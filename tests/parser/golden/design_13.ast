@@ -1,0 +1,26 @@
+(Program
+  (LetItem "sgemm"
+    (Params
+      (ParamHole)
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs
+        (Attribute "fp"
+          (Name "reassoc")
+          (Name "contract")
+        )
+      )
+    )
+    (Contracts
+      (Ensures
+        (Hole)
+      )
+    )
+    (Hole)
+  )
+)

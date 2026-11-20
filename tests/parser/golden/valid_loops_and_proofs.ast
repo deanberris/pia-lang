@@ -1,0 +1,236 @@
+(Program
+  (LetItem "gcd" [rec]
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "u32")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "u32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u32")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Decreases
+        (Name "b")
+      )
+    )
+    (If
+      (Binary "="
+        (Name "b")
+        (IntLit "0")
+      )
+      (Name "a")
+      (Apply
+        (Name "gcd")
+        (Name "b")
+        (Binary "mod"
+          (Name "a")
+          (Name "b")
+        )
+      )
+    )
+  )
+  (LetItem "find"
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers "borrowed in")
+          (SliceType
+            (TypeName "i32")
+          )
+          (None)
+        )
+      )
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "i32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "usize")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "==>"
+          (Binary "<"
+            (Name "result")
+            (Apply
+              (Name "len")
+              (Name "xs")
+            )
+          )
+          (Binary "="
+            (Index
+              (Name "xs")
+              (Name "result")
+            )
+            (Name "x")
+          )
+        )
+      )
+    )
+    (LetIn "i"
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers "mutable")
+          (TypeName "usize")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (IntLit "0")
+      (Sequence
+        (While
+          (Binary "&&"
+            (Binary "<"
+              (Name "i")
+              (Apply
+                (Name "len")
+                (Name "xs")
+              )
+            )
+            (Binary "<>"
+              (Index
+                (Name "xs")
+                (Name "i")
+              )
+              (Name "x")
+            )
+          )
+          (LoopAnnots
+            (Invariant
+              (Quantifier "forall"
+                (RangeBinder "j"
+                  (Range
+                    (IntLit "0")
+                    (Name "i")
+                  )
+                )
+                (Binary "<>"
+                  (Index
+                    (Name "xs")
+                    (Name "j")
+                  )
+                  (Name "x")
+                )
+              )
+            )
+            (Decreases
+              (Binary "-"
+                (Apply
+                  (Name "len")
+                  (Name "xs")
+                )
+                (Name "i")
+              )
+            )
+          )
+          (Assign
+            (Name "i")
+            (Binary "+"
+              (Name "i")
+              (IntLit "1")
+            )
+          )
+        )
+        (Sequence
+          (Assert
+            (Binary "<="
+              (Name "i")
+              (Apply
+                (Name "len")
+                (Name "xs")
+              )
+            )
+          )
+          (Name "i")
+        )
+      )
+    )
+  )
+  (LetItem "has_zero"
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "i32")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "bool")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "="
+          (Name "result")
+          (Quantifier "exists"
+            (RangeBinder "i"
+              (Range
+                (IntLit "0")
+                (Apply
+                  (Name "len")
+                  (Name "xs")
+                )
+              )
+            )
+            (Binary "="
+              (Index
+                (Name "xs")
+                (Name "i")
+              )
+              (IntLit "0")
+            )
+          )
+        )
+      )
+    )
+    (Apply
+      (Name "any")
+      (Lambda
+        (LParam
+          (PVar "x")
+          (None)
+        )
+        (Binary "="
+          (Name "x")
+          (IntLit "0")
+        )
+      )
+      (Name "xs")
+    )
+  )
+)

@@ -1,0 +1,122 @@
+(Program
+  (LetItem "scale"
+    (Params
+      (Param "src"
+        (Annot
+          (Modifiers "borrowed in")
+          (ArrayType
+            (TypeName "f32")
+            (Name "n")
+          )
+          (None)
+        )
+      )
+      (Param "dst"
+        (Annot
+          (Modifiers "borrowed out mutable")
+          (ArrayType
+            (TypeName "f32")
+            (Name "n")
+          )
+          (None)
+        )
+      )
+      (Param "k"
+        (Annot
+          (Modifiers)
+          (TypeName "f32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "="
+          (Binary "mod"
+            (Name "n")
+            (IntLit "4")
+          )
+          (IntLit "0")
+        )
+      )
+      (Ensures
+        (Quantifier "forall"
+          (RangeBinder "i"
+            (Range
+              (IntLit "0")
+              (Name "n")
+            )
+          )
+          (Binary "="
+            (Index
+              (Name "dst")
+              (Name "i")
+            )
+            (Binary "*"
+              (Index
+                (Name "src")
+                (Name "i")
+              )
+              (Name "k")
+            )
+          )
+        )
+      )
+    )
+    (For
+      (PVar "i")
+      (Range
+        (IntLit "0")
+        (Name "n")
+      )
+      (None)
+      (LoopAnnots)
+      (Assign
+        (Index
+          (Name "dst")
+          (Name "i")
+        )
+        (Binary "*"
+          (Index
+            (Name "src")
+            (Name "i")
+          )
+          (Name "k")
+        )
+      )
+    )
+  )
+  (LetItem "consume"
+    (Params
+      (Param "buf"
+        (Annot
+          (Modifiers "moved inout mutable")
+          (SliceType
+            (TypeName "u8")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (SliceType
+          (TypeName "u8")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Hole)
+  )
+)

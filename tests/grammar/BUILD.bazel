@@ -1,0 +1,21 @@
+load("@pia_pip//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+exports_files(["requirements.txt"])
+
+py_test(
+    name = "test_grammar",
+    srcs = ["test_grammar.py"],
+    data = glob(["valid/*.pia", "invalid/*.pia"]) + ["//docs:design.md"],
+    deps = [
+        "//grammar:pia_grammar",
+        requirement("lark"),
+    ],
+)
+
+# The shared corpus: the C++ parser's golden tests run over the same files.
+filegroup(
+    name = "cases",
+    srcs = glob(["valid/*.pia", "invalid/*.pia"]),
+    visibility = ["//tests/parser:__pkg__"],
+)
