@@ -8,6 +8,7 @@ The first milestone is a toy compiler, written in C++ on MLIR, that proves and c
 
 - [Language design](docs/design.md)
 - [Compiler architecture](docs/architecture.md)
+- [Grammar](docs/grammar.md)
 - [Architecture Decision Records](docs/adr/README.md)
 
 Build system: Bazel (bzlmod), depending on LLVM/MLIR and Z3 as Bazel modules. See [ADR 0017](docs/adr/0017-bazel-build.md).
