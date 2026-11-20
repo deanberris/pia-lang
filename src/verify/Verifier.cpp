@@ -850,7 +850,6 @@ class Encoder {
     auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
     bool hasBody = callee && !callee.isExternal();
     Demand pre;
-    llvm::DenseMap<Value, Value> postArrays;
     if (hasBody) {
       mlir::Block &entry = callee.getBody().front();
       for (unsigned i = 0; i < call.getNumOperands(); ++i) {
