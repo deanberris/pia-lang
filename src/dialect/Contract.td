@@ -15,6 +15,7 @@
 include "mlir/IR/DialectBase.td"
 include "mlir/IR/EnumAttr.td"
 include "mlir/IR/OpBase.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
 def Contract_Dialect : Dialect {
