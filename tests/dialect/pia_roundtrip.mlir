@@ -2,11 +2,15 @@
 // RUN: pia-opt %s | pia-opt | FileCheck %s
 // RUN: pia-opt %s --mlir-print-op-generic | pia-opt | FileCheck %s
 
+// Inside pia ops, MLIR prints operands and results constrained to
+// !pia.int or !pia.dyn in short form, without the dialect prefix
+// (`<0, 255>`). The parser accepts both spellings.
+
 // The saturating pixel add from docs/design.md:
 //   let add_px (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
 // CHECK-LABEL: func.func @add_px
 // CHECK-SAME: (%{{.*}}: !pia.int<0, 255>, %{{.*}}: !pia.int<0, 255>) -> !pia.int<0, 255>
-// CHECK: pia.add %{{.*}}, %{{.*}} overflow(saturate) : !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
+// CHECK: pia.add %{{.*}}, %{{.*}} overflow(saturate) : <0, 255>, <0, 255> -> <0, 255>
 func.func @add_px(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int<0, 255> {
   %r = pia.add %a, %b overflow(saturate) : !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
   return %r : !pia.int<0, 255>
@@ -14,7 +18,7 @@ func.func @add_px(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int<0, 255
 
 // The default overflow mode is proof, and is not printed.
 // CHECK-LABEL: func.func @bad
-// CHECK: pia.add %{{.*}}, %{{.*}} : !pia.int<0, 255>
+// CHECK: pia.add %{{.*}}, %{{.*}} : <0, 255>, <0, 255> -> <0, 255>
 // CHECK-NOT: overflow
 func.func @bad(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int<0, 255> {
   %r = pia.add %a, %b : !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
@@ -33,8 +37,8 @@ func.func @wide(%a: !pia.int<-9223372036854775808, 9223372036854775807>,
 // CHECK-LABEL: func.func @constants_and_compare
 // CHECK: pia.constant 200 : !pia.int<0, 255>
 // CHECK: pia.constant -5 : !pia.int<-128, 127>
+// CHECK: pia.convert %{{.*}} : <0, 255> -> <0, 65535>
 // CHECK: pia.cmp lt
-// CHECK: pia.convert %{{.*}} : !pia.int<0, 255> -> !pia.int<0, 65535>
 func.func @constants_and_compare() -> i1 {
   %c = pia.constant 200 : !pia.int<0, 255>
   %n = pia.constant -5 : !pia.int<-128, 127>
@@ -62,9 +66,9 @@ func.func @scale(%src: !pia.array<4 x f32> {pia.modifiers = "borrowed in"},
 
 // dyn values keep their tag set.
 // CHECK-LABEL: func.func @dyn
-// CHECK: pia.dyn.wrap %{{.*}} : !pia.int<0, 255> -> !pia.dyn<[!pia.int<0, 255>, f32]>
-// CHECK: pia.dyn.is %{{.*}}, f32 : !pia.dyn<[!pia.int<0, 255>, f32]>
-// CHECK: pia.dyn.unwrap %{{.*}} : !pia.dyn<[!pia.int<0, 255>, f32]> -> !pia.int<0, 255>
+// CHECK: pia.dyn.wrap %{{.*}} : !pia.int<0, 255> -> <[!pia.int<0, 255>, f32]>
+// CHECK: pia.dyn.is %{{.*}}, f32 : <[!pia.int<0, 255>, f32]>
+// CHECK: pia.dyn.unwrap %{{.*}} : <[!pia.int<0, 255>, f32]> -> !pia.int<0, 255>
 func.func @dyn(%x: !pia.int<0, 255>) -> i1 {
   %d = pia.dyn.wrap %x : !pia.int<0, 255> -> !pia.dyn<[!pia.int<0, 255>, f32]>
   %is = pia.dyn.is %d, f32 : !pia.dyn<[!pia.int<0, 255>, f32]>
