@@ -1,0 +1,6 @@
+load("//tests/lit:lit.bzl", "mlir_lit_tests")
+
+mlir_lit_tests(
+    name = "dialect_tests",
+    srcs = glob(["*.mlir"]),
+)

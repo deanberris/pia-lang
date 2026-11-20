@@ -1,12 +1,13 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 
 # mlir-opt for Pia. M0 registers the upstream dialects Pia lowers through;
-# M3 adds the pia, pia.contract and pia.par dialects.
+# Pia's own dialects: pia, pia_contract and pia_par (M3).
 cc_binary(
     name = "pia-opt",
     srcs = ["pia-opt.cpp"],
     visibility = ["//visibility:public"],
     deps = [
+        "//src/dialect",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArmNeonDialect",
         "@llvm-project//mlir:FuncDialect",
