@@ -146,27 +146,7 @@ class Gen {
   bool isBool(Type t) { return t && t.isInteger(1); }
   TV unit() { return {Value(), unitType()}; }
 
-  std::string typeName(Type t) {
-    if (!t) return "?";
-    if (isUnit(t)) return "unit";
-    if (isBool(t)) return "bool";
-    if (auto it = mlir::dyn_cast<IntType>(t)) {
-      for (const char *name : {"u8", "u16", "u32", "u64", "i8", "i16", "i32",
-                               "i64", "usize"})
-        if (types_.builtin(name) == t) return name;
-      return "int{" + llvm::toString(widen(it.getLo()), 10, true) + ".." +
-             llvm::toString(widen(it.getHi()), 10, true) + "}";
-    }
-    if (auto a = mlir::dyn_cast<ArrayType>(t))
-      return "[" + typeName(a.getElementType()) + "; " +
-             std::to_string(a.getLength()) + "]";
-    if (auto s = mlir::dyn_cast<SliceType>(t))
-      return "[" + typeName(s.getElementType()) + "]";
-    std::string out;
-    llvm::raw_string_ostream os(out);
-    t.print(os);
-    return os.str();
-  }
+  std::string typeName(Type t) { return sema::typeName(t); }
 
   // The smallest range type holding both.
   IntType join(IntType a, IntType b) {
@@ -287,6 +267,10 @@ class Gen {
     pushScope();
     for (size_t i = 0; i < sig.params.size(); ++i) {
       const sema::Param &p = sig.params[i];
+      // The verifier names counterexample values after the parameters.
+      entry->getArgument(i).setLoc(mlir::NameLoc::get(
+          b_.getStringAttr(p.name),
+          mlir::FileLineColLoc::get(file_, p.loc.line, p.loc.column)));
       BindingPtr b = bind(p.name, entry->getArgument(i), p.type,
                           sema::hasModifier(p.modifiers, "mutable"));
       b->modifiers = p.modifiers;

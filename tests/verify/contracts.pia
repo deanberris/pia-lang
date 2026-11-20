@@ -1,0 +1,76 @@
+(* Contracts: preconditions are assumed, postconditions and assertions are
+   goals, and calls use the callee's contract.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let safe_div (a : u32) (b : u32) : u32
+  requires b <> 0
+  ensures result <= a
+= a / b
+
+(* A call proves the callee's precondition and assumes its postcondition:
+   `twice_unchecked` fails at both calls, and `twice` proves. *)
+let inc (x : u8) : u8
+  requires x < 255
+  ensures result = x + 1
+= x + 1
+
+let twice_unchecked (x : u8) : u8 = inc (inc x)
+
+let twice (x : u8) : u8
+  requires x < 200
+= inc (inc x)
+
+(* `old` reads the value on entry; the second postcondition is false. *)
+let swap (xs : borrowed inout mutable [u8; 2]) : unit
+  ensures xs.[0] = old (xs.[1]) && xs.[1] = old (xs.[0])
+  ensures xs.[0] = old (xs.[0])
+= let t = xs.[0] in xs.[0] <- xs.[1]; xs.[1] <- t
+
+(* Quantified preconditions are assumed. The second postcondition is false
+   for xs = [0; 9]. *)
+let small (xs : [u8]) : bool
+  requires forall (i in 0..len xs). xs.[i] < 10
+  ensures len xs > 0 ==> xs.[0] < 10
+  ensures len xs > 1 ==> xs.[1] < 9
+= true
+
+(* An existential postcondition. *)
+let pick (xs : [i32; 4]) (k : usize) : i32
+  requires k < 4
+  ensures exists (i in 0..4). xs.[i] = result
+= xs.[k]
+
+(* Arithmetic in contracts is exact: `a + b` here cannot overflow. *)
+let avg (a : u8) (b : u8) : u8
+  ensures 2 * result <= a + b
+= (a +| b) / 2
+
+(* Expected report, in order.
+// CHECK: contracts.pia:9:5: proved: the divisor is not zero [smt]
+// CHECK: contracts.pia:9:5: proved: '/' does not overflow u32 [intervals]
+// CHECK: contracts.pia:8:3: proved: the postcondition holds [smt]
+// CHECK: contracts.pia:16:5: proved: '+' does not overflow u8 [smt]
+// CHECK: contracts.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: contracts.pia:18:42: failed: the precondition of 'inc' holds
+// CHECK-NEXT: counterexample: x = 255
+// CHECK: contracts.pia:18:37: failed: the precondition of 'inc' holds
+// CHECK-NEXT: counterexample: x = 254
+// CHECK: contracts.pia:22:8: proved: the precondition of 'inc' holds [smt]
+// CHECK: contracts.pia:22:3: proved: the precondition of 'inc' holds [smt]
+// CHECK: contracts.pia:28:11: proved: the index is within bounds [intervals]
+// CHECK: contracts.pia:28:31: proved: the index is within bounds [intervals]
+// CHECK: contracts.pia:28:21: proved: the index is within bounds [intervals]
+// CHECK: contracts.pia:28:39: proved: the index is within bounds [intervals]
+// CHECK: contracts.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: contracts.pia:27:3: failed: the postcondition holds
+// CHECK: contracts.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: contracts.pia:35:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}
+// CHECK: contracts.pia:42:3: proved: the index is within bounds [smt]
+// CHECK: contracts.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: contracts.pia:47:12: proved: the divisor is not zero [intervals]
+// CHECK: contracts.pia:47:12: proved: '/' does not overflow u8 [intervals]
+// CHECK: contracts.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: 18 proved, 4 failed, 0 skipped
+*)

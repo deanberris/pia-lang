@@ -1,0 +1,81 @@
+# Verifier v0
+
+Status: implemented in M5 ([#6](https://github.com/deanberris/pia-lang/issues/6)).
+
+`piac --verify file.pia` lowers a program ([irgen.md](irgen.md)) and tries to prove every goal in it. It prints one line per goal and a summary, and exits with status 1 if any goal fails:
+
+```
+overflow.pia:18:36: failed: '+' does not overflow u8
+  counterexample: a = 248, b = 248, result = 496
+overflow.pia:23:38: proved: '+' does not overflow u16 [intervals]
+3 proved, 2 failed, 0 skipped
+```
+
+`piac --verify --emit=mlir` prints the IR as well, with the report on stderr. Every op whose goals all hold carries `pia.proved = "intervals"` or `pia.proved = "smt"`. `piac --dump-smt` prints each solver query.
+
+This follows the pipeline in [architecture.md](architecture.md#verifier). The limits of v0 are listed at the end.
+
+## Goals
+
+The verifier walks each function in order and collects these goals:
+
+| Goal | Raised by |
+| --- | --- |
+| `nooverflow` | `pia.add`, `sub`, `mul`, `div` and narrowing `pia.convert` in `overflow(proof)` mode, which is the default. Also `pia.to_index` on a signed type (the index is not negative) and `pia.from_index` to a type narrower than `usize`. |
+| `nonzero` | the divisor of `pia.div` and `pia.rem`, in every mode |
+| `inbounds` | `pia.load` and `pia.store`: `0 <= i < len` |
+| `assert` | `assert p` |
+| `ensures` | each postcondition, at the return |
+| `requires` | each of the callee's preconditions, at a call |
+
+`wrap`, `saturate` and `trap` arithmetic raises no overflow goal. Wrapping and saturating results are modelled exactly. A trapping result is the exact value, since the program stops if it does not fit.
+
+**Specifications are exact.** Ops that only feed contracts, such as the arithmetic in `ensures 2 * result <= a + b`, compute mathematical values and raise no goals. A contract can mention `a + b` without it overflowing, and `len xs > 0 ==> xs.[0] < 10` can read `xs.[0]` under its guard.
+
+Goals are kept in the verifier's own list, in walk order. The architecture describes materialising them as `pia_contract.obligation` ops, and that waits for the modular and incremental work, where obligations must outlive one run. The verifier already accepts `obligation` ops, and `nonzero` was added to the obligation kinds.
+
+## Intervals first
+
+Before calling the solver, the verifier tries the operand ranges. A value's range is its type, narrowed through widening conversions, constants and other proof-mode arithmetic: `a * b + c` on `u8`, `u8` and `u16` lies within `[0, 130560]`, so it fits in `u32`. These goals are proved by intervals:
+
+- arithmetic whose exact range fits the result type
+- a divisor whose range excludes zero
+- a quotient of non-negative operands, which lies in `[0, a]`
+- an index into a fixed array whose range lies within the array, such as `lut.[i]` with `i : int{0..255}` and a 256-element `lut` ([design.md](design.md#integers))
+
+Everything else goes to Z3.
+
+## Encoding
+
+Each remaining goal becomes one query in the upstream `smt` dialect. The query is exported to SMT-LIB and decided by Z3 in-process ([ADR 0011](adr/0011-mlir-and-z3-implementation.md)). It holds:
+
+- every parameter as a constant, with its type's range assumed
+- the function's ops up to the goal, as terms
+- every earlier goal as an assumption, which is sound because each is checked in its own query
+- the goal's negation under the path condition
+
+`unsat` means the goal holds. With `sat`, the model is the counterexample.
+
+**Integers are bit-vectors.** Every Pia integer is a signed bit-vector of one width per module: 68 bits, or 132 if the module multiplies. That is wide enough for the exact result of any operation on values in `[-2^63, 2^64 - 1]`, so the encoding never wraps by accident. Ranges are constraints on these bit-vectors. `wrap` reduces into the type with `bvsmod`, and `saturate` clamps with `ite`. `index` uses the same sort.
+
+**Booleans** are SMT booleans. In contracts `&&`, `||` and `==>` are already plain logic. In code they arrive as `scf.if`, which becomes `ite`.
+
+**Arrays and slices** are SMT arrays from index to element. A fixed array's length is its type's. A slice's length is a constant in `[0, 2^64 - 1]`. `pia.store` produces a new array term. After an `if`, the two branches' arrays merge with `ite`. Every loaded element is assumed to lie in its element type's range.
+
+**Control flow.** The two branches of `scf.if` are walked under the condition and its negation, and the results merge with `ite`.
+
+**Calls** use the callee's contract, not its body. Its preconditions become goals, with the arguments substituted. The result is a fresh value of the result type. The callee's postconditions are assumed about it, with `old` reading the arguments as they were before the call. Buffers the callee may write (`out` or `inout`) are fresh arrays afterwards. Recursion needs nothing special.
+
+**`old e`** reads the function's arrays as they were on entry.
+
+**Quantifiers.** `forall (i in lo..hi). p` becomes an SMT `forall` over the bound variable, `(type range && lo <= i && i < hi) ==> p`. `exists` conjoins the guard instead.
+
+**Counterexamples** name the parameters, using the names IRGen records in the block arguments' locations, and slice lengths as `len xs`. They add the values that explain the goal: `result` for an overflow, `index` and `length` for bounds. Array contents are not shown yet.
+
+## Limits of v0
+
+- **Loops are not cut with their invariants yet.** Goals inside `for` and `while`, including the invariant and measure, are reported as `skipped`. After a loop, its results and every writable buffer are unknown values of their types. That keeps later goals sound, but they may fail when they depend on what the loop did. Loops come next: assume the invariant at the head, prove it on entry and after each iteration, and havoc only what the loop assigns.
+- **Termination** (`decreases`) is skipped.
+- **A call inside a contract** stands for an unknown value of its result type, so a contract that relies on another function's meaning cannot be proved yet.
+- **Ops the verifier does not model** produce unknown values of their types, which is sound but may cause failures.
+- **Interval analysis** is local to each goal. Extending MLIR's integer range analysis, so that ranges flow through control flow, comes with loops.

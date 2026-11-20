@@ -30,7 +30,8 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//src/dialect` | The `pia`, `pia_contract` and `pia_par` dialects |
 | `//tests/dialect:dialect_tests` | Dialect round-trip, folding and verifier tests |
 | `//tests/irgen:irgen_tests` | `piac --emit=mlir` tests checked with FileCheck |
-| `//tools/piac` | The compiler driver: `piac --emit=mlir file.pia` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--dump-ast` prints the syntax tree |
+| `//tests/verify:verify_tests` | `piac --verify` reports checked with FileCheck |
+| `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--dump-ast` prints the syntax tree |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |
 

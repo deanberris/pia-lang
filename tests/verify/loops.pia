@@ -1,0 +1,42 @@
+(* Verifier v0 does not cut loops with their invariants yet. Goals inside a
+   loop are reported as skipped, and a loop's results are treated as unknown
+   values of their types afterwards, which keeps later goals sound.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let sum_to (n : u16) : u32 =
+  let s : mutable u32 = 0 in
+  for i in 0..n do s <- s + i done;
+  s
+
+(* Without the invariant, the value of `i` after the loop is unknown, so this
+   assertion fails for now. *)
+let find (xs : borrowed in [i32]) (x : i32) : usize =
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> x
+    invariant i <= len xs
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  assert i <= len xs;
+  i
+
+(* Recursion is checked against the contract; termination is not yet. *)
+let rec gcd (a : u32) (b : u32) : u32
+  decreases b
+= if b = 0 then a else gcd b (a mod b)
+
+(* Expected report, in order.
+// CHECK: loops.pia:9:7: skipped: the index fits in u16 [loops are not verified yet]
+// CHECK: loops.pia:9:27: skipped: '+' does not overflow u32 [loops are not verified yet]
+// CHECK: loops.pia:17:5: skipped: the loop invariant holds [loops are not verified yet]
+// CHECK: loops.pia:18:5: skipped: the measure decreases [loops are not verified yet]
+// CHECK: loops.pia:16:23: skipped: the index is within bounds [loops are not verified yet]
+// CHECK: loops.pia:20:12: skipped: '+' does not overflow usize [loops are not verified yet]
+// CHECK: loops.pia:22:3: failed: the assertion holds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, x = {{-?[0-9]+}}
+// CHECK: loops.pia:27:3: skipped: the measure decreases [termination is not checked yet]
+// CHECK: loops.pia:28:33: proved: the divisor is not zero [smt]
+// CHECK: 1 proved, 1 failed, 7 skipped
+*)

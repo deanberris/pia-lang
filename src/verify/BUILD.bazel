@@ -1,0 +1,23 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Verifier v0 (milestone M5): obligations, interval checks, an encoding in
+# the upstream smt dialect, and Z3 (docs/verifier.md).
+cc_library(
+    name = "verify",
+    srcs = ["Verifier.cpp"],
+    hdrs = ["Verifier.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/dialect",
+        "//src/sema",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:SMTDialect",
+        "@llvm-project//mlir:TargetSMTLIB",
+        "@z3//:z3_static",
+    ],
+)

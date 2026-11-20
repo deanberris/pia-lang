@@ -1,0 +1,26 @@
+(* With --emit=mlir, the report goes to stderr and the IR marks the ops
+   whose goals all hold.
+// RUN: not piac --verify --emit=mlir %s 2>/dev/null | FileCheck %s
+// RUN: not piac --verify --emit=mlir %s 2>&1 >/dev/null | FileCheck %s --check-prefix=REPORT
+*)
+
+(*
+// CHECK-LABEL: func.func @good
+// CHECK: pia.add %{{.*}}, %{{.*}} {pia.proved = "intervals"}
+// CHECK-LABEL: func.func @checked
+// CHECK: pia.add %{{.*}}, %{{.*}} {pia.proved = "smt"}
+// CHECK: pia_contract.ensures %{{.*}} {pia.proved = "smt"}
+// CHECK-LABEL: func.func @bad
+// CHECK: pia.add
+// CHECK-NOT: pia.proved
+// CHECK: return
+// REPORT: 3 proved, 1 failed, 0 skipped
+*)
+let good (a : u8) (b : u8) : u16 = a + b
+
+let checked (a : u8) (b : u8) : u8
+  requires a < 100 && b < 100
+  ensures result >= a
+= a + b
+
+let bad (a : u8) (b : u8) : u8 = a + b
