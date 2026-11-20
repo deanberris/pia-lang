@@ -1,6 +1,6 @@
 # Pia grammar
 
-Status: draft for milestone M1 ([#2](https://github.com/deanberris/pia-lang/issues/2)), 2026-11-20. The disambiguation rules are recorded in [ADR 0019](adr/0019-grammar-disambiguation.md).
+Status: accepted for milestone M1 ([#2](https://github.com/deanberris/pia-lang/issues/2)), 2026-11-20. The disambiguation rules are recorded in [ADR 0019](adr/0019-grammar-disambiguation.md).
 
 This document is the specification. Two files make it executable:
 
