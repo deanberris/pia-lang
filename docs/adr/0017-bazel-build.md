@@ -16,9 +16,11 @@ Use Bazel with bzlmod. Depend on llvm-project through its own bzlmod overlay mod
 
 llvm-project's `utils/bazel/MODULE.bazel` (module `llvm-project-overlay`) only defines its source repository `@llvm-raw` when it is the root module, and the `@llvm-project` repository it configures is private to that module. A `bazel_dep` on it with a `git_override` therefore cannot give Pia's targets `@llvm-project//mlir:...`. Instead, `MODULE.bazel` does what the overlay's README recommends for downstream projects:
 
-- fetch llvm-project as `@llvm-raw` with `git_repository`, pinned to one main commit (`LLVM_COMMIT`)
+- fetch llvm-project as the module `@llvm-raw` with `bazel_dep` plus `git_override`, pinned to one main commit (`LLVM_COMMIT`). `patch_cmds` add a minimal root `MODULE.bazel` and the empty root files LLVM's `configure.bzl` expects. It has to be a module, because `MODULE.bazel` can only load `.bzl` files from modules, not from a repository made with `use_repo_rule`.
 - run LLVM's own `llvm_configure` rule from it, for the AArch64 and X86 targets
 - `bazel_dep` on the same modules as the overlay's `MODULE.bazel`, with the same repo names
+
+Z3 builds through rules_foreign_cc's CMake rule. A one-line patch (`third_party/rules_foreign_cc/absolute_linker_path.patch`, applied with `single_version_override`) makes the linker path absolute so CMake can find Apple's wrapped clang.
 
 This is still LLVM's own Bazel build at a pinned main commit, fetched by Bazel and never checked into the repository.
 
