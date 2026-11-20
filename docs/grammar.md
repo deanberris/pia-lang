@@ -30,13 +30,13 @@ IDENT = ( letter | "_" ) { letter | digit | "_" | "'" } ;
 Reserved words:
 
 ```
-let rec meta in type of where if then else match with for par_for while do done
+let rec meta in type of where if then else match with for spread while do done
 requires ensures invariant decreases assert assume forall exists
 interface sig module struct end import operator true false
 borrowed moved out inout fixed mutable mod
 ```
 
-`step` is a keyword only inside a `for` or `par_for` header, between `for` and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
+`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -206,7 +206,7 @@ elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argu
 stmt   = postfix "<-" stmt
        | "if" seq "then" stmt [ "else" stmt ]
        | "for" pattern "in" or_e [ "step" add_e ] { loop_annot } "do" seq "done"
-       | "par_for" pattern "in" or_e { attribute } { loop_annot } "do" seq "done"
+       | "spread" pattern "in" or_e { attribute } { loop_annot } "do" seq "done"
        | "while" seq { loop_annot } "do" seq "done"
        | quantifier
        | "assert" imp_e | "assume" imp_e
@@ -296,5 +296,5 @@ These are in the design's direction but have no syntax yet. Each will get an ADR
 
 - Tuple types and tuple patterns
 - Guards on match arms (`when`)
-- Placement and task-graph syntax beyond `par_for` and `@place` (M12)
+- Placement and task-graph syntax beyond `spread` and `@place` (M12)
 - Doc comments
