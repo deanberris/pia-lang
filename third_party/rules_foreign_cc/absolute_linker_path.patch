@@ -1,0 +1,11 @@
+--- a/foreign_cc/private/cmake_script.bzl
++++ b/foreign_cc/private/cmake_script.bzl
+@@ -337,7 +337,7 @@
+                                                " ".join(flags.cxx_linker_static)
+ 
+     if tools.cxx_linker_executable and tools.cxx_linker_executable != tools.cxx:
+-        normalized_path = _absolutize(workspace_name, tools.cxx_linker_executable)
++        normalized_path = _absolutize(workspace_name, tools.cxx_linker_executable, True)
+         dict["CMAKE_CXX_LINK_EXECUTABLE"] = " ".join([
+             normalized_path,
+             "<FLAGS>",

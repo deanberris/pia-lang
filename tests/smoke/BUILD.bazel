@@ -1,0 +1,32 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+cc_test(
+    name = "smt_to_z3_test",
+    srcs = ["smt_to_z3_test.cpp"],
+    deps = [
+        "@googletest//:gtest_main",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:SMTDialect",
+        "@llvm-project//mlir:TargetSMTLIB",
+        "@z3//:z3_static",
+    ],
+)
+
+sh_test(
+    name = "smt_roundtrip_test",
+    srcs = ["filecheck_test.sh"],
+    args = [
+        "$(rootpath //tools/pia-opt)",
+        "$(rootpath @llvm-project//llvm:FileCheck)",
+        "$(rootpath smt_roundtrip.mlir)",
+    ],
+    data = [
+        "smt_roundtrip.mlir",
+        "//tools/pia-opt",
+        "@llvm-project//llvm:FileCheck",
+    ],
+)

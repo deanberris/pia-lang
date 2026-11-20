@@ -1,0 +1,29 @@
+# Shared settings, following llvm-project's utils/bazel/.bazelrc where LLVM
+# needs them.
+
+common --enable_platform_specific_config
+common --incompatible_disallow_empty_glob
+common --@rules_python//python/config_settings:bootstrap_impl=script
+
+build --dynamic_mode=off
+build --strip=never
+build --incompatible_no_implicit_file_export
+
+# C++17 is what LLVM builds with; Pia's own code uses the same.
+build --cxxopt=-std=c++17 --host_cxxopt=-std=c++17
+
+build:linux --force_pic
+build:macos --macos_minimum_os=13.0 --host_macos_minimum_os=13.0
+
+# Keep LLVM's warnings quiet; Pia's own targets turn warnings back on.
+build --per_file_copt=external/.*@-w
+build --host_per_file_copt=external/.*@-w
+
+# Building LLVM/MLIR is slow the first time. A disk cache makes clean builds
+# and branch switches cheap.
+build --disk_cache=~/.cache/pia-bazel-disk
+
+test --test_output=errors
+
+# Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
+try-import %workspace%/user.bazelrc

@@ -1,0 +1,114 @@
+"""Pia: a formally verified language for SIMD data pipelines."""
+
+module(name = "pia", version = "0.0.0")
+
+# --------------------------------------------------------------- tools
+
+bazel_dep(name = "apple_support", version = "2.12.0", repo_name = "build_bazel_apple_support")
+bazel_dep(name = "rules_cc", version = "0.2.28")
+bazel_dep(name = "bazel_skylib", version = "1.9.2")
+bazel_dep(name = "platforms", version = "1.1.0")
+bazel_dep(name = "rules_shell", version = "0.8.0")
+
+# llvm-project's overlay requires rules_python below 2.0.
+bazel_dep(name = "rules_python", version = "1.9.3")
+
+bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
+
+# --------------------------------------------------------------- Z3
+
+bazel_dep(name = "z3", version = "4.15.2")
+
+# Z3's BCR module builds with rules_foreign_cc's CMake rule. On macOS,
+# apple_support's toolchain links with a different tool (wrapped_clang) from
+# the one it compiles with (wrapped_clang_pp). rules_foreign_cc hands CMake
+# that linker as a relative bazel-out/ path, which breaks once CMake changes
+# into its build directory, so CMake's compiler check fails. The patch makes
+# the linker path absolute, as rules_foreign_cc already does for the compiler
+# and archiver. Still unfixed upstream as of rules_foreign_cc 0.17.0.
+single_version_override(
+    module_name = "rules_foreign_cc",
+    patch_strip = 1,
+    patches = ["//third_party/rules_foreign_cc:absolute_linker_path.patch"],
+    version = "0.14.0",
+)
+
+# --------------------------------------------------------------- LLVM and MLIR
+#
+# LLVM's Bazel build lives in llvm-project at utils/bazel. Its MODULE.bazel
+# (module "llvm-project-overlay") only defines @llvm-raw when it is the root
+# module, and the @llvm-project repo it configures is private to it. So, as
+# its README suggests for downstream projects, we fetch llvm-project at a
+# pinned commit and run its own configure rule here. See ADR 0017.
+#
+# MODULE.bazel can only load .bzl files from bazel_dep modules, not from repos
+# made by use_repo_rule. So @llvm-raw is a bazel_dep on llvm-project itself,
+# fetched with git_override at LLVM_COMMIT; patch_cmds give its root a minimal
+# MODULE.bazel (llvm-project has none there), plus the empty root BUILD and
+# WORKSPACE files that configure.bzl uses to find the source root.
+#
+# The deps below mirror utils/bazel/MODULE.bazel at LLVM_COMMIT, with the same
+# repo names, because LLVM's BUILD files refer to them by those names. Update
+# them together when bumping LLVM_COMMIT.
+
+LLVM_COMMIT = "556922ca35ba488697d9e766c84c9d3418d68203"
+
+bazel_dep(name = "protobuf", version = "35.0", repo_name = "com_google_protobuf")
+bazel_dep(name = "libxml2", version = "2.15.3")
+bazel_dep(name = "zlib-ng", version = "2.3.3", repo_name = "llvm_zlib")
+bazel_dep(name = "zstd", version = "1.5.7.bcr.1", repo_name = "llvm_zstd")
+bazel_dep(name = "gmp", version = "6.3.0.bcr.4")
+bazel_dep(name = "mpc", version = "1.4.1.bcr.3")
+bazel_dep(name = "mpfr", version = "4.2.2.bcr.4")
+bazel_dep(name = "nanobind", version = "2.12.0.bcr.1")
+bazel_dep(name = "libpfm", version = "4.13.0", repo_name = "pfm")
+bazel_dep(name = "vulkan_headers", version = "1.4.349")
+bazel_dep(name = "xz", version = "5.4.5.bcr.9", repo_name = "llvm_xz")
+
+bazel_dep(name = "llvm-raw", version = "")
+git_override(
+    module_name = "llvm-raw",
+    commit = LLVM_COMMIT,
+    patch_cmds = [
+        "touch WORKSPACE && echo \"# empty\" > BUILD.bazel",
+        "printf '%s\\n' " +
+        "'module(name = \"llvm-raw\")' " +
+        "'bazel_dep(name = \"bazel_skylib\", version = \"1.9.2\")' " +
+        "'bazel_dep(name = \"platforms\", version = \"1.1.0\")' " +
+        "'bazel_dep(name = \"rules_cc\", version = \"0.2.28\")' " +
+        "'bazel_dep(name = \"rules_python\", version = \"1.9.3\")' " +
+        "> MODULE.bazel",
+    ],
+    remote = "https://github.com/llvm/llvm-project.git",
+)
+
+llvm_configure = use_repo_rule("@llvm-raw//utils/bazel:configure.bzl", "llvm_configure")
+
+# AArch64 is the product target (Apple Silicon). X86 lets the compiler run
+# and be tested on x86 hosts.
+llvm_configure(
+    name = "llvm-project",
+    targets = [
+        "AArch64",
+        "X86",
+    ],
+)
+
+llvm_repos = use_extension("@llvm-raw//utils/bazel:extensions.bzl", "llvm_repos_extension")
+use_repo(llvm_repos, "linux_uapi", "pyyaml", "vulkan_sdk")
+
+# --------------------------------------------------------------- Python (grammar tests)
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip", dev_dependency = True)
+pip.parse(
+    hub_name = "pia_pip",
+    python_version = "3.12",
+    requirements_lock = "//tests/grammar:requirements.txt",
+)
+use_repo(pip, "pia_pip")
