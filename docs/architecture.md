@@ -43,16 +43,18 @@ Pia has three of its own dialects and reuses upstream dialects for everything el
 | Dialect | Holds | Lifetime |
 | --- | --- | --- |
 | `pia` | Pia's types and values: range-typed integers (`!pia.int<lo, hi>`), fixed arrays and slices with lengths, structs, `dyn` with its tag set, functions with parameter modifiers as attributes | IRGen to codegen |
-| `pia.contract` | `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume`, `old`, quantifiers (`forall`, `exists`), and an `obligation` op that ties each proof goal to a source location | IRGen to the end of verification, then erased |
-| `pia.par` | Tiled grids with halos, `spread`, collectives (`halo_exchange`, `all_reduce`, `scatter`, `gather`), placement attributes | IRGen to runtime lowering |
+| `pia_contract` | `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume`, `old`, quantifiers (`forall`, `exists`), and an `obligation` op that ties each proof goal to a source location | IRGen to the end of verification, then erased |
+| `pia_par` | Tiled grids with halos, `spread`, collectives (`halo_exchange`, `all_reduce`, `scatter`, `gather`), placement attributes | IRGen to runtime lowering |
 | `smt` (upstream) | Solver terms: bit-vectors, booleans, arrays, quantifiers, solver and assert ops | Built by the verifier, exported to SMT-LIB for Z3 |
 | `arith`, `scf`, `memref`, `vector`, `linalg`, `arm_neon`, `llvm` (upstream) | Codegen targets | After verification |
+
+MLIR dialect namespaces cannot contain a `.`, so the contract and parallel dialects are spelled `pia_contract` and `pia_par` in IR (`pia_contract.ensures`, `!pia_par.tiled<...>`).
 
 Design points:
 
 - Contracts are ops in their own dialect, not attributes, so they can reference SSA values and be verified, transformed and erased by ordinary passes.
 - Proved facts survive verification as attributes on the ops they justify (for example `pia.proved = ["inbounds", "nooverflow"]`), so the optimiser can act on them after contracts are erased.
-- Implicit obligations (index in bounds, no overflow under `@overflow(proof)`, exhaustive `match`) are materialised as `pia.contract.obligation` ops by a single pass, so the verifier has one kind of goal to handle.
+- Implicit obligations (index in bounds, no overflow under `@overflow(proof)`, exhaustive `match`) are materialised as `pia_contract.obligation` ops by a single pass, so the verifier has one kind of goal to handle.
 
 ## Verifier
 
@@ -77,7 +79,7 @@ Each milestone is a GitHub issue, built one at a time and merged to `main`.
 | [M0](https://github.com/deanberris/pia-lang/issues/1) | Bazel skeleton | `bazel build //...` builds a `pia-opt` tool linked against MLIR and Z3, with one passing test |
 | [M1](https://github.com/deanberris/pia-lang/issues/2) | Grammar | `docs/grammar.md` has the full grammar, and every example in `design.md` parses in a grammar test |
 | [M2](https://github.com/deanberris/pia-lang/issues/3) | Lexer and parser | `piac --dump-ast` parses all design examples, with golden tests |
-| [M3](https://github.com/deanberris/pia-lang/issues/4) | Dialects | `pia`, `pia.contract` and `pia.par` defined in ODS, with round-trip tests through `pia-opt` |
+| [M3](https://github.com/deanberris/pia-lang/issues/4) | Dialects | `pia`, `pia_contract` and `pia_par` defined in ODS, with round-trip tests through `pia-opt` |
 | [M4](https://github.com/deanberris/pia-lang/issues/5) | IRGen, scalar subset | `let`, functions, integers, `if`, `for`, arrays lower to the `pia` dialect |
 | [M5](https://github.com/deanberris/pia-lang/issues/6) | Verifier v0 | Saturating add and the `bad` overflow example: the first proves, the second fails with a counterexample |
 | [M6](https://github.com/deanberris/pia-lang/issues/7) | Codegen v0 | Saturating add runs on an Apple Silicon Mac and matches a C reference |

@@ -27,6 +27,8 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//tools/pia-opt` | `mlir-opt` for Pia's dialects |
 | `//tests/smoke:smt_to_z3_test` | smt dialect to SMT-LIB to Z3, end to end |
 | `//tests/smoke:smt_roundtrip_test` | `pia-opt` round trip checked with FileCheck |
+| `//src/dialect` | The `pia`, `pia_contract` and `pia_par` dialects |
+| `//tests/dialect:dialect_tests` | Dialect round-trip, folding and verifier tests |
 | `//tools/piac` | The compiler driver; `piac --dump-ast file.pia` |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |

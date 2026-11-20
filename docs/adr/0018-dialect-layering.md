@@ -10,7 +10,7 @@ The compiler needs IR for Pia's own types and values, for contracts that must be
 
 ## Decision
 
-Define three Pia dialects: `pia` (types, values, functions with parameter modifiers), `pia.contract` (contracts and proof obligations as ops), and `pia.par` (tiles, `spread` loops, collectives, placement). The verifier encodes obligations in the upstream `smt` dialect and hands SMT-LIB to Z3 in-process. After verification, contracts are erased, proved facts remain as attributes, and code lowers through upstream `arith`, `scf`, `memref`, `vector`, `linalg`, `arm_neon` and `llvm`. Interval analysis builds on MLIR's integer range analysis.
+Define three Pia dialects: `pia` (types, values, functions with parameter modifiers), `pia_contract` (contracts and proof obligations as ops), and `pia_par` (tiles, `spread` loops, collectives, placement). The verifier encodes obligations in the upstream `smt` dialect and hands SMT-LIB to Z3 in-process. After verification, contracts are erased, proved facts remain as attributes, and code lowers through upstream `arith`, `scf`, `memref`, `vector`, `linalg`, `arm_neon` and `llvm`. Interval analysis builds on MLIR's integer range analysis.
 
 ## Consequences
 
