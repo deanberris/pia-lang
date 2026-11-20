@@ -1,0 +1,1 @@
+let f (n : usize) : unit = for i in 0..n do g i

@@ -1,0 +1,285 @@
+// Pia reference grammar (Lark, Earley).
+//
+// Executable form of the phrase grammar in docs/grammar.md. Terminals come
+// from pia_lexer.py; see that file for the lexical rules, including the
+// layout rule that inserts SEP between top-level items.
+
+%declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR PAR_FOR
+%declare WHILE STEP DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
+%declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
+%declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
+%declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
+%declare ATTR ATTR_OPEN TARGS_OPEN TARGS_CLOSE LBRACE_ADJ HOLE
+%declare LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE DOT_LBRACKET
+%declare COMMA COLON SEMI SEP DOT QDOT DOTDOT
+%declare ARROW FATARROW LARROW EQ BAR OP_IMP OP_OR OP_AND OP_CMP OP_ADD OP_MUL
+
+// ---------------------------------------------------------------- program
+
+start: program
+
+program: SEP? (item (SEP item)*)? SEP?
+
+?item: let_item
+     | meta_operator
+     | interface_item
+     | module_item
+     | import_item
+     | expr_item
+
+// A bare top-level expression runs at compile time and must yield items,
+// e.g. `tiled_matmul `sgemm_4x16 f32 4 16 64 4`.
+expr_item: app
+
+import_item: IMPORT path
+path: IDENT (DOT IDENT)*
+
+// ---------------------------------------------------------------- bindings
+
+let_item: LET REC? META? binder param* ret_annot? contract* EQ seq
+
+binder: IDENT | SPLICE_IDENT
+
+param: IDENT                              -> param_bare
+     | SPLICE_IDENT                       -> param_bare
+     | LPAREN IDENT COLON annot RPAREN    -> param_typed
+     | LPAREN SPLICE_IDENT COLON annot RPAREN -> param_typed
+     | LPAREN RPAREN                      -> param_unit
+     | LPAREN HOLE RPAREN                 -> param_hole
+
+ret_annot: COLON annot attribute*
+         | attribute+
+
+contract: REQUIRES stmt          -> requires
+        | ENSURES stmt           -> ensures
+        | DECREASES stmt         -> decreases
+        | REQUIRES clause_eq     -> requires
+        | ENSURES clause_eq      -> ensures
+
+// Longest predicate rule: when a clause predicate could end either before or
+// after a top-level `=`, the predicate takes the `=` and the next `=` starts
+// the body. So `ensures total x = old (total x) = body` reads as
+// `ensures (total x = old (total x))` followed by the body.
+clause_eq.2: range_e EQ (range_e | quantifier) -> binop
+
+// `let meta operator ( + ) : prec 6 left = ...`
+// `let meta operator ( + ) for vec<T, k> = ...`
+meta_operator: LET META OPERATOR LPAREN operator RPAREN fixity? (FOR type)? EQ seq
+fixity: COLON IDENT INT IDENT            // prec <level> left|right|none
+
+?operator: OP_IMP | OP_OR | OP_AND | OP_CMP | OP_ADD | OP_MUL | EQ
+
+// ---------------------------------------------------------------- annotations and types
+
+// A parameter or binding annotation: modifiers, a type, an optional predicate.
+// Modifiers before a function type belong to its first parameter, so
+// `borrowed in [u8] -> [pixel]` takes a borrowed input slice.
+annot: modifiers union_type (WHERE stmt)?
+     | arrow (WHERE stmt)?
+
+modifiers: ownership? access? mutability?
+ownership: BORROWED | MOVED
+access: IN | OUT | INOUT
+mutability: FIXED | MUTABLE
+
+?type: arrow_type
+
+?arrow_type: arrow
+           | union_type
+arrow: arrow_dom ARROW arrow_type
+
+arrow_dom: modifiers union_type
+         | LPAREN IDENT COLON annot RPAREN   -> named_dom
+
+?union_type: app_type (BAR app_type)+ -> union
+           | app_type
+
+?app_type: type_atom type_arg+ -> type_app
+         | type_atom
+
+?type_arg: type_atom
+         | INT
+         | LPAREN expr RPAREN
+
+type_atom: IDENT                                     -> type_name
+         | TYPE                                      -> type_kind
+         | IDENT TARGS_OPEN targs TARGS_CLOSE        -> type_inst
+         | IDENT LBRACE_ADJ add_e DOTDOT add_e RBRACE -> range_type
+         | LBRACKET type RBRACKET                    -> slice_type
+         | LBRACKET type SEMI expr RBRACKET          -> array_type
+         | LBRACE field_decls RBRACE                 -> record_type
+         | LBRACE IDENT COLON type BAR stmt RBRACE   -> refinement_type
+         | LPAREN type RPAREN
+         | LPAREN RPAREN                             -> unit_type
+         | SPLICE_IDENT                              -> splice
+         | SPLICE_OPEN expr RPAREN                   -> splice
+
+targs: targ (COMMA targ)*
+targ: type
+    | elem
+    | named_targ
+// `halo = 1` in a type argument list is a named argument, not a comparison.
+named_targ.2: IDENT EQ elem
+
+field_decls: field_decl (SEMI field_decl)* SEMI?
+field_decl: IDENT COLON annot
+
+// A type value: `type | A | B of t`, `type { ... } where p`, `type t @fp(reassoc)`.
+type_value: TYPE type_body attribute* (WHERE stmt)? attribute*
+?type_body: variants | type
+variants: (BAR ctor)+
+ctor: IDENT (OF app_type)?
+
+attribute: ATTR
+         | ATTR_OPEN attr_args? RPAREN
+attr_args: attr_arg (COMMA attr_arg)*
+attr_arg: stmt
+        | named_attr_arg
+named_attr_arg.2: IDENT EQ stmt
+
+// ---------------------------------------------------------------- expressions
+
+?expr: seq
+
+// Constructs that extend as far right as possible sit at the sequence level.
+?seq: stmt SEMI seq -> sequence
+    | stmt SEMI     -> sequence
+    | stmt
+    | let_in
+    | match_e
+    | lambda
+
+let_in: LET REC? binder param* ret_annot? contract* EQ seq IN seq
+
+lambda: LET lparam+ FATARROW seq
+// Inside lists, records and argument lists `;` and `,` separate elements, so
+// a function literal there has a body without top-level sequencing.
+?elem: stmt
+     | LET lparam+ FATARROW elem -> lambda
+
+lparam: LPAREN pattern (COLON annot)? RPAREN
+      | LPAREN RPAREN -> lparam_unit
+
+match_e: MATCH seq WITH arms
+arms: BAR? arm (BAR arm)*
+arm: pattern ARROW seq
+
+?stmt: assign
+     | if_e
+     | for_e
+     | par_for_e
+     | while_e
+     | quantifier
+     | ASSERT imp_e  -> assert_e
+     | ASSUME imp_e  -> assume_e
+     | type_value
+     | imp_e
+
+assign: postfix LARROW stmt
+
+if_e: IF seq THEN stmt (ELSE stmt)?
+
+for_e: FOR pattern IN or_e (STEP add_e)? loop_annot* DO seq DONE
+par_for_e: PAR_FOR pattern IN or_e attribute* loop_annot* DO seq DONE
+while_e: WHILE seq loop_annot* DO seq DONE
+loop_annot: INVARIANT stmt   -> invariant
+          | DECREASES stmt   -> decreases
+
+quantifier: (FORALL | EXISTS) binders QDOT stmt
+binders: qbinder+
+qbinder: IDENT (COLON type)?                       -> qbinder_typed
+       | IDENT IN range_e                          -> qbinder_range
+       | LPAREN IDENT COLON type RPAREN            -> qbinder_typed
+       | LPAREN IDENT IN range_e RPAREN            -> qbinder_range
+
+// Binary operators, loosest first. Levels match the bootstrap table:
+// ==> 1 right, || 2 right, && 3 right, comparisons 4 none, .. 5 none,
+// + 6 left, * 7 left.
+// A quantifier may be the right operand of a logical operator or comparison
+// (`p ==> forall i. q i`); its body then extends as far right as possible.
+?imp_e: or_e OP_IMP (imp_e | quantifier) -> binop
+      | or_e
+?or_e: and_e OP_OR (or_e | quantifier) -> binop
+     | and_e
+?and_e: cmp_e OP_AND (and_e | quantifier) -> binop
+      | cmp_e
+?cmp_e: range_e (OP_CMP | EQ) (range_e | quantifier) -> binop
+      | range_e
+?range_e: add_e DOTDOT add_e -> range
+        | add_e
+?add_e: add_e OP_ADD mul_e -> binop
+      | mul_e
+?mul_e: mul_e OP_MUL unary -> binop
+      | unary
+?unary: OP_ADD unary -> neg
+      | app
+
+?app: postfix postfix+ -> apply
+    | postfix
+
+?postfix: postfix DOT IDENT                      -> field
+        | postfix DOT SPLICE_IDENT               -> field
+        | postfix DOT_LBRACKET seq RBRACKET      -> index
+        | postfix TARGS_OPEN targs TARGS_CLOSE   -> instantiate
+        | atom
+
+?atom: IDENT                                   -> name
+     | INT                                     -> int_lit
+     | FLOAT                                   -> float_lit
+     | STRING                                  -> string_lit
+     | TRUE                                    -> bool_lit
+     | FALSE                                   -> bool_lit
+     | QIDENT                                  -> quoted_ident
+     | HOLE                                    -> hole
+     | LPAREN seq RPAREN
+     | LPAREN RPAREN                           -> unit
+     | LPAREN operator RPAREN                  -> operator_value
+     | LBRACKET (elem (SEMI elem)* SEMI?)? RBRACKET        -> list_lit
+     | lbrace field_inits RBRACE               -> record_lit
+     | lbrace postfix WITH field_inits RBRACE  -> record_update
+     | QUOTE_OPEN quoted RPAREN                -> quote
+     | SPLICE_IDENT                            -> splice
+     | SPLICE_OPEN seq RPAREN                  -> splice
+
+lbrace: LBRACE | LBRACE_ADJ
+field_inits: field_init (SEMI field_init)* SEMI?
+field_init: IDENT EQ elem
+
+// Quoted syntax: items, a declaration (`add : $t -> $t -> $t`), or an expression.
+?quoted: quoted_items
+       | IDENT COLON type -> quoted_decl
+       | seq
+quoted_items: (let_item | meta_operator) (SEP? (let_item | meta_operator))*
+
+// ---------------------------------------------------------------- patterns
+
+?pattern: IDENT pattern_atom+ -> ctor_pattern
+        | pattern_atom
+
+?pattern_atom: IDENT                         -> pvar
+             | INT                           -> plit
+             | STRING                        -> plit
+             | TRUE                          -> plit
+             | FALSE                         -> plit
+             | SPLICE_IDENT                  -> psplice
+             | LPAREN pattern COLON type RPAREN -> ptyped
+             | LPAREN pattern RPAREN
+             | LBRACE pfields RBRACE         -> precord
+pfields: pfield (SEMI pfield)* SEMI?
+pfield: IDENT (EQ pattern)?
+
+// ---------------------------------------------------------------- modules
+
+interface_item: INTERFACE IDENT EQ SIG sig_item* END
+sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
+        | LET binder EQ type_value                     -> sig_type
+        | HOLE                                         -> sig_hole
+ret_attrs: attribute*
+
+module_item: MODULE IDENT (COLON path (COMMA path)*)? EQ STRUCT struct_body END
+struct_body: item*
+
+// ---------------------------------------------------------------- fragments
+
+// Used by tests for snippets that are not whole programs.
+contract_fragment: contract+

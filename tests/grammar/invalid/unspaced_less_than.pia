@@ -1,0 +1,2 @@
+(* `x<y` opens a type argument list; comparisons need spaces. *)
+let lt (x : i32) (y : i32) : bool = x<y

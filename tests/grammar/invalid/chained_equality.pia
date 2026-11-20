@@ -1,0 +1,2 @@
+(* Comparisons do not associate. *)
+let same = a = b = c

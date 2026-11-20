@@ -1,0 +1,22 @@
+import Pia.Prelude
+import Image.Png.Codec
+
+interface Counter = sig
+  let count : u64
+  let incr : unit -> unit
+    requires count < max_u64
+    ensures count = old count + 1
+end
+
+module Counters : Counter = struct
+  let count : mutable u64 = 0
+  let incr () : unit = count <- count + 1
+end
+
+let meta operator ( ** ) : prec 8 right = let (a) (b) => `( pow $a $b )
+
+let meta getter (field : ident) (t : type) : item =
+  `( let $field (x : $t) = x.$field )
+
+getter `width image
+getter `height image

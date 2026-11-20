@@ -1,0 +1,27 @@
+(* Literals (* nested comments *) and patterns. *)
+let masks = [0xff; 0b1010; 1_000_000; 255u8; 3usize]
+let floats = [1.5; 2.0e-3; 0.25f32]
+let greeting = "hello \"pia\"\n"
+let flags = { on = true; off = false }
+
+let token = type
+  | Num of i64
+  | Name of str
+  | Pair of (pair u8 u8)
+  | Eof
+
+let show (t : token) : str =
+  match t with
+  | Num 0 -> "zero"
+  | Num n -> "number"
+  | Name "pia" -> "us"
+  | Pair { fst; snd = 0 } -> "pair"
+  | _ -> "other"
+
+let unit_fn () : unit = ()
+let plus = ( + )
+let tail = if done_yet then () ;;
+let after_separator = 1
+
+let nested : vec<vec<u8, 4>, 2> = make_nested ()
+let boxed = wrap { x = 1 }
