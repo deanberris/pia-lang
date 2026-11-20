@@ -1,0 +1,200 @@
+(Program
+  (LetItem "masks"
+    (Params)
+    (None)
+    (Contracts)
+    (ListLit
+      (IntLit "0xff")
+      (IntLit "0b1010")
+      (IntLit "1_000_000")
+      (IntLit "255u8")
+      (IntLit "3usize")
+    )
+  )
+  (LetItem "floats"
+    (Params)
+    (None)
+    (Contracts)
+    (ListLit
+      (FloatLit "1.5")
+      (FloatLit "2.0e-3")
+      (FloatLit "0.25f32")
+    )
+  )
+  (LetItem "greeting"
+    (Params)
+    (None)
+    (Contracts)
+    (StringLit "\"hello \\\"pia\\\"\\n\"")
+  )
+  (LetItem "flags"
+    (Params)
+    (None)
+    (Contracts)
+    (RecordLit
+      (FieldInit "on"
+        (BoolLit "true")
+      )
+      (FieldInit "off"
+        (BoolLit "false")
+      )
+    )
+  )
+  (LetItem "token"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (Variants
+        (Ctor "Num"
+          (TypeName "i64")
+        )
+        (Ctor "Name"
+          (TypeName "str")
+        )
+        (Ctor "Pair"
+          (TypeApp
+            (TypeName "pair")
+            (TypeName "u8")
+            (TypeName "u8")
+          )
+        )
+        (Ctor "Eof"
+          (None)
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (LetItem "show"
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeName "token")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "str")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Match
+      (Name "t")
+      (Arm
+        (PCtor "Num"
+          (PLit "0")
+        )
+        (StringLit "\"zero\"")
+      )
+      (Arm
+        (PCtor "Num"
+          (PVar "n")
+        )
+        (StringLit "\"number\"")
+      )
+      (Arm
+        (PCtor "Name"
+          (PLit "\"pia\"")
+        )
+        (StringLit "\"us\"")
+      )
+      (Arm
+        (PCtor "Pair"
+          (PRecord
+            (PField "fst"
+              (None)
+            )
+            (PField "snd"
+              (PLit "0")
+            )
+          )
+        )
+        (StringLit "\"pair\"")
+      )
+      (Arm
+        (PVar "_")
+        (StringLit "\"other\"")
+      )
+    )
+  )
+  (LetItem "unit_fn"
+    (Params
+      (ParamUnit)
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Unit)
+  )
+  (LetItem "plus"
+    (Params)
+    (None)
+    (Contracts)
+    (OperatorValue "+")
+  )
+  (LetItem "tail"
+    (Params)
+    (None)
+    (Contracts)
+    (If
+      (Name "done_yet")
+      (Unit)
+      (None)
+    )
+  )
+  (LetItem "after_separator"
+    (Params)
+    (None)
+    (Contracts)
+    (IntLit "1")
+  )
+  (LetItem "nested"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeInst "vec"
+          (TypeInst "vec"
+            (TypeName "u8")
+            (IntLit "4")
+          )
+          (IntLit "2")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "make_nested")
+      (Unit)
+    )
+  )
+  (LetItem "boxed"
+    (Params)
+    (None)
+    (Contracts)
+    (Apply
+      (Name "wrap")
+      (RecordLit
+        (FieldInit "x"
+          (IntLit "1")
+        )
+      )
+    )
+  )
+)

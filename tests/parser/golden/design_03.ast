@@ -1,0 +1,95 @@
+(Program
+  (LetItem "add_px"
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs
+        (Attribute "overflow"
+          (Name "saturate")
+        )
+      )
+    )
+    (Contracts)
+    (Binary "+"
+      (Name "a")
+      (Name "b")
+    )
+  )
+  (LetItem "idx"
+    (Params
+      (Param "i"
+        (Annot
+          (Modifiers)
+          (RangeType "int"
+            (IntLit "0")
+            (IntLit "255")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Index
+      (Name "lut")
+      (Name "i")
+    )
+  )
+  (LetItem "bad"
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Binary "+"
+      (Name "a")
+      (Name "b")
+    )
+  )
+)

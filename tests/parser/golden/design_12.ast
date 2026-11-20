@@ -1,0 +1,477 @@
+(Program
+  (LetItem "tiled_matmul" [meta]
+    (Params
+      (Param "name"
+        (Annot
+          (Modifiers)
+          (TypeName "ident")
+          (None)
+        )
+      )
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (Apply
+            (Name "Numeric")
+            (Name "t")
+          )
+        )
+      )
+      (Param "tm"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+      (Param "tn"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+      (Param "tk"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+      (Param "lanes"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (Binary "="
+            (Binary "*"
+              (Name "lanes")
+              (Apply
+                (Name "size_of")
+                (Name "t")
+              )
+            )
+            (IntLit "16")
+          )
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "item")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (LetIn "cols"
+      (Params)
+      (None)
+      (Contracts)
+      (Binary "/"
+        (Name "tn")
+        (Name "lanes")
+      )
+      (Quote
+        (LetItem "$name"
+          (Params
+            (Param "m"
+              (Annot
+                (Modifiers)
+                (TypeName "usize")
+                (None)
+              )
+            )
+            (Param "n"
+              (Annot
+                (Modifiers)
+                (TypeName "usize")
+                (None)
+              )
+            )
+            (Param "k"
+              (Annot
+                (Modifiers)
+                (TypeName "usize")
+                (None)
+              )
+            )
+            (Param "a"
+              (Annot
+                (Modifiers "borrowed in")
+                (ArrayType
+                  (Splice "$t")
+                  (Binary "*"
+                    (Name "m")
+                    (Name "k")
+                  )
+                )
+                (None)
+              )
+            )
+            (Param "b"
+              (Annot
+                (Modifiers "borrowed in")
+                (ArrayType
+                  (Splice "$t")
+                  (Binary "*"
+                    (Name "k")
+                    (Name "n")
+                  )
+                )
+                (None)
+              )
+            )
+            (Param "c"
+              (Annot
+                (Modifiers "borrowed out mutable")
+                (ArrayType
+                  (Splice "$t")
+                  (Binary "*"
+                    (Name "m")
+                    (Name "n")
+                  )
+                )
+                (None)
+              )
+            )
+          )
+          (RetAnnot
+            (Annot
+              (Modifiers)
+              (TypeName "unit")
+              (None)
+            )
+            (Attrs)
+          )
+          (Contracts
+            (Requires
+              (Binary "&&"
+                (Binary "="
+                  (Binary "mod"
+                    (Name "m")
+                    (Splice "$tm")
+                  )
+                  (IntLit "0")
+                )
+                (Binary "&&"
+                  (Binary "="
+                    (Binary "mod"
+                      (Name "n")
+                      (Splice "$tn")
+                    )
+                    (IntLit "0")
+                  )
+                  (Binary "="
+                    (Binary "mod"
+                      (Name "k")
+                      (Splice "$tk")
+                    )
+                    (IntLit "0")
+                  )
+                )
+              )
+            )
+            (Ensures
+              (Quantifier "forall"
+                (RangeBinder "i"
+                  (Range
+                    (IntLit "0")
+                    (Name "m")
+                  )
+                )
+                (RangeBinder "j"
+                  (Range
+                    (IntLit "0")
+                    (Name "n")
+                  )
+                )
+                (Binary "="
+                  (Index
+                    (Name "c")
+                    (Binary "+"
+                      (Binary "*"
+                        (Name "i")
+                        (Name "n")
+                      )
+                      (Name "j")
+                    )
+                  )
+                  (Apply
+                    (Name "sum")
+                    (Range
+                      (IntLit "0")
+                      (Name "k")
+                    )
+                    (Lambda
+                      (LParam
+                        (PVar "p")
+                        (None)
+                      )
+                      (Binary "*"
+                        (Index
+                          (Name "a")
+                          (Binary "+"
+                            (Binary "*"
+                              (Name "i")
+                              (Name "k")
+                            )
+                            (Name "p")
+                          )
+                        )
+                        (Index
+                          (Name "b")
+                          (Binary "+"
+                            (Binary "*"
+                              (Name "p")
+                              (Name "n")
+                            )
+                            (Name "j")
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+          (For
+            (PVar "i0")
+            (Range
+              (IntLit "0")
+              (Name "m")
+            )
+            (Splice "$tm")
+            (LoopAnnots)
+            (For
+              (PVar "j0")
+              (Range
+                (IntLit "0")
+                (Name "n")
+              )
+              (Splice "$tn")
+              (LoopAnnots)
+              (LetIn "acc"
+                (Params)
+                (RetAnnot
+                  (Annot
+                    (Modifiers "mutable")
+                    (ArrayType
+                      (TypeInst "vec"
+                        (Splice "$t")
+                        (Splice "$lanes")
+                      )
+                      (Binary "*"
+                        (Splice "$tm")
+                        (Splice "$cols")
+                      )
+                    )
+                    (None)
+                  )
+                  (Attrs)
+                )
+                (Contracts)
+                (Apply
+                  (Name "splat")
+                  (Name "zero")
+                )
+                (Sequence
+                  (For
+                    (PVar "p0")
+                    (Range
+                      (IntLit "0")
+                      (Name "k")
+                    )
+                    (Splice "$tk")
+                    (LoopAnnots)
+                    (Splice
+                      (Apply
+                        (Name "unroll")
+                        (Name "tk")
+                        (Lambda
+                          (LParam
+                            (PVar "pp")
+                            (None)
+                          )
+                          (Apply
+                            (Name "unroll")
+                            (Name "tm")
+                            (Lambda
+                              (LParam
+                                (PVar "ii")
+                                (None)
+                              )
+                              (Quote
+                                (LetIn "av"
+                                  (Params)
+                                  (None)
+                                  (Contracts)
+                                  (Apply
+                                    (Name "splat")
+                                    (Index
+                                      (Name "a")
+                                      (Binary "+"
+                                        (Binary "+"
+                                          (Binary "*"
+                                            (Binary "+"
+                                              (Name "i0")
+                                              (Splice "$ii")
+                                            )
+                                            (Name "k")
+                                          )
+                                          (Name "p0")
+                                        )
+                                        (Splice "$pp")
+                                      )
+                                    )
+                                  )
+                                  (Splice
+                                    (Apply
+                                      (Name "unroll")
+                                      (Name "cols")
+                                      (Lambda
+                                        (LParam
+                                          (PVar "jj")
+                                          (None)
+                                        )
+                                        (Quote
+                                          (LetIn "bv"
+                                            (Params)
+                                            (None)
+                                            (Contracts)
+                                            (Apply
+                                              (Name "load")
+                                              (Name "b")
+                                              (Binary "+"
+                                                (Binary "+"
+                                                  (Binary "*"
+                                                    (Binary "+"
+                                                      (Name "p0")
+                                                      (Splice "$pp")
+                                                    )
+                                                    (Name "n")
+                                                  )
+                                                  (Name "j0")
+                                                )
+                                                (Binary "*"
+                                                  (Splice "$jj")
+                                                  (Splice "$lanes")
+                                                )
+                                              )
+                                            )
+                                            (Assign
+                                              (Index
+                                                (Name "acc")
+                                                (Binary "+"
+                                                  (Binary "*"
+                                                    (Splice "$ii")
+                                                    (Splice "$cols")
+                                                  )
+                                                  (Splice "$jj")
+                                                )
+                                              )
+                                              (Apply
+                                                (Name "fma")
+                                                (Index
+                                                  (Name "acc")
+                                                  (Binary "+"
+                                                    (Binary "*"
+                                                      (Splice "$ii")
+                                                      (Splice "$cols")
+                                                    )
+                                                    (Splice "$jj")
+                                                  )
+                                                )
+                                                (Name "av")
+                                                (Name "bv")
+                                              )
+                                            )
+                                          )
+                                        )
+                                      )
+                                    )
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                  (Splice
+                    (Apply
+                      (Name "unroll")
+                      (Name "tm")
+                      (Lambda
+                        (LParam
+                          (PVar "ii")
+                          (None)
+                        )
+                        (Apply
+                          (Name "unroll")
+                          (Name "cols")
+                          (Lambda
+                            (LParam
+                              (PVar "jj")
+                              (None)
+                            )
+                            (Quote
+                              (Apply
+                                (Name "store")
+                                (Name "c")
+                                (Binary "+"
+                                  (Binary "+"
+                                    (Binary "*"
+                                      (Binary "+"
+                                        (Name "i0")
+                                        (Splice "$ii")
+                                      )
+                                      (Name "n")
+                                    )
+                                    (Name "j0")
+                                  )
+                                  (Binary "*"
+                                    (Splice "$jj")
+                                    (Splice "$lanes")
+                                  )
+                                )
+                                (Index
+                                  (Name "acc")
+                                  (Binary "+"
+                                    (Binary "*"
+                                      (Splice "$ii")
+                                      (Splice "$cols")
+                                    )
+                                    (Splice "$jj")
+                                  )
+                                )
+                              )
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (ExprItem
+    (Apply
+      (Name "tiled_matmul")
+      (QuotedIdent "sgemm_4x16")
+      (Name "f32")
+      (IntLit "4")
+      (IntLit "16")
+      (IntLit "64")
+      (IntLit "4")
+    )
+  )
+)

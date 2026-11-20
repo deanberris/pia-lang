@@ -12,3 +12,10 @@ py_test(
         requirement("lark"),
     ],
 )
+
+# The shared corpus: the C++ parser's golden tests run over the same files.
+filegroup(
+    name = "cases",
+    srcs = glob(["valid/*.pia", "invalid/*.pia"]),
+    visibility = ["//tests/parser:__pkg__"],
+)

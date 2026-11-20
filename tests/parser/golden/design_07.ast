@@ -1,0 +1,55 @@
+(Program
+  (LetItem "eq_f32"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "adapter")
+          (TypeName "Eq")
+          (TypeName "f32")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (RecordLit
+      (FieldInit "eq"
+        (Lambda
+          (LParam
+            (PVar "a")
+            (None)
+          )
+          (LParam
+            (PVar "b")
+            (None)
+          )
+          (Binary "="
+            (Apply
+              (Name "bits")
+              (Name "a")
+            )
+            (Apply
+              (Name "bits")
+              (Name "b")
+            )
+          )
+        )
+      )
+    )
+  )
+  (LetItem "unique"
+    (Params)
+    (None)
+    (Contracts)
+    (Apply
+      (Instantiate
+        (Name "dedup")
+        (TypeName "f32")
+        (TypeName "eq_f32")
+      )
+      (Name "samples")
+    )
+  )
+)

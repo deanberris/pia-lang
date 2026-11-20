@@ -71,3 +71,4 @@ __pycache__/
 # Bazel
 /bazel-*
 /user.bazelrc
+/tests/parser/.tmp/

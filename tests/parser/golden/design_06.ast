@@ -1,0 +1,320 @@
+(Program
+  (LetItem "Numeric" [meta]
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "concept")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Binary "&&"
+      (Apply
+        (Name "has_fn")
+        (Name "t")
+        (Quote
+          (QuotedDecl "add"
+            (ArrowType
+              (Domain
+                (Modifiers)
+                (Splice "$t")
+                (None)
+              )
+              (ArrowType
+                (Domain
+                  (Modifiers)
+                  (Splice "$t")
+                  (None)
+                )
+                (Splice "$t")
+              )
+            )
+          )
+        )
+      )
+      (Binary "&&"
+        (Apply
+          (Name "has_fn")
+          (Name "t")
+          (Quote
+            (QuotedDecl "mul"
+              (ArrowType
+                (Domain
+                  (Modifiers)
+                  (Splice "$t")
+                  (None)
+                )
+                (ArrowType
+                  (Domain
+                    (Modifiers)
+                    (Splice "$t")
+                    (None)
+                  )
+                  (Splice "$t")
+                )
+              )
+            )
+          )
+        )
+        (Apply
+          (Name "has_val")
+          (Name "t")
+          (Quote
+            (QuotedDecl "zero"
+              (Splice "$t")
+            )
+          )
+        )
+      )
+    )
+  )
+  (LetItem "Eq" [meta]
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "concept")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Binary "&&"
+      (Apply
+        (Name "has_fn")
+        (Name "t")
+        (Quote
+          (QuotedDecl "eq"
+            (ArrowType
+              (Domain
+                (Modifiers)
+                (Splice "$t")
+                (None)
+              )
+              (ArrowType
+                (Domain
+                  (Modifiers)
+                  (Splice "$t")
+                  (None)
+                )
+                (TypeName "bool")
+              )
+            )
+          )
+        )
+      )
+      (Apply
+        (Name "law")
+        (Quote
+          (Quantifier "forall"
+            (Binder "a"
+              (Splice "$t")
+            )
+            (Apply
+              (Name "eq")
+              (Name "a")
+              (Name "a")
+            )
+          )
+        )
+      )
+    )
+  )
+  (LetItem "pair"
+    (Params)
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "a")
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+      (LParam
+        (PVar "b")
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+      (TypeValue
+        (RecordType
+          (FieldDecl "fst"
+            (Annot
+              (Modifiers)
+              (TypeName "a")
+              (None)
+            )
+          )
+          (FieldDecl "snd"
+            (Annot
+              (Modifiers)
+              (TypeName "b")
+              (None)
+            )
+          )
+        )
+        (Attrs)
+        (None)
+      )
+    )
+  )
+  (LetItem "matrix"
+    (Params)
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "t")
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (Apply
+            (Name "Numeric")
+            (Name "t")
+          )
+        )
+      )
+      (LParam
+        (PVar "rows")
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+      (LParam
+        (PVar "cols")
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+      (TypeValue
+        (ArrayType
+          (TypeName "t")
+          (Binary "*"
+            (Name "rows")
+            (Name "cols")
+          )
+        )
+        (Attrs)
+        (None)
+      )
+    )
+  )
+  (LetItem "sum"
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (Apply
+            (Name "Numeric")
+            (Name "t")
+          )
+        )
+      )
+      (Param "xs"
+        (Annot
+          (Modifiers "borrowed in")
+          (SliceType
+            (TypeName "t")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "t")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "fold")
+      (Name "add")
+      (Name "zero")
+      (Name "xs")
+    )
+  )
+  (LetItem "p"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "pair")
+          (TypeName "u8")
+          (TypeName "f32")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (RecordLit
+      (FieldInit "fst"
+        (IntLit "1")
+      )
+      (FieldInit "snd"
+        (FloatLit "2.0")
+      )
+    )
+  )
+  (LetItem "s"
+    (Params)
+    (None)
+    (Contracts)
+    (Apply
+      (Name "sum")
+      (ListLit
+        (IntLit "1")
+        (IntLit "2")
+        (IntLit "3")
+      )
+    )
+  )
+  (LetItem "w"
+    (Params)
+    (None)
+    (Contracts)
+    (Apply
+      (Instantiate
+        (Name "sum")
+        (TypeName "i64")
+      )
+      (ListLit
+        (IntLit "1")
+        (IntLit "2")
+        (IntLit "3")
+      )
+    )
+  )
+)
