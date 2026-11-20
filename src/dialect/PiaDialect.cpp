@@ -9,6 +9,25 @@
 using namespace mlir;
 using namespace pia;
 
+static Type elementTypeOf(Type buffer) {
+  if (auto a = dyn_cast<ArrayType>(buffer)) return a.getElementType();
+  return cast<SliceType>(buffer).getElementType();
+}
+
+// custom<ElementType>: pia.load and pia.store print only the buffer type; the
+// element type follows from it, so it is never printed.
+static ParseResult parseElementType(OpAsmParser &parser, Type buffer,
+                                    Type &element) {
+  if (!isa<ArrayType, SliceType>(buffer))
+    return parser.emitError(parser.getCurrentLocation(),
+                            "expected a !pia.array or !pia.slice type, got ")
+           << buffer;
+  element = elementTypeOf(buffer);
+  return success();
+}
+
+static void printElementType(OpAsmPrinter &, Operation *, Type, Type) {}
+
 #include "dialect/PiaDialect.cpp.inc"
 #include "dialect/PiaEnums.cpp.inc"
 
@@ -201,11 +220,6 @@ OpFoldResult LenOp::fold(FoldAdaptor) {
   if (auto array = dyn_cast<ArrayType>(getBuffer().getType()))
     return IntegerAttr::get(IndexType::get(getContext()), array.getLength());
   return {};
-}
-
-static Type elementTypeOf(Type buffer) {
-  if (auto a = dyn_cast<ArrayType>(buffer)) return a.getElementType();
-  return cast<SliceType>(buffer).getElementType();
 }
 
 LogicalResult LoadOp::verify() {

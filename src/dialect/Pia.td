@@ -197,14 +197,22 @@ def Pia_LoadOp : Pia_Op<"load", [MemoryEffects<[MemRead]>]> {
   let summary = "read an element; the index must be proved in bounds";
   let arguments = (ins Pia_Buffer:$buffer, Index:$index);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$buffer `[` $index `]` attr-dict `:` type($buffer)";
+  // The result type is the buffer's element type, so the format leaves it
+  // out; custom<ElementType> recovers it when parsing.
+  let assemblyFormat = [{
+    $buffer `[` $index `]` attr-dict `:` type($buffer)
+    custom<ElementType>(ref(type($buffer)), type($result))
+  }];
   let hasVerifier = 1;
 }
 
 def Pia_StoreOp : Pia_Op<"store", [MemoryEffects<[MemWrite]>]> {
   let summary = "write an element; the index must be proved in bounds";
   let arguments = (ins AnyType:$value, Pia_Buffer:$buffer, Index:$index);
-  let assemblyFormat = "$value `,` $buffer `[` $index `]` attr-dict `:` type($buffer)";
+  let assemblyFormat = [{
+    $value `,` $buffer `[` $index `]` attr-dict `:` type($buffer)
+    custom<ElementType>(ref(type($buffer)), type($value))
+  }];
   let hasVerifier = 1;
 }
 
