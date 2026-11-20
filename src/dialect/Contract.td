@@ -73,11 +73,12 @@ def Contract_OldOp : Contract_Op<"old", [Pure, SameOperandsAndResultType]> {
 }
 
 // Quantifiers. The body region takes the bound variables as block arguments
-// and yields the i1 predicate.
+// and yields the i1 predicate. The yield carries that predicate, so it is
+// always written out: SingleBlock, not SingleBlockImplicitTerminator, which
+// needs a terminator it can build with no operands.
 
 class Contract_QuantifierOp<string mnemonic>
-    : Contract_Op<mnemonic, [Pure, SingleBlockImplicitTerminator<"YieldOp">,
-                             RecursiveMemoryEffects]> {
+    : Contract_Op<mnemonic, [Pure, SingleBlock, RecursiveMemoryEffects]> {
   let arguments = (ins);
   let results = (outs I1:$result);
   let regions = (region SizedRegion<1>:$body);
