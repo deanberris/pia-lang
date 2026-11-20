@@ -1,0 +1,25 @@
+(* Errors in signatures, reported before any code is generated.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: sema_errors.pia:[[@LINE+2]]:12: error: unknown type 'u7'
+*)
+let f (x : u7) : u8 = 0
+
+let ok (x : u8) : u8 = x
+
+(* CHECK: sema_errors.pia:[[@LINE+2]]:7: error: parameter 'x' needs a type annotation for now
+*)
+let g x : u8 = x
+
+(* CHECK: sema_errors.pia:[[@LINE+2]]:12: error: the range's lower bound exceeds its upper bound
+*)
+let h (x : int{5..1}) : u8 = 0
+
+(* CHECK: sema_errors.pia:[[@LINE+2]]:18: error: an array length must be an integer literal for now
+*)
+let k (xs : [u8; n]) : u8 = 0
+
+(* CHECK: sema_errors.pia:[[@LINE+2]]:1: error: 'ok' is already defined
+*)
+let ok (y : u8) : u8 = y

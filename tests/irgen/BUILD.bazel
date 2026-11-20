@@ -1,0 +1,12 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# `piac --emit=mlir` tests (milestone M4). Each .pia file keeps its RUN and
+# CHECK lines inside comments.
+lit_tests(
+    name = "irgen_tests",
+    srcs = glob(["*.pia"]),
+    tools = [
+        "//tools/piac",
+        "//tools/pia-opt",
+    ],
+)

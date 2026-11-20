@@ -1,0 +1,35 @@
+(* Type errors IRGen reports, one per function.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: errors.pia:[[@LINE+2]]:29: error: 300 does not fit in u8
+*)
+let big (x : u8) : u8 = x + 300
+
+(* CHECK: errors.pia:[[@LINE+2]]:41: error: 'x' is not mutable; declare it as 'let x : mutable T = ...'
+*)
+let frozen (n : u8) : u8 = let x = n in x <- 1; x
+
+(* CHECK: errors.pia:[[@LINE+2]]:46: error: cannot write to 'xs': declare the parameter 'out' or 'inout'
+*)
+let poke (xs : borrowed in [u8; 4]) : unit = xs.[0] <- 1
+
+(* CHECK: errors.pia:[[@LINE+2]]:29: error: an 'if' condition must be a bool, found u8
+*)
+let pick (c : u8) : u8 = if c then 1 else 2
+
+(* CHECK: errors.pia:[[@LINE+2]]:23: error: 'big' takes 1 argument, given 2; partial application is not supported yet
+*)
+let call_wrong : u8 = big 1 2
+
+(* CHECK: errors.pia:[[@LINE+2]]:26: error: unknown name 'y'
+*)
+let nope (x : u8) : u8 = y
+
+(* CHECK: errors.pia:[[@LINE+2]]:25: error: quantifiers are only allowed in contracts and assertions
+*)
+let q (n : u8) : bool = forall (i in 0..n). i < n
+
+(* CHECK: errors.pia:[[@LINE+2]]:29: error: the branches of 'if' have different types: u8 and bool
+*)
+let mixed (c : bool) : u8 = if c then 1u8 else false

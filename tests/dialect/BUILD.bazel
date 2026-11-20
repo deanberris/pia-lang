@@ -1,6 +1,6 @@
-load("//tests/lit:lit.bzl", "mlir_lit_tests")
+load("//tests/lit:lit.bzl", "lit_tests")
 
-mlir_lit_tests(
+lit_tests(
     name = "dialect_tests",
     srcs = glob(["*.mlir"]),
 )

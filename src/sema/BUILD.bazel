@@ -1,0 +1,17 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Minimal Sema for the scalar subset (milestone M4): type resolution,
+# function signatures and parameter modifiers.
+cc_library(
+    name = "sema",
+    srcs = ["Sema.cpp"],
+    hdrs = ["Sema.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/dialect",
+        "//src/syntax",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
+)

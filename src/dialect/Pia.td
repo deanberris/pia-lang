@@ -159,6 +159,41 @@ def Pia_AddOp : Pia_ArithOp<"add", [Commutative]> {
 def Pia_SubOp : Pia_ArithOp<"sub"> { let summary = "integer subtraction"; }
 def Pia_MulOp : Pia_ArithOp<"mul", [Commutative]> { let summary = "integer multiplication"; }
 
+def Pia_DivOp : Pia_ArithOp<"div"> {
+  let summary = "integer division, rounding toward zero";
+  let description = [{
+    The divisor must be proved non-zero, whatever the overflow mode.
+  }];
+}
+def Pia_RemOp : Pia_ArithOp<"rem"> {
+  let summary = "the remainder of division, with the sign of the dividend";
+  let description = [{
+    Pia's `%` and `mod`. The divisor must be proved non-zero.
+  }];
+}
+
+def Pia_ToIndexOp : Pia_Op<"to_index", [Pure]> {
+  let summary = "use a range-typed integer as an index";
+  let description = [{
+    Indices are MLIR `index` values. The input must be proved non-negative
+    when its type allows negative values.
+  }];
+  let arguments = (ins Pia_AnyInt:$input);
+  let results = (outs Index:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input)";
+}
+
+def Pia_FromIndexOp : Pia_Op<"from_index", [Pure]> {
+  let summary = "read an index as a range-typed integer";
+  let description = [{
+    The index must be proved to lie in the result type's range, which is
+    immediate for `usize`.
+  }];
+  let arguments = (ins Index:$input);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = "$input attr-dict `:` type($result)";
+}
+
 def Pia_CmpOp : Pia_Op<"cmp", [Pure]> {
   let summary = "compare two range-typed integers by value";
   let arguments = (ins Pia_CmpPredicate:$predicate, Pia_AnyInt:$lhs, Pia_AnyInt:$rhs);

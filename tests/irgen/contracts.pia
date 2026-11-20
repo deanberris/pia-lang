@@ -1,0 +1,82 @@
+(* Contracts lower to pia_contract ops.
+// RUN: piac --emit=mlir %s | FileCheck %s
+// RUN: piac --emit=mlir %s | pia-opt | FileCheck %s
+*)
+
+(* `requires` comes first in the body; `ensures` sees the return value as
+   `result`, just before the return.
+// CHECK-LABEL: func.func @safe_div
+// CHECK: %[[NZ:.*]] = pia.cmp ne %arg1, %{{.*}}
+// CHECK-NEXT: pia_contract.requires %[[NZ]]
+// CHECK: %[[Q:.*]] = pia.div %arg0, %arg1
+// CHECK: %[[LE:.*]] = pia.cmp le %[[Q]], %arg0
+// CHECK-NEXT: pia_contract.ensures %[[LE]]
+// CHECK-NEXT: return %[[Q]]
+*)
+let safe_div (a : u32) (b : u32) : u32
+  requires b <> 0
+  ensures result <= a
+= a / b
+
+(* In contracts `&&` and `==>` are plain logic: (not a) or b.
+// CHECK-LABEL: func.func @abs
+// CHECK: pia_contract.requires
+// CHECK: %[[GE:.*]] = pia.cmp ge %{{.*}}, %{{.*}}
+// CHECK: %[[EQ:.*]] = pia.cmp eq %{{.*}}, %arg0
+// CHECK: %[[T:.*]] = arith.constant true
+// CHECK: %[[NOT:.*]] = arith.xori %[[GE]], %[[T]] : i1
+// CHECK: %[[IMP:.*]] = arith.ori %[[NOT]], %[[EQ]] : i1
+// CHECK: pia_contract.ensures %[[IMP]]
+*)
+let abs (x : i32) : i32
+  requires x > -2147483648
+  ensures x >= 0 ==> result = x
+= if x < 0 then -x else x
+
+(* A bounded quantifier guards its body with the range; nested binders
+   nest the ops.
+// CHECK-LABEL: func.func @sorted_prefix
+// CHECK: pia_contract.forall {
+// CHECK-NEXT: ^bb0(%[[I:.*]]: !usize):
+// CHECK: pia_contract.forall {
+// CHECK-NEXT: ^bb0(%[[J:.*]]: !usize):
+// CHECK: pia.load %arg0
+// CHECK: pia.cmp le
+// CHECK: pia.cmp le %{{.*}}, %[[J]]
+// CHECK: pia.cmp lt %[[J]], %[[I]]
+// CHECK: pia_contract.yield
+// CHECK: pia_contract.yield
+// CHECK: pia_contract.requires
+*)
+let sorted_prefix (xs : [u8]) (n : usize) : u8
+  requires forall (i in 0..n) (j in 0..i). xs.[j] <= xs.[i]
+= xs.[0]
+
+(* `exists` conjoins its range guard, and typed binders range over the type.
+// CHECK-LABEL: func.func @has
+// CHECK: pia_contract.exists {
+// CHECK: arith.andi
+// CHECK: pia_contract.ensures
+// CHECK-LABEL: func.func @some_square
+// CHECK: pia_contract.exists {
+// CHECK-NEXT: ^bb0(%{{.*}}: !pia.int<0, 255>):
+// CHECK-NOT: arith.andi
+// CHECK: pia_contract.yield
+*)
+let has (xs : [i32]) (v : i32) : bool
+  ensures result = exists (i in 0..len xs). xs.[i] = v
+= false
+
+let some_square (n : u16) : unit
+  requires exists (k : u8). k * k = n
+= assert n >= 0;
+  assume n < 65535
+
+(* `old` marks an entry value.
+// CHECK-LABEL: func.func @fill
+// CHECK: %[[OLD:.*]] = pia_contract.old %{{.*}} : !usize
+// CHECK: pia_contract.ensures
+*)
+let fill (buf : borrowed inout mutable [u8]) (v : u8) : unit
+  ensures len buf = old (len buf)
+= for i in 0..len buf do buf.[i] <- v done

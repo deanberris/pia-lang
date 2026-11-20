@@ -29,7 +29,8 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//tests/smoke:smt_roundtrip_test` | `pia-opt` round trip checked with FileCheck |
 | `//src/dialect` | The `pia`, `pia_contract` and `pia_par` dialects |
 | `//tests/dialect:dialect_tests` | Dialect round-trip, folding and verifier tests |
-| `//tools/piac` | The compiler driver; `piac --dump-ast file.pia` |
+| `//tests/irgen:irgen_tests` | `piac --emit=mlir` tests checked with FileCheck |
+| `//tools/piac` | The compiler driver: `piac --emit=mlir file.pia` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--dump-ast` prints the syntax tree |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |
 
@@ -38,7 +39,7 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 The lexer and parser (`src/syntax`) have no LLVM dependency. For quick work on them:
 
 ```sh
-clang++ -std=c++17 -Isrc src/syntax/*.cpp tools/piac/piac.cpp -o piac
+clang++ -std=c++17 -DPIA_NO_MLIR -Isrc src/syntax/*.cpp tools/piac/piac.cpp -o piac
 ./piac --dump-ast file.pia
 python3 tests/parser/run_tests.py ./piac            # golden tests
 python3 tests/parser/run_tests.py ./piac --update   # after an intended change

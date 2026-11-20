@@ -4,7 +4,10 @@
 
 // Inside pia ops, MLIR prints operands and results constrained to
 // !pia.int or !pia.dyn in short form, without the dialect prefix
-// (`<0, 255>`). The parser accepts both spellings.
+// (`<0, 255>`). The parser accepts both spellings. The two 64-bit ranges
+// print as the aliases !isize and !usize, defined at the top.
+// CHECK-DAG: !isize = !pia.int<-9223372036854775808, 9223372036854775807>
+// CHECK-DAG: !usize = !pia.int<0, 18446744073709551615>
 
 // The saturating pixel add from docs/design.md:
 //   let add_px (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
@@ -27,8 +30,7 @@ func.func @bad(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int<0, 255> {
 
 // Full-width bounds: i64 and u64.
 // CHECK-LABEL: func.func @wide
-// CHECK-SAME: !pia.int<-9223372036854775808, 9223372036854775807>
-// CHECK-SAME: !pia.int<0, 18446744073709551615>
+// CHECK-SAME: (%{{.*}}: !isize, %{{.*}}: !usize)
 func.func @wide(%a: !pia.int<-9223372036854775808, 9223372036854775807>,
                 %b: !pia.int<0, 18446744073709551615>) {
   return
@@ -74,4 +76,18 @@ func.func @dyn(%x: !pia.int<0, 255>) -> i1 {
   %is = pia.dyn.is %d, f32 : !pia.dyn<[!pia.int<0, 255>, f32]>
   %u = pia.dyn.unwrap %d : !pia.dyn<[!pia.int<0, 255>, f32]> -> !pia.int<0, 255>
   return %is : i1
+}
+
+// Division, remainder and index conversion (M4).
+// CHECK-LABEL: func.func @div_rem_index
+// CHECK: pia.div %{{.*}}, %{{.*}} : <0, 255>, <0, 255> -> <0, 255>
+// CHECK: pia.rem %{{.*}}, %{{.*}} overflow(trap) : <0, 255>, <0, 255> -> <0, 255>
+// CHECK: %[[I:.*]] = pia.to_index %{{.*}} : <0, 255>
+// CHECK: pia.from_index %[[I]] : !usize
+func.func @div_rem_index(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int<0, 18446744073709551615> {
+  %q = pia.div %a, %b : !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
+  %r = pia.rem %q, %b overflow(trap) : !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
+  %i = pia.to_index %r : !pia.int<0, 255>
+  %u = pia.from_index %i : !pia.int<0, 18446744073709551615>
+  return %u : !pia.int<0, 18446744073709551615>
 }

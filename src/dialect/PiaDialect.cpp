@@ -1,10 +1,12 @@
 #include "dialect/PiaDialect.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/OpImplementation.h"
 
 using namespace mlir;
 using namespace pia;
@@ -49,6 +51,30 @@ APInt widen(const APInt &v) { return v.sextOrTrunc(kBoundWidth); }
 APInt minBound() { return APInt::getSignedMinValue(64).sext(kBoundWidth); }
 APInt maxBound() { return APInt::getMaxValue(64).zext(kBoundWidth); }
 
+// Prints the two 64-bit ranges, whose bounds are long, as `!usize` and
+// `!isize`. They are also u64 and i64: Pia's targets are all 64-bit. MLIR
+// would add `_` to an alias ending in a digit, so the narrower types keep
+// their short `<0, 255>` spelling instead of `!u8_`.
+struct PiaOpAsmInterface : public OpAsmDialectInterface {
+  using OpAsmDialectInterface::OpAsmDialectInterface;
+
+  AliasResult getAlias(Type type, raw_ostream &os) const override {
+    auto it = dyn_cast<IntType>(type);
+    if (!it) return AliasResult::NoAlias;
+    APInt lo = widen(it.getLo()), hi = widen(it.getHi());
+    if (lo.isZero() && hi == maxBound()) {
+      os << "usize";
+      return AliasResult::FinalAlias;
+    }
+    if (lo == minBound() &&
+        hi == APInt::getSignedMaxValue(64).sext(kBoundWidth)) {
+      os << "isize";
+      return AliasResult::FinalAlias;
+    }
+    return AliasResult::NoAlias;
+  }
+};
+
 }  // namespace
 
 //===----------------------------------------------------------------------===//
@@ -57,6 +83,7 @@ APInt maxBound() { return APInt::getMaxValue(64).zext(kBoundWidth); }
 
 void PiaDialect::initialize() {
   registerTypes();
+  addInterfaces<PiaOpAsmInterface>();
   addOperations<
 #define GET_OP_LIST
 #include "dialect/Pia.cpp.inc"
@@ -67,9 +94,15 @@ Operation *PiaDialect::materializeConstant(OpBuilder &builder, Attribute value,
                                            Type type, Location loc) {
   auto intAttr = dyn_cast<IntegerAttr>(value);
   if (!intAttr) return nullptr;
+#if LLVM_VERSION_MAJOR >= 21
+  if (isa<IntType>(type)) return ConstantOp::create(builder, loc, type, intAttr);
+  if (arith::ConstantOp::isBuildableWith(value, type))
+    return arith::ConstantOp::create(builder, loc, type, cast<TypedAttr>(value));
+#else
   if (isa<IntType>(type)) return builder.create<ConstantOp>(loc, type, intAttr);
   if (arith::ConstantOp::isBuildableWith(value, type))
     return builder.create<arith::ConstantOp>(loc, type, cast<TypedAttr>(value));
+#endif
   return nullptr;
 }
 
