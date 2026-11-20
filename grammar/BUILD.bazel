@@ -1,0 +1,9 @@
+load("@rules_python//python:defs.bzl", "py_library")
+
+py_library(
+    name = "pia_grammar",
+    srcs = ["pia_grammar.py", "pia_lexer.py"],
+    data = ["pia.lark"],
+    imports = ["."],
+    visibility = ["//visibility:public"],
+)

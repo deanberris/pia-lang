@@ -67,3 +67,7 @@ vcpkg_installed/
 Testing/
 .cache/
 __pycache__/
+
+# Bazel
+/bazel-*
+/user.bazelrc
