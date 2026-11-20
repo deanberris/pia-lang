@@ -27,6 +27,12 @@ bazel_dep(name = "z3", version = "4.15.2")
 # its README suggests for downstream projects, we fetch llvm-project at a
 # pinned commit and run its own configure rule here. See ADR 0017.
 #
+# MODULE.bazel can only load .bzl files from bazel_dep modules, not from repos
+# made by use_repo_rule. So @llvm-raw is a bazel_dep on llvm-project itself,
+# fetched with git_override at LLVM_COMMIT; patch_cmds give its root a minimal
+# MODULE.bazel (llvm-project has none there), plus the empty root BUILD and
+# WORKSPACE files that configure.bzl uses to find the source root.
+#
 # The deps below mirror utils/bazel/MODULE.bazel at LLVM_COMMIT, with the same
 # repo names, because LLVM's BUILD files refer to them by those names. Update
 # them together when bumping LLVM_COMMIT.
@@ -45,12 +51,20 @@ bazel_dep(name = "libpfm", version = "4.13.0", repo_name = "pfm")
 bazel_dep(name = "vulkan_headers", version = "1.4.349")
 bazel_dep(name = "xz", version = "5.4.5.bcr.9", repo_name = "llvm_xz")
 
-git_repository = use_repo_rule("@bazel_tools//tools/build_defs/repo:git.bzl", "git_repository")
-
-git_repository(
-    name = "llvm-raw",
-    build_file_content = "# empty",
+bazel_dep(name = "llvm-raw", version = "")
+git_override(
+    module_name = "llvm-raw",
     commit = LLVM_COMMIT,
+    patch_cmds = [
+        "touch WORKSPACE && echo \"# empty\" > BUILD.bazel",
+        "printf '%s\\n' " +
+        "'module(name = \"llvm-raw\")' " +
+        "'bazel_dep(name = \"bazel_skylib\", version = \"1.9.2\")' " +
+        "'bazel_dep(name = \"platforms\", version = \"1.1.0\")' " +
+        "'bazel_dep(name = \"rules_cc\", version = \"0.2.28\")' " +
+        "'bazel_dep(name = \"rules_python\", version = \"1.9.3\")' " +
+        "> MODULE.bazel",
+    ],
     remote = "https://github.com/llvm/llvm-project.git",
 )
 
