@@ -74,18 +74,18 @@ Each milestone is a GitHub issue, built one at a time and merged to `main`.
 
 | # | Milestone | Done when |
 | --- | --- | --- |
-| M0 | Bazel skeleton | `bazel build //...` builds a `pia-opt` tool linked against MLIR and Z3, with one passing test |
-| M1 | Grammar | `docs/grammar.md` has the full grammar, and every example in `design.md` parses in a grammar test |
-| M2 | Lexer and parser | `piac --dump-ast` parses all design examples, with golden tests |
-| M3 | Dialects | `pia`, `pia.contract` and `pia.par` defined in ODS, with round-trip tests through `pia-opt` |
-| M4 | IRGen, scalar subset | `let`, functions, integers, `if`, `for`, arrays lower to the `pia` dialect |
-| M5 | Verifier v0 | Saturating add and the `bad` overflow example: the first proves, the second fails with a counterexample |
-| M6 | Codegen v0 | Saturating add runs on an Apple Silicon Mac and matches a C reference |
-| M7 | Meta engine v0 | Quote and splice, the expansion loop, `@derive(eq)`, prelude operators from metaprograms |
-| M8 | Modules and certificates | Interfaces, explicit imports, `.piai` files, link-time hash checks, parallel Bazel builds |
-| M9 | Generics and concepts | Type functions, concept checks, laws, adapters, deduction |
-| M10 | Vectorisation | Auto-vectorisation from proved facts, `vec<T, k>`, dot product and clamp-and-scale examples |
-| M11 | Floats | Strict IEEE, `@fp(reassoc)`, `fast t`, tiled matmul |
-| M12 | Concurrency v0 | `par_for`, halo exchange and `all_reduce` on CPU threads, protocol checker |
-| M13 | Image I/O | `Image.Png` decode and encode with derived `deserialise` |
-| M14 | Stream delineation | The full demo: PNG in, delineated and coloured PNG out |
+| [M0](https://github.com/deanberris/pia-lang/issues/1) | Bazel skeleton | `bazel build //...` builds a `pia-opt` tool linked against MLIR and Z3, with one passing test |
+| [M1](https://github.com/deanberris/pia-lang/issues/2) | Grammar | `docs/grammar.md` has the full grammar, and every example in `design.md` parses in a grammar test |
+| [M2](https://github.com/deanberris/pia-lang/issues/3) | Lexer and parser | `piac --dump-ast` parses all design examples, with golden tests |
+| [M3](https://github.com/deanberris/pia-lang/issues/4) | Dialects | `pia`, `pia.contract` and `pia.par` defined in ODS, with round-trip tests through `pia-opt` |
+| [M4](https://github.com/deanberris/pia-lang/issues/5) | IRGen, scalar subset | `let`, functions, integers, `if`, `for`, arrays lower to the `pia` dialect |
+| [M5](https://github.com/deanberris/pia-lang/issues/6) | Verifier v0 | Saturating add and the `bad` overflow example: the first proves, the second fails with a counterexample |
+| [M6](https://github.com/deanberris/pia-lang/issues/7) | Codegen v0 | Saturating add runs on an Apple Silicon Mac and matches a C reference |
+| [M7](https://github.com/deanberris/pia-lang/issues/8) | Meta engine v0 | Quote and splice, the expansion loop, `@derive(eq)`, prelude operators from metaprograms |
+| [M8](https://github.com/deanberris/pia-lang/issues/9) | Modules and certificates | Interfaces, explicit imports, `.piai` files, link-time hash checks, parallel Bazel builds |
+| [M9](https://github.com/deanberris/pia-lang/issues/10) | Generics and concepts | Type functions, concept checks, laws, adapters, deduction |
+| [M10](https://github.com/deanberris/pia-lang/issues/11) | Vectorisation | Auto-vectorisation from proved facts, `vec<T, k>`, dot product and clamp-and-scale examples |
+| [M11](https://github.com/deanberris/pia-lang/issues/12) | Floats | Strict IEEE, `@fp(reassoc)`, `fast t`, tiled matmul |
+| [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency v0 | `par_for`, halo exchange and `all_reduce` on CPU threads, protocol checker |
+| [M13](https://github.com/deanberris/pia-lang/issues/14) | Image I/O | `Image.Png` decode and encode with derived `deserialise` |
+| [M14](https://github.com/deanberris/pia-lang/issues/15) | Stream delineation | The full demo: PNG in, delineated and coloured PNG out |
