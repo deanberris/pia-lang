@@ -7,6 +7,7 @@ The name is the second half of *Sophia*, a name associated with wisdom and logic
 The first milestone is a toy compiler, written in C++ on MLIR, that proves and compiles SIMD data-processing pipelines for Apple Silicon. The flagship demo is stream delineation over terrain heightmaps.
 
 - [Language design](docs/design.md)
+- [Compiler architecture](docs/architecture.md)
 - [Architecture Decision Records](docs/adr/README.md)
 
 Build system: Bazel (bzlmod), depending on LLVM/MLIR and Z3 as Bazel modules. See [ADR 0017](docs/adr/0017-bazel-build.md).

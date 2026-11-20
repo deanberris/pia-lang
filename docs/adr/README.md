@@ -21,3 +21,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0015](0015-device-placement.md) | Device placement: compiler cost model, explicit, or overridable | Accepted |
 | [0016](0016-stream-delineation-flagship-demo.md) | Stream delineation on Apple Silicon is the flagship demo | Accepted |
 | [0017](0017-bazel-build.md) | Build with Bazel; depend on LLVM/MLIR and Z3 as Bazel modules | Accepted |
+| [0018](0018-dialect-layering.md) | Three Pia dialects over upstream MLIR, with `smt` for solving | Proposed |
