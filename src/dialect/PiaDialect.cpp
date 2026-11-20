@@ -128,7 +128,7 @@ void IntType::print(AsmPrinter &printer) const {
 }
 
 LogicalResult IntType::verify(function_ref<InFlightDiagnostic()> emitError,
-                              const APInt &lo, const APInt &hi) {
+                              APInt lo, APInt hi) {
   APInt l = widen(lo), h = widen(hi);
   if (l.sgt(h)) return emitError() << "range lower bound exceeds upper bound";
   if (l.slt(minBound()) || h.sgt(maxBound()))
