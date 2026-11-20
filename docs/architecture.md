@@ -1,6 +1,6 @@
 # Pia compiler architecture
 
-Status: proposed, 2026-11-20. This breaks the design in [`design.md`](design.md) into compiler components and MLIR dialects. The dialect layering is recorded in [ADR 0018](adr/0018-dialect-layering.md).
+Status: accepted, 2026-11-20. This breaks the design in [`design.md`](design.md) into compiler components and MLIR dialects. The dialect layering is recorded in [ADR 0018](adr/0018-dialect-layering.md).
 
 ## Components
 
