@@ -19,6 +19,20 @@ bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
 
 bazel_dep(name = "z3", version = "4.15.2")
 
+# Z3's BCR module builds with rules_foreign_cc's CMake rule. On macOS,
+# apple_support's toolchain links with a different tool (wrapped_clang) from
+# the one it compiles with (wrapped_clang_pp). rules_foreign_cc hands CMake
+# that linker as a relative bazel-out/ path, which breaks once CMake changes
+# into its build directory, so CMake's compiler check fails. The patch makes
+# the linker path absolute, as rules_foreign_cc already does for the compiler
+# and archiver. Still unfixed upstream as of rules_foreign_cc 0.17.0.
+single_version_override(
+    module_name = "rules_foreign_cc",
+    patch_strip = 1,
+    patches = ["//third_party/rules_foreign_cc:absolute_linker_path.patch"],
+    version = "0.14.0",
+)
+
 # --------------------------------------------------------------- LLVM and MLIR
 #
 # LLVM's Bazel build lives in llvm-project at utils/bazel. Its MODULE.bazel
