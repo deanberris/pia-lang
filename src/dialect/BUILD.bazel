@@ -1,0 +1,98 @@
+load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Pia's MLIR dialects (milestone M3, ADR 0018): pia, pia_contract, pia_par.
+
+td_library(
+    name = "TdFiles",
+    srcs = [
+        "Contract.td",
+        "Par.td",
+        "Pia.td",
+    ],
+    deps = [
+        "@llvm-project//mlir:InferTypeOpInterfaceTdFiles",
+        "@llvm-project//mlir:OpBaseTdFiles",
+        "@llvm-project//mlir:SideEffectInterfacesTdFiles",
+    ],
+)
+
+gentbl_cc_library(
+    name = "PiaIncGen",
+    strip_include_prefix = "/src",
+    tbl_outs = {
+        "Pia.h.inc": ["-gen-op-decls"],
+        "Pia.cpp.inc": ["-gen-op-defs"],
+        "PiaDialect.h.inc": ["-gen-dialect-decls", "-dialect=pia"],
+        "PiaDialect.cpp.inc": ["-gen-dialect-defs", "-dialect=pia"],
+        "PiaTypes.h.inc": ["-gen-typedef-decls", "-typedefs-dialect=pia"],
+        "PiaTypes.cpp.inc": ["-gen-typedef-defs", "-typedefs-dialect=pia"],
+        "PiaEnums.h.inc": ["-gen-enum-decls"],
+        "PiaEnums.cpp.inc": ["-gen-enum-defs"],
+    },
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Pia.td",
+    deps = [":TdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ContractIncGen",
+    strip_include_prefix = "/src",
+    tbl_outs = {
+        "Contract.h.inc": ["-gen-op-decls"],
+        "Contract.cpp.inc": ["-gen-op-defs"],
+        "ContractDialect.h.inc": ["-gen-dialect-decls", "-dialect=pia_contract"],
+        "ContractDialect.cpp.inc": ["-gen-dialect-defs", "-dialect=pia_contract"],
+        "ContractEnums.h.inc": ["-gen-enum-decls"],
+        "ContractEnums.cpp.inc": ["-gen-enum-defs"],
+    },
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Contract.td",
+    deps = [":TdFiles"],
+)
+
+gentbl_cc_library(
+    name = "ParIncGen",
+    strip_include_prefix = "/src",
+    tbl_outs = {
+        "Par.h.inc": ["-gen-op-decls"],
+        "Par.cpp.inc": ["-gen-op-defs"],
+        "ParDialect.h.inc": ["-gen-dialect-decls", "-dialect=pia_par"],
+        "ParDialect.cpp.inc": ["-gen-dialect-defs", "-dialect=pia_par"],
+        "ParTypes.h.inc": ["-gen-typedef-decls", "-typedefs-dialect=pia_par"],
+        "ParTypes.cpp.inc": ["-gen-typedef-defs", "-typedefs-dialect=pia_par"],
+        "ParEnums.h.inc": ["-gen-enum-decls"],
+        "ParEnums.cpp.inc": ["-gen-enum-defs"],
+    },
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Par.td",
+    deps = [":TdFiles"],
+)
+
+cc_library(
+    name = "dialect",
+    srcs = [
+        "ContractDialect.cpp",
+        "ParDialect.cpp",
+        "PiaDialect.cpp",
+    ],
+    hdrs = [
+        "ContractDialect.h",
+        "ParDialect.h",
+        "PiaDialect.h",
+    ],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":ContractIncGen",
+        ":ParIncGen",
+        ":PiaIncGen",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:BytecodeOpInterface",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:InferTypeOpInterface",
+        "@llvm-project//mlir:SideEffectInterfaces",
+        "@llvm-project//mlir:Support",
+    ],
+)
