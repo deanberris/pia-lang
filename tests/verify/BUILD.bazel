@@ -1,0 +1,9 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# `piac --verify` tests (milestone M5). Each file ends with the expected
+# report as CHECK lines.
+lit_tests(
+    name = "verify_tests",
+    srcs = glob(["*.pia"]),
+    tools = ["//tools/piac"],
+)

@@ -31,6 +31,9 @@ struct IntLiteral {
 };
 std::optional<IntLiteral> parseIntLiteral(std::string_view spelling);
 
+// A type as Pia spells it: `u8`, `int{-3..5}`, `[u8; 4]`, `bool`, `unit`.
+std::string typeName(mlir::Type type);
+
 // Whether a modifier list such as "borrowed in mutable" has `word`.
 bool hasModifier(std::string_view modifiers, std::string_view word);
 

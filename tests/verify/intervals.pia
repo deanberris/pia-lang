@@ -1,0 +1,26 @@
+(* Goals the operand ranges prove without the solver.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* A range-typed index into a fixed array needs no bounds check, as in
+   docs/design.md. *)
+let idx (lut : [u8; 256]) (i : int{0..255}) : u8 = lut.[i]
+
+(* Widening and products whose range fits. *)
+let mac (a : u8) (b : u8) (c : u16) : u32 = a * b + c
+
+(* A constant index into an array. *)
+let first (xs : [i32; 4]) : i32 = xs.[0]
+
+(* A divisor whose range excludes zero. *)
+let per_tile (n : u32) (tile : int{1..64}) : u32 = n / tile
+
+(* Expected report, in order.
+// CHECK: intervals.pia:7:52: proved: the index is within bounds [intervals]
+// CHECK: intervals.pia:10:47: proved: '*' does not overflow u32 [intervals]
+// CHECK: intervals.pia:10:51: proved: '+' does not overflow u32 [intervals]
+// CHECK: intervals.pia:13:35: proved: the index is within bounds [intervals]
+// CHECK: intervals.pia:16:54: proved: the divisor is not zero [intervals]
+// CHECK: intervals.pia:16:54: proved: '/' does not overflow u32 [intervals]
+// CHECK: 6 proved, 0 failed, 0 skipped
+*)

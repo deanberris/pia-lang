@@ -66,6 +66,8 @@ Design points:
 6. **Counterexamples.** Map the model back to source variables and report it at the obligation's source location.
 7. **Model checking (later).** A separate pass checks collective protocols for the concurrency rules in ADR 0014.
 
+Verifier v0 (M5) implements steps 2 to 6 for code without loops; [verifier.md](verifier.md) has the details and the limits.
+
 ## Bootstrapping order
 
 Operators are defined by metaprograms (ADR 0008), but the metaprogramming engine needs a parser that already handles expressions. The parser therefore starts with a fixed operator table matching the planned prelude. Once the meta engine works, the table is generated from the prelude's `operator` declarations, and the hard-coded one is removed.

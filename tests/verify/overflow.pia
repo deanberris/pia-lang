@@ -1,0 +1,39 @@
+(* The two examples from docs/design.md, "Integers".
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* With @overflow(saturate) there is nothing to prove about the sum, and the
+   postcondition proves.
+// CHECK: overflow.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let add_px (a : u8) (b : u8) : u8 @overflow(saturate)
+  ensures result >= a && result >= b
+= a + b
+
+(* Without it the sum must fit, and it need not: the counterexample is two
+   values whose sum exceeds 255, reported at the '+'.
+// CHECK: overflow.pia:[[@LINE+3]]:36: failed: '+' does not overflow u8
+// CHECK-NEXT: counterexample: a = [[A:[0-9]+]], b = [[B:[0-9]+]], result = {{2[5-9][0-9]|[3-9][0-9][0-9]|5[01][0-9]}}
+*)
+let bad (a : u8) (b : u8) : u8 = a + b
+
+(* A wider result type makes the same sum safe, by intervals alone.
+// CHECK: overflow.pia:[[@LINE+2]]:38: proved: '+' does not overflow u16 [intervals]
+*)
+let good (a : u8) (b : u8) : u16 = a + b
+
+(* Wrapping arithmetic has defined results the prover can reason about.
+// CHECK: overflow.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let wrapped (x : u8) : u8 @overflow(wrap)
+  ensures x = 255 ==> result = 0
+= x + 1
+
+(* Narrowing is a goal too.
+// CHECK: overflow.pia:[[@LINE+2]]:29: failed: the value fits in u8
+*)
+let narrow (x : u16) : u8 = x
+
+(*
+// CHECK: 3 proved, 2 failed, 0 skipped
+*)

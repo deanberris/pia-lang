@@ -3,6 +3,8 @@
 #include <cctype>
 
 #include "dialect/PiaDialect.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
 
 namespace pia::sema {
@@ -67,6 +69,34 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   }
   lit.value = v;
   return lit;
+}
+
+std::string typeName(mlir::Type t) {
+  if (!t) return "?";
+  if (mlir::isa<mlir::NoneType>(t)) return "unit";
+  if (t.isInteger(1)) return "bool";
+  if (mlir::isa<mlir::IndexType>(t)) return "index";
+  if (auto it = mlir::dyn_cast<IntType>(t)) {
+    llvm::APInt lo = it.getLo().sextOrTrunc(kWidth);
+    llvm::APInt hi = it.getHi().sextOrTrunc(kWidth);
+    for (unsigned bits : {8u, 16u, 32u, 64u}) {
+      if (lo.isZero() && hi == unsignedMax(bits))
+        return bits == 64 ? "usize" : "u" + std::to_string(bits);
+      if (lo == signedMin(bits) && hi == signedMax(bits))
+        return "i" + std::to_string(bits);
+    }
+    return "int{" + llvm::toString(lo, 10, true) + ".." +
+           llvm::toString(hi, 10, true) + "}";
+  }
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return "[" + typeName(a.getElementType()) + "; " +
+           std::to_string(a.getLength()) + "]";
+  if (auto s = mlir::dyn_cast<SliceType>(t))
+    return "[" + typeName(s.getElementType()) + "]";
+  std::string out;
+  llvm::raw_string_ostream os(out);
+  t.print(os);
+  return out;
 }
 
 bool hasModifier(std::string_view modifiers, std::string_view word) {
