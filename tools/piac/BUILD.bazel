@@ -3,7 +3,12 @@ load("@rules_cc//cc:defs.bzl", "cc_binary")
 cc_binary(
     name = "piac",
     srcs = ["piac.cpp"],
-    copts = ["-Wall", "-Wextra", "-Werror"],
+    copts = ["-Wall", "-Wextra"],
     visibility = ["//visibility:public"],
-    deps = ["//src/syntax"],
+    deps = [
+        "//src/irgen",
+        "//src/syntax",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
 )

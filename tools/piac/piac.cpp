@@ -1,11 +1,16 @@
-// piac: the Pia compiler driver. M2 supports parsing only.
+// piac: the Pia compiler driver.
 //
+//   piac --emit=mlir file.pia       lower to the pia dialects and print (M4)
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-tokens file.pia     print the token stream
 //   piac --check file.pia           parse and report errors only
 //   piac --fragment=contracts ...   parse a file of contract clauses
 //
-// Exit status: 0 on success, 1 on a syntax error, 2 on a usage error.
+// Exit status: 0 on success, 1 on an error in the program, 2 on a usage
+// error.
+//
+// Built with -DPIA_NO_MLIR, piac has only the front end and needs no LLVM
+// (README, "Front end without Bazel").
 
 #include <fstream>
 #include <iostream>
@@ -16,10 +21,17 @@
 #include "syntax/Parser.h"
 #include "syntax/Syntax.h"
 
+#ifndef PIA_NO_MLIR
+#include "irgen/IRGen.h"
+#include "llvm/Support/raw_ostream.h"
+#include "mlir/IR/MLIRContext.h"
+#endif
+
 namespace {
 
 int usage() {
-  std::cerr << "usage: piac (--dump-ast | --dump-tokens | --check) "
+  std::cerr << "usage: piac (--emit=mlir | --dump-ast | --dump-tokens | "
+               "--check) "
                "[--fragment=contracts] <file.pia>\n";
   return 2;
 }
@@ -31,7 +43,8 @@ int main(int argc, char **argv) {
   bool contracts = false;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--dump-ast" || arg == "--dump-tokens" || arg == "--check")
+    if (arg == "--dump-ast" || arg == "--dump-tokens" || arg == "--check" ||
+        arg == "--emit=mlir")
       mode = arg;
     else if (arg == "--fragment=contracts")
       contracts = true;
@@ -41,6 +54,13 @@ int main(int argc, char **argv) {
       file = arg;
   }
   if (mode.empty() || file.empty()) return usage();
+  if (mode == "--emit=mlir" && contracts) return usage();
+#ifdef PIA_NO_MLIR
+  if (mode == "--emit=mlir") {
+    std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
+    return 2;
+  }
+#endif
 
   std::ifstream in(file, std::ios::binary);
   if (!in) {
@@ -65,6 +85,17 @@ int main(int argc, char **argv) {
                   : pia::syntax::parseProgram(source, diags);
     if (!diags.hasErrors() && mode == "--dump-ast")
       pia::syntax::dump(std::cout, *tree);
+#ifndef PIA_NO_MLIR
+    if (!diags.hasErrors() && mode == "--emit=mlir") {
+      mlir::MLIRContext ctx;
+      auto module = pia::irgen::generate(*tree, file, ctx, diags);
+      if (!module && !diags.hasErrors()) {
+        std::cerr << "piac: internal error: the generated IR does not verify\n";
+        return 1;
+      }
+      if (module) module->print(llvm::outs());
+    }
+#endif
   }
   if (diags.hasErrors()) {
     diags.print(std::cerr, file, source);

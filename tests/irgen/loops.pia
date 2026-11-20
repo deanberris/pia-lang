@@ -1,0 +1,82 @@
+(* Mutable locals, loops and arrays.
+// RUN: piac --emit=mlir %s | FileCheck %s
+// RUN: piac --emit=mlir %s | pia-opt | FileCheck %s
+*)
+
+(* A mutable local is an SSA value threaded through the loop.
+// CHECK-LABEL: func.func @sum_to
+// CHECK: %[[ZERO:.*]] = pia.constant 0 : !usize
+// CHECK: %[[LB:.*]] = pia.to_index
+// CHECK: %[[UB:.*]] = pia.to_index %arg0
+// CHECK: %[[STEP:.*]] = arith.constant 1 : index
+// CHECK: %[[R:.*]] = scf.for %[[IV:.*]] = %[[LB]] to %[[UB]] step %[[STEP]] iter_args(%[[S:.*]] = %[[ZERO]]) -> (!usize)
+// CHECK: %[[I:.*]] = pia.from_index %[[IV]] : !usize
+// CHECK: %[[N:.*]] = pia.add %[[S]], %[[I]]
+// CHECK: scf.yield %[[N]] : !usize
+// CHECK: return %[[R]] : !usize
+*)
+let sum_to (n : usize) : usize =
+  let s : mutable usize = 0 in
+  for i in 0..n do s <- s + i done;
+  s
+
+(* `step`, and a loop that carries nothing. The product is computed at
+   u16, the type the store expects.
+// CHECK-LABEL: func.func @scale
+// CHECK-SAME: {pia.modifiers = "borrowed in"}
+// CHECK-SAME: {pia.modifiers = "borrowed out mutable"}
+// CHECK: %[[TWO:.*]] = pia.constant 2 : !usize
+// CHECK: %[[ST:.*]] = pia.to_index %[[TWO]]
+// CHECK: scf.for %{{.*}} = %{{.*}} to %{{.*}} step %[[ST]] {
+// CHECK: %[[X:.*]] = pia.load %arg0[%{{.*}}] : !pia.array<8 x !pia.int<0, 255>>
+// CHECK: %[[WX:.*]] = pia.convert %[[X]] : <0, 255> -> <0, 65535>
+// CHECK: %[[P:.*]] = pia.mul %[[WX]], %{{.*}} : <0, 65535>, <0, 65535> -> <0, 65535>
+// CHECK: pia.store %[[P]], %arg1[%{{.*}}] : !pia.array<8 x !pia.int<0, 65535>>
+*)
+let scale (src : borrowed in [u8; 8]) (dst : borrowed out mutable [u16; 8]) : unit =
+  for i in 0..8 step 2 do dst.[i] <- src.[i] * 3 done
+
+(* An assignment in one branch makes the local an `scf.if` result.
+// CHECK-LABEL: func.func @count_big
+// CHECK: scf.for {{.*}} iter_args(%[[C:.*]] = %{{.*}}) -> (!pia.int<0, 4294967295>)
+// CHECK: %[[IF:.*]] = scf.if %{{.*}} -> (!pia.int<0, 4294967295>) {
+// CHECK: %[[INC:.*]] = pia.add %[[C]]
+// CHECK: scf.yield %[[INC]]
+// CHECK: } else {
+// CHECK: scf.yield %[[C]]
+// CHECK: scf.yield %[[IF]]
+*)
+let count_big (xs : [u8]) (limit : u8) : u32 =
+  let c : mutable u32 = 0 in
+  for i in 0..len xs do
+    if xs.[i] > limit then c <- c + 1
+  done;
+  c
+
+(* `while`, with its invariant and measure at the head of each iteration.
+// CHECK-LABEL: func.func @find
+// CHECK: %[[W:.*]] = scf.while (%[[I:.*]] = %{{.*}}) : (!usize) -> !usize {
+// CHECK: pia_contract.forall
+// CHECK: pia_contract.invariant
+// CHECK: pia_contract.decreases
+// CHECK: scf.if
+// CHECK: scf.condition(%{{.*}}) %[[I]] : !usize
+// CHECK: } do {
+// CHECK: ^bb0(%[[J:.*]]: !usize):
+// CHECK: %[[NEXT:.*]] = pia.add %[[J]]
+// CHECK: scf.yield %[[NEXT]] : !usize
+// CHECK: pia_contract.assert
+// CHECK: return %[[W]]
+*)
+let find (xs : borrowed in [i32]) (x : i32) : usize
+  ensures result < len xs ==> xs.[result] = x
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> x
+    invariant forall (j in 0..i). xs.[j] <> x
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  assert i <= len xs;
+  i

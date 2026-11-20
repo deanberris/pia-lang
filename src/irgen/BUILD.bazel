@@ -1,0 +1,22 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# IRGen for the scalar subset (milestone M4): syntax tree to the pia and
+# pia_contract dialects, with control flow in scf.
+cc_library(
+    name = "irgen",
+    srcs = ["IRGen.cpp"],
+    hdrs = ["IRGen.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/dialect",
+        "//src/sema",
+        "//src/syntax",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+    ],
+)

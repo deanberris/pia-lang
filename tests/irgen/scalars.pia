@@ -1,0 +1,79 @@
+(* Functions, integers, comparisons, if and calls.
+// RUN: piac --emit=mlir %s | FileCheck %s
+// RUN: piac --emit=mlir %s | pia-opt | FileCheck %s
+*)
+
+(*
+// CHECK-LABEL: func.func @add_px
+// CHECK-SAME: (%[[A:.*]]: !pia.int<0, 255>, %[[B:.*]]: !pia.int<0, 255>) -> !pia.int<0, 255>
+// CHECK: %[[S:.*]] = pia.add %[[A]], %[[B]] overflow(saturate) : <0, 255>, <0, 255> -> <0, 255>
+// CHECK: return %[[S]]
+*)
+let add_px (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
+
+(* A literal takes the type of the other operand.
+// CHECK-LABEL: func.func @next
+// CHECK: %[[ONE:.*]] = pia.constant 1 : !pia.int<0, 255>
+// CHECK: pia.add %{{.*}}, %[[ONE]] : <0, 255>, <0, 255> -> <0, 255>
+*)
+let next (x : u8) : u8 = x + 1
+
+(* Mixed ranges meet at their join, here int{-3..255}; the result narrows
+   back to u8, which is a proof obligation.
+// CHECK-LABEL: func.func @mixed
+// CHECK: %[[WA:.*]] = pia.convert %{{.*}} : <0, 255> -> <-3, 255>
+// CHECK: %[[WB:.*]] = pia.convert %{{.*}} : <-3, 5> -> <-3, 255>
+// CHECK: %[[S:.*]] = pia.sub %[[WA]], %[[WB]] : <-3, 255>, <-3, 255> -> <-3, 255>
+// CHECK: pia.convert %[[S]] : <-3, 255> -> <0, 255>
+*)
+let mixed (a : u8) (b : int{-3..5}) : u8 = a - b
+
+(*
+// CHECK-LABEL: func.func @clamp
+// CHECK: %[[LT:.*]] = pia.cmp lt %{{.*}}, %{{.*}} : <0, 65535>, <0, 65535>
+// CHECK: scf.if %[[LT]] -> (!pia.int<0, 65535>)
+// CHECK: scf.yield
+// CHECK: } else {
+// CHECK: scf.yield
+*)
+let clamp (x : u16) (hi : u16) : u16 = if x < hi then x else hi
+
+(* Recursion, `mod` and a termination measure.
+// CHECK-LABEL: func.func @gcd
+// CHECK: pia_contract.decreases %{{.*}} : !pia.int<0, 4294967295>
+// CHECK: pia.cmp eq
+// CHECK: pia.rem
+// CHECK: func.call @gcd
+*)
+let rec gcd (a : u32) (b : u32) : u32
+  decreases b
+= if b = 0 then a else gcd b (a mod b)
+
+(* Calls convert their arguments to the parameter types.
+// CHECK-LABEL: func.func @twice
+// CHECK: %[[W:.*]] = pia.convert %{{.*}} : <0, 255> -> <0, 65535>
+// CHECK: call @clamp(%[[W]], %{{.*}})
+*)
+let twice (x : u8) : u16 = clamp x 1000
+
+(* `&&` and `||` short-circuit in code.
+// CHECK-LABEL: func.func @between
+// CHECK: %[[LO:.*]] = pia.cmp le
+// CHECK: scf.if %[[LO]] -> (i1)
+// CHECK: pia.cmp lt
+// CHECK: } else {
+// CHECK: arith.constant false
+*)
+let between (x : i32) (lo : i32) (hi : i32) : bool = lo <= x && x < hi
+
+(* A zero-parameter definition is a constant function; the return type
+   comes from the body when it is not written.
+// CHECK-LABEL: func.func @answer() -> !pia.int<-2147483648, 2147483647>
+// CHECK: pia.constant 42
+// CHECK-LABEL: func.func @neg
+// CHECK: pia.constant -5 : !pia.int<-128, 127>
+// CHECK: pia.constant 0 : !pia.int<-128, 127>
+// CHECK: pia.sub
+*)
+let answer = 42
+let neg (x : i8) : i8 = if x < -5 then -x else x

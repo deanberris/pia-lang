@@ -1,20 +1,24 @@
 #!/usr/bin/env bash
 # A minimal lit: runs every `// RUN:` line of a test file.
 #
-#   %s        the test file
-#   pia-opt   the pia-opt binary
-#   FileCheck the FileCheck binary
-#   not       inverts the exit status of the command after it
+#   %s     the test file
+#   <tool> each tool passed on the command line, by its file name
+#          (pia-opt, piac, FileCheck)
+#   not    inverts the exit status of the command after it
 #
-# Usage: run_lit.sh <pia-opt> <FileCheck> <test file>
+# Usage: run_lit.sh <test file> <tool>...
+#
+# A .pia test keeps its RUN and CHECK lines inside a `(* ... *)` comment.
 set -euo pipefail
-PIA_OPT="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
-FILECHECK="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
-TEST="$3"
+TEST="$1"
+shift
 
 not() { if "$@"; then return 1; else return 0; fi; }
-pia-opt() { "$PIA_OPT" "$@"; }
-FileCheck() { "$FILECHECK" "$@"; }
+for tool in "$@"; do
+  name="$(basename "$tool")"
+  path="$(cd "$(dirname "$tool")" && pwd)/$name"
+  eval "$name() { \"$path\" \"\$@\"; }"
+done
 
 ran=0
 while IFS= read -r line; do
