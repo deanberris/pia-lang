@@ -24,7 +24,7 @@ smt.solver () : () -> () {
   %sum = smt.bv.add %x, %one : !smt.bv<8>
   %lt = smt.bv.cmp ult %sum, %x : !smt.bv<8>
   smt.assert %lt
-  %r = smt.check sat {} unknown {} unsat {}
+  smt.check sat {} unknown {} unsat {}
 }
 )mlir";
 
@@ -36,7 +36,7 @@ smt.solver () : () -> () {
   %y = smt.bv.and %x, %m : !smt.bv<8>
   %gt = smt.bv.cmp ugt %y, %x : !smt.bv<8>
   smt.assert %gt
-  %r = smt.check sat {} unknown {} unsat {}
+  smt.check sat {} unknown {} unsat {}
 }
 )mlir";
 
