@@ -1,0 +1,91 @@
+(Program
+  (LetItem "shape"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (Variants
+        (Ctor "Circle"
+          (TypeName "f32")
+        )
+        (Ctor "Rect"
+          (RecordType
+            (FieldDecl "w"
+              (Annot
+                (Modifiers)
+                (TypeName "f32")
+                (None)
+              )
+            )
+            (FieldDecl "h"
+              (Annot
+                (Modifiers)
+                (TypeName "f32")
+                (None)
+              )
+            )
+          )
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (LetItem "v"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "dyn")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "dyn")
+      (IntLit "42u8")
+    )
+  )
+  (LetItem "describe"
+    (Params
+      (Param "v"
+        (Annot
+          (Modifiers)
+          (TypeName "dyn")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "str")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Match
+      (Name "v")
+      (Arm
+        (PTyped
+          (PVar "x")
+          (TypeName "u8")
+        )
+        (StringLit "\"byte\"")
+      )
+      (Arm
+        (PTyped
+          (PVar "x")
+          (TypeName "f32")
+        )
+        (StringLit "\"float\"")
+      )
+      (Arm
+        (PVar "_")
+        (StringLit "\"other\"")
+      )
+    )
+  )
+)

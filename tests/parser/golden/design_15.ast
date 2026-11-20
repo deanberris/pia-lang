@@ -1,0 +1,90 @@
+(Contracts
+  (Ensures
+    (Quantifier "forall"
+      (RangeBinder "i"
+        (Range
+          (IntLit "0")
+          (Name "m")
+        )
+      )
+      (RangeBinder "j"
+        (Range
+          (IntLit "0")
+          (Name "n")
+        )
+      )
+      (Binary "<="
+        (Apply
+          (Name "abs")
+          (Binary "-"
+            (Index
+              (Name "c")
+              (Binary "+"
+                (Binary "*"
+                  (Name "i")
+                  (Name "n")
+                )
+                (Name "j")
+              )
+            )
+            (Apply
+              (Name "spec")
+              (Name "i")
+              (Name "j")
+            )
+          )
+        )
+        (Binary "*"
+          (Binary "*"
+            (Name "k")
+            (Apply
+              (Name "eps")
+              (Name "f32")
+            )
+          )
+          (Apply
+            (Name "sum")
+            (Range
+              (IntLit "0")
+              (Name "k")
+            )
+            (Lambda
+              (LParam
+                (PVar "p")
+                (None)
+              )
+              (Binary "*"
+                (Apply
+                  (Name "abs")
+                  (Index
+                    (Name "a")
+                    (Binary "+"
+                      (Binary "*"
+                        (Name "i")
+                        (Name "k")
+                      )
+                      (Name "p")
+                    )
+                  )
+                )
+                (Apply
+                  (Name "abs")
+                  (Index
+                    (Name "b")
+                    (Binary "+"
+                      (Binary "*"
+                        (Name "p")
+                        (Name "n")
+                      )
+                      (Name "j")
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+)

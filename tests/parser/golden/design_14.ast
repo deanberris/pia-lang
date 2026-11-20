@@ -1,0 +1,73 @@
+(Program
+  (LetItem "fast"
+    (Params)
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "t")
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (Apply
+            (Name "Float")
+            (Name "t")
+          )
+        )
+      )
+      (TypeValue
+        (TypeName "t")
+        (Attrs
+          (Attribute "fp"
+            (Name "reassoc")
+          )
+        )
+        (None)
+      )
+    )
+  )
+  (LetItem "numeric_fast_f32"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "adapter")
+          (TypeName "Numeric")
+          (TypeApp
+            (TypeName "fast")
+            (TypeName "f32")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (RecordLit
+      (FieldInit "add"
+        (Name "fadd_reassoc")
+      )
+      (FieldInit "mul"
+        (Name "fmul")
+      )
+      (FieldInit "zero"
+        (FloatLit "0.0")
+      )
+    )
+  )
+  (ExprItem
+    (Apply
+      (Name "tiled_matmul")
+      (QuotedIdent "sgemm_4x16")
+      (Apply
+        (Name "fast")
+        (Name "f32")
+      )
+      (IntLit "4")
+      (IntLit "16")
+      (IntLit "64")
+      (IntLit "4")
+    )
+  )
+)

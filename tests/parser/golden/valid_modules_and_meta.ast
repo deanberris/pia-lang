@@ -1,0 +1,169 @@
+(Program
+  (Import "Pia.Prelude")
+  (Import "Image.Png.Codec")
+  (Interface "Counter"
+    (SigVal "count"
+      (Annot
+        (Modifiers)
+        (TypeName "u64")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "incr"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers)
+            (TypeName "unit")
+            (None)
+          )
+          (TypeName "unit")
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Requires
+          (Binary "<"
+            (Name "count")
+            (Name "max_u64")
+          )
+        )
+        (Ensures
+          (Binary "="
+            (Name "count")
+            (Binary "+"
+              (Apply
+                (Name "old")
+                (Name "count")
+              )
+              (IntLit "1")
+            )
+          )
+        )
+      )
+    )
+  )
+  (Module "Counters"
+    (Paths
+      (Path "Counter")
+    )
+    (LetItem "count"
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers "mutable")
+          (TypeName "u64")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (IntLit "0")
+    )
+    (LetItem "incr"
+      (Params
+        (ParamUnit)
+      )
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (TypeName "unit")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (Assign
+        (Name "count")
+        (Binary "+"
+          (Name "count")
+          (IntLit "1")
+        )
+      )
+    )
+  )
+  (MetaOperator "**"
+    (Fixity "prec 8 right")
+    (None)
+    (Lambda
+      (LParam
+        (PVar "a")
+        (None)
+      )
+      (LParam
+        (PVar "b")
+        (None)
+      )
+      (Quote
+        (Apply
+          (Name "pow")
+          (Splice "$a")
+          (Splice "$b")
+        )
+      )
+    )
+  )
+  (LetItem "getter" [meta]
+    (Params
+      (Param "field"
+        (Annot
+          (Modifiers)
+          (TypeName "ident")
+          (None)
+        )
+      )
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "item")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Quote
+      (LetItem "$field"
+        (Params
+          (Param "x"
+            (Annot
+              (Modifiers)
+              (Splice "$t")
+              (None)
+            )
+          )
+        )
+        (None)
+        (Contracts)
+        (Field "$field"
+          (Name "x")
+        )
+      )
+    )
+  )
+  (ExprItem
+    (Apply
+      (Name "getter")
+      (QuotedIdent "width")
+      (Name "image")
+    )
+  )
+  (ExprItem
+    (Apply
+      (Name "getter")
+      (QuotedIdent "height")
+      (Name "image")
+    )
+  )
+)

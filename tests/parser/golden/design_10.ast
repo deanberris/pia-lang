@@ -1,0 +1,68 @@
+(Program
+  (MetaOperator "+"
+    (Fixity "prec 6 left")
+    (None)
+    (Lambda
+      (LParam
+        (PVar "a")
+        (None)
+      )
+      (LParam
+        (PVar "b")
+        (None)
+      )
+      (Quote
+        (Apply
+          (Name "add")
+          (Splice "$a")
+          (Splice "$b")
+        )
+      )
+    )
+  )
+  (MetaOperator "+|"
+    (Fixity "prec 6 left")
+    (None)
+    (Lambda
+      (LParam
+        (PVar "a")
+        (None)
+      )
+      (LParam
+        (PVar "b")
+        (None)
+      )
+      (Quote
+        (Apply
+          (Name "add_sat")
+          (Splice "$a")
+          (Splice "$b")
+        )
+      )
+    )
+  )
+  (MetaOperator "+"
+    (None)
+    (TypeInst "vec"
+      (TypeName "T")
+      (TypeName "k")
+    )
+    (Lambda
+      (LParam
+        (PVar "a")
+        (None)
+      )
+      (LParam
+        (PVar "b")
+        (None)
+      )
+      (Quote
+        (Apply
+          (Name "vec_add")
+          (Splice "$a")
+          (Splice "$b")
+        )
+      )
+    )
+  )
+)

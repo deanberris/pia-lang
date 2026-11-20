@@ -1,0 +1,159 @@
+(Program
+  (LetItem "width"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u32")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (IntLit "1024")
+  )
+  (LetItem "square"
+    (Params)
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "x")
+        (Annot
+          (Modifiers)
+          (TypeName "i32")
+          (None)
+        )
+      )
+      (Binary "*"
+        (Name "x")
+        (Name "x")
+      )
+    )
+  )
+  (LetItem "square"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "i32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "i32")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Binary "*"
+      (Name "x")
+      (Name "x")
+    )
+  )
+  (LetItem "compose"
+    (Params
+      (Param "f")
+      (Param "g")
+    )
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "x")
+        (None)
+      )
+      (Apply
+        (Name "f")
+        (Apply
+          (Name "g")
+          (Name "x")
+        )
+      )
+    )
+  )
+  (LetItem "sum" [rec]
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "i32")
+          )
+          (None)
+        )
+      )
+      (Param "i"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "i64")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (If
+      (Binary "="
+        (Name "i")
+        (Apply
+          (Name "len")
+          (Name "xs")
+        )
+      )
+      (IntLit "0")
+      (Binary "+"
+        (Apply
+          (Name "widen")
+          (Index
+            (Name "xs")
+            (Name "i")
+          )
+        )
+        (Apply
+          (Name "sum")
+          (Name "xs")
+          (Binary "+"
+            (Name "i")
+            (IntLit "1")
+          )
+        )
+      )
+    )
+  )
+  (LetItem "total"
+    (Params)
+    (None)
+    (Contracts)
+    (LetIn "a"
+      (Params)
+      (None)
+      (Contracts)
+      (IntLit "3")
+      (LetIn "b"
+        (Params)
+        (None)
+        (Contracts)
+        (Binary "*"
+          (Name "a")
+          (IntLit "2")
+        )
+        (Binary "+"
+          (Name "a")
+          (Name "b")
+        )
+      )
+    )
+  )
+)

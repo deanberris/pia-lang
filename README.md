@@ -12,3 +12,14 @@ The first milestone is a toy compiler, written in C++ on MLIR, that proves and c
 - [Architecture Decision Records](docs/adr/README.md)
 
 Build system: Bazel (bzlmod), depending on LLVM/MLIR and Z3 as Bazel modules. See [ADR 0017](docs/adr/0017-bazel-build.md).
+
+### Front end without Bazel
+
+The lexer and parser (`src/syntax`) have no LLVM dependency. For quick work on them:
+
+```sh
+clang++ -std=c++17 -Isrc src/syntax/*.cpp tools/piac/piac.cpp -o piac
+./piac --dump-ast file.pia
+python3 tests/parser/run_tests.py ./piac            # golden tests
+python3 tests/parser/run_tests.py ./piac --update   # after an intended change
+```

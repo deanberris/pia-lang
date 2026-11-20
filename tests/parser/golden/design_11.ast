@@ -1,0 +1,118 @@
+(Program
+  (Interface "PixelOps"
+    (SigVal "pixel"
+      (Annot
+        (Modifiers)
+        (TypeKind)
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "blend"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "a"
+            (Modifiers)
+            (TypeName "pixel")
+            (None)
+          )
+          (ArrowType
+            (Domain "b"
+              (Modifiers)
+              (TypeName "pixel")
+              (None)
+            )
+            (ArrowType
+              (Domain "t"
+                (Modifiers)
+                (RangeType "int"
+                  (IntLit "0")
+                  (IntLit "255")
+                )
+                (None)
+              )
+              (TypeName "pixel")
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Ensures
+          (Binary "="
+            (Field "a"
+              (Name "result")
+            )
+            (Apply
+              (Name "max")
+              (Field "a"
+                (Name "a")
+              )
+              (Field "a"
+                (Name "b")
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (Interface "PixelCodec"
+    (SigVal "encode"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers "borrowed in")
+            (SliceType
+              (TypeName "pixel")
+            )
+            (None)
+          )
+          (SliceType
+            (TypeName "u8")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "decode"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers "borrowed in")
+            (SliceType
+              (TypeName "u8")
+            )
+            (None)
+          )
+          (UnionType
+            (SliceType
+              (TypeName "pixel")
+            )
+            (TypeName "Error")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
+  (Module "Pixels"
+    (Paths
+      (Path "PixelOps")
+      (Path "PixelCodec")
+    )
+    (ExprItem
+      (Hole)
+    )
+  )
+  (Import "Pixels.PixelOps")
+)

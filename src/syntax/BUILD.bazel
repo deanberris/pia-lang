@@ -1,0 +1,22 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Lexer, parser and syntax tree (milestone M2). No LLVM dependency, so the
+# front end builds and tests in seconds.
+cc_library(
+    name = "syntax",
+    srcs = [
+        "Lexer.cpp",
+        "Parser.cpp",
+        "Syntax.cpp",
+    ],
+    hdrs = [
+        "Diagnostics.h",
+        "Lexer.h",
+        "Parser.h",
+        "Syntax.h",
+        "Token.h",
+    ],
+    copts = ["-Wall", "-Wextra", "-Werror"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+)

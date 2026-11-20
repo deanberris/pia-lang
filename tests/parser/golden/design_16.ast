@@ -1,0 +1,94 @@
+(Program
+  (Import "Pia.Par.Collectives")
+  (Import "Image.Png.Codec")
+  (LetItem "sediment_step"
+    (Params
+      (Param "grid"
+        (Annot
+          (Modifiers "borrowed in mutable")
+          (TypeInst "tiled"
+            (TypeName "cell")
+            (IntLit "256")
+            (IntLit "256")
+            (NamedArg "halo"
+              (IntLit "1")
+            )
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "="
+          (Apply
+            (Name "total_mass")
+            (Name "grid")
+          )
+          (Binary "-"
+            (Apply
+              (Name "old")
+              (Apply
+                (Name "total_mass")
+                (Name "grid")
+              )
+            )
+            (Apply
+              (Name "outflow")
+              (Name "grid")
+            )
+          )
+        )
+      )
+    )
+    (Sequence
+      (Apply
+        (Name "halo_exchange")
+        (Name "grid")
+      )
+      (Sequence
+        (Spread
+          (PVar "tile")
+          (Name "grid")
+          (Attrs
+            (Attribute "place"
+              (Name "auto")
+            )
+          )
+          (LoopAnnots)
+          (Apply
+            (Name "erode_and_deposit")
+            (Name "tile")
+          )
+        )
+        (LetIn "lost"
+          (Params)
+          (None)
+          (Contracts)
+          (Apply
+            (Name "all_reduce")
+            (Name "add")
+            (Apply
+              (Name "map")
+              (Name "outflow_of")
+              (Name "grid")
+            )
+          )
+          (Apply
+            (Name "record_outflow")
+            (Name "grid")
+            (Name "lost")
+          )
+        )
+      )
+    )
+  )
+)

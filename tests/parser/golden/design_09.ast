@@ -1,0 +1,130 @@
+(Program
+  (LetItem "derive_eq" [meta]
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeName "type_decl")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "item")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (LetIn "cmps"
+      (Params)
+      (None)
+      (Contracts)
+      (Apply
+        (Name "map")
+        (Lambda
+          (LParam
+            (PVar "f")
+            (None)
+          )
+          (Quote
+            (Binary "="
+              (Field "$f"
+                (Name "a")
+              )
+              (Field "$f"
+                (Name "b")
+              )
+            )
+          )
+        )
+        (Apply
+          (Name "fields")
+          (Name "t")
+        )
+      )
+      (Quote
+        (LetItem "eq"
+          (Params
+            (Param "a"
+              (Annot
+                (Modifiers)
+                (Splice "$t")
+                (None)
+              )
+            )
+            (Param "b"
+              (Annot
+                (Modifiers)
+                (Splice "$t")
+                (None)
+              )
+            )
+          )
+          (RetAnnot
+            (Annot
+              (Modifiers)
+              (TypeName "bool")
+              (None)
+            )
+            (Attrs)
+          )
+          (Contracts)
+          (Splice
+            (Apply
+              (Name "fold_and")
+              (Name "cmps")
+            )
+          )
+        )
+      )
+    )
+  )
+  (LetItem "pixel"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "r"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "g"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "b"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "a"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+      )
+      (Attrs
+        (Attribute "derive"
+          (Name "eq")
+          (Name "serialise")
+          (Name "deserialise")
+        )
+      )
+      (None)
+    )
+  )
+)

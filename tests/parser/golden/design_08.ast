@@ -1,0 +1,219 @@
+(Program
+  (LetItem "range"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "lo"
+          (Annot
+            (Modifiers)
+            (TypeName "i32")
+            (None)
+          )
+        )
+        (FieldDecl "hi"
+          (Annot
+            (Modifiers)
+            (TypeName "i32")
+            (None)
+          )
+        )
+      )
+      (Attrs)
+      (Binary "<="
+        (Name "lo")
+        (Name "hi")
+      )
+    )
+  )
+  (LetItem "clamp"
+    (Params
+      (Param "r"
+        (Annot
+          (Modifiers)
+          (TypeName "range")
+          (None)
+        )
+      )
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "i32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (RefinementType "y"
+          (TypeName "i32")
+          (Binary "&&"
+            (Binary "<="
+              (Field "lo"
+                (Name "r")
+              )
+              (Name "y")
+            )
+            (Binary "<="
+              (Name "y")
+              (Field "hi"
+                (Name "r")
+              )
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (If
+      (Binary "<"
+        (Name "x")
+        (Field "lo"
+          (Name "r")
+        )
+      )
+      (Field "lo"
+        (Name "r")
+      )
+      (If
+        (Binary ">"
+          (Name "x")
+          (Field "hi"
+            (Name "r")
+          )
+        )
+        (Field "hi"
+          (Name "r")
+        )
+        (Name "x")
+      )
+    )
+  )
+  (Interface "Stream"
+    (SigType "status"
+      (TypeValue
+        (Variants
+          (Ctor "Closed"
+            (None)
+          )
+          (Ctor "Open"
+            (None)
+          )
+          (Ctor "Drained"
+            (None)
+          )
+        )
+        (Attrs)
+        (None)
+      )
+    )
+    (SigVal "state"
+      (Annot
+        (Modifiers)
+        (TypeName "status")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "open_"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers)
+            (TypeName "unit")
+            (None)
+          )
+          (TypeName "unit")
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Requires
+          (Binary "="
+            (Name "state")
+            (Name "Closed")
+          )
+        )
+        (Ensures
+          (Binary "="
+            (Name "state")
+            (Name "Open")
+          )
+        )
+      )
+    )
+    (SigVal "pull"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers)
+            (TypeName "unit")
+            (None)
+          )
+          (SliceType
+            (TypeName "u8")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Requires
+          (Binary "="
+            (Name "state")
+            (Name "Open")
+          )
+        )
+        (Ensures
+          (Binary "||"
+            (Binary "="
+              (Name "state")
+              (Name "Open")
+            )
+            (Binary "="
+              (Name "state")
+              (Name "Drained")
+            )
+          )
+        )
+      )
+    )
+    (SigVal "close"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain
+            (Modifiers)
+            (TypeName "unit")
+            (None)
+          )
+          (TypeName "unit")
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Requires
+          (Binary "<>"
+            (Name "state")
+            (Name "Closed")
+          )
+        )
+        (Ensures
+          (Binary "="
+            (Name "state")
+            (Name "Closed")
+          )
+        )
+      )
+    )
+  )
+)

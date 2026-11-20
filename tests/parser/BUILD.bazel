@@ -1,0 +1,13 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+py_test(
+    name = "parser_golden_test",
+    srcs = ["run_tests.py"],
+    args = ["$(rootpath //tools/piac)"],
+    data = glob(["golden/*.ast"]) + [
+        "//docs:design.md",
+        "//tests/grammar:cases",
+        "//tools/piac",
+    ],
+    main = "run_tests.py",
+)
