@@ -11,7 +11,7 @@ from dataclasses import dataclass
 KEYWORDS = {
     "let": "LET", "rec": "REC", "meta": "META", "in": "IN", "type": "TYPE",
     "of": "OF", "where": "WHERE", "if": "IF", "then": "THEN", "else": "ELSE",
-    "match": "MATCH", "with": "WITH", "for": "FOR", "par_for": "PAR_FOR",
+    "match": "MATCH", "with": "WITH", "for": "FOR", "spread": "SPREAD",
     "while": "WHILE", "do": "DO", "done": "DONE",
     "requires": "REQUIRES", "ensures": "ENSURES", "invariant": "INVARIANT",
     "decreases": "DECREASES", "assert": "ASSERT", "assume": "ASSUME",
@@ -230,7 +230,7 @@ class Lexer:
                 if word == "step" and self.for_headers and \
                         self.for_headers[-1] == self.depth:
                     kind = "STEP"
-                if kind in ("FOR", "PAR_FOR"):
+                if kind in ("FOR", "SPREAD"):
                     self.for_headers.append(self.depth)
                 elif kind == "DO" and self.for_headers and \
                         self.for_headers[-1] == self.depth:

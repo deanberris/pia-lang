@@ -33,7 +33,7 @@ flowchart TD
 | Optimiser | Uses proved facts to drop checks, erase `dyn` tags, fold constants and vectorise | MLIR canonicalisation and custom passes |
 | Codegen | Lowers to standard dialects and then LLVM for arm64 | Upstream MLIR conversions |
 | Interfaces and certificates | Emits `.piai` interface artifacts, records interface hashes in each object, refuses mismatched links | Small C++ library plus a Bazel rule |
-| Runtime | Concurrency (`par_for`, collectives, later task graphs and futures) | C++ runtime library linked into Pia programs |
+| Runtime | Concurrency (`spread` loops, collectives, later task graphs and futures) | C++ runtime library linked into Pia programs |
 | Standard library | Prelude (operators, `vec`, core concepts), `Image.Png`, `Image.Gif` | Written in Pia once the compiler can build it |
 
 ## Dialects
@@ -44,7 +44,7 @@ Pia has three of its own dialects and reuses upstream dialects for everything el
 | --- | --- | --- |
 | `pia` | Pia's types and values: range-typed integers (`!pia.int<lo, hi>`), fixed arrays and slices with lengths, structs, `dyn` with its tag set, functions with parameter modifiers as attributes | IRGen to codegen |
 | `pia.contract` | `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume`, `old`, quantifiers (`forall`, `exists`), and an `obligation` op that ties each proof goal to a source location | IRGen to the end of verification, then erased |
-| `pia.par` | Tiled grids with halos, `par_for`, collectives (`halo_exchange`, `all_reduce`, `scatter`, `gather`), placement attributes | IRGen to runtime lowering |
+| `pia.par` | Tiled grids with halos, `spread`, collectives (`halo_exchange`, `all_reduce`, `scatter`, `gather`), placement attributes | IRGen to runtime lowering |
 | `smt` (upstream) | Solver terms: bit-vectors, booleans, arrays, quantifiers, solver and assert ops | Built by the verifier, exported to SMT-LIB for Z3 |
 | `arith`, `scf`, `memref`, `vector`, `linalg`, `arm_neon`, `llvm` (upstream) | Codegen targets | After verification |
 
@@ -86,6 +86,6 @@ Each milestone is a GitHub issue, built one at a time and merged to `main`.
 | [M9](https://github.com/deanberris/pia-lang/issues/10) | Generics and concepts | Type functions, concept checks, laws, adapters, deduction |
 | [M10](https://github.com/deanberris/pia-lang/issues/11) | Vectorisation | Auto-vectorisation from proved facts, `vec<T, k>`, dot product and clamp-and-scale examples |
 | [M11](https://github.com/deanberris/pia-lang/issues/12) | Floats | Strict IEEE, `@fp(reassoc)`, `fast t`, tiled matmul |
-| [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency v0 | `par_for`, halo exchange and `all_reduce` on CPU threads, protocol checker |
+| [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency v0 | `spread` loops, halo exchange and `all_reduce` on CPU threads, protocol checker |
 | [M13](https://github.com/deanberris/pia-lang/issues/14) | Image I/O | `Image.Png` decode and encode with derived `deserialise` |
 | [M14](https://github.com/deanberris/pia-lang/issues/15) | Stream delineation | The full demo: PNG in, delineated and coloured PNG out |

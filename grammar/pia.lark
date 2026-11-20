@@ -4,7 +4,7 @@
 // from pia_lexer.py; see that file for the lexical rules, including the
 // layout rule that inserts SEP between top-level items.
 
-%declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR PAR_FOR
+%declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
@@ -167,7 +167,7 @@ arm: pattern ARROW seq
 ?stmt: assign
      | if_e
      | for_e
-     | par_for_e
+     | spread_e
      | while_e
      | quantifier
      | ASSERT imp_e  -> assert_e
@@ -180,7 +180,7 @@ assign: postfix LARROW stmt
 if_e: IF seq THEN stmt (ELSE stmt)?
 
 for_e: FOR pattern IN or_e (STEP add_e)? loop_annot* DO seq DONE
-par_for_e: PAR_FOR pattern IN or_e attribute* loop_annot* DO seq DONE
+spread_e: SPREAD pattern IN or_e attribute* loop_annot* DO seq DONE
 while_e: WHILE seq loop_annot* DO seq DONE
 loop_annot: INVARIANT stmt   -> invariant
           | DECREASES stmt   -> decreases

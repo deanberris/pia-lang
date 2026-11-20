@@ -23,7 +23,7 @@ The design's syntax is OCaml-like: application by juxtaposition, `=` for both bi
 5. A dot followed by whitespace ends quantifier binders.
 6. Modifiers before a function type belong to its first parameter. They come in a fixed order: ownership, then access, then mutability.
 7. `==>` (implication) is added to the bootstrap operator table at level 1, below `||`, because contracts need it.
-8. `step` is a keyword only inside a `for` header. The parameter modifiers, `par_for` and `mod` are reserved words.
+8. The parallel loop keyword is `spread` (`spread tile in grid @place(auto) do ... done`), chosen as a single imperative word. `scatter` and `gather` were ruled out because they name collectives. `step` is a keyword only inside a `for` or `spread` header. The parameter modifiers, `spread` and `mod` are reserved words.
 9. `...` is a hole token. It parses wherever the design's sketches use it, and Sema rejects it.
 
 ## Consequences
