@@ -74,11 +74,17 @@ let matches (wild : [bool]) (want : [u32]) (inputs : [u32]) : bool
 
 ```console
 $ piac --verify interpreter.pia
-...
+interpreter.pia:6:8: proved: the index is within bounds [smt]
+interpreter.pia:6:33: failed: the index is within bounds
+  counterexample: len wild = 9223372036854775936, len want = 9223372036854775936, len inputs = 0, index = 9223372036854775934, length = 0
+interpreter.pia:6:47: proved: the index is within bounds [smt]
+2 proved, 1 failed, 0 skipped
 ```
 
-The counterexample has fewer inputs than fields. This is the point testing
-could not reach: the read happens only when the criterion is not a
+The read of `inputs.[i]` fails, and the counterexample has fewer inputs
+than fields (here none at all). The reads of `wild` and `want` prove,
+because the precondition ties their lengths together. This is the point
+testing could not reach: the read happens only when the criterion is not a
 wildcard, and every test used a wildcard there. The verifier does not
 sample criteria; it proves the read is safe for all of them, or shows one
 where it is not.
@@ -111,9 +117,13 @@ let check_ipc (wild : [bool; 21]) (want : [u32; 21]) (inputs : [u32; 20]) : bool
 ```console
 $ piac --verify integration.pia
 ...
+integration.pia:11:3: failed: the precondition of 'matches' holds
+6 proved, 1 failed, 0 skipped
 ```
 
-That is the bug, as a compile error in the sensor's own build, before any
+There is no counterexample, because none is needed: the lengths are fixed
+by the types, so the precondition fails whatever the inputs are. That is
+the bug, as a compile error in the sensor's own build, before any
 content was ever written for it. No channel file, wildcard or not, could
 then have reached the read.
 
@@ -151,6 +161,10 @@ Every goal on this page is proved:
 ```console
 $ piac --verify crowdstrike.pia.md
 ...
+crowdstrike.pia.md:139:3: proved: the postcondition holds [smt]
+...
+crowdstrike.pia.md:156:3: proved: the precondition of 'matches' holds [smt]
+10 proved, 0 failed, 0 skipped
 ```
 
 CrowdStrike's other fix was a runtime bounds check in the interpreter,
