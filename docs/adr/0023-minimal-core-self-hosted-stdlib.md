@@ -15,7 +15,7 @@ Pia needs a standard library, and Dean wants it written in Pia so that it is ver
 - FFI is `= extern "symbol"` as a function body. A foreign function with a `requires` or `ensures` clause is called normally: its preconditions are goals and its postconditions are trusted. One without a contract can only be called as `unsafe f x`, which assumes nothing about the result.
 - POSIX is reached through libSystem, declared with weak, cited contracts in one trusted module, `Pia.Sys.Posix`. The rest of `Pia.Sys` wraps it in strong types and is fully proved: errors are a `result` of a decoded `errno`, and handles such as `fd` are `@linear`, so they are closed exactly once.
 - `addr` and `assume` are only allowed in modules marked `@trusted`. Each module's certificate lists its own trusted items (foreign contracts, `unsafe` call sites, `assume`s, accepted unproved goals), and `piac --trust-report` computes a program's transitive trusted base from the certificates. The format is [ADR 0024](0024-published-proof-certificates.md)'s.
-- Allocation is Pia over `mmap`, starting with arenas. Allocation failure is a `result` by default.
+- Allocation is Pia over `mmap`, through explicit allocators ([ADR 0026](0026-memory-manager.md)). Allocation failure is a `result` by default.
 - Every run-time trap and fatal signal goes to one handler in `Pia.Rt`, written in Pia: it prints the Pia source location, a frame-pointer stack trace symbolised with `dladdr`, DWARF file and line when available, and exits with status 134. Programs may replace it.
 - Multiplication is handled by a ladder in the verifier: per-goal bit widths, linear encoding of constant products, intervals, an opaque product with library lemmas, and exact nonlinear arithmetic only in a query of its own.
 

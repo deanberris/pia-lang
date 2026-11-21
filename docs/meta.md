@@ -78,6 +78,33 @@ let meta derive_eq (t : type_decl) : item =
   `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
 ```
 
+## Comments and literate programs
+
+Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md), [grammar.md](grammar.md#comments-in-the-syntax-tree)), and metaprograms can read them:
+
+| Builtin | Meaning |
+| --- | --- |
+| `listing ()` | the program's items in source order, as the current pass found them, then the comments at the end of the file |
+| `comments x` | the comments attached to the syntax `x`, in source order |
+| `doc x` | the text of the `doc` and `prose` comments leading `x`, joined by blank lines; `""` when there are none |
+| `text c` | a comment's text (also a string literal's value) |
+| `style c` | `"line"`, `"block"`, `"doc"` or `"prose"` |
+| `place c` | `"leading"`, `"trailing"` or `"detached"` |
+| `kind x` | the kind of a syntax value, such as `"LetItem"`, `"Apply"` or `"Comment"` |
+| `with_doc s x` | a copy of the syntax `x` (or the first of a list of items) with a leading doc comment `s` |
+| `fail s` | stop with the error `s`, reported at the expansion site |
+
+Comments survive everything expansion does:
+
+- **Quotes** keep the comments written inside them, at the expansion site like the rest of the quote.
+- **Splices** keep the comments on the spliced code. A comment on the splice itself, as in `` `( (** the sum *) $e ) ``, moves to the code that replaces it.
+- **Expansion** moves the comments on a replaced node to its replacement: an operator's comments to the builtin call, and a top-level call's comments to the first item it makes.
+- **Hygiene** never looks inside a comment. Comments bind no names and refer to none.
+
+A comment can be read but not spliced into code. To document generated code, use `with_doc`, as the prelude's `derive_eq` does, so `eq_pixel` reads "Field-by-field equality for pixel, made by @derive(eq)." on hover.
+
+`tests/meta/doc_lint.pia` walks `listing ()` and fails on an undocumented function, and `tests/meta/literate.pia.md` is a literate program that `piac --verify` proves. Rendering listings to LaTeX, HTML, SVG and DOT ([#63](https://github.com/deanberris/pia-lang/issues/63)) and a Jupyter kernel ([#64](https://github.com/deanberris/pia-lang/issues/64)) build on these.
+
 ## Derives
 
 `@derive(x)` on a type item calls the metaprogram `derive_x` with the item and adds the items it returns after the type. The prelude defines `derive_eq`. For `let pixel = type { r : u8; g : u8 } @derive(eq)` it makes:
@@ -128,6 +155,9 @@ The loop stops when a pass changes nothing. A metaprogram still waiting then is 
 | `waiting.pia` | a derive waiting for a type that is never defined |
 | `cycles.pia` | `--meta-cycles` and its default |
 | `shadowing.pia`, `builtin_name.pia` | the no-shadowing rule, and that quote binders never trip it |
+| `comments.pia` | where comments attach, and that quotes, splices, derives and operators keep them |
+| `doc_lint.pia` | a metaprogram that walks `listing ()` and insists on doc comments |
+| `literate.pia.md`, `literate_errors.pia.md`, `literate_unclosed.pia.md` | a literate program, proved, and its errors |
 
 ## Not yet
 

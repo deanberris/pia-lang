@@ -5,12 +5,14 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "syntax",
     srcs = [
+        "Comments.cpp",
         "Lexer.cpp",
         "Parser.cpp",
         "Prelude.cpp",
         "Syntax.cpp",
     ],
     hdrs = [
+        "Comments.h",
         "Diagnostics.h",
         "Lexer.h",
         "Parser.h",

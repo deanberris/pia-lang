@@ -7,7 +7,9 @@ Editor support for [Pia](https://github.com/deanberris/pia-lang), from the `pia-
 - **Quick fix for shadowing** (ADR 0022): the lightbulb on a "shadows ..." error renames the new binding and its uses to the suggested name, such as `x'`.
 - **Rename**, **find references** and highlighting of a name's uses, by scope.
 - **Syntax errors** as you type, **go to definition**, an **outline** of the file, and **completion** of keywords and names.
-- Syntax highlighting, bracket matching and `(* *)` comments.
+- **Doc comments on hover.** A `(** ... *)` comment before a definition shows under its signature ([ADR 0029](../../docs/adr/0029-comments-as-syntax-and-literate-pia.md)).
+- **Literate files.** A `*.pia.md` file is Markdown whose fenced `pia` blocks are code. The blocks are highlighted, and the server checks and proves them, with the prose before a block as its documentation.
+- Syntax highlighting, bracket matching, and `(* *)`, `(** *)` and `\` comments (**Toggle Line Comment** uses `\`).
 
 ## Install
 

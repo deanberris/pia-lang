@@ -1,6 +1,6 @@
 # Shared libraries and published proof certificates
 
-Status: proposed, 2026-11-21. Decision record: [ADR 0024](adr/0024-published-proof-certificates.md). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in [docs/stdlib.md](stdlib.md).
+Status: proposed, 2026-11-21. Decision records: [ADR 0024](adr/0024-published-proof-certificates.md) (certificates) and [ADR 0030](adr/0030-published-object-layouts.md) (object layout). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in [docs/stdlib.md](stdlib.md).
 
 A Pia shared library carries, inside the binary, the interfaces it exports, their contracts and a proof certificate. Before a Pia program binds to that library, something checks that the library still provides exactly the interfaces the program was proved against. This page says what the certificate contains, what is hashed and what is re-checked, how a library can evolve without breaking its importers, how the check works on macOS/arm64 first, and what the certificate does and does not let you trust.
 
@@ -39,7 +39,7 @@ The check runs in three layers. Each catches everything the layer below it catch
 
 | Layer | When | Who | What it checks | Cost |
 | --- | --- | --- | --- | --- |
-| 1. Witness symbols | Launch, `dlopen` | dyld (or `ld.so`) | Each imported interface's hash is provided by the library actually loaded | One symbol bind per imported interface |
+| 1. Witness symbols | Launch, `dlopen` | dyld (or `ld.so`) | Each imported interface's hash, and each imported type's shape or layout hash, is provided by the library actually loaded | One symbol bind per imported interface and type |
 | 2. Certificate check | Static link, launch, `Pia.Dl.open` | `piac link`, the Pia runtime | Layer 1, plus folded constants, ABI version, trusted-base policy, compiler identity | Reads a small section per image |
 | 3. Audit | Any time, offline | `pia-cert audit` | Layers 1 and 2, plus recomputes every hash from the embedded interfaces, re-proves interface refinements and optionally replays the proofs | Seconds to minutes. Never on the load path |
 
@@ -53,11 +53,11 @@ Each exported interface gets an **interface hash**: SHA-256 over a canonical ser
 
 The serialisation is built from the type-checked interface, after metaprogram expansion and monomorphisation, never from source text. It contains, in this order:
 
-1. **Domain prefix**: the string `pia-iface`, the **Pia ABI version** (below) and the target triple (`arm64-apple-macos`). A change to calling convention or layout rules changes every hash.
+1. **Domain prefix**: the string `pia-iface`, the **Pia ABI version** (below) and the target triple (`arm64-apple-macos`). A change to the calling convention changes every hash.
 2. **Interface identity**: the fully qualified module and interface name.
 3. **Every exported symbol**, sorted by name. For each:
    - its kind: function, type, fixed value, state symbol;
-   - its type, with range types (`int{0..255}`), parameter modifiers (ownership, access, modifiability), and the target **layout** of every type that crosses the boundary (size, alignment, field offsets, `dyn` tag encoding);
+   - its type, with range types (`int{0..255}`) and parameter modifiers (ownership, access, modifiability). Memory layout is **not** part of the interface hash: it has its own shape and layout hashes, so a layout change forces a relink but never a re-proof (see [Object layout](#object-layout));
    - its contract: `requires`, `ensures`, refinements and state invariants, as `pia_contract` terms. Bound variables are numbered (de Bruijn style), names are module-qualified as in [ADR 0022](adr/0022-metaprogram-hygiene.md), and terms are simplified only by a fixed, versioned set of rewrites so the hash does not depend on optimiser changes;
    - trust marks that are part of the interface: an `@assume` that [design.md](design.md#contracts) says "is a visible note in the interface", and whether the symbol is an `extern` with a trusted contract.
 4. Concept instances and adapters the interface exports, by concept and type.
@@ -87,6 +87,10 @@ modules[]    one per Pia module linked into the image:
                and the hashes of every older interface version it also provides (see ABI evolution)
   requires[]   interface name, interface hash it was proved against,
                inline surface hash if any value was folded, else zero
+  layouts[]    shape and layout hash of every type the module defines and exports
+               (descriptors themselves are in __pia_layout)
+  uses[]       type name, and the shape or layout hash this module's code was
+               compiled against, with a flag if a proof depended on it
   trusted[]    this module's own trusted items: kind (extern contract, @assume,
                allowed-unproved goal, unsafe call site), symbol, source location,
                hash of the trusted contract or goal
@@ -106,6 +110,7 @@ Decisions behind the format:
 | Mach-O location | Contents | Loaded | Signed |
 | --- | --- | --- | --- |
 | `__TEXT,__pia_cert` | The image certificate | Yes, read-only | Yes, by the code signature's page hashes |
+| `__TEXT,__pia_layout` | Layout descriptors of every exported type (the `.pial` contents) | Yes, read-only | Yes |
 | `__TEXT,__pia_iface` | The canonical serialised interfaces the image provides (the `.piai` contents) | Yes, read-only | Yes |
 | `__PIA_PROOF,__bundle` (optional) | Proof bundle: the module's obligations as `pia_contract` MLIR bytecode, plus solver settings | No (stripped by default, or a sidecar `.piap` file) | If present |
 
@@ -172,7 +177,7 @@ A library keeps **ABI baselines**: the canonical interfaces of every version it 
 | Element | Compatible change (refinement) |
 | --- | --- |
 | Symbol set | New symbols may be added. No baseline symbol may be removed |
-| Types and layout | Identical for every baseline symbol. Layout changes always break |
+| Types | Identical for every baseline symbol. Layout is versioned separately: an `auto` layout change relinks importers, and a `frozen` layout cannot change (see [Object layout](#object-layout)) |
 | `requires` | May get weaker: prove `requires_old ⇒ requires_new` |
 | `ensures` | May get stronger: prove `requires_old ∧ ensures_new ⇒ ensures_old` |
 | Refinement on a result or fixed value | May get stronger, same rule as `ensures` |
@@ -183,7 +188,100 @@ These are behavioural subtyping rules: anything a caller proved against the old 
 
 To make a breaking change, the library drops the baseline from its declared set and bumps its install name's major version (`libpixels.2.dylib`), the usual dylib practice. Dropping a baseline is visible in review because the baseline file is deleted.
 
-**The Pia ABI version** is a single integer in the compiler covering calling convention, layout rules, `dyn` tag encoding, the certificate format and the canonical hash serialisation. Bumping it changes every hash, so it is bumped rarely and on purpose, and the release notes say so.
+**The Pia ABI version** is a single integer in the compiler covering the calling convention, the certificate format and the canonical hash serialisation. The layout algorithm has its own version inside each layout descriptor, so improving layouts changes layout hashes (relink) without changing interface hashes (no re-proof). Bumping the ABI version changes every hash, so it is bumped rarely and on purpose, and the release notes say so.
+
+## Object layout
+
+The compiler is free to choose how every Pia type is laid out in memory: field order, packing, alignment, where sum-type tags go, and tag bits stashed in the low bits of pointers. The module that defines a type picks its layout and **publishes it**. Every importer that compiled code against that layout records a **layout hash**, and a library whose layout no longer matches cannot be loaded: dyld fails, and the importer must be relinked. Static links and rebuilds therefore always agree on how data is laid out and packed.
+
+This is a deliberate choice against the alternatives:
+
+| Approach | Example | Why not for Pia |
+| --- | --- | --- |
+| Fixed, C-like layout rules | C, C++ (the fragile base class problem) | Forbids reordering, packing and niches, which is most of the optimisation |
+| Layout resolved at load time | Objective-C 2.0 non-fragile ivars (offsets are symbols that dyld binds), Swift resilience (size and offsets read from value witness tables at run time) | Offsets become run-time values: no constant folding, worse vectorisation, and proofs about sizes lose their constants |
+| Unspecified layout, no dynamic ABI | Rust `repr(Rust)` | Gives the optimisation freedom, but no shared libraries across builds |
+| **Published layout, fail and relink** | Pia | Full optimisation freedom, constant offsets, and a mismatch is caught at load instead of corrupting memory |
+
+### Layout never changes a proof
+
+Proofs are about types and contracts, not offsets. Verification runs on layout-independent IR, and layout is chosen afterwards, in codegen. That gives the property the rest of the design depends on:
+
+- A layout change changes **layout hashes only**, never interface hashes, so importers are **relinked, not re-verified**. "Relink" means re-running layout lowering, codegen and the link from the importer's cached verified IR, against the new layout descriptors. The importer's proof certificate is reused unchanged.
+- In Bazel, verification actions depend only on `.piai` interfaces, and codegen actions also depend on `.pial` layout descriptors. A layout change reruns codegen and link actions only.
+- `size_of t` and `align_of t` are treated like exported fixed values ([ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md)). Proofs see them as symbols with refinements (`size_of t : int{1 .. 2^32}`, `align_of t` a power of two), and codegen folds them. A proof that needs the concrete number makes the module record a dependency on the layout hash in its requires, just as folding a constant records the inline surface hash. A layout change then makes that module re-verify, and no other.
+- Layout respects the interface, never the reverse. If an interface lets importers borrow a field of an exported type, that field stays byte-addressable, so layout can never change what type-checks.
+
+### The layout descriptor
+
+Each module emits a descriptor for every type that is visible outside it, in a `.pial` file and in `__TEXT,__pia_layout` in the image:
+
+```text
+type          fully qualified name, monomorphised (Pixels.pixel, Pia.Mem.pool<Pixels.pixel>)
+policy        auto | c | frozen | packed
+shape         size, alignment, calling-convention class (integer registers, HFA, memory)
+fields[]      name, bit offset, bit width, encoding (plain, biased range, niche-carrying),
+              addressable flag
+tags          for sum types and dyn: where the tag lives (own field, niche in a field,
+              low bits of a pointer field), its bit positions and the variant-to-value map
+pointer_tags  for each pointer field: which low bits carry tags, and the alignment proof
+              they rely on
+components    layout hashes of every field and type argument
+algorithm     layout algorithm version, and the profile hash if layout used a profile
+```
+
+Two hashes are computed from it, both SHA-256 over a canonical encoding:
+
+- **Shape hash**: size, alignment and calling-convention class. This is all an importer needs to pass a value of an **abstract** type (one whose definition the interface hides) or to embed it in its own records.
+- **Layout hash**: the whole descriptor. Needed by an importer that reads or writes fields, matches on variants, or unpacks tagged pointers. Only possible for types whose definition the interface exposes.
+
+Hashes compose through `components`. `Pia.Mem.pool<Pixels.pixel>` has a layout hash that includes `Pixels.pixel`'s, so a pool passed across a library boundary forces both sides to agree on its slot size.
+
+An importer records, per type, the weakest hash it actually used. A library can therefore reorder or repack the fields of an abstract type freely, as long as its size, alignment and class stay the same, and importers that only hold it abstractly keep loading.
+
+### Layout policies
+
+- `@layout(auto)` is the default. The compiler orders fields to remove padding, packs range-typed fields into the bits they need (`int{0..9}` in 4 bits, `bool` in 1), puts sum-type tags into niches (an `option<int{0..254}>` uses 255 for `None`), and stashes tags in pointer low bits where the alignment allows. It may use a profile to place hot fields together, and then the profile's hash is part of the layout. The algorithm is deterministic: the same type, algorithm version and profile always give the same layout, so reproducible builds stay reproducible.
+- `@layout(c)` follows the platform C ABI exactly, with no tags or packing. It is required for every type that crosses an `extern` boundary.
+- `@layout(packed)` asks for minimum size even at the cost of unaligned access.
+- `@layout(frozen)` pins the current layout with a checked-in baseline (`abi/<Module>.<type>.pial`), like Swift's `@frozen`. The compiler must reproduce the baseline exactly, and a library release cannot change it without dropping the baseline and bumping its major version. Use it for types in a library's stable ABI. Everything else stays `auto`, and changes whenever the compiler finds a better layout.
+
+### Pointer tagging rules
+
+A tagged pointer keeps extra information in pointer bits that are always zero for valid addresses. Pia allows it under these rules, each checked by the compiler:
+
+1. **Low bits only.** A pointer may carry `k` tag bits only in bits `0 .. k-1`, and only if every pointer of that type is proved to be aligned to at least `2^k`. The proof comes from the pointer's provenance. `Pia.Mem.alloc` guarantees alignment of at least `max 16 (align_of t)` in its `ensures` (ADR 0026, [PR #65](https://github.com/deanberris/pia-lang/pull/65)), so any pointer from `Pia.Mem` has at least 4 free low bits. Static data gets the alignment codegen gives it. A pointer from an `extern` call has only the alignment its contract states.
+2. **Never the high bits.** On Apple Silicon the top bits belong to pointer authentication (arm64e), memory tagging (MTE) and top-byte-ignore, and which of these apply varies by process and OS release. Pia does not tag there.
+3. **More tag bits mean more alignment.** A layout that wants `k > 4` tag bits raises the pointee's alignment to `2^k`. That alignment is part of the pointee's shape, so it changes the shape hash and is visible to every importer.
+4. **The tag encoding belongs to the containing type.** Which bits are used and what each value means is in the descriptor of the type that holds the pointer, so changing it changes that type's layout hash.
+5. **Tags never cross `extern`.** `@layout(c)` types cannot hold tagged pointers, and passing a pointer to a foreign function strips its tag. A pointer received from C is never assumed to have free bits beyond its stated alignment.
+6. **Tagging and untagging are checked operations.** They are `pia` dialect ops whose obligations (alignment, tag in range, address bits untouched) go to the verifier like any other goal, and they are lowered to `and`/`orr`/`bic` or folded into load offsets when the tag is known.
+
+### Free-list reuse
+
+Free lists are where a layout disagreement does the most damage, so they get explicit rules. `Pia.Mem` ([ADR 0026](https://github.com/deanberris/pia-lang/pull/65)) keeps its free lists as side metadata keyed by size class, so the allocator itself only ever sees sizes and alignments, never layouts.
+
+- **Both sides of a free use the same size.** Allocation sizes come from `size_of t`, folded at codegen. If `libA` allocates a `t` and `B` frees it, both must agree on `size_of t`, or the block goes back into the wrong size class and a later allocation overlaps a live object. Both bind the same shape or layout witness for `t`, so dyld refuses the program before that can happen.
+- **Typed pools compose.** `pool<t>` slabs are sized by `t`'s layout, and `pool<t>`'s own layout hash includes `t`'s. Code that shares a pool across a boundary binds one witness for both.
+- **Reuse never exposes old contents or old tags.** A reused block comes back as `out` memory, so it must be fully written before it is read, and nothing of the old object's fields or pointer tags can be observed. Ownership and the borrow rules in ADR 0026 rule out a stale owner, or a stale tagged pointer, that still refers to the old object.
+- **Reuse across types is by size class only.** A block freed as `t` may come back as `u` from the same size class. That is safe because the allocator guarantees size and alignment for `u`, and `u`'s layout does not depend on `t`'s.
+- **Alignment survives reuse.** Every block in a size class has the class's alignment, at least 16, so the low-bit tags of any type allocated from it stay valid after reuse.
+
+### The relink failure path
+
+For each exported type a library makes visible, it exports one witness per hash, next to the interface witnesses:
+
+```text
+_pia$s$<module>$<type>$<hash128>               shape hash
+_pia$l$<module>$<type>$<hash128>               layout hash (only for types whose definition is exported)
+```
+
+An importer references the witness for each type it depends on, at the weakest level it used.
+
+- **Launch.** If the library's layout changed, dyld stops the program with `Symbol not found: _pia$l$Pixels$pixel$...` before any code runs. No Pia code can intercept that, so `pia-cert check <binary>` explains it: which type changed, which importer depends on it, what changed (size, field offsets, tag encoding), and that the fix is to relink, with no re-verification needed.
+- **`dlopen`.** `Pia.Dl.open` turns the failure into `Err (LayoutChanged { type, wanted, found })` instead of a raw `dlerror` string.
+- **Static link.** The link checker compares the layout hashes every object was compiled against with the defining module's descriptors, and reports `relink required` with the list of objects whose codegen is stale. The Bazel rules rerun exactly those codegen actions.
+- **Frozen types** keep the same witness across releases. **Auto types** get a new one whenever their layout changes.
 
 ## Trust model
 
@@ -222,6 +320,12 @@ Each step is a GitHub issue, tracked from M8 ([#9](https://github.com/deanberris
 7. ABI baselines and refinement proofs ([#49](https://github.com/deanberris/pia-lang/issues/49)).
 8. `pia-cert audit`: recompute, re-prove refinements, replay proof bundles ([#51](https://github.com/deanberris/pia-lang/issues/51)).
 9. The ELF port ([#53](https://github.com/deanberris/pia-lang/issues/53)).
+10. Layout descriptors, shape and layout hashes, `__pia_layout` ([#89](https://github.com/deanberris/pia-lang/issues/89)).
+11. Layout-independent verification and relink without re-proof ([#90](https://github.com/deanberris/pia-lang/issues/90)).
+12. The `@layout(auto)` optimiser and the `c`, `packed` and `frozen` policies ([#91](https://github.com/deanberris/pia-lang/issues/91)).
+13. Verified pointer tagging ([#92](https://github.com/deanberris/pia-lang/issues/92)).
+14. Layout witnesses and the relink failure path ([#93](https://github.com/deanberris/pia-lang/issues/93)).
+15. Free-list reuse across a library boundary ([#94](https://github.com/deanberris/pia-lang/issues/94)).
 
 ## References
 

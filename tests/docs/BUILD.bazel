@@ -7,6 +7,7 @@ DOCS = [
     "//:README.md",
     "//docs:index.md",
     "//docs:getting-started.md",
+    "//docs:demo.md",
     "//docs:tour.md",
     "//docs:verification.md",
     "//docs:repl.md",
@@ -22,6 +23,8 @@ py_test(
         "$(rootpath //tools/pia)",
     ] + ["$(rootpath %s)" % d for d in DOCS],
     data = DOCS + [
+        "//examples/edges:edges.pia",
+        "//examples/edges:edges_buggy.pia",
         "//tools/pia",
         "//tools/piac",
     ],

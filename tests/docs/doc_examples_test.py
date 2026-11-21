@@ -11,16 +11,18 @@ proved. Comments just before a block change that:
     <!-- expect: fail -->        `piac --verify` must exit 1 (a goal fails)
     <!-- untested: reason -->    not checked, such as syntax that is
                                  designed but not implemented yet
+    <!-- source: path/f.pia -->  the block must be the whole of that file
+                                 in the repository, so a page that shows a
+                                 program cannot drift from it
     <!-- repl: name.pia -->      a REPL session, written to that file but
                                  not checked with piac --verify
-
-A ```console block whose first line is `$ pia ...` runs `pia` the same way,
-and `< file` on that line feeds the file to its standard input.
 
 A ```console block whose first line is `$ piac ...` runs that command in the
 directory holding the examples written so far, and its output (stdout and
 stderr) must match the rest of the block. A line `...` in the expected
-output matches any number of lines.
+output matches any number of lines. A ```console block whose first line is
+`$ pia ...` runs `pia` the same way, and `< file` on that line feeds the
+file to its standard input.
 """
 
 import os
@@ -31,7 +33,7 @@ import sys
 import tempfile
 
 FENCE = re.compile(r"^(\s*)```(\w*)\s*$")
-DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|repl)\s*:\s*(.*?)\s*-->$")
+DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|source|repl)\s*:\s*(.*?)\s*-->$")
 
 
 def blocks(path):
@@ -94,6 +96,12 @@ def main():
                             f.write("\n".join(body) + "\n")
                         continue
                     count += 1
+                    if "source" in directives:
+                        with open(directives["source"], encoding="utf-8") as f:
+                            source = f.read().splitlines()
+                        if source != body:
+                            failures.append(
+                                f"{where}: the block differs from {directives['source']}")
                     name = directives.get("example", f"example{count}.pia")
                     with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
                         f.write("\n".join(body) + "\n")

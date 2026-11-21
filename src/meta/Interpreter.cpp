@@ -1,6 +1,9 @@
 #include "meta/Interpreter.h"
 
+#include <iterator>
 #include <set>
+
+#include "syntax/Comments.h"
 
 namespace pia::meta {
 
@@ -67,6 +70,10 @@ const std::map<std::string, size_t> &metaBuiltins() {
   static const std::map<std::string, size_t> table = {
       {"map", 2},   {"fold", 3},   {"fields", 1},
       {"name", 1},  {"concat", 2}, {"length", 1},
+      // Comments and literate programs (ADR 0029).
+      {"listing", 1}, {"comments", 1}, {"doc", 1},   {"text", 1},
+      {"style", 1},   {"place", 1},    {"kind", 1},  {"with_doc", 2},
+      {"fail", 1},
   };
   return table;
 }
@@ -443,6 +450,68 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     };
     return strValue(str(a) + str(b));
   }
+  auto needSyntax = [&](const ValuePtr &v) -> const Node & {
+    if (v->kind != K::Syntax || !v->syntax)
+      throw MetaError{site_, "'" + name + "' needs syntax, found " +
+                                 kindName(v->kind)};
+    return *v->syntax;
+  };
+  auto needComment = [&](const ValuePtr &v) -> const Node & {
+    const Node &n = needSyntax(v);
+    if (n.kind != NodeKind::Comment)
+      throw MetaError{site_, "'" + name + "' needs a comment, found " +
+                                 syntax::nodeKindName(n.kind)};
+    return n;
+  };
+  if (name == "listing") {
+    std::vector<ValuePtr> out;
+    for (const Node *item : listing_) out.push_back(syntaxValue(clone(*item)));
+    if (program_)
+      for (const NodePtr &c : program_->comments)
+        out.push_back(syntaxValue(clone(*c)));
+    return listValue(std::move(out));
+  }
+  if (name == "comments") {
+    std::vector<ValuePtr> out;
+    for (const NodePtr &c : needSyntax(args[0]).comments)
+      out.push_back(syntaxValue(clone(*c)));
+    return listValue(std::move(out));
+  }
+  if (name == "doc") return strValue(syntax::docText(needSyntax(args[0])));
+  if (name == "text") {
+    if (args[0]->kind == K::Str) return args[0];
+    const Node &n = needSyntax(args[0]);
+    if (n.kind == NodeKind::StringLit) return strValue(unescape(n.text));
+    return strValue(needComment(args[0]).text);
+  }
+  if (name == "style") return strValue(syntax::commentStyle(needComment(args[0])));
+  if (name == "place") return strValue(syntax::commentPlace(needComment(args[0])));
+  if (name == "kind")
+    return strValue(syntax::nodeKindName(needSyntax(args[0]).kind));
+  if (name == "with_doc") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'with_doc' needs a string, found ") +
+                                 kindName(args[0]->kind)};
+    NodePtr copy = clone(needSyntax(args[1]));
+    Node *target = copy.get();
+    if (target->kind == NodeKind::Program) {
+      if (target->kids.empty())
+        throw MetaError{site_, "'with_doc' needs code to document"};
+      target = target->kids[0].get();
+    }
+    if (target->kind == NodeKind::Comment)
+      throw MetaError{site_, "'with_doc' needs code to document"};
+    target->comments.insert(
+        target->comments.begin(),
+        syntax::makeComment(site_, args[0]->s, "doc", "leading"));
+    return syntaxValue(std::move(copy));
+  }
+  if (name == "fail") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'fail' needs a string, found ") +
+                                 kindName(args[0]->kind)};
+    throw MetaError{site_, args[0]->s};
+  }
   throw MetaError{site_, "unknown builtin '" + name + "'"};
 }
 
@@ -501,6 +570,9 @@ class QuoteBuilder {
         if (n.kind == NodeKind::Program)
           throw MetaError{site, "a list of items can only be spliced at the "
                                 "top level"};
+        if (n.kind == NodeKind::Comment)
+          throw MetaError{site, "a comment cannot be spliced into code; use "
+                                "'with_doc' to document generated code"};
         if (typePos && n.kind == NodeKind::LetItem)
           return makeNode(NodeKind::TypeName, site, n.text);
         return clone(n);
@@ -524,19 +596,39 @@ class QuoteBuilder {
                                   kindName(v->kind) + " into code"};
     }
   }
+  // A quote's comments come along, at the expansion site (ADR 0029).
+  // Hygiene never looks inside them.
+  void copyComments(const Node &from, Node &to, bool front) {
+    std::vector<NodePtr> cs;
+    for (const NodePtr &c : from.comments) {
+      cs.push_back(clone(*c));
+      cs.back()->loc = in_.site_;
+    }
+    to.comments.insert(front ? to.comments.begin() : to.comments.end(),
+                       std::make_move_iterator(cs.begin()),
+                       std::make_move_iterator(cs.end()));
+  }
+
   NodePtr copy(const Node &n, bool typePos) {
     syntax::SourceLoc site = in_.site_;
     if (n.kind == NodeKind::Splice) {
-      if (n.text.rfind("$!", 0) == 0)
-        return makeNode(typePos ? NodeKind::TypeName : NodeKind::Name, site,
-                        n.text.substr(2));
-      ValuePtr v = n.text.empty() ? in_.eval(*n.kids[0], env_) : var(n.text);
-      return fromValue(v, typePos);
+      NodePtr out;
+      if (n.text.rfind("$!", 0) == 0) {
+        out = makeNode(typePos ? NodeKind::TypeName : NodeKind::Name, site,
+                       n.text.substr(2));
+      } else {
+        ValuePtr v = n.text.empty() ? in_.eval(*n.kids[0], env_) : var(n.text);
+        out = fromValue(v, typePos);
+      }
+      // A comment on the splice moves to the code that replaces it.
+      copyComments(n, *out, /*front=*/true);
+      return out;
     }
     if (n.kind == NodeKind::Quote)
       throw MetaError{site, "nested quotes are not supported yet"};
     auto out = makeNode(n.kind, site, n.text);
     out->flags = n.flags;
+    copyComments(n, *out, /*front=*/false);
     if (n.kind == NodeKind::PSplice) {
       out->kind = NodeKind::PVar;
       out->text = n.text.rfind("$!", 0) == 0 ? n.text.substr(2)
