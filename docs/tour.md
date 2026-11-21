@@ -198,6 +198,27 @@ let same (p : pixel) (q : pixel) : bool
 = p = q
 ```
 
+## Variants and match
+
+A variant type lists its constructors, each with at most one payload. `match` takes a value apart. Its arms must cover every constructor, or end with `_`, and an arm that can never be reached is an error. The verifier knows which constructor built a value, so a match on a known constructor picks its arm:
+
+```ocaml
+let opt = type | None | Some of u32
+
+let get_or (o : opt) (d : u32) : u32 =
+  match o with
+  | Some x -> x
+  | None -> d
+
+let roundtrip (x : u32) : u32
+  ensures result = x
+= match Some x with
+  | Some y -> y
+  | None -> 0
+```
+
+A payload's type can be an integer, `bool` or a record. Arrays, slices and variants inside a variant are not supported yet, and nor are generic variants such as `option<T>`. Patterns are a constructor with a name or `_` for its payload, a name that matches anything, or `_`.
+
 ## Control flow
 
 `if ... then ... else` is an expression. `&&`, `||` and `==>` short-circuit, so a guard protects what follows it:
@@ -342,9 +363,9 @@ let square = let (x : i32) => x * x
 let compose f g = let (x) => f (g x)
 ```
 
-**Variants and matching**, and `dyn`, a tagged value whose tags the prover can enumerate:
+**`dyn`**, a tagged value whose tags the prover can enumerate, and variants with record or float payloads:
 
-<!-- untested: variants and match are not implemented yet -->
+<!-- untested: dyn and float payloads are not implemented yet -->
 ```ocaml
 let shape = type
   | Circle of f32

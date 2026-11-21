@@ -1,0 +1,31 @@
+(* Errors in variants and match (#54), one per function.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let opt = type | None | Some of u32
+
+let color = type | Red | Green | Blue
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the match does not cover Blue; add an arm for each, or '_'
+*)
+let name (c : color) : u8 = match c with | Red -> 1 | Green -> 2
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Red' is already matched by an earlier arm
+*)
+let twice (c : color) : u8 = match c with | Red -> 1 | Red -> 2 | _ -> 3
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this arm is never reached: an earlier arm matches everything
+*)
+let late (c : color) : u8 = match c with | _ -> 1 | Red -> 2
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Some' is a constructor of opt, not of color
+*)
+let wrong (c : color) : u8 = match c with | Some x -> 1 | _ -> 2
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '.tag' needs a record, found opt; use 'match' to read a variant
+*)
+let peek (o : opt) : u8 = o.tag
+
+(* CHECK: variant_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Some' takes a payload of type u32, as in 'Some x'
+*)
+let bare : opt = Some

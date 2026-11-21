@@ -1,0 +1,66 @@
+(* Variants and match (#54, docs/stdlib.md group 3). A variant is a tag and
+   its payloads, so the verifier knows which constructor built a value.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let shape = type | Circle of u16 | Square of u16 | Empty
+
+(* Each arm sees its payload with its own type. *)
+let area (s : shape) : u64 =
+  match s with
+  | Circle r -> 3 * r * r
+  | Square w -> w * w
+  | Empty -> 0
+
+let opt = type | None | Some of u32
+
+let is_some (o : opt) : bool =
+  match o with
+  | Some _ -> true
+  | _ -> false
+
+(* The constructor is known, so the match picks its arm. *)
+let roundtrip (x : u32) : u32
+  ensures result = x
+= match Some x with
+  | Some y -> y
+  | None -> 0
+
+(* A payload is still checked where it goes: u32 does not fit in u8. *)
+let narrow (o : opt) : u8 =
+  match o with
+  | Some x -> x
+  | None -> 0
+
+(* `abort` in an arm the contract rules out, and one it does not. *)
+let unwrap_known (x : u32) : u32 =
+  match Some x with
+  | Some y -> y
+  | None -> abort ()
+
+let unwrap (o : opt) : u32 =
+  match o with
+  | Some y -> y
+  | None -> abort ()
+
+(* A mutable local carried through the arms. *)
+let count (a : opt) (b : opt) : u8 =
+  let n : mutable u8 = 0 in
+  (match a with | Some _ -> n <- n + 1 | None -> ());
+  (match b with | Some _ -> n <- n + 1 | None -> ());
+  n
+
+(* Expected report, in order.
+// CHECK: variants.pia:11:19: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:11:23: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:12:19: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: variants.pia:31:3: failed: the value fits in u8
+// CHECK-NEXT: counterexample: o.tag = {{-?[0-9]+}}, o.Some = {{-?[0-9]+}}, value = {{-?[0-9]+}}
+// CHECK: variants.pia:39:13: proved: 'abort' is never reached [smt]
+// CHECK: variants.pia:44:13: failed: 'abort' is never reached
+// CHECK-NEXT: counterexample: o.tag = {{-?[0-9]+}}, o.Some = {{-?[0-9]+}}
+// CHECK: variants.pia:49:36: proved: '+' does not overflow u8 [intervals]
+// CHECK: variants.pia:50:36: proved: '+' does not overflow u8 [smt]
+// CHECK: 7 proved, 2 failed, 0 skipped
+*)

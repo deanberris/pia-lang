@@ -234,6 +234,56 @@ bool isCoreBuiltin(std::string_view name) {
 
 namespace {
 
+// `let shape = type | Circle of u32 | Empty`: a record with a `tag` and one
+// field per payload (struct Ctor in Sema.h).
+void defineVariant(const Node &item, const Node &body, TypeResolver &types,
+                   syntax::Diagnostics &diags) {
+  mlir::MLIRContext *ctx = types.boolType().getContext();
+  std::vector<std::pair<std::string, mlir::Type>> ctors;
+  for (const syntax::NodePtr &c : body.kids) {
+    if (types.ctor(c->text)) {
+      diags.error(c->loc, "the constructor '" + c->text +
+                              "' is already defined by another type");
+      return;
+    }
+    for (auto &[name, t] : ctors)
+      if (name == c->text) {
+        diags.error(c->loc, "the constructor '" + c->text +
+                                "' is already declared");
+        return;
+      }
+    mlir::Type payload;
+    if (!c->kids.empty() && c->kids[0]->kind != NodeKind::None) {
+      payload = types.resolve(*c->kids[0]);
+      if (!payload) return;
+      if (types.isUnit(payload) || mlir::isa<ArrayType, SliceType>(payload) ||
+          types.isVariant(payload)) {
+        diags.error(c->kids[0]->loc,
+                    "a constructor's payload of type " + typeName(payload) +
+                        " is not supported yet");
+        return;
+      }
+    }
+    ctors.push_back({c->text, payload});
+  }
+  if (ctors.empty()) {
+    diags.error(body.loc, "a variant needs at least one constructor");
+    return;
+  }
+  llvm::SmallVector<mlir::StringAttr> names{mlir::StringAttr::get(ctx, "tag")};
+  llvm::SmallVector<mlir::Type> fieldTypes{IntType::get(
+      ctx, llvm::APInt(kWidth, 0), llvm::APInt(kWidth, ctors.size() - 1))};
+  for (auto &[name, t] : ctors)
+    if (t) {
+      names.push_back(mlir::StringAttr::get(ctx, name));
+      fieldTypes.push_back(t);
+    }
+  mlir::Type variant = RecordType::get(ctx, item.text, names, fieldTypes);
+  types.define(item.text, variant);
+  for (unsigned i = 0; i < ctors.size(); ++i)
+    types.defineCtor(Ctor{ctors[i].first, variant, i, ctors[i].second});
+}
+
 // `let name = type <body>`: a record, or another name for a type.
 void defineType(const Node &item, TypeResolver &types,
                 syntax::Diagnostics &diags) {
@@ -254,6 +304,10 @@ void defineType(const Node &item, TypeResolver &types,
     return;
   }
   mlir::MLIRContext *ctx = types.boolType().getContext();
+  if (body.kind == NodeKind::Variants) {
+    defineVariant(item, body, types, diags);
+    return;
+  }
   if (body.kind != NodeKind::RecordType) {
     mlir::Type t = types.resolve(body);
     if (t) types.define(item.text, t);
