@@ -625,6 +625,8 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                  "' items are not supported yet");
       continue;
     }
+    // Concepts are checked by IRGen, at each use (ADR 0034).
+    if (syntax::isConceptItem(*item)) continue;
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;

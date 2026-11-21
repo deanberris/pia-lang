@@ -183,7 +183,7 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type:
+      case K::Assume: case K::Type: case K::Sig:
         return true;
       default:
         return false;
@@ -394,14 +394,56 @@ class Parser {
     n->text = std::string(expect(K::Ident, "an interface name").text);
     expect(K::Eq, "'='");
     expect(K::Sig, "'sig'");
+    sigItems(*n, /*isConcept=*/false);
+    return n;
+  }
+
+  // `sig ... end` as a value: the body of a concept (ADR 0034).
+  NodePtr sigValue() {
+    auto n = makeNode(N::Sig, loc());
+    expect(K::Sig, "'sig'");
+    sigItems(*n, /*isConcept=*/true);
+    return n;
+  }
+
+  // The items of a signature up to and including its `end`. A concept's
+  // signature may also `include` another concept and state laws as
+  // `let lemma name params ensures ...`.
+  void sigItems(Node &n, bool isConcept) {
     while (!at(K::End)) {
       if (at(K::Hole)) {
-        n->add(makeNode(N::Hole, loc()));
+        n.add(makeNode(N::Hole, loc()));
         take();
         continue;
       }
       SourceLoc start = loc();
-      expect(K::Let, "'let' or 'end' in a signature");
+      if (isConcept && at(K::Ident) && text() == "include") {
+        take();
+        NodePtr t = type();
+        auto inc = makeNode(N::SigInclude, start);
+        if (t->kind == N::TypeApp) {
+          inc->text = t->kids[0]->text;
+          for (size_t i = 1; i < t->kids.size(); ++i)
+            inc->add(std::move(t->kids[i]));
+        } else if (t->kind == N::TypeName) {
+          inc->text = t->text;
+        } else {
+          fail("expected a concept after 'include'");
+        }
+        n.add(std::move(inc));
+        continue;
+      }
+      expect(K::Let, isConcept ? "'let', 'include' or 'end' in a concept"
+                             : "'let' or 'end' in a signature");
+      if (isConcept && accept(K::Lemma)) {
+        auto law = makeNode(N::SigLemma, start,
+                            std::string(expect(K::Ident, "a law's name").text));
+        law->add(params());
+        Node *cs = law->add(makeNode(N::Contracts, loc()));
+        while (atContract()) cs->add(contract());
+        n.add(std::move(law));
+        continue;
+      }
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
@@ -411,18 +453,17 @@ class Parser {
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
         while (atContract()) cs->add(contract());
-        n->add(std::move(v));
+        n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);
         if (!at(K::Type)) fail("expected 'type' in a signature type definition");
         t->add(typeValue());
-        n->add(std::move(t));
+        n.add(std::move(t));
       } else {
         fail("expected ':' or '=' after the name");
       }
     }
     take();
-    return n;
   }
 
   NodePtr moduleItem() {
@@ -887,6 +928,8 @@ class Parser {
       }
       case K::Type:
         return typeValue();
+      case K::Sig:
+        return sigValue();
       default:
         break;
     }

@@ -1,0 +1,34 @@
+(* The use check (ADR 0034): a generic's type arguments must meet its
+   constraints. A candidate in an overload set whose arguments do not is
+   removed, with the reason.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let meta Ord (t : type) : concept = sig
+  include Same t
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let max (t : type where Ord t) (a : t) (b : t) : t =
+  if less a b then b else a
+
+(* CHECK: concept_use_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: u8 does not meet Ord: no function 'less : u8 -> u8 -> bool'
+*)
+let m (a : u8) (b : u8) : u8 = max a b
+
+(* CHECK: concept_use_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: bool does not meet Ord: no function 'same : bool -> bool -> bool' (from 'include Same')
+*)
+let n (a : bool) (b : bool) : bool = max a b
+
+let show (t : type where Same t) (x : t) : u8 = 0
+let show (x : bool) : u8 = 1
+
+(* CHECK: concept_use_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: no overload of 'show' takes (u16); the generic 'show': u16 does not meet Same: no function 'same : u16 -> u16 -> bool'; 'show(bool)' does not take these types
+*)
+let s (x : u16) : u8 = show x

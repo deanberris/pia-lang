@@ -245,6 +245,7 @@ stmt   = postfix "<-" stmt
        | quantifier
        | "assert" imp_e | "assume" imp_e
        | type_value
+       | sig_value
        | imp_e ;
 loop_annot = "invariant" stmt | "decreases" stmt ;
 
@@ -304,6 +305,9 @@ interface = "interface" IDENT "=" "sig" { sig_item } "end" ;
 sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
           | "let" binder "=" type_value                           (* exported type *)
           | "..." ;
+sig_value = "sig" { sig_item | concept_item } "end" ;          (* a concept's body *)
+concept_item = "include" type                                  (* "include" is contextual *)
+             | "let" "lemma" IDENT { param } { contract } ;   (* a law *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
 ```
 

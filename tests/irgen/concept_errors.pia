@@ -1,0 +1,47 @@
+(* Errors in concepts and in the constraints that name them (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Good (t : type) : concept = sig
+  let good : (a : t) -> bool
+end
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a concept's parameters are types, as in '(t : type)'
+*)
+let meta Bad (x : u8) : concept = sig
+  let f : (a : u8) -> bool
+end
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: the requirement 'v' must be a function, as in 'let v : (a : t) -> bool'
+*)
+let meta Value (t : type) : concept = sig
+  let v : t
+end
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: the requirement 'f' has a contract, so it must name its parameters, as in '(a : t) -> bool'
+*)
+let meta Unnamed (t : type) : concept = sig
+  let f : t -> bool ensures result
+end
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'Missing' is not a concept
+*)
+let meta Includes (t : type) : concept = sig
+  include Missing t
+end
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Nope' is not a concept
+*)
+let g (t : type where Nope t) (a : t) : t = a
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Good' takes 1 type argument, given 2
+*)
+let h (t : type where Good t u8) (a : t) : t = a
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a 'where' on a type parameter names concepts, as in 'where Ord t' or 'where Eq t && Hash t'
+*)
+let k (t : type where t) (a : t) : t = a
+
+(* CHECK-DAG: concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Good' is already defined
+*)
+let meta Good (t : type) : concept = sig end

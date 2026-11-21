@@ -101,7 +101,9 @@ class Expander {
     }
     std::vector<NodePtr> kept;
     for (NodePtr &item : program_.kids)
-      if (!isMetaItem(*item)) kept.push_back(std::move(item));
+      // A concept stays: the compiler checks types against it (ADR 0034).
+      if (!isMetaItem(*item) || syntax::isConceptItem(*item))
+        kept.push_back(std::move(item));
     program_.kids = std::move(kept);
   }
 
@@ -141,6 +143,9 @@ class Expander {
     interp_.setListing(std::move(listing), &program_);
     for (NodePtr &item : items) {
       if (isMetaItem(*item)) {
+        // A concept's laws and contracts are code the compiler checks, so
+        // their operators expand like any other code's.
+        if (syntax::isConceptItem(*item)) changed |= expandOperators(item);
         out.push_back(std::move(item));
         continue;
       }

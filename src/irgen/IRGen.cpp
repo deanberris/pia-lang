@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 
+#include <algorithm>
 #include <deque>
 #include <map>
 #include <memory>
@@ -31,6 +32,7 @@ using mlir::Type;
 using mlir::Value;
 using syntax::Node;
 using syntax::NodeKind;
+using syntax::NodePtr;
 
 void loadDialects(mlir::MLIRContext &ctx) {
   ctx.loadDialect<PiaDialect, contract::ContractDialect, mlir::arith::ArithDialect,
@@ -141,6 +143,8 @@ class Gen {
       symbolOf[sig.item] = symbol;
       overloads_[sig.source()].push_back(symbol);
     }
+    collectConcepts(program);
+    if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids)
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         genFunction(it->second);
@@ -1520,6 +1524,8 @@ class Gen {
         return fail(n, "cannot tell what '" + t + "' is in this call of '" +
                            generic.name + "'; give it, as in '" +
                            generic.name + "<" + t + " = u8>'");
+    if (std::optional<std::string> why = constraintsUnmet(generic, bound))
+      return fail(n, *why);
     sema::FuncSig *inst = genericInstance(generic, bound);
     if (!inst) return std::nullopt;
     return genCall(n, *inst, args, &early);
@@ -1605,6 +1611,11 @@ class Gen {
           rejected.push_back(label + (clash ? " does not fit these types"
                                             : ": '" + unknown +
                                                   "' cannot be deduced"));
+          continue;
+        }
+        // A type that does not meet a constraint removes the candidate.
+        if (std::optional<std::string> why = constraintsUnmet(*cand, bound)) {
+          rejected.push_back(label + ": " + *why);
           continue;
         }
         trial.push_back(*cand);
@@ -1705,6 +1716,352 @@ class Gen {
                    ret.kids[0]->kind == NodeKind::Annot
                ? ret.kids[0].get()
                : nullptr;
+  }
+
+  // --- concepts (ADR 0034) -------------------------------------------
+
+  // Records every concept and checks its form, then checks that each
+  // generic function's constraints name concepts with the right number of
+  // type arguments.
+  void collectConcepts(const Node &program) {
+    // Reported in source order once everything is checked.
+    std::vector<std::pair<syntax::SourceLoc, std::string>> errors;
+    auto error = [&](syntax::SourceLoc at, std::string message) {
+      errors.emplace_back(at, std::move(message));
+    };
+    for (const syntax::NodePtr &item : program.kids) {
+      if (!syntax::isConceptItem(*item)) continue;
+      const std::string &name = item->text;
+      if (overloads_.count(name) || types_.named(name) ||
+          types_.generic(name) || concepts_.count(name)) {
+        error(item->loc, "'" + name + "' is already defined");
+        continue;
+      }
+      bool ok = true;
+      for (const syntax::NodePtr &p : item->kids[0]->kids)
+        if (!sema::isTypeParam(*p)) {
+          error(p->loc, "a concept's parameters are types, as in "
+                               "'(t : type)'");
+          ok = false;
+        }
+      const Node &body = *item->kids[3];
+      if (body.kind != NodeKind::Sig) {
+        error(body.loc, "a concept's body must be a 'sig ... end' "
+                               "for now");
+        continue;
+      }
+      for (const syntax::NodePtr &r : body.kids) {
+        if (r->kind == NodeKind::SigVal) {
+          const Node &annot = *r->kids[0];
+          if (annot.kids[1]->kind != NodeKind::ArrowType) {
+            error(r->loc, "the requirement '" + r->text +
+                                     "' must be a function, as in 'let " +
+                                     r->text + " : (a : t) -> bool'");
+            ok = false;
+          } else if (!r->kids[2]->kids.empty()) {
+            for (const Node *d = annot.kids[1].get();
+                 d->kind == NodeKind::ArrowType; d = d->kids[1].get())
+              if (d->kids[0]->text.empty()) {
+                error(r->loc, "the requirement '" + r->text +
+                                         "' has a contract, so it must name "
+                                         "its parameters, as in '(a : t) -> "
+                                         "bool'");
+                ok = false;
+                break;
+              }
+          }
+        } else if (r->kind == NodeKind::SigInclude) {
+          // Checked once every concept is known.
+        } else if (r->kind == NodeKind::SigLemma) {
+        } else {
+          error(r->loc, "a concept may hold functions, laws and "
+                               "'include' for now; type requirements are not "
+                               "supported yet");
+          ok = false;
+        }
+      }
+      if (ok) concepts_[name] = item.get();
+    }
+    for (auto &[name, item] : concepts_)
+      for (const syntax::NodePtr &r : item->kids[3]->kids)
+        if (r->kind == NodeKind::SigInclude)
+          checkConceptUse(r->text, r->kids.size(), r->loc, errors);
+    for (auto &[symbol, sig] : sigs_) {
+      if (!sig.isGeneric()) continue;
+      for (const syntax::NodePtr &p : sig.item->kids[0]->kids) {
+        const Node *pred = wherePredicate(*p);
+        if (!pred) continue;
+        std::vector<const Node *> cs;
+        if (!constraintsOf(*pred, cs)) {
+          error(pred->loc, "a 'where' on a type parameter names "
+                                  "concepts, as in 'where Ord t' or "
+                                  "'where Eq t && Hash t'");
+          continue;
+        }
+        for (const Node *c : cs) {
+          checkConceptUse(c->kids[0]->text, c->kids.size() - 1, c->loc, errors);
+          for (size_t i = 1; i < c->kids.size(); ++i)
+            if (c->kids[i]->kind != NodeKind::Name)
+              error(c->kids[i]->loc,
+                           "a concept's argument must be a type's name for "
+                           "now");
+        }
+      }
+    }
+    std::stable_sort(errors.begin(), errors.end(), [](auto &a, auto &b) {
+      return std::make_pair(a.first.line, a.first.column) <
+             std::make_pair(b.first.line, b.first.column);
+    });
+    for (auto &[at, message] : errors) diags_.error(at, message);
+  }
+
+  void checkConceptUse(
+      const std::string &name, size_t given, syntax::SourceLoc at,
+      std::vector<std::pair<syntax::SourceLoc, std::string>> &errors) {
+    auto error = [&](syntax::SourceLoc l, std::string message) {
+      errors.emplace_back(l, std::move(message));
+    };
+    auto it = concepts_.find(name);
+    if (it == concepts_.end()) {
+      error(at, "'" + name + "' is not a concept");
+      return;
+    }
+    size_t want = 0;
+    for (const syntax::NodePtr &p : it->second->kids[0]->kids)
+      if (sema::isTypeParam(*p)) ++want;
+    if (want != given)
+      error(at, "'" + name + "' takes " +
+                           plural(want, "type argument") + ", given " +
+                           std::to_string(given));
+  }
+
+  // The `where` of a type parameter, `(t : type where Ord t)`, or null.
+  static const Node *wherePredicate(const Node &param) {
+    if (!sema::isTypeParam(param)) return nullptr;
+    const Node &annot = *param.kids[0];
+    return annot.kids.size() > 2 && annot.kids[2]->kind != NodeKind::None
+               ? annot.kids[2].get()
+               : nullptr;
+  }
+
+  // The concept constraints of a `where`: `C t`, joined by `&&` (which
+  // expands to `and`). False for anything else.
+  static bool constraintsOf(const Node &pred, std::vector<const Node *> &out) {
+    if (pred.kind != NodeKind::Apply || pred.kids.empty() ||
+        pred.kids[0]->kind != NodeKind::Name)
+      return false;
+    if (pred.kids[0]->text == "and" && pred.kids.size() == 3)
+      return constraintsOf(*pred.kids[1], out) &&
+             constraintsOf(*pred.kids[2], out);
+    out.push_back(&pred);
+    return true;
+  }
+
+  static std::string spellTypes(const std::vector<Type> &ts) {
+    std::string out;
+    for (size_t i = 0; i < ts.size(); ++i)
+      out += (i ? ", " : "") + sema::typeName(ts[i]);
+    return out;
+  }
+
+  // Why the type arguments `bound` do not meet the constraints of
+  // `generic`, or nothing when they do (the use check).
+  std::optional<std::string> constraintsUnmet(
+      const sema::FuncSig &generic, const std::map<std::string, Type> &bound) {
+    for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
+      const Node *pred = wherePredicate(*p);
+      if (!pred) continue;
+      std::vector<const Node *> cs;
+      constraintsOf(*pred, cs);
+      for (const Node *c : cs) {
+        std::vector<Type> args;
+        for (size_t i = 1; i < c->kids.size(); ++i) {
+          auto t = bound.find(c->kids[i]->text);
+          Type ty;
+          if (t != bound.end()) {
+            ty = t->second;
+          } else {
+            Node asType;
+            asType.kind = NodeKind::TypeName;
+            asType.text = c->kids[i]->text;
+            asType.loc = c->kids[i]->loc;
+            ty = types_.resolve(asType);
+          }
+          if (!ty) return "a type in its constraints cannot be formed";
+          args.push_back(ty);
+        }
+        const std::string &cname = c->kids[0]->text;
+        if (std::optional<std::string> why = unmet(cname, args))
+          return spellTypes(args) + (args.size() > 1 ? " do" : " does") +
+                 " not meet " + cname + ": " + *why;
+      }
+    }
+    return std::nullopt;
+  }
+
+  // Why `args` do not meet the concept `cname`, or nothing when they do. Decided
+  // once per concept and arguments; laws and requirement contracts become
+  // lemmas, proved for those arguments.
+  std::optional<std::string> unmet(const std::string &cname,
+                                   const std::vector<Type> &args) {
+    std::string key = cname + "<" + spellTypes(args) + ">";
+    if (auto it = met_.find(key); it != met_.end()) return it->second;
+    // An `include` that comes back to this concept adds nothing new.
+    met_[key] = std::nullopt;
+    const Node &item = *concepts_.at(cname);
+    std::map<std::string, Type> scope;
+    size_t i = 0;
+    for (const syntax::NodePtr &p : item.kids[0]->kids)
+      if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
+    std::vector<std::map<std::string, Type>> saved =
+        types_.replaceTypeScopes({scope});
+    std::optional<std::string> why = requirementsUnmet(item, key, scope);
+    types_.replaceTypeScopes(std::move(saved));
+    met_[key] = why;
+    return why;
+  }
+
+  std::optional<std::string> requirementsUnmet(
+      const Node &item, const std::string &key,
+      const std::map<std::string, Type> &scope) {
+    for (const syntax::NodePtr &r : item.kids[3]->kids) {
+      if (r->kind == NodeKind::SigInclude) {
+        std::vector<Type> args;
+        for (const syntax::NodePtr &a : r->kids) {
+          Type t = types_.resolve(*a);
+          if (!t) return "a type it includes cannot be formed";
+          args.push_back(t);
+        }
+        if (std::optional<std::string> why = unmet(r->text, args))
+          return *why + " (from 'include " + r->text + "')";
+      } else if (r->kind == NodeKind::SigVal) {
+        std::vector<std::string> names, mods;
+        std::vector<Type> ptypes;
+        const Node *cur = r->kids[0]->kids[1].get();
+        for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+          const Node &d = *cur->kids[0];
+          names.push_back(d.text);
+          mods.push_back(d.kids[0]->text);
+          Type t = types_.resolve(*d.kids[1]);
+          if (!t) return "the type of '" + r->text + "' cannot be formed";
+          ptypes.push_back(t);
+        }
+        Type result = types_.resolve(*cur);
+        if (!result) return "the type of '" + r->text + "' cannot be formed";
+        std::string spelled = r->text + " : ";
+        for (Type t : ptypes) spelled += typeName(t) + " -> ";
+        spelled += typeName(result);
+        const sema::FuncSig *found = nullptr;
+        for (sema::FuncSig *cand : overloadSet(r->text)) {
+          if (cand->isGeneric() || cand->params.size() != ptypes.size() ||
+              cand->result != result)
+            continue;
+          bool same = true;
+          for (size_t i = 0; i < ptypes.size(); ++i)
+            same = same && cand->params[i].type == ptypes[i] &&
+                   cand->params[i].modifiers == mods[i];
+          if (same) found = cand;
+        }
+        if (!found) return "no function '" + spelled + "'";
+        if (!r->kids[2]->kids.empty())
+          queueContractLemma(*r, key, names, *found, scope);
+      } else if (r->kind == NodeKind::SigLemma) {
+        queueLemma(key + "." + r->text, syntax::clone(*r->kids[0]),
+                   syntax::clone(*r->kids[1]),
+                   syntax::makeNode(NodeKind::Unit, r->loc), scope, r->loc);
+      }
+    }
+    return std::nullopt;
+  }
+
+  // A requirement's contract is honoured by the function that meets it
+  // when the requirement's precondition implies the function's, and the
+  // function's postcondition implies the requirement's. Both are proved by
+  // a lemma over the function's parameters: it asserts the function's
+  // preconditions under the requirement's, and ensures the requirement's
+  // postcondition of a call.
+  void queueContractLemma(const Node &req, const std::string &key,
+                          const std::vector<std::string> &names,
+                          const sema::FuncSig &found,
+                          const std::map<std::string, Type> &scope) {
+    syntax::SourceLoc at = req.loc;
+    std::map<std::string, std::string> rename;
+    auto params = syntax::makeNode(NodeKind::Params, at);
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, req.text));
+    const Node *cur = req.kids[0]->kids[1].get();
+    for (size_t i = 0; i < names.size(); ++i, cur = cur->kids[1].get()) {
+      const std::string &mine = found.params[i].name;
+      rename[names[i]] = mine;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, mine));
+      Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
+      annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+      annot->add(syntax::clone(*cur->kids[0]->kids[1]));
+      annot->add(syntax::makeNode(NodeKind::None, at));
+      call->add(syntax::makeNode(NodeKind::Name, at, mine));
+    }
+    auto contracts = syntax::makeNode(NodeKind::Contracts, at);
+    for (const syntax::NodePtr &c : req.kids[2]->kids) {
+      NodePtr copy = syntax::clone(*c);
+      renameNames(*copy, rename, c->kind == NodeKind::Ensures ? call.get()
+                                                              : nullptr);
+      contracts->add(std::move(copy));
+    }
+    // The body asserts the function's own preconditions, in its own names.
+    NodePtr body = syntax::makeNode(NodeKind::Unit, at);
+    const Node &own = *found.item->kids[2];
+    for (size_t i = own.kids.size(); i-- > 0;) {
+      if (own.kids[i]->kind != NodeKind::Requires) continue;
+      auto seq = syntax::makeNode(NodeKind::Sequence, at);
+      Node *a = seq->add(syntax::makeNode(NodeKind::Assert, own.kids[i]->loc));
+      a->add(syntax::clone(*own.kids[i]->kids[0]));
+      seq->add(std::move(body));
+      body = std::move(seq);
+    }
+    queueLemma(key + "." + req.text + ".contract", std::move(params),
+               std::move(contracts), std::move(body), scope, at);
+  }
+
+  // Renames free names in a contract; `result` becomes `call` when given.
+  static void renameNames(Node &n, const std::map<std::string, std::string> &to,
+                          const Node *call) {
+    for (syntax::NodePtr &k : n.kids) {
+      if (k->kind == NodeKind::Name && call && k->text == "result") {
+        k = syntax::clone(*call);
+        continue;
+      }
+      if (k->kind == NodeKind::Name)
+        if (auto it = to.find(k->text); it != to.end()) k->text = it->second;
+      renameNames(*k, to, call);
+    }
+  }
+
+  // Makes a lemma for a concept's arguments and queues it to be generated
+  // and proved like any other function.
+  void queueLemma(const std::string &symbol, NodePtr params, NodePtr contracts,
+                  NodePtr body, const std::map<std::string, Type> &scope,
+                  syntax::SourceLoc at) {
+    if (sigs_.count(symbol)) return;
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    item->flags = "lemma";
+    item->add(std::move(params));
+    Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::makeNode(NodeKind::TypeName, at, "unit"));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    item->add(std::move(contracts));
+    item->add(std::move(body));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    sig.typeArgs = scope;
+    for (auto &[name, type] : scope) sig.typeParams.push_back(name);
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return;
+    sigs_.emplace(symbol, std::move(sig));
+    pendingInstances_.push_back(symbol);
   }
 
   // The instance of a generic function for `bound`, made and queued on
@@ -2419,6 +2776,12 @@ class Gen {
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
   std::deque<std::string> pendingInstances_;  // generic instances to generate
+  // Concepts by name, and whether each (concept, arguments) is met: the
+  // reason when it is not (ADR 0034).
+  std::map<std::string, const Node *> concepts_;
+  std::map<std::string, std::optional<std::string>> met_;
+  // Lemmas made for concepts' laws and requirement contracts.
+  std::deque<syntax::NodePtr> synthesized_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
 };
