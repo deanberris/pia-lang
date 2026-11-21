@@ -895,7 +895,7 @@ class Gen {
 
     // The chain, built as syntax over the hidden name: the last arm needs
     // no test, since the arms are exhaustive.
-    SourceLoc at = n.loc;
+    syntax::SourceLoc at = n.loc;
     auto hiddenName = [&]() {
       return syntax::makeNode(NodeKind::Name, at, hidden);
     };

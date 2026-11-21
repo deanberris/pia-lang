@@ -49,3 +49,18 @@ let count (a : opt) (b : opt) : u8 =
   (match a with | Some _ -> n <- n + 1 | None -> ());
   (match b with | Some _ -> n <- n + 1 | None -> ());
   n
+
+(* Expected report, in order.
+// CHECK: variants.pia:11:19: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:11:23: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:12:19: proved: '*' does not overflow usize [intervals]
+// CHECK: variants.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: variants.pia:31:3: failed: the value fits in u8
+// CHECK-NEXT: counterexample: o.tag = {{-?[0-9]+}}, o.Some = {{-?[0-9]+}}, value = {{-?[0-9]+}}
+// CHECK: variants.pia:39:13: proved: 'abort' is never reached [smt]
+// CHECK: variants.pia:44:13: failed: 'abort' is never reached
+// CHECK-NEXT: counterexample: o.tag = {{-?[0-9]+}}, o.Some = {{-?[0-9]+}}
+// CHECK: variants.pia:49:36: proved: '+' does not overflow u8 [intervals]
+// CHECK: variants.pia:50:36: proved: '+' does not overflow u8 [smt]
+// CHECK: 7 proved, 2 failed, 0 skipped
+*)
