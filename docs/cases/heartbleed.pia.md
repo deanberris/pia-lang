@@ -216,6 +216,9 @@ Every goal on this page is proved:
 ```console
 $ piac --verify heartbleed.pia.md
 ...
+heartbleed.pia.md:196:3: proved: the postcondition holds [smt]
+heartbleed.pia.md:197:3: proved: the postcondition holds [smt]
+22 proved, 0 failed, 0 skipped
 ```
 
 Because the bounds are proved, the compiled code has no bounds checks in
