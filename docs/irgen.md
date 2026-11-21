@@ -36,6 +36,13 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 - **Negation** `-x` is `0 - x` at x's type, so it is an obligation for unsigned and minimum values. `-5` is a literal.
 - **Comparisons** lower to `pia.cmp` at the joined type. `=` and `<>` on bools lower to `arith.cmpi`.
 
+## Buffers
+
+- **Indexing** `xs.[i]` is `pia.load`, and `xs.[i] <- v` on an `out` or `inout` parameter is `pia.store`.
+- **Slicing** `xs.[a .. b]` is `pia.slice`, a view of the same storage. An array passed where a slice is expected becomes a `pia.slice` of all of it.
+- **Array literals** `[1; 2; 3]` where an array type is expected, and top-level `let t : [T; n] = [...]`, are `pia.const_array`. A top-level constant is not a function: each use is a `pia.const_array` with the constant's name as its `label`. The elements must be integer literals for now. Passing constant data, or a slice of it, to an `out` or `inout` parameter is an error.
+- **`abort ()`** is `pia.abort`, with a result of the type the context expects.
+
 ## Bindings and mutation
 
 - `let x = e in body` binds an SSA value. An annotation converts `e` to the declared type.

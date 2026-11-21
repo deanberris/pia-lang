@@ -493,6 +493,50 @@ struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
   }
 };
 
+// Constant data: a private constant memref.global, which LLVM places in
+// read-only data, shared by every use of the same constant.
+struct ConstArrayLowering : mlir::OpConversionPattern<ConstArrayOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ConstArrayOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!type) return mlir::failure();
+    auto elem = mlir::cast<mlir::IntegerType>(type.getElementType());
+    llvm::SmallVector<APInt> values;
+    for (mlir::Attribute a : op.getValues())
+      values.push_back(
+          mlir::cast<mlir::IntegerAttr>(a).getValue().sextOrTrunc(
+              elem.getWidth()));
+    auto init = mlir::DenseIntElementsAttr::get(
+        mlir::RankedTensorType::get({type.getDimSize(0)}, elem), values);
+
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    std::string base = "__pia_const_" +
+                       (op.getLabel() ? op.getLabel()->str() : std::string("lit"));
+    // Reuse a global with this name and these values; otherwise pick a
+    // fresh name.
+    std::string name = base;
+    for (unsigned n = 1;; ++n) {
+      auto g = module.lookupSymbol<mlir::memref::GlobalOp>(name);
+      if (!g) {
+        mlir::OpBuilder::InsertionGuard guard(rw);
+        rw.setInsertionPointToStart(module.getBody());
+        make<mlir::memref::GlobalOp>(
+            rw, loc, name, rw.getStringAttr("private"), type, init,
+            /*constant=*/true, /*alignment=*/mlir::IntegerAttr());
+        break;
+      }
+      if (g.getType() == type && g.getInitialValueAttr() == init) break;
+      name = base + "_" + std::to_string(n);
+    }
+    rw.replaceOpWithNewOp<mlir::memref::GetGlobalOp>(op, type, name);
+    return mlir::success();
+  }
+};
+
 // `xs.[lo .. hi]`: the same storage, from the buffer's offset plus lo, with
 // hi - lo elements.
 struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
@@ -649,7 +693,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, AbortLowering>(types, ctx);
+               StoreLowering, SliceLowering, AbortLowering, ConstArrayLowering>(
+      types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

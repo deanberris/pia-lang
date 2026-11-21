@@ -299,6 +299,19 @@ def Pia_StoreOp : Pia_Op<"store", [MemoryEffects<[MemWrite]>]> {
   let hasVerifier = 1;
 }
 
+def Pia_ConstArrayOp : Pia_Op<"const_array", [Pure]> {
+  let summary = "an array of constant integers, placed in read-only data";
+  let description = [{
+    `[1; 2; 3]` where an array is expected, and module-level constant
+    arrays such as `let crc_table : [u32; 256] = [...]`. Each value is an
+    integer attribute; `label`, when present, is the constant's Pia name.
+  }];
+  let arguments = (ins ArrayAttr:$values, OptionalAttr<StrAttr>:$label);
+  let results = (outs Pia_ArrayType:$result);
+  let assemblyFormat = "$values attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Pia_SliceOp : Pia_Op<"slice", [Pure]> {
   let summary = "a view of elements [lo, hi) of a buffer";
   let description = [{

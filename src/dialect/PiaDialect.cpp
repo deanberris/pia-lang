@@ -360,6 +360,24 @@ LogicalResult LoadOp::verify() {
   return success();
 }
 
+LogicalResult ConstArrayOp::verify() {
+  ArrayType t = getResult().getType();
+  auto elem = mlir::dyn_cast<IntType>(t.getElementType());
+  if (!elem) return emitOpError("elements must be integers");
+  if (getValues().size() != t.getLength())
+    return emitOpError("has ") << getValues().size() << " values for "
+                               << t.getLength() << " elements";
+  for (mlir::Attribute a : getValues()) {
+    auto i = mlir::dyn_cast<mlir::IntegerAttr>(a);
+    if (!i) return emitOpError("values must be integers");
+    if (!elem.contains(i.getValue()))
+      return emitOpError("value ")
+             << llvm::toString(i.getValue(), 10, /*Signed=*/true)
+             << " does not fit " << t.getElementType();
+  }
+  return success();
+}
+
 LogicalResult SliceOp::verify() {
   if (getResult().getType().getElementType() !=
       elementTypeOf(getBuffer().getType()))

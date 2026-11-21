@@ -45,7 +45,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | `[T; n]` | `memref<n x T>` |
 | `[T]` | `memref<? x T, strided<[1], offset: ?>>` |
 
-A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`.
+A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`. A constant array (`pia.const_array`) becomes a private constant `memref.global`, one per constant, which LLVM places in read-only data; each use is a `memref.get_global`.
 
 Records are scalarized before codegen ([irgen.md](irgen.md#records)). Buffers of buffers or of records, and `dyn`, are not lowered yet.
 
