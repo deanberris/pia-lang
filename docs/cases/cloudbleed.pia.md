@@ -76,12 +76,22 @@ let count_attrs (html : [u8]) : usize =
 ```console
 $ piac --verify scan.pia
 ...
+scan.pia:8:47: failed: '+' does not overflow usize
+  counterexample: len html = 18446744073709551615, result = 18446744073709551616
+...
+scan.pia:5:5: failed: the loop invariant holds after each iteration
+  counterexample: len html = 18446744073709551613
+...
+5 proved, 2 failed, 0 skipped
 ```
 
-The counterexample is a page whose last byte is `=`: an attribute cut off
-at the end of the buffer, exactly the input that triggered Cloudbleed.
-From there `p` jumps to one past the end and the loop, testing only for
-equality, never stops.
+The invariant failure is Cloudbleed. Counterexamples do not show the
+contents of a slice yet, only its length, but the case the solver found is
+the one that triggered the leak: `p` at the last byte, and that byte an
+`=`, an attribute cut off at the end of the buffer. The step takes `p` to
+one past the end, and the loop, testing only for equality, never stops.
+(The first failure is the same step from the other side: on a buffer of
+2^64 - 1 bytes, `p + 2` does not even fit in a `usize`.)
 
 ## Without the invariant
 
@@ -105,7 +115,10 @@ let count_attrs (html : [u8]) : usize =
 
 ```console
 $ piac --verify scan_no_invariant.pia
+scan_no_invariant.pia:7:8: failed: the index is within bounds
+  counterexample: len html = 12583104, index = 18446744073696968511, length = 12583104
 ...
+1 proved, 1 failed, 0 skipped
 ```
 
 Either way, the program does not compile. In C, both compiled.
@@ -113,7 +126,7 @@ Either way, the program does not compile. In C, both compiled.
 ## The fix, proved
 
 The fix the report names is to test with `>=` instead of `==`: in Pia,
-loop while `p < len html`. Here that is half the fix:
+loop while `p < len html`. Here that is only half the fix:
 
 <!-- example: scan_lt.pia -->
 <!-- expect: fail -->
@@ -134,9 +147,18 @@ let count_attrs (html : [u8]) : usize =
 ```console
 $ piac --verify scan_lt.pia
 ...
+scan_lt.pia:8:47: failed: '+' does not overflow usize
+  counterexample: len html = 18446744073709551615, result = 18446744073709551616
+...
+scan_lt.pia:5:5: proved: the loop invariant holds after each iteration [smt]
+...
+6 proved, 1 failed, 0 skipped
 ```
 
-The other half is not to step over a byte that is not there. The scanner
+The loop now stops, and every read is proved in bounds, but the step past
+the end is still there: on the largest possible buffer, `p + 2`
+overflows. A C program would wrap the pointer around and carry on. The
+other half of the fix is not to step over a byte that is not there. The scanner
 skips the quote only when the buffer has one, so `p` never passes the end,
 and the loop test and the invariant say so. The postcondition is a small
 theorem about the result: there are never more attributes than bytes.
@@ -162,6 +184,10 @@ Every goal on this page is proved:
 ```console
 $ piac --verify cloudbleed.pia.md
 ...
+cloudbleed.pia.md:173:5: proved: the loop invariant holds after each iteration [smt]
+...
+cloudbleed.pia.md:168:3: proved: the postcondition holds [smt]
+9 proved, 0 failed, 0 skipped
 ```
 
 The deeper fix is the one Pia makes the default. In the C code, the fact
