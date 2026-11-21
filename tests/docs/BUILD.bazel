@@ -30,6 +30,10 @@ py_test(
         "//tools/piac",
     ],
     main = "doc_examples_test.py",
+    # It proves every example with pia_object's deterministic limits, which
+    # takes about four minutes on the iMac: past the 300 s of a medium test
+    # under a loaded `bazel test //...`.
+    size = "large",
 )
 
 # The case studies (docs/cases): famous bugs recreated in Pia, each failing
