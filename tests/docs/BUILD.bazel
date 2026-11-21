@@ -44,6 +44,7 @@ CASES = [
     "//docs:cases/rust-str-repeat.pia.md",
     "//docs:cases/rust-vecdeque.pia.md",
     "//docs:cases/libwebp.pia.md",
+    "//docs:cases/bun-readfile.pia.md",
 ]
 
 py_test(
