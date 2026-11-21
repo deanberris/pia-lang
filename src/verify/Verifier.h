@@ -24,6 +24,7 @@ struct Outcome {
   Status status = Status::Skipped;
   contract::ObligationKind kind = contract::ObligationKind::assert_;
   std::string where;   // "file:line:col"
+  std::string function;  // the enclosing function's symbol name
   std::string claim;   // what must hold, e.g. "'+' does not overflow u8"
   std::string method;  // "intervals" or "smt" when proved, else the reason
   std::vector<ModelValue> counterexample;
