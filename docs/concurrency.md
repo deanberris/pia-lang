@@ -1,6 +1,6 @@
 # Coroutines, tasks and race freedom
 
-Status: proposal, 2026-11-21 ([ADR 0027](adr/0027-coroutines-and-race-freedom.md)). Nothing here is implemented yet. Code blocks show designed syntax.
+Status: accepted design, 2026-11-21 ([ADR 0027](adr/0027-coroutines-and-race-freedom.md)). Nothing here is implemented yet. Code blocks show designed syntax.
 
 [ADR 0014](adr/0014-concurrency-model.md) made Pia concurrent by default, with `spread` loops, collectives, task graphs and futures. It settled one question about safety: tiles are `moved` to workers, so they cannot race. This page designs the rest:
 
@@ -23,7 +23,8 @@ Each choice has a recommendation. The alternatives are below in each section.
 | 4 | How is race freedom proved? | **Permissions first**: ownership and borrows in the type checker, disjointness by Presburger (FPL) and Z3, and the **model checker** only for what types cannot express (the primitives themselves, protocols, deadlock) |
 | 5 | How do locks work? | **A lock owns its data** (`mutex<T>`), with a **lock invariant** and a **static level**. Levels must increase, which rules out lock-order deadlocks at compile time |
 | 6 | Which memory orders for atomics? | **`seq_cst`, `acquire`, `release` and `acq_rel`** are checked from day one. `relaxed` is an unproved obligation until the model checker supports RC11 |
-| 7 | What does an unproved race do? | **Compile error**, with the two accesses and a witness. `--allow-unproved=race:...` accepts it, records it in the certificate as trusted, and recommends a TSan build |
+| 7 | How are deadlocks in channel communication (CSP) found? | **A deadlock goal for every scope**: a forest-shaped channel topology is proved by a lemma, protocols inferred per channel end are checked for compatibility and matched against proved patterns (pipeline, worker pool, request and reply), and the model checker searches the rest for any set of tasks blocked forever |
+| 8 | What does an unproved race or deadlock do? | **Compile error**, with the accesses or blocked tasks and a witness. `--allow-unproved=race:...` or `deadlock:...` accepts it, records it in the certificate as trusted, and recommends a TSan build |
 
 ## 1. Coroutines: stackless
 
@@ -47,7 +48,7 @@ There are two ways to build them:
 - **Foreign code stays outside.** No foreign frame is ever suspended, so foreign code never sees a stack move or a thread change under it.
 - **Lowering exists.** LLVM's coroutine intrinsics (`llvm.coro.*`, switched-resume lowering) build the frame and elide its allocation when the coroutine does not outlive its caller. MLIR's `async` dialect lowers to them already.
 
-The cost is colouring: a function that suspends can only be called by one that also suspends, or handed to a scheduler. Pia makes the colour cheap instead of hiding it (section 2). It also stays honest: the colour is a fact the verifier and importers need anyway.
+The cost is colouring: a function that suspends can only be called by one that also suspends, or handed to a scheduler. Pia makes the colour cheap instead of hiding it (below). It also stays honest: the colour is a fact the verifier and importers need anyway.
 
 ### Syntax
 
@@ -173,11 +174,11 @@ Every lock has a static level, written `@level(n)`. A task may only acquire a lo
 
 Acquiring in a fixed order is the classic lock-ordering argument, and it makes lock-order cycles impossible. Linux's lockdep checks it at run time; Pia checks it at compile time. Levels are numbers, not a declared lattice, which keeps the check simple. Locks of equal level may not be nested. Two locks of the same level that must be held together, such as two accounts in a transfer, are taken with `lock2`, which orders them by address and is proved once in the library.
 
-Deadlocks through channels, joins and barriers cannot be ruled out by levels. They go to the protocol checker and the model checker (section 4).
+Deadlocks through channels, joins and barriers cannot be ruled out by levels. They have their own checks (section 5).
 
 ### Channels move ownership
 
-`send` takes its value `moved`, so the sender cannot touch it afterwards, and the receiver owns it. Nothing sent through a channel can be raced on, whatever it contains. A channel's two ends are separate values: `sender<T>` is `shareable` (many producers), and `receiver<T>` is `@linear` (one consumer). `select` waits on several channels and returns the first ready one.
+`send` takes its value `moved`, so the sender cannot touch it afterwards, and the receiver owns it. Nothing sent through a channel can be raced on, whatever it contains. A channel's two ends are separate values, and both are `@linear`. `receiver<T>` has one consumer. `sender<T>` can be `clone`d for more producers, every copy must be consumed, and the channel closes when the last one is. A borrowed `sender<T>` is `shareable`. `select` waits on several channels and returns the first ready one.
 
 ```ocaml
 let pipeline (src : moved receiver<tile>) (dst : moved sender<tile>) : unit @suspends =
@@ -271,7 +272,7 @@ The model checker pass, already planned in [ADR 0014](adr/0014-concurrency-model
 **What it checks:**
 
 1. **The primitives.** `mutex`, `rwlock`, `chan`, `barrier`, `once` and the work-stealing deque are written in Pia over `atomic<T>` and the scheduler. Each is proved against its contract: mutual exclusion, the lock invariant, no lost wake-ups, FIFO delivery, the barrier releasing exactly when `n` tasks arrive. These proofs run once, when the library builds, and every program then relies on the contracts.
-2. **Protocols and deadlock.** Every `wait` eventually completes: no cycle of tasks waiting on each other's channels, joins or barriers. The protocol metaprogram from ADR 0014 settles the regular cases, such as every `spread` worker issuing the same collectives. The model checker takes the rest.
+2. **Protocols and deadlock.** No set of tasks is ever blocked forever on each other's channels, joins or barriers (section 5). The topology check, the protocol metaprogram and the library's patterns settle the regular cases. The model checker takes the rest.
 3. **User code built from atomics**, under the memory orders it uses.
 
 **How it works:**
@@ -283,7 +284,78 @@ The model checker pass, already planned in [ADR 0014](adr/0014-concurrency-model
 
 Writing a model checker is real work, so it comes after the type-level checks. The first programs, `spread` over tiles with collectives, need only types and FPL. The library primitives can start as trusted wrappers around `os_unfair_lock` and pthreads (both already in [stdlib.md](stdlib.md#8-posix-trusted-declarations-and-typed-wrappers)), and are replaced by proved Pia implementations when the checker lands. The trust report shows the difference.
 
-## 5. Unproved races
+## 5. Deadlock freedom for channel communication
+
+Programs in the style of CSP (Hoare's Communicating Sequential Processes, as in occam and Go) build concurrency out of tasks that share nothing and talk only through channels. They cannot race, because `send` moves ownership. They can still deadlock: a set of tasks each blocked on a `send` or `recv` that only another task in the same set could complete. Lock levels do not help here. So every `scope` that uses channels gets a **deadlock goal**: no reachable state leaves a set of tasks blocked forever. Like any other goal, it is a compile error when it is unproved.
+
+### What counts as a deadlock
+
+In any state, every blocked task is waiting for someone:
+
+| Blocked on | Can be woken by |
+| --- | --- |
+| `recv` on an empty channel | any holder of a sender, or the last sender being consumed, which closes the channel |
+| `send` on a full channel, or any `send` on a rendezvous channel (`cap = 0`, CSP's synchronous send) | the holder of the receiver, or the receiver being consumed, which makes `send` return `Err Closed` |
+| `join` | the child task |
+| `barrier`, `event`, `promise` | the tasks that have not arrived yet, or the holders of the notifier or the writer |
+| `select` | anyone who can wake any of its arms |
+
+A state is **deadlocked** when there is a non-empty set `D` of blocked tasks such that every task that could wake a member of `D` is itself in `D`. This covers partial deadlocks too, such as two workers stuck waiting on each other while a server keeps running, not only "every task has stopped". The condition is about a single state, so checking it needs no fairness assumptions.
+
+Three rules from earlier sections keep the waits-for relation small and computable:
+
+- **Who can wake a task is known.** A `receiver<T>` is `@linear`, and a `sender<T>` is `@linear` too: more producers come from `clone`, and every copy must be consumed on every path. The holders of each end are therefore values the compiler tracks. A channel closes exactly when its last sender is consumed, so "forgot to close the channel" is a type error rather than a hang.
+- **Mutexes are not in the relation.** A `lock` body cannot suspend, so a task holding a mutex always makes progress, and waiting for a mutex always ends. Lock levels already rule out cycles among locks.
+- **Channels are bounded.** `chan<T, cap>` always has a capacity. There are no unbounded channels, which would hide memory exhaustion and give the model checker infinite states.
+
+### Three stages, cheapest first
+
+**Stage 1: topology.** The compiler extracts each scope's **channel topology** from ownership. The nodes are the tasks spawned in the scope and the parent. There is an edge wherever a task holds one end of a channel and another task holds the other, and from each child to the parent that joins it. Structured scopes make this graph static for most programs. If the graph is a **forest**, so that no two tasks are linked by two different paths, and every task drains its inputs (it receives until they close, then consumes its senders), then the scope is deadlock-free. A lemma proved once in the library covers this. Pipelines, broadcast trees and fan-in through one shared channel are all forests, and they cover most stream programs, including the flagship demo's tile pipeline.
+
+A graph that only avoids directed cycles (a DAG) is not enough with bounded channels. In the diamond below, every channel points downstream, yet the program can deadlock:
+
+```ocaml
+let diamond (items : moved receiver<job>) (out : moved sender<res>) : unit @suspends =
+  let (l_in, l_inr)   = chan 1 in
+  let (r_in, r_inr)   = chan 1 in
+  let (l_out, l_outr) = chan 1 in
+  let (r_out, r_outr) = chan 1 in
+  scope (let (s) =>
+    let split = spawn s (let () => alternate items l_in r_in) in   (* l, r, l, r, ... *)
+    let left  = spawn s (let () => work l_inr l_out) in
+    let right = spawn s (let () => work r_inr r_out) in
+    let merge = spawn s (let () => drain l_outr out; drain r_outr out) in  (* all of left first *)
+    join split; join left; join right; join merge)
+```
+
+```console
+$ piac --verify diamond.pia
+diamond.pia:6:3: error: possible deadlock in this scope
+  tasks split, left, right and merge can all block forever:
+    split  sends to r_in      (full, capacity 1)    diamond.pia:7
+    right  sends to r_out     (full, capacity 1)    diamond.pia:9
+    left   receives from l_in (empty)               diamond.pia:8
+    merge  receives from l_out (empty)              diamond.pia:10
+  witness (model checker): a schedule of 11 steps, replay with --replay=diamond.trace
+  help: merge with `select` over both inputs, or use `Pia.Chan.fan_in`
+```
+
+**Stage 2: protocols.** For each channel end a function uses, the compiler infers a **usage protocol**: a finite automaton over its sends, receives and closes, which is the function's control flow projected onto that end. `work` above follows `(recv; send)* ; close` on its two ends. Protocols are inferred inside a module and written as `@protocol` on exported parameters, so the check is modular. The protocol metaprogram from [ADR 0014](adr/0014-concurrency-model.md) checks that the protocols at the two ends of every channel are compatible, as it already does for collectives. This is not session typing, which ADR 0014 rejected: the type system is unchanged, and protocols are contracts the metaprogram checks.
+
+The library also ships **patterns** with deadlock-freedom lemmas proved once, for any number of tasks:
+
+- **pipeline** and **broadcast tree** (stage 1 already covers these);
+- **worker pool**: a dispatcher, `n` identical workers and a collector, joined through one fan-in channel;
+- **request and reply**: the request carries a one-shot `promise` for its reply, so the reply cannot block the server;
+- **scatter and gather**, the channel form of the collectives.
+
+When a scope's topology and protocols match a pattern, the goal is discharged by the pattern's lemma, with no state exploration. This is how a worker pool of `n` tasks is proved for every `n`.
+
+**Stage 3: the model checker.** Anything else goes to the model checker (section 4). The protocol automata of every task in the scope, together with the channel capacities, form a finite system once data is abstracted away. The checker explores it with DPOR and tests the deadlock condition in every state. It finds request cycles (A waits for B's reply while B waits for A's), the diamond above, and mismatched rendezvous orders. Parametric claims need symmetry and a cutoff lemma, otherwise they are unproved. Channels sent over channels (mobile topologies, as in the pi-calculus) are explored while their number stays bounded. Topologies that grow with the data, such as a task spawned for each element of an input stream, are unproved unless they match a pattern.
+
+**Timeouts.** A `select` with an `after d` arm is never blocked forever, so it is not a deadlock. It can still spin forever. Deadlock freedom is a safety property, and proving progress (liveness) is a later extension.
+
+## 6. Unproved races
 
 An unproved race goal is like any other unproved goal: `piac` refuses to compile ([codegen.md](codegen.md)). The error names both accesses, the tasks they come from, the stage that tried, and a witness: an FPL sample point, a Z3 model, or a model-checker schedule.
 
@@ -292,12 +364,12 @@ To compile anyway, `--allow-unproved` accepts race goals by kind:
 | Flag | Accepts |
 | --- | --- |
 | `--allow-unproved=race:hist.pia:12` | the race goals on line 12 |
-| `--allow-unproved=deadlock:pipeline` | the deadlock goals in function `pipeline` |
+| `--allow-unproved=deadlock:pipeline` | the deadlock goals of scopes in function `pipeline` |
 | `--allow-unproved=relaxed:Stats` | `relaxed` uses in module `Stats` that need RC11 |
 
 An accepted race is a trust item in the module's certificate (below), and `piac` says that a `--config=tsan` build would check it at run time.
 
-## 6. Interfaces and proof certificates
+## 7. Interfaces and proof certificates
 
 Modules are verified separately ([ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md)), so every fact a caller's race proof needs must be in the interface. These join the interface, and so the interface hash and the witness symbols ([ADR 0024](adr/0024-published-proof-certificates.md)):
 
@@ -309,10 +381,11 @@ Modules are verified separately ([ADR 0010](adr/0010-modules-interfaces-and-proo
 | Concurrency of calls | `@threadsafe`, `@serial` | whether two tasks may call it at once |
 | Concepts of exported types | `sendable`, `shareable` | whether a value may cross a task boundary |
 | Module-state footprint | which shared primitives a function touches | rules 4 and 6 across modules |
+| Channel protocols | `@protocol((recv; send)* ; close)` on a channel-end parameter | deadlock goals across modules |
 
 A change to any of these changes the interface hash, so a library whose function starts acquiring a higher-level lock, or stops being `@threadsafe`, no longer loads against a binary built for the old one. The ABI evolution rules apply as before. Interfaces refine safely when a function acquires lower levels (or none), suspends where it used to block, or becomes `@threadsafe` where it was `@serial`.
 
-The certificate records each race and deadlock goal with its stage: `types`, `presburger`, `smt` or `mc`. Model-checker results also record the state count and the reduction used, and are only recorded when the search was exhaustive. The trust section gains:
+The certificate records each race and deadlock goal with its stage: `types`, `presburger`, `smt`, `topology`, `protocol` (with the pattern it matched) or `mc`. Model-checker results also record the state count and the reduction used, and are only recorded when the search was exhaustive. The trust section gains:
 
 - race, deadlock and `relaxed` goals accepted with `--allow-unproved`;
 - `@threadsafe` claims on foreign declarations;
@@ -333,6 +406,9 @@ The loader checks nothing new at run time. The concurrency facts are part of the
 | Linux lockdep, Fuchsia lock levels | static lock ordering |
 | GenMC, CDSChecker, Nidhugg, Loom | exhaustive checking with DPOR under C11-style memory models |
 | SPIN, TLA+ and TLC | explicit-state model checking of protocols |
+| CSP and FDR, occam | channel-only concurrency, and refinement checking of CSP processes for deadlock freedom |
+| Go (runtime detector; static checkers such as Gong and Godel) | Go's runtime detects only global deadlock; the static checkers extract channel behaviour and model-check it, as Pia's stages 2 and 3 do |
+| Kobayashi's deadlock-free pi-calculus types | the idea that a forest-shaped topology and usage protocols are enough for most programs |
 | Eraser, RacerD, TSan | lockset and happens-before race detection, which is dynamic or unsound, so Pia uses TSan only for the trusted boundary |
 
 Two alternatives were considered and set aside. **Lockset analysis** (RacerD, Eraser) finds many races cheaply but is not sound, so it cannot discharge a proof goal. **Full separation-logic annotations** (Iris, VerCors, Viper) are sound and very expressive, but ask every user to write permissions by hand. Pia's types infer the common cases, and the heavier reasoning is kept for the library primitives, which are written once.
@@ -350,5 +426,6 @@ The order follows what the flagship demo needs, then general programs:
 7. **The model checker**: DPOR, SC and release/acquire, deadlock, schedule counterexamples. Then proved Pia implementations of the primitives replace the trusted wrappers.
 8. **Certificates**: the concurrency facts in interfaces and hashes, race goal kinds, trust items, `--allow-unproved=race:...`.
 9. **RC11 mode** for `relaxed` atomics.
+10. **Deadlock freedom for channel communication**: channel topology and the forest lemma, then inferred protocols with compatibility checks and pattern lemmas, then the waits-for deadlock check in the model checker.
 
-Each step is a GitHub issue under the tracking issue [#74](https://github.com/deanberris/pia-lang/issues/74): #75 to #83, in this order.
+Each step is a GitHub issue under the tracking issue [#74](https://github.com/deanberris/pia-lang/issues/74): #75 to #83 for steps 1 to 9, and #111, #112 and #113 for step 10.
