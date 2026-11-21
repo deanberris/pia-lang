@@ -13,6 +13,8 @@ DOCS = [
     "//docs:repl.md",
     "//docs:status.md",
     "//docs:streams.pia.md",
+    "//docs:cases/index.md",
+    "//docs:cases/heartbleed.pia.md",
 ]
 
 py_test(
