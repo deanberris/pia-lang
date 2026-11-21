@@ -53,7 +53,7 @@ average_fixed.pia:2:3: proved: the postcondition holds [smt]
 
 Interval analysis settles the easy goals for free, and Z3 settles the rest. The counterexample is the input that breaks your code, so you know what to fix.
 
-The proofs cost nothing at run time: a proved index has no bounds check and a proved sum has no overflow check. When arithmetic should clamp instead of failing, say so with `+|` or `@overflow(saturate)`, and the behaviour is defined, so there is nothing to prove. This loop adds two rows of pixels, and LLVM vectorises it into NEON instructions that add 16 bytes at a time:
+The proofs cost nothing at run time: a proved index has no bounds check and a proved sum has no overflow check. When arithmetic should clamp instead of failing, say so with `+|` or `@overflow(saturate)`, and the behaviour is defined, so there is nothing to prove. This loop adds two rows of pixels, and LLVM vectorises it into NEON saturating adds, 64 bytes per iteration:
 
 <!-- example: add_rows.pia -->
 ```ocaml
@@ -64,10 +64,21 @@ let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
 
 ```console
 $ piac --emit=asm add_rows.pia
-TBD
+...
+LBB0_10:
+	ldp	q0, q1, [x10, #-32]
+	ldp	q2, q3, [x10], #64
+	ldp	q4, q5, [x12, #-32]
+	ldp	q6, q7, [x12], #64
+	uqadd.16b	v0, v0, v4
+	uqadd.16b	v1, v1, v5
+	uqadd.16b	v2, v2, v6
+	uqadd.16b	v3, v3, v7
+...
+piac: warning: 3 obligations were skipped and not proved; see piac --verify
 ```
 
-(The bounds goals inside the loop are not proved yet: `piac` warns that it skipped them. Loop invariants are the verifier's next step; see [Status](docs/status.md).)
+(The warning is honest: the bounds goals inside the loop are not proved yet, so `piac` says it skipped them. Loop invariants are the verifier's next step; see [Status](docs/status.md).)
 
 ## What is in Pia
 
