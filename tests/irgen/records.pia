@@ -1,0 +1,44 @@
+(* Records: a `type { ... }` item, record literals, field reads and field
+   assignment.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+(*
+// CHECK-DAG: !pixel = !pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>, b : !pia.int<0, 255>, a : !pia.int<0, 255>>
+// CHECK-DAG: !span = !pia.record<"span", lo : !pia.int<0, 255>, px : !pixel>
+*)
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+let span = type { lo : u8; px : pixel }
+
+(* The literal's fields are built in declaration order, whatever order they
+   are written in.
+// CHECK-LABEL: func.func @grey(%arg0: !pia.int<0, 255>) -> !pixel
+// CHECK: %[[A:.*]] = pia.constant 255
+// CHECK: pia.record(%arg0, %arg0, %arg0, %[[A]] : {{.*}}) : !pixel
+*)
+let grey (v : u8) : pixel = { a = 255; r = v; g = v; b = v }
+
+(* CHECK-LABEL: func.func @green(%arg0: !span) -> !pia.int<0, 255>
+// CHECK: %[[P:.*]] = pia.field %arg0, "px" : !span -> !pixel
+// CHECK: pia.field %[[P]], "g" : !pixel -> !pia.int<0, 255>
+*)
+let green (s : span) : u8 = s.px.g
+
+(* `q.a <- 0` rebuilds `q` with one field replaced.
+// CHECK-LABEL: func.func @clear
+// CHECK: %[[R:.*]] = pia.field %arg0, "r"
+// CHECK: %[[G:.*]] = pia.field %arg0, "g"
+// CHECK: %[[B:.*]] = pia.field %arg0, "b"
+// CHECK: pia.record(%[[R]], %[[G]], %[[B]], %{{.*}} : {{.*}}) : !pixel
+*)
+let clear (p : pixel) : pixel =
+  let q : mutable pixel = p in
+  q.a <- 0;
+  q
+
+(* A literal with no expected type is the record with exactly its fields.
+// CHECK-LABEL: func.func @red
+// CHECK: pia.record
+// CHECK: pia.field %{{.*}}, "r"
+*)
+let red (v : u8) : u8 = { r = v; g = 0; b = 0; a = 0 }.r

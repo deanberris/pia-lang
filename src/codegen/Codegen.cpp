@@ -610,14 +610,17 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
       (kInternalPrefix + e.name).str());
   if (!internal) return mlir::emitError(e.loc) << "lost function " << e.name;
-  if (e.type.getNumResults() > 1 ||
-      (e.type.getNumResults() == 1 &&
-       mlir::isa<mlir::MemRefType>(e.type.getResult(0))))
-    return mlir::emitError(e.loc)
-           << "codegen v0 cannot return a buffer from '" << e.name << "'";
+  for (Type t : e.type.getResults())
+    if (mlir::isa<mlir::MemRefType>(t))
+      return mlir::emitError(e.loc)
+             << "codegen v0 cannot return a buffer from '" << e.name << "'";
 
   llvm::SmallVector<Type> argTypes;
   for (Type t : e.type.getInputs()) cArgTypes(t, ctx, argTypes);
+  // A record result comes back through a pointer to a C struct of its
+  // fields, which is the last argument.
+  bool outStruct = e.type.getNumResults() > 1;
+  if (outStruct) argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
   Type resultType = mlir::LLVM::LLVMVoidType::get(ctx);
   if (e.type.getNumResults() == 1) {
     llvm::SmallVector<Type, 1> r;
@@ -654,7 +657,28 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
     operands.push_back(block->getArgument(arg++));
   }
   auto call = make<mlir::LLVM::CallOp>(b, e.loc, internal, operands);
-  if (e.type.getNumResults() == 1) {
+  if (outStruct) {
+    // Each field at its C offset: aligned to its own size.
+    Value out = block->getArgument(arg);
+    unsigned offset = 0;
+    for (auto [i, t] : llvm::enumerate(e.type.getResults())) {
+      llvm::SmallVector<Type, 1> c;
+      cArgTypes(t, ctx, c);
+      unsigned width = c[0].getIntOrFloatBitWidth();
+      unsigned size = width <= 8 ? 1 : width / 8;
+      offset = (offset + size - 1) / size * size;
+      Value field = make<mlir::LLVM::ExtractValueOp>(
+          b, e.loc, call.getResult(), llvm::ArrayRef<int64_t>{int64_t(i)});
+      if (width == 1)
+        field = make<mlir::LLVM::ZExtOp>(b, e.loc, b.getI8Type(), field);
+      Value at = make<mlir::LLVM::GEPOp>(
+          b, e.loc, mlir::LLVM::LLVMPointerType::get(ctx), b.getI8Type(), out,
+          llvm::ArrayRef<mlir::LLVM::GEPArg>{int32_t(offset)});
+      make<mlir::LLVM::StoreOp>(b, e.loc, field, at);
+      offset += size;
+    }
+    make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
+  } else if (e.type.getNumResults() == 1) {
     if (auto ext = extAttr(e.type.getResult(0), e.resultSigned))
       entry.setResultAttr(0, *ext, b.getUnitAttr());
     make<mlir::LLVM::ReturnOp>(b, e.loc, call.getResult());

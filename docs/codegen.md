@@ -35,7 +35,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | `[T; n]` | `memref<n x T>` |
 | `[T]` | `memref<? x T>` |
 
-Buffers of buffers, and `dyn`, are not lowered yet.
+Records are scalarized before codegen ([irgen.md](irgen.md#records)). Buffers of buffers or of records, and `dyn`, are not lowered yet.
 
 ## Arithmetic
 
@@ -62,6 +62,14 @@ Each public Pia function `f` becomes an internal function and a C entry point na
 | `bool` | `bool` |
 | `[T]` | `const T *data, uint64_t len` (or `T *` when it is written) |
 | `[T; n]` | `const T *data` (or `T *`) |
+
+A record parameter is passed as its fields, in declaration order, so `blend (p : pixel) (q : pixel) : pixel` takes eight `uint8_t` arguments. A record result is written through a pointer to a C struct of its fields, which is the last argument. Each field sits at its natural C offset, aligned to its own size:
+
+```c
+struct pixel { uint8_t r, g, b, a; };
+void blend(uint8_t pr, uint8_t pg, uint8_t pb, uint8_t pa,
+           uint8_t qr, uint8_t qg, uint8_t qb, uint8_t qa, struct pixel *out);
+```
 
 Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. Returning a buffer is not supported yet.
 

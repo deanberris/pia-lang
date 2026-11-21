@@ -1,0 +1,25 @@
+(* Errors in records and their uses.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:30: error: the field 'a' of pixel is missing
+*)
+let short (v : u8) : pixel = { r = v; g = v; b = v }
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:60: error: pixel has no field 'z'
+*)
+let extra (v : u8) : pixel = { r = v; g = v; b = v; a = v; z = v }
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:30: error: pixel has no field 'x'
+*)
+let wrong (p : pixel) : u8 = p.x
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:28: error: '.r' needs a record, found u8
+*)
+let scalar (v : u8) : u8 = v.r
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:45: error: comparing records with '=' is not supported yet
+*)
+let same (p : pixel) (q : pixel) : bool = p = q

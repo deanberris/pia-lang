@@ -35,7 +35,9 @@ struct Options {
 };
 
 // Checks every function in `module`, in order, and marks each op whose
-// obligations all hold with `pia.proved = "intervals"` or `"smt"`.
+// obligations all hold with `pia.proved = "intervals"` or `"smt"`. It first
+// replaces record values with their fields (transforms/ScalarizeRecords.h),
+// so the module afterwards has no records.
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options = {});
 

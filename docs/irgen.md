@@ -22,8 +22,9 @@ Status: implemented in M4 ([#5](https://github.com/deanberris/pia-lang/issues/5)
 | `[T; n]` | `!pia.array<n x T>` (n is a literal for now) |
 | `[T]` | `!pia.slice<T>` |
 | `unit` | no value; a function returning unit has no results |
+| `let pixel = type { r : u8; ... }` | `!pia.record<"pixel", r : !pia.int<0, 255>, ...>`, printed as `!pixel` |
 
-Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`.
+Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`. Records are the exception: they are named, so two record types with the same fields are different types. `let byte = type u8` is another name for `u8`.
 
 ## Integers
 
@@ -65,10 +66,21 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 
 Several binders nest one quantifier op per name, so a later range can mention an earlier name. Inside contracts, which have no effects, `&&`, `||` and `==>` are plain `arith` logic, and `==>` is `(a xor true) or b`. Whether arithmetic in contracts is exact or follows the overflow mode is settled with the verifier in M5. Quantifiers are rejected outside contracts and assertions.
 
+## Records
+
+A `let name = type { field : T; ... }` item defines a record type. Records are values, like integers.
+
+- **Literals.** `{ r = v; g = 0; b = 0; a = 255 }` lowers to `pia.record`, with the fields in declaration order, whatever order they are written in. Its type comes from the context. Failing that, it is the one record type whose fields are exactly these. Every field must be given, once.
+- **Field reads.** `p.r` lowers to `pia.field %p, "r"`.
+- **Field assignment.** `q.r <- v` on a mutable local record rebuilds `q` with one field replaced. So, like any mutable local, `q` is an SSA value threaded through `scf.if` and loops.
+- **Not yet supported:** arrays and slices of records, buffers inside records, `=` on records (which arrives with `@derive(eq)` in M7), and attributes on type items.
+
+The verifier and code generation do not see records. `transforms::scalarizeRecords` replaces each record value with its fields first, using MLIR's 1:N dialect conversion. A `pixel` parameter becomes four parameters named `p.r`, `p.g`, `p.b` and `p.a`, a `pixel` result becomes four results, and `pia.record` and `pia.field` disappear. `old p` becomes `old` of each field.
+
 ## Functions
 
 Each top-level `let f (x : T) ... : R = body` becomes `func.func @f`. Parameters need annotations. A `let` with no parameters becomes a function with no arguments, and its uses call it. The return type may be left out, and then it comes from the body. Such a function cannot be called before its definition, or recursively. Calls must pass every argument, since partial application and functions as values come later.
 
 ## Not yet
 
-Local functions and lambdas, `match`, records and variants, `dyn`, floats, `spread` and tiles (M8), slicing `xs.[a .. b]`, type-level lengths (`[T; n]`), refinements (`where`), modules, and metaprograms (M7).
+Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), slicing `xs.[a .. b]`, type-level lengths (`[T; n]`), refinements (`where`), modules, and metaprograms (M7).

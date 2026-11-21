@@ -54,11 +54,17 @@ APInt maxBound() { return APInt::getMaxValue(64).zext(kBoundWidth); }
 // Prints the two 64-bit ranges, whose bounds are long, as `!usize` and
 // `!isize`. They are also u64 and i64: Pia's targets are all 64-bit. MLIR
 // would add `_` to an alias ending in a digit, so the narrower types keep
-// their short `<0, 255>` spelling instead of `!u8_`.
+// their short `<0, 255>` spelling instead of `!u8_`. Records print as
+// their names.
 struct PiaOpAsmInterface : public OpAsmDialectInterface {
   using OpAsmDialectInterface::OpAsmDialectInterface;
 
   AliasResult getAlias(Type type, raw_ostream &os) const override {
+    // A record prints as its name: `!pixel`.
+    if (auto rec = dyn_cast<RecordType>(type)) {
+      os << rec.getName();
+      return AliasResult::OverridableAlias;
+    }
     auto it = dyn_cast<IntType>(type);
     if (!it) return AliasResult::NoAlias;
     APInt lo = widen(it.getLo()), hi = widen(it.getHi());
@@ -215,8 +221,94 @@ unsigned IntType::getStorageWidth() const {
 }
 
 //===----------------------------------------------------------------------===//
+// RecordType
+//===----------------------------------------------------------------------===//
+
+// `<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>>`
+Type RecordType::parse(AsmParser &parser) {
+  SMLoc loc = parser.getCurrentLocation();
+  std::string name;
+  if (parser.parseLess() || parser.parseString(&name)) return {};
+  SmallVector<StringAttr> names;
+  SmallVector<Type> types;
+  while (succeeded(parser.parseOptionalComma())) {
+    std::string field;
+    Type type;
+    if (parser.parseKeywordOrString(&field) || parser.parseColon() ||
+        parser.parseType(type))
+      return {};
+    names.push_back(StringAttr::get(parser.getContext(), field));
+    types.push_back(type);
+  }
+  if (parser.parseGreater()) return {};
+  return parser.getChecked<RecordType>(loc, parser.getContext(), name, names,
+                                       types);
+}
+
+void RecordType::print(AsmPrinter &printer) const {
+  printer << "<\"" << getName() << "\"";
+  for (auto [n, t] : llvm::zip(getFieldNames(), getFieldTypes())) {
+    printer << ", ";
+    printer.printKeywordOrString(n.getValue());
+    printer << " : " << t;
+  }
+  printer << ">";
+}
+
+LogicalResult RecordType::verify(function_ref<InFlightDiagnostic()> emitError,
+                                 StringRef name, ArrayRef<StringAttr> names,
+                                 ArrayRef<Type> types) {
+  if (names.size() != types.size())
+    return emitError() << "a record needs one type per field";
+  for (size_t i = 0; i < names.size(); ++i)
+    for (size_t j = 0; j < i; ++j)
+      if (names[i] == names[j])
+        return emitError() << "record '" << name << "' has two fields named '"
+                           << names[i].getValue() << "'";
+  return success();
+}
+
+std::optional<unsigned> RecordType::fieldIndex(StringRef name) const {
+  for (auto [i, n] : llvm::enumerate(getFieldNames()))
+    if (n.getValue() == name) return i;
+  return std::nullopt;
+}
+
+//===----------------------------------------------------------------------===//
 // Ops
 //===----------------------------------------------------------------------===//
+
+LogicalResult RecordOp::verify() {
+  RecordType t = getResult().getType();
+  if (getFields().size() != t.getFieldTypes().size())
+    return emitOpError("expected ") << t.getFieldTypes().size()
+                                    << " fields for " << t;
+  for (auto [v, ft] : llvm::zip(getFields(), t.getFieldTypes()))
+    if (v.getType() != ft)
+      return emitOpError("field of type ") << v.getType() << " where " << t
+                                           << " expects " << ft;
+  return success();
+}
+
+unsigned FieldOp::getIndex() {
+  return *getInput().getType().fieldIndex(getField());
+}
+
+LogicalResult FieldOp::verify() {
+  RecordType t = getInput().getType();
+  std::optional<unsigned> i = t.fieldIndex(getField());
+  if (!i) return emitOpError() << t << " has no field '" << getField() << "'";
+  if (getResult().getType() != t.getFieldTypes()[*i])
+    return emitOpError("result type must be the field's type");
+  return success();
+}
+
+// pia.field (pia.record a, b), "b"  ->  b
+OpFoldResult FieldOp::fold(FoldAdaptor) {
+  if (auto rec = getInput().getDefiningOp<RecordOp>())
+    return rec.getFields()[getIndex()];
+  return {};
+}
 
 // `pia.constant 42 : !pia.int<0, 255>`
 ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
