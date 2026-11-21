@@ -129,3 +129,4 @@ nav:
       - adr/0031-verified-repl-and-live-environment.md
       - adr/0032-parallel-sliced-cached-proving.md
       - adr/0033-module-initialisation-and-registries.md
+      - adr/0034-concepts-and-overload-resolution.md
