@@ -1,0 +1,50 @@
+(* Slices `xs.[a .. b]` (#50, docs/stdlib.md group 6): views with proved
+   bounds that read and write their buffer's storage, and `abort`.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A view starts at its offset: element 0 of `xs.[2 .. 6]` is xs.[2]. *)
+let third (xs : [u8; 8]) : u8
+  ensures result = xs.[2]
+= let v = xs.[2 .. 6] in v.[0]
+
+(* A view's length is b - a, so its own indices are checked against it. *)
+let past_end (xs : [u8; 8]) : u8 = let v = xs.[2 .. 6] in v.[4]
+
+(* The bounds are a goal: 0 <= a <= b <= len xs. *)
+let bad_bounds (xs : [u8]) (n : usize) : usize = len (xs.[0 .. n])
+
+let good_bounds (xs : [u8]) (n : usize) : usize
+  requires n <= len xs
+  ensures result = n
+= len (xs.[0 .. n])
+
+(* A callee that fills a slice. *)
+let fill (dst : out mutable [u8]) (v : u8) : unit
+  ensures forall (k in 0..len dst). dst.[k] = v
+=
+  for i in 0..len dst
+    invariant forall (k in 0..i). dst.[k] = v
+  do dst.[i] <- v done
+
+(* Writing through a view changes only the viewed part of the buffer. *)
+let fill_middle (xs : out mutable [u8; 8]) : unit
+  ensures xs.[3] = 7 && xs.[0] = old xs.[0] && xs.[7] = old xs.[7]
+= fill (xs.[2 .. 6]) 7
+
+(* A view of a view adds the offsets. *)
+let nested (xs : [u8; 8]) : u8
+  ensures result = xs.[5]
+= let v = xs.[2 .. 8] in let w = v.[1 .. 6] in w.[2]
+
+(* An array passes as a slice of all of it. *)
+let fill_all (xs : out mutable [u8; 4]) : unit
+  ensures xs.[3] = 0
+= fill xs 0
+
+(* `abort` is a proof that it is never reached. *)
+let checked_div (a : u32) (b : u32) : u32
+  requires b > 0
+= if b = 0 then abort () else a / b
+
+let reachable (a : u32) : u32 = if a > 10 then abort () else a

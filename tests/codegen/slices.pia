@@ -1,0 +1,27 @@
+(* Slices (#50), compiled for Apple Silicon and run by slices_test.c.
+   Every goal here must be proved.
+*)
+
+let fill (dst : out mutable [u8]) (v : u8) : unit =
+  for i in 0..len dst do dst.[i] <- v done
+
+(* Writes only elements 2 to 5 of an 8-element array. *)
+let fill_middle (xs : out mutable [u8; 8]) (v : u8) : unit = fill (xs.[2 .. 6]) v
+
+(* A slice of a slice: elements [a + 1, b - 1) of xs. *)
+let fill_inner (xs : out mutable [u8]) (a : usize) (b : usize) (v : u8) : unit
+  requires a + 2 <= b && b <= len xs
+=
+  let outer = xs.[a .. b] in fill (outer.[1 .. b - a - 1]) v
+
+let first_of (xs : [u16]) (a : usize) (b : usize) : u16
+  requires a < b && b <= len xs
+= let v = xs.[a .. b] in v.[0]
+
+let count (xs : [u16]) (a : usize) (b : usize) : usize
+  requires a <= b && b <= len xs
+= len (xs.[a .. b])
+
+let safe_div (a : u32) (b : u32) : u32
+  requires b > 0
+= if b = 0 then abort () else a / b

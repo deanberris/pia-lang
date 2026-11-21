@@ -117,6 +117,19 @@ let last (xs : [u8]) : u8
 = xs.[len xs - 1]
 ```
 
+`xs.[a .. b]` is a slice of elements `a` up to but not including `b`. It is a view, not a copy: it shares the buffer's storage, so a function that writes a slice writes that part of the buffer, and the verifier knows the rest is unchanged. Its bounds are a goal, `0 <= a <= b <= len xs`. An array also passes where a slice is expected, as a slice of all of it.
+
+```ocaml
+let fill (dst : out mutable [u8]) (v : u8) : unit =
+  for i in 0..len dst do dst.[i] <- v done
+
+let clear_tail (xs : out mutable [u8]) (n : usize) : unit
+  requires n <= len xs
+= fill (xs.[n .. len xs]) 0
+```
+
+`abort ()` stops the program. Its precondition is `false`, so every `abort` is a goal that it is never reached: it marks a case the contracts rule out.
+
 ### Parameter modifiers
 
 Parameters say how a function uses what it is given, on three axes, so a function's signature tells callers and the prover everything about its effects:

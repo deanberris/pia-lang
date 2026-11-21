@@ -4,7 +4,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "slices.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -51,6 +51,25 @@ cc_test(
     srcs = [
         "bits_test.c",
         ":bits_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# slices.pia, slices and abort (#50), run against expected values.
+genrule(
+    name = "slices_obj",
+    srcs = ["slices.pia"],
+    outs = ["slices.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "slices_test",
+    srcs = [
+        "slices_test.c",
+        ":slices_obj",
     ],
     target_compatible_with = APPLE_SILICON,
 )

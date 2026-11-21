@@ -24,7 +24,7 @@ Pia is an experimental language under active development. The compiler works end
 - **Termination is checked for loops and direct recursion only.** A `while` loop or a recursive call without `decreases` is a skipped goal, which `piac` refuses unless `--allow-unproved` accepts it. Mutual recursion is not checked.
 - **Calls inside contracts** are unknown values, so a contract cannot rely on what another function computes.
 - **Counterexamples do not show array contents** yet, only lengths and scalar values.
-- **Not compiled yet:** function values and lambdas outside metaprograms, variants, `match`, `dyn`, floats, `vec<T, k>`, slicing `xs.[a .. b]`, refinement types and `where`, generics and concepts, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
+- **Not compiled yet:** function values and lambdas outside metaprograms, variants, `match`, `dyn`, floats, `vec<T, k>`, refinement types and `where`, generics and concepts, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
 - **One target.** Code generation targets arm64 macOS. The compiler itself builds on Linux and cross-compiles.
 
 ## Roadmap

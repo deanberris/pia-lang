@@ -299,6 +299,32 @@ def Pia_StoreOp : Pia_Op<"store", [MemoryEffects<[MemWrite]>]> {
   let hasVerifier = 1;
 }
 
+def Pia_SliceOp : Pia_Op<"slice", [Pure]> {
+  let summary = "a view of elements [lo, hi) of a buffer";
+  let description = [{
+    `xs.[lo .. hi]`. The view shares the buffer's storage, so a write
+    through it is a write to the buffer. The bounds must be proved:
+    `0 <= lo <= hi <= len xs`, in every mode.
+  }];
+  let arguments = (ins Pia_Buffer:$buffer, Index:$lo, Index:$hi);
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = [{
+    $buffer `[` $lo `,` $hi `]` attr-dict `:` type($buffer) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_AbortOp : Pia_Op<"abort"> {
+  let summary = "stop the program; proved unreachable in proof mode";
+  let description = [{
+    `abort ()`. Its precondition is `false`, so the verifier proves that no
+    path reaches it. Reached anyway (through `--allow-unproved`), it traps.
+    Its result, when the context wants one, is never produced.
+  }];
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = "attr-dict (`:` type($results)^)?";
+}
+
 def Pia_RecordOp : Pia_Op<"record", [Pure]> {
   let summary = "build a record from its fields, in declaration order";
   let description = [{
