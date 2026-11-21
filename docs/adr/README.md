@@ -37,3 +37,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0031](0031-verified-repl-and-live-environment.md) | A verified REPL over a reusable session, with proved live redefinition | Proposed |
 | [0032](0032-parallel-sliced-cached-proving.md) | Proofs run in parallel, one goal per solver, sliced, cached and selectable | Accepted |
 | [0033](0033-module-initialisation-and-registries.md) | Module initialisation: registries, proved `@init` hooks, and opt-in dynamic registration | Accepted |
+| [0034](0034-concepts-and-overload-resolution.md) | Concepts are checked signatures with laws; overloads are ranked by type and by concept subsumption | Proposed |
