@@ -38,14 +38,55 @@ struct Options {
   unsigned rlimit = 0;
   bool reportCost = false;     // record each query's resource use
   bool dumpSmt = false;        // print each query's SMT-LIB to stderr
+
+  // Solver threads; 0 for one per core. Each SMT goal is solved in its own
+  // Z3 context, and outcomes keep the walk order, so the report does not
+  // depend on the number of threads (ADR 0032).
+  unsigned jobs = 0;
+  // Drop the assertions that share no symbol with the goal before solving.
+  // A sliced query that is not unsat is solved again in full, so slicing
+  // changes only how fast a goal is proved, never whether it is.
+  bool slice = true;
+  // Proved goals are recorded here, one file per goal hash; empty for no
+  // cache. The hash covers the sliced query, the solver version and the
+  // rlimit, so a hit is the proof the solver would find again.
+  std::string cacheDir;
+  // Prove only the goals these specs select: a function name, a module
+  // (its file name, such as "edges.pia"), or a location "file:line" or
+  // "file:line:col". Empty selects every goal. Unselected goals are left out
+  // of the outcomes; earlier goals are still assumed, as in a full run.
+  std::vector<std::string> only;
 };
+
+// What one verifyModule call did, for --verify-stats and the build-time
+// benchmark (tools/bench).
+struct Stats {
+  unsigned goals = 0;        // selected goals
+  unsigned unselected = 0;   // goals --verify-only left out
+  unsigned intervals = 0;    // proved without the solver
+  unsigned skipped = 0;
+  unsigned solved = 0;       // queries sent to Z3
+  unsigned cached = 0;       // goals the proof cache answered
+  unsigned sliced = 0;       // queries slicing made smaller
+  unsigned unsliced = 0;     // sliced queries solved again in full
+  unsigned threads = 0;
+  unsigned long long cost = 0;  // Z3 resource count over every query
+  double encodeMs = 0, solveMs = 0;
+};
+
+// Whether `--verify-only=spec` selects a goal at `where` in `function`.
+bool selects(const std::string &spec, const std::string &where,
+             const std::string &function);
 
 // Checks every function in `module`, in order, and marks each op whose
 // obligations all hold with `pia.proved = "intervals"` or `"smt"`. It first
 // replaces record values with their fields (transforms/ScalarizeRecords.h),
 // so the module afterwards has no records.
+//
+// Goals are encoded one at a time, then solved on `options.jobs` threads.
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
-                                  const Options &options = {});
+                                  const Options &options = {},
+                                  Stats *stats = nullptr);
 
 // "file:line:col" for the innermost file location in `loc`.
 std::string formatLoc(mlir::Location loc);

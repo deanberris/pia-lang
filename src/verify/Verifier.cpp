@@ -1,10 +1,16 @@
 #include "verify/Verifier.h"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "dialect/PiaDialect.h"
@@ -12,9 +18,14 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1448,64 +1459,241 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   return q;
 }
 
-void solve(const Query &q, unsigned width, const Options &options,
-           Outcome &out) {
+// --- solving ---------------------------------------------------------------
+
+// One SMT goal, encoded and waiting for a solver thread.
+struct Job {
+  size_t outcome;  // its index in the outcomes
+  Query query;
+  unsigned width;
+  std::string script;  // the query's declarations and assertions
+};
+
+// What one job did, summed into Stats once every thread has finished.
+struct JobStats {
+  bool solved = false, cached = false, sliced = false, unsliced = false;
+  unsigned long long cost = 0;
+};
+
+// The declarations and assertions of a query; the solver is asked for the
+// result separately.
+std::string scriptOf(const std::string &smtlib) {
+  std::string script;
+  size_t pos = 0;
+  while (pos < smtlib.size()) {
+    size_t end = smtlib.find('\n', pos);
+    if (end == std::string::npos) end = smtlib.size();
+    llvm::StringRef line(smtlib.data() + pos, end - pos);
+    if (!line.contains("(check-sat)") && !line.contains("(reset)"))
+      script.append(line.begin(), line.end()).push_back('\n');
+    pos = end + 1;
+  }
+  return script;
+}
+
+// The ids of the uninterpreted constants and functions `e` mentions.
+std::vector<unsigned> symbolsOf(const z3::expr &e) {
+  std::vector<unsigned> out;
+  std::unordered_set<unsigned> seen;
+  std::vector<z3::expr> work{e};
+  while (!work.empty()) {
+    z3::expr x = work.back();
+    work.pop_back();
+    if (!seen.insert(x.id()).second) continue;
+    if (x.is_app()) {
+      z3::func_decl d = x.decl();
+      if (d.decl_kind() == Z3_OP_UNINTERPRETED) out.push_back(d.id());
+      for (unsigned i = 0; i < x.num_args(); ++i) work.push_back(x.arg(i));
+    } else if (x.is_quantifier() || x.is_lambda()) {
+      work.push_back(x.body());
+    }
+  }
+  return out;
+}
+
+// Goal slicing: the assertions the goal can depend on. The encoder asserts
+// the goal's negation last. Kept are that assertion and, transitively, every
+// assertion that shares a symbol with one already kept. Dropping the rest
+// only weakens the hypotheses, so an unsat slice proves the goal.
+std::vector<unsigned> sliceOf(const z3::expr_vector &assertions) {
+  unsigned n = assertions.size();
+  std::vector<unsigned> all(n);
+  for (unsigned i = 0; i < n; ++i) all[i] = i;
+  if (n < 2) return all;
+  std::vector<std::vector<unsigned>> symbols(n);
+  std::unordered_map<unsigned, std::vector<unsigned>> users;
+  for (unsigned i = 0; i < n; ++i) {
+    symbols[i] = symbolsOf(assertions[i]);
+    for (unsigned s : symbols[i]) users[s].push_back(i);
+  }
+  std::vector<bool> kept(n, false);
+  std::unordered_set<unsigned> done;
+  std::vector<unsigned> work{n - 1};
+  kept[n - 1] = true;
+  while (!work.empty()) {
+    unsigned a = work.back();
+    work.pop_back();
+    for (unsigned s : symbols[a]) {
+      if (!done.insert(s).second) continue;
+      for (unsigned b : users[s])
+        if (!kept[b]) {
+          kept[b] = true;
+          work.push_back(b);
+        }
+    }
+  }
+  std::vector<unsigned> out;
+  for (unsigned i = 0; i < n; ++i)
+    if (kept[i]) out.push_back(i);
+  return out;
+}
+
+// The proof cache's key for a query: everything that decides whether Z3
+// proves it within the limit.
+std::string goalHash(const std::string &query, const Options &options) {
+  llvm::SHA256 h;
+  h.update("pia-proof-cache v1\n");
+  h.update(Z3_get_full_version());
+  h.update("\nrlimit " + std::to_string(options.rlimit) + "\n");
+  h.update(query);
+  std::array<uint8_t, 32> digest = h.final();
+  return llvm::toHex(digest, /*LowerCase=*/true);
+}
+
+std::string cachePath(const Options &options, const std::string &key) {
+  llvm::SmallString<256> path(options.cacheDir);
+  llvm::sys::path::append(path, key.substr(0, 2), key);
+  return std::string(path);
+}
+
+bool cacheLookup(const Options &options, const std::string &key,
+                 unsigned long long &cost) {
+  auto buf = llvm::MemoryBuffer::getFile(cachePath(options, key));
+  if (!buf) return false;
+  llvm::StringRef text = (*buf)->getBuffer().trim();
+  if (!text.consume_front("proved ")) return false;
+  return !text.getAsInteger(10, cost);
+}
+
+// Written to a unique file and renamed into place, so concurrent builds
+// sharing a cache never see a partial entry.
+void cacheStore(const Options &options, const std::string &key,
+                unsigned long long cost) {
+  std::string path = cachePath(options, key);
+  if (llvm::sys::fs::create_directories(llvm::sys::path::parent_path(path)))
+    return;
+  llvm::SmallString<256> tmp;
+  int fd;
+  if (llvm::sys::fs::createUniqueFile(path + ".%%%%%%%%.tmp", fd, tmp))
+    return;
+  {
+    llvm::raw_fd_ostream os(fd, /*shouldClose=*/true);
+    os << "proved " << cost << "\n";
+  }
+  if (llvm::sys::fs::rename(tmp, path)) llvm::sys::fs::remove(tmp);
+}
+
+// Z3's resource count so far in the solver's context.
+unsigned long long rlimitCount(z3::solver &solver) {
+  z3::stats st = solver.statistics();
+  for (unsigned i = 0; i < st.size(); ++i)
+    if (st.key(i) == "rlimit count")
+      return st.is_uint(i) ? st.uint_value(i)
+                           : static_cast<unsigned long long>(st.double_value(i));
+  return 0;
+}
+
+// Decides one goal in a Z3 context of its own, so jobs can run on any
+// thread. The rlimit makes the result independent of which thread, and of
+// how busy the machine is.
+void solve(const Job &job, const Options &options, Outcome &out,
+           JobStats &js) {
+  const Query &q = job.query;
   if (q.smtlib.empty() || !q.reached) {
     out.status = Status::Failed;
     out.method = "the goal could not be encoded";
     return;
   }
-  if (options.dumpSmt) llvm::errs() << "; " << out.where << ": " << out.claim
-                                    << "\n" << q.smtlib << "\n";
-  // Keep the declarations and assertions; this code asks for the result.
-  std::string script;
-  size_t pos = 0;
-  while (pos < q.smtlib.size()) {
-    size_t end = q.smtlib.find('\n', pos);
-    if (end == std::string::npos) end = q.smtlib.size();
-    std::string line = q.smtlib.substr(pos, end - pos);
-    if (line.find("(check-sat)") == std::string::npos &&
-        line.find("(reset)") == std::string::npos)
-      script += line + "\n";
-    pos = end + 1;
-  }
   z3::context ctx;
-  z3::solver solver(ctx);
   z3::params p(ctx);
   p.set("timeout", options.timeoutMs);
   if (options.rlimit) p.set("rlimit", options.rlimit);
-  solver.set(p);
+  z3::solver full(ctx);
+  full.set(p);
   try {
-    solver.from_string(script.c_str());
+    full.from_string(job.script.c_str());
   } catch (const z3::exception &e) {
     out.status = Status::Failed;
     out.method = std::string("the solver rejected the query: ") + e.msg();
     return;
   }
-  z3::check_result result = solver.check();
-  if (options.reportCost) {
-    z3::stats st = solver.statistics();
-    for (unsigned i = 0; i < st.size(); ++i)
-      if (st.key(i) == "rlimit count")
-        out.cost = st.is_uint(i) ? st.uint_value(i)
-                                 : static_cast<unsigned long long>(
-                                       st.double_value(i));
+  z3::solver sliced(ctx);
+  sliced.set(p);
+  z3::solver *first = &full;
+  if (options.slice) {
+    z3::expr_vector as = full.assertions();
+    std::vector<unsigned> keep = sliceOf(as);
+    if (keep.size() < as.size()) {
+      for (unsigned i : keep) sliced.add(as[i]);
+      first = &sliced;
+      js.sliced = true;
+    }
   }
-  switch (result) {
-    case z3::unsat:
+  std::string key;
+  if (!options.cacheDir.empty()) {
+    key = goalHash(first->to_smt2(), options);
+    unsigned long long cost = 0;
+    if (cacheLookup(options, key, cost)) {
+      js.cached = true;
       out.status = Status::Proved;
       out.method = "smt";
+      if (options.reportCost) out.cost = cost;
       return;
-    case z3::unknown:
-      out.status = Status::Failed;
-      out.method = "the solver gave up: " + solver.reason_unknown();
+    }
+  }
+  js.solved = true;
+  z3::check_result result;
+  try {
+    unsigned long long before = rlimitCount(*first);
+    result = first->check();
+    unsigned long long now = rlimitCount(*first);
+    js.cost += now - before;
+    if (result == z3::unsat) {
+      out.status = Status::Proved;
+      out.method = "smt";
+      if (options.reportCost) out.cost = now - before;
+      if (!key.empty()) cacheStore(options, key, now - before);
       return;
-    case z3::sat:
-      break;
+    }
+    if (first != &full) {
+      // The slice may have dropped an assumption the proof needs, such as
+      // a contradictory path condition: decide the whole query.
+      js.unsliced = true;
+      before = now;
+      result = full.check();
+      now = rlimitCount(full);
+      js.cost += now - before;
+      if (result == z3::unsat) {
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost) out.cost = now - before;
+        return;
+      }
+    }
+  } catch (const z3::exception &e) {
+    out.status = Status::Failed;
+    out.method = std::string("the solver failed: ") + e.msg();
+    return;
+  }
+  if (result == z3::unknown) {
+    out.status = Status::Failed;
+    out.method = "the solver gave up: " + full.reason_unknown();
+    return;
   }
   out.status = Status::Failed;
   out.method = "counterexample";
-  z3::model m = solver.get_model();
+  unsigned width = job.width;
+  z3::model m = full.get_model();
   auto value = [&](const Encoder::Decl &d) -> std::string {
     z3::expr c = d.isBool ? ctx.bool_const(d.exported.c_str())
                           : ctx.bv_const(d.exported.c_str(), width);
@@ -1519,21 +1707,82 @@ void solve(const Query &q, unsigned width, const Options &options,
     out.counterexample.push_back({d.display, value(d)});
 }
 
+// Solves every job on a pool of threads. Each job writes only its own
+// outcome, so the outcomes keep the walk order whatever the schedule.
+unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
+                  const Options &options, Stats &st) {
+  if (jobs.empty()) return 0;
+  unsigned threads = options.jobs ? options.jobs
+                                  : std::max(1u, std::thread::hardware_concurrency());
+  threads = std::min<size_t>(threads, jobs.size());
+  // The largest queries first, so a big one does not start last.
+  std::vector<size_t> order(jobs.size());
+  for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    return jobs[a].script.size() > jobs[b].script.size();
+  });
+  std::vector<JobStats> js(jobs.size());
+  std::atomic<size_t> next{0};
+  auto worker = [&] {
+    for (size_t k; (k = next.fetch_add(1)) < order.size();) {
+      size_t i = order[k];
+      solve(jobs[i], options, outcomes[jobs[i].outcome], js[i]);
+    }
+  };
+  std::vector<std::thread> pool;
+  for (unsigned t = 1; t < threads; ++t) pool.emplace_back(worker);
+  worker();
+  for (std::thread &t : pool) t.join();
+  for (const JobStats &j : js) {
+    st.solved += j.solved;
+    st.cached += j.cached;
+    st.sliced += j.sliced;
+    st.unsliced += j.unsliced;
+    st.cost += j.cost;
+  }
+  return threads;
+}
+
+double msSince(std::chrono::steady_clock::time_point t) {
+  return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now() - t)
+      .count();
+}
+
 }  // namespace
 
+bool selects(const std::string &spec, const std::string &where,
+             const std::string &function) {
+  llvm::StringRef s(spec);
+  if (s.ends_with(".pia") || s.ends_with(".pia.md")) {
+    // A module: the file part of "file:line:col".
+    llvm::StringRef w(where);
+    llvm::StringRef file = w.rsplit(':').first.rsplit(':').first;
+    return llvm::sys::path::filename(file) == llvm::sys::path::filename(s);
+  }
+  if (s.contains(':'))
+    return where == spec || llvm::StringRef(where).starts_with(spec + ":");
+  return function == spec;
+}
+
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
-                                  const Options &options) {
+                                  const Options &options, Stats *stats) {
+  auto start = std::chrono::steady_clock::now();
+  Stats st;
   module.getContext()->loadDialect<mlir::smt::SMTDialect>();
   // The encoding has no records: each record value becomes its fields.
   (void)transforms::scalarizeRecords(module);
+  // Encoding uses the module's MLIR context, so it runs on this thread;
+  // only solving is parallel.
   std::vector<Outcome> outcomes;
+  std::vector<Operation *> opOf;  // the op that raised each outcome
+  llvm::DenseSet<Operation *> partial;  // ops with an unselected goal
+  std::vector<Job> jobs;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
     unsigned width = encodingWidth(module, fn);
     std::vector<Goal> goals;
     buildQuery(module, fn, width, -1, goals);
-    // Per op: whether every goal it raises holds, and how.
-    llvm::DenseMap<Operation *, std::pair<bool, bool>> proved;  // all, smt
     for (size_t i = 0; i < goals.size(); ++i) {
       Goal &g = goals[i];
       Outcome out;
@@ -1541,29 +1790,61 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       out.where = formatLoc(g.op->getLoc());
       out.function = fn.getSymName().str();
       out.claim = g.claim;
+      if (!options.only.empty() &&
+          std::none_of(options.only.begin(), options.only.end(),
+                       [&](const std::string &spec) {
+                         return selects(spec, out.where, out.function);
+                       })) {
+        ++st.unselected;
+        partial.insert(g.op);
+        continue;
+      }
+      ++st.goals;
       if (g.skipped) {
+        ++st.skipped;
         out.status = Status::Skipped;
         out.method = g.reason;
       } else if (g.byIntervals) {
+        ++st.intervals;
         out.status = Status::Proved;
         out.method = "intervals";
       } else {
         std::vector<Goal> unused;
-        Query q = buildQuery(module, fn, width, static_cast<int>(i), unused);
-        solve(q, width, options, out);
+        Job job{outcomes.size(),
+                buildQuery(module, fn, width, static_cast<int>(i), unused),
+                width, ""};
+        job.script = scriptOf(job.query.smtlib);
+        if (options.dumpSmt && !job.query.smtlib.empty())
+          llvm::errs() << "; " << out.where << ": " << out.claim << "\n"
+                       << job.query.smtlib << "\n";
+        jobs.push_back(std::move(job));
       }
-      auto &entry = proved.try_emplace(g.op, std::make_pair(true, false))
-                        .first->second;
-      if (out.status != Status::Proved) entry.first = false;
-      if (out.method == "smt") entry.second = true;
+      opOf.push_back(g.op);
       outcomes.push_back(std::move(out));
     }
-    for (auto &[op, state] : proved)
-      if (state.first)
-        op->setAttr("pia.proved", mlir::StringAttr::get(
-                                      module.getContext(),
-                                      state.second ? "smt" : "intervals"));
   }
+  st.encodeMs = msSince(start);
+  auto solving = std::chrono::steady_clock::now();
+  st.threads = solveAll(jobs, outcomes, options, st);
+  st.solveMs = msSince(solving);
+  // Per op: whether every goal it raises holds, and how.
+  llvm::DenseMap<Operation *, std::pair<bool, bool>> proved;  // all, smt
+  llvm::SmallVector<Operation *> order;
+  for (size_t i = 0; i < outcomes.size(); ++i) {
+    auto [it, fresh] =
+        proved.try_emplace(opOf[i], std::make_pair(true, false));
+    if (fresh) order.push_back(opOf[i]);
+    if (outcomes[i].status != Status::Proved) it->second.first = false;
+    if (outcomes[i].method == "smt") it->second.second = true;
+  }
+  for (Operation *op : order) {
+    auto state = proved.lookup(op);
+    if (state.first && !partial.contains(op))
+      op->setAttr("pia.proved",
+                  mlir::StringAttr::get(module.getContext(),
+                                        state.second ? "smt" : "intervals"));
+  }
+  if (stats) *stats = st;
   return outcomes;
 }
 
