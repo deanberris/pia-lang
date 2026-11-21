@@ -79,8 +79,11 @@ A name that a metaprogram call generated belongs to that call: redefine the call
 `:spawn <expr>` proves an expression, then runs it on a thread of its own, so the session carries on while it runs. Redefining a function the task uses swaps the new code into the running task, as in Lisp, as long as the change is proved safe for code that is already running ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)):
 
 - **Every definition is called through a slot.** In the REPL, a call from one definition to another loads the callee's current code from its slot. Committing a redefinition stores the new code in the slot, so each call that starts afterwards runs it, while calls already running finish on the code they started in. The engine holding old code stays alive until no task uses it.
-- **A definition a running task can reach must keep its contract.** The task's code was proved against the old definition's contract. So the new definition's body is proved against that old contract as well as its own, as a hidden function: its obligations under the old `requires`, and the old `ensures`. If that proof holds and the type is unchanged, the swap is safe for the running task, and the result says `swapped into running task 1`. If it does not, the redefinition is refused until the task finishes.
-- **Everything else is the same as without tasks.** The redefinition and everything that uses it are verified again, as one transaction. Definitions no running task can reach change freely. `:forget` and `:reset` wait for the tasks that need what they would remove.
+- **A refinement swaps at once.** The task's code was proved against the old definition's contract. So the new definition's body is proved against that old contract as well as its own, as a hidden function: its obligations under the old `requires`, and the old `ensures`. If that proof holds and the type is unchanged, the swap is safe for the running task wherever it is, and the result says `swapped into running task 1`.
+- **Any other change swaps together with its callers.** If the new body does not meet the old contract, or its type changed (also when a record type it uses changed), the code that calls it was proved against something that no longer holds. The redefinition and everything that uses it are verified again, as always, and then the changed definition and every definition that calls it are swapped together, at a moment when no task is running any of them. Calls into that set from outside it wait while the set drains, for at most two seconds. Their callers outside the set relied only on contracts that did not change, so they carry on. If a task never leaves the set, for example because its own expression calls a definition in it, nothing is committed until the task finishes.
+- **Everything else is the same as without tasks.** Definitions no running task can reach change freely. `:forget` and `:reset` wait for the tasks that need what they would remove.
+
+To find that moment, code that a task may run counts its calls in progress, one counter per definition. That costs a few nanoseconds per call, so the REPL counts only in code compiled while a task runs or for `:spawn`. Compiled programs never count.
 
 <!-- repl: live.pia -->
 ```ocaml
@@ -95,7 +98,7 @@ let total (n : u64) : u64
     invariant s <= 2 * i
   do s <- s + step 5 done;
   s
-:spawn total 2000000000
+:spawn total 1000000000
 :redef let step (a : u64) : u64 requires a < 1000 ensures result = 1 = 2 - 1
 :redef let step (a : u64) : u64 requires a < 1000 ensures result <= 2 = 2
 :wait 1
@@ -105,13 +108,43 @@ let total (n : u64) : u64
 $ pia repl < live.pia
 step : (a : usize) -> usize  (* 1 proved *)
 total : (n : usize) -> usize  (* 4 proved *)
-task 1 (total 2000000000) running
+task 1 (total 1000000000) running
 step : (a : usize) -> usize  (redefined, swapped into running task 1)  (* 2 proved *)
-[5]: error: 'step' is in use by a running task (task 1), so its new definition must refine the old one, but the new body does not meet the old contract: the postcondition holds (the old contract at [4]:1:44); nothing was committed (wait for the task with :wait, or keep the contract)
-task 1 (total 2000000000) done: usize = 2000000000
+[5]: error: 'step' no longer refines what running code was proved against (the new body does not meet the old contract: the postcondition holds (the old contract at [4]:1:44)), so it can only be swapped together with 'total', which calls it, at a moment when no task is running any of them, but task 1 stayed inside 'total' for 2000 ms; nothing was committed (wait for the task with :wait)
+task 1 (total 1000000000) done: usize = 1000000000
 ```
 
-The second `step` would still let `total` verify, but the running task was proved against `result = 1`, so the change waits for it.
+The second `step` would still let `total` verify, but `total` was proved against `result = 1`, and the task never leaves `total`, so the change waits for it. With one more level of calls, the same change goes through while the task runs:
+
+<!-- untested: the final value depends on when the swap happens -->
+```ocaml
+let chunk (k : u64) : u64
+  requires k <= 1000
+  ensures result <= 2 * k
+= let s : mutable u64 = 0 in
+  for i in 0 .. k
+    invariant s <= 2 * i
+  do s <- s + step 5 done;
+  s
+let many (n : u64) : u64
+  requires n <= 8000000
+= let s : mutable u64 = 0 in
+  for i in 0 .. n
+    invariant s <= 2000 * i
+  do s <- s + chunk 1000 done;
+  s
+:spawn many 1000000
+:redef let step (a : u64) : u64 requires a < 1000 ensures result <= 2 = 2
+:wait 2
+```
+
+```console
+task 2 (many 1000000) running
+step : (a : usize) -> usize  (redefined, swapped into running task 2 at a moment when no task was running 'chunk' or 'step')  (* 1 proved *)
+task 2 (many 1000000) done: usize = 1497312000
+```
+
+`chunk` still verifies with the new `step`, and `many` relies only on `chunk`'s contract, which did not change. So `step` and `chunk` are swapped together between two calls of `chunk`. Every call of `chunk` ran wholly on the old code or wholly on the new, which is why the value is a multiple of 1000.
 
 ### Metaprograms that change the environment
 
