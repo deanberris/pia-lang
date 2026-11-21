@@ -27,7 +27,7 @@ code turns each of these from a production incident into a compile error.
 | [Rust `str::repeat`](rust-str-repeat.pia.md) (CVE-2018-1000810) | 2018 | a wrapping multiplication sized a buffer that `unsafe` code then overran | overflow goals and postconditions | done |
 | [Rust `VecDeque`](rust-vecdeque.pia.md) (CVE-2018-1000657) | 2017 | `reserve` compared against the wrong "capacity", and `unsafe` code moved elements past the end | preconditions | done |
 | [libwebp Huffman tables](libwebp.pia.md) (CVE-2023-4863) | 2023 | tables sized for valid codes were filled before the code was checked | bounds and loop invariants | done |
-| Zig integer casts | | a narrowing cast that is checked only in safe build modes | narrowing goals | next |
+| [Bun `readFile` on Windows](bun-readfile.pia.md) (Zig) | 2026 | a byte count past 2 GB was truncated to a C `int`, and the negative result was cast to `usize` | narrowing goals and postconditions | done |
 | Ariane 5 flight 501 | 1996 | a 64-bit float converted to a 16-bit integer overflowed | narrowing goals | needs floats ([M11](https://github.com/deanberris/pia-lang/issues/12)) |
 | Therac-25 | 1985 to 1987 | a race between operator input and the treatment setup | race proofs | needs concurrency ([M12](https://github.com/deanberris/pia-lang/issues/13)) |
 
