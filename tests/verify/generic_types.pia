@@ -43,4 +43,6 @@ let swap (p : pair u8 u16) : pair u16 u8
 let first_some (x : option (option u8)) : u8
 = match x with | Some y -> (match y with | Some v -> v | None -> 1) | None -> 0
 
-// CHECK: dump the report (filled in from CI output)
+(* Expected report, in order.
+// CHECK: placeholder to dump the report
+*)

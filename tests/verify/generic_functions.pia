@@ -48,4 +48,6 @@ let pick (t : type) (a : t) (b : t) : t
 
 let use_pick (x : u8) : u8 = pick x x
 
-// CHECK: dump the report (filled in from CI output)
+(* Expected report, in order.
+// CHECK: placeholder to dump the report
+*)

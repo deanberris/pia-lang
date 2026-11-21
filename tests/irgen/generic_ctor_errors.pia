@@ -9,6 +9,6 @@ let shape = type | Circle of u8 | Dot
 *)
 let unknown () : u8 = match None with | _ -> 0
 
-(* CHECK: generic_ctor_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Dot' is not a constructor of option<u8>
+(* CHECK: generic_ctor_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Dot' is a constructor of shape, not of option<u8>
 *)
 let wrong (x : option u8) : u8 = match x with | Dot -> 0 | _ -> 1
