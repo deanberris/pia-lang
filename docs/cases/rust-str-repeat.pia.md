@@ -70,7 +70,9 @@ let capacity (size : usize) (n : usize) : usize = size * n
 
 ```console
 $ piac --verify capacity.pia
-...
+capacity.pia:1:56: failed: '*' does not overflow usize
+  counterexample: size = 1828397664858756623, n = 12022660837723052030, result = 21982205001081651031079857090536094690
+0 proved, 1 failed, 0 skipped
 ```
 
 By default every Pia multiplication is a goal: it must be proved to fit.
@@ -94,7 +96,9 @@ let capacity (size : usize) (n : usize) : usize @overflow(wrap)
 
 ```console
 $ piac --verify capacity_wrap.pia
-...
+capacity_wrap.pia:2:3: failed: the postcondition holds
+  counterexample: size = 18229368363665230819, n = 16679650292680605362
+0 proved, 1 failed, 0 skipped
 ```
 
 Arithmetic in a contract is exact, so `size * n` in the postcondition is
@@ -137,7 +141,9 @@ Every goal on this page is proved:
 
 ```console
 $ piac --verify rust-str-repeat.pia.md
-...
+rust-str-repeat.pia.md:133:3: proved: the postcondition holds [smt]
+rust-str-repeat.pia.md:134:3: proved: the postcondition holds [smt]
+2 proved, 0 failed, 0 skipped
 ```
 
 The postconditions are exact, even in a saturating function: `size * n`
