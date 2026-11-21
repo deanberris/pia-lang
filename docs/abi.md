@@ -155,6 +155,8 @@ It runs at three points:
 
 **Pia images have no static initializers.** `piac` never emits `__mod_init_func` entries for Pia code: module-level values are constants resolved at compile time, and anything else must be explicit in `main`. This is what makes checking after `dlopen` sound: opening a Pia library runs none of its code, so the check happens before anything the certificate guards can execute. The certificate check rejects a Pia image that contains initializers. Non-Pia libraries (libSystem, C dependencies) can still have initializers. They are outside the proof anyway, and enter the trusted base through `extern` contracts.
 
+Module initialisation still exists, but not through dyld. `@init` functions and registries are run by the Pia runtime after this check, in a proved order, and dynamic loading with `Pia.Dl.open` is provided by the opt-in `Pia.Dyn` environment, which calls each image's generated registration function ([init.md](init.md), [ADR 0032](adr/0032-module-initialisation-and-registries.md)).
+
 dyld has no hook that runs before binding, and with the hardened runtime `DYLD_INSERT_LIBRARIES` is disabled, so Pia does not rely on either. Layer 1 covers the window before the runtime's check runs.
 
 ## Layer 3: audit and re-checking
