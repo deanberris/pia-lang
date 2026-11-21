@@ -64,12 +64,11 @@ The code a quote builds takes the location of the expansion site: the operator, 
 
 ## Hygiene
 
-The rules are [ADR 0022](adr/0022-metaprogram-hygiene.md).
-
-Hygiene is on by default, so a quote cannot capture or be captured by names at the expansion site:
+The rules are [ADR 0022](adr/0022-metaprogram-hygiene.md). Pia has no shadowing: a binding written in the source may not reuse the name of a local in scope, a function, a type or a core builtin. So an unqualified name always means its one visible binding. On top of that, hygiene keeps a quote from capturing, or being captured by, names at the expansion site:
 
 - **Names a quote binds are renamed.** A `let ... in`, a parameter, a lambda or loop variable, or a quantifier binder inside a quote gets a fresh name such as `t#1`, so code spliced into its scope still sees the caller's `t`. The names of quoted top-level items are not renamed, since they are meant to be used.
-- **Free names refer to the definition site.** A free name in a quote is marked `[prelude]` when it is a core builtin, and `[toplevel]` otherwise. IRGen resolves a `[prelude]` name to the builtin and a `[toplevel]` name to a top-level function, never to a local.
+- **Free names refer to the definition site.** A free name in a quote is marked `[prelude]` when it is a core builtin, and `[toplevel]` otherwise. IRGen resolves a `[prelude]` name to the builtin and a `[toplevel]` name to a top-level function, never to a local. With modules (M8), these become module-qualified paths such as `prelude.add`.
+- **Operators and derives for a type will use argument-dependent lookup.** They are found in the module that defines the type and in adapter modules the program imports. Two candidates are an ambiguity error. This arrives with modules.
 - **`$!name` opts out.** It stands for the plain name `name`, bound or resolved where the code lands. `derive_eq` uses it for the parameters `a` and `b`, which two separate quotes share:
 
 ```ocaml
@@ -128,6 +127,7 @@ The loop stops when a pass changes nothing. A metaprogram still waiting then is 
 | `errors.pia` | undeclared operators, unknown derives, failing metaprograms, operators for a type |
 | `waiting.pia` | a derive waiting for a type that is never defined |
 | `cycles.pia` | `--meta-cycles` and its default |
+| `shadowing.pia`, `builtin_name.pia` | the no-shadowing rule, and that quote binders never trip it |
 
 ## Not yet
 

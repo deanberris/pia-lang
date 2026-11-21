@@ -39,6 +39,7 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 ## Bindings and mutation
 
 - `let x = e in body` binds an SSA value. An annotation converts `e` to the declared type.
+- There is no shadowing ([ADR 0022](adr/0022-metaprogram-hygiene.md)). A `let`, parameter, loop variable or quantifier binder may not reuse the name of a local in scope, a function, a type or a core builtin. Assigning to a mutable local is not shadowing.
 - `let x : mutable T = e in ...` makes `x` assignable. There is no memory: each `x <- v` rebinds the SSA value, and structured control flow threads it through. A mutable local assigned inside `if` becomes an extra `scf.if` result, and one assigned inside a loop becomes a loop-carried value (`iter_args` for `for`, `scf.while` operands).
 - Parameters are mutable only with `mutable`. Their modifiers are kept as the `pia.modifiers` argument attribute.
 - `xs.[i]` lowers to `pia.load` and `xs.[i] <- v` to `pia.store`. Writing requires the parameter to be `out` or `inout`. Indices go through `pia.to_index`. `len xs` is `pia.len` followed by `pia.from_index` to `usize`.

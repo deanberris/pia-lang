@@ -221,6 +221,23 @@ class Gen {
     return b;
   }
 
+  // Pia has no shadowing (ADR 0022): a binding written in the source may not
+  // reuse the name of a local in scope, a function, a type or a core
+  // builtin. Names a quote binds carry a `#` and are always fresh.
+  bool checkFresh(const std::string &name, syntax::SourceLoc at) {
+    if (name.find('#') != std::string::npos) return true;
+    std::string what;
+    if (lookup(name)) what = "a local of the same name";
+    else if (sigs_.count(name)) what = "the function '" + name + "'";
+    else if (types_.named(name) || types_.builtin(name))
+      what = "the type '" + name + "'";
+    else if (sema::isCoreBuiltin(name)) what = "a core builtin";
+    else return true;
+    diags_.error(at, "'" + name + "' shadows " + what +
+                         "; Pia does not allow shadowing (ADR 0022)");
+    return false;
+  }
+
   BindingPtr lookup(const std::string &name) {
     for (auto it = scopes_.rbegin(); it != scopes_.rend(); ++it) {
       auto found = it->find(name);
@@ -289,6 +306,7 @@ class Gen {
       entry->getArgument(i).setLoc(mlir::NameLoc::get(
           b_.getStringAttr(p.name),
           mlir::FileLineColLoc::get(file_, p.loc.line, p.loc.column)));
+      checkFresh(p.name, p.loc);
       BindingPtr b = bind(p.name, entry->getArgument(i), p.type,
                           sema::hasModifier(p.modifiers, "mutable"));
       b->modifiers = p.modifiers;
@@ -1131,6 +1149,10 @@ class Gen {
       pushScope();
       setValues(vars, forOp.getRegionIterArgs());
       Value i = create<FromIndexOp>(loc(pattern), t, forOp.getInductionVar());
+      if (!checkFresh(pattern.text, pattern.loc)) {
+        popScope();
+        return std::nullopt;
+      }
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
@@ -1219,6 +1241,7 @@ class Gen {
     }
     if (isUnit(v->type))
       return fail(valueNode, "'" + n.text + "' would have type unit");
+    if (!checkFresh(n.text, n.loc)) return std::nullopt;
     pushScope();
     bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     R body = genExpr(*n.kids[4], expected);
@@ -1256,6 +1279,7 @@ class Gen {
             : create<contract::ExistsOp>(l, b_.getI1Type()).getOperation();
     OpBuilder::InsertionGuard guard(b_);
     Block *block = b_.createBlock(&q->getRegion(0), {}, {t}, {l});
+    if (!checkFresh(binder.text, binder.loc)) return std::nullopt;
     pushScope();
     Value x = block->getArgument(0);
     bind(binder.text, x, t, false);

@@ -222,6 +222,15 @@ bool isTypeItem(const Node &item) {
          item.kids[0]->kids.empty() && item.kids[3]->kind == NodeKind::TypeValue;
 }
 
+bool isCoreBuiltin(std::string_view name) {
+  static const std::set<std::string, std::less<>> names = {
+      "add", "sub", "add_sat", "sub_sat", "mul", "div", "rem",
+      "eq",  "ne",  "lt",      "gt",      "le",  "ge",
+      "and", "or",  "implies", "iff",     "len", "old",
+  };
+  return names.count(name);
+}
+
 namespace {
 
 // `let name = type <body>`: a record, or another name for a type.
@@ -380,6 +389,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         ret.kids[0]->kind == NodeKind::Annot) {
       sig.result = types.resolveAnnot(*ret.kids[0]);
       if (!sig.result) ok = false;
+    }
+    if (isCoreBuiltin(sig.name)) {
+      diags.error(item->loc, "'" + sig.name + "' is a core builtin; Pia does "
+                             "not allow shadowing (ADR 0022)");
+      continue;
     }
     if (sigs.count(sig.name) || types.named(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is already defined");
