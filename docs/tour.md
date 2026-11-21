@@ -232,7 +232,7 @@ A payload's type can be an integer, `bool`, a record, another variant or `unit`.
 
 ## Generics
 
-A generic type is a function from types to a type, and a generic function takes type parameters, written `(t : type)`, before its other parameters. Each use names concrete types: `option u8` is an instance of `option`, and a call of `unwrap_or` with an `option u16` calls its instance `unwrap_or<u16>`. Every instance is generated and proved on its own, so each goal is about concrete types:
+A generic type is a function from types to a type, and a generic function takes type parameters, written `(t : type)`, before its other parameters. Each use names concrete types: `option u8` is an instance of `option`, and a call of `unwrap_or` with an `option u16` calls its instance `unwrap_or<u16>`. Every instance is generated and proved on its own, so each goal is about concrete types. As with any call, a caller knows only what the instance's contract says, so `same` proves from `id`'s `ensures`:
 
 ```ocaml
 let option = let (t : type) => type | None | Some of t
@@ -244,9 +244,15 @@ let unwrap_or (t : type) (o : option t) (d : t) : t =
   | Some v -> v
   | None -> d
 
-let first (v : u16) : u16
+let first (v : u16) : u16 = unwrap_or (Some v) 0
+
+let id (t : type) (x : t) : t
+  ensures result = x
+= x
+
+let same (v : u8) : u8
   ensures result = v
-= unwrap_or (Some v) 0
+= id v
 
 let reserve (n : usize) : result unit oom =
   if n > 4096 then Err OutOfMemory else Ok ()

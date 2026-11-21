@@ -26,25 +26,20 @@ let use_flip (p : pair u8 u16) : u16
   ensures result = p.snd
 = (flip p).fst
 
-(* Deduced through a constructor's payload, or given explicitly. *)
+(* Deduced through a constructor's payload, or given explicitly. A caller
+   knows only an instance's contract, as with any call. *)
 let unwrap_or (t : type) (o : option t) (d : t) : t
 = match o with | Some v -> v | None -> d
 
-let deduced (v : u16) : u16
-  ensures result = v
-= unwrap_or (Some v) 0
+let deduced (v : u16) : u16 = unwrap_or (Some v) 0
 
-let explicit (v : u16) : u16
-  ensures result = v
-= unwrap_or<u16> (Some v) 0
+let explicit (v : u16) : u16 = unwrap_or<u16> (Some v) 0
 
 (* Deduced from the expected type: `none` has no arguments, and here it
    must build the `option u8` that `unwrap_or<u8>` takes. *)
 let none (t : type) : option t = None
 
-let empty () : u8
-  ensures result = 7
-= unwrap_or<u8> none 7
+let empty () : u8 = unwrap_or<u8> none 7
 
 (* Each instance is proved on its own: this one fails for u8. *)
 let pick (t : type) (a : t) (b : t) : t
@@ -52,3 +47,5 @@ let pick (t : type) (a : t) (b : t) : t
 = a
 
 let use_pick (x : u8) : u8 = pick x x
+
+// CHECK: dump the report (filled in from CI output)

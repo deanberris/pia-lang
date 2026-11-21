@@ -1068,9 +1068,14 @@ class Gen {
         const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
         if (!c && !types_.isCtorName(pat.text))
           return fail(pat, "unknown constructor '" + pat.text + "'");
-        if (!c)
+        if (!c) {
+          if (const sema::Ctor *other = types_.ctor(pat.text))
+            return fail(pat, "'" + pat.text + "' is a constructor of " +
+                                 typeName(other->variant) + ", not of " +
+                                 typeName(s->type));
           return fail(pat, "'" + pat.text + "' is not a constructor of " +
                                typeName(s->type));
+        }
         if (covered.count(c->name))
           return fail(pat, "'" + c->name + "' is already matched by an "
                            "earlier arm");
