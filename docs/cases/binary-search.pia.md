@@ -190,6 +190,11 @@ Every goal on this page is proved, including that the loop ends:
 ```console
 $ piac --verify binary-search.pia.md
 ...
+binary-search.pia.md:177:5: proved: the measure decreases [smt]
+...
+binary-search.pia.md:165:3: proved: the postcondition holds [smt]
+binary-search.pia.md:166:3: proved: the postcondition holds [smt]
+24 proved, 0 failed, 0 skipped
 ```
 
 In a 2008 update, Bloch corrected his own C fix, which was not guaranteed
