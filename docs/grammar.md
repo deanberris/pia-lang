@@ -98,13 +98,19 @@ Every other operator gets its precedence from the operator table. The table come
 | 3 | `&&` | right |
 | 4 | `=` `<>` `<` `>` `<=` `>=` | none |
 | 5 | `..` (range) | none |
+| 5.5 | `<<` `>>` | left |
 | 6 | `+` `-` `+\|` `-\|` | left |
+| 6.3 | `\|` (bitwise or, inside brackets) | left |
+| 6.4 | `^` | left |
+| 6.5 | `&` | left |
 | 7 | `*` `/` `%` `mod` | left |
-| prefix | `-` | |
+| prefix | `-` `~` | |
 | | application | left |
 | | `.f` `.[i]` `name<...>` | postfix |
 
-The levels match the design's `let meta operator ( + ) : prec 6 left`. A user operator declared at a level above 7 binds tighter than `*` and looser than application.
+The levels match the design's `let meta operator ( + ) : prec 6 left`. A level may have one decimal place, as in `prec 6.5`. A user operator declared at a level above 7 binds tighter than `*` and looser than application.
+
+Unlike C, the bit operators bind tighter than comparisons, so `x & mask = 0` is `(x & mask) = 0`. Because `|` also separates variants and match arms, it is bitwise or only inside parentheses, brackets or braces, and not directly in a match arm's body there: `| A -> (x | y)` needs its parentheses. `~x` is the builtin `bnot x`. The lexer reads a run of operator characters as one token, so `a&~b` is the operator `&~`; write `a & ~b`.
 
 ### Other punctuation
 
@@ -172,7 +178,7 @@ lambda    = "let" lparam { lparam } "=>" seq ;
 lparam    = "(" pattern [ ":" annot ] ")" | "(" ")" ;
 
 meta_operator = "let" "meta" "operator" "(" operator ")"
-                [ ":" "prec" INT ( "left" | "right" | "none" ) ]
+                [ ":" "prec" ( INT | FLOAT ) ( "left" | "right" | "none" ) ]
                 [ "for" type ] "=" seq ;
 ```
 

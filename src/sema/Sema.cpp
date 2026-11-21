@@ -227,6 +227,7 @@ bool isCoreBuiltin(std::string_view name) {
       "add", "sub", "add_sat", "sub_sat", "mul", "div", "rem",
       "eq",  "ne",  "lt",      "gt",      "le",  "ge",
       "and", "or",  "implies", "iff",     "len", "old",
+      "band", "bor", "bxor", "bnot", "shl", "shr",
   };
   return names.count(name);
 }

@@ -22,8 +22,14 @@ The standard operators live in the prelude ([`src/syntax/Prelude.cpp`](../src/sy
 | 2 | `\|\|` | right | `or` |
 | 3 | `&&` | right | `and` |
 | 4 | `=` `<>` `<` `>` `<=` `>=` | none | `eq` `ne` `lt` `gt` `le` `ge` |
+| 5.5 | `<<` `>>` | left | `shl` `shr` |
 | 6 | `+` `-` `+\|` `-\|` | left | `add` `sub` `add_sat` `sub_sat` |
+| 6.3 | `\|` | left | `bor` |
+| 6.4 | `^` | left | `bxor` |
+| 6.5 | `&` | left | `band` |
 | 7 | `*` `/` `%` `mod` | left | `mul` `div` `rem` `rem` |
+
+Prefix `~x` is built into the parser, like `-x`, and stands for `bnot x`. `|` is bitwise or only inside brackets ([grammar.md](grammar.md#operators)).
 
 The parser reads the fixities from these declarations. A program can declare its own operators, or redeclare a prelude one. When it does, `parseProgram` parses the program again with the new table. An operator nobody declares still parses, with a level from its first character ([grammar.md](grammar.md#operators)), and expansion then reports it as undeclared.
 

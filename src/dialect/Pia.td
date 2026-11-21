@@ -192,6 +192,34 @@ def Pia_RemOp : Pia_ArithOp<"rem"> {
   }];
 }
 
+def Pia_BAndOp : Pia_ArithOp<"band", [Commutative]> {
+  let summary = "bitwise and";
+  let description = [{
+    Bitwise operations act on the two's-complement form of the exact
+    integers, as if it extended forever to the left, so the exact result
+    never depends on a machine width. The result type is checked like any
+    other arithmetic result.
+  }];
+}
+def Pia_BOrOp : Pia_ArithOp<"bor", [Commutative]> { let summary = "bitwise or"; }
+def Pia_BXorOp : Pia_ArithOp<"bxor", [Commutative]> { let summary = "bitwise exclusive or"; }
+
+def Pia_ShlOp : Pia_ArithOp<"shl"> {
+  let summary = "shift left: `lhs * 2^rhs`";
+  let description = [{
+    The amount must be proved to lie in [0, w), w the storage width of the
+    left operand's type, whatever the overflow mode. Under `overflow(proof)`
+    the exact product must also fit the result type, so no bit is lost.
+  }];
+}
+def Pia_ShrOp : Pia_ArithOp<"shr"> {
+  let summary = "arithmetic shift right: `floor(lhs / 2^rhs)`";
+  let description = [{
+    The amount must be proved to lie in [0, w) as for `shl`. Unsigned
+    values shift in zeros and signed ones copy the sign bit.
+  }];
+}
+
 def Pia_ToIndexOp : Pia_Op<"to_index", [Pure]> {
   let summary = "use a range-typed integer as an index";
   let description = [{

@@ -1,5 +1,6 @@
 #include "syntax/Parser.h"
 
+#include <cctype>
 #include <string>
 #include <utility>
 #include <vector>
@@ -23,17 +24,38 @@ using OpInfo = Fixity;  // level 0 means "not a binary operator"
 
 // An operator with no declaration gets a level from its first character,
 // as in OCaml (docs/grammar.md, "Operators").
+// Levels are held in tenths (Fixity).
 OpInfo defaultFixity(std::string_view op) {
-  if (op.substr(0, 2) == "||") return {2, Assoc::Right};
-  if (op.substr(0, 2) == "&&") return {3, Assoc::Right};
+  if (op.substr(0, 2) == "||") return {20, Assoc::Right};
+  if (op.substr(0, 2) == "&&") return {30, Assoc::Right};
   switch (op[0]) {
     case '=': case '<': case '>': case '|': case '&': case '$': case '!':
-      return {4, Assoc::None};
+      return {40, Assoc::None};
     case '+': case '-':
-      return {6, Assoc::Left};
+      return {60, Assoc::Left};
     default:
-      return {7, Assoc::Left};
+      return {70, Assoc::Left};
   }
+}
+
+// "6" is 60 and "6.5" is 65; anything else is 0.
+int parseLevel(std::string_view text) {
+  int whole = 0, tenth = 0;
+  size_t i = 0;
+  if (text.empty() || !std::isdigit(static_cast<unsigned char>(text[0])))
+    return 0;
+  for (; i < text.size() && std::isdigit(static_cast<unsigned char>(text[i]));
+       ++i) {
+    whole = whole * 10 + (text[i] - '0');
+    if (whole > 99) return 0;
+  }
+  if (i < text.size()) {
+    if (text[i] != '.' || i + 2 != text.size() ||
+        !std::isdigit(static_cast<unsigned char>(text[i + 1])))
+      return 0;
+    tenth = text[i + 1] - '0';
+  }
+  return whole * 10 + tenth;
 }
 
 class Parser {
@@ -127,15 +149,20 @@ class Parser {
   // Brackets reset the contract-clause rules: `(a = b = c)` is still an error.
   struct Bracket {
     Parser &p;
-    bool contract, ended;
+    bool contract, ended, bitOr;
     explicit Bracket(Parser &p)
-        : p(p), contract(p.contractMode_), ended(p.clauseEnded_) {
+        : p(p),
+          contract(p.contractMode_),
+          ended(p.clauseEnded_),
+          bitOr(p.bitOr_) {
       p.contractMode_ = false;
       p.clauseEnded_ = false;
+      p.bitOr_ = true;
     }
     ~Bracket() {
       p.contractMode_ = contract;
       p.clauseEnded_ = ended;
+      p.bitOr_ = bitOr;
     }
   };
 
@@ -242,7 +269,7 @@ class Parser {
     if (clause.kind == N::Decreases) return nullptr;
     NodePtr *slot = &clause.kids[0];
     while ((*slot)->kind == N::Binary && (*slot)->text != "=" &&
-           operatorInfo((*slot)->text).level < 4)
+           operatorInfo((*slot)->text).level < 40)
       slot = &(*slot)->kids[1];
     if ((*slot)->kind != N::Binary || (*slot)->text != "=") return nullptr;
     NodePtr eq = std::move(*slot);
@@ -323,7 +350,7 @@ class Parser {
     take();  // meta
     take();  // operator
     expect(K::LParen, "'(' before the operator");
-    if (!at(K::Op) && !at(K::Eq)) fail("expected an operator");
+    if (!at(K::Op) && !at(K::Eq) && !at(K::Bar)) fail("expected an operator");
     n->text = text();
     take();
     expect(K::RParen, "')' after the operator");
@@ -331,7 +358,12 @@ class Parser {
       auto f = makeNode(N::Fixity, loc());
       std::string prec(expect(K::Ident, "'prec'").text);
       if (prec != "prec") fail("expected 'prec'");
-      std::string level(expect(K::Int, "a precedence level").text);
+      if (!at(K::Int) && !at(K::Float)) fail("expected a precedence level");
+      std::string level(take().text);
+      int tenths = parseLevel(level);
+      if (tenths < 10)
+        fail("a precedence level is a number from 1 to 99 with at most one "
+             "decimal place, such as 6 or 6.5");
       std::string assoc(expect(K::Ident, "'left', 'right' or 'none'").text);
       if (assoc != "left" && assoc != "right" && assoc != "none")
         fail("expected 'left', 'right' or 'none'");
@@ -555,9 +587,9 @@ class Parser {
         if (accept(K::LBraceAdj)) {
           Bracket b(*this);
           auto n = makeNode(N::RangeType, start, name);
-          n->add(binary(6));
+          n->add(binary(60));
           expect(K::DotDot, "'..' in a range type");
-          n->add(binary(6));
+          n->add(binary(60));
           expect(K::RBrace, "'}'");
           return n;
         }
@@ -773,6 +805,13 @@ class Parser {
     n->add(seq());
     expect(K::With, "'with'");
     accept(K::Bar);
+    // An arm's body ends at the next `|`, even inside brackets.
+    struct Restore {
+      bool &flag;
+      bool old;
+      ~Restore() { flag = old; }
+    } restore{bitOr_, bitOr_};
+    bitOr_ = false;
     do {
       auto arm = makeNode(N::Arm, loc());
       arm->add(pattern());
@@ -805,11 +844,11 @@ class Parser {
         auto n = makeNode(spread ? N::Spread : N::For, start);
         n->add(pattern());
         expect(K::In, "'in'");
-        n->add(binary(2));
+        n->add(binary(20));
         if (spread) {
           n->add(attrs());
         } else if (accept(K::Step)) {
-          n->add(binary(6));
+          n->add(binary(60));
         } else {
           n->add(makeNode(N::None, loc()));
         }
@@ -880,7 +919,7 @@ class Parser {
       std::string name(expect(K::Ident, "a bound variable").text);
       if (accept(K::In)) {
         auto b = makeNode(N::RangeBinder, loc(), name);
-        b->add(binary(5));
+        b->add(binary(50));
         n->add(std::move(b));
       } else {
         auto b = makeNode(N::Binder, loc(), name);
@@ -905,7 +944,10 @@ class Parser {
   // Precedence climbing over the operator table.
   OpInfo binaryInfo() const {
     if (at(K::Eq)) return operatorInfo("=");
-    if (at(K::DotDot)) return {5, Assoc::None};
+    if (at(K::DotDot)) return {50, Assoc::None};
+    // `|` is bitwise or only inside brackets, away from match arms: at the
+    // top level it separates variants and arms (docs/grammar.md).
+    if (at(K::Bar) && bitOr_) return operatorInfo("|");
     if (at(K::Op)) return operatorInfo(tok().text);
     return {};
   }
@@ -935,7 +977,7 @@ class Parser {
       if (info.assoc == Assoc::None) usedNone = info.level;
       NodePtr rhs;
       bool quantified = false;
-      if (info.level <= 4 && (at(K::Forall) || at(K::Exists))) {
+      if (info.level <= 40 && (at(K::Forall) || at(K::Exists))) {
         rhs = quantifier();
         quantified = true;
       } else {
@@ -954,6 +996,16 @@ class Parser {
   NodePtr unary() {
     if (atOp("-")) {
       auto n = makeNode(N::Neg, loc());
+      take();
+      n->add(unary());
+      return n;
+    }
+    // `~x` is the core builtin `bnot x` (docs/stdlib.md, group 2).
+    if (atOp("~")) {
+      auto n = makeNode(N::Apply, loc());
+      auto fn = makeNode(N::Name, loc(), "bnot");
+      fn->flags = "prelude";  // the builtin, whatever is in scope
+      n->add(std::move(fn));
       take();
       n->add(unary());
       return n;
@@ -1189,6 +1241,7 @@ class Parser {
   size_t pos_ = 0;
   bool contractMode_ = false;  // parsing a requires/ensures predicate
   bool clauseEnded_ = false;   // the predicate has ended at a body `=`
+  bool bitOr_ = false;         // `|` is bitwise or here (binaryInfo)
 };
 
 }  // namespace
@@ -1244,7 +1297,7 @@ void collectOperators(const Node &program, OperatorTable &table) {
     // "prec <level> <assoc>"
     size_t a = fixity.text.find(' '), b = fixity.text.rfind(' ');
     Fixity f;
-    f.level = std::stoi(fixity.text.substr(a + 1, b - a - 1));
+    f.level = parseLevel(fixity.text.substr(a + 1, b - a - 1));
     std::string assoc = fixity.text.substr(b + 1);
     f.assoc = assoc == "left"    ? Assoc::Left
               : assoc == "right" ? Assoc::Right

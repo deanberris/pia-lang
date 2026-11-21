@@ -121,11 +121,13 @@ bool isFullWidth(IntType t) {
   return r.lo.isZero() && r.hi == APInt::getMaxValue(repr.width).zext(kExact);
 }
 
-enum class Arith { Add, Sub, Mul, Div, Rem };
+enum class Arith { Add, Sub, Mul, Div, Rem, BAnd, BOr, BXor, Shl, Shr };
 
 // The exact range of `a op b` for operands in the given ranges. Division
-// and remainder are bounded by the operands' magnitudes.
-Range exactRange(Arith kind, const Range &a, const Range &b) {
+// and remainder are bounded by the operands' magnitudes. A shift amount is
+// proved below the left operand's width, so at most `maxShift`.
+Range exactRange(Arith kind, const Range &a, const Range &b,
+                 unsigned maxShift = 0) {
   auto minOf = [](std::initializer_list<APInt> xs) {
     APInt m = *xs.begin();
     for (const APInt &x : xs)
@@ -156,6 +158,27 @@ Range exactRange(Arith kind, const Range &a, const Range &b) {
     case Arith::Rem: {
       APInt m = maxOf({mag(a), mag(b)});
       return {-m, m};
+    }
+    case Arith::BAnd:
+    case Arith::BOr:
+    case Arith::BXor: {
+      // Both operands fit k signed bits, and so does the result.
+      unsigned k = std::max({a.lo.getSignificantBits(),
+                             a.hi.getSignificantBits(),
+                             b.lo.getSignificantBits(),
+                             b.hi.getSignificantBits()});
+      bool nonneg = !a.lo.isNegative() && !b.lo.isNegative();
+      APInt hi = APInt::getSignedMaxValue(k).sext(kExact);
+      APInt lo = nonneg ? APInt(kExact, 0)
+                        : APInt::getSignedMinValue(k).sext(kExact);
+      return {lo, hi};
+    }
+    case Arith::Shl:
+      return {minOf({a.lo, a.lo.shl(maxShift)}),
+              maxOf({a.hi, a.hi.shl(maxShift)})};
+    case Arith::Shr: {
+      APInt zero(kExact, 0);
+      return {minOf({a.lo, zero}), maxOf({a.hi, zero})};
     }
   }
   return a;
@@ -315,7 +338,7 @@ struct ArithLowering : mlir::OpConversionPattern<OpTy> {
     // unless the result was proved to fit, the exact result.
     Range span = join(join(ra, rb), rangeOf(res));
     if (mode != OverflowMode::proof)
-      span = join(span, exactRange(kind, ra, rb));
+      span = join(span, exactRange(kind, ra, rb, lt.getStorageWidth() - 1));
     Repr c = reprOf(span);
     Value a = resize(rw, loc, adaptor.getLhs(), reprOf(lt).isSigned, c.width);
     Value b = resize(rw, loc, adaptor.getRhs(), reprOf(rt).isSigned, c.width);
@@ -337,6 +360,24 @@ struct ArithLowering : mlir::OpConversionPattern<OpTy> {
       case Arith::Rem:
         r = c.isSigned ? Value(make<mlir::arith::RemSIOp>(rw, loc, a, b))
                        : Value(make<mlir::arith::RemUIOp>(rw, loc, a, b));
+        break;
+      // Extended to the computation width, the operands' bits agree with
+      // the exact integers', so these are exact (Pia.td).
+      case Arith::BAnd:
+        r = make<mlir::arith::AndIOp>(rw, loc, a, b);
+        break;
+      case Arith::BOr:
+        r = make<mlir::arith::OrIOp>(rw, loc, a, b);
+        break;
+      case Arith::BXor:
+        r = make<mlir::arith::XOrIOp>(rw, loc, a, b);
+        break;
+      case Arith::Shl:
+        r = make<mlir::arith::ShLIOp>(rw, loc, a, b);
+        break;
+      case Arith::Shr:
+        r = c.isSigned ? Value(make<mlir::arith::ShRSIOp>(rw, loc, a, b))
+                       : Value(make<mlir::arith::ShRUIOp>(rw, loc, a, b));
         break;
     }
     rw.replaceOp(op, finish(rw, loc, r, c, res, mode));
@@ -550,7 +591,12 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<SubOp, Arith::Sub>,
                ArithLowering<MulOp, Arith::Mul>,
                ArithLowering<DivOp, Arith::Div>,
-               ArithLowering<RemOp, Arith::Rem>, ConvertLowering, CmpLowering,
+               ArithLowering<RemOp, Arith::Rem>,
+               ArithLowering<BAndOp, Arith::BAnd>,
+               ArithLowering<BOrOp, Arith::BOr>,
+               ArithLowering<BXorOp, Arith::BXor>,
+               ArithLowering<ShlOp, Arith::Shl>,
+               ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
                StoreLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(

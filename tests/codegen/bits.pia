@@ -1,0 +1,32 @@
+(* Bit operators (#48), compiled for Apple Silicon and run by bits_test.c
+   against C over every input (or a sweep, for the wider types). Every goal
+   here must be proved.
+*)
+
+let band8 (a : u8) (b : u8) : u8 = a & b
+
+let bor8 (a : u8) (b : u8) : u8 = (a | b)
+
+let bxor8 (a : u8) (b : u8) : u8 = a ^ b
+
+let bnot8 (x : u8) : u8 = ~x
+
+let bnot32 (x : i32) : i32 = ~x
+
+let band_i16 (a : i16) (b : i16) : i16 = a & b
+
+let shl16 (x : u8) (n : u8) : u16
+  requires n < 8
+= x << n
+
+let shr_i32 (x : i32) (n : u8) : i32
+  requires n < 32
+= x >> n
+
+let shr_u32 (x : u32) (n : u8) : u32
+  requires n < 32
+= x >> n
+
+let rotl8 (x : u8) (n : u8) : u8 @overflow(wrap)
+  requires n < 8
+= ((x << n) | (x >> ((8 - n) % 8)))

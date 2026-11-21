@@ -36,6 +36,15 @@ let meta operator ( / ) : prec 7 left = let (a) (b) => `( div $a $b )
 let meta operator ( % ) : prec 7 left = let (a) (b) => `( rem $a $b )
 let meta operator ( mod ) : prec 7 left = let (a) (b) => `( rem $a $b )
 
+(* Bits, with C's symbols (docs/stdlib.md, group 2). Unlike C they bind
+   tighter than comparisons, so `x & mask = 0` is `(x & mask) = 0`. `|` is
+   bitwise or only inside brackets. `~x` is built in, like `-x`. *)
+let meta operator ( << ) : prec 5.5 left = let (a) (b) => `( shl $a $b )
+let meta operator ( >> ) : prec 5.5 left = let (a) (b) => `( shr $a $b )
+let meta operator ( | ) : prec 6.3 left = let (a) (b) => `( bor $a $b )
+let meta operator ( ^ ) : prec 6.4 left = let (a) (b) => `( bxor $a $b )
+let meta operator ( & ) : prec 6.5 left = let (a) (b) => `( band $a $b )
+
 (* The conjunction of a list of conditions, `true` when it is empty. *)
 let meta fold_and (xs : list) : expr =
   fold (let (acc) (x) => `( $acc && $x )) `( true ) xs

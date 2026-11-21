@@ -21,8 +21,9 @@ The verifier walks each function in order and collects these goals:
 
 | Goal | Raised by |
 | --- | --- |
-| `nooverflow` | `pia.add`, `sub`, `mul`, `div` and narrowing `pia.convert` in `overflow(proof)` mode, which is the default. Also `pia.to_index` on a signed type (the index is not negative) and `pia.from_index` to a type narrower than `usize`. |
+| `nooverflow` | `pia.add`, `sub`, `mul`, `div`, `band`, `bor`, `bxor`, `shl`, `shr` and narrowing `pia.convert` in `overflow(proof)` mode, which is the default. Also `pia.to_index` on a signed type (the index is not negative) and `pia.from_index` to a type narrower than `usize`. |
 | `nonzero` | the divisor of `pia.div` and `pia.rem`, in every mode |
+| `shift` | the amount of `pia.shl` and `pia.shr` lies in [0, w), w the storage width of the shifted value's type, in every mode |
 | `inbounds` | `pia.load` and `pia.store`: `0 <= i < len` |
 | `assert` | `assert p` |
 | `ensures` | each postcondition, at the return |

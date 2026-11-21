@@ -8,8 +8,9 @@ A *goal* is a fact the compiler must establish. Some come from your contracts, a
 
 | Goal | Raised by |
 | --- | --- |
-| no overflow | `+ - * /` in the default `@overflow(proof)` mode, and every narrowing conversion |
+| no overflow | `+ - * /`, the bit operators and shifts in the default `@overflow(proof)` mode, and every narrowing conversion |
 | nonzero divisor | every `/`, `%` and `mod` |
+| shift amount | every `<<` and `>>`: the amount is at least 0 and less than the width of the shifted value |
 | in bounds | every `xs.[i]`, read or written |
 | precondition | every call, for each of the callee's `requires` |
 | postcondition | every return, for each `ensures` |

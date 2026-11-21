@@ -62,8 +62,8 @@ New builtins, each one or two MLIR ops, with exact SMT semantics (`bvand`, `bvsh
 
 | Builtin | Meaning | Goal raised |
 | --- | --- | --- |
-| `band` `bor` `bxor` `bnot` | bitwise logic on unsigned types | none |
-| `shl` `shr` | shifts (`shr` is arithmetic on signed types) | `shift < bits t`. `shl` in proof mode also proves no bits are lost |
+| `band` `bor` `bxor` `bnot` | bitwise logic, exact on the two's-complement form of the integers (`bnot` on an unsigned type flips the bits of its storage width) | the result fits, in proof mode |
+| `shl` `shr` | shifts: `a * 2^b` and `floor(a / 2^b)` | `0 <= b < bits t` (the `shift` goal), in every mode. `shl` in proof mode also proves no bits are lost |
 | `rotl` `rotr`, `clz` `ctz` `popcount` `bswap` | bit counting, rotation and byte swap, through LLVM intrinsics | none |
 | `widen e` | to a wider type of the same signedness | none |
 | `narrow e` | narrowing conversion, the explicit form of what assignment does now | the value fits |
@@ -76,12 +76,12 @@ Their operators use C's symbols (Dean, 2026-11-21) and go in the prelude as meta
 | Operator | Builtin | Precedence |
 | --- | --- | --- |
 | `~x` | `bnot` | prefix, binds like `-x` |
-| `<<` `>>` | `shl` `shr` | 5, left (between comparisons and `+`) |
+| `<<` `>>` | `shl` `shr` | 5.5, left (between `..` and `+`) |
 | `&` | `band` | 6.5, left (between `+` and `*`) |
 | `^` | `bxor` | 6.4, left |
 | `\|` | `bor` | 6.3, left |
 
-Unlike C, bitwise operators bind tighter than comparisons, so `x & mask = 0` means `(x & mask) = 0`. The prelude's levels are whole numbers today, so the three bitwise levels need the prelude to allow more levels between 6 and 7. `~` needs prefix operator declarations, which the prelude does not have yet (`-x` is built in).
+Unlike C, bitwise operators bind tighter than comparisons, so `x & mask = 0` means `(x & mask) = 0`. Precedence levels may have one decimal place for this. `~x` is built into the parser like `-x`, and stands for `bnot x`. Implemented in #48.
 
 `|` is already a grammar token: it separates variants and match arms, and starts a refinement's predicate ([grammar.md](grammar.md)). So `|` means bitwise or only inside parentheses or brackets opened within the expression. At the top level of a match arm's body or a refinement it keeps its grammar meaning, and `| A -> (x | y)` needs the parentheses. `||` and `&&` stay logical, and `^`, `&`, `<<` and `>>` are free today.
 

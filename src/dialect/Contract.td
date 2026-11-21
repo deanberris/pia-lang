@@ -116,6 +116,7 @@ def Contract_ObligationKind : I32EnumAttr<"ObligationKind", "where a proof goal 
       I32EnumAttrCase<"outwritten", 8>, // an `out` parameter is fully written
       I32EnumAttrCase<"law", 9>,        // a concept law for one instance
       I32EnumAttrCase<"nonzero", 10>,   // a divisor is not zero
+      I32EnumAttrCase<"shift", 11>,     // a shift amount is below the width
     ]> {
   let cppNamespace = "::pia::contract";
 }

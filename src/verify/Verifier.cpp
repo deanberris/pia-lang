@@ -75,6 +75,11 @@ std::string opSpelling(Operation *op) {
   if (mlir::isa<MulOp>(op)) return "'*'";
   if (mlir::isa<DivOp>(op)) return "'/'";
   if (mlir::isa<RemOp>(op)) return "'%'";
+  if (mlir::isa<BAndOp>(op)) return "'&'";
+  if (mlir::isa<BOrOp>(op)) return "'|'";
+  if (mlir::isa<BXorOp>(op)) return "'^'";
+  if (mlir::isa<ShlOp>(op)) return "'<<'";
+  if (mlir::isa<ShrOp>(op)) return "'>>'";
   return "'" + op->getName().getStringRef().str() + "'";
 }
 
@@ -90,7 +95,21 @@ std::optional<OverflowMode> arithMode(Operation *op) {
   if (auto m = overflowMode<MulOp>(op)) return m;
   if (auto m = overflowMode<DivOp>(op)) return m;
   if (auto m = overflowMode<RemOp>(op)) return m;
+  if (auto m = overflowMode<BAndOp>(op)) return m;
+  if (auto m = overflowMode<BOrOp>(op)) return m;
+  if (auto m = overflowMode<BXorOp>(op)) return m;
+  if (auto m = overflowMode<ShlOp>(op)) return m;
+  if (auto m = overflowMode<ShrOp>(op)) return m;
   return std::nullopt;
+}
+
+// The storage width of a shift's left operand: the amount must be below it.
+unsigned shiftWidth(Operation *op) {
+  return mlir::cast<IntType>(op->getOperand(0).getType()).getStorageWidth();
+}
+
+std::string shiftClaim(Operation *op) {
+  return "the shift amount is less than " + std::to_string(shiftWidth(op));
 }
 
 bool isContractSink(Operation *op) {
@@ -228,6 +247,13 @@ class Encoder {
     if (which == "sdiv") return create<mlir::smt::BVSDivOp>(t, a, c);
     if (which == "srem") return create<mlir::smt::BVSRemOp>(t, a, c);
     if (which == "smod") return create<mlir::smt::BVSModOp>(t, a, c);
+    // On sign-extended operands these are exact: the encoding is wide
+    // enough for every shifted value (encodingWidth).
+    if (which == "and") return create<mlir::smt::BVAndOp>(t, a, c);
+    if (which == "or") return create<mlir::smt::BVOrOp>(t, a, c);
+    if (which == "xor") return create<mlir::smt::BVXOrOp>(t, a, c);
+    if (which == "shl") return create<mlir::smt::BVShlOp>(t, a, c);
+    if (which == "ashr") return create<mlir::smt::BVAShrOp>(t, a, c);
     Value neg = create<mlir::smt::BVNegOp>(t, c);  // "sub"
     return create<mlir::smt::BVAddOp>(t, a, neg);
   }
@@ -399,6 +425,8 @@ class Encoder {
     if (auto m = arithMode(op)) {
       if (mlir::isa<DivOp, RemOp>(op))
         out.push_back({ObligationKind::nonzero, "the divisor is not zero"});
+      if (mlir::isa<ShlOp, ShrOp>(op))
+        out.push_back({ObligationKind::shift, shiftClaim(op)});
       if (*m == OverflowMode::proof && !mlir::isa<RemOp>(op))
         out.push_back({ObligationKind::nooverflow,
                        opSpelling(op) + " does not overflow " +
@@ -496,6 +524,44 @@ class Encoder {
     // is its own goal.
     if (mlir::isa<DivOp>(op) && !a.first.isNegative() && !c.first.isNegative())
       return Interval{APInt(192, 0), a.second};
+    if (mlir::isa<BAndOp, BOrOp, BXorOp>(op)) {
+      bool nonneg = !a.first.isNegative() && !c.first.isNegative();
+      if (nonneg && mlir::isa<BAndOp>(op))
+        return Interval{APInt(192, 0), a.second.slt(c.second) ? a.second
+                                                               : c.second};
+      // Both operands fit k signed bits, so the result does too; with no
+      // sign bit set on either side, it is not negative.
+      unsigned k = std::max({a.first.getSignificantBits(),
+                             a.second.getSignificantBits(),
+                             c.first.getSignificantBits(),
+                             c.second.getSignificantBits()});
+      APInt hi = APInt::getSignedMaxValue(k).sext(192);
+      APInt lo = nonneg ? APInt(192, 0) : APInt::getSignedMinValue(k).sext(192);
+      return Interval{lo, hi};
+    }
+    // a >> b lies between a and 0, whatever b is.
+    if (mlir::isa<ShrOp>(op)) {
+      APInt zero(192, 0);
+      return Interval{a.first.slt(zero) ? a.first : zero,
+                      a.second.sgt(zero) ? a.second : zero};
+    }
+    // a << b is a * 2^b, for the amounts its own goal allows.
+    if (mlir::isa<ShlOp>(op)) {
+      if (c.first.isNegative()) return std::nullopt;
+      uint64_t lo = c.first.getZExtValue();
+      uint64_t hi = std::min<uint64_t>(
+          c.second.getActiveBits() > 16 ? 1u << 16 : c.second.getZExtValue(),
+          shiftWidth(op) - 1);
+      if (lo > hi) return std::nullopt;
+      APInt ps[] = {a.first.shl(lo), a.first.shl(hi), a.second.shl(lo),
+                    a.second.shl(hi)};
+      APInt rlo = ps[0], rhi = ps[0];
+      for (const APInt &p : ps) {
+        if (p.slt(rlo)) rlo = p;
+        if (p.sgt(rhi)) rhi = p;
+      }
+      return Interval{rlo, rhi};
+    }
     return std::nullopt;
   }
 
@@ -617,6 +683,15 @@ class Encoder {
             goal(ObligationKind::nonzero, op, "the divisor is not zero",
                  notOf(eq(c, bv(0))), nonzero);
           }
+          if (mlir::isa<ShlOp, ShrOp>(op)) {
+            Interval d = valueRange(op->getOperand(1));
+            APInt w(192, shiftWidth(op));
+            bool inWidth = !d.first.isNegative() && d.second.slt(w);
+            goal(ObligationKind::shift, op, shiftClaim(op),
+                 andOf(cmp(P::sge, c, bv(0)),
+                       cmp(P::slt, c, bv(static_cast<int64_t>(shiftWidth(op))))),
+                 inWidth, {{"amount", c}});
+          }
           if (*m == OverflowMode::proof && !mlir::isa<RemOp>(op)) {
             Value exact = exactArith(op, a, c);
             auto rt = mlir::cast<IntType>(op->getResult(0).getType());
@@ -699,6 +774,11 @@ class Encoder {
     if (mlir::isa<SubOp>(op)) return bvBin("sub", a, c);
     if (mlir::isa<MulOp>(op)) return bvBin("mul", a, c);
     if (mlir::isa<DivOp>(op)) return bvBin("sdiv", a, c);
+    if (mlir::isa<BAndOp>(op)) return bvBin("and", a, c);
+    if (mlir::isa<BOrOp>(op)) return bvBin("or", a, c);
+    if (mlir::isa<BXorOp>(op)) return bvBin("xor", a, c);
+    if (mlir::isa<ShlOp>(op)) return bvBin("shl", a, c);
+    if (mlir::isa<ShrOp>(op)) return bvBin("ashr", a, c);
     return bvBin("srem", a, c);
   }
 
@@ -1389,6 +1469,17 @@ unsigned encodingWidth(mlir::ModuleOp module, mlir::func::FuncOp fn) {
       if (auto m = mlir::dyn_cast<MulOp>(op))
         need = std::max(need, productBits(m.getLhs().getType(),
                                           m.getRhs().getType()));
+      // `a << b` is a product with 2^b, b below a's storage width.
+      if (auto s = mlir::dyn_cast<ShlOp>(op)) {
+        auto a = mlir::cast<IntType>(s.getLhs().getType());
+        unsigned shift = a.getStorageWidth() - 1;
+        if (auto b = mlir::dyn_cast<IntType>(s.getRhs().getType()))
+          if (!b.getHi().isNegative() && b.getHi().ult(shift))
+            shift = b.getHi().getZExtValue();
+        unsigned bits = std::max(a.getLo().getSignificantBits(),
+                                 a.getHi().getSignificantBits());
+        need = std::max(need, bits + shift);
+      }
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
         if (auto callee =
                 module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
