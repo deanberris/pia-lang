@@ -1,6 +1,7 @@
 # Builds and tests everything on Apple Silicon, the target Pia compiles for.
-# The first run builds LLVM/MLIR and Z3 from source (about 30 minutes); the
-# Bazel disk cache below makes later runs incremental.
+# A cold run builds LLVM/MLIR and Z3 from source, which can take two to three
+# hours on a hosted runner. The Bazel disk cache below makes later runs
+# incremental.
 name: CI
 
 on:
@@ -16,29 +17,60 @@ jobs:
   test:
     name: bazel test (macOS arm64)
     runs-on: macos-15
-    timeout-minutes: 240
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
 
+      # One cache entry per set of dependencies. Pia's own code is cheap to
+      # rebuild; LLVM, MLIR and Z3 are what the cache is for.
+      - name: Name the cache
+        id: key
+        run: echo "key=bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}" >> "$GITHUB_OUTPUT"
+
       - name: Restore the Bazel disk cache
+        id: restore
         uses: actions/cache/restore@v4
         with:
           path: ~/.cache/pia-bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
+          key: ${{ steps.key.outputs.key }}
           restore-keys: |
-            bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
+            ${{ steps.key.outputs.key }}-partial-
             bazel-disk-${{ runner.os }}-${{ runner.arch }}-
 
+      # The step timeouts leave the job time to save what was built.
       - name: Build
-        run: bazel build --keep_going //...
+        timeout-minutes: 300
+        run: bazel build --config=ci --keep_going //...
 
       - name: Test
-        run: bazel test --keep_going //...
+        id: test
+        timeout-minutes: 30
+        run: bazel test --config=ci --keep_going //...
 
-      # Saved even when a test fails, so the next run does not rebuild LLVM.
       - name: Save the Bazel disk cache
-        if: always() && github.event_name == 'push'
+        if: steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/pia-bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
+          key: ${{ steps.key.outputs.key }}
+
+      # A run that fails or runs out of time still keeps what it built, under
+      # its own key, so the next run starts from there.
+      - name: Save a partial Bazel disk cache
+        if: always() && steps.test.outcome != 'success' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: ${{ steps.key.outputs.key }}-partial-${{ github.run_id }}
+
+      - name: Collect test logs
+        if: failure()
+        run: rsync -aL --include='*/' --include='test.log' --exclude='*' --prune-empty-dirs bazel-testlogs/ testlogs/ || true
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: testlogs/
+          if-no-files-found: ignore

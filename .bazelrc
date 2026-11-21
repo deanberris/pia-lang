@@ -25,5 +25,8 @@ build --disk_cache=~/.cache/pia-bazel-disk
 
 test --test_output=errors
 
+# CI logs: no progress bar, and a progress line at most once a minute.
+common:ci --curses=no --show_progress_rate_limit=60
+
 # Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
 try-import %workspace%/user.bazelrc
