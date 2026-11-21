@@ -87,10 +87,7 @@ corrupts head/tail."
 Here is `handle_cap_increase` in Pia. The ring's ends are a record, and
 `buf` is the buffer after the allocator has run, so `len buf` is the new
 capacity. The precondition says only what the Rust code's types say: the
-old capacity fits in the buffer, and both ends are inside it. The last
-precondition caps the buffer at 2^62 elements; Rust never allocates more
-than `isize::MAX` bytes, so no real buffer comes near it, and without it
-the verifier spends its time on sums that overflow a 64-bit `usize`.
+old capacity fits in the buffer, and both ends are inside it.
 
 <!-- example: grow.pia -->
 <!-- expect: fail -->
@@ -100,7 +97,6 @@ let ring = type { head : usize; tail : usize }
 let handle_cap_increase (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
   requires 0 < old_cap && old_cap <= len buf
   requires r.tail < old_cap && r.head < old_cap
-  requires len buf <= 4611686018427387904
   ensures result.head < len buf && result.tail < len buf
 =
   if r.tail <= r.head then r
@@ -120,10 +116,24 @@ for every input:
 ```console
 $ piac --verify grow.pia
 ...
+grow.pia:10:40: failed: '+' does not overflow usize
+  counterexample: len buf = 18194542494480334846, old_cap = 17942340915217563644, r.head = 1603281467343896576, r.tail = 14573648393944432639, result = 19383492795976122362
+grow.pia:10:48: proved: the index is within bounds [smt]
+grow.pia:10:27: failed: the index is within bounds
+  counterexample: len buf = 9889909180821147779, old_cap = 8394709705418604544, r.head = 3742835996431745023, r.tail = 4611686018427387904, index = 11403114256518873090, length = 9889909180821147779
+grow.pia:11:21: failed: '+' does not overflow usize
+  counterexample: len buf = 18446731979081777150, old_cap = 18446726481523507198, r.head = 2404253697946157056, r.tail = 4611668426241343489, result = 20850980179469664254
+...
+grow.pia:6:3: failed: the postcondition holds
+  counterexample: len buf = 4159055151934286921, old_cap = 4158770928446078977, r.head = 580971992739324, r.tail = 663400120603115520
+9 proved, 4 failed, 0 skipped
 ```
 
-The counterexamples are buffers that did not grow: `len buf` equal to
-`old_cap`. In Rust that assumption lived in the word `unsafe`. In Pia it
+The index failure and the postcondition failure are both buffers that
+did not grow enough: `len buf` only a little above `old_cap`, so case B
+moves `head` past the end and the copy writes there. (The two overflow
+failures are the same mistake on enormous buffers, where `r.head +
+old_cap` does not even fit in a `usize`.) In Rust that assumption lived in the word `unsafe`. In Pia it
 has to be written down, or the function does not compile.
 
 ## The assumption, stated
@@ -142,7 +152,6 @@ let ring = type { head : usize; tail : usize }
 let handle_cap_increase (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
   requires 0 < old_cap && old_cap + old_cap <= len buf
   requires r.tail < old_cap && r.head < old_cap
-  requires len buf <= 4611686018427387904
   ensures result.head < len buf && result.tail < len buf
 =
   if r.tail <= r.head then r
@@ -157,7 +166,6 @@ let handle_cap_increase (buf : inout mutable [u32]) (old_cap : usize) (r : ring)
 let reserve (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
   requires 0 < old_cap && r.tail < old_cap && r.head < old_cap
   requires len buf = old_cap || old_cap + old_cap <= len buf
-  requires len buf <= 4611686018427387904
 =
   let capacity : usize = old_cap - 1 in
   if len buf > capacity then handle_cap_increase buf old_cap r else r
@@ -166,12 +174,16 @@ let reserve (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
 ```console
 $ piac --verify reserve.pia
 ...
+reserve.pia:22:30: failed: the precondition of 'handle_cap_increase' holds
+  counterexample: len buf = 16583426343899006287, old_cap = 16583426343899006287, r.head = 433509266868928512, r.tail = 0
+reserve.pia:22:30: proved: the precondition of 'handle_cap_increase' holds [smt]
+15 proved, 1 failed, 0 skipped
 ```
 
 The verifier finds the bug report's case: the buffer did not grow, the
 comparison against `capacity` still passed, and the unsafe move would
 have run. A call reports one goal per precondition of the callee, in
-order, so the failure is the first one, the doubling; the others hold.
+order, so the failure is the first one, the doubling; the second holds.
 
 ## The fix, proved
 
@@ -184,7 +196,6 @@ let ring = type { head : usize; tail : usize }
 let handle_cap_increase (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
   requires 0 < old_cap && old_cap + old_cap <= len buf
   requires r.tail < old_cap && r.head < old_cap
-  requires len buf <= 4611686018427387904
   ensures result.head < len buf && result.tail < len buf
 =
   if r.tail <= r.head then r
@@ -203,7 +214,6 @@ and `reserve` compares against the old capacity, as Rust's fix does:
 let reserve (buf : inout mutable [u32]) (old_cap : usize) (r : ring) : ring
   requires 0 < old_cap && r.tail < old_cap && r.head < old_cap
   requires len buf = old_cap || old_cap + old_cap <= len buf
-  requires len buf <= 4611686018427387904
   ensures result.head < len buf && result.tail < len buf
 =
   if len buf > old_cap then handle_cap_increase buf old_cap r else r
@@ -214,6 +224,10 @@ Every goal on this page is proved:
 ```console
 $ piac --verify rust-vecdeque.pia.md
 ...
+rust-vecdeque.pia.md:199:3: proved: the postcondition holds [smt]
+...
+rust-vecdeque.pia.md:217:3: proved: the postcondition holds [smt]
+16 proved, 0 failed, 0 skipped
 ```
 
 Two numbers named "capacity", one of them off by one from the other, is
