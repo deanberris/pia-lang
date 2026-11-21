@@ -31,13 +31,14 @@ let less (x : u8) (y : u8) : bool
   ensures result <==> x < y
 = (x < y)
 
-let max (t : type where Ord t) (a : t) (b : t) : t =
-  if less a b then b else a
+let max (t : type where Ord t) (a : t) (b : t) : t
+  ensures result = a || result = b
+= if less a b then b else a
 
 let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
 
 let biggest (a : u8) (b : u8) : u8
-  ensures result >= a && result >= b
+  ensures result = a || result = b
 = max a b
 
 let pixels_alike (p : pixel) (q : pixel) : bool = alike p q

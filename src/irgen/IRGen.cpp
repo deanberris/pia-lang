@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 
+#include <algorithm>
 #include <deque>
 #include <map>
 #include <memory>
@@ -1723,24 +1724,29 @@ class Gen {
   // generic function's constraints name concepts with the right number of
   // type arguments.
   void collectConcepts(const Node &program) {
+    // Reported in source order once everything is checked.
+    std::vector<std::pair<syntax::SourceLoc, std::string>> errors;
+    auto error = [&](syntax::SourceLoc at, std::string message) {
+      errors.emplace_back(at, std::move(message));
+    };
     for (const syntax::NodePtr &item : program.kids) {
       if (!syntax::isConceptItem(*item)) continue;
       const std::string &name = item->text;
       if (overloads_.count(name) || types_.named(name) ||
           types_.generic(name) || concepts_.count(name)) {
-        diags_.error(item->loc, "'" + name + "' is already defined");
+        error(item->loc, "'" + name + "' is already defined");
         continue;
       }
       bool ok = true;
       for (const syntax::NodePtr &p : item->kids[0]->kids)
         if (!sema::isTypeParam(*p)) {
-          diags_.error(p->loc, "a concept's parameters are types, as in "
+          error(p->loc, "a concept's parameters are types, as in "
                                "'(t : type)'");
           ok = false;
         }
       const Node &body = *item->kids[3];
       if (body.kind != NodeKind::Sig) {
-        diags_.error(body.loc, "a concept's body must be a 'sig ... end' "
+        error(body.loc, "a concept's body must be a 'sig ... end' "
                                "for now");
         continue;
       }
@@ -1748,7 +1754,7 @@ class Gen {
         if (r->kind == NodeKind::SigVal) {
           const Node &annot = *r->kids[0];
           if (annot.kids[1]->kind != NodeKind::ArrowType) {
-            diags_.error(r->loc, "the requirement '" + r->text +
+            error(r->loc, "the requirement '" + r->text +
                                      "' must be a function, as in 'let " +
                                      r->text + " : (a : t) -> bool'");
             ok = false;
@@ -1756,7 +1762,7 @@ class Gen {
             for (const Node *d = annot.kids[1].get();
                  d->kind == NodeKind::ArrowType; d = d->kids[1].get())
               if (d->kids[0]->text.empty()) {
-                diags_.error(r->loc, "the requirement '" + r->text +
+                error(r->loc, "the requirement '" + r->text +
                                          "' has a contract, so it must name "
                                          "its parameters, as in '(a : t) -> "
                                          "bool'");
@@ -1768,7 +1774,7 @@ class Gen {
           // Checked once every concept is known.
         } else if (r->kind == NodeKind::SigLemma) {
         } else {
-          diags_.error(r->loc, "a concept may hold functions, laws and "
+          error(r->loc, "a concept may hold functions, laws and "
                                "'include' for now; type requirements are not "
                                "supported yet");
           ok = false;
@@ -1779,7 +1785,7 @@ class Gen {
     for (auto &[name, item] : concepts_)
       for (const syntax::NodePtr &r : item->kids[3]->kids)
         if (r->kind == NodeKind::SigInclude)
-          checkConceptUse(r->text, r->kids.size(), r->loc);
+          checkConceptUse(r->text, r->kids.size(), r->loc, errors);
     for (auto &[symbol, sig] : sigs_) {
       if (!sig.isGeneric()) continue;
       for (const syntax::NodePtr &p : sig.item->kids[0]->kids) {
@@ -1787,35 +1793,44 @@ class Gen {
         if (!pred) continue;
         std::vector<const Node *> cs;
         if (!constraintsOf(*pred, cs)) {
-          diags_.error(pred->loc, "a 'where' on a type parameter names "
+          error(pred->loc, "a 'where' on a type parameter names "
                                   "concepts, as in 'where Ord t' or "
                                   "'where Eq t && Hash t'");
           continue;
         }
         for (const Node *c : cs) {
-          checkConceptUse(c->kids[0]->text, c->kids.size() - 1, c->loc);
+          checkConceptUse(c->kids[0]->text, c->kids.size() - 1, c->loc, errors);
           for (size_t i = 1; i < c->kids.size(); ++i)
             if (c->kids[i]->kind != NodeKind::Name)
-              diags_.error(c->kids[i]->loc,
+              error(c->kids[i]->loc,
                            "a concept's argument must be a type's name for "
                            "now");
         }
       }
     }
+    std::stable_sort(errors.begin(), errors.end(), [](auto &a, auto &b) {
+      return std::make_pair(a.first.line, a.first.column) <
+             std::make_pair(b.first.line, b.first.column);
+    });
+    for (auto &[at, message] : errors) diags_.error(at, message);
   }
 
-  void checkConceptUse(const std::string &name, size_t given,
-                       syntax::SourceLoc at) {
+  void checkConceptUse(
+      const std::string &name, size_t given, syntax::SourceLoc at,
+      std::vector<std::pair<syntax::SourceLoc, std::string>> &errors) {
+    auto error = [&](syntax::SourceLoc l, std::string message) {
+      errors.emplace_back(l, std::move(message));
+    };
     auto it = concepts_.find(name);
     if (it == concepts_.end()) {
-      diags_.error(at, "'" + name + "' is not a concept");
+      error(at, "'" + name + "' is not a concept");
       return;
     }
     size_t want = 0;
     for (const syntax::NodePtr &p : it->second->kids[0]->kids)
       if (sema::isTypeParam(*p)) ++want;
     if (want != given)
-      diags_.error(at, "'" + name + "' takes " +
+      error(at, "'" + name + "' takes " +
                            plural(want, "type argument") + ", given " +
                            std::to_string(given));
   }
@@ -1845,7 +1860,7 @@ class Gen {
   static std::string spellTypes(const std::vector<Type> &ts) {
     std::string out;
     for (size_t i = 0; i < ts.size(); ++i)
-      out += (i ? ", " : "") + typeName(ts[i]);
+      out += (i ? ", " : "") + sema::typeName(ts[i]);
     return out;
   }
 
