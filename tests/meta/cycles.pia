@@ -1,0 +1,11 @@
+(* A metaprogram that keeps producing code stops at --meta-cycles.
+// RUN: not piac --meta-cycles=3 --dump-expanded %s 2>&1 | FileCheck %s
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s --check-prefix=DEFAULT
+*)
+
+let meta again () : item = `( again () )
+
+(* CHECK: cycles.pia:[[@LINE+3]]:1: error: metaprograms did not reach a fixed point within 3 passes (--meta-cycles); still producing code: again
+   DEFAULT: within 32 passes
+*)
+again ()

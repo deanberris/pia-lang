@@ -7,6 +7,7 @@ Status: implemented in M4 ([#5](https://github.com/deanberris/pia-lang/issues/5)
 ## The pipeline
 
 1. **Parse** (`src/syntax`) to the uniform syntax tree.
+1. **Expand metaprograms** (`src/meta`, [meta.md](meta.md)). Binary operators become calls of core builtins, `@derive` runs, and the `let meta` items are removed.
 2. **Sema** (`src/sema`) resolves written types and collects the signature of every top-level `let`, so a function can be called before its definition. It reports items outside the subset (types, modules, metaprograms) before any code is generated.
 3. **IRGen** (`src/irgen`) type checks expressions as it lowers them. A separate typed AST comes when the language outgrows the scalar subset.
 4. The module is run through the MLIR verifier.
@@ -29,7 +30,7 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 ## Integers
 
 - **Literals** take the type the context expects. With no context they are `i32`, or `i64` or `u64` if the value does not fit. A suffix (`42u8`) fixes the type. A literal that does not fit its type is an error.
-- **Binary operators** compute at the join of the operand types, the smallest range holding both. When the context expects a wider integer, they compute at that type, so `dst.[i] <- src.[i] * 3` with `u8` source and `u16` destination multiplies at `u16`. The other operand is widened with `pia.convert`. A literal takes the other operand's type, whichever side it is on.
+- **Binary operators** arrive from expansion as calls of core builtins (`a + b` is `add a b`, [meta.md](meta.md#operators)). IRGen lowers a builtin call as the operator it stands for. They compute at the join of the operand types, the smallest range holding both. When the context expects a wider integer, they compute at that type, so `dst.[i] <- src.[i] * 3` with `u8` source and `u16` destination multiplies at `u16`. The other operand is widened with `pia.convert`. A literal takes the other operand's type, whichever side it is on.
 - **Conversions**: wherever a value meets a declared type (a parameter, a return type, an annotated `let`, an assignment, an element store), IRGen inserts `pia.convert`. Widening always holds. Narrowing is a proof obligation for the verifier (M5).
 - **Overflow**: `+ - * / %` lower to `pia.add`, `sub`, `mul`, `div`, `rem` with the function's overflow mode. The default is `proof`. `@overflow(wrap | saturate | trap)` on the return annotation sets another mode, and `+|` `-|` always saturate. `mod` is `%`.
 - **Negation** `-x` is `0 - x` at x's type, so it is an obligation for unsigned and minimum values. `-5` is a literal.
@@ -73,7 +74,8 @@ A `let name = type { field : T; ... }` item defines a record type. Records are v
 - **Literals.** `{ r = v; g = 0; b = 0; a = 255 }` lowers to `pia.record`, with the fields in declaration order, whatever order they are written in. Its type comes from the context. Failing that, it is the one record type whose fields are exactly these. Every field must be given, once.
 - **Field reads.** `p.r` lowers to `pia.field %p, "r"`.
 - **Field assignment.** `q.r <- v` on a mutable local record rebuilds `q` with one field replaced. So, like any mutable local, `q` is an SSA value threaded through `scf.if` and loops.
-- **Not yet supported:** arrays and slices of records, buffers inside records, `=` on records (which arrives with `@derive(eq)` in M7), and attributes on type items.
+- **Equality.** `p = q` on records calls `eq_<name>`, which `@derive(eq)` makes ([meta.md](meta.md#derives)). `<>` negates it.
+- **Not yet supported:** arrays and slices of records, buffers inside records, and attributes on type items other than `@derive`.
 
 The verifier and code generation do not see records. `transforms::scalarizeRecords` replaces each record value with its fields first, using MLIR's 1:N dialect conversion. A `pixel` parameter becomes four parameters named `p.r`, `p.g`, `p.b` and `p.a`, a `pixel` result becomes four results, and `pia.record` and `pia.field` disappear. `old p` becomes `old` of each field.
 
@@ -83,4 +85,4 @@ Each top-level `let f (x : T) ... : R = body` becomes `func.func @f`. Parameters
 
 ## Not yet
 
-Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), slicing `xs.[a .. b]`, type-level lengths (`[T; n]`), refinements (`where`), modules, and metaprograms (M7).
+Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), slicing `xs.[a .. b]`, type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.

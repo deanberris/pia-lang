@@ -21,6 +21,16 @@ NodePtr makeNode(NodeKind kind, SourceLoc loc, std::string text) {
   return n;
 }
 
+NodePtr clone(const Node &node) {
+  auto n = std::make_unique<Node>();
+  n->kind = node.kind;
+  n->text = node.text;
+  n->flags = node.flags;
+  n->loc = node.loc;
+  for (const NodePtr &kid : node.kids) n->kids.push_back(clone(*kid));
+  return n;
+}
+
 namespace {
 
 void writeQuoted(std::ostream &os, const std::string &s) {

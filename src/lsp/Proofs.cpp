@@ -3,6 +3,7 @@
 #include <cstdlib>
 
 #include "irgen/IRGen.h"
+#include "meta/Expand.h"
 #include "mlir/IR/MLIRContext.h"
 #include "syntax/Parser.h"
 #include "verify/Verifier.h"
@@ -29,6 +30,14 @@ ProofReport checkProofs(std::string_view source, const std::string &path,
   syntax::Diagnostics diags;
   syntax::NodePtr tree = syntax::parseProgram(source, diags);
   if (diags.hasErrors()) return report;  // the front end reports these
+
+  // Proofs are about the code after its metaprograms run (docs/meta.md).
+  meta::expand(*tree, diags);
+  if (diags.hasErrors()) {
+    for (const syntax::Diagnostic &d : diags.errors())
+      report.errors.push_back({d.loc.line, d.loc.column, d.message});
+    return report;
+  }
 
   mlir::MLIRContext ctx;
   ctx.disableMultithreading();

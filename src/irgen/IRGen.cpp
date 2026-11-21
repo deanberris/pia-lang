@@ -78,6 +78,19 @@ bool isComparison(const std::string &op) {
          op == ">=";
 }
 
+// The operator a core builtin stands for (src/syntax/Prelude.cpp), or null.
+const char *builtinOperator(const std::string &name) {
+  static const std::map<std::string, const char *> ops = {
+      {"add", "+"},     {"sub", "-"},     {"add_sat", "+|"}, {"sub_sat", "-|"},
+      {"mul", "*"},     {"div", "/"},     {"rem", "%"},      {"eq", "="},
+      {"ne", "<>"},     {"lt", "<"},      {"gt", ">"},       {"le", "<="},
+      {"ge", ">="},     {"and", "&&"},    {"or", "||"},      {"implies", "==>"},
+      {"iff", "<==>"},
+  };
+  auto it = ops.find(name);
+  return it == ops.end() ? nullptr : it->second;
+}
+
 bool isLogic(const std::string &op) {
   return op == "&&" || op == "||" || op == "==>" || op == "<==>";
 }
@@ -392,11 +405,11 @@ class Gen {
       case NodeKind::Name:
         return genName(n);
       case NodeKind::Binary:
-        return genBinary(n, expected);
+        return genBinary(n, n.text, *n.kids[0], *n.kids[1], expected);
       case NodeKind::Neg:
         return genNeg(n, expected);
       case NodeKind::Apply:
-        return genApply(n);
+        return genApply(n, expected);
       case NodeKind::Index:
         return genIndex(n);
       case NodeKind::RecordLit:
@@ -468,7 +481,8 @@ class Gen {
   }
 
   R genName(const Node &n) {
-    if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+    if (n.flags.empty())
+      if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
     auto it = sigs_.find(n.text);
     if (it != sigs_.end()) {
       if (!it->second.params.empty())
@@ -498,26 +512,31 @@ class Gen {
   }
 
   // Brings two integers to their joined type.
-  std::optional<std::pair<TV, TV>> unify(TV a, TV c, const Node &n) {
+  std::optional<std::pair<TV, TV>> unify(TV a, TV c, const Node &n,
+                                         const std::string &op,
+                                         const Node &lhs, const Node &rhs) {
     auto at = mlir::dyn_cast<IntType>(a.type);
     auto ct = mlir::dyn_cast<IntType>(c.type);
     if (!at || !ct) {
-      fail(n, "'" + n.text + "' needs integer operands, found " +
+      fail(n, "'" + op + "' needs integer operands, found " +
                   typeName(a.type) + " and " + typeName(c.type));
       return std::nullopt;
     }
     IntType j = join(at, ct);
-    R a2 = coerce(a, j, *n.kids[0]);
-    R c2 = coerce(c, j, *n.kids[1]);
+    R a2 = coerce(a, j, lhs);
+    R c2 = coerce(c, j, rhs);
     if (!a2 || !c2) return std::nullopt;
     return std::make_pair(*a2, *c2);
   }
 
-  R genBinary(const Node &n, Type expected) {
-    const std::string &op = n.text;
-    if (isLogic(op)) return genLogic(n);
+  // A binary operation. After metaprogram expansion it arrives as a call of
+  // a core builtin, such as `add a b` for `a + b` (docs/meta.md); `n` is the
+  // node it is reported at.
+  R genBinary(const Node &n, const std::string &op, const Node &lhsNode,
+              const Node &rhsNode, Type expected) {
+    if (isLogic(op)) return genLogic(n, op, lhsNode, rhsNode);
     if (isComparison(op)) {
-      auto ops = genOperands(*n.kids[0], *n.kids[1], Type());
+      auto ops = genOperands(lhsNode, rhsNode, Type());
       if (!ops) return std::nullopt;
       auto [a, c] = *ops;
       Location l = loc(n);
@@ -530,9 +549,8 @@ class Gen {
         return TV{v, boolType()};
       }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
-        return fail(n, "comparing records with '" + op +
-                           "' is not supported yet");
-      auto u = unify(a, c, n);
+        return genRecordEq(n, op, a, lhsNode, c, rhsNode);
+      auto u = unify(a, c, n, op, lhsNode, rhsNode);
       if (!u) return std::nullopt;
       CmpPredicate p = op == "="    ? CmpPredicate::eq
                        : op == "<>" ? CmpPredicate::ne
@@ -543,7 +561,7 @@ class Gen {
       return TV{cmp(l, p, u->first.value, u->second.value), boolType()};
     }
     if (isArith(op)) {
-      auto ops = genOperands(*n.kids[0], *n.kids[1],
+      auto ops = genOperands(lhsNode, rhsNode,
                              mlir::isa_and_nonnull<IntType>(expected)
                                  ? expected
                                  : Type());
@@ -557,14 +575,14 @@ class Gen {
         auto rt = mlir::dyn_cast<IntType>(rhs.type);
         if (lt && rt) {
           IntType j = join(join(lt, rt), want);
-          R l2 = coerce(lhs, j, *n.kids[0]);
-          R r2 = coerce(rhs, j, *n.kids[1]);
+          R l2 = coerce(lhs, j, lhsNode);
+          R r2 = coerce(rhs, j, rhsNode);
           if (!l2 || !r2) return std::nullopt;
           lhs = *l2;
           rhs = *r2;
         }
       }
-      auto u = unify(lhs, rhs, n);
+      auto u = unify(lhs, rhs, n, op, lhsNode, rhsNode);
       if (!u) return std::nullopt;
       Value a = u->first.value, c = u->second.value;
       Type t = u->first.type;
@@ -585,19 +603,19 @@ class Gen {
 
   // `&&`, `||` and `==>` short-circuit in code, so they lower to `scf.if`.
   // In contracts, which have no effects, they are plain `arith` logic.
-  R genLogic(const Node &n) {
-    const std::string &op = n.text;
+  R genLogic(const Node &n, const std::string &op, const Node &lhsNode,
+             const Node &rhsNode) {
     Location l = loc(n);
-    R a = genExpr(*n.kids[0], boolType());
+    R a = genExpr(lhsNode, boolType());
     if (!a) return a;
     if (!isBool(a->type))
-      return fail(*n.kids[0], "'" + op + "' needs bool operands, found " +
-                                  typeName(a->type));
+      return fail(lhsNode, "'" + op + "' needs bool operands, found " +
+                               typeName(a->type));
     auto genRhs = [&]() -> R {
-      R c = genExpr(*n.kids[1], boolType());
+      R c = genExpr(rhsNode, boolType());
       if (!c) return c;
       if (!isBool(c->type))
-        return fail(*n.kids[1], "'" + op + "' needs bool operands, found " +
+        return fail(rhsNode, "'" + op + "' needs bool operands, found " +
                                     typeName(c->type));
       return c;
     };
@@ -614,9 +632,9 @@ class Gen {
       return TV{v, boolType()};
     }
     std::set<std::string> assigned;
-    collectAssigned(*n.kids[1], assigned);
+    collectAssigned(rhsNode, assigned);
     if (!assigned.empty())
-      return fail(*n.kids[1], "an assignment on the right of '" + op +
+      return fail(rhsNode, "an assignment on the right of '" + op +
                                   "' is not supported");
     // && : if a then rhs else false;  || : if a then true else rhs;
     // ==> : if a then rhs else true.
@@ -673,13 +691,30 @@ class Gen {
     return TV{r, t};
   }
 
-  R genApply(const Node &n) {
+  R genApply(const Node &n, Type expected) {
     const Node &fn = *n.kids[0];
     if (fn.kind != NodeKind::Name)
       return fail(fn, "only named functions can be called for now");
     size_t argc = n.kids.size() - 1;
     Location l = loc(n);
-    if (!lookup(fn.text)) {
+    // A name a quote made resolves where the metaprogram was defined, never
+    // to a local at the expansion site (docs/meta.md, "Hygiene").
+    bool local = fn.flags.empty() && lookup(fn.text);
+    if (!local && fn.flags != "prelude") {
+      auto it = sigs_.find(fn.text);
+      if (it != sigs_.end()) {
+        std::vector<const Node *> args;
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          args.push_back(n.kids[i].get());
+        return genCall(n, it->second, args);
+      }
+    }
+    if (!local) {
+      if (const char *op = builtinOperator(fn.text)) {
+        if (argc != 2)
+          return fail(n, "'" + fn.text + "' takes two arguments");
+        return genBinary(n, op, *n.kids[1], *n.kids[2], expected);
+      }
       if (fn.text == "len") {
         if (argc != 1) return fail(n, "'len' takes one argument");
         R buf = genExpr(*n.kids[1], Type());
@@ -697,13 +732,6 @@ class Gen {
         R v = genExpr(*n.kids[1], Type());
         if (!v) return v;
         return TV{create<contract::OldOp>(l, v->type, v->value), v->type};
-      }
-      auto it = sigs_.find(fn.text);
-      if (it != sigs_.end()) {
-        std::vector<const Node *> args;
-        for (size_t i = 1; i < n.kids.size(); ++i)
-          args.push_back(n.kids[i].get());
-        return genCall(n, it->second, args);
       }
     }
     return fail(fn, "'" + fn.text + "' is not a function");
@@ -728,12 +756,46 @@ class Gen {
       if (!c) return c;
       operands.push_back(c->value);
     }
+    return emitCall(n, sig, operands);
+  }
+
+  R emitCall(const Node &n, const sema::FuncSig &sig,
+             llvm::ArrayRef<Value> operands) {
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     auto call = create<mlir::func::CallOp>(loc(n), sig.name, results,
                                               operands);
     if (results.empty()) return unit();
     return TV{call.getResult(0), sig.result};
+  }
+
+  // `=` and `<>` on records call `eq_<name>`, which `@derive(eq)` makes.
+  R genRecordEq(const Node &n, const std::string &op, TV a,
+                const Node &lhsNode, TV c, const Node &rhsNode) {
+    if (op != "=" && op != "<>")
+      return fail(n, "records cannot be compared with '" + op + "'");
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt || a.type != c.type)
+      return fail(n, "'" + op + "' compares two values of one record type, "
+                     "found " + typeName(a.type) + " and " + typeName(c.type));
+    std::string name = rt.getName().str();
+    auto it = sigs_.find("eq_" + name);
+    if (it == sigs_.end())
+      return fail(n, "comparing records of type " + name + " with '" + op +
+                         "' needs 'eq_" + name + "'; add @derive(eq) to '" +
+                         name + "'");
+    const sema::FuncSig &sig = it->second;
+    if (sig.params.size() != 2 || sig.params[0].type != a.type ||
+        sig.params[1].type != a.type || sig.result != boolType())
+      return fail(n, "'eq_" + name + "' must take two " + name +
+                         " values and return bool");
+    (void)lhsNode;
+    (void)rhsNode;
+    R eq = emitCall(n, sig, {a.value, c.value});
+    if (!eq || op == "=") return eq;
+    Location l = loc(n);
+    Value v = create<mlir::arith::XOrIOp>(l, eq->value, boolConst(l, true));
+    return TV{v, boolType()};
   }
 
   Type elementType(Type buffer) {

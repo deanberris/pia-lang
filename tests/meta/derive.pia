@@ -1,0 +1,54 @@
+(* @derive(eq) makes eq_pixel, with a postcondition that says what it
+   means, and `=` on two pixels calls it.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=AST
+*)
+
+let pixel = type { r : u8; g : u8 } @derive(eq)
+
+(* AST:      (LetItem "eq_pixel"
+   AST:        (Param "a"
+   AST:            (TypeName "pixel")
+   AST:        (Param "b"
+   AST:          (Ensures
+   AST-NEXT:       (Apply
+   AST-NEXT:         (Name "iff" [prelude])
+   AST-NEXT:         (Name "result")
+   AST-NEXT:         (Apply
+   AST-NEXT:           (Name "and" [prelude])
+   AST-NEXT:           (Apply
+   AST-NEXT:             (Name "and" [prelude])
+   AST-NEXT:             (BoolLit "true")
+   AST-NEXT:             (Apply
+   AST-NEXT:               (Name "eq" [prelude])
+   AST-NEXT:               (Field "r"
+   AST-NEXT:                 (Name "a")
+*)
+
+let same (p : pixel) (q : pixel) : bool
+  ensures result ==> p.r = q.r
+  = p = q
+
+let differ (p : pixel) (q : pixel) : bool
+  ensures result <==> (p.g <> q.g || p.r <> q.r)
+  = (p <> q)
+
+(* A field of byte, a type that a metaprogram defines later: the derive
+   waits for it. *)
+let wide = type { v : byte; w : u8 } @derive(eq)
+
+let meta make_byte () : item = `( let byte = type u8 )
+
+make_byte ()
+
+let unchanged (x : wide) : bool
+  ensures result
+  = (x = x)
+
+(* CHECK: derive.pia:7:37: proved: the postcondition holds [smt]
+   CHECK: derive.pia:29:3: proved: the postcondition holds [smt]
+   CHECK: derive.pia:33:3: proved: the postcondition holds [smt]
+   CHECK: derive.pia:38:38: proved: the postcondition holds [smt]
+   CHECK: derive.pia:45:3: proved: the postcondition holds [smt]
+   CHECK: 5 proved, 0 failed, 0 skipped
+*)

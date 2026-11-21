@@ -1,0 +1,8 @@
+(* A derive that needs a type nothing defines waits for it, and is reported
+   once expansion reaches its fixed point.
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: waiting.pia:[[@LINE+2]]:38: error: @derive(eq) on 'cell' needs the type 'byte', which is never defined
+*)
+let cell = type { v : byte } @derive(eq)

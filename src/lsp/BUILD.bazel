@@ -37,6 +37,7 @@ cc_library(
         ":lsp",
         "//src/dialect",
         "//src/irgen",
+        "//src/meta",
         "//src/syntax",
         "//src/verify",
         "@llvm-project//llvm:Support",

@@ -1,0 +1,26 @@
+(* Metaprogram errors are reported where the expansion happens.
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s
+   Declarations are checked before anything expands.
+*)
+
+(* CHECK: errors.pia:[[@LINE+2]]:1: error: operators declared for a type are not supported yet
+*)
+let meta operator ( - ) for point = let (a) (b) => `( sub $a $b )
+
+(* CHECK: errors.pia:[[@LINE+2]]:25: error: the operator '<+>' is not declared; declare it with 'let meta operator ( <+> )'
+*)
+let f (x : u8) : u8 = x <+> x
+
+(* CHECK: errors.pia:[[@LINE+2]]:37: error: there is no metaprogram 'derive_hash' for @derive(hash) on 'point'
+*)
+let point = type { x : u8 } @derive(hash)
+
+(* CHECK: errors.pia:[[@LINE+3]]:1: error: the metaprogram 'bad' failed: a splice is only allowed inside a quote
+*)
+let meta bad () : item = $x
+bad ()
+
+(* CHECK: errors.pia:[[@LINE+3]]:1: error: the metaprogram 'three' must produce items
+*)
+let meta three () : int = 3
+three ()

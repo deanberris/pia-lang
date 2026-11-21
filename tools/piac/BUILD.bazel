@@ -13,6 +13,7 @@ cc_binary(
     deps = [
         "//src/codegen",
         "//src/irgen",
+        "//src/meta",
         "//src/syntax",
         "//src/verify",
         "@llvm-project//llvm:Core",

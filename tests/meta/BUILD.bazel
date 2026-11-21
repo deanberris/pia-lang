@@ -1,0 +1,9 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# Metaprogram tests (milestone M7): `piac --dump-expanded` shows the code
+# metaprograms produce, and `piac --verify` proves it.
+lit_tests(
+    name = "meta_tests",
+    srcs = glob(["*.pia"]),
+    tools = ["//tools/piac"],
+)

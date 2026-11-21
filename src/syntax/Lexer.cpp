@@ -336,7 +336,10 @@ class Lexer {
       if (peek() == '(') {
         advance();
         push(TokenKind::SpliceOpen, start);
-      } else if (isIdentStart(peek())) {
+      } else if (isIdentStart(peek()) ||
+                 (peek() == '!' && isIdentStart(peek(1)))) {
+        // `$!name` splices a name that escapes hygiene (docs/meta.md).
+        if (peek() == '!') advance();
         while (isIdentChar(peek())) advance();
         push(TokenKind::SpliceIdent, start);
       } else {
