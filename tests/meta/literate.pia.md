@@ -35,8 +35,9 @@ The end of the file is prose too.
 
 <!--
 CHECK: literate.pia.md:15:3: proved: the postcondition holds [smt]
+CHECK: literate.pia.md:31:7: proved: '*' does not overflow u16 [intervals]
 CHECK: literate.pia.md:30:3: proved: the postcondition holds [smt]
-CHECK: 2 proved, 0 failed, 0 skipped
+CHECK: 3 proved, 0 failed, 0 skipped
 
 AST:      (Program
 AST-NEXT:   (Comment "The end of the file is prose too.{{.*}}" [prose detached])
