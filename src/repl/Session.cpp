@@ -31,6 +31,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "repl/State.h"
 #include "sema/Sema.h"
 #include "syntax/Lexer.h"
 #include "syntax/Parser.h"
@@ -81,9 +82,15 @@ extern "C" void piaReplWait(Gate *g, Gate *from) {
   }
 }
 
+// A state's storage, as the JIT sees it, and the entry point that calls an
+// expression with the states it takes (ADR 0031, "State").
+constexpr const char *kStatePrefix = "__pia_state_";
+constexpr const char *kThunkPrefix = "__pia_thunk_";
+
 // Names the session makes up, which the environment never shows.
 bool internalName(const std::string &n) {
-  return n.rfind(kEvalPrefix, 0) == 0 || n.rfind(kRefinesPrefix, 0) == 0;
+  return n.rfind(kEvalPrefix, 0) == 0 || n.rfind(kRefinesPrefix, 0) == 0 ||
+         n.rfind(kInitPrefix, 0) == 0;
 }
 
 std::string shadowing(const std::string &n, unsigned cell) {
@@ -305,14 +312,17 @@ struct Segment {
 
 // A function's type as Pia writes it: `(a : u8) -> (b : u8) -> u8`, or the
 // result type alone for a constant.
-std::string functionType(mlir::func::FuncOp fn) {
+// The states a function takes are left out: they are not its arguments.
+std::string functionType(mlir::func::FuncOp fn, const std::set<std::string> &states = {},
+                         bool unit = false) {
   mlir::FunctionType t = fn.getFunctionType();
-  std::string out;
+  std::string out = unit ? "() -> " : "";
   for (unsigned i = 0; i < t.getNumInputs(); ++i) {
     std::string name;
     if (auto nl = mlir::dyn_cast<mlir::NameLoc>(fn.getArgument(i).getLoc()))
       name = nl.getName().str();
     name = name.substr(0, name.find('#'));  // a quote's renamed parameter
+    if (states.count(name)) continue;
     std::string mods;
     if (auto a = fn.getArgAttrOfType<mlir::StringAttr>(
             i, PiaDialect::getModifiersAttrName()))
@@ -423,6 +433,72 @@ std::string callAndFormat(void *fp, mlir::Type t) {
 
 bool showable(mlir::Type t) { return !t || layoutOf(t).has_value(); }
 
+// Calls a JIT-compiled entry point that takes nothing and returns an integer
+// or a bool, and stores the result at `out` in C layout.
+void callInto(void *fp, mlir::Type t, unsigned char *out) {
+  auto store = [&](auto v) { std::memcpy(out, &v, sizeof v); };
+  if (t.isInteger(1)) {
+    store(reinterpret_cast<bool (*)()>(fp)());
+    return;
+  }
+  auto it = mlir::cast<IntType>(t);
+  bool s = it.getLo().isNegative();
+  switch (it.getStorageWidth()) {
+    case 8: s ? store(reinterpret_cast<int8_t (*)()>(fp)())
+              : store(reinterpret_cast<uint8_t (*)()>(fp)()); break;
+    case 16: s ? store(reinterpret_cast<int16_t (*)()>(fp)())
+               : store(reinterpret_cast<uint16_t (*)()>(fp)()); break;
+    case 32: s ? store(reinterpret_cast<int32_t (*)()>(fp)())
+               : store(reinterpret_cast<uint32_t (*)()>(fp)()); break;
+    default: s ? store(reinterpret_cast<int64_t (*)()>(fp)())
+               : store(reinterpret_cast<uint64_t (*)()>(fp)()); break;
+  }
+}
+
+// Adds `__pia_thunk_<e>` for each expression `e` that takes states: it calls
+// `e`'s entry point with the states' storage, which the session registers as
+// `__pia_state_<name>`, so the thunk has the signature of an expression
+// that takes nothing.
+mlir::LogicalResult addThunks(mlir::ModuleOp m,
+                              const std::map<std::string, std::vector<std::string>> &evals) {
+  mlir::MLIRContext *ctx = m.getContext();
+  mlir::OpBuilder b(ctx);
+  auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+  for (const auto &[eval, states] : evals) {
+    auto entry = m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(cName(eval));
+    if (!entry) continue;
+    mlir::LLVM::LLVMFunctionType ty = entry.getFunctionType();
+    if (ty.getNumParams() < states.size()) return mlir::failure();
+    for (size_t i = 0; i < states.size(); ++i)
+      if (!mlir::isa<mlir::LLVM::LLVMPointerType>(ty.getParamType(i)))
+        return mlir::failure();
+    for (const std::string &st : states)
+      if (!m.lookupSymbol(kStatePrefix + st)) {
+        b.setInsertionPointToStart(m.getBody());
+        build<mlir::LLVM::GlobalOp>(b, m.getLoc(), b.getI64Type(), /*isConstant=*/false,
+                                    mlir::LLVM::Linkage::External, kStatePrefix + st,
+                                    mlir::Attribute());
+      }
+    llvm::SmallVector<mlir::Type> rest(ty.getParams().begin() + states.size(),
+                                       ty.getParams().end());
+    auto thunkTy = mlir::LLVM::LLVMFunctionType::get(ty.getReturnType(), rest);
+    b.setInsertionPointToEnd(m.getBody());
+    auto thunk = build<mlir::LLVM::LLVMFuncOp>(b, m.getLoc(), kThunkPrefix + eval, thunkTy);
+    mlir::Block *blk = thunk.addEntryBlock(b);
+    b.setInsertionPointToStart(blk);
+    llvm::SmallVector<mlir::Value> args;
+    for (const std::string &st : states)
+      args.push_back(build<mlir::LLVM::AddressOfOp>(b, m.getLoc(), ptr, kStatePrefix + st));
+    for (mlir::BlockArgument a : blk->getArguments()) args.push_back(a);
+    auto call = build<mlir::LLVM::CallOp>(b, m.getLoc(), entry, args);
+    if (mlir::isa<mlir::LLVM::LLVMVoidType>(ty.getReturnType()))
+      build<mlir::LLVM::ReturnOp>(b, m.getLoc(), mlir::ValueRange{});
+    else
+      build<mlir::LLVM::ReturnOp>(b, m.getLoc(), call.getResults());
+  }
+  return mlir::success();
+}
+
 // The names of the top-level functions that `n` refers to.
 void collectRefs(const Node &n, std::set<std::string> &out) {
   if (n.kind == NodeKind::Name) out.insert(n.text);
@@ -447,6 +523,8 @@ const char *helpText =
     "  :help             this list\n"
     "  :quit             leave\n"
     "A definition joins the environment only if everything still verifies.\n"
+    "`let x : mutable T invariant p = v` is a state: it keeps its value, every\n"
+    "definition keeps p, and `:redef` of it can migrate `old x`.\n"
     "While a task runs, a definition it can reach is swapped into it live: at\n"
     "once if the new body is proved against the old contract, or else together\n"
     "with its callers, at a moment when no task is running any of them.\n";
@@ -476,6 +554,19 @@ struct Session::Impl {
   unsigned taskCount = 0;
   std::string pendingSpawn;                 // the expression :spawn runs
   std::set<std::string> pendingSpawnRefs;   // and what it refers to
+
+  // State (ADR 0031, "State"): each state's storage, which compiled code
+  // reaches as `__pia_state_<name>`, and the states each definition takes.
+  struct StateSlot {
+    std::unique_ptr<uint64_t> cell = std::make_unique<uint64_t>(0);
+    mlir::Type type;
+  };
+  std::map<std::string, StateSlot> stateSlots;
+  std::map<std::string, std::vector<std::string>> stateUses;
+  // The expressions of the cell being compiled that take states.
+  std::map<std::string, std::vector<std::string>> pendingThunks;
+  std::set<std::string> pendingSpawnStates;
+  std::vector<std::unique_ptr<uint64_t>> retiredStates;
 
   explicit Impl(Options o) : options(std::move(o)) {
     irgen::loadDialects(ctx);
@@ -552,9 +643,11 @@ struct Session::Impl {
       error(a.errors, x.message, where(a, x.loc.line, x.loc.column));
   }
 
-  // Joins `entries` and `cell` into one program and parses it.
+  // Joins `entries` and `cell` into one program and parses it. With `wrap`,
+  // the cell is read as one parenthesised expression, on lines of its own so
+  // that locations inside it stay the same.
   Attempt parse(const std::vector<Entry> &entries, std::string_view cell,
-                unsigned cellNo) {
+                unsigned cellNo, bool wrap = false) {
     Attempt a;
     for (size_t i = 0; i < entries.size(); ++i) {
       Segment s;
@@ -572,8 +665,12 @@ struct Session::Impl {
     s.offset = a.cellOffset = a.source.size();
     s.vline = countLines(a.source) + 1;
     s.cell = cellNo;
+    if (wrap) {
+      s.line = 0;
+      a.source += "(\n";
+    }
     a.source += cell;
-    a.source += "\n";
+    a.source += wrap ? "\n)\n" : "\n";
     s.end = a.source.size();
     a.segments.push_back(s);
 
@@ -600,6 +697,12 @@ struct Session::Impl {
     std::set<int> doomed;  // entries a redefinition replaces
 
     Attempt a = parse(base, text, cellNo);
+    // A statement such as `count <- 7` is not a top-level item, but a cell
+    // can be one: read it as an expression.
+    if (!a.errors.empty() && trim(text).rfind("let", 0) != 0) {
+      Attempt w = parse(base, text, cellNo, true);
+      if (w.errors.empty()) a = std::move(w);
+    }
     if (!a.errors.empty()) return fail(r, std::move(a.errors));
 
     std::vector<Item> items;
@@ -621,6 +724,7 @@ struct Session::Impl {
         it.entry.head = k.text;
         it.entry.kind = k.flags.find("meta") != std::string::npos ? "meta"
                         : sema::isTypeItem(k)                     ? "type"
+                        : isStateItem(k)                          ? "state"
                                                                   : "let";
       } else if (k.kind == NodeKind::MetaOperator) {
         it.entry.head = "(" + k.text + ")";
@@ -794,6 +898,59 @@ struct Session::Impl {
       }
     if (!r.ok) return r;
 
+    // State: every definition that uses one takes it as a buffer.
+    std::vector<Node *> oldList;
+    for (auto &[n, item] : oldItems) oldList.push_back(item.get());
+    std::vector<std::pair<syntax::SourceLoc, std::string>> stateErrors;
+    StateUse su = rewriteState(
+        *a.tree, oldList,
+        [&](const Node &k) {
+          const Segment *seg = segmentAt(a, k.loc.offset);
+          return !seg || seg->entry < 0;
+        },
+        stateErrors);
+    for (auto &[loc, msg] : stateErrors) error(a.errors, msg, where(a, loc.line, loc.column));
+    if (!a.errors.empty()) return fail(r, std::move(a.errors));
+    std::set<std::string> stateNames;
+    for (const StateDecl &d : su.states) {
+      stateNames.insert(d.name);
+      newItems.erase(d.name);  // replaced by its initial value's function
+    }
+    std::set<std::string> cellStates;  // the states this cell defines
+    for (const std::string &n : cellNames)
+      if (stateNames.count(n)) cellStates.insert(n);
+    // A state a running task uses is the task's alone: nothing else may
+    // read, write, replace or remove it while the task runs.
+    {
+      std::set<std::string> touched(cellStates.begin(), cellStates.end());
+      for (auto &[name, t] : evals) {
+        auto u = su.uses.find(name);
+        if (u != su.uses.end()) touched.insert(u->second.begin(), u->second.end());
+      }
+      for (const std::string &n : forgotten) touched.insert(n);
+      for (const std::string &n : replaced) touched.insert(n);
+      for (const std::string &st : touched) {
+        std::string owners = tasksUsingState(st);
+        if (owners.empty()) continue;
+        error(r.events, "the state '" + st + "' belongs to a running task (" + owners +
+                            ") until it finishes; wait for it with :wait",
+              Where{cellNo, 0, 0});
+        r.ok = false;
+      }
+      if (!r.ok) return r;
+    }
+    pendingThunks.clear();
+    for (auto &[name, t] : evals) {
+      auto u = su.uses.find(name);
+      if (u != su.uses.end()) pendingThunks[name] = u->second;
+    }
+    std::set<std::string> migrating;  // states whose new value comes from the old
+    for (const StateDecl &d : su.states)
+      if (d.migrates) {
+        migrating.insert(d.name);
+        pendingThunks[kInitPrefix + d.name] = {d.name};
+      }
+
     // While tasks run, a replaced definition they can reach must refine the
     // one they were proved against (ADR 0031): its new body is proved
     // against the old contract, as a hidden function.
@@ -873,12 +1030,22 @@ struct Session::Impl {
     std::set<std::string> nullary;  // compiling replaces the func ops
     for (auto &[name, f] : fns) {
       if (f.getNumArguments() == 0) nullary.insert(name);
-      newTypes[name] = functionType(f);
+      newTypes[name] = functionType(f, stateNames, su.unitFns.count(name) > 0);
       newShapes[name] = functionShape(f);
       mlir::FunctionType t = f.getFunctionType();
       results[name] = t.getNumResults() ? t.getResult(0) : mlir::Type();
     }
     for (auto &[name, t] : evals) t = results[name];
+    for (const StateDecl &d : su.states) {
+      if (!cellStates.count(d.name)) continue;
+      mlir::Type t = results[kInitPrefix + d.name];
+      if (!t || !(t.isInteger(1) || mlir::isa<IntType>(t))) {
+        error(r.events, "the state '" + d.name + "' must be an integer or a bool, for now",
+              where(a, d.loc.line, d.loc.column));
+        r.ok = false;
+      }
+    }
+    if (!r.ok) return r;
     // A type that changed changes the shapes of the functions that use it,
     // whether or not they were redefined.
     for (const std::string &n : live)
@@ -921,6 +1088,8 @@ struct Session::Impl {
       for (const verify::ModelValue &v : o.counterexample)
         e.counterexample.emplace_back(v.name, v.value);
       bool refinement = o.function.rfind(kRefinesPrefix, 0) == 0;
+      if (o.function.rfind(kInitPrefix, 0) == 0)
+        e.name = o.function.substr(std::strlen(kInitPrefix));
       switch (o.status) {
         case verify::Status::Proved: e.status = "proved"; break;
         case verify::Status::Failed: e.status = "failed"; break;
@@ -939,8 +1108,8 @@ struct Session::Impl {
       }
       bad += e.status == "failed";
       unproved += e.status == "unproved";
-      proofs[o.function].push_back(e);
-      if (mine.count(o.function) || (e.status != "proved" && e.status != "allowed"))
+      proofs[e.name].push_back(e);
+      if (mine.count(e.name) || (e.status != "proved" && e.status != "allowed"))
         proofEvents.push_back(std::move(e));
     }
     for (Event &e : proofEvents) {
@@ -1026,10 +1195,32 @@ struct Session::Impl {
     std::vector<Entry> kept;
     for (size_t i = 0; i < base.size(); ++i)
       if (!doomed.count(static_cast<int>(i))) kept.push_back(base[i]);
+    // A state that keeps its value keeps the proofs of its initial value.
+    for (const std::string &st : stateNames)
+      if (!cellStates.count(st) && this->proofs.count(st)) proofs[st] = this->proofs[st];
     commit(kept, items, proofs, newTypes, *a.tree);
     shapes.clear();
     for (auto &[name, sh] : newShapes)
       if (!internalName(name)) shapes[name] = sh;
+    stateUses.clear();
+    for (auto &[name, u] : su.uses)
+      if (!internalName(name)) stateUses[name] = u;
+    for (auto it = stateSlots.begin(); it != stateSlots.end();)
+      if (!stateNames.count(it->first)) {
+        retiredStates.push_back(std::move(it->second.cell));  // code may still name it
+        it = stateSlots.erase(it);
+      } else {
+        ++it;
+      }
+    std::map<std::string, mlir::Type> oldStateTypes;
+    for (const std::string &st : cellStates) {
+      auto was = stateSlots.find(st);
+      if (was != stateSlots.end() && was->second.type) oldStateTypes[st] = was->second.type;
+      stateSlots[st].type = results[kInitPrefix + st];
+    }
+    pendingSpawnStates.clear();
+    for (auto &[name, u] : pendingThunks)
+      if (name.rfind(kEvalPrefix, 0) == 0) pendingSpawnStates.insert(u.begin(), u.end());
 
     std::string quietList =
         joinNames(std::vector<std::string>(quiet.begin(), quiet.end()), "or");
@@ -1047,6 +1238,26 @@ struct Session::Impl {
         std::vector<std::string> busy;
         if (!engine) return;
         install(engine, defs, {}, busy);
+      }
+      // A state this cell defines starts at its initial value.
+      for (const std::string &st : cellStates) {
+        llvm::Expected<void *> fp = engine->lookup(
+            migrating.count(st) ? kThunkPrefix + std::string(kInitPrefix) + st
+                                : cName(kInitPrefix + st));
+        if (!fp) {
+          error(r.events, "JIT: " + llvm::toString(fp.takeError()));
+          r.ok = false;
+          continue;
+        }
+        StateSlot &slot = stateSlots[st];
+        uint64_t v = 0;  // a migration reads the old value from the cell
+        callInto(*fp, slot.type, reinterpret_cast<unsigned char *>(&v));
+        *slot.cell = v;
+        for (Event &e : r.events)
+          if ((e.kind == Event::Kind::Defined || e.kind == Event::Kind::Redefined) &&
+              e.name == st)
+            e.value = formatValue(slot.type,
+                                  reinterpret_cast<const unsigned char *>(slot.cell.get()));
       }
       execute(engine, toRun, r, spawn);
     };
@@ -1070,6 +1281,19 @@ struct Session::Impl {
         r.events.push_back(std::move(e));
         if (nullary.count(n) && results[n] && showable(results[n]))
           toRun.emplace_back(n, results[n]);
+      }
+      if (it.entry.kind == "state") {
+        Event e;
+        e.kind = std::find(replaced.begin(), replaced.end(), it.entry.head) !=
+                         replaced.end()
+                     ? Event::Kind::Redefined
+                     : Event::Kind::Defined;
+        e.name = it.entry.head;
+        e.type = "mutable " + sema::typeName(stateSlots[it.entry.head].type);
+        auto was = oldStateTypes.find(it.entry.head);
+        if (migrating.count(it.entry.head) && was != oldStateTypes.end())
+          e.text = "migrated from mutable " + sema::typeName(was->second);
+        r.events.push_back(std::move(e));
       }
       if (it.entry.kind == "type" || it.entry.kind == "meta" ||
           it.entry.kind == "operator") {
@@ -1109,7 +1333,8 @@ struct Session::Impl {
       toRun.emplace_back(name, t);
     }
     bool swap = !replaced.empty() && !live.empty();
-    if (!options.run || (toRun.empty() && !swap && !engine)) return r;
+    if (!options.run || (toRun.empty() && !swap && !engine && cellStates.empty()))
+      return r;
     finish(toRun, mode == Mode::Spawn);
     return r;
   }
@@ -1124,7 +1349,8 @@ struct Session::Impl {
     codegen::eraseContracts(module);
     if (mlir::failed(codegen::lowerToCore(module)) ||
         mlir::failed(codegen::lowerToLLVM(module)) ||
-        mlir::failed(callThroughSlots(module, defs, gated))) {
+        mlir::failed(callThroughSlots(module, defs, gated)) ||
+        mlir::failed(addThunks(module, pendingThunks))) {
       for (Event &e : mlirErrors) r.events.push_back(std::move(e));
       error(r.events, "this cannot be compiled yet, so it was not run");
       r.ok = false;
@@ -1168,6 +1394,7 @@ struct Session::Impl {
       };
       for (const auto &[n, slot] : slots) add(kSlotPrefix + n, slot.get());
       for (const auto &[n, gate] : gates) add(kGatePrefix + n, gate.get());
+      for (const auto &[n, st] : stateSlots) add(kStatePrefix + n, st.cell.get());
       add(kWait, reinterpret_cast<void *>(&piaReplWait));
       return map;
     });
@@ -1232,7 +1459,8 @@ struct Session::Impl {
                const std::vector<std::pair<std::string, mlir::Type>> &toRun,
                CellResult &r, bool spawn) {
     for (const auto &[name, t] : toRun) {
-      llvm::Expected<void *> fp = engine->lookup(cName(name));
+      llvm::Expected<void *> fp = engine->lookup(
+          pendingThunks.count(name) ? kThunkPrefix + name : cName(name));
       if (!fp) {
         error(r.events, "JIT: " + llvm::toString(fp.takeError()));
         r.ok = false;
@@ -1267,6 +1495,7 @@ struct Session::Impl {
     std::string expr;
     std::string type;
     std::set<std::string> reach;  // definitions its code can call
+    std::set<std::string> states;  // the states it uses, which are its alone
     std::shared_ptr<mlir::ExecutionEngine> engine;
     std::thread thread;
     std::atomic<bool> done{false};
@@ -1281,6 +1510,11 @@ struct Session::Impl {
     task->expr = pendingSpawn;
     task->type = t ? sema::typeName(t) : "unit";
     task->reach = reachOf(pendingSpawnRefs);
+    task->states = pendingSpawnStates;
+    for (const std::string &n : task->reach) {
+      auto u = stateUses.find(n);
+      if (u != stateUses.end()) task->states.insert(u->second.begin(), u->second.end());
+    }
     task->engine = std::move(engine);
     Task *raw = task.get();
     task->thread = std::thread([raw, fp, t] {
@@ -1316,6 +1550,14 @@ struct Session::Impl {
     for (const auto &t : tasks)
       if (!t->done.load(std::memory_order_acquire))
         out.insert(t->reach.begin(), t->reach.end());
+    return out;
+  }
+
+  std::string tasksUsingState(const std::string &st) const {
+    std::string out;
+    for (const auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire) && t->states.count(st))
+        out += (out.empty() ? "task " : ", ") + std::to_string(t->id);
     return out;
   }
 
@@ -1492,7 +1734,7 @@ struct Session::Impl {
       }
       auto it = proofs.find(arg);
       if (it == proofs.end()) {
-        if (types.count(arg))
+        if (types.count(arg) || stateSlots.count(arg))
           info("'" + arg + "' has no obligations");
         else {
           error(r.events, "nothing named '" + arg + "' is defined");
@@ -1600,6 +1842,9 @@ struct Session::Impl {
       env.clear();
       refs.clear();
       shapes.clear();
+      stateUses.clear();
+      for (auto &[n, st] : stateSlots) retiredStates.push_back(std::move(st.cell));
+      stateSlots.clear();
       proofs.clear();
       types.clear();
       info("the environment is empty");
@@ -1646,7 +1891,7 @@ bool Session::isComplete(std::string_view text) {
   // contract clause needs the body still to come.
   size_t nl = t.rfind('\n');
   std::string lastLine = trim(t.substr(nl == std::string::npos ? 0 : nl + 1));
-  for (const char *clause : {"requires", "ensures", "decreases"}) {
+  for (const char *clause : {"requires", "ensures", "decreases", "invariant"}) {
     size_t n = std::strlen(clause);
     if (lastLine.compare(0, n, clause) == 0 &&
         (lastLine.size() == n ||

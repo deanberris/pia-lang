@@ -422,6 +422,10 @@ class Gen {
         R m = genContractExpr(*c->kids[0], Type());
         if (!m) return;
         create<contract::DecreasesOp>(loc(*c), m->value);
+      } else if (c->kind == NodeKind::Invariant) {
+        fail(*c, "'invariant' belongs to a state, which only the REPL "
+                 "supports yet (ADR 0031)");
+        return;
       }
     }
 
