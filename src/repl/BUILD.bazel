@@ -10,11 +10,13 @@ cc_library(
         "Kernel.cpp",
         "Mcp.cpp",
         "Session.cpp",
+        "State.cpp",
     ],
     hdrs = [
         "Kernel.h",
         "Mcp.h",
         "Session.h",
+        "State.h",
     ],
     # MLIR's generated headers trip -Wunused-parameter.
     copts = [

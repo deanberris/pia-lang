@@ -70,6 +70,10 @@ nav:
   - A tour of Pia: tour.md
   - How verification works: verification.md
   - The REPL: repl.md
+  - Case studies:
+      - Famous bugs, proved away: cases/index.md
+      - Heartbleed: cases/heartbleed.pia.md
+      - Binary search: cases/binary-search.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md

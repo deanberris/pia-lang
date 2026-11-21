@@ -22,7 +22,9 @@ directory holding the examples written so far, and its output (stdout and
 stderr) must match the rest of the block. A line `...` in the expected
 output matches any number of lines. A ```console block whose first line is
 `$ pia ...` runs `pia` the same way, and `< file` on that line feeds the
-file to its standard input.
+file to its standard input. The page itself is in that directory too, so a
+literate page (`*.pia.md`) can show `$ piac --verify page.pia.md` proving
+its own ```pia blocks.
 
 Every piac run gets the same deterministic solver limits as `pia_object`
 (tools/piac/pia.bzl), unless its command line sets them, so whether a goal
@@ -33,6 +35,7 @@ runs this test alongside everything else.
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -100,6 +103,7 @@ def main():
     checked = 0
     for doc in docs:
         with tempfile.TemporaryDirectory() as tmp:
+            shutil.copy(doc, os.path.join(tmp, os.path.basename(doc)))
             count = 0
             for line, info, directives, body in blocks(doc):
                 where = f"{doc}:{line}"
