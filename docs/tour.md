@@ -199,7 +199,7 @@ let find (xs : [i32]) (x : i32) : usize =
   i
 ```
 
-Loops compile and vectorise today: `add_rows` becomes a NEON loop that adds 16 bytes at a time. The verifier does not prove the goals inside loops yet. It reports them as `skipped`, and `piac` warns that they were not proved. [Status](status.md) has more on this.
+The verifier proves each invariant on entry and after an arbitrary iteration, proves the goals in the body for every iteration where the invariant holds, and knows only the invariant after the loop. A `while` loop needs a `decreases` measure that is never negative and goes down, or its termination is not proved. Both loops above are proved, and `add_rows` becomes a NEON loop that adds 16 bytes at a time. [The verifier](verifier.md#loops) has the details.
 
 ## Contracts
 

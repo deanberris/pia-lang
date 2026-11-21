@@ -75,10 +75,9 @@ LBB0_10:
 	uqadd.16b	v2, v2, v6
 	uqadd.16b	v3, v3, v7
 ...
-piac: warning: 3 obligations were skipped and not proved; see piac --verify
 ```
 
-(The warning is honest: the bounds goals inside the loop are not proved yet, so `piac` says it skipped them. Loop invariants are the verifier's next step; see [Status](docs/status.md).)
+The bounds goals inside the loop are proved first: `i < len dst` from the loop's range, and the precondition gives the other two lengths. `piac` generates code only when every goal is proved.
 
 ## What is in Pia
 
@@ -90,7 +89,7 @@ piac: warning: 3 obligations were skipped and not proved; see piac --verify
 
 ## Status
 
-Pia is early and experimental. The compiler proves and compiles straight-line code, records, contracts and quantifiers today, and compiles loops (vectorised), but it does not prove the goals inside loops yet. Modules, generics, floats, variants and the concurrency model are designed but not built. [Status and roadmap](docs/status.md) has the details. The long-term target is a provably correct GIS pipeline, stream delineation and sediment transport over terrain images, running across the CPU and GPU.
+Pia is early and experimental. The compiler proves and compiles straight-line code, records, contracts and quantifiers today, and loops, cut at their invariants with termination checked by `decreases`, and compiles them (loops vectorised). Modules, generics, floats, variants and the concurrency model are designed but not built. [Status and roadmap](docs/status.md) has the details. The long-term target is a provably correct GIS pipeline, stream delineation and sediment transport over terrain images, running across the CPU and GPU.
 
 ## Building
 
