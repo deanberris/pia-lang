@@ -3,12 +3,18 @@ load("@rules_python//python:defs.bzl", "py_test")
 load("//tests/lit:lit.bzl", "lit_tests")
 
 # `pia repl` end to end, through the JSON protocol and a pipe.
+# It verifies and JITs dozens of cells, so it runs in shards (each shard
+# runs every fourth test; tests/repl/shard.py).
 py_test(
     name = "repl_test",
-    srcs = ["repl_test.py"],
+    srcs = [
+        "repl_test.py",
+        "shard.py",
+    ],
     args = ["$(rootpath //tools/pia)"],
     data = ["//tools/pia"],
     main = "repl_test.py",
+    shard_count = 4,
 )
 
 # `pia mcp`: the execute and poll tools over stdio.

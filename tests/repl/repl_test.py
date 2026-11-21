@@ -488,4 +488,7 @@ class TextTest(unittest.TestCase):
 
 if __name__ == "__main__":
     PIA = sys.argv.pop(1)
-    unittest.main()
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import shard
+    shard.main(sys.modules[__name__])

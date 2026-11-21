@@ -12,9 +12,10 @@
 //                                   all of them in function SPEC, or the ones
 //                                   at SPEC = file:line or file:line:col
 //   piac --solver-timeout=MS ...    give Z3 MS milliseconds per obligation
-//                                   (default 10000)
+//                                   (default 600000, a safety net only)
 //   piac --solver-rlimit=N ...      give Z3 a deterministic resource limit
-//                                   of N per obligation (default none)
+//                                   of N per obligation (default
+//                                   1200000000, as pia_object passes)
 //   piac --solver-cost file.pia     --verify, also printing each proved
 //                                   goal's Z3 resource count
 //   piac --jobs=N ...               solve goals on N threads (default: one
@@ -267,8 +268,12 @@ int main(int argc, char **argv) {
   bool contracts = false, verify = false, dumpSmt = false;
   bool literate = false, showComments = false;
   pia::meta::Options meta;
-  unsigned solverTimeoutMs = 0;  // 0: the verifier's default
-  unsigned solverRlimit = 0;     // 0: none
+  // Whether a goal is proved must not depend on load: since goals are
+  // solved on every core, a wall-clock limit would turn proofs into
+  // timeouts on a busy machine. So the deterministic rlimit decides, as in
+  // pia_object, and the timeout is only a safety net (ADR 0032).
+  unsigned solverTimeoutMs = 600000;
+  unsigned solverRlimit = 1200000000;
   bool solverCost = false;
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
@@ -432,7 +437,7 @@ int main(int argc, char **argv) {
       }
       pia::verify::Options options;
       options.dumpSmt = dumpSmt;
-      if (solverTimeoutMs) options.timeoutMs = solverTimeoutMs;
+      options.timeoutMs = solverTimeoutMs;
       options.rlimit = solverRlimit;
       options.reportCost = solverCost;
       options.jobs = jobs;
