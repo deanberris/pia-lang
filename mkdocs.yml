@@ -112,3 +112,4 @@ nav:
       - adr/0027-coroutines-and-race-freedom.md
       - adr/0028-error-propagation-and-cleanup.md
       - adr/0029-comments-as-syntax-and-literate-pia.md
+      - adr/0030-published-object-layouts.md
