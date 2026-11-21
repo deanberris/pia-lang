@@ -120,15 +120,16 @@ static uint16_t *draw_terrain(long w, long h) {
   for (long y = 0; y < h; ++y) {
     for (long x = 0; x < w; ++x) {
       double u = (double)x / w, v = (double)y / h;
-      double z = 0.75 * (1 - v);                       // north is high
-      z += 0.18 * fabs(u - 0.5 - 0.1 * sin(6 * v));    // a winding valley
-      double n = 0, amp = 0.5, freq = 4;
-      for (int o = 0; o < 5; ++o, amp *= 0.5, freq *= 2)
+      double valley = 0.5 + 0.12 * sin(5 * v);        // a winding valley
+      double z = 0.35 * (1 - v);                       // north is high
+      z += 0.55 * fabs(u - valley);                    // sides fall to it
+      double n = 0, amp = 0.5, freq = 3;
+      for (int o = 0; o < 6; ++o, amp *= 0.55, freq *= 2)
         n += amp * value_noise(u * freq, v * freq, 7u + o);
-      z += 0.22 * n;
-      double cx = u - 0.72, cy = v - 0.55;               // the crater
-      double r2 = (cx * cx + cy * cy) / (0.09 * 0.09);
-      z += r2 < 1 ? -0.12 * (1 - r2) : 0.04 * exp(-(r2 - 1) * 2);
+      z += 0.35 * n;                                   // hills and gullies
+      double cx = u - 0.78, cy = v - 0.4;              // the crater
+      double r2 = (cx * cx + cy * cy) / (0.08 * 0.08);
+      z += r2 < 1 ? -0.15 * (1 - r2) : 0.05 * exp(-(r2 - 1) * 2);
       if (z < 0) z = 0;
       if (z > 1.2) z = 1.2;
       dem[y * w + x] = (uint16_t)(z / 1.2 * 60000);
@@ -219,9 +220,9 @@ int main(int argc, char **argv) {
     return 1;
   }
   uint64_t n = (uint64_t)w * h;
-  // A stream drains at least 1 in 400 of the map, unless told otherwise.
+  // A stream drains at least 1 in 100 of the map, unless told otherwise.
   uint32_t threshold = threshold_arg ? (uint32_t)threshold_arg
-                                     : (uint32_t)(n / 400 > 8 ? n / 400 : 8);
+                                     : (uint32_t)(n / 100 > 8 ? n / 100 : 8);
   uint16_t *fill = malloc(n * sizeof *fill);
   uint64_t *down = malloc(n * sizeof *down), *basin = malloc(n * sizeof *basin);
   uint32_t *acc = malloc(n * sizeof *acc);
@@ -243,11 +244,14 @@ int main(int argc, char **argv) {
   double t4 = seconds();
 
   if (!write_rgb(resolve(output, out_buf, sizeof out_buf), w, h, rgb)) return 1;
-  uint64_t lakes = 0, outlets = 0, drained = 0;
+  // Every border cell is an outlet; the ones that drain a stream's worth
+  // of the map are the watersheds worth counting.
+  uint64_t lakes = 0, outlets = 0, rivers = 0, drained = 0;
   for (uint64_t i = 0; i < n; ++i) {
     lakes += fill[i] > dem[i];
     if (down[i] == i) {
       ++outlets;
+      rivers += acc[i] >= threshold;
       drained += acc[i];
     }
   }
@@ -256,11 +260,12 @@ int main(int argc, char **argv) {
          passes, passes == limit ? ", not settled" : "", (t1 - t0) * 1e3);
   printf("D8 directions (%.1f ms); accumulation and watersheds (%.1f ms)\n",
          (t2 - t1) * 1e3, (t3 - t2) * 1e3);
-  printf("%llu lake cells, %llu stream cells at threshold %u, %llu outlets "
-         "draining %llu cells (%.1f ms)\n",
+  printf("%llu lake cells, %llu stream cells at threshold %u (%.1f ms)\n",
          (unsigned long long)lakes, (unsigned long long)streams, threshold,
-         (unsigned long long)outlets, (unsigned long long)drained,
          (t4 - t3) * 1e3);
+  printf("%llu outlets drain %llu cells; %llu of them drain a stream\n",
+         (unsigned long long)outlets, (unsigned long long)drained,
+         (unsigned long long)rivers);
   printf("map written to %s\n", output);
   free(dem), free(fill), free(down), free(basin), free(acc), free(rgb);
   return 0;

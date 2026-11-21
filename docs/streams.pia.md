@@ -26,7 +26,9 @@ $ bazel run //examples/streams -- ~/Pictures/terrain.png ~/Desktop/streams.png
 
 The first command draws a synthetic terrain, saves it as
 `streams-input.png` in the current directory, and writes the result to
-`streams-output.png`. The second reads your own heightmap, in any format
+`streams-output.png`. It prints a text preview of the map and how long
+each stage took; on an M-series iMac the whole 384x256 map takes about 30
+ms. The second reads your own heightmap, in any format
 macOS can open (PNG, GIF, JPEG, TIFF, BMP), where brighter means higher, and
 writes the map as PNG, or GIF if the name ends in `.gif`.
 
@@ -297,7 +299,7 @@ pairs left, so it ends even on a terrain that would take longer to settle;
 when the result is `limit`, the surface may not have settled, and the later
 stages are still correct on it, only less useful. The `ensures` is the
 first theorem: the filled surface is nowhere below the ground. The copy
-loop is a straight copy, which LLVM vectorises.
+loop is a straight copy, which LLVM turns into NEON loads and stores.
 
 ```pia
 let fill_sinks (dem : [u16]) (w : usize) (limit : u32)
@@ -743,9 +745,17 @@ The demo works around parts of Pia that are not built yet:
   code adds instead, and the slope weights are `tenfold` and `sevenfold`.
 - **Floats** ([M11](https://github.com/deanberris/pia-lang/issues/12))
   would give true slopes in place of the 10:7 weights.
-- **Parallelism.** `directions` and `render` are independent per row and
-  per cell; `spread`
-  ([M12](https://github.com/deanberris/pia-lang/issues/13)) will run them
-  across cores. The copy and initialisation loops are vectorised by LLVM
-  already.
+- **Vectorisation and parallelism.** Today LLVM vectorises only the
+  simple loops: the copy in `fill_sinks` and `down.[i] <- i` in
+  `directions` become NEON loads, stores and adds. The stencil kernels
+  (`settle`, `steepest`) and the walks are scalar. `steepest` and `paint`
+  are branch-free enough to vectorise once proved facts drive it
+  ([M10](https://github.com/deanberris/pia-lang/issues/11)), and
+  `directions` and `render` are independent per row and per cell, so
+  `spread` ([M12](https://github.com/deanberris/pia-lang/issues/13)) can
+  run them across cores. Gauss-Seidel filling stays sequential by design.
+- **Solver robustness.** Goals beside a `forall` are slow for the solver,
+  and some slices' element ranges are lost inside quantifiers
+  ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
+  code is shaped around both, as noted where it matters.
 - **Sediment transport**, the second half of the flagship demo, is next.
