@@ -128,6 +128,18 @@ let clear_tail (xs : out mutable [u8]) (n : usize) : unit
 = fill (xs.[n .. len xs]) 0
 ```
 
+An array literal `[a; b; c]` gives an array its values. At the top level it is a constant table in read-only data, and the verifier knows every value in it:
+
+```ocaml
+let squares : [u16; 4] = [0; 1; 4; 9]
+
+let square (i : int{0..3}) : u16
+  ensures result = i * i
+= squares.[i]
+```
+
+Constant data cannot be passed to an `out` or `inout` parameter. For now the elements must be integer literals.
+
 `abort ()` stops the program. Its precondition is `false`, so every `abort` is a goal that it is never reached: it marks a case the contracts rule out.
 
 ### Parameter modifiers

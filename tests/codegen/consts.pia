@@ -1,0 +1,13 @@
+(* Constant arrays (#50), compiled for Apple Silicon and run by
+   consts_test.c. Every goal here must be proved.
+*)
+
+let crc4 : [u8; 16] = [0; 3; 6; 5; 12; 15; 10; 9; 11; 8; 13; 14; 7; 4; 1; 2]
+
+let lookup (i : int{0..15}) : u8 = crc4.[i]
+
+let signs : [i8; 4] = [-128; -1; 0; 127]
+
+let sign_at (i : int{0..3}) : i8 = signs.[i]
+
+let middle_sum : u16 = let v = crc4.[4 .. 8] in v.[0] + v.[1] + v.[2] + v.[3]

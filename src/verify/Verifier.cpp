@@ -957,6 +957,22 @@ class Encoder {
       out.push_back(create<mlir::smt::ArraySelectOp>(sort, arr, at));
       return true;
     }
+    // Constant data: an array of its values, all known.
+    if (auto k = mlir::dyn_cast<ConstArrayOp>(op)) {
+      auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(
+          sortOf(k.getType()));
+      if (!sort) return false;
+      Value arr = create<mlir::smt::ArrayBroadcastOp>(sort, bv(0));
+      for (auto [i, v] : llvm::enumerate(k.getValues()))
+        arr = create<mlir::smt::ArrayStoreOp>(
+            sort, arr, bv(static_cast<int64_t>(i)),
+            bv(mlir::cast<mlir::IntegerAttr>(v).getValue()));
+      arrays[k.getResult()] = arr;
+      lengths[k.getResult()] =
+          bv(static_cast<int64_t>(k.getType().getLength()));
+      out.push_back(bv(0));  // a placeholder: buffers are not terms
+      return true;
+    }
     // A slice is its buffer's storage from an offset: its length and that
     // offset are tracked, and its elements are read and written in the
     // root buffer. The result term is a placeholder; buffers are not terms.

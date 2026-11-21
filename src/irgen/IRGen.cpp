@@ -133,6 +133,8 @@ class Gen {
     module_ = *module;
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
+    collectConstants();
+    if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids) genFunction(item->text);
     if (diags_.hasErrors()) return nullptr;
     if (mlir::failed(mlir::verify(*module))) return nullptr;
@@ -243,6 +245,7 @@ class Gen {
     std::string what;
     if (lookup(name)) what = "a local of the same name";
     else if (sigs_.count(name)) what = "the function '" + name + "'";
+    else if (consts_.count(name)) what = "the constant '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
     else if (sema::isCoreBuiltin(name)) what = "a core builtin";
@@ -256,7 +259,8 @@ class Gen {
   // The first of `x'`, `x''`, ... that nothing in scope uses.
   std::string primed(const std::string &name) {
     std::string p = name + "'";
-    while (lookup(p) || sigs_.count(p) || types_.named(p)) p += "'";
+    while (lookup(p) || sigs_.count(p) || consts_.count(p) || types_.named(p))
+      p += "'";
     return p;
   }
 
@@ -295,6 +299,72 @@ class Gen {
   }
 
   // --- functions ------------------------------------------------------
+
+  // `let crc_table : [u32; 256] = [...]`: a top-level array of literals is
+  // constant data, not a function. Each use reads it from read-only data.
+  void collectConstants() {
+    for (auto it = sigs_.begin(); it != sigs_.end();) {
+      const sema::FuncSig &sig = it->second;
+      auto arr = mlir::dyn_cast_or_null<ArrayType>(sig.result);
+      const Node &body = *sig.item->kids[3];
+      if (!sig.params.empty() || !arr || body.kind != NodeKind::ListLit) {
+        ++it;
+        continue;
+      }
+      if (auto values = constValues(body, arr))
+        consts_[sig.name] = {arr, *values};
+      it = sigs_.erase(it);
+    }
+  }
+
+  // The values of an array literal of integer literals, checked against
+  // the array type.
+  std::optional<mlir::ArrayAttr> constValues(const Node &lit, ArrayType arr) {
+    auto elem = mlir::dyn_cast<IntType>(arr.getElementType());
+    if (!elem) {
+      fail(lit, "constant arrays of " + typeName(arr.getElementType()) +
+                    " are not supported yet");
+      return std::nullopt;
+    }
+    if (lit.kids.size() != arr.getLength()) {
+      fail(lit, "an array literal for " + typeName(arr) + " needs " +
+                    plural(arr.getLength(), "element") + ", found " +
+                    std::to_string(lit.kids.size()));
+      return std::nullopt;
+    }
+    llvm::SmallVector<mlir::Attribute> values;
+    for (const syntax::NodePtr &k : lit.kids) {
+      const Node *n = k.get();
+      bool negative = false;
+      if (n->kind == NodeKind::Neg && n->kids.size() == 1) {
+        negative = true;
+        n = n->kids[0].get();
+      }
+      if (n->kind != NodeKind::IntLit) {
+        fail(*k, "an array literal's elements must be integer literals for "
+                 "now");
+        return std::nullopt;
+      }
+      auto v = sema::parseIntLiteral(n->text);
+      if (!v) {
+        fail(*k, "invalid integer literal");
+        return std::nullopt;
+      }
+      llvm::APInt x = negative ? -v->value : v->value;
+      if (!elem.contains(x)) {
+        fail(*k, llvm::toString(x, 10, true) + " does not fit in " +
+                     typeName(elem));
+        return std::nullopt;
+      }
+      values.push_back(b_.getIntegerAttr(b_.getIntegerType(kWidth), x));
+    }
+    return b_.getArrayAttr(values);
+  }
+
+  struct Constant {
+    ArrayType type;
+    mlir::ArrayAttr values;
+  };
 
   void genFunction(const std::string &name) {
     auto it = sigs_.find(name);
@@ -452,6 +522,17 @@ class Gen {
         return genApply(n, expected);
       case NodeKind::Index:
         return genIndex(n);
+      case NodeKind::ListLit: {
+        auto arr = mlir::dyn_cast_or_null<ArrayType>(expected);
+        if (!arr)
+          return fail(n, "an array literal needs its type from the context, "
+                         "as in 'let t : [u8; 3] = [1; 2; 3]'");
+        auto values = constValues(n, arr);
+        if (!values) return std::nullopt;
+        auto op = create<ConstArrayOp>(loc(n), arr, *values,
+                                       mlir::StringAttr());
+        return TV{op.getResult(), arr};
+      }
       case NodeKind::RecordLit:
         return genRecordLit(n, expected);
       case NodeKind::Field:
@@ -523,6 +604,11 @@ class Gen {
   R genName(const Node &n) {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+    if (auto c = consts_.find(n.text); c != consts_.end()) {
+      auto op = create<ConstArrayOp>(loc(n), c->second.type, c->second.values,
+                                     b_.getStringAttr(n.text));
+      return TV{op.getResult(), c->second.type};
+    }
     auto it = sigs_.find(n.text);
     if (it != sigs_.end()) {
       if (!it->second.params.empty())
@@ -872,9 +958,24 @@ class Gen {
       if (!a) return a;
       R c = coerce(*a, sig.params[i].type, *args[i]);
       if (!c) return c;
+      if (writes(sig.params[i]) && isConstantData(c->value))
+        return fail(*args[i], "constant data cannot be passed to '" +
+                                  sig.params[i].name + "', which is 'out' or "
+                                  "'inout'");
       operands.push_back(c->value);
     }
     return emitCall(n, sig, operands);
+  }
+
+  static bool writes(const sema::Param &p) {
+    return sema::hasModifier(p.modifiers, "out") ||
+           sema::hasModifier(p.modifiers, "inout");
+  }
+
+  // Whether a buffer is, or views, read-only constant data.
+  static bool isConstantData(Value v) {
+    while (auto s = v.getDefiningOp<SliceOp>()) v = s.getBuffer();
+    return v.getDefiningOp<ConstArrayOp>() != nullptr;
   }
 
   R emitCall(const Node &n, const sema::FuncSig &sig,
@@ -1419,6 +1520,7 @@ class Gen {
   sema::TypeResolver types_;
   mlir::ModuleOp module_;
   std::map<std::string, sema::FuncSig> sigs_;
+  std::map<std::string, Constant> consts_;
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;

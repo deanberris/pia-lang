@@ -1,0 +1,49 @@
+(* Constant arrays (#50, docs/stdlib.md group 6): array literals and
+   module-level tables, whose values the verifier knows.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A table at module level is constant data. *)
+let squares : [u16; 8] = [0; 1; 4; 9; 16; 25; 36; 49]
+
+(* Every value is known, so the lookup's result is proved exactly. *)
+let square (i : int{0..7}) : u16
+  ensures result = i * i
+= squares.[i]
+
+(* The index is still a goal. *)
+let out_of_table (i : u8) : u16 = squares.[i]
+
+(* A literal where an array is expected. *)
+let weights : [i8; 3] = [-1; 0; 1]
+
+let edge (a : i8) (c : i8) : i16
+  requires -100 <= a && a <= 100 && -100 <= c && c <= 100
+  ensures result = c - a
+= weights.[0] * a + weights.[2] * c
+
+(* A slice of a table is read-only data too. *)
+let sum_head (xs : [u16]) : u32
+  requires len xs >= 2
+= xs.[0] + xs.[1]
+
+let head2 : u32 = sum_head (squares.[2 .. 8])
+
+(* Expected report, in order.
+// CHECK: consts.pia:12:3: proved: the index is within bounds [intervals]
+// CHECK: consts.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: consts.pia:15:35: failed: the index is within bounds
+// CHECK-NEXT: counterexample: i = {{-?[0-9]+}}, index = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: consts.pia:23:3: proved: the index is within bounds [intervals]
+// CHECK: consts.pia:23:15: proved: '*' does not overflow i16 [intervals]
+// CHECK: consts.pia:23:21: proved: the index is within bounds [intervals]
+// CHECK: consts.pia:23:33: proved: '*' does not overflow i16 [intervals]
+// CHECK: consts.pia:23:19: proved: '+' does not overflow i16 [smt]
+// CHECK: consts.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: consts.pia:28:3: proved: the index is within bounds [smt]
+// CHECK: consts.pia:28:12: proved: the index is within bounds [smt]
+// CHECK: consts.pia:28:10: proved: '+' does not overflow u32 [intervals]
+// CHECK: consts.pia:30:29: proved: the slice is within bounds [smt]
+// CHECK: consts.pia:30:19: proved: the precondition of 'sum_head' holds [smt]
+// CHECK: 13 proved, 1 failed, 0 skipped
+*)
