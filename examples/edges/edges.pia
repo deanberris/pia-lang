@@ -1,0 +1,99 @@
+(* Edge detection: the Pia demo (docs/demo.md).
+
+   `edges` takes an image as packed RGB bytes, `w` pixels wide, and writes
+   an edge map that is bright where the brightness changes sharply. It runs
+   three passes, and the verifier proves every index, every sum and every
+   narrowing in them before any code is generated:
+
+   1. `gray`, from RGB to brightness,
+   2. `blur`, a 3x3 box blur that smooths out noise,
+   3. `sobel`, the Sobel operator, which measures how fast the brightness
+      changes at each pixel.
+
+   An image is stored row by row, so the pixel above `m` is `m - w` and the
+   pixel below is `m + w`. The row loops keep a row on each side of the one
+   they are working on, and the column loops keep a column on each side, so
+   every neighbour is in bounds. Pia does not allocate memory yet, so the
+   caller passes the buffers.
+*)
+
+(* BT.601 brightness in 8.8 fixed point. The weights add up to 256, so the
+   result fits in a byte. *)
+let luma (r : u8) (g : u8) (b : u8) : u8 =
+  let y : u32 = 77 * r + 150 * g + 29 * b in
+  y / 256
+
+let gray (rgb : [u8]) (dst : out mutable [u8]) : unit
+  requires len rgb = 3 * len dst
+=
+  for i in 0..len dst do
+    dst.[i] <- luma (rgb.[3 * i]) (rgb.[3 * i + 1]) (rgb.[3 * i + 2])
+  done
+
+(* The mean of each pixel and its eight neighbours. Border pixels are
+   copied unchanged. *)
+let blur (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
+  requires len dst = len src && w >= 3 && 3 * w <= len src
+=
+  for i in 0..len src do dst.[i] <- src.[i] done;
+  let r : mutable usize = w in
+  while w <= len src - (r + w)
+    invariant w <= r && r + w <= len src
+    decreases len src - r
+  do
+    for x in 1..w - 1 do
+      let a = r - w + x in
+      let m = r + x in
+      let b = r + w + x in
+      let s : u16 =
+        src.[a - 1] + src.[a] + src.[a + 1]
+        + src.[m - 1] + src.[m] + src.[m + 1]
+        + src.[b - 1] + src.[b] + src.[b + 1]
+      in
+      dst.[m] <- s / 9
+    done;
+    r <- r + w
+  done
+
+(* The Sobel gradient: how much brighter the right side of each pixel is
+   than its left side (gx), and its bottom than its top (gy). The edge
+   strength |gx| + |gy| is clamped to 255. Border pixels are 0. *)
+let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
+  requires len dst = len src && w >= 3 && 3 * w <= len src
+=
+  for i in 0..len dst do dst.[i] <- 0 done;
+  let r : mutable usize = w in
+  while w <= len src - (r + w)
+    invariant w <= r && r + w <= len src
+    decreases len src - r
+  do
+    for x in 1..w - 1 do
+      let a = r - w + x in
+      let m = r + x in
+      let b = r + w + x in
+      let gx : i32 =
+        (src.[a + 1] + 2 * src.[m + 1] + src.[b + 1])
+        - (src.[a - 1] + 2 * src.[m - 1] + src.[b - 1])
+      in
+      let gy : i32 =
+        (src.[b - 1] + 2 * src.[b] + src.[b + 1])
+        - (src.[a - 1] + 2 * src.[a] + src.[a + 1])
+      in
+      let ax : i32 = if gx < 0 then 0 - gx else gx in
+      let ay : i32 = if gy < 0 then 0 - gy else gy in
+      let g : i32 = ax + ay in
+      dst.[m] <- if g > 255 then 255 else g
+    done;
+    r <- r + w
+  done
+
+(* The whole pipeline. `luma_buf` and `smooth` hold the intermediate
+   images. *)
+let edges (rgb : [u8]) (w : usize) (luma_buf : out mutable [u8])
+    (smooth : out mutable [u8]) (dst : out mutable [u8]) : unit
+  requires len rgb = 3 * len dst && len luma_buf = len dst
+  requires len smooth = len dst && w >= 3 && 3 * w <= len dst
+=
+  gray rgb luma_buf;
+  blur luma_buf w smooth;
+  sobel smooth w dst
