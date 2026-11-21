@@ -445,7 +445,12 @@ let directions_row (fill : [u16]) (w : usize) (r : usize)
 
 The whole stage. Every cell starts pointing at itself, which is trivially
 "downhill or nowhere", so border cells are outlets; then each interior row
-gets its directions. The postcondition is the second theorem. Unlike
+gets its directions. The row loop counts up to the last interior row
+rather than testing for room below, as the others do: with the downhill
+`forall` in its invariant, the solver could not see the subtraction in that
+test was safe within its timeout
+([issue #96](https://github.com/deanberris/pia-lang/issues/96)), and
+comparisons with `last` need no subtraction. The postcondition is the second theorem. Unlike
 filling, each cell's direction depends only on `fill`, so the rows are
 independent; once `spread` is compiled
 ([M12](https://github.com/deanberris/pia-lang/issues/13)) they can run in
@@ -462,14 +467,14 @@ let directions (fill : [u16]) (w : usize) (down : out mutable [usize]) : unit
   do
     down.[i] <- i
   done;
+  let last = last_row (len fill) w in
   let r : mutable usize = w in
-  while w <= len fill - (r + w)
-    invariant w <= r && r + w <= len fill
+  while r <= last
+    invariant w <= r && r <= last + w && last + w + w <= len fill
     invariant forall (k in 0..len down).
                 down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-    decreases len fill - r
+    decreases last + w - r
   do
-    assert w <= r && r + w + w <= len fill;
     directions_row fill w r down;
     r <- r + w
   done
