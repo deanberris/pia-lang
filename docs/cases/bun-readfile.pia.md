@@ -49,24 +49,14 @@ const bytes_read: usize = @intCast(req.result.int());
 
 ## The same code in Pia
 
-Here is the libuv call, written as C wrote it: an `@overflow(wrap)`
-function, so its narrowing wraps exactly as C's cast does. Its
-postcondition is what Bun's code took for granted: a successful read,
-with a count that is not negative, gives a return value that is not
-negative either.
+Pia has no truncating cast hidden in an assignment. A conversion to a
+narrower type is a goal, like every index and every sum: it must be proved
+to fit. So here is libuv's conversion, written as plainly as C wrote it:
 
 <!-- example: uv.pia -->
 <!-- expect: fail -->
 ```ocaml
-let uv_fs_read (req_result : isize) : i32 @overflow(wrap)
-  ensures req_result >= 0 ==> result >= 0
-= req_result
-
-let bytes_read (req_result : isize) : usize
-  requires req_result >= 0
-=
-  let rc : i32 = uv_fs_read req_result in
-  rc
+let uv_fs_read (req_result : isize) : i32 = req_result
 ```
 
 ```console
@@ -74,41 +64,33 @@ $ piac --verify uv.pia
 ...
 ```
 
-The verifier refutes the assumption with a count just past 2 GB, the size
-of file in the bug report. Given the postcondition, `bytes_read`'s own
-narrowing would prove. But the postcondition is false, so the program
-does not compile, in any build mode.
+That is the first narrowing, the one C never checks, refused with a
+count that does not fit. The second is Bun's, the `@intCast` of whatever
+`int` came back to a `usize`:
 
-Without the postcondition, the assumption is not written anywhere, and
-the narrowing in `bytes_read` is the goal that fails:
-
-<!-- example: uv_unstated.pia -->
+<!-- example: cast.pia -->
 <!-- expect: fail -->
 ```ocaml
-let uv_fs_read (req_result : isize) : i32 @overflow(wrap) = req_result
-
-let bytes_read (req_result : isize) : usize
-  requires req_result >= 0
-=
-  let rc : i32 = uv_fs_read req_result in
-  rc
+let bytes_read (rc : i32) : usize = rc
 ```
 
 ```console
-$ piac --verify uv_unstated.pia
+$ piac --verify cast.pia
 ...
 ```
 
-This is Zig's `@intCast` check, done once, at compile time, for every
-input. There is no build mode in Pia that turns it off
+The counterexample is the crash: a negative `int`, which no `usize` can
+hold. This is Zig's `@intCast` check, done once, at compile time, for
+every input. There is no build mode in Pia that turns it off
 ([ADR 0004](../adr/0004-strongest-guarantee-by-default.md)): a narrowing
 either proves or the program does not compile.
 
 ## The fix, proved
 
 The rest of this page is the fixed program. Like Bun's fix, it reads the
-untruncated count. An error is a negative count, and a successful read
-returns the count as a `usize`:
+untruncated count, so there is no `int` in the way. An error is a
+negative count, and a successful read returns the count as a `usize`,
+which proves because the branch has just checked it is not negative:
 
 ```pia
 let read_result = type { failed : bool; bytes : usize }
