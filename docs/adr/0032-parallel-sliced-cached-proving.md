@@ -24,8 +24,8 @@ The verifier (`src/verify/Verifier.cpp`, [docs/verifier.md](../verifier.md)) alr
 ## Consequences
 
 - Proving scales with cores. A file with many SMT goals finishes in about the time of its costliest goal rather than the sum of all of them.
-- The first measurement on Dean's 8-core iMac: verifying the corpus took 90 seconds on one thread and 51 on eight (with slicing on). The streams demo is bounded by one goal costing about 178 million units and 20 seconds, so its critical path, not the core count, now sets its build time; splitting such goals (by cases, or through intermediate lemmas) is the next lever.
-- Every `piac` run spends about 1.5 seconds before proving anything, even on a usage error. That is paid by every `pia_object` action and is tracked as its own issue.
+- Measured on Dean's 8-core iMac (`tools/bench/baseline.json`): the corpus verifies in 61 seconds on one thread and 32 on eight. The streams demo goes from 33 seconds to 11, and edges from 13 to 6. With a warm proof cache, streams verifies in 2.6 seconds, of which 1.5 is startup and 1 is encoding. Once there are cores to spare, the costliest single goal sets the time, so splitting such goals (by cases, or through intermediate lemmas) is the next lever.
+- Every `piac` run spends about 1.5 seconds in dyld before `main`, binding about 365,000 weak symbols (LLVM, MLIR and Z3 templates) against its own 420,000-entry export trie. That is paid by every `pia_object` action and is tracked as its own issue (dead stripping and hidden visibility).
 - One function or one goal can be proved on its own, for editors and for iterating on a hard goal, without loading every proof.
 - The resource count per goal changes with slicing, so the `pia_object` rlimit is re-measured against the benchmark rather than the old per-goal numbers.
 - Encoding is still sequential and costs time proportional to goals times function size. Making it parallel needs a thread-safe way to build queries outside the module's context (separate contexts per function, or encoding straight to SMT-LIB), and is left for when the benchmark shows it matters.
