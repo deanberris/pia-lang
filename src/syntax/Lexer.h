@@ -4,6 +4,7 @@
 #ifndef PIA_SYNTAX_LEXER_H
 #define PIA_SYNTAX_LEXER_H
 
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -28,6 +29,10 @@ std::vector<Token> tokenize(std::string_view source, Diagnostics &diags,
 
 // Whether a file name names a literate Pia file (`*.pia.md`).
 bool isLiterateFileName(std::string_view path);
+
+// The code of a literate file with its prose and fences blanked out, so
+// offsets, lines and columns stay those of the Markdown.
+std::string literateCode(std::string_view text);
 
 }  // namespace pia::syntax
 

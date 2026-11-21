@@ -211,7 +211,7 @@ A state is an integer or a `bool` for now. State belongs to the REPL until modul
 | `:spawn <expr>` | run an expression as a background task (see [Live redefinition](#live-redefinition)) |
 | `:tasks` | the tasks, running or done, with their values |
 | `:wait <n>` | wait for task `n` to finish, and show its value |
-| `:load <file>` | run a file as one cell |
+| `:load <file>` | run a file as one cell; for a literate `.pia.md` file, its `pia` blocks |
 | `:reset` | empty the environment |
 | `:help` | the list of commands |
 | `:quit` | leave |
@@ -255,8 +255,10 @@ Each event has a `kind`:
 
 `pia mcp` serves a persistent REPL session over the Model Context Protocol (stdio transport), so an agent such as Claude can use Pia interactively. It has exactly two tools, in the style of Code Mode:
 
-- **`execute {code, wait_ms?}`** runs a cell, code or a command, in the session. It waits up to `wait_ms` (10 seconds by default) and returns the cell's result: the rendered text, and the JSON result above as structured content. A cell that is still running returns its job number instead.
-- **`poll {job, wait_ms?}`** waits for a job and returns its state (`queued`, `running` or `done`) and, once it is done, its result.
+- **`execute {code, wait_ms?, json?}`** runs a cell, code or a command, in the session. It waits up to `wait_ms` (10 seconds by default) and returns the cell's result as the text `pia repl` prints. A cell that is still running returns its job number instead.
+- **`poll {job, wait_ms?, json?}`** waits for a job and returns its state (`queued`, `running` or `done`) and, once it is done, its result.
+
+With `json: true`, a result also carries the job, its state and the JSON result above as structured content. It is off by default because some clients, Claude Code among them, show the agent the structured content in place of the text, and the events are several times longer than the text.
 
 A tool result is an error when the cell failed, so the agent sees failed proofs and counterexamples as errors to fix. To use it from Claude Code:
 

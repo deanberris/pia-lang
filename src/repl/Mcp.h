@@ -32,7 +32,7 @@ class McpServer {
 
  private:
   lsp::Json callTool(const std::string &name, const lsp::Json &args);
-  lsp::Json jobResult(const Kernel::Status &s);
+  lsp::Json jobResult(const Kernel::Status &s, bool json);
 
   Kernel kernel_;
 };
