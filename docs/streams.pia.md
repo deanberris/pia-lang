@@ -99,14 +99,18 @@ let higher (a : u16) (b : u16) : u16
 = if a > b then a else b
 ```
 
-The lowest of the eight neighbours of an interior cell `m`. The
-precondition says the whole 3x3 window around `m` is in the slice, which is
-what the bounds goals of the eight reads need.
+The lowest of the eight neighbours of cell `m`, which is in the interior
+of the row that starts at `r`. Every function that looks at a cell's
+neighbours takes this precondition, *row form*: `r` is an interior row
+(`w <= r` and another row fits below it) and `m` is neither its first
+cell nor its last. It is exactly what a loop over the row knows, and it
+gives the bounds of all eight reads.
 
 ```pia
-let lowest_around (fill : [u16]) (w : usize) (m : usize) : u16
-  requires w < m && m + w + 1 < len fill
+let lowest_around (fill : [u16]) (w : usize) (r : usize) (m : usize) : u16
+  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
 =
+  assert w < m && m + w + 1 < len fill;
   let a = m - w in
   let b = m + w in
   let above = lower (lower (fill.[a - 1]) (fill.[a])) (fill.[a + 1]) in
@@ -143,7 +147,7 @@ possible everywhere else, as if the map were flooded. Then let the water
 drain: each interior cell is lowered to
 
 ```text
-higher (dem.[m]) (lowest_around fill w m + 1)
+higher (dem.[m]) (lowest_around fill w r m + 1)
 ```
 
 that is, to the ground if the ground already sits above a neighbour, and
@@ -162,14 +166,15 @@ of the old value and a value above the ground, and `lower` returns one of
 its arguments.
 
 ```pia
-let settle (dem : [u16]) (w : usize) (m : usize)
+let settle (dem : [u16]) (w : usize) (r : usize) (m : usize)
     (fill : inout mutable [u16]) : bool
-  requires len fill = len dem && w < m && m + w + 1 < len fill
+  requires len fill = len dem
+  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
   requires forall (k in 0..len fill). fill.[k] >= dem.[k]
   ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
 =
   let here = fill.[m] in
-  let spill = higher (dem.[m]) (lowest_around fill w m +| 1) in
+  let spill = higher (dem.[m]) (lowest_around fill w r m +| 1) in
   fill.[m] <- lower spill here;
   spill < here
 ```
@@ -177,9 +182,10 @@ let settle (dem : [u16]) (w : usize) (m : usize)
 Settles the interior of the row that starts at `r`, left to right. Each
 cell sees the new values of the cells before it, which is why the method
 converges in few sweeps (a Gauss-Seidel iteration), and also why this loop
-cannot be vectorised: each cell depends on the one just written. The two
-`assert`s are the steps from the loop bounds to `settle`'s precondition. The
-call comes before `||`, so it runs even once `changed` is true.
+cannot be vectorised: each cell depends on the one just written. The loop
+runs over the cell offsets `m` themselves, so its bounds are `settle`'s
+row-form precondition. The call comes before `||`, so it runs even once
+`changed` is true.
 
 ```pia
 let settle_row (dem : [u16]) (w : usize) (r : usize)
@@ -189,12 +195,10 @@ let settle_row (dem : [u16]) (w : usize) (r : usize)
   ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
 =
   let changed : mutable bool = false in
-  for x in 1..w - 1
+  for m in r + 1..r + w - 1
     invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
   do
-    assert x + 1 < w;
-    assert r + x + 1 < r + w;
-    changed <- settle dem w (r + x) fill || changed
+    changed <- settle dem w r m fill || changed
   done;
   changed
 ```
@@ -213,10 +217,7 @@ let settle_row_back (dem : [u16]) (w : usize) (r : usize)
   for i in 0..w - 2
     invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
   do
-    let x = w - 2 - i in
-    assert x + 1 < w;
-    assert r + x + 1 < r + w;
-    changed <- settle dem w (r + x) fill || changed
+    changed <- settle dem w r (r + w - 2 - i) fill || changed
   done;
   changed
 ```
@@ -269,6 +270,11 @@ let sweep_up (dem : [u16]) (w : usize) (last : usize)
 ```
 
 Floods the interior of the row that starts at `r`: the starting surface.
+The flood level is written `higher (dem.[m]) 65535`, which is always
+65535, because the verifier does not yet know that a `u16` read from a
+slice inside a `forall` is at most 65535
+([issue #96](https://github.com/deanberris/pia-lang/issues/96)).
+`higher`'s postcondition says it is not below the ground.
 
 ```pia
 let flood_row (dem : [u16]) (w : usize) (r : usize)
@@ -277,11 +283,10 @@ let flood_row (dem : [u16]) (w : usize) (r : usize)
   requires forall (k in 0..len fill). fill.[k] >= dem.[k]
   ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
 =
-  for x in 1..w - 1
+  for m in r + 1..r + w - 1
     invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
   do
-    assert r + x < r + w;
-    fill.[r + x] <- 65535
+    fill.[m] <- higher (dem.[m]) 65535
   done
 ```
 
@@ -398,10 +403,11 @@ let consider (fill : [u16]) (m : usize) (n : usize) (diagonal : bool)
 The D8 direction of interior cell `m`: the eight neighbours, row by row.
 
 ```pia
-let steepest (fill : [u16]) (w : usize) (m : usize) : usize
-  requires w < m && m + w + 1 < len fill
+let steepest (fill : [u16]) (w : usize) (r : usize) (m : usize) : usize
+  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
   ensures result = m || (result < len fill && fill.[result] < fill.[m])
 =
+  assert w < m && m + w + 1 < len fill;
   let a = m - w in
   let b = m + w in
   let none : route = { target = m; drop = 0 } in
@@ -429,13 +435,11 @@ let directions_row (fill : [u16]) (w : usize) (r : usize)
   ensures forall (k in 0..len down).
             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
 =
-  for x in 1..w - 1
+  for m in r + 1..r + w - 1
     invariant forall (k in 0..len down).
                 down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   do
-    assert x + 1 < w;
-    assert r + x + 1 < r + w;
-    down.[r + x] <- steepest fill w (r + x)
+    down.[m] <- steepest fill w r m
   done
 ```
 
@@ -465,6 +469,7 @@ let directions (fill : [u16]) (w : usize) (down : out mutable [usize]) : unit
                 down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
     decreases len fill - r
   do
+    assert w <= r && r + w + w <= len fill;
     directions_row fill w r down;
     r <- r + w
   done
