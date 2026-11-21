@@ -17,7 +17,7 @@ Dean: the runtime needs a real memory manager. Naive `malloc` and `free` aren't 
 - Every `alloc` returns a `result` that must be handled where it is called (with `match` or `?`, ADR 0028); there is no trapping variant. Its proved postcondition is enough memory, disjoint from every live block, or `Err OutOfMemory` with the allocator unchanged. All free lists live in `Pia.Mem`, and the proof covers them.
 - Each task, worker and coroutine scope gets its own arena and `general` cache by default.
 - Allocators and their buffers have `Drop` instances, so memory not freed explicitly is freed at scope end (ADR 0028).
-- Concurrency: each task, worker or coroutine scope gets its own allocator by move. Stackless coroutine frames come from the task's allocator (ADR 0027). `shared<a>` is the only synchronised allocator, and its refill lock is a top-level leaf lock that never suspends.
+- Concurrency: each task, worker or coroutine scope gets its own allocator by move. Stackless coroutine frames come from the task's allocator ([ADR 0027](0027-coroutines-and-race-freedom.md)). `shared<a>` is the only synchronised allocator, and its refill lock is a top-level leaf lock that never suspends.
 
 ## Acceptance
 

@@ -73,6 +73,7 @@ nav:
       - Metaprograms: meta.md
       - Standard library (proposal): stdlib.md
       - Shared libraries and certificates: abi.md
+      - Coroutines and race freedom (proposal): concurrency.md
   - Compiler internals:
       - Architecture: architecture.md
       - IRGen: irgen.md
@@ -106,4 +107,5 @@ nav:
       - adr/0024-published-proof-certificates.md
       - adr/0025-sanitizers.md
       - adr/0026-memory-manager.md
+      - adr/0027-coroutines-and-race-freedom.md
       - adr/0028-error-propagation-and-cleanup.md

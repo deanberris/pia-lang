@@ -22,4 +22,4 @@ Every allocation and every system call can fail, and Dean wants each failure han
 
 - Failure paths are visible and exhaustively handled, and cleanup is guaranteed on all of them, which is what lets every allocation be fallible without clutter.
 - The verifier walks each exit's cleanup as code at that exit, so drops are proved like everything else.
-- IRGen needs scope-exit lowering (a cleanup chain per scope), which is also what coroutine cancellation uses (ADR 0027).
+- IRGen needs scope-exit lowering (a cleanup chain per scope), which is also what coroutine cancellation uses ([ADR 0027](0027-coroutines-and-race-freedom.md)).
