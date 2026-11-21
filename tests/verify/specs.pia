@@ -23,7 +23,7 @@ let spec sorted (xs : [i32]) : bool =
 let first_two (xs : [i32]) : bool
   requires len xs > 1 && sorted xs
   ensures result
-= xs.[0] <= xs.[1]
+= (xs.[0] <= xs.[1])
 
 (* A recursive spec function needs a measure. Each call is unfolded once,
    and its postcondition is known wherever its precondition holds. *)
@@ -69,3 +69,56 @@ let spec total (xs : [u8]) (n : usize) : u32 @fuel(3)
 let sum3 (xs : [u8; 3]) : u32
   ensures result = total xs 3
 = xs.[0] + xs.[1] + xs.[2]
+
+(* Expected report, in order.
+// CHECK: specs.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:16:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: a = {{-?[0-9]+}}, b = {{-?[0-9]+}}
+// CHECK: specs.pia:26:4: proved: the index is within bounds [smt]
+// CHECK: specs.pia:26:14: proved: the index is within bounds [smt]
+// CHECK: specs.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:34:36: proved: '-' does not overflow usize [smt]
+// CHECK: specs.pia:34:24: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:34:24: proved: the measure of 'count' decreases [smt]
+// CHECK: specs.pia:34:55: proved: '-' does not overflow usize [smt]
+// CHECK: specs.pia:34:49: proved: the index is within bounds [smt]
+// CHECK: specs.pia:34:43: proved: '+' does not overflow usize [smt]
+// CHECK: specs.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:42:5: proved: the loop invariant holds on entry [smt]
+// CHECK: specs.pia:42:19: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:43:9: proved: the index is within bounds [smt]
+// CHECK: specs.pia:43:32: proved: '+' does not overflow usize [smt]
+// CHECK: specs.pia:42:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: specs.pia:38:20: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:51:29: proved: '-' does not overflow usize [smt]
+// CHECK: specs.pia:51:17: proved: the precondition of 'split' holds [smt]
+// CHECK: specs.pia:51:17: proved: the measure of 'split' decreases [smt]
+// CHECK: specs.pia:49:11: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:49:26: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:49:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:55:3: proved: the precondition of 'split' holds [smt]
+// CHECK: specs.pia:54:11: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:54:33: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:54:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:59:11: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:59:33: proved: the precondition of 'count' holds [smt]
+// CHECK: specs.pia:59:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}
+// CHECK: specs.pia:67:36: proved: '-' does not overflow usize [smt]
+// CHECK: specs.pia:67:24: proved: the precondition of 'total' holds [smt]
+// CHECK: specs.pia:67:24: proved: the measure of 'total' decreases [smt]
+// CHECK: specs.pia:67:49: proved: '-' does not overflow usize [smt]
+// CHECK: specs.pia:67:43: proved: the index is within bounds [smt]
+// CHECK: specs.pia:67:41: proved: '+' does not overflow u32 [smt]
+// CHECK: specs.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: specs.pia:71:3: proved: the index is within bounds [intervals]
+// CHECK: specs.pia:71:12: proved: the index is within bounds [intervals]
+// CHECK: specs.pia:71:10: proved: '+' does not overflow u32 [intervals]
+// CHECK: specs.pia:71:21: proved: the index is within bounds [intervals]
+// CHECK: specs.pia:71:19: proved: '+' does not overflow u32 [intervals]
+// CHECK: specs.pia:70:26: proved: the slice is within bounds [smt]
+// CHECK: specs.pia:70:20: proved: the precondition of 'total' holds [smt]
+// CHECK: specs.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: 45 proved, 2 failed, 0 skipped
+*)

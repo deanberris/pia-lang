@@ -1,0 +1,203 @@
+(Program
+  (LetItem "sorted" [spec]
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "i32")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "bool")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Quantifier "forall"
+      (RangeBinder "i"
+        (Range
+          (IntLit "1")
+          (Apply
+            (Name "len")
+            (Name "xs")
+          )
+        )
+      )
+      (Binary "<="
+        (Index
+          (Name "xs")
+          (Binary "-"
+            (Name "i")
+            (IntLit "1")
+          )
+        )
+        (Index
+          (Name "xs")
+          (Name "i")
+        )
+      )
+    )
+  )
+  (LetItem "total" [spec]
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "u8")
+          )
+          (None)
+        )
+      )
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u32")
+        (None)
+      )
+      (Attrs
+        (Attribute "fuel"
+          (IntLit "2")
+        )
+      )
+    )
+    (Contracts
+      (Requires
+        (Binary "<="
+          (Name "n")
+          (Apply
+            (Name "len")
+            (Name "xs")
+          )
+        )
+      )
+      (Decreases
+        (Name "n")
+      )
+    )
+    (If
+      (Binary "="
+        (Name "n")
+        (IntLit "0")
+      )
+      (IntLit "0")
+      (Binary "+"
+        (Apply
+          (Name "total")
+          (Name "xs")
+          (Binary "-"
+            (Name "n")
+            (IntLit "1")
+          )
+        )
+        (Index
+          (Name "xs")
+          (Binary "-"
+            (Name "n")
+            (IntLit "1")
+          )
+        )
+      )
+    )
+  )
+  (LetItem "total_bound" [lemma]
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "u8")
+          )
+          (None)
+        )
+      )
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "<="
+          (Name "n")
+          (Apply
+            (Name "len")
+            (Name "xs")
+          )
+        )
+      )
+      (Ensures
+        (Binary "<="
+          (Apply
+            (Name "total")
+            (Name "xs")
+            (Name "n")
+          )
+          (Binary "*"
+            (Name "n")
+            (IntLit "255")
+          )
+        )
+      )
+      (Decreases
+        (Name "n")
+      )
+    )
+    (If
+      (Binary ">"
+        (Name "n")
+        (IntLit "0")
+      )
+      (Apply
+        (Name "total_bound")
+        (Name "xs")
+        (Binary "-"
+          (Name "n")
+          (IntLit "1")
+        )
+      )
+      (None)
+    )
+  )
+  (LetItem "spec"
+    (Params)
+    (None)
+    (Contracts)
+    (IntLit "3")
+  )
+  (LetItem "lemma"
+    (Params)
+    (None)
+    (Contracts)
+    (Binary "+"
+      (Name "spec")
+      (IntLit "1")
+    )
+  )
+)

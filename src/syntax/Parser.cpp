@@ -264,11 +264,11 @@ class Parser {
 
   // The longest-predicate rule (ADR 0019): `requires sorted xs = g xs` with no
   // later `=` reads as the predicate `sorted xs` and the body `g xs`. Split at
-  // the last `=` on the right spine of the final clause.
+  // the last `=` on the right spine of the final clause. A `decreases`
+  // measure is an integer, so `decreases n = f (n - 1)` splits the same way.
   NodePtr splitBodyFromContract(Node &contracts) {
     if (contracts.kids.empty()) return nullptr;
     Node &clause = *contracts.kids.back();
-    if (clause.kind == N::Decreases) return nullptr;
     NodePtr *slot = &clause.kids[0];
     while ((*slot)->kind == N::Binary && (*slot)->text != "=" &&
            operatorInfo((*slot)->text).level < 40)
