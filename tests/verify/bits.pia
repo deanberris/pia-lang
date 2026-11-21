@@ -30,7 +30,7 @@ let times8 (x : u8) : u16 = x << 3
 (* A shift left is a product: in proof mode no bit may be lost. *)
 (* `|` is bitwise only inside brackets, so the body is in parentheses. *)
 let pack (hi : u8) (lo : u8) : u16
-  ensures result = 256 * hi + lo
+  ensures result = 256u16 * hi + lo
 = ((hi << 8) | lo)
 
 (* The amount is a goal: here it can reach 8, which a u8 cannot shift by. *)
@@ -48,3 +48,35 @@ let floor_half (x : i32) : i32
 let rotl8 (x : u8) (n : u8) : u8 @overflow(wrap)
   requires n < 8
 = ((x << n) | (x >> ((8 - n) % 8)))
+
+(* Expected report, in order.
+// CHECK: bits.pia:7:42: proved: '&' does not overflow u8 [intervals]
+// CHECK: bits.pia:7:42: proved: the value fits in int{0..15} [smt]
+// CHECK: bits.pia:12:5: proved: '&' does not overflow u32 [intervals]
+// CHECK: bits.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:15:39: proved: '|' does not overflow u8 [intervals]
+// CHECK: bits.pia:15:49: proved: '&' does not overflow u8 [intervals]
+// CHECK: bits.pia:15:44: proved: '^' does not overflow u8 [intervals]
+// CHECK: bits.pia:20:3: proved: '^' does not overflow u8 [intervals]
+// CHECK: bits.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:25:3: proved: '-' does not overflow i32 [intervals]
+// CHECK: bits.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:28:31: proved: the shift amount is less than 16 [intervals]
+// CHECK: bits.pia:28:31: proved: '<<' does not overflow u16 [intervals]
+// CHECK: bits.pia:34:8: proved: the shift amount is less than 16 [intervals]
+// CHECK: bits.pia:34:8: proved: '<<' does not overflow u16 [intervals]
+// CHECK: bits.pia:34:14: proved: '|' does not overflow u16 [intervals]
+// CHECK: bits.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:37:63: failed: the shift amount is less than 8
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, n = {{-?[0-9]+}}, amount = {{-?[0-9]+}}
+// CHECK: bits.pia:40:29: proved: the shift amount is less than 8 [intervals]
+// CHECK: bits.pia:40:29: failed: '<<' does not overflow u8
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, result = {{-?[0-9]+}}
+// CHECK: bits.pia:45:5: proved: the shift amount is less than 32 [intervals]
+// CHECK: bits.pia:45:5: proved: '>>' does not overflow i32 [intervals]
+// CHECK: bits.pia:44:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:50:7: proved: the shift amount is less than 8 [smt]
+// CHECK: bits.pia:50:30: proved: the divisor is not zero [intervals]
+// CHECK: bits.pia:50:18: proved: the shift amount is less than 8 [smt]
+// CHECK: 24 proved, 2 failed, 0 skipped
+*)
