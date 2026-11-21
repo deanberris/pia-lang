@@ -24,3 +24,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0018](0018-dialect-layering.md) | Three Pia dialects over upstream MLIR, with `smt` for solving | Accepted |
 | [0019](0019-grammar-disambiguation.md) | Grammar disambiguation rules: contracts before bodies, layout, adjacency | Accepted |
 | [0020](0020-presburger-for-affine-goals.md) | Decide affine aliasing and dependence goals with MLIR's Presburger library | Accepted |
+| [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Proposed |
