@@ -13,8 +13,6 @@ DOCS = [
     "//docs:repl.md",
     "//docs:status.md",
     "//docs:streams.pia.md",
-    "//docs:cases/index.md",
-    "//docs:cases/heartbleed.pia.md",
 ]
 
 py_test(
@@ -31,5 +29,21 @@ py_test(
         "//tools/pia",
         "//tools/piac",
     ],
+    main = "doc_examples_test.py",
+)
+
+# The case studies (docs/cases): famous bugs recreated in Pia, each failing
+# with a counterexample, and their fixes proved. A separate target so the
+# pages are checked in parallel with the rest of the docs.
+CASES = [
+    "//docs:cases/index.md",
+    "//docs:cases/heartbleed.pia.md",
+]
+
+py_test(
+    name = "case_studies_test",
+    srcs = ["doc_examples_test.py"],
+    args = ["$(rootpath //tools/piac)"] + ["$(rootpath %s)" % d for d in CASES],
+    data = CASES + ["//tools/piac"],
     main = "doc_examples_test.py",
 )

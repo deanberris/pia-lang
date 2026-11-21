@@ -98,13 +98,24 @@ let heartbeat (req : [u8]) (resp : out mutable [u8]) : usize
 ```console
 $ piac --verify heartbleed.pia
 ...
+heartbleed.pia:12:27: failed: the index is within bounds
+  counterexample: len req = 0, len resp = 98304, index = 1, length = 0
+...
+heartbleed.pia:12:43: failed: the index is within bounds
+  counterexample: len req = 2, len resp = 98304, index = 2, length = 2
+...
+heartbleed.pia:16:35: failed: the slice is within bounds
+  counterexample: len req = 4, len resp = 131039, start = 3, end = 5, length = 4
+...
+18 proved, 3 failed, 0 skipped
 ```
 
-The third failure is Heartbleed. The counterexample is an attack: a record
-of a few bytes whose length field claims far more, so the slice
-`req.[3 .. 3 + payload]` would run past the end of `req`. The first two
-failures are a second bug the C code shares: a record shorter than three
-bytes has no length field to read, and `n2s` reads past it too.
+The third failure is Heartbleed. The counterexample is an attack: a
+4-byte record, one byte of payload, whose length field says 2, so the
+slice `req.[3 .. 5]` would run past the end of `req`. Make the length
+field say 65535 and it is the real exploit. The first two failures are a
+second bug the C code shares: a record shorter than three bytes has no
+length field to read, and `n2s` reads past it too.
 
 ## Half a fix
 
@@ -139,6 +150,15 @@ The copy is proved now, but reading the length still is not:
 ```console
 $ piac --verify half_fixed.pia
 ...
+half_fixed.pia:12:27: failed: the index is within bounds
+  counterexample: len req = 0, len resp = 98304, index = 1, length = 0
+...
+half_fixed.pia:12:43: failed: the index is within bounds
+  counterexample: len req = 2, len resp = 98304, index = 2, length = 2
+...
+half_fixed.pia:18:37: proved: the slice is within bounds [smt]
+...
+21 proved, 2 failed, 0 skipped
 ```
 
 OpenSSL's real fix ([commit 96db902][fix], by Adam Langley and Bodo
@@ -190,7 +210,7 @@ let heartbeat (req : [u8]) (resp : out mutable [u8]) : usize
   ensures forall (k in 3..result). resp.[k] = req.[k]
 =
   if 3 + 16 > len req then 0
-  else
+  else (
     let payload : usize = ((req.[1] << 8) | req.[2]) in
     if 3 + payload + 16 > len req then 0
     else if req.[0] <> 1 then 0
@@ -199,7 +219,7 @@ let heartbeat (req : [u8]) (resp : out mutable [u8]) : usize
       resp.[1] <- req.[1];
       resp.[2] <- req.[2];
       copy (resp.[3 .. 3 + payload]) (req.[3 .. 3 + payload]);
-      3 + payload)
+      3 + payload))
 ```
 
 Every goal on this page is proved:
