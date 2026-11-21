@@ -110,8 +110,8 @@ Every goal on this page is proved:
 
 ```console
 $ piac --verify bun-readfile.pia.md
-bun-readfile.pia.md:102:34: proved: the value fits in usize [smt]
-bun-readfile.pia.md:99:3: proved: the postcondition holds [smt]
+bun-readfile.pia.md:106:34: proved: the value fits in usize [smt]
+bun-readfile.pia.md:103:3: proved: the postcondition holds [smt]
 2 proved, 0 failed, 0 skipped
 ```
 
