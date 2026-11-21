@@ -1,0 +1,22 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# The Pia language server (ADR 0021), with proofs from IRGen and the
+# verifier. Editors start it as a subprocess and talk LSP over stdio.
+cc_binary(
+    name = "pia-lsp",
+    srcs = ["pia-lsp.cpp"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/lsp",
+        "//src/lsp:proofs",
+    ],
+)
+
+# The front-end features only, without LLVM: quick to build and test.
+cc_binary(
+    name = "pia-lsp-frontend",
+    srcs = ["pia-lsp.cpp"],
+    local_defines = ["PIA_NO_MLIR"],
+    visibility = ["//visibility:public"],
+    deps = ["//src/lsp"],
+)

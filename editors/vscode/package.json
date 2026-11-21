@@ -1,0 +1,122 @@
+{
+  "name": "pia",
+  "displayName": "Pia",
+  "description": "Pia language support: syntax highlighting, and proofs, hover and navigation from the pia-lsp language server.",
+  "version": "0.1.0",
+  "publisher": "pia-lang",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/deanberris/pia-lang"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "languages": [
+      {
+        "id": "pia",
+        "aliases": [
+          "Pia",
+          "pia"
+        ],
+        "extensions": [
+          ".pia"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "pia",
+        "scopeName": "source.pia",
+        "path": "./syntaxes/pia.tmLanguage.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "pia.verify",
+        "title": "Verify This File",
+        "category": "Pia"
+      },
+      {
+        "command": "pia.restart",
+        "title": "Restart Language Server",
+        "category": "Pia"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "pia.verify",
+          "when": "editorLangId == pia"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Pia",
+      "properties": {
+        "pia.server.path": {
+          "type": "string",
+          "default": "pia-lsp",
+          "markdownDescription": "Path to the `pia-lsp` binary, for example `bazel-bin/tools/pia-lsp/pia-lsp` in a Pia checkout. A relative path is resolved against the first workspace folder; a bare name is looked up on `PATH`."
+        },
+        "pia.server.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra arguments for `pia-lsp`, such as `--timeout-ms=5000`."
+        },
+        "pia.verify.on": {
+          "type": "string",
+          "enum": [
+            "save",
+            "change",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Prove the file when it is opened and saved.",
+            "Prove the file after every edit.",
+            "Only when you run 'Pia: Verify This File'."
+          ],
+          "default": "save",
+          "description": "When the verifier runs."
+        },
+        "pia.verify.showProved": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show proved goals as hints, not just failed and skipped ones."
+        },
+        "pia.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Log the messages between VS Code and pia-lsp in the Pia output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package",
+    "test": "node test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.2.1"
+  }
+}

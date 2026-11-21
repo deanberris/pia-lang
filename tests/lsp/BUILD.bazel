@@ -1,0 +1,19 @@
+load("@rules_python//python:defs.bzl", "py_test")
+
+# pia-lsp end to end over pipes (ADR 0021), with the verifier.
+py_test(
+    name = "lsp_test",
+    srcs = ["lsp_test.py"],
+    args = ["$(rootpath //tools/pia-lsp)"],
+    data = ["//tools/pia-lsp"],
+    main = "lsp_test.py",
+)
+
+# The same tests against the front-end-only server; the proof tests skip.
+py_test(
+    name = "lsp_frontend_test",
+    srcs = ["lsp_test.py"],
+    args = ["$(rootpath //tools/pia-lsp:pia-lsp-frontend)"],
+    data = ["//tools/pia-lsp:pia-lsp-frontend"],
+    main = "lsp_test.py",
+)

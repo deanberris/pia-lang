@@ -1,0 +1,303 @@
+"""End-to-end tests for pia-lsp (ADR 0021).
+
+Starts the server, speaks LSP to it over pipes and checks the replies.
+
+    python3 tests/lsp/lsp_test.py path/to/pia-lsp
+
+The proof tests run only when the server reports the verifier
+(`capabilities.experimental.piaVerifier`), so the same script tests a
+front-end build made with -DPIA_NO_MLIR.
+"""
+
+import json
+import queue
+import subprocess
+import sys
+import threading
+import time
+import unittest
+
+SERVER = None
+
+GOOD = """\
+(* A function with a contract, and a caller. *)
+let add (a : u8) (b : u8) : u16
+  ensures result >= a
+= let s = a + b in s
+
+let twice (x : u8) : u16 = add x x
+"""
+
+BROKEN = """\
+let ok (a : u8) : u8 = a
+
+let broken (a : u8) : u8 = (a +
+"""
+
+FAILING = """\
+let bad (a : u8) (b : u8) : u8 = a + b
+
+let good (a : u8) (b : u8) : u16 = a + b
+"""
+
+
+class Client:
+    def __init__(self, path):
+        self.proc = subprocess.Popen(
+            [path, "--timeout-ms=5000"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self.next_id = 0
+        self.messages = queue.Queue()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        out = self.proc.stdout
+        while True:
+            headers = {}
+            while True:
+                line = out.readline()
+                if not line:
+                    self.messages.put(None)
+                    return
+                line = line.decode().strip()
+                if not line:
+                    break
+                key, _, value = line.partition(":")
+                headers[key.strip().lower()] = value.strip()
+            body = out.read(int(headers["content-length"]))
+            self.messages.put(json.loads(body))
+
+    def send(self, msg):
+        msg["jsonrpc"] = "2.0"
+        body = json.dumps(msg).encode()
+        self.proc.stdin.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+        self.proc.stdin.flush()
+
+    def notify(self, method, params=None):
+        self.send({"method": method, "params": params or {}})
+
+    def request(self, method, params=None, timeout=30):
+        self.next_id += 1
+        rid = self.next_id
+        self.send({"id": rid, "method": method, "params": params or {}})
+        return self.wait(lambda m: m.get("id") == rid and "method" not in m,
+                         timeout)
+
+    def wait(self, pred, timeout=30):
+        deadline = time.time() + timeout
+        while True:
+            left = deadline - time.time()
+            if left <= 0:
+                raise AssertionError("timed out waiting for a message")
+            msg = self.messages.get(timeout=left)
+            if msg is None:
+                raise AssertionError("server closed its output")
+            if pred(msg):
+                return msg
+
+    def diagnostics(self, uri, pred=lambda d: True, timeout=30):
+        msg = self.wait(
+            lambda m: m.get("method") == "textDocument/publishDiagnostics"
+            and m["params"]["uri"] == uri and pred(m["params"]["diagnostics"]),
+            timeout)
+        return msg["params"]["diagnostics"]
+
+    def open(self, uri, text, version=1):
+        self.notify("textDocument/didOpen", {"textDocument": {
+            "uri": uri, "languageId": "pia", "version": version, "text": text}})
+
+    def close(self):
+        self.request("shutdown")
+        self.notify("exit")
+        code = self.proc.wait(timeout=10)
+        self.proc.stdin.close()
+        self.reader.join(timeout=5)
+        self.proc.stdout.close()
+        self.proc.stderr.close()
+        return code
+
+
+def pos(text, needle, nth=0, delta=0):
+    """The LSP position of the nth occurrence of needle, plus delta."""
+    at = -1
+    for _ in range(nth + 1):
+        at = text.index(needle, at + 1)
+    at += delta
+    line = text.count("\n", 0, at)
+    col = at - (text.rindex("\n", 0, at) + 1 if line else 0)
+    return {"line": line, "character": col}
+
+
+class LspTest(unittest.TestCase):
+    def setUp(self):
+        self.client = Client(SERVER)
+        init = self.client.request("initialize", {
+            "processId": None, "rootUri": None, "capabilities": {},
+            "initializationOptions": {"verify": {"on": "save"}}})
+        self.caps = init["result"]["capabilities"]
+        self.verifier = self.caps.get("experimental", {}).get("piaVerifier")
+        self.client.notify("initialized")
+
+    def tearDown(self):
+        code = self.client.close()
+        self.assertEqual(code, 0)
+
+    def test_capabilities(self):
+        self.assertTrue(self.caps["hoverProvider"])
+        self.assertTrue(self.caps["definitionProvider"])
+        self.assertEqual(self.caps["textDocumentSync"]["change"], 1)
+
+    def test_syntax_error_then_fix(self):
+        uri = "file:///tmp/broken.pia"
+        self.client.open(uri, BROKEN)
+        diags = self.client.diagnostics(uri)
+        self.assertGreaterEqual(len(diags), 1)
+        self.assertEqual(diags[0]["severity"], 1)
+        self.assertEqual(diags[0]["source"], "pia")
+        # The unclosed `(a +` on line 2 (0-based), reported there or at the
+        # end of the file.
+        self.assertGreaterEqual(diags[0]["range"]["start"]["line"], 2)
+        # The items that parse on their own still have symbols and hover.
+        syms = self.client.request("textDocument/documentSymbol", {
+            "textDocument": {"uri": uri}})["result"]
+        self.assertEqual([s["name"] for s in syms], ["ok"])
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(BROKEN, "a\n")})["result"]
+        self.assertIn("(parameter) a : u8", hover["contents"]["value"])
+        self.client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": GOOD}]})
+        self.assertEqual(self.client.diagnostics(uri), [])
+
+    def test_hover_and_definition(self):
+        uri = "file:///tmp/good.pia"
+        self.client.open(uri, GOOD)
+        self.client.diagnostics(uri)
+
+        # `add` in `twice`'s body resolves to the definition on line 1.
+        at = pos(GOOD, "add x x")
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri}, "position": at})["result"]
+        text = hover["contents"]["value"]
+        self.assertIn("let add (a : u8) (b : u8) : u16", text)
+        self.assertIn("ensures result >= a", text)
+        loc = self.client.request("textDocument/definition", {
+            "textDocument": {"uri": uri}, "position": at})["result"]
+        self.assertEqual(loc["range"]["start"], pos(GOOD, "add"))
+
+        # A parameter shows its annotation; its use goes to its binding.
+        at = pos(GOOD, "a + b", delta=0)
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri}, "position": at})["result"]
+        self.assertIn("(parameter) a : u8", hover["contents"]["value"])
+        loc = self.client.request("textDocument/definition", {
+            "textDocument": {"uri": uri}, "position": at})["result"]
+        self.assertEqual(loc["range"]["start"], pos(GOOD, "a : u8"))
+
+        # A `let ... in` local.
+        loc = self.client.request("textDocument/definition", {
+            "textDocument": {"uri": uri},
+            "position": pos(GOOD, "in s", delta=3)})["result"]
+        self.assertEqual(loc["range"]["start"], pos(GOOD, "s = a"))
+
+        # Nothing to say about a keyword.
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(GOOD, "ensures")})["result"]
+        self.assertIsNone(hover)
+
+    def test_symbols_and_completion(self):
+        uri = "file:///tmp/good.pia"
+        self.client.open(uri, GOOD)
+        syms = self.client.request("textDocument/documentSymbol", {
+            "textDocument": {"uri": uri}})["result"]
+        self.assertEqual([s["name"] for s in syms], ["add", "twice"])
+        self.assertEqual(syms[0]["kind"], 12)
+        self.assertEqual(syms[0]["selectionRange"]["start"], pos(GOOD, "add"))
+        items = self.client.request("textDocument/completion", {
+            "textDocument": {"uri": uri},
+            "position": pos(GOOD, "add x x")})["result"]["items"]
+        labels = {i["label"] for i in items}
+        self.assertTrue({"add", "twice", "x", "let", "spread"} <= labels)
+
+    def test_utf16_positions(self):
+        uri = "file:///tmp/utf.pia"
+        text = "(* é😀 *) let f (x : u8) : u8 = x\n"
+        self.client.open(uri, text)
+        self.client.diagnostics(uri)
+        # "(* é😀 *) let f (x : u8) : u8 = " is 30 UTF-16 units before `x`.
+        prefix = text[:text.rindex("x")]
+        units = len(prefix.encode("utf-16-le")) // 2
+        loc = self.client.request("textDocument/definition", {
+            "textDocument": {"uri": uri},
+            "position": {"line": 0, "character": units}})["result"]
+        start = text.index("x :")
+        start_units = len(text[:start].encode("utf-16-le")) // 2
+        self.assertEqual(loc["range"]["start"]["character"], start_units)
+
+    def test_unknown_request(self):
+        reply = self.client.request("textDocument/foldingRange", {
+            "textDocument": {"uri": "file:///none.pia"}})
+        self.assertEqual(reply["error"]["code"], -32601)
+
+    def test_proofs(self):
+        if not self.verifier:
+            self.skipTest("pia-lsp was built without the verifier")
+        uri = "file:///tmp/failing.pia"
+        self.client.open(uri, FAILING)
+        diags = self.client.diagnostics(
+            uri, lambda ds: any(d.get("source") == "pia-verify" for d in ds),
+            timeout=60)
+        failed = [d for d in diags if d.get("source") == "pia-verify"]
+        self.assertEqual(len(failed), 1)
+        d = failed[0]
+        self.assertEqual(d["severity"], 1)
+        self.assertEqual(d["code"], "nooverflow")
+        self.assertIn("'+' does not overflow u8", d["message"])
+        self.assertIn("counterexample: a = ", d["message"])
+        self.assertEqual(d["range"]["start"], pos(FAILING, "+"))
+
+        # Hover on the '+' shows the goal and its counterexample; hover on
+        # the safe '+' shows how it was proved.
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(FAILING, "+")})["result"]["contents"]["value"]
+        self.assertIn("not proved", hover)
+        self.assertIn("counterexample", hover)
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(FAILING, "+", nth=1)})["result"]["contents"]["value"]
+        self.assertIn("proved: '+' does not overflow u16", hover)
+        self.assertIn("intervals", hover)
+
+        # An edit drops the stale proof diagnostics until the next save.
+        self.client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": FAILING + "\n"}]})
+        diags = self.client.diagnostics(uri)
+        self.assertEqual(diags, [])
+        self.client.notify("textDocument/didSave", {
+            "textDocument": {"uri": uri}})
+        self.client.diagnostics(
+            uri, lambda ds: any(d.get("source") == "pia-verify" for d in ds),
+            timeout=60)
+
+    def test_type_error(self):
+        if not self.verifier:
+            self.skipTest("pia-lsp was built without the verifier")
+        uri = "file:///tmp/types.pia"
+        text = "let f (x : u8) : u8 = nope x\n"
+        self.client.open(uri, text)
+        diags = self.client.diagnostics(uri, lambda ds: len(ds) > 0, timeout=60)
+        self.assertEqual(diags[0]["severity"], 1)
+        self.assertEqual(diags[0]["range"]["start"]["line"], 0)
+
+
+if __name__ == "__main__":
+    SERVER = sys.argv.pop(1)
+    unittest.main()

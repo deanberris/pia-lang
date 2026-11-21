@@ -1,0 +1,45 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The language server's protocol and front-end features (ADR 0021). No LLVM
+# dependency, like //src/syntax, so it builds and tests in seconds.
+cc_library(
+    name = "lsp",
+    srcs = [
+        "Analysis.cpp",
+        "Json.cpp",
+        "Server.cpp",
+    ],
+    hdrs = [
+        "Analysis.h",
+        "Json.h",
+        "Proofs.h",
+        "Server.h",
+    ],
+    copts = ["-Wall", "-Wextra", "-Werror"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = ["//src/syntax"],
+)
+
+# The deep check: IRGen's errors and the verifier's goals for a document.
+cc_library(
+    name = "proofs",
+    srcs = ["Proofs.cpp"],
+    # MLIR's generated headers trip -Wunused-parameter.
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+    ],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":lsp",
+        "//src/dialect",
+        "//src/irgen",
+        "//src/syntax",
+        "//src/verify",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:IR",
+    ],
+)
