@@ -17,6 +17,10 @@ namespace pia::meta {
 struct Options {
   // The most passes that may still produce code (`--meta-cycles=N`).
   unsigned maxCycles = 32;
+  // Whether the REPL-only builtins of Pia.Live are available, such as
+  // `redefine` (ADR 0031). Only `pia repl` sets it; compiled programs
+  // never have them.
+  bool live = false;
 };
 
 // Expands `program` in place. Reports each failure to `diags` and returns
