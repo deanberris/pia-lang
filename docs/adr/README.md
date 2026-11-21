@@ -29,3 +29,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0023](0023-minimal-core-self-hosted-stdlib.md) | A minimal core, with the standard library written and proved in Pia | Proposed |
 | [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Proposed |
 | [0025](0025-sanitizers.md) | Sanitizers check the edges of the proof | Proposed |
+| [0026](0026-memory-manager.md) | A memory manager of explicit allocators, with no garbage collection | Proposed |

@@ -118,21 +118,56 @@ Pia does not allocate. Two things fix that: one type rule, and allocation writte
 
 **`@linear` types.** Pia already has `moved` parameters, which make a value dead in the caller after the call. A type marked `@linear` adds one rule to the type checker: a value of it must be consumed, by being passed as `moved` or returned, on every path out of its scope. File descriptors, mappings and arenas are linear, so leaking one is a type error and using one after it is closed is the existing `moved` rule. This is the idea behind ATS's and Austral's resource types, kept to one attribute and no typestate ([ADR 0006](adr/0006-contracts-and-module-state.md)).
 
-**Allocation.** `Pia.Mem` gives the allocation interface, with the ownership modifiers that already exist as its contract:
+**The memory manager.** `Pia.Mem` is a memory manager written in Pia over `mmap`, with no garbage collector, now or later ([ADR 0026](adr/0026-memory-manager.md)). Every allocation is explicit, and every free is explicit or comes from freeing the region it lives in. A single global `malloc`/`free` is not enough. Different lifetimes want different allocators, and the verifier can prove more about a specialised allocator than about a general heap.
+
+*Allocators are explicit values.* Library code never allocates from a hidden global. A function that allocates takes an allocator parameter, as in Zig:
 
 ```ocaml
-(* Pia.Mem *)
-let alloc (t : type) (n : usize) : result (moved out mutable [t])   (* Ok: len = n, every element unwritten *)
-let free  (buf : moved inout [t]) : unit                            (* buf is dead after the call *)
+let Allocator (a : type) : concept = sig
+  let alloc  : (m : borrowed inout mutable a) -> (t : type) -> (n : usize) -> result (borrowed(m) out mutable [t])
+  let free   : (m : borrowed inout mutable a) -> (buf : moved [t]) -> unit
+    requires owns m buf
+  let resize : (m : borrowed inout mutable a) -> (buf : moved [t]) -> (n : usize) -> result (borrowed(m) out mutable [t])
+end
+
+let read_all (m : borrowed inout mutable a) (f : fd) : result [u8] where Allocator a = ...
 ```
 
-- `moved` already means that the caller cannot use the buffer after the call, so use after free and double free are type errors, not proof goals.
-- `out` already means "written before it is read", so reading uninitialised memory is a proof goal.
-- Running out of memory is a `result` by default, the strongest guarantee. `alloc_or_trap` is the clearly named trapping variant, and its trap is visible in its contract.
+- The result is `out`, so reading memory before writing it is a proof goal.
+- Running out of memory is a `result` by default, the strongest guarantee. Each allocator also offers a clearly named `alloc_or_trap`, whose trap is visible in its contract and goes to `Pia.Rt`.
+- `free` takes the buffer `moved`, so use after free and double free are type errors, not proof goals. `owns m buf` is a ghost fact recorded when `m` handed out `buf`, so freeing into the wrong allocator is a proof goal.
+- `main` gets the program's root allocator as an argument. Nothing else is global.
 
-`alloc` and `free` are Pia, not a runtime written in C. Their memory comes from `mmap` through [group 8](#8-posix-trusted-declarations-and-typed-wrappers). The first allocator is an **arena**: a `@linear` region from which slices are handed out, all freed together when the arena is consumed. That fits pipelines like the demos, which allocate a few large buffers up front. Its invariant (the bump pointer stays inside the region, handed-out slices are disjoint) is module state, proved once in `Pia.Mem`. A size-class allocator behind `alloc`/`free` follows. Zig's explicit allocators and F*'s Low* regions are the prior art.
+*The allocators.* Each is a `@linear` value built on a page source, and each states its invariants as module state, proved once in `Pia.Mem`:
 
-On top of these, `vec`, `string`, `hash_map`, a binary heap (priority-flood in the flagship demo needs one) are library code. They are the first place where specification functions and ghost models (group 5) pay off: `push` ensures `model result = append (model old) x`.
+| Allocator | Frees | Fits | Invariant proved |
+| --- | --- | --- | --- |
+| `pages` | `munmap` of whole mappings | the source for every other allocator; guard pages and huge-page hints | mappings are disjoint and page aligned |
+| `fixed_buffer` | all at once | allocation over a caller's buffer, with no OS at all; usable from `Pia.Core` | the bump pointer stays inside the buffer |
+| `arena` | all at once (`reset`, or consuming the arena) | pipelines and per-request or per-frame work, like the demos | handed-out slices are disjoint and inside the arena's chunks |
+| `scratch` | last in, first out, back to a `mark` | temporaries inside a function or a loop iteration | frees happen in reverse order of allocation |
+| `pool<T>` | one object at a time, O(1) | many objects of one type: graph nodes, tasks, coroutine frames | the free list and the live set partition the slab |
+| `general` | one buffer at a time | lifetimes that don't nest: segregated size classes over slabs, as in mimalloc or jemalloc | every block is in exactly one size class, and free or live |
+
+Containers (`vec`, `string`, `hash_map`, the binary heap that priority-flood needs) take an allocator as a parameter, as C++'s `pmr` containers do, so the same `vec` can live in an arena or in a pool. They are the first place where specification functions and ghost models (group 5) pay off: `push` ensures `model result = append (model old) x`.
+
+*Lifetimes are proved, not collected.* Two rules in Sema, with no lifetime syntax in ordinary code:
+
+1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them.
+2. **Regions can be scoped.** `with_arena n (let (a) => body)` makes an arena, runs `body`, and frees the arena. The arena's type is fresh to `body`, and `body`'s result type cannot mention it, so nothing allocated in the arena can escape. This is Haskell's `runST` trick, and the region idea from Cyclone and the ML Kit, without region inference.
+
+Leaks are type errors too. An allocator is `@linear`, so it must be torn down. A buffer from `general` or a `pool` is consumed by `free` or handed back, and a buffer from an arena needs nothing, because freeing the arena frees it. So proved code cannot leak, double free, or use after free, and none of that costs anything at run time.
+
+*Threads and coroutines.* An allocator is a value, not a global, so concurrency needs no allocator locks by default. This follows the coroutine design in ADR 0027 (in progress), which makes coroutines stackless:
+
+- A task, worker or coroutine scope gets its own allocator, `moved` to it. `spread` gives each tile's worker its own arena by default, and frees it when the worker joins. A `@linear` allocator is `sendable` (it can move to another thread) but not `shareable`.
+- Coroutine frames have a size known at compile time, and come from the allocator that the enclosing task scope was given, usually a `pool` of frames. Stackless coroutines need no green-thread stacks. The `pool` of fixed-size, guard-paged stacks is only for OS worker threads, so that a stack overflow faults into `Pia.Rt` instead of corrupting memory.
+- A coroutine may hold borrows from an arena across a suspension point, as long as the arena's region encloses the coroutine. Rule 1 enforces that the arena outlives every suspended borrow.
+- `shared<a>` wraps any allocator for use from several threads, with per-thread caches and atomics, as mimalloc does. It is `shareable`, it is the only allocator with synchronisation, and choosing it is explicit. The lock that refills its caches is a leaf lock at the top lock level, since it can be taken while user locks are held, and it never suspends. So allocating inside a `lock` body is allowed.
+
+*With sanitizers*, every allocator poisons the memory it hasn't handed out and the blocks it has freed, so foreign code that strays into them is reported ([sanitizers](#sanitizers-compiler-rt)).
+
+Prior art: Zig's explicit allocators, Odin's and Jai's allocator contexts, C++'s `std::pmr`, Rust's `bumpalo` and allocator API, mimalloc's sharded free lists, the Linux slab allocator, and Cyclone and the ML Kit for regions.
 
 ### 8. POSIX: trusted declarations and typed wrappers
 
@@ -304,7 +339,7 @@ flowchart TD
   core --> posix["Pia.Sys.Posix: extern declarations, @trusted"]
   posix --> sys["Pia.Sys: Fs, Mapping, Process, Clock, Thread"]
   posix --> rt["Pia.Rt: runtime error handler, @trusted"]
-  sys --> mem["Pia.Mem: arena, alloc, vec, heap"]
+  sys --> mem["Pia.Mem: allocators, vec, heap"]
   mem --> io["Pia.Io: readers, writers, formatting"]
   io --> par["Pia.Par: worker pool, collectives"]
   io --> img["Image: Bmp, Png, Gif"]
@@ -317,7 +352,7 @@ flowchart TD
 | `Pia.Sys.Posix` | group 8 | the trusted libSystem declarations, and nothing else |
 | `Pia.Rt` | groups 8 and 9 | the trap entry point, signal handlers, stack traces |
 | `Pia.Sys` | groups 7 and 8 | `fd`, `mapping`, `errno`, `args`, `exit`, clocks, threads: POSIX in strong types, fully proved |
-| `Pia.Mem` | group 7 | `arena`, `alloc` `free`, `vec`, `string`, `hash_map`, `heap` |
+| `Pia.Mem` | group 7 | the `Allocator` concept; `pages` `fixed_buffer` `arena` `scratch` `pool` `general` `shared`; `vec`, `string`, `hash_map`, `heap` |
 | `Pia.Io` | `Pia.Sys`, `Pia.Mem` | `reader` and `writer` concepts with bounds-proved reads, buffered file I/O, `str` as `[u8]` refined to valid UTF-8, printing |
 | `Pia.Math` | floats | elementary functions with error bounds |
 | `Pia.Par` | atomics, threads | the `spread` worker pool, collectives |
@@ -366,6 +401,7 @@ These were open questions in the first draft. ADR 0023 records the answers. No o
 
 - **Trusted items are listed in certificates.** Each certificate lists its own module's trusted items (foreign contracts, `unsafe` calls, `assume`s, accepted unproved goals), and `piac --trust-report` walks them for the whole program. `addr` and `assume` are only allowed in `@trusted` modules.
 - **Allocation failure is a `result`** by default, with a trapping variant clearly named.
+- **No garbage collection, ever.** Memory is managed by explicit allocator values (arenas, scratch, pools, a general size-class allocator), with lifetimes proved by two Sema rules ([ADR 0026](adr/0026-memory-manager.md)).
 - **`extern` is a function body**, `= extern "symbol"`, not a new declaration form, so `let` stays the only binding form.
 - **FFI needs explicit contracts.** A foreign function without one can only be called as `unsafe f x`, and each such call is a trusted item.
 - **Sanitizers are for the edges of the proof**: foreign code, trusted contracts and the verifier itself ([ADR 0025](adr/0025-sanitizers.md)).
