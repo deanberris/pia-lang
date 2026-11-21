@@ -216,8 +216,28 @@ TOTAL = ("let total (n : u64) : u64\n"
          "    invariant s <= 2 * i\n"
          "  do s <- s + step 5 done;\n"
          "  s")
-# Long enough to still be running while the next few cells are checked.
-LONG = 4000000000
+# Long enough to still be running while the next few cells are checked:
+# code a task runs counts its calls, which costs a few nanoseconds each.
+LONG = 1000000000
+# step is called by chunk, which many calls, so a change to step's contract
+# swaps step and chunk together, between two calls of chunk.
+CHUNK = ("let chunk (k : u64) : u64\n"
+         "  requires k <= 1000\n"
+         "  ensures result <= 2 * k\n"
+         "= let s : mutable u64 = 0 in\n"
+         "  for i in 0 .. k\n"
+         "    invariant s <= 2 * i\n"
+         "  do s <- s + step 5 done;\n"
+         "  s")
+MANY = ("let many (n : u64) : u64\n"
+        "  requires n <= 8000000\n"
+        "= let s : mutable u64 = 0 in\n"
+        "  for i in 0 .. n\n"
+        "    invariant s <= 2000 * i\n"
+        "  do s <- s + chunk 1000 done;\n"
+        "  s")
+WEAKER = (":redef let step (a : u64) : u64 requires a < 1000 "
+          "ensures result <= 2 = 2")
 
 
 class LiveTest(unittest.TestCase):
@@ -263,16 +283,38 @@ class LiveTest(unittest.TestCase):
         task = self.spawn()
         # total still verifies with this step, but the running task was
         # proved against `result = 1`, which the new body breaks.
-        weaker = (":redef let step (a : u64) : u64 requires a < 1000 "
-                  "ensures result <= 2 = 2")
-        r = self.repl.run(weaker)
+        # It would have to be swapped together with total, which the task
+        # never leaves.
+        r = self.repl.run(WEAKER)
         self.assertFalse(r["ok"], r)
-        self.assertIn("must refine", kinds(r, "error")[0]["text"])
+        text = kinds(r, "error")[0]["text"]
+        self.assertIn("can only be swapped together", text)
+        self.assertRegex(text, r"stayed inside [^;]*'total'")
         self.assertEqual(self.repl.run("total 10")["events"][-1]["value"], "10")
         self.repl.run(":wait " + task)
-        r = self.repl.run(weaker)
+        r = self.repl.run(WEAKER)
         self.assertTrue(r["ok"], r)
         self.assertEqual(self.repl.run("total 10")["events"][-1]["value"], "20")
+
+    def test_a_contract_change_swaps_with_its_callers(self):
+        self.assertTrue(self.repl.run(CHUNK)["ok"])
+        self.assertTrue(self.repl.run(MANY)["ok"])
+        n = LONG // 1000
+        r = self.repl.run(f":spawn many {n}")
+        [t] = kinds(r, "task")
+        # chunk still verifies with the weaker step, and many relies only on
+        # chunk's contract, so step and chunk are swapped together at a
+        # moment when the task is between two calls of chunk.
+        r = self.repl.run(WEAKER)
+        self.assertTrue(r["ok"], r)
+        [d] = kinds(r, "redefined")
+        self.assertIn("swapped into running task " + t["name"], d["text"])
+        self.assertIn("no task was running 'chunk' or 'step'", d["text"])
+        value = int(kinds(self.repl.run(":wait " + t["name"]), "task")[0]["value"])
+        # Every chunk ran wholly old code or wholly new code.
+        self.assertEqual(value % 1000, 0)
+        self.assertGreater(value, LONG)
+        self.assertLessEqual(value, 2 * LONG)
 
     def test_forget_waits_for_the_task(self):
         task = self.spawn()
@@ -289,7 +331,7 @@ class LiveTest(unittest.TestCase):
         r = self.repl.run("let other (a : u8) : u8 = a")
         self.assertTrue(r["ok"], r)
         self.assertEqual(self.repl.run("other 4")["events"][-1]["value"], "4")
-        self.repl.run(":wait " + task)
+        self.assertEqual(kinds(self.repl.run(":tasks"), "task")[0]["status"], "running")
 
     def test_metaprograms_redefine_with_pia_live(self):
         r = self.repl.run("let meta faster () = redefine `( let step (a : u64) : u64 "
@@ -301,7 +343,6 @@ class LiveTest(unittest.TestCase):
         [d] = kinds(r, "redefined")
         self.assertEqual(d["name"], "step")
         self.assertIn("swapped into running task " + task, d["text"])
-        self.repl.run(":wait " + task)
         # It stays redefined in later cells.
         self.assertTrue(self.repl.run("let after : u8 = 1")["ok"])
         r = self.repl.run(":source step")
