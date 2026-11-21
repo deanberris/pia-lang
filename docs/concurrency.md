@@ -99,6 +99,15 @@ Detached ("fire and forget") tasks are not in the first version. A long-lived se
 
 **Cancellation** is cooperative and explicit in the first version: a scope can be given a `cancel` token, and operations that take one return `Err Cancelled`. Implicit cancellation at every `wait` interacts with `@linear` resources (a cancelled task must still consume its file descriptors), so it waits for experience with the explicit form.
 
+### Errors and cleanup in tasks
+
+Error propagation and scope cleanup are designed separately (ADR 0028, in review). The design here relies on four of its rules:
+
+- `?` never crosses a task boundary. Inside a spawned closure it ends that task, and the error comes back from `join`.
+- Inside a `lock` body, `?` leaves the closure, the lock is released, and the error is the closure's result.
+- A `scope` that exits early first joins (or cancels, then joins) every child still running, and only then runs the parent's defers, because children may borrow from the parent.
+- Drops and defers never suspend and never acquire a lock, so they cannot break the lock-level order.
+
 ### Calling suspending code from ordinary code
 
 `Pia.Task.run (f : () -> T @suspends) : T` starts a scheduler, runs `f` to completion, and returns. `main` may itself be `@suspends`, in which case the runtime calls `run` for it. A non-suspending function cannot `wait`.
@@ -342,4 +351,4 @@ The order follows what the flagship demo needs, then general programs:
 8. **Certificates**: the concurrency facts in interfaces and hashes, race goal kinds, trust items, `--allow-unproved=race:...`.
 9. **RC11 mode** for `relaxed` atomics.
 
-Each step is a GitHub issue, listed under the tracking issue linked from [ADR 0027](adr/0027-coroutines-and-race-freedom.md).
+Each step is a GitHub issue under the tracking issue [#74](https://github.com/deanberris/pia-lang/issues/74): #75 to #83, in this order.

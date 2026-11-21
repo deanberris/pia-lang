@@ -27,3 +27,4 @@ Dean wants coroutines or green threads in Pia, locking and synchronisation and c
 - Function colouring is visible, and generic code over both colours needs effect polymorphism in generics (M9).
 - The model checker is substantial work. Until it lands, the primitives are trusted wrappers over `os_unfair_lock` and pthreads, and the trust report says so.
 - Races between processes, for example on the file system, are out of scope.
+- Implementation is tracked in [#74](https://github.com/deanberris/pia-lang/issues/74).
