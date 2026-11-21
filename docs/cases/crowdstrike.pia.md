@@ -65,7 +65,7 @@ let matches (wild : [bool]) (want : [u32]) (inputs : [u32]) : bool
 =
   let ok : mutable bool = true in
   for i in 0..len wild do
-    if not wild.[i] && inputs.[i] <> want.[i] then ok <- false
+    if wild.[i] then () else if inputs.[i] <> want.[i] then ok <- false
   done;
   ok
 ```
@@ -100,7 +100,7 @@ let matches (wild : [bool]) (want : [u32]) (inputs : [u32]) : bool
 =
   let ok : mutable bool = true in
   for i in 0..len wild do
-    if not wild.[i] && inputs.[i] <> want.[i] then ok <- false
+    if wild.[i] then () else if inputs.[i] <> want.[i] then ok <- false
   done;
   ok
 
@@ -132,7 +132,7 @@ let matches (wild : [bool]) (want : [u32]) (inputs : [u32]) : bool
   for i in 0..len wild
     invariant ok ==> forall (k in 0..i). wild.[k] || inputs.[k] = want.[k]
   do
-    if not wild.[i] && inputs.[i] <> want.[i] then ok <- false
+    if wild.[i] then () else if inputs.[i] <> want.[i] then ok <- false
   done;
   ok
 ```
