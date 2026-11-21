@@ -48,6 +48,13 @@ let pick (t : type) (a : t) (b : t) : t
 
 let use_pick (x : u8) : u8 = pick x x
 
-(* Expected report, in order.
-// CHECK: placeholder to dump the report
+(* Expected report, in order. Instances come after every other function,
+   in the order of their first use.
+// CHECK: generic_functions.pia:17:3: proved: the postcondition holds [smt]
+// CHECK: generic_functions.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: generic_functions.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: generic_functions.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: generic_functions.pia:46:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: a = {{-?[0-9]+}}, b = {{-?[0-9]+}}
+// CHECK: 4 proved, 1 failed, 0 skipped
 *)

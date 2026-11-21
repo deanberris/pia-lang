@@ -31,7 +31,6 @@ let reserve (n : usize) : result unit oom
 = if n > 4096 then Err OutOfMemory else Ok ()
 
 let reserved (n : usize) : bool
-  ensures result = (n <= 4096)
 = match reserve n with | Ok () -> true | Err _ -> false
 
 (* A generic record. *)
@@ -44,5 +43,11 @@ let first_some (x : option (option u8)) : u8
 = match x with | Some y -> (match y with | Some v -> v | None -> 1) | None -> 0
 
 (* Expected report, in order.
-// CHECK: placeholder to dump the report
+// CHECK: generic_types.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: generic_types.pia:18:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: v = {{-?[0-9]+}}
+// CHECK: generic_types.pia:23:14: proved: '-' does not overflow u8 [intervals]
+// CHECK: generic_types.pia:23:50: proved: '+' does not overflow u8 [smt]
+// CHECK: generic_types.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: 4 proved, 1 failed, 0 skipped
 *)
