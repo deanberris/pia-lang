@@ -31,6 +31,9 @@ namespace pia::syntax {
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
   X(SigType)       /* text=name; TypeValue */                                \
+  X(Sig)           /* a signature value: sig items */                        \
+  X(SigInclude)    /* text=concept; type arguments */                        \
+  X(SigLemma)      /* text=name; Params, Contracts */                        \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
   /* bindings */                                                             \
@@ -148,6 +151,10 @@ NodePtr makeNode(NodeKind kind, SourceLoc loc, std::string text = "");
 
 // A deep copy of `node`.
 NodePtr clone(const Node &node);
+
+// Whether a top-level `let` defines a concept (ADR 0034):
+// `let meta C (t : type) : concept = sig ... end`.
+bool isConceptItem(const Node &item);
 
 // Writes the tree as an indented S-expression, one node per line. This is the
 // `piac --dump-ast` format that the golden tests compare. With `comments`,

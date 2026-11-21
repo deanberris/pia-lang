@@ -260,6 +260,40 @@ let reserve (n : usize) : result unit oom =
 
 The type arguments are deduced. A constructor takes its instance from the type it is expected to have, as `Err OutOfMemory` does from `reserve`'s result, or else from its payload, as `Some v` does. A call takes them from its arguments, then from the type it is expected to have. To force a choice, give them: `unwrap_or<u16> (Some v) 0`, or by name, `unwrap_or<t = u16>`. A generic function needs its return type written, and recursive generic types, such as a list, are not supported yet.
 
+### Concepts
+
+A concept says what a type must provide. It is a metaprogram that returns a signature: each requirement is a function a type must have, a law is a lemma every type must prove, and `include` brings in another concept. A constraint on a type parameter, `(t : type where Ord t)`, names one:
+
+```ocaml
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+end
+
+let meta Ord (t : type) : concept = sig
+  include Same t
+  let less : (a : t) -> (b : t) -> bool
+  let lemma irreflexive (a : t) ensures less a a = false
+end
+
+let same (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let less (a : u8) (b : u8) : bool
+  ensures result <==> a < b
+= (a < b)
+
+let max (t : type where Ord t) (a : t) (b : t) : t =
+  if less a b then b else a
+
+let biggest (a : u8) (b : u8) : u8 = max a b
+```
+
+A type meets a concept when a function with each requirement's name and exact type is in scope, so `u8` meets `Ord` through the two functions above. Each law is then proved for `u8`, from those functions' contracts. A call with a type that does not meet a constraint is an error that says what is missing: `bool does not meet Ord: no function 'same : bool -> bool -> bool' (from 'include Same')`.
+
+Functions may share a name when their parameter types differ. They form an overload set, and each call picks the one that fits its arguments best: an exact type beats a conversion, and a function that is not generic beats a generic one. A generic overload whose type arguments do not meet its constraints drops out of the call, so it is only chosen for the types it can serve.
+
 
 ## Control flow
 

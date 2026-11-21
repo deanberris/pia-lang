@@ -1,0 +1,47 @@
+(* Concepts (ADR 0034): a concept is a metaprogram that returns a
+   signature. A type meets it when a function with each requirement's name
+   and type is in scope. Each law, and each requirement's contract, is
+   proved as a lemma for every type that is used with the concept.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+end
+
+let meta Ord (t : type) : concept = sig
+  include Same t
+  let less : (a : t) -> (b : t) -> bool
+    ensures result ==> same a b = false
+  let lemma irreflexive (a : t) ensures less a a = false
+end
+
+let pixel = type { r : u8; g : u8 }
+
+let same (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let same (p : pixel) (q : pixel) : bool
+  ensures result <==> p.r = q.r && p.g = q.g
+= (p.r = q.r && p.g = q.g)
+
+let less (x : u8) (y : u8) : bool
+  ensures result <==> x < y
+= (x < y)
+
+let max (t : type where Ord t) (a : t) (b : t) : t =
+  if less a b then b else a
+
+let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+let biggest (a : u8) (b : u8) : u8
+  ensures result >= a && result >= b
+= max a b
+
+let pixels_alike (p : pixel) (q : pixel) : bool = alike p q
+
+(* Expected report, in order.
+// CHECK: 0 proved, 0 failed, 0 skipped
+*)

@@ -32,6 +32,17 @@ NodePtr clone(const Node &node) {
   return n;
 }
 
+bool isConceptItem(const Node &item) {
+  if (item.kind != NodeKind::LetItem || item.kids.size() < 4 ||
+      item.flags.find("meta") == std::string::npos)
+    return false;
+  const Node &ret = *item.kids[1];
+  return ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+         ret.kids[0]->kind == NodeKind::Annot &&
+         ret.kids[0]->kids[1]->kind == NodeKind::TypeName &&
+         ret.kids[0]->kids[1]->text == "concept";
+}
+
 namespace {
 
 void writeQuoted(std::ostream &os, const std::string &s) {
