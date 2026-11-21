@@ -157,6 +157,46 @@ let meta faster () =
 
 `Pia.Live` exists only in the REPL. `piac` refuses `redefine`, and compiled programs call functions directly, with no slots.
 
+## State
+
+A `let` with no parameters whose type says `mutable` is a *state*: a value that persists from cell to cell, which definitions can read and change ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)). Its `invariant` is a fact that every definition must keep:
+
+<!-- repl: state.pia -->
+```ocaml
+let count : mutable u8
+  invariant count <= 100
+= 0
+let bump () : unit = if count < 100 then count <- count + 1 else ()
+bump ()
+bump ()
+count
+let tick () : unit = count <- count + 1
+:redef let count : mutable u16 invariant count <= 1000 = old count * 10
+count
+```
+
+```console
+$ pia repl < state.pia
+count : mutable u8 = 0  (* 1 proved *)
+bump : () -> unit  (* 5 proved *)
+- : unit = ()
+- : unit = ()
+- : u8 = 2
+[1]:2:19: failed: the postcondition holds
+[6]: error: 1 obligation failed; nothing was committed
+count : mutable u16 = 20  (redefined, migrated from mutable u8)  (* 3 proved *)
+- : u16 = 20
+```
+
+`tick` could take `count` past 100, so it is refused, and the failure points at the invariant it would break.
+
+- **How it is proved.** Every definition that uses a state, directly or through a call, takes it as a `borrowed inout mutable` one-element buffer, so the verifier treats it like any other buffer. Each such definition requires the invariant and ensures it, every loop in it has the invariant as a loop invariant, and a definition that never writes the state ensures it is unchanged. The initial value is proved to meet the invariant. Since an invariant holds whenever no call is in progress, a redefinition of a function that uses a state keeps the invariant too: its contract includes it.
+- **Migration.** `:redef` of a state starts it again from its new initial value, unless the value names `old count`, the value of the definition it replaces. Then the new value is computed from the old one, and proved to meet the new type and the new invariant for every old value the old invariant allows. Above, `old count * 10` fits in `u16` and stays at most 1000 because the old `count` is at most 100. Going back to `u8` with `old count` would be refused, since `old count` may be 1000.
+- **Tasks.** A state that a running task uses belongs to the task until it finishes. Reading it, writing it, redefining it or forgetting it waits for the task, so a task and the session never race on it. Functions that use it can still be redefined while the task runs, as above: a new body that keeps the old contract, and with it the invariant, is swapped into the task.
+- **Cells.** A cell can be a statement, such as `count <- 7`, and its result is checked against the invariant like any definition's.
+
+A state is an integer or a `bool` for now. State belongs to the REPL until modules ([M8](https://github.com/deanberris/pia-lang/issues/9)) bring module state to compiled programs, so `piac` refuses an `invariant` on a definition.
+
 ## Commands
 
 | Command | |

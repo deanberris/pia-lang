@@ -349,6 +349,120 @@ class LiveTest(unittest.TestCase):
         self.assertTrue(r["ok"], r)
 
 
+COUNT = ("let count : mutable u8\n"
+         "  invariant count <= 100\n"
+         "= 0")
+BUMP = "let bump () : unit = if count < 100 then count <- count + 1 else ()"
+HITS = ("let hits : mutable u64\n"
+        "  invariant hits <= 8000000000\n"
+        "= 0")
+HIT = "let hit () : unit = if hits < 8000000000 then hits <- hits + 1 else ()"
+RUN = ("let run (n : u64) : unit\n"
+       "  requires n <= 8000000000\n"
+       "= for i in 0 .. n do hit () done")
+
+
+class StateTest(unittest.TestCase):
+    """Top-level state, its invariant, and migration (ADR 0031, "State")."""
+
+    def setUp(self):
+        self.repl = Repl()
+
+    def tearDown(self):
+        self.repl.close()
+
+    def value(self, code):
+        r = self.repl.run(code)
+        self.assertTrue(r["ok"], r)
+        return kinds(r, "value")[0]["value"]
+
+    def test_state_persists_between_cells(self):
+        r = self.repl.run(COUNT)
+        self.assertTrue(r["ok"], r)
+        [d] = kinds(r, "defined")
+        self.assertEqual((d["name"], d["type"], d["value"]), ("count", "mutable u8", "0"))
+        r = self.repl.run(BUMP)
+        # The state is not a parameter the caller sees.
+        self.assertEqual(kinds(r, "defined")[0]["type"], "() -> unit")
+        self.value("bump ()")
+        self.value("bump ()")
+        self.assertEqual(self.value("count"), "2")
+        self.value("count <- 7")
+        self.assertEqual(self.value("count"), "7")
+        self.assertEqual(self.value("count + 1"), "8")
+
+    def test_the_invariant_is_kept(self):
+        self.assertTrue(self.repl.run(COUNT)["ok"])
+        r = self.repl.run("count <- 200")
+        self.assertFalse(r["ok"], r)
+        [p] = [e for e in kinds(r, "proof") if e["status"] == "failed"]
+        self.assertEqual(p["where"], {"cell": 1, "line": 2, "column": 19})
+        r = self.repl.run("let tick () : unit = count <- count + 1")
+        self.assertFalse(r["ok"], r)
+        r = self.repl.run("let bad : mutable u8\n  invariant bad <= 3\n= 4")
+        self.assertFalse(r["ok"], r)
+        self.assertEqual(self.value("count"), "0")
+
+    def test_loops_keep_the_invariant(self):
+        for code in (HITS, HIT, RUN):
+            self.assertTrue(self.repl.run(code)["ok"], code)
+        self.value("run 1000")
+        self.assertEqual(self.value("hits"), "1000")
+
+    def test_migration(self):
+        self.assertTrue(self.repl.run(COUNT)["ok"])
+        self.assertTrue(self.repl.run(BUMP)["ok"])
+        self.value("bump ()")
+        self.value("bump ()")
+        r = self.repl.run(":redef let count : mutable u16 invariant count <= 1000 "
+                          "= old count * 10")
+        self.assertTrue(r["ok"], r)
+        [d] = kinds(r, "redefined")
+        self.assertEqual((d["type"], d["value"], d["text"]),
+                         ("mutable u16", "20", "migrated from mutable u8"))
+        self.value("bump ()")
+        self.assertEqual(self.value("count"), "21")
+        # Back to u8 cannot hold every value the old invariant allows.
+        r = self.repl.run(":redef let count : mutable u8 invariant count <= 100 "
+                          "= old count")
+        self.assertFalse(r["ok"], r)
+        self.assertEqual(self.value("count"), "21")
+        # Without `old`, a redefinition starts again.
+        r = self.repl.run(":redef let count : mutable u8 invariant count <= 100 = 5")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.value("count"), "5")
+        r = self.repl.run("let fresh : mutable u8 = old fresh")
+        self.assertFalse(r["ok"], r)
+
+    def test_a_task_owns_its_state(self):
+        for code in (HITS, HIT, RUN):
+            self.assertTrue(self.repl.run(code)["ok"], code)
+        r = self.repl.run(f":spawn run {LONG}")
+        [t] = kinds(r, "task")
+        for code in ("hits", "hits <- 0",
+                     ":redef let hits : mutable u64 invariant hits <= 9000000000 "
+                     "= old hits"):
+            r = self.repl.run(code)
+            self.assertFalse(r["ok"], r)
+            self.assertIn("belongs to a running task", kinds(r, "error")[0]["text"])
+        # A new body for hit that keeps its contract, and so the invariant,
+        # is swapped into the task.
+        r = self.repl.run(":redef let hit () : unit = "
+                          "if hits < 7999999999 then hits <- hits + 1 else ()")
+        self.assertTrue(r["ok"], r)
+        self.assertIn("swapped into running task", kinds(r, "redefined")[0]["text"])
+        # One that can break it is not.
+        r = self.repl.run(":redef let hit () : unit = hits <- hits + 1")
+        self.assertFalse(r["ok"], r)
+        self.repl.run(":wait " + t["name"])
+        self.assertEqual(self.value("hits"), str(LONG))
+
+    def test_only_state_has_an_invariant(self):
+        r = self.repl.run("let f (a : u8) : u8\n  invariant a <= 3\n= a")
+        self.assertFalse(r["ok"], r)
+        self.assertIn("belongs to a state", kinds(r, "error")[0]["text"])
+
+
 class TextTest(unittest.TestCase):
     def test_pipe(self):
         script = (
