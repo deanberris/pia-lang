@@ -4,6 +4,7 @@ exports_files([
     "getting-started.md",
     "index.md",
     "status.md",
+    "streams.pia.md",
     "tour.md",
     "verification.md",
 ])

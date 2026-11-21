@@ -11,6 +11,8 @@
 //                                   obligations:
 //                                   all of them in function SPEC, or the ones
 //                                   at SPEC = file:line or file:line:col
+//   piac --solver-timeout=MS ...    give Z3 MS milliseconds per obligation
+//                                   (default 10000)
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
@@ -58,7 +60,7 @@ int usage() {
   std::cerr << "usage: piac (--verify | --emit=mlir | --dump-ast | "
                "--dump-expanded | --dump-tokens | --check) "
                "[--fragment=contracts] [--meta-cycles=N]\n"
-               "             [--literate] [--comments]\n"
+               "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -148,10 +150,12 @@ std::string obligations(size_t n) {
 // docs/verifier.md, "Limits of v0"), unless `allowUnproved` accepts it.
 int compile(mlir::ModuleOp module, const std::string &mode,
             const std::string &output, const pia::codegen::Options &options,
-            const std::vector<std::string> &allowUnproved) {
+            const std::vector<std::string> &allowUnproved,
+            const pia::verify::Options &verifyOptions) {
   using pia::verify::Outcome;
   using pia::verify::Status;
-  std::vector<Outcome> outcomes = pia::verify::verifyModule(module);
+  std::vector<Outcome> outcomes =
+      pia::verify::verifyModule(module, verifyOptions);
   bool failed = false;
   for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
@@ -225,6 +229,7 @@ int main(int argc, char **argv) {
   bool contracts = false, verify = false, dumpSmt = false;
   bool literate = false, showComments = false;
   pia::meta::Options meta;
+  unsigned solverTimeoutMs = 0;  // 0: the verifier's default
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -249,6 +254,13 @@ int main(int argc, char **argv) {
     else if (arg.rfind("--allow-unproved=", 0) == 0) {
       if (arg.size() == 17) return usage();
       allowUnproved.push_back(arg.substr(17));
+    }
+    else if (arg.rfind("--solver-timeout=", 0) == 0) {
+      char *end = nullptr;
+      unsigned long ms = std::strtoul(arg.c_str() + 17, &end, 10);
+      if (arg.size() == 17 || *end != '\0' || ms == 0 || ms > 3600000)
+        return usage();
+      solverTimeoutMs = static_cast<unsigned>(ms);
     }
     else if (arg == "--verify")
       verify = true;
@@ -287,6 +299,7 @@ int main(int argc, char **argv) {
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();
 #ifdef PIA_NO_MLIR
+  (void)solverTimeoutMs;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
     return 2;
@@ -335,11 +348,12 @@ int main(int argc, char **argv) {
         std::cerr << "piac: internal error: the generated IR does not verify\n";
         return 1;
       }
+      pia::verify::Options options;
+      options.dumpSmt = dumpSmt;
+      if (solverTimeoutMs) options.timeoutMs = solverTimeoutMs;
       if (module && codegen) {
-        return compile(*module, mode, output, cg, allowUnproved);
+        return compile(*module, mode, output, cg, allowUnproved, options);
       } else if (module && verify) {
-        pia::verify::Options options;
-        options.dumpSmt = dumpSmt;
         std::vector<pia::verify::Outcome> outcomes =
             pia::verify::verifyModule(*module, options);
         bool failed =

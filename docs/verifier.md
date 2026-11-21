@@ -77,6 +77,8 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 **Division.** Z3 bit-blasts division, and cannot show `a mod b < b` on 68-bit values within its timeout. So for non-negative operands the encoding states `0 <= a / b <= a` and `0 <= a mod b < b` (when `b` is not zero) beside the term. Inside a quantifier, where the operands may be bound variables, it does not.
 
+**Timeouts.** Each obligation is one Z3 query with a time limit, 10 seconds by default; `--solver-timeout=<ms>` changes it. A goal the solver gives up on is reported as failed, with the reason, such as `[the solver gave up: timeout]`. The `pia_object` Bazel rule passes 60 seconds, because a parallel build shares the machine. A deterministic resource limit in place of wall time would make this independent of load.
+
 **Counterexamples** name the parameters, using the names IRGen records in the block arguments' locations, and slice lengths as `len xs`. They add the values that explain the goal: `result` for an overflow, `index` and `length` for bounds. Array contents are not shown yet.
 
 ## Loops
