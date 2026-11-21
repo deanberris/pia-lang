@@ -1,4 +1,4 @@
-# 32. Module initialisation: registries, proved `@init` hooks, and opt-in dynamic registration
+# 33. Module initialisation: registries, proved `@init` hooks, and opt-in dynamic registration
 
 Date: 2026-11-21
 

@@ -1,6 +1,6 @@
 # Module initialisation and registries
 
-Status: proposed, 2026-11-21. Decision record: [ADR 0032](adr/0032-module-initialisation-and-registries.md). Builds on [ADR 0024](adr/0024-published-proof-certificates.md) (certificates and the loader), [ADR 0006](adr/0006-contracts-and-module-state.md) (module state), [ADR 0028](adr/0028-error-propagation-and-cleanup.md) (errors and cleanup) and [ADR 0026](adr/0026-memory-manager.md) (allocators), and follows the REPL's environment model ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)).
+Status: proposed, 2026-11-21. Decision record: [ADR 0033](adr/0033-module-initialisation-and-registries.md). Builds on [ADR 0024](adr/0024-published-proof-certificates.md) (certificates and the loader), [ADR 0006](adr/0006-contracts-and-module-state.md) (module state), [ADR 0028](adr/0028-error-propagation-and-cleanup.md) (errors and cleanup) and [ADR 0026](adr/0026-memory-manager.md) (allocators), and follows the REPL's environment model ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)).
 
 Programs need code that runs before `main`: tables to build, codecs to register, caches to allocate. C++ does this with static initializers, and almost everything about them is implementation-defined. The order across translation units is unspecified (the "static initialization order fiasco"), an initializer can read another one's object before it is constructed, it can throw, loop forever or start threads, and the platform runs it from inside the dynamic loader, before any program code can check anything.
 
@@ -168,4 +168,4 @@ If a fallible init fails, the inits already run are dropped in reverse order, `m
 
 ## Implementation plan
 
-Issues are listed in [ADR 0032](adr/0032-module-initialisation-and-registries.md#implementation).
+Issues are listed in [ADR 0033](adr/0033-module-initialisation-and-registries.md#implementation).

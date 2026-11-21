@@ -1,0 +1,18 @@
+{
+  "cores": 8,
+  "files": {
+    "docs/streams.pia.md": {"cost": 269094119, "goals": 243, "solve_ms_1": 30677, "solve_ms_n": 8616, "solved": 222, "wall_ms_1": 33198.5, "wall_ms_n": 11107.8},
+    "examples/edges/edges.pia": {"cost": 61107851, "goals": 110, "solve_ms_1": 11251, "solve_ms_n": 4507, "solved": 82, "wall_ms_1": 12985.9, "wall_ms_n": 6314.4},
+    "tests/verify/contracts.pia": {"cost": 15186, "goals": 22, "solve_ms_1": 23, "solve_ms_n": 28, "solved": 15, "wall_ms_1": 1546.6, "wall_ms_n": 1594.1},
+    "tests/verify/emit.pia": {"cost": 2912, "goals": 4, "solve_ms_1": 8, "solve_ms_n": 4, "solved": 3, "wall_ms_1": 1542.1, "wall_ms_n": 1506.3},
+    "tests/verify/intervals.pia": {"cost": 0, "goals": 6, "solve_ms_1": 0, "solve_ms_n": 0, "solved": 0, "wall_ms_1": 1511.8, "wall_ms_n": 1501.4},
+    "tests/verify/loops.pia": {"cost": 1812685, "goals": 42, "solve_ms_1": 205, "solve_ms_n": 117, "solved": 41, "wall_ms_1": 1769.2, "wall_ms_n": 1688.2},
+    "tests/verify/overflow.pia": {"cost": 4841, "goals": 5, "solve_ms_1": 8, "solve_ms_n": 5, "solved": 4, "wall_ms_1": 1552.9, "wall_ms_n": 1514.6},
+    "tests/verify/parallel.pia": {"cost": 129527, "goals": 5, "solve_ms_1": 37, "solve_ms_n": 36, "solved": 4, "wall_ms_1": 1646.9, "wall_ms_n": 1560.3},
+    "tests/verify/primes.pia": {"cost": 429, "goals": 3, "solve_ms_1": 5, "solve_ms_n": 4, "solved": 2, "wall_ms_1": 1519.7, "wall_ms_n": 1493.7},
+    "tests/verify/records.pia": {"cost": 1815, "goals": 5, "solve_ms_1": 5, "solve_ms_n": 5, "solved": 3, "wall_ms_1": 1496.2, "wall_ms_n": 1507.4},
+    "tests/verify/widths.pia": {"cost": 3482195, "goals": 17, "solve_ms_1": 523, "solve_ms_n": 297, "solved": 10, "wall_ms_1": 2149.3, "wall_ms_n": 1848.4}
+  },
+  "host": "BabyHouse-iMac",
+  "total": {"cost": 335651560, "goals": 462, "solved": 386, "wall_ms_1": 60919.1, "wall_ms_n": 31636.6}
+}
