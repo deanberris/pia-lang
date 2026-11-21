@@ -422,6 +422,8 @@ What the prover must establish for this to count as correct by construction:
 - **Collectives match.** Every worker reaches every `all_reduce` and `halo_exchange` in the same order, so no worker waits forever. A protocol metaprogram checks at compile time that every worker issues the same sequence of collectives. A model checker pass then explores the interleavings that the protocol check cannot settle on its own.
 - **Placement does not change results.** Moving a tile from CPU to GPU must not change the proved result, which ties back to the float rules.
 
+Coroutines, tasks, locks, atomics, channels and the race prover are designed in [concurrency.md](concurrency.md) ([ADR 0027](adr/0027-coroutines-and-race-freedom.md)).
+
 Concurrency features are built in the order this demo needs them: collectives and `spread` loops first, then a task graph for flow accumulation (tiles wait on their upstream neighbours), then futures.
 
 Placement has three forms. `@place(auto)` lets the compiler's cost model choose. `@place(gpu)` or `@place(cpu)` fixes the device. `@place(auto, prefer = gpu)` keeps the cost model but overrides its choice. CPU cores and the GPU (through Metal) are reachable from MLIR. The Neural Engine is only reachable through Core ML, so it fits fixed operations such as convolutions, and is a later, optional target.
