@@ -13,13 +13,18 @@ async function main() {
   const root = path.resolve(__dirname, '..');
   const workspace = path.join(__dirname, 'fixture');
   const fs = require('fs');
+  const os = require('os');
+  // VS Code's IPC socket lives in the user-data dir and macOS caps socket
+  // paths at 103 chars, so a deep checkout breaks the default
+  // .vscode-test/user-data; use a short temp dir instead.
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'pia-vsc-'));
   fs.mkdirSync(path.join(workspace, '.vscode'), { recursive: true });
   fs.writeFileSync(path.join(workspace, '.vscode', 'settings.json'),
     JSON.stringify({ 'pia.server.path': path.resolve(server), 'pia.trace.server': 'verbose' }, null, 2));
   await runTests({
     extensionDevelopmentPath: root,
     extensionTestsPath: path.join(__dirname, 'suite.js'),
-    launchArgs: [workspace, '--disable-extensions', '--disable-gpu'],
+    launchArgs: [workspace, '--disable-extensions', '--disable-gpu', `--user-data-dir=${userData}`],
   });
 }
 
