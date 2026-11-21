@@ -720,6 +720,9 @@ struct Entry {
   std::vector<bool> argSigned;
   bool resultSigned = false;
   Location loc;
+  // For each argument, the earlier argument whose length it shares (a
+  // field buffer of a slice of records), or -1.
+  std::vector<int> lengthOf = {};
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -768,8 +771,15 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
       return mlir::emitError(e.loc)
              << "codegen v0 cannot return a buffer from '" << e.name << "'";
 
+  // A field buffer that shares another's length takes only its pointer.
   llvm::SmallVector<Type> argTypes;
-  for (Type t : e.type.getInputs()) cArgTypes(t, ctx, argTypes);
+  for (auto [i, t] : llvm::enumerate(e.type.getInputs())) {
+    if (e.lengthOf[i] >= 0) {
+      argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
+      continue;
+    }
+    cArgTypes(t, ctx, argTypes);
+  }
   // A record result comes back through a pointer to a C struct of its
   // fields, which is the last argument.
   bool outStruct = e.type.getNumResults() > 1;
@@ -794,6 +804,7 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
     return make<mlir::LLVM::ConstantOp>(b, e.loc, i64, b.getI64IntegerAttr(v));
   };
   llvm::SmallVector<Value> operands;
+  llvm::SmallVector<Value> sizes(e.type.getNumInputs());
   unsigned arg = 0;
   for (unsigned i = 0; i < e.type.getNumInputs(); ++i) {
     Type t = e.type.getInput(i);
@@ -801,8 +812,10 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
       // The memref descriptor: allocated and aligned pointers, offset,
       // size and stride.
       Value data = block->getArgument(arg++);
-      Value size =
-          m.isDynamicDim(0) ? block->getArgument(arg++) : c64(m.getDimSize(0));
+      Value size = e.lengthOf[i] >= 0 ? sizes[e.lengthOf[i]]
+                   : m.isDynamicDim(0) ? block->getArgument(arg++)
+                                       : c64(m.getDimSize(0));
+      sizes[i] = size;
       operands.append({data, data, c64(0), size, c64(1)});
       continue;
     }
@@ -851,8 +864,12 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module) {
   std::vector<Entry> entries;
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
     Entry e{f.getSymName().str(), f.getFunctionType(), {}, false, f.getLoc()};
-    for (unsigned i = 0; i < f.getNumArguments(); ++i)
+    for (unsigned i = 0; i < f.getNumArguments(); ++i) {
       e.argSigned.push_back(static_cast<bool>(f.getArgAttr(i, kSigned)));
+      auto shared = f.getArgAttrOfType<mlir::IntegerAttr>(
+          i, PiaDialect::getLengthOfAttrName());
+      e.lengthOf.push_back(shared ? int(shared.getInt()) : -1);
+    }
     e.resultSigned =
         f.getNumResults() == 1 && static_cast<bool>(f.getResultAttr(0, kSigned));
     // Pia's own attributes have no meaning in LLVM IR.

@@ -198,6 +198,17 @@ let same (p : pixel) (q : pixel) : bool
 = p = q
 ```
 
+Arrays and slices can hold records. The compiler stores them as one buffer per field, so a loop over one field reads contiguous memory and vectorises:
+
+```ocaml
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+
+let set_alpha (xs : inout mutable [pixel]) (i : usize) (v : u8) : unit
+  requires i < len xs
+  ensures xs.[i].a = v && xs.[i].r = old xs.[i].r
+= xs.[i].a <- v
+```
+
 ## Variants and match
 
 A variant type lists its constructors, each with at most one payload. `match` takes a value apart. Its arms must cover every constructor, or end with `_`, and an arm that can never be reached is an error. The verifier knows which constructor built a value, so a match on a known constructor picks its arm:

@@ -335,8 +335,14 @@ class Encoder {
       Type sort = sortOf(t);
       if (!sort) return;
       arrays_[arg] = declare(sort, "");
+      auto shared = fn_.getArgAttrOfType<mlir::IntegerAttr>(
+          index, PiaDialect::getLengthOfAttrName());
       if (auto a = mlir::dyn_cast<ArrayType>(t)) {
         lengths_[arg] = bv(APInt(64, a.getLength()));
+      } else if (shared) {
+        // A field buffer of a slice of records: the record slice has one
+        // length, which every field shares.
+        lengths_[arg] = lengths_[fn_.getArgument(shared.getInt())];
       } else {
         Value len = declare(bvType(), "len " + name);
         assertTerm(inRange(len, indexRange()));

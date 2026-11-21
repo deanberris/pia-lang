@@ -20,14 +20,39 @@ using mlir::Value;
 
 namespace {
 
+// The record a buffer holds, if it holds records.
+RecordType elementRecord(Type t) {
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return mlir::dyn_cast<RecordType>(a.getElementType());
+  if (auto s = mlir::dyn_cast<SliceType>(t))
+    return mlir::dyn_cast<RecordType>(s.getElementType());
+  return {};
+}
+
 // The scalar fields of `t`, depth first: a record's fields, recursively,
-// or `t` itself.
+// or `t` itself. A buffer of records becomes one buffer per field, struct
+// of arrays: `[pixel; 8]` is `[u8; 8]` four times.
 void leaves(Type t, llvm::SmallVectorImpl<Type> &out) {
   if (auto r = mlir::dyn_cast<RecordType>(t)) {
     for (Type f : r.getFieldTypes()) leaves(f, out);
     return;
   }
+  if (RecordType r = elementRecord(t)) {
+    llvm::SmallVector<Type> fields;
+    leaves(r, fields);
+    for (Type f : fields) {
+      if (auto a = mlir::dyn_cast<ArrayType>(t))
+        out.push_back(ArrayType::get(t.getContext(), a.getLength(), f));
+      else
+        out.push_back(SliceType::get(t.getContext(), f));
+    }
+    return;
+  }
   out.push_back(t);
+}
+
+bool hasRecordLeaves(Type t) {
+  return mlir::isa<RecordType>(t) || static_cast<bool>(elementRecord(t));
 }
 
 unsigned leafCount(Type t) {
@@ -40,6 +65,7 @@ unsigned leafCount(Type t) {
 void leafNames(Type t, const std::string &prefix,
                std::vector<std::string> &out) {
   auto r = mlir::dyn_cast<RecordType>(t);
+  if (!r) r = elementRecord(t);
   if (!r) {
     out.push_back(prefix);
     return;
@@ -57,8 +83,35 @@ class RecordTypes : public mlir::TypeConverter {
       leaves(r, out);
       return mlir::success();
     });
+    auto buffer = [](Type t, llvm::SmallVectorImpl<Type> &out)
+        -> std::optional<mlir::LogicalResult> {
+      if (!elementRecord(t)) return std::nullopt;
+      leaves(t, out);
+      return mlir::success();
+    };
+    addConversion([buffer](ArrayType t, llvm::SmallVectorImpl<Type> &out) {
+      return buffer(t, out);
+    });
+    addConversion([buffer](SliceType t, llvm::SmallVectorImpl<Type> &out) {
+      return buffer(t, out);
+    });
   }
 };
+
+// Ops are created with the builder API of the LLVM in use.
+template <typename Op, typename... Args>
+Op make(mlir::OpBuilder &b, mlir::Location loc, Args &&...args) {
+#if LLVM_VERSION_MAJOR >= 21
+  return Op::create(b, loc, std::forward<Args>(args)...);
+#else
+  return b.create<Op>(loc, std::forward<Args>(args)...);
+#endif
+}
+
+Type elementOf(Type buffer) {
+  if (auto a = mlir::dyn_cast<ArrayType>(buffer)) return a.getElementType();
+  return mlir::cast<SliceType>(buffer).getElementType();
+}
 
 llvm::SmallVector<Value> flatten(llvm::ArrayRef<mlir::ValueRange> ranges) {
   llvm::SmallVector<Value> out;
@@ -119,10 +172,84 @@ struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   }
 };
 
+// `xs[i]` on a buffer of records reads element i of each field's buffer.
+struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      LoadOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
+    Value index = adaptor.getIndex().front();
+    llvm::SmallVector<Value> fields;
+    for (Value b : adaptor.getBuffer())
+      fields.push_back(
+          make<LoadOp>(rw, op.getLoc(), elementOf(b.getType()), b, index));
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(fields));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
+// `xs[i] <- v` writes each field of v to its own buffer.
+struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      StoreOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
+    Value index = adaptor.getIndex().front();
+    for (auto [v, b] : llvm::zip_equal(adaptor.getValue(), adaptor.getBuffer())) {
+      // A field read back from the same place, as `xs.[i].r <- v` leaves
+      // the other fields, needs no write.
+      if (auto load = v.getDefiningOp<LoadOp>();
+          load && load.getBuffer() == b && load.getIndex() == index)
+        continue;
+      make<StoreOp>(rw, op.getLoc(), v, b, index);
+    }
+    rw.eraseOp(op);
+    return mlir::success();
+  }
+};
+
+// A view of a buffer of records is the same view of each field's buffer.
+struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      SliceOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
+    Value lo = adaptor.getLo().front(), hi = adaptor.getHi().front();
+    llvm::SmallVector<Value> views;
+    for (Value b : adaptor.getBuffer())
+      views.push_back(make<SliceOp>(
+          rw, op.getLoc(), SliceType::get(rw.getContext(), elementOf(b.getType())),
+          b, lo, hi));
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(views));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
+// Every field's buffer has the same length; the first one's is used.
+struct LenLowering : mlir::OpConversionPattern<LenOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      LenOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
+    Value len = make<LenOp>(rw, op.getLoc(), rw.getIndexType(),
+                            adaptor.getBuffer().front());
+    rw.replaceOp(op, len);
+    return mlir::success();
+  }
+};
+
 bool hasRecords(mlir::ModuleOp module) {
   bool found = false;
   module.walk([&](mlir::Operation *op) {
-    auto isRecord = [](Type t) { return mlir::isa<RecordType>(t); };
+    auto isRecord = [](Type t) { return hasRecordLeaves(t); };
     if (llvm::any_of(op->getOperandTypes(), isRecord) ||
         llvm::any_of(op->getResultTypes(), isRecord))
       found = true;
@@ -179,6 +306,8 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   RecordTypes types;
   mlir::ConversionTarget target(*ctx);
   target.addIllegalOp<RecordOp, FieldOp>();
+  target.addDynamicallyLegalOp<LoadOp, StoreOp, SliceOp, LenOp>(
+      [&](mlir::Operation *op) { return types.isLegal(op); });
   target.markUnknownOpDynamicallyLegal(
       [&](mlir::Operation *op) { return types.isLegal(op); });
   target.addDynamicallyLegalOp<mlir::func::FuncOp>([&](mlir::func::FuncOp f) {
@@ -187,7 +316,8 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<RecordLowering, FieldLowering, OldLowering>(types, ctx);
+  patterns.add<RecordLowering, FieldLowering, OldLowering, LoadLowering,
+               StoreLowering, SliceLowering, LenLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);
@@ -205,13 +335,26 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
     for (size_t i = 0; i < ps.size(); ++i) {
       std::vector<std::string> names;
       leafNames(ps[i].type, ps[i].name, names);
+      // The field buffers of a slice of records share one length, which
+      // pia.length_of records for the verifier and the C entry point.
+      unsigned first = next;
+      bool slice = mlir::isa<SliceType>(ps[i].type) &&
+                   static_cast<bool>(elementRecord(ps[i].type));
       for (const std::string &name : names) {
-        mlir::BlockArgument a = f.getArgument(next++);
+        mlir::BlockArgument a = f.getArgument(next);
         a.setLoc(name.empty() ? ps[i].loc
                               : mlir::NameLoc::get(
                                     mlir::StringAttr::get(ctx, name),
                                     ps[i].loc));
-        attrs.push_back(argAttrs[k][i]);
+        mlir::DictionaryAttr d = argAttrs[k][i];
+        if (slice && next != first) {
+          mlir::NamedAttrList list(d);
+          list.set(PiaDialect::getLengthOfAttrName(),
+                   mlir::IntegerAttr::get(mlir::IntegerType::get(ctx, 64), first));
+          d = list.getDictionary(ctx);
+        }
+        attrs.push_back(d);
+        ++next;
       }
     }
     f.setAllArgAttrs(attrs);

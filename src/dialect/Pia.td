@@ -28,6 +28,13 @@ def Pia_Dialect : Dialect {
     static constexpr ::llvm::StringLiteral getModifiersAttrName() {
       return ::llvm::StringLiteral("pia.modifiers");
     }
+
+    /// The argument attribute on a field buffer of a slice of records
+    /// naming the argument whose length it shares: `{pia.length_of = 0}`
+    /// (docs/irgen.md, "Records").
+    static constexpr ::llvm::StringLiteral getLengthOfAttrName() {
+      return ::llvm::StringLiteral("pia.length_of");
+    }
   }];
   let hasRegionArgAttrVerify = 1;
   // Folded `index` values become `arith.constant`; folded Pia integers become

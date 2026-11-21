@@ -1,0 +1,35 @@
+(* Buffers of records (#50): an array or slice of records is stored as one
+   buffer per field, so every goal is about those field buffers.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+
+(* A field of an element. *)
+let red (xs : [pixel; 4]) (i : usize) : u8
+  requires i < 4
+= xs.[i].r
+
+(* Writing one field of an element leaves its other fields alone. *)
+let set_alpha (xs : inout mutable [pixel]) (i : usize) (v : u8) : unit
+  requires i < len xs
+  ensures xs.[i].a = v && xs.[i].r = old xs.[i].r
+= xs.[i].a <- v
+
+(* Every field buffer of a slice has the slice's length, so one bound
+   covers them all. *)
+let opaque_all (xs : out mutable [pixel]) : unit
+  ensures forall (k in 0..len xs). xs.[k].a = 255 && xs.[k].r = 0
+=
+  for i in 0..len xs
+    invariant forall (k in 0..i). xs.[k].a = 255 && xs.[k].r = 0
+  do xs.[i] <- { r = 0; g = 0; b = 0; a = 255 } done
+
+(* A view of a buffer of records views each field buffer. *)
+let opaque_middle (xs : out mutable [pixel; 8]) : unit
+  ensures xs.[3].a = 255 && xs.[0].a = old xs.[0].a
+= opaque_all (xs.[2 .. 6])
+
+let luma (p : pixel) : u16 = p.r + p.g + p.b
+
+let total_red (xs : [pixel]) (n : usize) : u8 = xs.[n].r

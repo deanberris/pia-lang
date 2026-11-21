@@ -186,19 +186,11 @@ mlir::Type TypeResolver::resolve(const Node &type) {
                      "an array length must be an integer literal for now");
         return {};
       }
-      if (mlir::isa<RecordType>(elem)) {
-        diags_.error(type.loc, "arrays of records are not supported yet");
-        return {};
-      }
       return ArrayType::get(&ctx_, lit->value.getZExtValue(), elem);
     }
     case NodeKind::SliceType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
-      if (mlir::isa<RecordType>(elem)) {
-        diags_.error(type.loc, "slices of records are not supported yet");
-        return {};
-      }
       return SliceType::get(&ctx_, elem);
     }
     default:
