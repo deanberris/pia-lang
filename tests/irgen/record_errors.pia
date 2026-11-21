@@ -23,3 +23,7 @@ let scalar (v : u8) : u8 = v.r
 (* CHECK: record_errors.pia:[[@LINE+2]]:45: error: comparing records of type pixel with '=' needs 'eq_pixel'; add @derive(eq) to 'pixel'
 *)
 let same (p : pixel) (q : pixel) : bool = p = q
+
+(* CHECK: record_errors.pia:[[@LINE+2]]:43: error: cannot write to 'xs': declare the parameter 'out' or 'inout'
+*)
+let unwritable (xs : [pixel; 2]) : unit = xs.[0].a <- 1

@@ -43,11 +43,18 @@ struct Options {
   // Z3 context, and outcomes keep the walk order, so the report does not
   // depend on the number of threads (ADR 0032).
   unsigned jobs = 0;
-  // Drop the assertions that share no symbol with the goal before solving.
-  // A sliced query that is not unsat is solved again in full, so slicing
-  // changes only how fast a goal is proved, never whether it is. Off by
-  // default: on the benchmark it costs more than it saves (ADR 0032).
-  bool slice = false;
+  // Goal slicing: drop the assertions that share no symbol with the goal,
+  // directly or transitively, before solving. A sliced query that is not
+  // unsat is solved again in full, so slicing changes only how fast a goal
+  // is proved, never whether it is. Auto, the default, slices only in a
+  // function with a buffer of records ({pia.record_buffers}), and only
+  // when the slice drops a declaration the goal cannot reach, such as the
+  // field buffers of fields the goal never mentions. Elsewhere slicing
+  // costs more than it saves on the benchmark (ADR 0032), so Auto solves
+  // the full query. On (--slice) slices whenever the slice is smaller;
+  // Off (--no-slice) always solves the full query.
+  enum class Slice { Auto, On, Off };
+  Slice slice = Slice::Auto;
   // Proved goals are recorded here, one file per goal hash; empty for no
   // cache. The hash covers the whole query, the solver version and the
   // rlimit, so a hit is the proof the solver would find again.

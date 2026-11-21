@@ -47,7 +47,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 
 A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`. A constant array (`pia.const_array`) becomes a private constant `memref.global`, one per constant, which LLVM places in read-only data; each use is a `memref.get_global`.
 
-Records are scalarized before codegen ([irgen.md](irgen.md#records)). Buffers of buffers or of records, and `dyn`, are not lowered yet.
+Records are scalarized before codegen ([irgen.md](irgen.md#records)). A buffer of records arrives as one buffer per field (struct of arrays), so `[pixel; 8]` is four `memref<8 x i8>`, which vectorises like any other buffer. Buffers of buffers and `dyn` are not lowered yet.
 
 ## Arithmetic
 
@@ -81,6 +81,14 @@ A record parameter is passed as its fields, in declaration order, so `blend (p :
 struct pixel { uint8_t r, g, b, a; };
 void blend(uint8_t pr, uint8_t pg, uint8_t pb, uint8_t pa,
            uint8_t qr, uint8_t qg, uint8_t qb, uint8_t qa, struct pixel *out);
+```
+
+A buffer of records is passed as one buffer per field, in declaration order. A slice of records has one length, passed after its first field's pointer, which every field buffer shares (`{pia.length_of}` marks the others):
+
+```c
+// opaque_all (xs : out mutable [pixel]) (v : u8) : unit
+void opaque_all(uint8_t *r, uint64_t n, uint8_t *g, uint8_t *b, uint8_t *a,
+                uint8_t v);
 ```
 
 Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. A prime cannot appear in a C name, so each `'` in a function's name becomes `_prime` in its entry point: `step'` is called as `step_prime`. Two functions whose C names would be the same are an error. Returning a buffer is not supported yet.

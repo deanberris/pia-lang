@@ -28,9 +28,4 @@ let k (xs : [u8; n]) : u8 = 0
 *)
 let ok (y : u8) : u8 = y
 
-let pixel = type { r : u8; g : u8 }
-
-(* CHECK: sema_errors.pia:[[@LINE+2]]:15: error: arrays of records are not supported yet
-*)
-let row (xs : [pixel; 4]) : u8 = 0
 

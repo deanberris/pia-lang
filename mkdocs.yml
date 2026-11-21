@@ -73,6 +73,8 @@ nav:
   - Case studies:
       - Famous bugs, proved away: cases/index.md
       - Heartbleed: cases/heartbleed.pia.md
+      - Binary search: cases/binary-search.pia.md
+      - Cloudbleed: cases/cloudbleed.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md

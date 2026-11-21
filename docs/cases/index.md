@@ -21,9 +21,9 @@ code turns each of these from a production incident into a compile error.
 | Bug | Year | What went wrong | Pia catches it with | |
 | --- | --- | --- | --- | --- |
 | [Heartbleed](heartbleed.pia.md) (OpenSSL, CVE-2014-0160) | 2014 | a length field from the network was trusted, and `memcpy` read past the record | slice bounds | done |
-| Binary search midpoint (Java, C) | 2006 | `(lo + hi) / 2` overflows on large arrays | overflow goals | next |
-| Cloudbleed (Cloudflare) | 2017 | an HTML parser ran past the end of its buffer | bounds and loop invariants | planned |
-| CrowdStrike Channel File 291 | 2024 | a template expected more input fields than it was given, and read out of bounds | bounds and preconditions | planned |
+| [Binary search midpoint](binary-search.pia.md) (Java, C) | 2006 | `(low + high) / 2` overflows on large arrays | overflow goals | done |
+| [Cloudbleed](cloudbleed.pia.md) (Cloudflare) | 2017 | an HTML parser's end-of-buffer test used `==`, and a pointer stepped past the end | bounds and loop invariants | done |
+| CrowdStrike Channel File 291 | 2024 | a template expected more input fields than it was given, and read out of bounds | bounds and preconditions | next |
 | Rust `str::repeat` (CVE-2018-1000810) | 2018 | an unchecked multiplication inside `unsafe` code sized a buffer too small | overflow goals | planned |
 | Rust `VecDeque` (CVE-2018-1000657) | 2018 | a capacity calculation in `unsafe` code was wrong | contracts on capacity | planned |
 | libwebp Huffman tables (CVE-2023-4863) | 2023 | crafted input overflowed a fixed-size table | bounds on table writes | planned |

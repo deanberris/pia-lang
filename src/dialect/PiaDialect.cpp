@@ -131,6 +131,12 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'pia.signed' on argument " << argIndex
                            << " must be a unit attribute";
   }
+  if (attr.getName() == getLengthOfAttrName()) {
+    auto i = dyn_cast<IntegerAttr>(attr.getValue());
+    if (i && i.getValue().ult(argIndex)) return success();
+    return op->emitError() << "'" << getLengthOfAttrName() << "' on argument "
+                           << argIndex << " must name an earlier argument";
+  }
   if (attr.getName() != getModifiersAttrName())
     return op->emitError() << "unknown pia argument attribute '"
                            << attr.getName() << "'";

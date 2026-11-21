@@ -25,6 +25,11 @@ output matches any number of lines. A ```console block whose first line is
 file to its standard input. The page itself is in that directory too, so a
 literate page (`*.pia.md`) can show `$ piac --verify page.pia.md` proving
 its own ```pia blocks.
+
+Every piac run gets the same deterministic solver limits as `pia_object`
+(tools/piac/pia.bzl), unless its command line sets them, so whether a goal
+is proved does not depend on how busy the machine is: `bazel test //...`
+runs this test alongside everything else.
 """
 
 import os
@@ -34,6 +39,17 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+# The defaults of pia_object in tools/piac/pia.bzl.
+SOLVER_LIMITS = ["--solver-rlimit=1200000000", "--solver-timeout=600000"]
+
+
+def with_limits(args):
+    """`args` for piac, with SOLVER_LIMITS added where they are not set."""
+    extra = [f for f in SOLVER_LIMITS
+             if not any(a.startswith(f.split("=")[0] + "=") for a in args)]
+    return extra + args
+
 
 FENCE = re.compile(r"^(\s*)```(\w*)\s*$")
 DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|source|repl)\s*:\s*(.*?)\s*-->$")
@@ -110,7 +126,7 @@ def main():
                     with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
                         f.write("\n".join(body) + "\n")
                     want = 1 if directives.get("expect") == "fail" else 0
-                    run = subprocess.run([piac, "--verify", name], cwd=tmp,
+                    run = subprocess.run([piac] + with_limits(["--verify", name]), cwd=tmp,
                                          capture_output=True, text=True)
                     checked += 1
                     if run.returncode != want:
@@ -127,7 +143,8 @@ def main():
                         stdin = open(os.path.join(tmp, argv[k + 1]), encoding="utf-8")
                         argv = argv[:k] + argv[k + 2:]
                     tool = piac if argv[0] == "piac" else pia
-                    run = subprocess.run([tool] + argv[1:], cwd=tmp, stdin=stdin,
+                    args = with_limits(argv[1:]) if tool == piac else argv[1:]
+                    run = subprocess.run([tool] + args, cwd=tmp, stdin=stdin,
                                          capture_output=True, text=True)
                     if stdin:
                         stdin.close()
