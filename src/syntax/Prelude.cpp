@@ -42,11 +42,14 @@ let meta fold_and (xs : list) : expr =
 
 (* @derive(eq): `eq_<t> (a : t) (b : t) : bool`, true when every field is
    equal. Its postcondition says so, so callers can reason about it. `=` on
-   two values of a record type calls it. *)
+   two values of a record type calls it. The function is documented, so
+   hover and literate tools can say where it came from. *)
 let meta derive_eq (t : type_decl) : item =
   let n = concat "eq_" (name t) in
   let c = fold_and (map (let (f) => `( $!a.$f = $!b.$f )) (fields t)) in
-  `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
+  let what = concat (name t) ", made by @derive(eq)." in
+  with_doc (concat "Field-by-field equality for " what)
+    `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
 )pia";
   return source;
 }

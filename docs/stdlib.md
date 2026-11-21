@@ -473,17 +473,16 @@ These come with milestones M10 to M12, but they are core builtins, so they are l
 
 ### 11. Metaprogram builtins
 
-The interpreter has `map fold length fields name concat` ([meta.md](meta.md)). Derives in the library need a few more, all read-only questions about types:
+The interpreter has `map fold length fields name concat` ([meta.md](meta.md)), and ADR 0029 adds `kind`, `fail` (stop expansion with an error) and the comment builtins. Derives in the library need a few more, all read-only questions about types:
 
 | Builtin | Answer |
 | --- | --- |
 | `field_type t f` | the type of field `f` of record `t` |
 | `variants t` | the constructors of a variant type, with their payload types |
-| `kind t` | `"record"`, `"variant"`, `"int"`, `"float"`, `"array"`, `"slice"` or `"vec"` |
+| `type_kind t` | `"record"`, `"variant"`, `"int"`, `"float"`, `"array"`, `"slice"` or `"vec"` (`kind`, from [ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md), is the kind of a syntax value) |
 | `size_of t`, `align_of t` | layout, as codegen will lay it out |
 | `int_bounds t` | the bounds of an integer or range type |
 | `attrs x` | the attributes on an item or field, with their arguments |
-| `error msg` | stop expansion with a diagnostic at the expansion site |
 | `nth` `zip` `range` | list helpers the library would otherwise write recursively |
 
 With these, `@derive(ord)`, `@derive(hash)`, `@derive(serialise)` and `@derive(deserialise)` are library metaprograms. A PNG chunk header can be declared as a record and read by a derived, bounds-proved reader.

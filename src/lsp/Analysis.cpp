@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <functional>
 
+#include "syntax/Comments.h"
 #include "syntax/Parser.h"
 
 namespace pia::lsp {
@@ -295,6 +296,9 @@ class Resolver {
     } else {
       b.snippet = fence(letHeader(text_, let));
     }
+    // Its doc comment, or the literate prose before it (ADR 0029).
+    std::string doc = syntax::docText(let);
+    if (!doc.empty()) b.snippet += "\n" + doc;
     return b;
   }
 
@@ -577,6 +581,11 @@ std::vector<uint32_t> itemStarts(std::string_view text) {
     if (lineStart && comment == 0 && !string && identStart(c))
       starts.push_back(i);
     lineStart = c == '\n';
+    if (comment == 0 && !string && c == '\\') {
+      // A line comment: skip to its end (ADR 0029).
+      while (i + 1 < text.size() && text[i + 1] != '\n') ++i;
+      continue;
+    }
     if (string) {
       if (c == '\\') ++i;
       else if (c == '"') string = false;
@@ -619,10 +628,38 @@ syntax::NodePtr parseItemByItem(std::string_view text) {
 
 }  // namespace
 
-Analysis::Analysis(std::string text) : text_(std::move(text)), index_(text_) {
-  tree_ = syntax::parseProgram(text_, diags_);
-  if (diags_.hasErrors()) tree_ = parseItemByItem(text_);
+// The code of a literate file with its prose and fences blanked out, so
+// offsets, lines and columns stay those of the Markdown.
+static std::string literateCode(std::string_view text) {
+  std::string out(text);
+  bool code = false;
+  for (size_t at = 0; at < out.size();) {
+    size_t eol = out.find('\n', at);
+    if (eol == std::string::npos) eol = out.size();
+    std::string_view line = std::string_view(out).substr(at, eol - at);
+    bool fence = line.substr(0, 3) == "```";
+    bool opens = !code && line.substr(0, 6) == "```pia" &&
+                 (line.size() == 6 || line[6] == ' ' || line[6] == '\t' ||
+                  line[6] == '\r' || line[6] == '{');
+    if (opens) {
+      code = true;
+    } else if (code && fence) {
+      code = false;
+    }
+    if (!code || opens)
+      for (size_t j = at; j < eol; ++j) out[j] = ' ';
+    at = eol + 1;
+  }
+  return out;
 }
+
+Analysis::Analysis(std::string text, bool literate)
+    : text_(std::move(text)), index_(text_) {
+  tree_ = syntax::parseProgram(text_, diags_, literate);
+  if (diags_.hasErrors())
+    tree_ = parseItemByItem(literate ? literateCode(text_) : text_);
+}
+
 
 std::vector<Diag> Analysis::diagnostics() const {
   std::vector<Diag> out;

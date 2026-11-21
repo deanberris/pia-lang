@@ -28,6 +28,7 @@ NodePtr clone(const Node &node) {
   n->flags = node.flags;
   n->loc = node.loc;
   for (const NodePtr &kid : node.kids) n->kids.push_back(clone(*kid));
+  for (const NodePtr &c : node.comments) n->comments.push_back(clone(*c));
   return n;
 }
 
@@ -46,7 +47,7 @@ void writeQuoted(std::ostream &os, const std::string &s) {
   os << '"';
 }
 
-void dumpAt(std::ostream &os, const Node &n, int indent) {
+void dumpAt(std::ostream &os, const Node &n, int indent, bool comments) {
   for (int i = 0; i < indent; ++i) os << "  ";
   os << '(' << nodeKindName(n.kind);
   if (!n.text.empty()) {
@@ -54,18 +55,22 @@ void dumpAt(std::ostream &os, const Node &n, int indent) {
     writeQuoted(os, n.text);
   }
   if (!n.flags.empty()) os << " [" << n.flags << ']';
-  if (n.kids.empty()) {
+  if (n.kids.empty() && (!comments || n.comments.empty())) {
     os << ")\n";
     return;
   }
   os << '\n';
-  for (const NodePtr &k : n.kids) dumpAt(os, *k, indent + 1);
+  if (comments)
+    for (const NodePtr &c : n.comments) dumpAt(os, *c, indent + 1, comments);
+  for (const NodePtr &k : n.kids) dumpAt(os, *k, indent + 1, comments);
   for (int i = 0; i < indent; ++i) os << "  ";
   os << ")\n";
 }
 
 }  // namespace
 
-void dump(std::ostream &os, const Node &node) { dumpAt(os, node, 0); }
+void dump(std::ostream &os, const Node &node, bool comments) {
+  dumpAt(os, node, 0, comments);
+}
 
 }  // namespace pia::syntax
