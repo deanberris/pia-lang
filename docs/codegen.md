@@ -15,17 +15,17 @@ Status: implemented in M6 ([#7](https://github.com/deanberris/pia-lang/issues/7)
 
 ## Verification comes first
 
-Code is generated only when every obligation is proved. If one fails, piac prints the report from `--verify` and stops. An obligation that is not proved either way, such as one that v0 skips inside a loop, also stops it: piac lists each unproved obligation with its function and generates nothing.
+Code is generated only when every obligation is proved. If one fails, piac prints the report from `--verify` and stops. An obligation that is not proved either way, such as the termination of a `while` loop with no `decreases` measure, also stops it: piac lists each unproved obligation with its function and generates nothing.
 
 To compile anyway, accept specific unproved obligations with `--allow-unproved`, which can be repeated:
 
 | Flag | Accepts |
 | --- | --- |
-| `--allow-unproved=add_rows` | every unproved obligation in the function `add_rows` |
+| `--allow-unproved=drain` | every unproved obligation in the function `drain` |
 | `--allow-unproved=file.pia:30` | the unproved obligations on line 30 |
 | `--allow-unproved=file.pia:30:37` | the one at line 30, column 37 |
 
-The location is written the way piac prints it. Accepted obligations are still reported as a warning, and a flag that accepts nothing is reported too, so stale ones show up. A failed obligation cannot be accepted. Once loops are cut with their invariants, most of these flags can go.
+The location is written the way piac prints it. Accepted obligations are still reported as a warning, and a flag that accepts nothing is reported too, so stale ones show up. A failed obligation cannot be accepted.
 
 ## Stages
 

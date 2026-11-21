@@ -27,6 +27,9 @@ The verifier walks each function in order and collects these goals:
 | `assert` | `assert p` |
 | `ensures` | each postcondition, at the return |
 | `requires` | each of the callee's preconditions, at a call |
+| `invariant` | each loop invariant, on entry and after each iteration ([Loops](#loops)) |
+| `decreases` | each loop measure, and the function's measure at each recursive call ([Termination](#termination)) |
+| `nonzero` | the step of a `for` loop, when it is not a constant |
 
 `wrap`, `saturate` and `trap` arithmetic raises no overflow goal. Wrapping and saturating results are modelled exactly. A trapping result is the exact value, since the program stops if it does not fit.
 
@@ -72,12 +75,40 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 **Quantifiers.** `forall (i in lo..hi). p` becomes an SMT `forall` over the bound variable, `(type range && lo <= i && i < hi) ==> p`. `exists` conjoins the guard instead.
 
+**Division.** Z3 bit-blasts division, and cannot show `a mod b < b` on 68-bit values within its timeout. So for non-negative operands the encoding states `0 <= a / b <= a` and `0 <= a mod b < b` (when `b` is not zero) beside the term. Inside a quantifier, where the operands may be bound variables, it does not.
+
 **Counterexamples** name the parameters, using the names IRGen records in the block arguments' locations, and slice lengths as `len xs`. They add the values that explain the goal: `result` for an overflow, `index` and `length` for bounds. Array contents are not shown yet.
+
+## Loops
+
+A loop is cut at its invariants, so the verifier never unrolls it.
+
+```ocaml
+let sum_to (n : u16) : u32 =
+  let s : mutable u32 = 0 in
+  for i in 0..n invariant s <= i * 65535 do s <- s + i done;
+  s
+```
+
+1. **On entry**, each invariant is a goal, with the loop variable at its first value and the loop-carried values (`s` here) as they are before the loop.
+2. **One arbitrary iteration** is then walked. The loop variable and the loop-carried values are fresh, and so is every buffer the loop writes. A `for` loop's variable satisfies `lo <= i < hi` and is a whole number of steps from `lo`. The invariant is assumed where it is written, so the goals in the body, such as `s + i` not overflowing, are proved for every iteration where it holds. At the end of the body, each invariant is a goal again, for the next value of the loop variable and the values the body leaves.
+3. **After the loop**, what it computes and writes is fresh again, and only the invariant is assumed. A `for` loop's variable has then passed `hi` by less than one step, or equals `lo` if the loop never ran. A `while` loop's condition is also false.
+
+The iteration's assumptions hold under a fresh guard in the path condition, so they say nothing about the code after the loop. A loop without an invariant still works, but nothing is known about its loop-carried values in the body or afterwards: without its invariant, `s + i` above could overflow.
+
+A `while` loop's invariant is written before `do` and holds each time the condition is evaluated. The condition's own goals, such as the bounds of `xs.[i]` in `while i < len xs && xs.[i] <> x`, are proved in the iteration, under the invariant.
+
+## Termination
+
+A `for` loop always ends. A `while` loop ends when it has a measure, `decreases m`, that is never negative and goes down on each iteration. That is a `decreases` goal at the end of the body, `m >= 0 && m' < m`, where `m'` is the measure after the iteration. A function's `decreases` is checked the same way at each call of the function by itself: `gcd b (a mod b)` with `decreases b` needs `b >= 0` and `a mod b < b`, under the path condition `b <> 0`.
+
+A `while` loop or a recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So piac generates no code for it unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
 
 ## Limits of v0
 
-- **Loops are not cut with their invariants yet.** Goals inside `for` and `while`, including the invariant and measure, are reported as `skipped`. After a loop, its results and every writable buffer are unknown values of their types. That keeps later goals sound, but they may fail when they depend on what the loop did. Loops come next: assume the invariant at the head, prove it on entry and after each iteration, and havoc only what the loop assigns. Affine goals in loops, such as subscripts like `xs.[2*i + 1]`, aliasing and loop-carried dependence, will be decided by a Presburger stage before Z3 ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
-- **Termination** (`decreases`) is skipped.
+- **Loops whose bounds or loop-carried values cannot be encoded** have every goal inside reported as `skipped`, and what they compute or write is unknown afterwards.
+- **Termination is checked for direct recursion only.** Mutual recursion is not checked, since each call is taken on its callee's contract.
+- **Affine goals in loops**, such as subscripts like `xs.[2*i + 1]`, aliasing and loop-carried dependence, still go to Z3. A Presburger stage will decide them first ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
 - **A call inside a contract** stands for an unknown value of its result type, so a contract that relies on another function's meaning cannot be proved yet.
 - **Ops the verifier does not model** produce unknown values of their types, which is sound but may cause failures.
-- **Interval analysis** is local to each goal. Extending MLIR's integer range analysis, so that ranges flow through control flow, comes with loops.
+- **Interval analysis** is local to each goal. Extending MLIR's integer range analysis, so that ranges flow through control flow, comes later.
