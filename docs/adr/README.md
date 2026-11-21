@@ -24,10 +24,10 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0018](0018-dialect-layering.md) | Three Pia dialects over upstream MLIR, with `smt` for solving | Accepted |
 | [0019](0019-grammar-disambiguation.md) | Grammar disambiguation rules: contracts before bodies, layout, adjacency | Accepted |
 | [0020](0020-presburger-for-affine-goals.md) | Decide affine aliasing and dependence goals with MLIR's Presburger library | Accepted |
-| [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Proposed |
+| [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Accepted |
 | [0022](0022-metaprogram-hygiene.md) | Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL | Accepted |
-| [0023](0023-minimal-core-self-hosted-stdlib.md) | A minimal core, with the standard library written and proved in Pia | Proposed |
-| [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Proposed |
+| [0023](0023-minimal-core-self-hosted-stdlib.md) | A minimal core, with the standard library written and proved in Pia | Accepted |
+| [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Accepted |
 | [0025](0025-sanitizers.md) | Sanitizers check the edges of the proof | Proposed |
 | [0026](0026-memory-manager.md) | A memory manager of explicit allocators, with no garbage collection | Proposed |
 | [0027](0027-coroutines-and-race-freedom.md) | Stackless coroutines, structured tasks, and race freedom proved from permissions | Proposed |

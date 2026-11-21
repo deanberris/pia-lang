@@ -1,6 +1,6 @@
 # Shared libraries and published proof certificates
 
-Status: proposed, 2026-11-21. Decision records: [ADR 0024](adr/0024-published-proof-certificates.md) (certificates) and [ADR 0030](adr/0030-published-object-layouts.md) (object layout). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in [docs/stdlib.md](stdlib.md).
+Status: certificates accepted, 2026-11-21; object layout proposed. Decision records: [ADR 0024](adr/0024-published-proof-certificates.md) (certificates, accepted) and [ADR 0030](adr/0030-published-object-layouts.md) (object layout). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in [docs/stdlib.md](stdlib.md).
 
 A Pia shared library carries, inside the binary, the interfaces it exports, their contracts and a proof certificate. Before a Pia program binds to that library, something checks that the library still provides exactly the interfaces the program was proved against. This page says what the certificate contains, what is hashed and what is re-checked, how a library can evolve without breaking its importers, how the check works on macOS/arm64 first, and what the certificate does and does not let you trust.
 
