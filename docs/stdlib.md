@@ -89,7 +89,7 @@ Everything else about integers is library code: `min`, `max`, `clamp`, `abs`, `g
 
 ### 3. Sum types and `match` ★
 
-These are already designed (`let shape = type | Circle of f32 | ...`). Implementing variants and an exhaustive `match`, encoded as Z3 datatypes as [design.md](design.md#type-system) describes, unlocks `option`, `result`, `ordering`, and every API that can fail. Without them, the library can only report errors through out-parameters and flags.
+These are already designed (`let shape = type | Circle of f32 | ...`). Implementing variants and an exhaustive `match`, encoded as Z3 datatypes as [design.md](design.md#type-system) describes, unlocks `option`, `result`, `ordering`, and every API that can fail. Without them, the library can only report errors through out-parameters and flags. Implemented for non-generic variants with scalar or record payloads (#54), encoded as a tagged record rather than Z3 datatypes, since MLIR's `smt` dialect has none. Generic `option<T>` and `result t e` wait for generics, and buffer payloads for buffers in records.
 
 ### Errors and scope cleanup ★
 

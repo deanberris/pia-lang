@@ -1,0 +1,21 @@
+(* Variants and match (#54), compiled for Apple Silicon and run by
+   variants_test.c. A variant crosses the C boundary as its fields: the
+   tag, then one field per payload. Every goal here must be proved.
+*)
+
+let shape = type | Circle of u16 | Square of u16 | Empty
+
+let area (s : shape) : u64 =
+  match s with
+  | Circle r -> 3 * r * r
+  | Square w -> w * w
+  | Empty -> 0
+
+let opt = type | None | Some of u32
+
+let first_some (a : opt) (b : opt) : opt =
+  match a with
+  | Some _ -> a
+  | None -> b
+
+let square_of (n : u16) : shape = if n = 0 then Empty else Square n

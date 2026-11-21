@@ -17,6 +17,7 @@
 
 #include "llvm/ADT/APInt.h"
 #include "mlir/IR/MLIRContext.h"
+#include "llvm/ADT/DenseMap.h"
 #include "mlir/IR/Types.h"
 #include "syntax/Diagnostics.h"
 #include "syntax/Syntax.h"
@@ -37,6 +38,18 @@ std::string typeName(mlir::Type type);
 
 // Whether a modifier list such as "borrowed in mutable" has `word`.
 bool hasModifier(std::string_view modifiers, std::string_view word);
+
+// A constructor of a variant type. A variant `let shape = type | A | B of t`
+// is held as a record named `shape` with a field `tag`, int{0..n-1}, and one
+// field per constructor with a payload, named after the constructor. The
+// constructor's tag is its position. Only constructors, `match` and the
+// verifier see those fields.
+struct Ctor {
+  std::string name;
+  mlir::Type variant;  // the record type that holds the variant
+  unsigned tag = 0;
+  mlir::Type payload;  // null for a constructor without one
+};
 
 class TypeResolver {
  public:
@@ -61,6 +74,24 @@ class TypeResolver {
   }
   const std::map<std::string, mlir::Type> &namedTypes() const { return named_; }
 
+  // Variant constructors, by name, and a variant's constructors in order.
+  void defineCtor(Ctor c) {
+    variants_[c.variant].push_back(c.name);
+    ctors_[c.name] = std::move(c);
+  }
+  const Ctor *ctor(const std::string &name) const {
+    auto it = ctors_.find(name);
+    return it == ctors_.end() ? nullptr : &it->second;
+  }
+  bool isVariant(mlir::Type t) const { return variants_.count(t) != 0; }
+  std::vector<const Ctor *> ctorsOf(mlir::Type variant) const {
+    std::vector<const Ctor *> out;
+    auto it = variants_.find(variant);
+    if (it != variants_.end())
+      for (const std::string &n : it->second) out.push_back(ctor(n));
+    return out;
+  }
+
   mlir::Type usize() { return builtin("usize"); }
   mlir::Type i32() { return builtin("i32"); }
   mlir::Type boolType();
@@ -73,6 +104,8 @@ class TypeResolver {
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
   std::map<std::string, mlir::Type> named_;
+  std::map<std::string, Ctor> ctors_;
+  llvm::DenseMap<mlir::Type, std::vector<std::string>> variants_;
 };
 
 // Whether a top-level `let` defines a type: `let pixel = type { ... }`.

@@ -43,6 +43,12 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 - **Array literals** `[1; 2; 3]` where an array type is expected, and top-level `let t : [T; n] = [...]`, are `pia.const_array`. A top-level constant is not a function: each use is a `pia.const_array` with the constant's name as its `label`. The elements must be integer literals for now. Passing constant data, or a slice of it, to an `out` or `inout` parameter is an error.
 - **`abort ()`** is `pia.abort`, with a result of the type the context expects.
 
+## Variants
+
+A variant `let shape = type | Circle of u16 | Empty` is a record named `shape` with a field `tag`, `int{0..n-1}`, and one field per constructor that has a payload, named after the constructor. A constructor's tag is its position. `Circle r` is a `pia.record` with tag 0, `r` in `Circle`, and a fixed value in every other payload field. Only constructors and `match` see these fields: `.tag` and record literals are errors on a variant. Records then scalarize as usual, so the verifier and codegen need nothing new, and a variant crosses the C boundary as its fields.
+
+`match` checks its arms first: they must cover every constructor or end with a catch-all, and an arm after a catch-all, a constructor matched twice, or a catch-all after every constructor is an error. It then becomes a chain of `if`s on the tag, the last arm untested, with each arm's payload bound by a `let`. So arms carry mutable locals and join their result types exactly as `if` does.
+
 ## Bindings and mutation
 
 - `let x = e in body` binds an SSA value. An annotation converts `e` to the declared type.
@@ -93,4 +99,4 @@ Each top-level `let f (x : T) ... : R = body` becomes `func.func @f`. Parameters
 
 ## Not yet
 
-Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.
+Local functions and lambdas, generic variants, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.

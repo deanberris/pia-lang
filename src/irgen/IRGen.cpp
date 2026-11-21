@@ -246,6 +246,7 @@ class Gen {
     if (lookup(name)) what = "a local of the same name";
     else if (sigs_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
+    else if (types_.ctor(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
     else if (sema::isCoreBuiltin(name)) what = "a core builtin";
@@ -570,6 +571,8 @@ class Gen {
       case NodeKind::Range:
         return fail(n, "a range is only allowed in a for loop or a "
                        "quantifier for now");
+      case NodeKind::Match:
+        return genMatch(n, expected);
       default:
         return fail(n, std::string("'") + syntax::nodeKindName(n.kind) +
                            "' is not supported yet (IRGen covers the scalar "
@@ -604,6 +607,13 @@ class Gen {
   R genName(const Node &n) {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+    if (const sema::Ctor *c = types_.ctor(n.text)) {
+      if (c->payload)
+        return fail(n, "'" + n.text + "' takes a payload of type " +
+                           typeName(c->payload) + ", as in '" + n.text +
+                           " x'");
+      return genCtor(n, *c, std::nullopt);
+    }
     if (auto c = consts_.find(n.text); c != consts_.end()) {
       auto op = create<ConstArrayOp>(loc(n), c->second.type, c->second.values,
                                      b_.getStringAttr(n.text));
@@ -755,6 +765,205 @@ class Gen {
     return TV{v, lt};
   }
 
+  // A variant value: its tag, the payload in its constructor's field, and a
+  // fixed value in every other payload field, which nothing reads.
+  R genCtor(const Node &n, const sema::Ctor &c, std::optional<TV> payload) {
+    Location l = loc(n);
+    auto rt = mlir::cast<RecordType>(c.variant);
+    llvm::SmallVector<Value> fields;
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
+      if (name.getValue() == "tag") {
+        fields.push_back(create<ConstantOp>(
+            l, ft,
+            b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                              llvm::APInt(kWidth, c.tag))));
+      } else if (name.getValue() == c.name && payload) {
+        fields.push_back(payload->value);
+      } else {
+        Value d = defaultValue(l, ft);
+        if (!d)
+          return fail(n, "cannot build a value of " + typeName(ft) +
+                             " for an unused payload");
+        fields.push_back(d);
+      }
+    }
+    return TV{create<RecordOp>(l, rt, fields).getResult(), rt};
+  }
+
+  // Some value of `t`: its lowest integer, false, or a record of those.
+  Value defaultValue(Location l, Type t) {
+    if (auto it = mlir::dyn_cast<IntType>(t)) {
+      llvm::APInt v = it.contains(llvm::APInt(kWidth, 0))
+                          ? llvm::APInt(kWidth, 0)
+                          : it.getLo().sextOrTrunc(kWidth);
+      return create<ConstantOp>(
+          l, it, b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
+    }
+    if (isBool(t)) return boolConst(l, false);
+    if (auto rt = mlir::dyn_cast<RecordType>(t)) {
+      llvm::SmallVector<Value> fields;
+      for (Type ft : rt.getFieldTypes()) {
+        Value d = defaultValue(l, ft);
+        if (!d) return Value();
+        fields.push_back(d);
+      }
+      return create<RecordOp>(l, rt, fields).getResult();
+    }
+    return Value();
+  }
+
+  // `match e with | C x -> a | D -> b | _ -> c` on a variant. It becomes a
+  // chain of `if`s on the tag, each arm binding its payload, so carried
+  // mutable locals and result types work as they do for `if`. The arms must
+  // cover every constructor, and none may be redundant.
+  R genMatch(const Node &n, Type expected) {
+    R s = genExpr(*n.kids[0], Type());
+    if (!s) return s;
+    if (!types_.isVariant(s->type))
+      return fail(*n.kids[0], "'match' on " + typeName(s->type) +
+                                  " is not supported yet; it works on "
+                                  "variants");
+    std::vector<const sema::Ctor *> ctors = types_.ctorsOf(s->type);
+    std::string hidden = "#match" + std::to_string(matchCounter_++);
+
+    // Each arm: the constructor it tests (null for a catch-all) and the name
+    // it binds (empty for none, or `_`).
+    struct ArmInfo {
+      const sema::Ctor *ctor = nullptr;
+      std::string bind;
+      const Node *body = nullptr;
+      const Node *at = nullptr;
+    };
+    std::vector<ArmInfo> arms;
+    std::set<std::string> covered;
+    bool catchAll = false;
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      const Node &arm = *n.kids[i];
+      const Node &pat = *arm.kids[0];
+      ArmInfo a;
+      a.body = arm.kids[1].get();
+      a.at = &pat;
+      if (catchAll)
+        return fail(pat, "this arm is never reached: an earlier arm "
+                         "matches everything");
+      if (pat.kind == NodeKind::PVar && !types_.ctor(pat.text)) {
+        catchAll = true;
+        if (pat.text != "_") a.bind = pat.text;
+      } else if (pat.kind == NodeKind::PVar ||
+                 (pat.kind == NodeKind::PCtor)) {
+        const sema::Ctor *c = types_.ctor(pat.text);
+        if (!c)
+          return fail(pat, "unknown constructor '" + pat.text + "'");
+        if (c->variant != s->type)
+          return fail(pat, "'" + pat.text + "' is a constructor of " +
+                               typeName(c->variant) + ", not of " +
+                               typeName(s->type));
+        if (covered.count(c->name))
+          return fail(pat, "'" + c->name + "' is already matched by an "
+                           "earlier arm");
+        size_t subs = pat.kind == NodeKind::PCtor ? pat.kids.size() : 0;
+        if (subs > (c->payload ? 1u : 0u))
+          return fail(pat, "'" + c->name + "' has " +
+                               (c->payload ? "one payload" : "no payload"));
+        if (subs == 1) {
+          const Node &sub = *pat.kids[0];
+          if (sub.kind != NodeKind::PVar || types_.ctor(sub.text))
+            return fail(sub, "only a name or '_' can match a payload for "
+                             "now");
+          if (sub.text != "_") a.bind = sub.text;
+        }
+        covered.insert(c->name);
+        a.ctor = c;
+      } else {
+        return fail(pat, "this pattern is not supported yet; match a "
+                         "constructor, a name or '_'");
+      }
+      arms.push_back(a);
+    }
+    if (!catchAll) {
+      std::string missing;
+      for (const sema::Ctor *c : ctors)
+        if (!covered.count(c->name))
+          missing += (missing.empty() ? "" : ", ") + c->name;
+      if (!missing.empty())
+        return fail(n, "the match does not cover " + missing +
+                           "; add an arm for each, or '_'");
+    } else if (covered.size() == ctors.size()) {
+      return fail(*arms.back().at, "this arm is never reached: the arms "
+                                   "before it cover every constructor");
+    }
+
+    // The chain, built as syntax over the hidden name: the last arm needs
+    // no test, since the arms are exhaustive.
+    SourceLoc at = n.loc;
+    auto hiddenName = [&]() {
+      return syntax::makeNode(NodeKind::Name, at, hidden);
+    };
+    auto armBody = [&](const ArmInfo &a) -> syntax::NodePtr {
+      syntax::NodePtr body = syntax::clone(*a.body);
+      if (a.bind.empty()) return body;
+      auto let = syntax::makeNode(NodeKind::LetIn, a.at->loc, a.bind);
+      let->add(syntax::makeNode(NodeKind::Params, a.at->loc));
+      let->add(syntax::makeNode(NodeKind::None, a.at->loc));
+      let->add(syntax::makeNode(NodeKind::Contracts, a.at->loc));
+      if (a.ctor) {
+        auto get = syntax::makeNode(NodeKind::Apply, a.at->loc);
+        auto fn = syntax::makeNode(NodeKind::Name, a.at->loc, "#payload");
+        fn->flags = "prelude";
+        get->add(std::move(fn));
+        get->add(hiddenName());
+        get->add(syntax::makeNode(NodeKind::Name, a.at->loc, a.ctor->name));
+        let->add(std::move(get));
+      } else {
+        let->add(hiddenName());
+      }
+      let->add(std::move(body));
+      return let;
+    };
+    syntax::NodePtr chain = armBody(arms.back());
+    for (size_t i = arms.size() - 1; i-- > 0;) {
+      auto test = syntax::makeNode(NodeKind::Apply, arms[i].at->loc);
+      auto fn = syntax::makeNode(NodeKind::Name, arms[i].at->loc, "#is");
+      fn->flags = "prelude";
+      test->add(std::move(fn));
+      test->add(hiddenName());
+      test->add(syntax::makeNode(NodeKind::Name, arms[i].at->loc,
+                                 arms[i].ctor->name));
+      auto ifNode = syntax::makeNode(NodeKind::If, arms[i].at->loc);
+      ifNode->add(std::move(test));
+      ifNode->add(armBody(arms[i]));
+      ifNode->add(std::move(chain));
+      chain = std::move(ifNode);
+    }
+    pushScope();
+    bind(hidden, s->value, s->type, false);
+    R r = genExpr(*chain, expected);
+    popScope();
+    matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
+    return r;
+  }
+
+  // `#is s C` and `#payload s C`, which only `match` produces.
+  R genMatchBuiltin(const Node &n) {
+    BindingPtr b = lookup(n.kids[1]->text);
+    const sema::Ctor *c = types_.ctor(n.kids[2]->text);
+    if (!b || !c) return fail(n, "internal error in 'match'");
+    auto rt = mlir::cast<RecordType>(b->type);
+    Location l = loc(n);
+    if (n.kids[0]->text == "#is") {
+      Type tt = rt.getFieldTypes()[*rt.fieldIndex("tag")];
+      Value tag = create<FieldOp>(l, tt, b->value, b_.getStringAttr("tag"));
+      Value k = create<ConstantOp>(
+          l, tt,
+          b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                            llvm::APInt(kWidth, c->tag)));
+      return TV{cmp(l, CmpPredicate::eq, tag, k), boolType()};
+    }
+    Value v = create<FieldOp>(l, c->payload, b->value,
+                              b_.getStringAttr(c->name));
+    return TV{v, c->payload};
+  }
+
   // `abort ()`: proved unreachable. In a context that wants a value it has
   // that type, though it never produces one.
   R genAbort(const Node &n, Type expected) {
@@ -904,6 +1113,21 @@ class Gen {
         return genCall(n, it->second, args);
       }
     }
+    if (!local && fn.flags != "prelude") {
+      if (const sema::Ctor *c = types_.ctor(fn.text)) {
+        if (!c->payload || argc != 1)
+          return fail(n, c->payload
+                             ? "'" + fn.text + "' takes one payload"
+                             : "'" + fn.text + "' takes no payload");
+        R v = genExpr(*n.kids[1], c->payload);
+        if (!v) return v;
+        R cv = coerce(*v, c->payload, *n.kids[1]);
+        if (!cv) return cv;
+        return genCtor(n, *c, *cv);
+      }
+    }
+    if (fn.flags == "prelude" && (fn.text == "#is" || fn.text == "#payload"))
+      return genMatchBuiltin(n);
     if (!local) {
       if (fn.text == "abort") {
         if (argc != 1 || n.kids[1]->kind != NodeKind::Unit)
@@ -1067,13 +1291,16 @@ class Gen {
   // that, from the one record whose fields are exactly these.
   R genRecordLit(const Node &n, Type expected) {
     auto rt = mlir::dyn_cast_or_null<RecordType>(expected);
+    if (rt && types_.isVariant(rt))
+      return fail(n, typeName(rt) + " is a variant; build it with one of its "
+                     "constructors");
     if (!rt) {
       std::set<std::string> written;
       for (const syntax::NodePtr &f : n.kids) written.insert(f->text);
       std::vector<RecordType> matches;
       for (const auto &[name, t] : types_.namedTypes()) {
         auto r = mlir::dyn_cast<RecordType>(t);
-        if (!r || r.getName() != name) continue;
+        if (!r || r.getName() != name || types_.isVariant(r)) continue;
         std::set<std::string> fields;
         for (mlir::StringAttr f : r.getFieldNames()) fields.insert(f.str());
         if (fields == written) matches.push_back(r);
@@ -1113,9 +1340,10 @@ class Gen {
     R obj = genExpr(*n.kids[0], Type());
     if (!obj) return obj;
     auto rt = mlir::dyn_cast<RecordType>(obj->type);
-    if (!rt)
+    if (!rt || types_.isVariant(rt))
       return fail(n, "'." + n.text + "' needs a record, found " +
-                         typeName(obj->type));
+                         typeName(obj->type) +
+                         (rt ? "; use 'match' to read a variant" : ""));
     std::optional<unsigned> i = rt.fieldIndex(n.text);
     if (!i) return fail(n, typeName(rt) + " has no field '" + n.text + "'");
     Type ft = rt.getFieldTypes()[*i];
@@ -1521,6 +1749,8 @@ class Gen {
   mlir::ModuleOp module_;
   std::map<std::string, sema::FuncSig> sigs_;
   std::map<std::string, Constant> consts_;
+  unsigned matchCounter_ = 0;
+  std::vector<syntax::NodePtr> matchTrees_;
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
