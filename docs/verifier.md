@@ -59,7 +59,7 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 `unsat` means the goal holds. With `sat`, the model is the counterexample.
 
-**Integers are bit-vectors.** Every Pia integer is a signed bit-vector of one width per module: 68 bits, or 132 if the module multiplies. That is wide enough for the exact result of any operation on values in `[-2^63, 2^64 - 1]`, so the encoding never wraps by accident. Ranges are constraints on these bit-vectors. `wrap` reduces into the type with `bvsmod`, and `saturate` clamps with `ite`. `index` uses the same sort.
+**Integers are bit-vectors.** Every Pia integer is a signed bit-vector of one width per function: 68 bits, wide enough for the exact sum or difference of any values in `[-2^63, 2^64 - 1]`. A multiplication widens a function to 132 bits only when its exact product can need more than 66 bits, which the operands' types decide: `u8 * u8` or `77 * r` stays at 68, `u64 * u64` or a product of `usize` values does not. The function's callees count too, since their contracts are encoded at each call. So one wide product slows only the functions that compute it, and the encoding never wraps by accident. Ranges are constraints on these bit-vectors. `wrap` reduces into the type with `bvsmod`, and `saturate` clamps with `ite`. `index` uses the same sort.
 
 **Booleans** are SMT booleans. In contracts `&&`, `||` and `==>` are already plain logic. In code they arrive as `scf.if`, which becomes `ite`.
 
@@ -76,6 +76,8 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 **Quantifiers.** `forall (i in lo..hi). p` becomes an SMT `forall` over the bound variable, `(type range && lo <= i && i < hi) ==> p`. `exists` conjoins the guard instead.
 
 **Division.** Z3 bit-blasts division, and cannot show `a mod b < b` on 68-bit values within its timeout. So for non-negative operands the encoding states `0 <= a / b <= a` and `0 <= a mod b < b` (when `b` is not zero) beside the term. Inside a quantifier, where the operands may be bound variables, it does not.
+
+**Timeouts.** Each obligation is one Z3 query with a time limit, 10 seconds by default; `--solver-timeout=<ms>` changes it. A goal the solver gives up on is reported as failed, with the reason, such as `[the solver gave up: timeout]`. The `pia_object` Bazel rule passes 60 seconds, because a parallel build shares the machine. A deterministic resource limit in place of wall time would make this independent of load.
 
 **Counterexamples** name the parameters, using the names IRGen records in the block arguments' locations, and slice lengths as `len xs`. They add the values that explain the goal: `result` for an overflow, `index` and `length` for bounds. Array contents are not shown yet.
 

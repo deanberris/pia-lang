@@ -1,0 +1,30 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_python//python:defs.bzl", "py_test")
+
+# `pia repl` end to end, through the JSON protocol and a pipe.
+py_test(
+    name = "repl_test",
+    srcs = ["repl_test.py"],
+    args = ["$(rootpath //tools/pia)"],
+    data = ["//tools/pia"],
+    main = "repl_test.py",
+)
+
+# `pia mcp`: the execute and poll tools over stdio.
+py_test(
+    name = "mcp_test",
+    srcs = ["mcp_test.py"],
+    args = ["$(rootpath //tools/pia)"],
+    data = ["//tools/pia"],
+    main = "mcp_test.py",
+)
+
+# The asynchronous Kernel that the MCP server is built on.
+cc_test(
+    name = "kernel_test",
+    srcs = ["kernel_test.cpp"],
+    deps = [
+        "//src/repl",
+        "@googletest//:gtest_main",
+    ],
+)

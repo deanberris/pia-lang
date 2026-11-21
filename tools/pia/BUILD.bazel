@@ -1,0 +1,18 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# `pia repl`: the interactive, verified REPL (docs/repl.md).
+cc_binary(
+    name = "pia",
+    srcs = ["pia.cpp"],
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+    ],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/lsp",
+        "//src/repl",
+        "//src/repl:line_editor",
+    ],
+)

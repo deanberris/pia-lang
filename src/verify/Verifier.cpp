@@ -1,5 +1,6 @@
 #include "verify/Verifier.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -10,6 +11,8 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1352,12 +1355,49 @@ class Encoder {
 };
 
 // Values in the bit-vector encoding are signed and wide enough for every
-// exact intermediate: 64-bit operands need 66 bits for a sum and 130 for
-// a product.
-unsigned encodingWidth(mlir::ModuleOp module) {
-  bool mul = false;
-  module.walk([&](MulOp) { mul = true; });
-  return mul ? 132 : 68;
+// exact intermediate. Sums and differences of 64-bit values need 66 bits,
+// so the floor is 68. A product needs the bits of its exact range, which
+// the operands' types bound: `u8 * u8` fits in 17 bits, while `u64 * u64`
+// needs 130. So the width is chosen per function, from the products the
+// function and its callees (whose contracts it encodes) can compute, rather than once
+// for the whole module (docs/verifier.md, "Encoding").
+constexpr unsigned kBaseWidth = 68;
+constexpr unsigned kWideWidth = 132;
+
+// The signed bits an exact product of values of these types can need.
+unsigned productBits(Type lhs, Type rhs) {
+  auto a = mlir::dyn_cast<IntType>(lhs), c = mlir::dyn_cast<IntType>(rhs);
+  if (!a || !c) return kWideWidth;  // index operands: up to 2^64 - 1
+  constexpr unsigned w = 2 * kBoundWidth + 2;
+  APInt corners[2][2] = {{a.getLo().sextOrTrunc(w), a.getHi().sextOrTrunc(w)},
+                         {c.getLo().sextOrTrunc(w), c.getHi().sextOrTrunc(w)}};
+  unsigned bits = 0;
+  for (const APInt &x : corners[0])
+    for (const APInt &y : corners[1])
+      bits = std::max(bits, (x * y).getSignificantBits());
+  return bits;
+}
+
+unsigned encodingWidth(mlir::ModuleOp module, mlir::func::FuncOp fn) {
+  unsigned need = 0;
+  llvm::SmallPtrSet<Operation *, 8> seen;
+  llvm::SmallVector<mlir::func::FuncOp> work{fn};
+  while (!work.empty()) {
+    mlir::func::FuncOp f = work.pop_back_val();
+    if (!seen.insert(f.getOperation()).second) continue;
+    f.walk([&](Operation *op) {
+      if (auto m = mlir::dyn_cast<MulOp>(op))
+        need = std::max(need, productBits(m.getLhs().getType(),
+                                          m.getRhs().getType()));
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (auto callee =
+                module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
+          work.push_back(callee);
+    });
+  }
+  // Two bits of headroom, as for sums: the exact result, then one more
+  // operation on it before an overflow goal reduces it.
+  return need + 2 <= kBaseWidth ? kBaseWidth : kWideWidth;
 }
 
 std::string signedDecimal(const std::string &unsignedDecimal, unsigned width) {
@@ -1476,10 +1516,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   module.getContext()->loadDialect<mlir::smt::SMTDialect>();
   // The encoding has no records: each record value becomes its fields.
   (void)transforms::scalarizeRecords(module);
-  unsigned width = encodingWidth(module);
   std::vector<Outcome> outcomes;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
+    unsigned width = encodingWidth(module, fn);
     std::vector<Goal> goals;
     buildQuery(module, fn, width, -1, goals);
     // Per op: whether every goal it raises holds, and how.

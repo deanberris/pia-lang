@@ -1,0 +1,54 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The REPL's session API (ADR 0031, docs/repl.md): a persistent, verified
+# environment, evaluation with the ORC JIT through MLIR's ExecutionEngine,
+# and an asynchronous Kernel for tools such as the MCP server. It is a
+# development tool: nothing in Pia.Rt or in compiled programs links it.
+cc_library(
+    name = "repl",
+    srcs = [
+        "Kernel.cpp",
+        "Mcp.cpp",
+        "Session.cpp",
+    ],
+    hdrs = [
+        "Kernel.h",
+        "Mcp.h",
+        "Session.h",
+    ],
+    # MLIR's generated headers trip -Wunused-parameter.
+    copts = [
+        "-Wall",
+        "-Wextra",
+        "-Wno-unused-parameter",
+    ],
+    linkopts = ["-lpthread"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/codegen",
+        "//src/dialect",
+        "//src/irgen",
+        "//src/lsp",
+        "//src/meta",
+        "//src/sema",
+        "//src/syntax",
+        "//src/verify",
+        "@llvm-project//llvm:Core",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//llvm:TargetParser",
+        "@llvm-project//mlir:ExecutionEngine",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
+    ],
+)
+
+# The terminal line editor. No LLVM dependency.
+cc_library(
+    name = "line_editor",
+    srcs = ["LineEditor.cpp"],
+    hdrs = ["LineEditor.h"],
+    copts = ["-Wall", "-Wextra", "-Werror"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+)
