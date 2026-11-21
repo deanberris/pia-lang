@@ -17,7 +17,9 @@
     "Linters"
   ],
   "main": "./extension.js",
-  "activationEvents": [],
+  "activationEvents": [
+    "workspaceContains:**/*.pia.md"
+  ],
   "contributes": {
     "languages": [
       {
@@ -37,6 +39,16 @@
         "language": "pia",
         "scopeName": "source.pia",
         "path": "./syntaxes/pia.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.pia.codeblock",
+        "path": "./syntaxes/pia.markdown.tmLanguage.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.pia": "pia"
+        }
       }
     ],
     "commands": [
@@ -55,7 +67,7 @@
       "commandPalette": [
         {
           "command": "pia.verify",
-          "when": "editorLangId == pia"
+          "when": "editorLangId == pia || resourceFilename =~ /\\.pia\\.md$/"
         }
       ]
     },

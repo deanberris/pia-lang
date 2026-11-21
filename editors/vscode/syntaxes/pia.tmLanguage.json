@@ -16,10 +16,27 @@
   ],
   "repository": {
     "comment": {
+      "patterns": [
+        { "include": "#comment-doc" },
+        { "include": "#comment-block" },
+        { "include": "#comment-line" }
+      ]
+    },
+    "comment-doc": {
+      "begin": "\\(\\*\\*(?![*)])",
+      "end": "\\*\\)",
+      "name": "comment.block.documentation.pia",
+      "patterns": [{ "include": "#comment-block" }]
+    },
+    "comment-block": {
       "begin": "\\(\\*",
       "end": "\\*\\)",
       "name": "comment.block.pia",
-      "patterns": [{ "include": "#comment" }]
+      "patterns": [{ "include": "#comment-block" }]
+    },
+    "comment-line": {
+      "match": "\\\\.*$",
+      "name": "comment.line.backslash.pia"
     },
     "string": {
       "begin": "\"",

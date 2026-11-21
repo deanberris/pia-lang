@@ -111,7 +111,9 @@ namespace pia::syntax {
   X(PTyped)        /* pattern, type */                                       \
   X(PRecord)       /* PField* */                                             \
   X(PField)        /* text=field; pattern? */                                \
-  X(PSplice)       /* text=name */
+  X(PSplice)       /* text=name */                                           \
+  /* comments, kept beside a node's children, never among them */            \
+  X(Comment)       /* text=content; flags="<style> <place>" (ADR 0029) */
 
 enum class NodeKind : uint8_t {
 #define PIA_NODE_ENUM(name) name,
@@ -132,6 +134,9 @@ struct Node {
   std::string flags;
   SourceLoc loc;
   std::vector<NodePtr> kids;
+  // The comments attached to this node, in source order (ADR 0029). They
+  // are Comment nodes, and no pass but the meta engine looks at them.
+  std::vector<NodePtr> comments;
 
   Node *add(NodePtr kid) {
     kids.push_back(std::move(kid));
@@ -145,8 +150,9 @@ NodePtr makeNode(NodeKind kind, SourceLoc loc, std::string text = "");
 NodePtr clone(const Node &node);
 
 // Writes the tree as an indented S-expression, one node per line. This is the
-// `piac --dump-ast` format that the golden tests compare.
-void dump(std::ostream &os, const Node &node);
+// `piac --dump-ast` format that the golden tests compare. With `comments`,
+// each node's comments come first among its children (`--comments`).
+void dump(std::ostream &os, const Node &node, bool comments = false);
 
 }  // namespace pia::syntax
 
