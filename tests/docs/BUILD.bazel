@@ -38,6 +38,7 @@ py_test(
 CASES = [
     "//docs:cases/index.md",
     "//docs:cases/heartbleed.pia.md",
+    "//docs:cases/binary-search.pia.md",
 ]
 
 py_test(

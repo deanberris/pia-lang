@@ -1,4 +1,5 @@
 exports_files([
+    "cases/binary-search.pia.md",
     "cases/heartbleed.pia.md",
     "cases/index.md",
     "demo.md",
