@@ -98,6 +98,8 @@ The verifier and code generation do not see records. `transforms::scalarizeRecor
 
 Each top-level `let f (x : T) ... : R = body` becomes `func.func @f`. Parameters need annotations. A `let` with no parameters becomes a function with no arguments, and its uses call it. The return type may be left out, and then it comes from the body. Such a function cannot be called before its definition, or recursively. Calls must pass every argument, since partial application and functions as values come later.
 
+A generic function, one with `(t : type)` parameters, is never generated itself. Each call works out the type arguments: first from `f<u8>` or `f<t = u8>`, then by matching the written types of the parameters that mention an unknown type parameter against the types of their arguments, which are generated first for this, then from the type the call is expected to have. The call goes to the instance, a private `func.func @"f<u8>"`, which is made on first use and generated after the function that used it, with each type parameter naming its argument. Generic types work the same way: `option u8` is a record type named `option<u8>`, made the first time it is used, and a generic constructor such as `Some` builds the instance it is expected to build, or else the one its payload's type gives.
+
 ## Not yet
 
-Local functions and lambdas, generic variants, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.
+Local functions and lambdas, recursive types, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and adapters.

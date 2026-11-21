@@ -1,0 +1,54 @@
+(* Generic functions (M9, ADR 0009): type parameters are deduced from the
+   arguments, or from the type a call is expected to have, or given as in
+   `f<u8>`. Each set of type arguments makes an instance, such as `id<u8>`,
+   which is proved on its own, so every goal is about concrete types.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let pair = let (a : type) (b : type) => type { fst : a; snd : b }
+
+(* Deduced from the argument: `id v` calls `id<u8>`. *)
+let id (t : type) (x : t) : t
+  ensures result = x
+= x
+
+let use_id (v : u8) : u8
+  ensures result = v
+= id v
+
+(* Two type parameters, deduced through a generic record. *)
+let flip (a : type) (b : type) (p : pair a b) : pair b a
+  ensures result.fst = p.snd && result.snd = p.fst
+= { fst = p.snd; snd = p.fst }
+
+let use_flip (p : pair u8 u16) : u16
+  ensures result = p.snd
+= (flip p).fst
+
+(* Deduced through a constructor's payload, or given explicitly. *)
+let unwrap_or (t : type) (o : option t) (d : t) : t
+= match o with | Some v -> v | None -> d
+
+let deduced (v : u16) : u16
+  ensures result = v
+= unwrap_or (Some v) 0
+
+let explicit (v : u16) : u16
+  ensures result = v
+= unwrap_or<u16> (Some v) 0
+
+(* Deduced from the expected type: `none` has no arguments, and here it
+   must build the `option u8` that `unwrap_or<u8>` takes. *)
+let none (t : type) : option t = None
+
+let empty () : u8
+  ensures result = 7
+= unwrap_or<u8> none 7
+
+(* Each instance is proved on its own: this one fails for u8. *)
+let pick (t : type) (a : t) (b : t) : t
+  ensures result = b
+= a
+
+let use_pick (x : u8) : u8 = pick x x

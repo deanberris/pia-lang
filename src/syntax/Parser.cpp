@@ -1204,6 +1204,11 @@ class Parser {
       }
       case K::SpliceIdent: { auto n = makeNode(N::PSplice, start, text()); take(); return n; }
       case K::LParen: {
+        if (kind(1) == K::RParen) {  // `()`, as in `Ok ()`
+          take();
+          take();
+          return makeNode(N::PLit, start, "()");
+        }
         take();
         Bracket b(*this);
         NodePtr p = pattern();

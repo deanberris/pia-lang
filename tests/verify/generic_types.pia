@@ -1,0 +1,44 @@
+(* Generic types (M9, ADR 0009): a generic type is a function from types to
+   a type, and each use, such as `option u8`, is a concrete instance, so
+   every goal is about concrete types.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let result = let (t : type) (e : type) => type | Ok of t | Err of e
+let pair = let (a : type) (b : type) => type { fst : a; snd : b }
+let oom = type | OutOfMemory
+
+(* `Some v` takes its instance from the payload: option<u8>. *)
+let unwrap_some (v : u8) : u8
+  ensures result = v
+= match Some v with | Some w -> w | None -> 0
+
+let wrong (v : u8) : u8
+  ensures result = v
+= match Some v with | Some w -> 0 | None -> v
+
+(* The return type gives `Ok` and `Err` their instance. *)
+let checked_add (a : u8) (b : u8) : result u8 oom
+= if a > 255 - b then Err OutOfMemory else Ok (a + b)
+
+(* A variant's only constructor matches every payload. *)
+let sum_or_zero (a : u8) (b : u8) : u8
+= match checked_add a b with | Ok s -> s | Err OutOfMemory -> 0
+
+(* A unit payload: `Ok ()` builds and matches `Ok`. *)
+let reserve (n : usize) : result unit oom
+= if n > 4096 then Err OutOfMemory else Ok ()
+
+let reserved (n : usize) : bool
+  ensures result = (n <= 4096)
+= match reserve n with | Ok () -> true | Err _ -> false
+
+(* A generic record. *)
+let swap (p : pair u8 u16) : pair u16 u8
+  ensures result.fst = p.snd && result.snd = p.fst
+= { fst = p.snd; snd = p.fst }
+
+(* Nested instances. *)
+let first_some (x : option (option u8)) : u8
+= match x with | Some y -> (match y with | Some v -> v | None -> 1) | None -> 0

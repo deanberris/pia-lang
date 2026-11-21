@@ -1,5 +1,6 @@
 #include "sema/Sema.h"
 
+#include <algorithm>
 #include <cctype>
 #include <set>
 
@@ -150,10 +151,34 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
 mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
     case NodeKind::TypeName: {
+      for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
+        if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
       if (mlir::Type t = named(type.text)) return t;
+      if (const Generic *g = generic(type.text)) {
+        diags_.error(type.loc, "'" + type.text + "' is generic: it takes " +
+                                   std::to_string(g->params.size()) +
+                                   " type argument" +
+                                   (g->params.size() == 1 ? "" : "s") +
+                                   ", as in '" + type.text + " u8'");
+        return {};
+      }
       diags_.error(type.loc, "unknown type '" + type.text + "'");
       return {};
+    }
+    case NodeKind::TypeApp: {
+      const Node &head = *type.kids[0];
+      if (head.kind != NodeKind::TypeName || !generic(head.text)) {
+        diags_.error(head.loc, "only a generic type can take type arguments");
+        return {};
+      }
+      llvm::SmallVector<mlir::Type> args;
+      for (size_t i = 1; i < type.kids.size(); ++i) {
+        mlir::Type a = resolve(*type.kids[i]);
+        if (!a) return {};
+        args.push_back(a);
+      }
+      return instantiate(head.text, args, type.loc);
     }
     case NodeKind::UnitType:
       return unitType();
@@ -214,6 +239,69 @@ bool isTypeItem(const Node &item) {
          item.kids[0]->kids.empty() && item.kids[3]->kind == NodeKind::TypeValue;
 }
 
+bool isGenericTypeItem(const Node &item) {
+  if (item.kind != NodeKind::LetItem || item.kids.size() < 4 ||
+      !item.kids[0]->kids.empty())
+    return false;
+  const Node &value = *item.kids[3];
+  if (value.kind != NodeKind::Lambda || value.kids.empty() ||
+      value.kids.back()->kind != NodeKind::TypeValue)
+    return false;
+  for (size_t i = 0; i + 1 < value.kids.size(); ++i) {
+    const Node &p = *value.kids[i];
+    if (p.kind != NodeKind::LParam || p.kids.size() < 2 ||
+        p.kids[0]->kind != NodeKind::PVar ||
+        p.kids[1]->kind != NodeKind::Annot ||
+        p.kids[1]->kids[1]->kind != NodeKind::TypeKind)
+      return false;
+  }
+  return true;
+}
+
+// The parameter names of a generic type item.
+static std::vector<std::string> genericParams(const Node &item) {
+  std::vector<std::string> out;
+  const Node &value = *item.kids[3];
+  for (size_t i = 0; i + 1 < value.kids.size(); ++i)
+    out.push_back(value.kids[i]->kids[0]->text);
+  return out;
+}
+
+bool TypeResolver::unify(const Node &written, mlir::Type actual,
+                         const std::vector<std::string> &params,
+                         std::map<std::string, mlir::Type> &bound) const {
+  if (!actual) return true;
+  switch (written.kind) {
+    case NodeKind::TypeName: {
+      if (std::find(params.begin(), params.end(), written.text) == params.end())
+        return true;  // a concrete type: coercion checks it later
+      auto [it, fresh] = bound.emplace(written.text, actual);
+      return fresh || it->second == actual;
+    }
+    case NodeKind::TypeApp: {
+      const Instance *inst = instanceOf(actual);
+      if (!inst || written.kids[0]->text != inst->generic ||
+          inst->args.size() + 1 != written.kids.size())
+        return true;
+      for (size_t i = 0; i < inst->args.size(); ++i)
+        if (!unify(*written.kids[i + 1], inst->args[i], params, bound))
+          return false;
+      return true;
+    }
+    case NodeKind::ArrayType:
+    case NodeKind::SliceType: {
+      mlir::Type elem;
+      if (auto a = mlir::dyn_cast<ArrayType>(actual)) elem = a.getElementType();
+      if (auto sl = mlir::dyn_cast<SliceType>(actual)) elem = sl.getElementType();
+      return !elem || unify(*written.kids[0], elem, params, bound);
+    }
+    case NodeKind::Annot:
+      return unify(*written.kids[1], actual, params, bound);
+    default:
+      return true;
+  }
+}
+
 bool isCoreBuiltin(std::string_view name) {
   static const std::set<std::string, std::less<>> names = {
       "add", "sub", "add_sat", "sub_sat", "mul", "div", "rem",
@@ -228,39 +316,41 @@ namespace {
 
 // `let shape = type | Circle of u32 | Empty`: a record with a `tag` and one
 // field per payload (struct Ctor in Sema.h).
-void defineVariant(const Node &item, const Node &body, TypeResolver &types,
-                   syntax::Diagnostics &diags) {
+mlir::Type buildVariant(const std::string &name, const Node &body,
+                        TypeResolver &types, syntax::Diagnostics &diags,
+                        bool instance) {
   mlir::MLIRContext *ctx = types.boolType().getContext();
   std::vector<std::pair<std::string, mlir::Type>> ctors;
   for (const syntax::NodePtr &c : body.kids) {
-    if (types.ctor(c->text)) {
+    if (!instance && types.isCtorName(c->text)) {
       diags.error(c->loc, "the constructor '" + c->text +
                               "' is already defined by another type");
-      return;
+      return {};
     }
     for (auto &[name, t] : ctors)
       if (name == c->text) {
         diags.error(c->loc, "the constructor '" + c->text +
                                 "' is already declared");
-        return;
+        return {};
       }
     mlir::Type payload;
     if (!c->kids.empty() && c->kids[0]->kind != NodeKind::None) {
       payload = types.resolve(*c->kids[0]);
-      if (!payload) return;
-      if (types.isUnit(payload) || mlir::isa<ArrayType, SliceType>(payload) ||
-          types.isVariant(payload)) {
+      if (!payload) return {};
+      // `Ok of unit`, as in `result unit e`, carries nothing.
+      if (types.isUnit(payload)) payload = {};
+      if (payload && mlir::isa<ArrayType, SliceType>(payload)) {
         diags.error(c->kids[0]->loc,
                     "a constructor's payload of type " + typeName(payload) +
                         " is not supported yet");
-        return;
+        return {};
       }
     }
     ctors.push_back({c->text, payload});
   }
   if (ctors.empty()) {
     diags.error(body.loc, "a variant needs at least one constructor");
-    return;
+    return {};
   }
   llvm::SmallVector<mlir::StringAttr> names{mlir::StringAttr::get(ctx, "tag")};
   llvm::SmallVector<mlir::Type> fieldTypes{IntType::get(
@@ -270,16 +360,21 @@ void defineVariant(const Node &item, const Node &body, TypeResolver &types,
       names.push_back(mlir::StringAttr::get(ctx, name));
       fieldTypes.push_back(t);
     }
-  mlir::Type variant = RecordType::get(ctx, item.text, names, fieldTypes);
-  types.define(item.text, variant);
+  mlir::Type variant = RecordType::get(ctx, name, names, fieldTypes);
+  if (types.isVariant(variant)) return variant;  // made before
   for (unsigned i = 0; i < ctors.size(); ++i)
-    types.defineCtor(Ctor{ctors[i].first, variant, i, ctors[i].second});
+    types.defineCtor(Ctor{ctors[i].first, variant, i, ctors[i].second},
+                     !instance);
+  return variant;
 }
 
-// `let name = type <body>`: a record, or another name for a type.
-void defineType(const Node &item, TypeResolver &types,
-                syntax::Diagnostics &diags) {
-  const Node &value = *item.kids[3];
+}  // namespace
+
+// The type a `type <body>` value denotes, named `name`: a record, a
+// variant, or another type. An instance's constructors are not global.
+static mlir::Type buildType(const std::string &name, const Node &value,
+                     TypeResolver &types, syntax::Diagnostics &diags,
+                     bool instance) {
   const Node &body = *value.kids[0];
   if (!value.kids[1]->kids.empty()) {
     const Node &attr = *value.kids[1]->kids[0];
@@ -289,52 +384,133 @@ void defineType(const Node &item, TypeResolver &types,
   if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
     diags.error(value.kids[2]->loc,
                 "refinements ('where') are not supported yet");
-    return;
-  }
-  if (types.named(item.text) || types.builtin(item.text)) {
-    diags.error(item.loc, "the type '" + item.text + "' is already defined");
-    return;
+    return {};
   }
   mlir::MLIRContext *ctx = types.boolType().getContext();
-  if (body.kind == NodeKind::Variants) {
-    defineVariant(item, body, types, diags);
-    return;
-  }
-  if (body.kind != NodeKind::RecordType) {
-    mlir::Type t = types.resolve(body);
-    if (t) types.define(item.text, t);
-    return;
-  }
+  if (body.kind == NodeKind::Variants)
+    return buildVariant(name, body, types, diags, instance);
+  if (body.kind != NodeKind::RecordType) return types.resolve(body);
   llvm::SmallVector<mlir::StringAttr> names;
   llvm::SmallVector<mlir::Type> fieldTypes;
   for (const syntax::NodePtr &f : body.kids) {
     mlir::Type t = types.resolveAnnot(*f->kids[0]);
-    if (!t) return;
+    if (!t) return {};
     if (!f->kids[0]->kids[0]->text.empty()) {
       diags.error(f->loc, "a field cannot have modifiers");
-      return;
+      return {};
     }
     if (types.isUnit(t)) {
       diags.error(f->loc, "a field cannot have type unit");
-      return;
+      return {};
     }
     if (mlir::isa<ArrayType, SliceType>(t)) {
       diags.error(f->loc, "a record field cannot be an array or slice yet");
-      return;
+      return {};
     }
     for (mlir::StringAttr n : names)
       if (n.getValue() == f->text) {
         diags.error(f->loc, "the field '" + f->text + "' is already declared");
-        return;
+        return {};
       }
     names.push_back(mlir::StringAttr::get(ctx, f->text));
     fieldTypes.push_back(t);
   }
   if (names.empty()) {
     diags.error(body.loc, "a record needs at least one field");
+    return {};
+  }
+  return RecordType::get(ctx, name, names, fieldTypes);
+}
+
+mlir::Type TypeResolver::instantiate(const std::string &name,
+                                     llvm::ArrayRef<mlir::Type> args,
+                                     syntax::SourceLoc at) {
+  const Generic *g = generic(name);
+  if (!g) return {};
+  if (args.size() != g->params.size()) {
+    diags_.error(at, "'" + name + "' takes " + std::to_string(g->params.size()) +
+                         " type argument" + (g->params.size() == 1 ? "" : "s") +
+                         ", given " + std::to_string(args.size()));
+    return {};
+  }
+  std::string key = name + "<";
+  for (size_t i = 0; i < args.size(); ++i)
+    key += (i ? ", " : "") + typeName(args[i]);
+  key += ">";
+  if (auto it = instances_.find(key); it != instances_.end()) return it->second;
+  if (instantiating_.count(key)) {
+    diags_.error(at, "the generic type '" + name + "' contains itself; "
+                     "recursive types are not supported yet");
+    return {};
+  }
+  instantiating_.insert(key);
+  std::map<std::string, mlir::Type> scope;
+  for (size_t i = 0; i < args.size(); ++i) scope[g->params[i]] = args[i];
+  // The body sees only its parameters and top-level names.
+  std::vector<std::map<std::string, mlir::Type>> saved;
+  saved.swap(typeScopes_);
+  pushTypeScope(std::move(scope));
+  mlir::Type t = buildType(key, *g->value, *this, diags_, /*instance=*/true);
+  typeScopes_.swap(saved);
+  instantiating_.erase(key);
+  if (!t) return {};
+  instances_[key] = t;
+  // An alias such as `let id = let (t : type) => type t` makes no new type.
+  if (auto r = mlir::dyn_cast<RecordType>(t); r && r.getName() == key)
+    instanceOf_.try_emplace(
+        t, Instance{name, std::vector<mlir::Type>(args.begin(), args.end())});
+  return t;
+}
+
+namespace {
+
+// `let name = type <body>`: a record, or another name for a type.
+void defineType(const Node &item, TypeResolver &types,
+                syntax::Diagnostics &diags) {
+  if (types.named(item.text) || types.builtin(item.text) ||
+      types.generic(item.text)) {
+    diags.error(item.loc, "the type '" + item.text + "' is already defined");
     return;
   }
-  types.define(item.text, RecordType::get(ctx, item.text, names, fieldTypes));
+  mlir::Type t = buildType(item.text, *item.kids[3], types, diags, false);
+  if (t) types.define(item.text, t);
+}
+
+// `let name = let (t : type) ... => type <body>`: recorded, and made
+// for each list of arguments it is used with. Its constructors are known
+// by name now, so a constructor can choose the instance from its payload.
+void defineGenericType(const Node &item, TypeResolver &types,
+                       syntax::Diagnostics &diags) {
+  if (types.named(item.text) || types.builtin(item.text) ||
+      types.generic(item.text)) {
+    diags.error(item.loc, "the type '" + item.text + "' is already defined");
+    return;
+  }
+  const Node &value = *item.kids[3]->kids.back();
+  Generic g{item.text, genericParams(item), &value, item.loc};
+  std::set<std::string> seen;
+  for (const std::string &p : g.params)
+    if (!seen.insert(p).second) {
+      diags.error(item.loc, "the type parameter '" + p + "' is declared twice");
+      return;
+    }
+  const Node &body = *value.kids[0];
+  if (body.kind == NodeKind::Variants) {
+    for (size_t i = 0; i < body.kids.size(); ++i) {
+      const Node &c = *body.kids[i];
+      if (types.isCtorName(c.text)) {
+        diags.error(c.loc, "the constructor '" + c.text +
+                               "' is already defined by another type");
+        return;
+      }
+      const Node *payload = !c.kids.empty() && c.kids[0]->kind != NodeKind::None
+                                ? c.kids[0].get()
+                                : nullptr;
+      types.defineGenericCtor(
+          GenericCtor{c.text, item.text, static_cast<unsigned>(i), payload});
+    }
+  }
+  types.defineGeneric(std::move(g));
 }
 
 void typeNames(const Node &n, std::set<std::string> &out) {
@@ -347,6 +523,8 @@ void typeNames(const Node &n, std::set<std::string> &out) {
 // cycle are defined in source order, which reports the unknown name.
 void defineTypes(const Node &program, TypeResolver &types,
                  syntax::Diagnostics &diags) {
+  for (const syntax::NodePtr &item : program.kids)
+    if (isGenericTypeItem(*item)) defineGenericType(*item, types, diags);
   std::vector<const Node *> pending;
   std::set<std::string> declared;
   for (const syntax::NodePtr &item : program.kids)
@@ -381,13 +559,67 @@ void defineTypes(const Node &program, TypeResolver &types,
 
 }  // namespace
 
+bool isTypeParam(const Node &p) {
+  return p.kind == NodeKind::Param && !p.kids.empty() &&
+         p.kids[0]->kind == NodeKind::Annot &&
+         p.kids[0]->kids[1]->kind == NodeKind::TypeKind;
+}
+
+bool resolveSignature(FuncSig &sig, TypeResolver &types,
+                      syntax::Diagnostics &diags) {
+  const Node &item = *sig.item;
+  sig.params.clear();
+  std::vector<std::map<std::string, mlir::Type>> saved;
+  if (!sig.typeArgs.empty()) saved = types.replaceTypeScopes({sig.typeArgs});
+  bool ok = true;
+  for (const syntax::NodePtr &p : item.kids[0]->kids) {
+    if (p->kind == NodeKind::ParamUnit) continue;
+    if (isTypeParam(*p)) continue;
+    if (p->kind != NodeKind::Param) {
+      diags.error(p->loc, "this parameter form is not supported yet");
+      ok = false;
+      continue;
+    }
+    if (p->kids.empty() || p->kids[0]->kind == NodeKind::None) {
+      diags.error(p->loc, "parameter '" + p->text +
+                              "' needs a type annotation for now");
+      ok = false;
+      continue;
+    }
+    const Node &annot = *p->kids[0];
+    Param param;
+    param.name = p->text;
+    param.modifiers = annot.kids[0]->text;
+    param.loc = p->loc;
+    param.type = types.resolveAnnot(annot);
+    if (!param.type) {
+      ok = false;
+      continue;
+    }
+    if (types.isUnit(param.type)) {
+      diags.error(p->loc, "a parameter cannot have type unit");
+      ok = false;
+      continue;
+    }
+    sig.params.push_back(std::move(param));
+  }
+  const Node &ret = *item.kids[1];
+  if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+      ret.kids[0]->kind == NodeKind::Annot) {
+    sig.result = types.resolveAnnot(*ret.kids[0]);
+    if (!sig.result) ok = false;
+  }
+  if (!sig.typeArgs.empty()) types.replaceTypeScopes(std::move(saved));
+  return ok;
+}
+
 std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags) {
   defineTypes(program, types, diags);
   std::map<std::string, FuncSig> sigs;
   for (const syntax::NodePtr &item : program.kids) {
-    if (isTypeItem(*item)) continue;
+    if (isTypeItem(*item) || isGenericTypeItem(*item)) continue;
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");
@@ -400,50 +632,24 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     FuncSig sig;
     sig.name = item->text;
     sig.item = item.get();
-    bool ok = true;
-    for (const syntax::NodePtr &p : item->kids[0]->kids) {
-      if (p->kind == NodeKind::ParamUnit) continue;
-      if (p->kind != NodeKind::Param) {
-        diags.error(p->loc, "this parameter form is not supported yet");
-        ok = false;
-        continue;
+    for (const syntax::NodePtr &p : item->kids[0]->kids)
+      if (isTypeParam(*p)) {
+        if (std::find(sig.typeParams.begin(), sig.typeParams.end(), p->text) !=
+            sig.typeParams.end())
+          diags.error(p->loc, "the type parameter '" + p->text +
+                                  "' is declared twice");
+        sig.typeParams.push_back(p->text);
       }
-      if (p->kids.empty() || p->kids[0]->kind == NodeKind::None) {
-        diags.error(p->loc, "parameter '" + p->text +
-                                "' needs a type annotation for now");
-        ok = false;
-        continue;
-      }
-      const Node &annot = *p->kids[0];
-      Param param;
-      param.name = p->text;
-      param.modifiers = annot.kids[0]->text;
-      param.loc = p->loc;
-      param.type = types.resolveAnnot(annot);
-      if (!param.type) {
-        ok = false;
-        continue;
-      }
-      if (types.isUnit(param.type)) {
-        diags.error(p->loc, "a parameter cannot have type unit");
-        ok = false;
-        continue;
-      }
-      sig.params.push_back(std::move(param));
-    }
-    const Node &ret = *item->kids[1];
-    if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
-        ret.kids[0]->kind == NodeKind::Annot) {
-      sig.result = types.resolveAnnot(*ret.kids[0]);
-      if (!sig.result) ok = false;
-    }
+    // A generic function's types are resolved for each instance.
+    bool ok = sig.isGeneric() || resolveSignature(sig, types, diags);
     if (isCoreBuiltin(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is a core builtin; Pia does "
                              "not allow shadowing (ADR 0022), so rename it "
                              "to " + sig.name + "'");
       continue;
     }
-    if (sigs.count(sig.name) || types.named(sig.name)) {
+    if (sigs.count(sig.name) || types.named(sig.name) ||
+        types.generic(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is already defined");
       continue;
     }
