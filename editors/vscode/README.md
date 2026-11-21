@@ -4,6 +4,8 @@ Editor support for [Pia](https://github.com/deanberris/pia-lang), from the `pia-
 
 - **Proofs in the editor.** When you open or save a file, the verifier runs in the background. A goal it cannot prove is an error on the expression that raised it, with the counterexample: `not proved: '+' does not overflow u8, counterexample: a = 248, b = 248, result = 496`. Skipped goals show as information.
 - **Hover** on a name shows its definition with its contracts. Hover on an operator, call or index shows each goal there and how it was proved (`intervals`, `presburger`, `smt`).
+- **Quick fix for shadowing** (ADR 0022): the lightbulb on a "shadows ..." error renames the new binding and its uses to the suggested name, such as `x'`.
+- **Rename**, **find references** and highlighting of a name's uses, by scope.
 - **Syntax errors** as you type, **go to definition**, an **outline** of the file, and **completion** of keywords and names.
 - Syntax highlighting, bracket matching and `(* *)` comments.
 
