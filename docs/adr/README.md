@@ -28,5 +28,8 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0022](0022-metaprogram-hygiene.md) | Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL | Accepted |
 | [0023](0023-minimal-core-self-hosted-stdlib.md) | A minimal core, with the standard library written and proved in Pia | Proposed |
 | [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Proposed |
+| [0025](0025-sanitizers.md) | Sanitizers check the edges of the proof | Proposed |
+| [0026](0026-memory-manager.md) | A memory manager of explicit allocators, with no garbage collection | Proposed |
 | [0027](0027-coroutines-and-race-freedom.md) | Stackless coroutines, structured tasks, and race freedom proved from permissions | Proposed |
+| [0028](0028-error-propagation-and-cleanup.md) | Errors propagate with `?` to a scope's handler; cleanup runs at scope end | Proposed |
 | [0029](0029-comments-as-syntax-and-literate-pia.md) | Comments are syntax: `\` line comments, doc comments, and literate `.pia.md` files | Accepted |
