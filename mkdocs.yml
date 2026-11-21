@@ -77,7 +77,7 @@ nav:
       - Metaprograms: meta.md
       - Standard library (proposal): stdlib.md
       - Shared libraries and certificates: abi.md
-      - Coroutines and race freedom (proposal): concurrency.md
+      - Coroutines, races and deadlocks: concurrency.md
   - Compiler internals:
       - Architecture: architecture.md
       - IRGen: irgen.md

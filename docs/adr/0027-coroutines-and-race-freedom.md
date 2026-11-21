@@ -2,7 +2,7 @@
 
 Date: 2026-11-21
 
-Status: Proposed
+Status: Accepted (2026-11-21, with deadlock freedom for channel communication added at Dean's request)
 
 ## Context
 
@@ -16,6 +16,7 @@ Dean wants coroutines or green threads in Pia, locking and synchronisation and c
 - **Primitives in the library** (`Pia.Sync`, `Pia.Chan`): `mutex<T>` and `rwlock<T>` own their data and are reached only through scoped `lock` closures that may not suspend, with the data type's refinement as the lock invariant. `atomic<T>`, channels whose `send` takes `moved`, `once`, `barrier`, `semaphore` and `event`. No bare condition variables.
 - **Static lock levels.** Each lock has `@level(n)`. A task may only acquire a lock above every level it holds, and interfaces record `@acquires(n)`. Lock-order deadlock is then a type error.
 - **Race freedom from permissions.** Every pair of possibly concurrent accesses must be justified by ownership, shared `fixed` reading, proved disjointness, a lock, atomicity, or a happens-before edge. The type checker settles most of these, using the `sendable` and `shareable` concepts (derived over fields) and task boundaries. Disjointness goes to FPL ([ADR 0020](0020-presburger-for-affine-goals.md)), then Z3. The model checker settles the rest: the primitives' own implementations, protocols and deadlock, and user code built from atomics. Non-memory resources (positioned file I/O, `stdout`) carry footprints that are checked the same way.
+- **Deadlock freedom for channel communication (CSP).** Every scope that uses channels has a deadlock goal: no reachable state has a set of tasks that are all blocked forever, each waiting on a `send`, `recv`, `join`, barrier or `select` that only another task in the set could complete. This includes partial deadlocks. Both channel ends are `@linear` (more senders come from `clone`), so the tasks able to wake each waiter are known, and channels are always bounded. The goal is proved in three stages. First, the channel topology is extracted from ownership: a forest whose tasks drain their inputs is deadlock-free by a lemma. Second, per-end usage protocols are inferred (and written as `@protocol` on exported parameters), checked for compatibility by the protocol metaprogram, and matched against library patterns with proved lemmas for any number of tasks: pipeline, worker pool, request and reply, scatter and gather. Third, the model checker searches the remaining scopes' protocol automata for a deadlocked state.
 - **Memory orders.** Sequential consistency and release/acquire are checked from the start. `relaxed` is accepted where its value orders nothing, and otherwise is an unproved obligation until the model checker has an RC11 mode.
 - **The model checker is exhaustive.** It uses DPOR and symmetry reduction. A search that hits a limit is unproved, never proved.
 - **Unproved races, deadlocks and `relaxed` uses are compile errors**, with a witness (FPL sample, Z3 model or schedule). `--allow-unproved=race:...`, `deadlock:...` and `relaxed:...` accept them as trust items.
@@ -27,4 +28,5 @@ Dean wants coroutines or green threads in Pia, locking and synchronisation and c
 - Function colouring is visible, and generic code over both colours needs effect polymorphism in generics (M9).
 - The model checker is substantial work. Until it lands, the primitives are trusted wrappers over `os_unfair_lock` and pthreads, and the trust report says so.
 - Races between processes, for example on the file system, are out of scope.
+- Channel protocols join the interface, so changing how an exported function uses a channel changes its interface hash.
 - Implementation is tracked in [#74](https://github.com/deanberris/pia-lang/issues/74).
