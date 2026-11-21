@@ -266,6 +266,79 @@ A tool result is an error when the cell failed, so the agent sees failed proofs 
 claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp
 ```
 
+### Claude driving a session
+
+Here is Claude using the server from Claude Code to work through the examples on these pages. Each `>>>` is a tool call and each `<<<` is its result, verbatim apart from the edge detector's list of functions, which is cut short. The server was started in the repository's root, so `:load` takes paths from there. A result is the same text `pia repl` prints, and `(isError)` marks a cell that failed.
+
+```text
+>>> execute {"code": "let bump (a : u8) : u8 = a + 1"}
+<<< (isError) [1]:1:28: failed: '+' does not overflow u8
+  counterexample: a = 255, result = 256
+[1]: error: 1 obligation failed; nothing was committed
+>>> execute {"code": "let bump (a : u8) : u8 requires a < 200 ensures result = a + 1 = a + 1"}
+<<< bump : (a : u8) -> u8  (* 2 proved *)
+>>> execute {"code": "let double (a : u8) : u16 requires a < 100 ensures result = a + a = bump a + a - 1"}
+<<< double : (a : u8) -> u16  (* 4 proved *)
+>>> execute {"code": "double 41"}
+<<< - : u16 = 82
+>>> execute {"code": ":redef let bump (a : u8) : u8 requires a < 10 ensures result = a + 1 = a + 1"}
+<<< (isError) [3]:1:69: failed: the precondition of 'bump' holds
+  counterexample: a = 64
+[5]: error: 1 obligation failed; the redefinition is not committed
+>>> execute {"code": ":redef let bump (a : u8) : u8 requires a < 255 ensures result = a + 1 = a + 1"}
+<<< bump : (a : u8) -> u8  (redefined)  (* 2 proved *)
+>>> execute {"code": "let count : mutable u8\n  invariant count <= 100\n= 0"}
+<<< count : mutable u8 = 0  (* 1 proved *)
+>>> execute {"code": "let tick () : unit = if count < 100 then count <- count + 1 else ()"}
+<<< tick : () -> unit  (* 5 proved *)
+>>> execute {"code": "tick ()"}
+<<< - : unit = ()
+>>> execute {"code": "let tick' () : unit = count <- count + 1"}
+<<< (isError) [7]:2:19: failed: the postcondition holds
+[10]: error: 1 obligation failed; nothing was committed
+>>> execute {"code": ":redef let count : mutable u16 invariant count <= 1000 = old count * 10"}
+<<< count : mutable u16 = 10  (redefined, migrated from mutable u8)  (* 3 proved *)
+>>> execute {"code": ":reset"}
+<<< the environment is empty
+>>> execute {"code": ":load examples/edges/edges_buggy.pia"}
+<<< (isError) [13]:13:29: failed: the index is within bounds
+  counterexample: len src = 2311472508747907072, w = 0, m = 2311472508747907071, index = 2311472508747907072, length = 2311472508747907072
+[13]:15:31: failed: the index is within bounds
+  counterexample: len src = 17329207052307791873, w = 8255452159714263041, m = 9073754892593528831, index = 17329207052307791873, length = 17329207052307791873
+[13]: error: 2 obligations failed; nothing was committed
+>>> execute {"code": ":load examples/edges/edges.pia"}
+<<< luma : (r : u8) -> (g : u8) -> (b : u8) -> u8  (* 6 proved *)
+gray : (rgb : [u8]) -> (dst : out mutable [u8]) -> unit  (* 8 proved *)
+mean_at : (src : [u8]) -> (w : usize) -> (m : usize) -> u8  (* 28 proved *)
+...
+edges : (rgb : [u8]) -> (w : usize) -> (luma_buf : out mutable [u8]) -> (smooth : out mutable [u8]) -> (dst : out mutable [u8]) -> unit  (* 3 proved *)
+>>> execute {"code": ":reset"}
+<<< the environment is empty
+>>> execute {"code": ":load docs/cases/heartbleed.pia.md"}
+<<< heartbeat : (req : [u8]) -> (resp : out mutable [u8]) -> usize  (* 22 proved *)
+>>> execute {"code": ":load docs/cases/binary-search.pia.md"}
+<<< search : (xs : [i32]) -> (key : i32) -> i32  (* 24 proved *)
+>>> execute {"code": ":env"}
+<<< [16] let heartbeat : (req : [u8]) -> (resp : out mutable [u8]) -> usize
+[17] let search : (xs : [i32]) -> (key : i32) -> i32
+>>> execute {"code": "let spin (n : u64) : u64 =\n  let i : mutable u64 = 0 in\n  while i < n\n    invariant i <= n\n    decreases n - i\n  do i <- i + 1 done;\n  i"}
+<<< spin : (n : usize) -> usize  (* 4 proved *)
+>>> execute {"code": ":spawn spin 3000000000"}
+<<< task 1 (spin 3000000000) running
+>>> execute {"code": ":wait 1"}
+<<< task 1 (spin 3000000000) done: usize = 3000000000
+```
+
+Here is what each step shows:
+
+- **Contracts.** The first `bump` can overflow, so it is refused with the input that breaks it. The second adds a precondition and an `ensures`, and `double` is proved from `bump`'s contract alone, before `double 41` runs.
+- **Redefinition is checked against its users.** Tightening `bump` to `a < 10` would break `double`, which calls it with `a < 100`, so the error points at that call in cell 3 and nothing changes. Loosening it to `a < 255` is accepted, and `double` is proved again.
+- **State.** `tick'` could take `count` past 100, so it is refused at the invariant. The `:redef` of `count` migrates its value to `u16` through `old count`, and the migration is proved for every value the old invariant allows.
+- **Files.** `:load` runs a file as one cell. The buggy edge detector is refused with counterexamples ([the demo](demo.md) explains its bug), and the fixed one is proved. A literate `.pia.md` file runs its `pia` blocks, so the [Heartbleed](cases/heartbleed.pia.md) and [binary search](cases/binary-search.pia.md) case studies load as they stand. `:reset` comes first because the two edge files define the same names, and Pia does not allow shadowing.
+- **Tasks.** `:spawn` returns at once, while the task runs on its own thread. A cell that takes longer than `wait_ms` returns a job number to `poll` instead.
+
+The transcript is not checked by the documentation tests, since they cannot run an agent. Every cell's output is the REPL's text, which the sessions above are checked against.
+
 ## The session API
 
 Every front end is a thin layer over two C++ classes in `src/repl`, so the planned Jupyter kernel ([#64](https://github.com/deanberris/pia-lang/issues/64)) will share them too:
