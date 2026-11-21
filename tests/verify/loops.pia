@@ -1,17 +1,27 @@
-(* Verifier v0 does not cut loops with their invariants yet. Goals inside a
-   loop are reported as skipped, and a loop's results are treated as unknown
-   values of their types afterwards, which keeps later goals sound.
+(* Loops are cut at their invariants (docs/verifier.md, "Loops"). An
+   invariant is proved on entry and after each iteration, the goals in the
+   body are proved for any iteration where it holds, and after the loop the
+   invariant is all that is known. A measure proves that a while loop or a
+   recursive function ends.
 // RUN: not piac --verify %s | FileCheck %s
 *)
 
+(* The invariant bounds `s`, so the sum cannot overflow. *)
 let sum_to (n : u16) : u32 =
+  let s : mutable u32 = 0 in
+  for i in 0..n invariant s <= i * 65535 do s <- s + i done;
+  s
+
+(* Without one, `s` could be anything before an iteration. *)
+let sum_unbounded (n : u16) : u32 =
   let s : mutable u32 = 0 in
   for i in 0..n do s <- s + i done;
   s
 
-(* Without the invariant, the value of `i` after the loop is unknown, so this
-   assertion fails for now. *)
-let find (xs : borrowed in [i32]) (x : i32) : usize =
+(* After the loop, the invariant and the false condition are what is known. *)
+let find (xs : borrowed in [i32]) (x : i32) : usize
+  ensures result <= len xs
+=
   let i : mutable usize = 0 in
   while i < len xs && xs.[i] <> x
     invariant i <= len xs
@@ -19,24 +29,103 @@ let find (xs : borrowed in [i32]) (x : i32) : usize =
   do
     i <- i + 1
   done;
-  assert i <= len xs;
   i
 
-(* Recursion is checked against the contract; termination is not yet. *)
+(* A loop that writes a buffer: the invariant says what it wrote so far. *)
+let zero (dst : out mutable [u8; 8]) : unit
+  ensures forall (k in 0..8). dst.[k] = 0
+=
+  for i in 0..8
+    invariant forall (k in 0..i). dst.[k] = 0
+  do dst.[i] <- 0 done
+
+(* A step of two visits even indices only. *)
+let evens (n : usize) : usize =
+  let c : mutable usize = 0 in
+  for i in 0..n step 2 invariant c <= i do c <- c + 1 done;
+  c
+
+(* An invariant that is false on entry, and one that a step breaks. *)
+let wrong_entry (n : u8) : unit =
+  let s : mutable u8 = 1 in
+  for i in 0..n invariant s = 0 do s <- 0 done
+
+let wrong_step (n : u8) : unit =
+  let s : mutable u16 = 0 in
+  for i in 0..n invariant s <= i do s <- s + 2 done
+
+(* A measure that does not go down. *)
+let spin (n : u8) : u8 =
+  let k : mutable u8 = n in
+  while k > 0 decreases k do k <- k done;
+  k
+
+(* A while loop that writes a buffer, and a nested loop. *)
+let copy (src : [u8; 4]) (dst : out mutable [u8; 4]) : unit
+  ensures forall (k in 0..4). dst.[k] = src.[k]
+=
+  let i : mutable usize = 0 in
+  while i < 4
+    invariant i <= 4 && (forall (k in 0..i). dst.[k] = src.[k])
+    decreases 4 - i
+  do dst.[i] <- src.[i]; i <- i + 1 done
+
+let total (n : u8) (m : u8) : u32 =
+  let s : mutable u32 = 0 in
+  for i in 0..n invariant s <= i * 255 do
+    let t : mutable u32 = 0 in
+    for j in 0..m invariant t <= j do t <- t + 1 done;
+    s <- s + t
+  done;
+  s
+
+(* Recursion ends when each recursive call makes the measure smaller. *)
 let rec gcd (a : u32) (b : u32) : u32
   decreases b
 = if b = 0 then a else gcd b (a mod b)
 
 (* Expected report, in order.
-// CHECK: loops.pia:9:7: skipped: the index fits in u16 [loops are not verified yet]
-// CHECK: loops.pia:9:27: skipped: '+' does not overflow u32 [loops are not verified yet]
-// CHECK: loops.pia:17:5: skipped: the loop invariant holds [loops are not verified yet]
-// CHECK: loops.pia:18:5: skipped: the measure decreases [loops are not verified yet]
-// CHECK: loops.pia:16:23: skipped: the index is within bounds [loops are not verified yet]
-// CHECK: loops.pia:20:12: skipped: '+' does not overflow usize [loops are not verified yet]
-// CHECK: loops.pia:22:3: failed: the assertion holds
-// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, x = {{-?[0-9]+}}
-// CHECK: loops.pia:27:3: skipped: the measure decreases [termination is not checked yet]
-// CHECK: loops.pia:28:33: proved: the divisor is not zero [smt]
-// CHECK: 1 proved, 1 failed, 7 skipped
+// CHECK: loops.pia:12:17: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:12:7: proved: the index fits in u16 [smt]
+// CHECK: loops.pia:12:52: proved: '+' does not overflow u32 [smt]
+// CHECK: loops.pia:12:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:18:7: proved: the index fits in u16 [smt]
+// CHECK: loops.pia:18:27: failed: '+' does not overflow u32
+// CHECK: loops.pia:27:5: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:26:23: proved: the index is within bounds [smt]
+// CHECK: loops.pia:30:12: proved: '+' does not overflow usize [smt]
+// CHECK: loops.pia:27:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:28:5: proved: the measure decreases [smt]
+// CHECK: loops.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: loops.pia:39:5: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:40:6: proved: the index is within bounds [smt]
+// CHECK: loops.pia:39:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: loops.pia:45:3: proved: the step is not zero [intervals]
+// CHECK: loops.pia:45:24: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:45:51: proved: '+' does not overflow usize [smt]
+// CHECK: loops.pia:45:24: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:51:17: failed: the loop invariant holds on entry
+// CHECK: loops.pia:51:7: proved: the index fits in u8 [smt]
+// CHECK: loops.pia:51:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:55:17: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:55:44: proved: '+' does not overflow u16 [smt]
+// CHECK: loops.pia:55:17: failed: the loop invariant holds after each iteration
+// CHECK: loops.pia:60:15: failed: the measure decreases
+// CHECK: loops.pia:69:5: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:71:17: proved: the index is within bounds [smt]
+// CHECK: loops.pia:71:6: proved: the index is within bounds [smt]
+// CHECK: loops.pia:71:33: proved: '+' does not overflow usize [smt]
+// CHECK: loops.pia:69:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:70:5: proved: the measure decreases [smt]
+// CHECK: loops.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: loops.pia:75:17: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:77:19: proved: the loop invariant holds on entry [smt]
+// CHECK: loops.pia:77:46: proved: '+' does not overflow u32 [smt]
+// CHECK: loops.pia:77:19: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:78:12: proved: '+' does not overflow u32 [smt]
+// CHECK: loops.pia:75:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: loops.pia:85:33: proved: the divisor is not zero [smt]
+// CHECK: loops.pia:85:24: proved: the measure of 'gcd' decreases [smt]
+// CHECK: 38 proved, 4 failed, 0 skipped
 *)

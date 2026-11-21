@@ -9,6 +9,7 @@
 #include "dialect/PiaDialect.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/raw_ostream.h"
@@ -363,22 +364,33 @@ class Encoder {
     }
   }
 
-  // Every goal inside a loop body, recorded as skipped. Loops are cut with
-  // their invariants in a later version of the verifier.
-  void skipRegion(Operation *loop) {
+  // A loop the encoding cannot follow, such as one whose bounds it cannot
+  // encode: every goal inside is skipped, and what the loop computes or
+  // writes is unknown afterwards.
+  bool skipLoop(Operation *loop) {
     loop->walk([&](Operation *op) {
       if (op == loop) return;
       for (auto &[kind, claim] : describe(op))
-        skipped(kind, op, claim, "loops are not verified yet");
+        skipped(kind, op, claim, "the loop could not be encoded");
     });
+    for (Value r : loop->getResults())
+      if (auto v = havoc(r.getType())) env_[r] = *v;
+    for (Value buffer : writtenBuffers(loop))
+      arrays_[buffer] = declare(arrays_[buffer].getType(), "", false);
+    return true;
   }
 
   // The goals an op raises, without their terms.
   std::vector<std::pair<ObligationKind, std::string>> describe(Operation *op) {
     std::vector<std::pair<ObligationKind, std::string>> out;
-    if (mlir::isa<contract::InvariantOp>(op))
-      out.push_back({ObligationKind::invariant, "the loop invariant holds"});
-    if (mlir::isa<contract::DecreasesOp>(op))
+    if (mlir::isa<contract::InvariantOp>(op)) {
+      out.push_back({ObligationKind::invariant,
+                     "the loop invariant holds on entry"});
+      out.push_back({ObligationKind::invariant,
+                     "the loop invariant holds after each iteration"});
+    }
+    if (mlir::isa<contract::DecreasesOp>(op) &&
+        !mlir::isa<mlir::func::FuncOp>(op->getParentOp()))
       out.push_back({ObligationKind::decreases, "the measure decreases"});
     if (spec_.contains(op) || insideQuantifier(op)) return out;
     if (auto m = arithMode(op)) {
@@ -517,6 +529,14 @@ class Encoder {
           for (Value v : y.getOperands()) yields->push_back(term(v));
         continue;
       }
+      // A while loop's condition, then the values it passes on.
+      if (auto c = mlir::dyn_cast<mlir::scf::ConditionOp>(op)) {
+        if (yields) {
+          yields->push_back(term(c.getCondition()));
+          for (Value v : c.getArgs()) yields->push_back(term(v));
+        }
+        continue;
+      }
       if (!step(&op)) return false;
       if (done_) return false;
     }
@@ -551,26 +571,18 @@ class Encoder {
       goal(o.getKind(), op, "the obligation holds", term(o.getGoal()), false);
       return true;
     }
-    if (mlir::isa<contract::DecreasesOp>(op)) {
-      skipped(ObligationKind::decreases, op, "the measure decreases",
-              "termination is not checked yet");
-      return true;
-    }
-    if (mlir::isa<contract::InvariantOp>(op)) {
-      skipped(ObligationKind::invariant, op, "the loop invariant holds",
-              "loops are not verified yet");
+    // A measure is checked by the loop or the recursive call it belongs to.
+    if (mlir::isa<contract::DecreasesOp>(op)) return true;
+    // Inside an iteration, the invariant is assumed. The loop proves it on
+    // entry and after each iteration.
+    if (auto inv = mlir::dyn_cast<contract::InvariantOp>(op)) {
+      if (Value p = term(inv.getPredicate())) assume(p);
       return true;
     }
 
     if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) return stepIf(ifOp);
-    if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
-      skipRegion(op);
-      for (Value r : op->getResults())
-        if (auto v = havoc(r.getType())) env_[r] = *v;
-      for (auto &[buffer, array] : arrays_)
-        if (isWritable(buffer)) array = declare(array.getType(), "", false);
-      return true;
-    }
+    if (auto forOp = mlir::dyn_cast<mlir::scf::ForOp>(op)) return stepFor(forOp);
+    if (auto w = mlir::dyn_cast<mlir::scf::WhileOp>(op)) return stepWhile(w);
     if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
       return stepCall(call);
 
@@ -687,6 +699,23 @@ class Encoder {
     return bvBin("srem", a, c);
   }
 
+  // Bit-blasting a division is slow: Z3 cannot show `a mod b < b` for
+  // 68-bit values within its timeout. So for non-negative operands the
+  // bounds of the quotient and remainder are stated as facts beside it.
+  // Inside a quantifier the operands may be bound variables, which a
+  // top-level fact cannot mention, so none is stated there.
+  void divisionLemma(Operation *op, Value a, Value c, Value r) {
+    using P = mlir::smt::BVCmpPredicate;
+    if (quantifierDepth_ > 0 || !mlir::isa<DivOp, RemOp>(op)) return;
+    for (Value operand : op->getOperands()) {
+      auto t = mlir::dyn_cast<IntType>(operand.getType());
+      if (!t || t.getLo().isNegative()) return;
+    }
+    Value bounds = andOf(cmp(P::sge, r, bv(0)), cmp(P::sle, r, a));
+    if (mlir::isa<RemOp>(op)) bounds = andOf(bounds, cmp(P::slt, r, c));
+    assertTerm(implies(notOf(eq(c, bv(0))), bounds));
+  }
+
   // `x` reduced into `t` by the overflow mode.
   Value applyMode(Value x, IntType t, OverflowMode mode) {
     using P = mlir::smt::BVCmpPredicate;
@@ -723,7 +752,9 @@ class Encoder {
       return true;
     }
     if (auto m = arithMode(op)) {
-      out.push_back(applyMode(exactArith(op, in[0], in[1]),
+      Value exact = exactArith(op, in[0], in[1]);
+      divisionLemma(op, in[0], in[1], exact);
+      out.push_back(applyMode(exact,
                               mlir::cast<IntType>(op->getResult(0).getType()),
                               *m));
       return true;
@@ -844,6 +875,286 @@ class Encoder {
     return true;
   }
 
+  // Encodes a value from its definition, under substitutions. Used for a
+  // callee's contract at a call, for `old`, and for quantifier bodies.
+  struct Demand {
+    llvm::DenseMap<Value, Value> values;
+    llvm::DenseMap<Value, Value> arrays;
+    llvm::DenseMap<Value, Value> lengths;
+    std::optional<llvm::DenseMap<Value, Value>> oldArrays;
+    llvm::DenseMap<Value, Value> memo;
+    bool envForBlockArgs = false;
+    Operation *envOutside = nullptr;  // values defined outside it use env_
+  };
+
+  // --- loops -------------------------------------------------------------
+  //
+  // A loop is cut at its invariants (docs/verifier.md, "Loops"). The
+  // invariant is proved on entry. One arbitrary iteration is then walked
+  // from any state where the invariant holds, so the goals inside are
+  // proved for every iteration, and the invariant is proved again at its
+  // end. After the loop, what it computes and writes is unknown except for
+  // the invariant, and for a while loop the negated condition.
+
+  template <typename OpTy>
+  static llvm::SmallVector<OpTy> loopOps(mlir::Block &block) {
+    llvm::SmallVector<OpTy> out;
+    for (OpTy op : block.getOps<OpTy>()) out.push_back(op);
+    return out;
+  }
+
+  static std::optional<contract::DecreasesOp> measureOf(mlir::func::FuncOp f) {
+    for (auto m : f.getBody().front().getOps<contract::DecreasesOp>()) return m;
+    return std::nullopt;
+  }
+
+  // A measure that is not negative now and smaller next time.
+  Value decreasesTerm(Value now, Value next) {
+    using P = mlir::smt::BVCmpPredicate;
+    if (!now || !next) return declare(boolType(), "", false);
+    return andOf(cmp(P::sge, now, bv(0)), cmp(P::slt, next, now));
+  }
+
+  // Whether a call may write the buffer it passes as operand `i`.
+  bool callWrites(mlir::func::CallOp call, unsigned i) {
+    if (!mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
+      return false;
+    auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    if (!callee || callee.isExternal()) return true;
+    auto mods = callee.getArgAttrOfType<mlir::StringAttr>(
+        i, PiaDialect::getModifiersAttrName());
+    return mods && (sema::hasModifier(mods.getValue(), "out") ||
+                    sema::hasModifier(mods.getValue(), "inout"));
+  }
+
+  // The tracked buffers that the ops inside `loop` store to or pass to a
+  // call that may write them.
+  llvm::SmallVector<Value> writtenBuffers(Operation *loop) {
+    llvm::SetVector<Value> out;
+    loop->walk([&](Operation *op) {
+      if (auto st = mlir::dyn_cast<StoreOp>(op)) out.insert(st.getBuffer());
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        for (unsigned i = 0; i < call.getNumOperands(); ++i)
+          if (callWrites(call, i)) out.insert(call.getOperand(i));
+    });
+    llvm::SmallVector<Value> tracked;
+    for (Value b : out)
+      if (arrays_.count(b)) tracked.push_back(b);
+    return tracked;
+  }
+
+  void havocBuffers(llvm::ArrayRef<Value> buffers) {
+    for (Value b : buffers)
+      arrays_[b] = declare(arrays_[b].getType(), "", false);
+  }
+
+  // A predicate that cannot be encoded is an unknown bool, so a goal on it
+  // fails and assuming it assumes nothing.
+  Value demandPredicate(Value p, Demand &d) {
+    if (Value t = demand(p, d)) return t;
+    return declare(boolType(), "", false);
+  }
+
+  bool stepFor(mlir::scf::ForOp forOp) {
+    using P = mlir::smt::BVCmpPredicate;
+    Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
+    Value st = term(forOp.getStep());
+    llvm::SmallVector<Value> inits;
+    for (Value v : forOp.getInitArgs()) inits.push_back(term(v));
+    if (!lb || !ub || !st || llvm::is_contained(inits, Value()))
+      return skipLoop(forOp);
+    mlir::Block &body = *forOp.getBody();
+    auto invariants = loopOps<contract::InvariantOp>(body);
+    auto measures = loopOps<contract::DecreasesOp>(body);
+    auto stepConst = forOp.getStep().getDefiningOp<mlir::arith::ConstantIndexOp>();
+    if (!stepConst) {
+      bool nonzero = false;
+      if (auto t = forOp.getStep().getDefiningOp<ToIndexOp>()) {
+        Interval r = valueRange(t.getInput());
+        nonzero = r.first.sgt(APInt(192, 0)) || r.second.slt(APInt(192, 0));
+      }
+      goal(ObligationKind::nonzero, forOp, "the step is not zero",
+           notOf(eq(st, bv(0))), nonzero);
+      if (done_) return false;
+    }
+    // The values the body's arguments take at iteration `i`.
+    auto at = [&](Value i, llvm::ArrayRef<Value> carried) {
+      Demand d;
+      d.values[forOp.getInductionVar()] = i;
+      for (auto [arg, v] : llvm::zip(forOp.getRegionIterArgs(), carried))
+        if (v) d.values[arg] = v;
+      d.arrays = arrays_;
+      d.lengths = lengths_;
+      d.envOutside = forOp;
+      return d;
+    };
+
+    for (auto inv : invariants) {
+      Demand d = at(lb, inits);
+      goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
+           demandPredicate(inv.getPredicate(), d), false);
+      if (done_) return false;
+    }
+
+    // One arbitrary iteration. Its assumptions hold under a fresh guard, so
+    // they say nothing about the code after the loop.
+    auto beforeArrays = arrays_;
+    auto written = writtenBuffers(forOp);
+    Value i = declare(bvType(), "", false);
+    Value iteration = andOf(declare(boolType(), "", false),
+                            andOf(cmp(P::sle, lb, i), cmp(P::slt, i, ub)));
+    if (!stepConst || stepConst.value() != 1)
+      iteration = andOf(iteration,
+                        eq(bvBin("srem", bvBin("sub", i, lb), st), bv(0)));
+    pc_.push_back(iteration);
+    env_[forOp.getInductionVar()] = i;
+    for (Value arg : forOp.getRegionIterArgs())
+      if (auto v = havoc(arg.getType())) env_[arg] = *v;
+    havocBuffers(written);
+    llvm::SmallVector<Value> yields;
+    bool ok = walkBlock(body, &yields);
+    if (ok) {
+      Value next = bvBin("add", i, st);
+      for (auto inv : invariants) {
+        Demand d = at(next, yields);
+        goal(ObligationKind::invariant, inv,
+             "the loop invariant holds after each iteration",
+             demandPredicate(inv.getPredicate(), d), false);
+        if (done_) break;
+      }
+      for (auto m : measures) {
+        if (done_) break;
+        Demand d = at(next, yields);
+        goal(ObligationKind::decreases, m, "the measure decreases",
+             decreasesTerm(term(m.getMeasure()), demand(m.getMeasure(), d)),
+             false);
+      }
+    }
+    pc_.pop_back();
+    if (!ok || done_) return false;
+
+    // After the loop: `i` has passed `ub` by less than one step, or the
+    // loop never ran.
+    arrays_ = beforeArrays;
+    havocBuffers(written);
+    llvm::SmallVector<Value> results;
+    for (Value r : forOp.getResults()) {
+      auto v = havoc(r.getType());
+      if (v) env_[r] = *v;
+      results.push_back(v ? *v : Value());
+    }
+    Value exit = declare(bvType(), "", false);
+    Value ran = cmp(P::slt, lb, ub);
+    assume(implies(notOf(ran), eq(exit, lb)));
+    assume(implies(ran, andOf(andOf(cmp(P::sge, exit, ub),
+                                    cmp(P::slt, bvBin("sub", exit, ub), st)),
+                              eq(bvBin("srem", bvBin("sub", exit, lb), st),
+                                 bv(0)))));
+    for (auto inv : invariants) {
+      Demand d = at(exit, results);
+      if (Value p = demand(inv.getPredicate(), d)) assume(p);
+    }
+    return true;
+  }
+
+  bool stepWhile(mlir::scf::WhileOp w) {
+    llvm::SmallVector<Value> inits;
+    for (Value v : w.getInits()) inits.push_back(term(v));
+    if (llvm::is_contained(inits, Value())) return skipLoop(w);
+    mlir::Block &before = w.getBefore().front();
+    mlir::Block &after = w.getAfter().front();
+    auto cond = mlir::cast<mlir::scf::ConditionOp>(before.getTerminator());
+    auto invariants = loopOps<contract::InvariantOp>(before);
+    auto measures = loopOps<contract::DecreasesOp>(before);
+    // The values of the condition region's arguments.
+    auto at = [&](llvm::ArrayRef<Value> args) {
+      Demand d;
+      for (auto [arg, v] : llvm::zip(before.getArguments(), args))
+        if (v) d.values[arg] = v;
+      d.arrays = arrays_;
+      d.lengths = lengths_;
+      d.envOutside = w;
+      return d;
+    };
+
+    for (auto inv : invariants) {
+      Demand d = at(inits);
+      goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
+           demandPredicate(inv.getPredicate(), d), false);
+      if (done_) return false;
+    }
+
+    // One arbitrary iteration: the condition from any state where the
+    // invariant holds, then the body when the condition is true.
+    auto beforeArrays = arrays_;
+    auto written = writtenBuffers(w);
+    pc_.push_back(declare(boolType(), "", false));
+    for (Value arg : before.getArguments())
+      if (auto v = havoc(arg.getType())) env_[arg] = *v;
+    havocBuffers(written);
+    llvm::SmallVector<Value> passed;
+    bool ok = walkBlock(before, &passed);
+    if (ok) {
+      Value c = passed.empty() || !passed[0] ? declare(boolType(), "", false)
+                                             : passed[0];
+      llvm::SmallVector<Value> nows;
+      for (auto m : measures) nows.push_back(term(m.getMeasure()));
+      pc_.push_back(c);
+      for (auto [k, arg] : llvm::enumerate(after.getArguments())) {
+        Value v = k + 1 < passed.size() ? passed[k + 1] : Value();
+        if (v)
+          env_[arg] = v;
+        else if (auto h = havoc(arg.getType()))
+          env_[arg] = *h;
+      }
+      llvm::SmallVector<Value> yields;
+      ok = walkBlock(after, &yields);
+      if (ok) {
+        for (auto inv : invariants) {
+          Demand d = at(yields);
+          goal(ObligationKind::invariant, inv,
+               "the loop invariant holds after each iteration",
+               demandPredicate(inv.getPredicate(), d), false);
+          if (done_) break;
+        }
+        for (auto [m, now] : llvm::zip(measures, nows)) {
+          if (done_) break;
+          Demand d = at(yields);
+          goal(ObligationKind::decreases, m, "the measure decreases",
+               decreasesTerm(now, demand(m.getMeasure(), d)), false);
+        }
+        // Without a measure, nothing shows that the loop ends.
+        if (measures.empty() && !done_)
+          skipped(ObligationKind::decreases, w, "the loop terminates",
+                  "it has no 'decreases' measure");
+      }
+      pc_.pop_back();
+    }
+    pc_.pop_back();
+    if (!ok || done_) return false;
+
+    // After the loop: the invariant holds and the condition is false, for
+    // some final state.
+    arrays_ = beforeArrays;
+    havocBuffers(written);
+    llvm::SmallVector<Value> finals;
+    for (Value arg : before.getArguments()) {
+      auto v = havoc(arg.getType());
+      finals.push_back(v ? *v : Value());
+    }
+    Demand d = at(finals);
+    for (auto inv : invariants)
+      if (Value p = demand(inv.getPredicate(), d)) assume(p);
+    if (Value c = demand(cond.getCondition(), d)) assume(notOf(c));
+    for (auto [r, v] : llvm::zip(w.getResults(), cond.getArgs())) {
+      if (Value t = demand(v, d))
+        env_[r] = t;
+      else if (auto h = havoc(r.getType()))
+        env_[r] = *h;
+    }
+    return true;
+  }
+
   // A call is checked against the callee's contract, not its body: its
   // preconditions are goals, and its postconditions are assumed about a
   // fresh result.
@@ -873,19 +1184,25 @@ class Encoder {
         if (done_) return false;
       }
     }
+    if (hasBody && callee == fn_ && !measureOf(fn_))
+      skipped(ObligationKind::decreases, call, "the recursion terminates",
+              "'" + call.getCallee().str() + "' has no 'decreases' measure");
+    if (hasBody && callee == fn_)
+      if (auto m = measureOf(fn_)) {
+        // Recursion terminates when each recursive call makes the measure
+        // smaller, and it never goes below zero.
+        Value now = term(m->getMeasure());
+        Value next = demand(m->getMeasure(), pre);
+        goal(ObligationKind::decreases, call,
+             "the measure of '" + call.getCallee().str() + "' decreases",
+             decreasesTerm(now, next), false);
+        if (done_) return false;
+      }
     for (Value r : call.getResults())
       if (auto v = havoc(r.getType())) env_[r] = *v;
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i);
-      if (!mlir::isa<ArrayType, SliceType>(actual.getType())) continue;
-      bool writes = !hasBody;
-      if (hasBody) {
-        auto mods = callee.getArgAttrOfType<mlir::StringAttr>(
-            i, PiaDialect::getModifiersAttrName());
-        writes = mods && (sema::hasModifier(mods.getValue(), "out") ||
-                          sema::hasModifier(mods.getValue(), "inout"));
-      }
-      if (writes && arrays_.count(actual))
+      if (callWrites(call, i) && arrays_.count(actual))
         arrays_[actual] = declare(arrays_[actual].getType(), "", false);
     }
     if (!hasBody) return true;
@@ -915,18 +1232,6 @@ class Encoder {
   }
 
   // --- demand encoding ---------------------------------------------------
-
-  // Encodes a value from its definition, under substitutions. Used for a
-  // callee's contract at a call, for `old`, and for quantifier bodies.
-  struct Demand {
-    llvm::DenseMap<Value, Value> values;
-    llvm::DenseMap<Value, Value> arrays;
-    llvm::DenseMap<Value, Value> lengths;
-    std::optional<llvm::DenseMap<Value, Value>> oldArrays;
-    llvm::DenseMap<Value, Value> memo;
-    bool envForBlockArgs = false;
-    Operation *envOutside = nullptr;  // values defined outside it use env_
-  };
 
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
@@ -991,9 +1296,12 @@ class Encoder {
     auto build = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+      ++quantifierDepth_;
+      // Values outside the quantifier come from where the outer encoding
+      // takes them: env_ in the walk, or a substitution in a loop's or a
+      // callee's contract.
       Demand d = outer;
       d.memo.clear();
-      d.envOutside = op;
       Value range = boolConst(true);
       for (auto [arg, var] : llvm::zip(body.getArguments(), vars)) {
         d.values[arg] = var;
@@ -1006,6 +1314,7 @@ class Encoder {
         failed = true;
         p = boolConst(true);
       }
+      --quantifierDepth_;
       return isForall ? implies(range, p) : andOf(range, p);
     };
     Operation *q =
@@ -1038,6 +1347,7 @@ class Encoder {
   std::vector<Decl> decls_, witnesses_;
   int counter_ = 0;
   int nextName_ = 0;
+  int quantifierDepth_ = 0;
   bool done_ = false;
 };
 

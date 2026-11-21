@@ -7,7 +7,8 @@
 //   piac --emit=obj -o f.o f.pia    verify, then compile to an object (M6)
 //   piac --emit=asm|llvm|core ...   the same, stopping at assembly, LLVM IR
 //                                   or the core MLIR dialects
-//   piac --allow-unproved=SPEC ...  let codegen accept unproved obligations:
+//   piac --allow-unproved=SPEC ...  let --verify and codegen accept unproved
+//                                   obligations:
 //                                   all of them in function SPEC, or the ones
 //                                   at SPEC = file:line or file:line:col
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
@@ -52,7 +53,9 @@ namespace {
 int usage() {
   std::cerr << "usage: piac (--verify | --emit=mlir | --dump-ast | "
                "--dump-expanded | --dump-tokens | --check) "
-               "[--fragment=contracts] [--meta-cycles=N] <file.pia>\n"
+               "[--fragment=contracts] [--meta-cycles=N]\n"
+               "             [--allow-unproved=<function>|<file:line[:col]>]... "
+               "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
                "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
@@ -106,6 +109,30 @@ bool allows(const std::string &spec, const pia::verify::Outcome &o) {
   return o.where == spec || o.where.rfind(spec + ":", 0) == 0;
 }
 
+// The unproved obligations that no `--allow-unproved` accepts. Counts the
+// accepted ones in `allowed`, and warns about each flag that accepts none.
+std::vector<const pia::verify::Outcome *> unaccepted(
+    const std::vector<pia::verify::Outcome> &outcomes,
+    const std::vector<std::string> &allowUnproved, size_t &allowed) {
+  std::vector<const pia::verify::Outcome *> out;
+  std::vector<bool> used(allowUnproved.size(), false);
+  for (const pia::verify::Outcome &o : outcomes) {
+    if (o.status != pia::verify::Status::Skipped) continue;
+    bool ok = false;
+    for (size_t i = 0; i < allowUnproved.size(); ++i)
+      if (allows(allowUnproved[i], o)) used[i] = ok = true;
+    if (ok)
+      ++allowed;
+    else
+      out.push_back(&o);
+  }
+  for (size_t i = 0; i < allowUnproved.size(); ++i)
+    if (!used[i])
+      std::cerr << "piac: warning: --allow-unproved=" << allowUnproved[i]
+                << " matches no unproved obligation\n";
+  return out;
+}
+
 std::string obligations(size_t n) {
   return std::to_string(n) + (n == 1 ? " obligation" : " obligations");
 }
@@ -121,28 +148,14 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   using pia::verify::Status;
   std::vector<Outcome> outcomes = pia::verify::verifyModule(module);
   bool failed = false;
-  std::vector<const Outcome *> unproved;
-  size_t allowed = 0;
-  std::vector<bool> used(allowUnproved.size(), false);
-  for (const Outcome &o : outcomes) {
-    failed |= o.status == Status::Failed;
-    if (o.status != Status::Skipped) continue;
-    bool ok = false;
-    for (size_t i = 0; i < allowUnproved.size(); ++i)
-      if (allows(allowUnproved[i], o)) used[i] = ok = true;
-    if (ok)
-      ++allowed;
-    else
-      unproved.push_back(&o);
-  }
+  for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
     report(outcomes, std::cerr);
     return 1;
   }
-  for (size_t i = 0; i < allowUnproved.size(); ++i)
-    if (!used[i])
-      std::cerr << "piac: warning: --allow-unproved=" << allowUnproved[i]
-                << " matches no unproved obligation\n";
+  size_t allowed = 0;
+  std::vector<const Outcome *> unproved =
+      unaccepted(outcomes, allowUnproved, allowed);
   if (!unproved.empty()) {
     for (const Outcome *o : unproved)
       std::cerr << o->where << ": unproved: " << o->claim << " ["
@@ -254,7 +267,7 @@ int main(int argc, char **argv) {
   bool codegen = mode == "--emit=core" || mode == "--emit=llvm" ||
                  mode == "--emit=asm" || mode == "--emit=obj";
   if (codegen && verify) return usage();
-  if (!allowUnproved.empty() && !codegen) return usage();
+  if (!allowUnproved.empty() && !codegen && !verify) return usage();
   if (mode == "--emit=obj" && output.empty()) return usage();
   if (!output.empty() && !codegen) return usage();
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
@@ -310,10 +323,21 @@ int main(int argc, char **argv) {
       } else if (module && verify) {
         pia::verify::Options options;
         options.dumpSmt = dumpSmt;
-        bool failed = report(pia::verify::verifyModule(*module, options),
-                             mode == "--emit=mlir" ? std::cerr : std::cout);
+        std::vector<pia::verify::Outcome> outcomes =
+            pia::verify::verifyModule(*module, options);
+        bool failed =
+            report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout);
         if (mode == "--emit=mlir") module->print(llvm::outs());
-        if (failed) return 1;
+        // A skipped goal is not proved, so it fails verification too unless
+        // --allow-unproved accepts it, as it does for codegen.
+        size_t allowed = 0;
+        size_t unproved = unaccepted(outcomes, allowUnproved, allowed).size();
+        if (!failed && unproved > 0)
+          std::cerr << "piac: error: " << obligations(unproved)
+                    << " not proved; accept specific ones with "
+                       "--allow-unproved=<function> or "
+                       "--allow-unproved=<file:line[:col]>\n";
+        if (failed || unproved > 0) return 1;
       } else if (module) {
         module->print(llvm::outs());
       }

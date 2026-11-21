@@ -22,7 +22,7 @@ genrule(
     # add_rows's subscripts are inside a loop, which v0 does not verify yet
     # (docs/verifier.md, "Limits of v0"), so its three bounds goals are
     # accepted unproved. Every other goal in saturate.pia must be proved.
-    cmd = "$(location //tools/piac) --emit=obj --allow-unproved=add_rows -o $@ $<",
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
     target_compatible_with = APPLE_SILICON,
     tools = ["//tools/piac"],
 )
