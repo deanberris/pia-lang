@@ -392,7 +392,8 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     }
     if (isCoreBuiltin(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is a core builtin; Pia does "
-                             "not allow shadowing (ADR 0022)");
+                             "not allow shadowing (ADR 0022), so rename it "
+                             "to " + sig.name + "'");
       continue;
     }
     if (sigs.count(sig.name) || types.named(sig.name)) {

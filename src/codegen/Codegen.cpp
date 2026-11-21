@@ -605,6 +605,17 @@ std::optional<llvm::StringRef> extAttr(Type t, bool isSigned) {
   return mlir::LLVM::LLVMDialect::getSExtAttrName();
 }
 
+// The C name of a Pia function: each prime becomes `_prime`, so `step'`
+// is `step_prime` (codegen.md, "C ABI").
+std::string cName(llvm::StringRef name) {
+  std::string out;
+  for (char c : name) {
+    if (c == '\'') out += "_prime";
+    else out += c;
+  }
+  return out;
+}
+
 LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   mlir::MLIRContext *ctx = module.getContext();
   auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
@@ -631,7 +642,8 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   OpBuilder b(ctx);
   b.setInsertionPointAfter(internal);
   auto entry = make<mlir::LLVM::LLVMFuncOp>(
-      b, e.loc, e.name, mlir::LLVM::LLVMFunctionType::get(resultType, argTypes));
+      b, e.loc, cName(e.name),
+      mlir::LLVM::LLVMFunctionType::get(resultType, argTypes));
   mlir::Block *block = entry.addEntryBlock(b);
   b.setInsertionPointToStart(block);
 
@@ -724,6 +736,15 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module) {
   pm.addPass(mlir::createReconcileUnrealizedCastsPass());
   if (mlir::failed(pm.run(module))) return mlir::failure();
 
+  std::map<std::string, std::string> cNames;
+  for (const Entry &e : entries) {
+    auto [it, fresh] = cNames.emplace(cName(e.name), e.name);
+    if (!fresh || (cName(e.name) != e.name &&
+                   module.lookupSymbol((kInternalPrefix + cName(e.name)).str())))
+      return mlir::emitError(e.loc)
+             << "the C entry point of '" << e.name << "' would be named '"
+             << cName(e.name) << "', which another function already uses";
+  }
   for (const Entry &e : entries) {
     if (mlir::failed(buildEntry(module, e))) return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(

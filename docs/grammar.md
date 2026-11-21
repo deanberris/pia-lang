@@ -27,6 +27,8 @@ Spaces, tabs and newlines separate tokens. Comments are `(* ... *)` and nest, as
 IDENT = ( letter | "_" ) { letter | digit | "_" | "'" } ;
 ```
 
+A prime (`'`) may follow the first character, as in `x'` and `x''`. Pia has no shadowing ([ADR 0022](adr/0022-metaprogram-hygiene.md)), so primes are the usual way to name a value related to `x`. Nothing else in the language uses `'`: there are no character literals, and type variables are written `<T>`.
+
 Reserved words:
 
 ```

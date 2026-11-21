@@ -1,0 +1,8 @@
+(* A prime is not allowed in a C name, so the C entry point of step' is
+   step_prime (docs/codegen.md, "C ABI").
+// RUN: piac --emit=llvm %s | FileCheck %s
+*)
+
+(* CHECK: define {{.*}} @step_prime(
+*)
+let step' (x : u8) : u16 = let x' : u16 = x in x' + 1
