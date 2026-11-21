@@ -19,8 +19,11 @@ This is the classic way to average two bytes, and it is wrong for large inputs, 
 ```console
 $ piac --verify average.pia
 average.pia:3:6: failed: '+' does not overflow u8
-  counterexample: a = 128, b = 128, result = 256
-...
+  counterexample: a = 255, b = 255, result = 510
+average.pia:3:11: proved: the divisor is not zero [intervals]
+average.pia:3:11: proved: '/' does not overflow u8 [intervals]
+average.pia:2:3: proved: the postcondition holds [smt]
+3 proved, 1 failed, 0 skipped
 ```
 
 Add in a wider type, and every goal is proved, including the postcondition:
@@ -34,7 +37,12 @@ let average (a : u8) (b : u8) : u8
 
 ```console
 $ piac --verify average_fixed.pia
-...
+average_fixed.pia:3:23: proved: '+' does not overflow u16 [intervals]
+average_fixed.pia:3:36: proved: the divisor is not zero [intervals]
+average_fixed.pia:3:36: proved: '/' does not overflow u16 [intervals]
+average_fixed.pia:3:3: proved: the value fits in u8 [smt]
+average_fixed.pia:2:3: proved: the postcondition holds [smt]
+5 proved, 0 failed, 0 skipped
 ```
 
 ## What is in Pia

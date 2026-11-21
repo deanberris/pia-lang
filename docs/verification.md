@@ -27,7 +27,11 @@ let scale (xs : [u16]) (i : usize) (k : u16) : u32
 
 ```console
 $ piac --verify scale.pia
-TBD
+scale.pia:3:3: proved: the index is within bounds [smt]
+scale.pia:3:10: proved: '*' does not overflow u32 [intervals]
+scale.pia:3:14: proved: the divisor is not zero [intervals]
+scale.pia:3:14: proved: '/' does not overflow u32 [intervals]
+4 proved, 0 failed, 0 skipped
 ```
 
 Every line has the source location, the claim, and the method that settled it. A goal is **proved**, **failed** (with a counterexample when the solver has one), or **skipped** when this version of the verifier cannot decide it yet.
@@ -65,11 +69,11 @@ let second (xs : [u8]) : u8 = xs.[1]
 ```console
 $ piac --verify bounds.pia
 bounds.pia:1:31: failed: the index is within bounds
-...
+  counterexample: len xs = 0, index = 1, length = 0
 0 proved, 1 failed, 0 skipped
 ```
 
-Here any slice shorter than two elements breaks the index. The fix is to say what the function needs, which moves the obligation to every caller:
+An empty slice breaks the index, and so would any slice shorter than two elements. The fix is to say what the function needs, which moves the obligation to every caller:
 
 ```ocaml
 let second (xs : [u8]) : u8
@@ -94,12 +98,13 @@ let twice (x : u8) : u8 = inc (inc x)
 
 ```console
 $ piac --verify calls.pia
-...
+calls.pia:4:5: proved: '+' does not overflow u8 [smt]
+calls.pia:3:3: proved: the postcondition holds [smt]
 calls.pia:6:32: failed: the precondition of 'inc' holds
   counterexample: x = 255
 calls.pia:6:27: failed: the precondition of 'inc' holds
   counterexample: x = 254
-...
+2 proved, 2 failed, 0 skipped
 ```
 
 Both calls fail: the inner one when `x` is 255, and the outer one when `x` is 254, because the inner call then returns 255. Adding `requires x < 200` to `twice` proves both. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.

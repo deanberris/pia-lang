@@ -70,11 +70,11 @@ let clamp (lo : i32) (hi : i32) (x : i32) : i32
 ```console
 $ piac --verify clamp_bad.pia
 clamp_bad.pia:3:3: failed: the postcondition holds
-...
+  counterexample: lo = 1028093, hi = 2147483647, x = 0
 0 proved, 1 failed, 0 skipped
 ```
 
-The counterexample line lists values of `lo`, `hi` and `x` that break the claim. Which ones Z3 picks can vary, but every set it reports is a real failure.
+The counterexample is an input that breaks the claim. Here `x` is below `lo`, so `clamp` returns `lo`, and `lo < lo` is false. Z3 picks whichever values it finds first, so they can look arbitrary, but they always break the goal.
 
 ## Compile a program
 

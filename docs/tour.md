@@ -103,7 +103,7 @@ let tick (x : u8) : u8 @overflow(wrap)
 let brighten (p : u8) : u8 = p +| 40
 ```
 
-Wrapping and saturating arithmetic are modelled exactly, so the postconditions above are proved too. Saturating code compiles to Apple Silicon's saturating instructions, such as `uqadd`.
+Wrapping and saturating arithmetic are modelled exactly, so the postconditions above are proved too. In loops, LLVM vectorises saturating arithmetic into NEON's saturating instructions, such as `uqadd`.
 
 ## Arrays and slices
 

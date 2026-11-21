@@ -25,8 +25,11 @@ The postcondition after `ensures` says what `average` means. In most languages t
 ```console
 $ piac --verify average.pia
 average.pia:3:6: failed: '+' does not overflow u8
-  counterexample: a = 128, b = 128, result = 256
-...
+  counterexample: a = 255, b = 255, result = 510
+average.pia:3:11: proved: the divisor is not zero [intervals]
+average.pia:3:11: proved: '/' does not overflow u8 [intervals]
+average.pia:2:3: proved: the postcondition holds [smt]
+3 proved, 1 failed, 0 skipped
 ```
 
 The fix is to add in a wider type. Now every goal is proved, including the postcondition and the narrowing of the result back to `u8`:
@@ -40,24 +43,31 @@ let average (a : u8) (b : u8) : u8
 
 ```console
 $ piac --verify average_fixed.pia
-...
+average_fixed.pia:3:23: proved: '+' does not overflow u16 [intervals]
+average_fixed.pia:3:36: proved: the divisor is not zero [intervals]
+average_fixed.pia:3:36: proved: '/' does not overflow u16 [intervals]
+average_fixed.pia:3:3: proved: the value fits in u8 [smt]
+average_fixed.pia:2:3: proved: the postcondition holds [smt]
+5 proved, 0 failed, 0 skipped
 ```
 
-The proofs cost nothing at run time. When the arithmetic should clamp instead, say so, and the proof obligation goes away because the behaviour is defined. This compiles to a single NEON instruction:
+Interval analysis settles the easy goals for free, and Z3 settles the rest. The counterexample is the input that breaks your code, so you know what to fix.
 
-<!-- example: add_px.pia -->
+The proofs cost nothing at run time: a proved index has no bounds check and a proved sum has no overflow check. When arithmetic should clamp instead of failing, say so with `+|` or `@overflow(saturate)`, and the behaviour is defined, so there is nothing to prove. This loop adds two rows of pixels, and LLVM vectorises it into NEON instructions that add 16 bytes at a time:
+
+<!-- example: add_rows.pia -->
 ```ocaml
-let add_px (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
+let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
+  requires len a = len dst && len b = len dst
+= for i in 0..len dst do dst.[i] <- a.[i] +| b.[i] done
 ```
 
 ```console
-$ piac --emit=asm add_px.pia
-...
-_add_px:
-...
-	uqadd	b0, b0, b1
-...
+$ piac --emit=asm add_rows.pia
+TBD
 ```
+
+(The bounds goals inside the loop are not proved yet: `piac` warns that it skipped them. Loop invariants are the verifier's next step; see [Status](docs/status.md).)
 
 ## What is in Pia
 
