@@ -30,3 +30,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Proposed |
 | [0025](0025-sanitizers.md) | Sanitizers check the edges of the proof | Proposed |
 | [0026](0026-memory-manager.md) | A memory manager of explicit allocators, with no garbage collection | Proposed |
+| [0028](0028-error-propagation-and-cleanup.md) | Errors propagate with `?` to a scope's handler; cleanup runs at scope end | Proposed |
