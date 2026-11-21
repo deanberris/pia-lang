@@ -952,6 +952,13 @@ class Encoder {
     if (auto m = arithMode(op)) {
       Value exact = exactArith(op, in[0], in[1]);
       divisionLemma(op, in[0], in[1], exact);
+      // Specification arithmetic is exact whatever the function's overflow
+      // mode: in an @overflow(wrap) function, `ensures result = a * b`
+      // means the mathematical product, so a wrapped result fails it.
+      if (spec_.contains(op) || insideQuantifier(op)) {
+        out.push_back(exact);
+        return true;
+      }
       out.push_back(applyMode(exact,
                               mlir::cast<IntType>(op->getResult(0).getType()),
                               *m));

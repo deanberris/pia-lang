@@ -1,0 +1,29 @@
+(* Contract arithmetic is exact in every overflow mode (docs/verifier.md,
+   "Specifications are exact"): the mode applies to the code, never to the
+   specification. Found by the str::repeat case study (docs/cases).
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* The wrapped product is not the true product, so this fails. *)
+let wrapped (a : u64) (b : u64) : u64 @overflow(wrap)
+  ensures result = a * b
+= a * b
+
+(* Saturation keeps the true product whenever it fits. *)
+let saturated (a : u64) (b : u64) : u64 @overflow(saturate)
+  ensures result < 18446744073709551615 ==> result = a * b
+= a * b
+
+(* A sum that wraps in the code is exact in the contract. *)
+let tick (x : u8) : u8 @overflow(wrap)
+  ensures x < 255 ==> result = x + 1
+  ensures x = 255 ==> result + 255 = x
+= x + 1
+
+(* Expected report, in order.
+// CHECK: spec_exact.pia:9:3: failed: the postcondition holds
+// CHECK: spec_exact.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: spec_exact.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: spec_exact.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: 3 proved, 1 failed, 0 skipped
+*)
