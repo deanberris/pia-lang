@@ -65,6 +65,7 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - "Demo: edge detection": demo.md
+  - "Demo: stream delineation": streams.pia.md
   - A tour of Pia: tour.md
   - How verification works: verification.md
   - Status and roadmap: status.md

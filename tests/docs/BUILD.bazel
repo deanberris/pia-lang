@@ -11,6 +11,7 @@ DOCS = [
     "//docs:tour.md",
     "//docs:verification.md",
     "//docs:status.md",
+    "//docs:streams.pia.md",
 ]
 
 py_test(
