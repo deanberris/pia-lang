@@ -1,0 +1,9 @@
+(* State belongs to the REPL for now (ADR 0031, "State"), so piac refuses
+   an invariant on a definition.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+// CHECK: error: 'invariant' belongs to a state, which only the REPL supports yet (ADR 0031)
+*)
+
+let f (a : u8) : u8
+  invariant a <= 3
+= a

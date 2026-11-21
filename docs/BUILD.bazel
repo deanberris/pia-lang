@@ -1,4 +1,6 @@
 exports_files([
+    "cases/heartbleed.pia.md",
+    "cases/index.md",
     "demo.md",
     "design.md",
     "getting-started.md",
