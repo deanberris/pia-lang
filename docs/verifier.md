@@ -74,7 +74,7 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 ## Limits of v0
 
-- **Loops are not cut with their invariants yet.** Goals inside `for` and `while`, including the invariant and measure, are reported as `skipped`. After a loop, its results and every writable buffer are unknown values of their types. That keeps later goals sound, but they may fail when they depend on what the loop did. Loops come next: assume the invariant at the head, prove it on entry and after each iteration, and havoc only what the loop assigns.
+- **Loops are not cut with their invariants yet.** Goals inside `for` and `while`, including the invariant and measure, are reported as `skipped`. After a loop, its results and every writable buffer are unknown values of their types. That keeps later goals sound, but they may fail when they depend on what the loop did. Loops come next: assume the invariant at the head, prove it on entry and after each iteration, and havoc only what the loop assigns. Affine goals in loops, such as subscripts like `xs.[2*i + 1]`, aliasing and loop-carried dependence, will be decided by a Presburger stage before Z3 ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
 - **Termination** (`decreases`) is skipped.
 - **A call inside a contract** stands for an unknown value of its result type, so a contract that relies on another function's meaning cannot be proved yet.
 - **Ops the verifier does not model** produce unknown values of their types, which is sound but may cause failures.

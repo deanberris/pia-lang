@@ -59,7 +59,7 @@ Design points:
 ## Verifier
 
 1. **Obligation materialisation.** Insert an `obligation` op for every implicit and explicit proof goal.
-2. **Interval analysis.** Run MLIR's integer range analysis (extended with Pia's range types) and discharge every obligation it proves on its own. Most bounds and overflow goals should end here.
+2. **Interval analysis.** Run MLIR's integer range analysis (extended with Pia's range types) and discharge every obligation it proves on its own. Most bounds and overflow goals should end here. Then the **Presburger stage** takes goals that are affine in integer variables, such as aliasing of slices, loop-carried dependence and affine subscripts, and decides them exactly with MLIR's Presburger library (FPL) before falling back to SMT ([ADR 0020](adr/0020-presburger-for-affine-goals.md)). `spread` legality and the vectoriser use the same dependence relations.
 3. **Verification-condition generation.** For each remaining obligation, build the formula that must hold: loop invariants cut loops, calls use the callee's (or the imported interface's) contract, and `old` refers to entry values.
 4. **SMT encoding.** Emit the formula in the `smt` dialect: machine integers as bit-vectors, floats in the FP theory, `dyn` tags as datatypes, arrays as SMT arrays.
 5. **Solving.** Export to SMT-LIB and run Z3 in-process. `unsat` of the negated goal means proved. `sat` yields a model.
