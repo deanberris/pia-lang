@@ -33,17 +33,21 @@ lsp::Json tools() {
       "Run Pia code in a persistent, verified REPL session. A cell is Pia "
       "code (definitions with let, expressions to evaluate) or a command "
       "(:help, :type e, :proof f, :env, :source f, :redef code, :forget f, "
-      ":allow spec, :load file, :reset). Definitions join the environment "
+      ":allow spec, :load file (.pia or literate .pia.md), :reset, :spawn e, "
+      ":tasks, :wait n). Definitions join the environment "
       "only if every proof obligation in the whole environment is proved; "
       "failures come back with counterexamples. Expressions are proved, "
       "then compiled and run. Defining a name that exists is an error (no "
       "shadowing); use :redef to replace it, which re-verifies everything "
       "that uses it. Returns the cell's events, or a job number to poll if "
-      "it is still running after wait_ms.";
+      "it is still running after wait_ms. The result is the REPL's text; "
+      "pass json: true for the events as structured JSON as well.";
   execute["inputSchema"] = schema(
       {{"code", prop("string", "The cell: Pia code or a :command")},
        {"wait_ms", prop("number", "How long to wait for the result before "
-                                  "returning a job to poll (default 10000)")}},
+                                  "returning a job to poll (default 10000)")},
+       {"json", prop("boolean", "Also return the cell's events as JSON, "
+                                "in structuredContent (default false)")}},
       {"code"});
   lsp::Json poll;
   poll["name"] = "poll";
@@ -52,7 +56,9 @@ lsp::Json tools() {
       "running, done) and, once done, its result.";
   poll["inputSchema"] = schema(
       {{"job", prop("number", "The job number from execute")},
-       {"wait_ms", prop("number", "How long to wait (default 10000)")}},
+       {"wait_ms", prop("number", "How long to wait (default 10000)")},
+       {"json", prop("boolean", "Also return the result as JSON, in "
+                                "structuredContent (default false)")}},
       {"job"});
   lsp::Json result;
   result["tools"] = lsp::Json::Array{execute, poll};
@@ -71,6 +77,10 @@ std::chrono::milliseconds waitOf(const lsp::Json &args) {
   if (ms < 0) ms = 0;
   if (ms > kMaxWaitMs) ms = kMaxWaitMs;
   return std::chrono::milliseconds(static_cast<long long>(ms));
+}
+
+bool wantsJson(const lsp::Json &args) {
+  return args["json"].isBool() && args["json"].asBool();
 }
 
 lsp::Json reply(const lsp::Json &id, lsp::Json result) {
@@ -94,7 +104,11 @@ lsp::Json errorReply(const lsp::Json &id, int code, const std::string &message) 
 
 }  // namespace
 
-lsp::Json McpServer::jobResult(const Kernel::Status &s) {
+// Some clients, Claude Code among them, show an agent the structured
+// content in place of the text when both are present, and the events are
+// several times longer than the REPL's text. So the JSON is sent only when
+// the caller asks for it.
+lsp::Json McpServer::jobResult(const Kernel::Status &s, bool json) {
   lsp::Json structured;
   structured["job"] = static_cast<double>(s.job);
   structured["status"] = stateName(s.state);
@@ -114,7 +128,7 @@ lsp::Json McpServer::jobResult(const Kernel::Status &s) {
   }
   lsp::Json result;
   result["content"] = textContent(text);
-  result["structuredContent"] = std::move(structured);
+  if (json) result["structuredContent"] = std::move(structured);
   result["isError"] = isError;
   return result;
 }
@@ -128,12 +142,13 @@ lsp::Json McpServer::callTool(const std::string &name, const lsp::Json &args) {
       return r;
     }
     uint64_t job = kernel_.submit(args["code"].asString());
-    return jobResult(kernel_.poll(job, waitOf(args)));
+    return jobResult(kernel_.poll(job, waitOf(args)), wantsJson(args));
   }
   if (name == "poll") {
     double job = args["job"].asNumber(0);
     return jobResult(kernel_.poll(job < 0 ? 0 : static_cast<uint64_t>(job),
-                                  waitOf(args)));
+                                  waitOf(args)),
+                     wantsJson(args));
   }
   lsp::Json r;
   r["content"] = textContent("unknown tool " + name + "\n");

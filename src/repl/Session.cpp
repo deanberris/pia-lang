@@ -1811,6 +1811,10 @@ struct Session::Impl {
       }
       std::stringstream buf;
       buf << in.rdbuf();
+      // A literate file's code is its ```pia blocks (ADR 0029). Blanking the
+      // prose keeps locations those of the Markdown.
+      if (syntax::isLiterateFileName(arg))
+        return code(syntax::literateCode(buf.str()), Mode::Define, cellNo);
       return code(buf.str(), Mode::Define, cellNo);
     } else if (word == "spawn") {
       if (!needArg()) return r;
