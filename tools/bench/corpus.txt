@@ -1,0 +1,6 @@
+# Files the build-time benchmark verifies (tools/bench/proof_bench.py), one
+# per line, relative to the repository root; globs allowed. The standard
+# library joins this list as its modules land (docs/stdlib.md).
+examples/edges/edges.pia
+docs/streams.pia.md
+tests/verify/*.pia

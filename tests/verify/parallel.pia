@@ -1,0 +1,40 @@
+(* Goals are solved on several threads, sliced, cached and selected
+   (ADR 0032). The report is the same whatever the number of threads, and
+   with or without slicing or the proof cache.
+// RUN: not piac --verify --jobs=1 %s > "$TEST_TMPDIR/one"
+// RUN: FileCheck %s < "$TEST_TMPDIR/one"
+// RUN: not piac --verify --jobs=8 %s | diff "$TEST_TMPDIR/one" -
+// RUN: not piac --verify --jobs=3 --slice %s | diff "$TEST_TMPDIR/one" -
+// RUN: not piac --verify --slice --verify-stats %s 2>&1 >/dev/null | FileCheck %s --check-prefix=SLICED
+// RUN: not piac --verify --proof-cache="$TEST_TMPDIR/cache" --verify-stats %s 2>&1 >/dev/null | FileCheck %s --check-prefix=COLD
+// RUN: not piac --verify --proof-cache="$TEST_TMPDIR/cache" --verify-stats %s 2>&1 > "$TEST_TMPDIR/warm" | FileCheck %s --check-prefix=WARM
+// RUN: diff "$TEST_TMPDIR/one" "$TEST_TMPDIR/warm"
+// RUN: piac --verify-only=mix --verify-stats %s 2>&1 | FileCheck %s --check-prefix=ONLY
+// RUN: not piac --verify-only=nothing_here %s 2>&1 | FileCheck %s --check-prefix=NONE
+
+   The first sum's goal needs only `x < 100`, so its slice leaves out `b`
+   and its precondition; the divisor's goal needs only `b <> 0`.
+// SLICED: verify-stats: {{.*}} cached=0 sliced={{[1-9][0-9]*}}
+// COLD: verify-stats: {{.*}} cached=0 sliced=0
+
+   On the second run every proved SMT goal comes from the cache, and only
+   the failing goal in `bad` reaches the solver again.
+// WARM: verify-stats: {{.*}} solved=1 cached={{[1-9][0-9]*}}
+
+// ONLY: verify-stats: goals={{[1-9][0-9]*}} unselected={{[1-9][0-9]*}}
+// ONLY: {{[0-9]+}} proved, 0 failed, 0 skipped
+// NONE: piac: error: --verify-only selects no goal
+*)
+
+let mix (b : u8) (x : u8) : u8
+  requires b <> 0
+  requires x < 100
+= (x + 50) + (100 / b)
+
+let bad (a : u8) (b : u8) : u8 = a + b
+
+(*
+// CHECK: proved: '+' does not overflow u8 [smt]
+// CHECK: failed: '+' does not overflow u8
+// CHECK: {{[0-9]+}} proved, 1 failed, 0 skipped
+*)

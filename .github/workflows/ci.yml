@@ -47,6 +47,28 @@ jobs:
         timeout-minutes: 30
         run: bazel test --config=ci --keep_going //...
 
+      # Build time is a benchmark (ADR 0032). The solver cost is deterministic
+      # and gated against tools/bench/baseline.json; wall times are reported
+      # in the job summary and kept as an artifact.
+      - name: Proof build-time benchmark
+        id: bench
+        if: steps.test.outcome == 'success'
+        timeout-minutes: 30
+        run: >-
+          python3 tools/bench/proof_bench.py
+          --piac bazel-bin/tools/piac/piac
+          --host github-macos-15
+          --out bench.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the benchmark
+        if: always() && steps.bench.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-bench
+          path: bench.json
+          if-no-files-found: ignore
+
       - name: Save the Bazel disk cache
         if: steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

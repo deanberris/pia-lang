@@ -17,6 +17,17 @@
 //                                   of N per obligation (default none)
 //   piac --solver-cost file.pia     --verify, also printing each proved
 //                                   goal's Z3 resource count
+//   piac --jobs=N ...               solve goals on N threads (default: one
+//                                   per core; the report is the same)
+//   piac --verify-only=SPEC ...     --verify only the goals SPEC selects: a
+//                                   function, a module (file.pia) or a
+//                                   location file:line[:col]; repeatable
+//   piac --proof-cache=DIR ...      skip goals proved before, keyed by the
+//                                   hash of each query
+//   piac --slice ...                first try each goal with only the
+//                                   assumptions it shares symbols with
+//   piac --verify-stats ...         print a summary of the proof work, and
+//                                   how long it took, to stderr
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
@@ -65,7 +76,9 @@ int usage() {
                "--dump-expanded | --dump-tokens | --check) "
                "[--fragment=contracts] [--meta-cycles=N]\n"
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
-               "             [--solver-rlimit=<n>] [--solver-cost]\n"
+               "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
+               "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
+               "             [--proof-cache=<dir>] [--slice] [--verify-stats]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -155,14 +168,28 @@ std::string obligations(size_t n) {
 // every obligation is proved. A failed one stops it with the verifier's
 // report. So does an unproved one (v0 skips some, such as those in loops;
 // docs/verifier.md, "Limits of v0"), unless `allowUnproved` accepts it.
+// One line, `verify-stats: key=value ...`, that tools/bench reads.
+void printStats(const pia::verify::Stats &st) {
+  std::cerr << "verify-stats: goals=" << st.goals
+            << " unselected=" << st.unselected
+            << " intervals=" << st.intervals << " skipped=" << st.skipped
+            << " solved=" << st.solved << " cached=" << st.cached
+            << " sliced=" << st.sliced << " unsliced=" << st.unsliced
+            << " threads=" << st.threads << " cost=" << st.cost
+            << " encode_ms=" << static_cast<long long>(st.encodeMs)
+            << " solve_ms=" << static_cast<long long>(st.solveMs) << "\n";
+}
+
 int compile(mlir::ModuleOp module, const std::string &mode,
             const std::string &output, const pia::codegen::Options &options,
             const std::vector<std::string> &allowUnproved,
-            const pia::verify::Options &verifyOptions) {
+            const pia::verify::Options &verifyOptions, bool verifyStats) {
   using pia::verify::Outcome;
   using pia::verify::Status;
+  pia::verify::Stats stats;
   std::vector<Outcome> outcomes =
-      pia::verify::verifyModule(module, verifyOptions);
+      pia::verify::verifyModule(module, verifyOptions, &stats);
+  if (verifyStats) printStats(stats);
   bool failed = false;
   for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
@@ -239,6 +266,10 @@ int main(int argc, char **argv) {
   unsigned solverTimeoutMs = 0;  // 0: the verifier's default
   unsigned solverRlimit = 0;     // 0: none
   bool solverCost = false;
+  unsigned jobs = 0;  // 0: one per core
+  std::vector<std::string> verifyOnly;
+  std::string proofCache;
+  bool slice = false, verifyStats = false;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -278,6 +309,26 @@ int main(int argc, char **argv) {
         return usage();
       solverRlimit = static_cast<unsigned>(n);
     }
+    else if (arg.rfind("--jobs=", 0) == 0) {
+      char *end = nullptr;
+      unsigned long n = std::strtoul(arg.c_str() + 7, &end, 10);
+      if (arg.size() == 7 || *end != '\0' || n == 0 || n > 4096)
+        return usage();
+      jobs = static_cast<unsigned>(n);
+    }
+    else if (arg.rfind("--verify-only=", 0) == 0) {
+      if (arg.size() == 14) return usage();
+      verifyOnly.push_back(arg.substr(14));
+      verify = true;
+    }
+    else if (arg.rfind("--proof-cache=", 0) == 0) {
+      if (arg.size() == 14) return usage();
+      proofCache = arg.substr(14);
+    }
+    else if (arg == "--slice")
+      slice = true;
+    else if (arg == "--verify-stats")
+      verifyStats = true;
     else if (arg == "--solver-cost")
       verify = solverCost = true;
     else if (arg == "--verify")
@@ -310,6 +361,7 @@ int main(int argc, char **argv) {
   if (literate && contracts) return usage();
   bool codegen = mode == "--emit=core" || mode == "--emit=llvm" ||
                  mode == "--emit=asm" || mode == "--emit=obj";
+  // A partial proof never justifies code, so --verify-only implies --verify.
   if (codegen && verify) return usage();
   if (!allowUnproved.empty() && !codegen && !verify) return usage();
   if (mode == "--emit=obj" && output.empty()) return usage();
@@ -320,6 +372,9 @@ int main(int argc, char **argv) {
   (void)solverTimeoutMs;
   (void)solverRlimit;
   (void)solverCost;
+  (void)jobs;
+  (void)slice;
+  (void)verifyStats;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
     return 2;
@@ -373,11 +428,22 @@ int main(int argc, char **argv) {
       if (solverTimeoutMs) options.timeoutMs = solverTimeoutMs;
       options.rlimit = solverRlimit;
       options.reportCost = solverCost;
+      options.jobs = jobs;
+      options.slice = slice;
+      options.cacheDir = proofCache;
+      options.only = verifyOnly;
       if (module && codegen) {
-        return compile(*module, mode, output, cg, allowUnproved, options);
+        return compile(*module, mode, output, cg, allowUnproved, options,
+                       verifyStats);
       } else if (module && verify) {
+        pia::verify::Stats stats;
         std::vector<pia::verify::Outcome> outcomes =
-            pia::verify::verifyModule(*module, options);
+            pia::verify::verifyModule(*module, options, &stats);
+        if (verifyStats) printStats(stats);
+        if (!verifyOnly.empty() && stats.goals == 0) {
+          std::cerr << "piac: error: --verify-only selects no goal\n";
+          return 1;
+        }
         bool failed =
             report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout);
         if (mode == "--emit=mlir") module->print(llvm::outs());
