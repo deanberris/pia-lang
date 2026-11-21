@@ -213,15 +213,15 @@ The standard library (`docs/stdlib.md` and ADR 0023, [PR #37](https://github.com
 
 Each step is a GitHub issue, tracked from M8 ([#9](https://github.com/deanberris/pia-lang/issues/9)) and the follow-up milestones.
 
-1. Canonical interface serialisation and the interface and inline surface hashes.
-2. The certificate format: a small C++ reader and writer, and `pia-cert dump`.
-3. Emit `__pia_cert` and `__pia_iface` in objects and merge them into image certificates at link.
-4. Witness symbols: export them from libraries and reference them from importers.
-5. The link checker for objects and `.dylib` inputs, including `--trust-report`.
-6. Pia images without static initializers, the runtime's launch check, and `Pia.Dl.open`.
-7. ABI baselines and refinement proofs.
-8. `pia-cert audit`: recompute, re-prove refinements, replay proof bundles.
-9. The ELF port.
+1. Canonical interface serialisation and the interface and inline surface hashes ([#40](https://github.com/deanberris/pia-lang/issues/40)).
+2. The certificate format: a small C++ reader and writer, and `pia-cert dump` ([#41](https://github.com/deanberris/pia-lang/issues/41)).
+3. Emit `__pia_cert` and `__pia_iface` in objects and merge them into image certificates at link ([#42](https://github.com/deanberris/pia-lang/issues/42)).
+4. Witness symbols: export them from libraries and reference them from importers ([#43](https://github.com/deanberris/pia-lang/issues/43)).
+5. The link checker for objects and `.dylib` inputs, including `--trust-report` ([#44](https://github.com/deanberris/pia-lang/issues/44)).
+6. Pia images without static initializers, the runtime's launch check, and `Pia.Dl.open` ([#46](https://github.com/deanberris/pia-lang/issues/46)).
+7. ABI baselines and refinement proofs ([#49](https://github.com/deanberris/pia-lang/issues/49)).
+8. `pia-cert audit`: recompute, re-prove refinements, replay proof bundles ([#51](https://github.com/deanberris/pia-lang/issues/51)).
+9. The ELF port ([#53](https://github.com/deanberris/pia-lang/issues/53)).
 
 ## References
 
