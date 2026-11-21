@@ -1,0 +1,13 @@
+(* Primed names, such as x', are ordinary names: a fresh name for a value
+   related to x, where Pia's no-shadowing rule rules out reusing x.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let next (x : u8) : u16 ensures result = x + 1 = let x' : u16 = x in x' + 1
+
+let down (x' : u8) : u8 = let x'' : u8 = x' - 1 in x''
+
+(* CHECK: primes.pia:6:25: proved: the postcondition holds [smt]
+   CHECK: primes.pia:8:45: failed: '-' does not overflow u8
+   CHECK-NEXT: counterexample: x' = 0, result = -1
+*)

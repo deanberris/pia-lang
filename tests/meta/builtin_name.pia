@@ -3,6 +3,6 @@
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
-(* CHECK: builtin_name.pia:[[@LINE+2]]:1: error: 'add' is a core builtin; Pia does not allow shadowing (ADR 0022)
+(* CHECK: builtin_name.pia:[[@LINE+2]]:1: error: 'add' is a core builtin; Pia does not allow shadowing (ADR 0022), so rename it to add'
 *)
 let add (a : u8) (b : u8) : u8 = a
