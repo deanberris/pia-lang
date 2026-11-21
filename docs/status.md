@@ -15,7 +15,7 @@ Pia is an experimental language under active development. The compiler works end
 | Metaprograms | `let meta` functions, quotes and splices, hygiene, operators defined in the prelude and by programs, `@derive(eq)`, expansion to a fixed point |
 | Comments | `(* *)`, `\` line and `(** *)` doc comments, kept in the syntax tree for metaprograms and hover; literate `.pia.md` files |
 | Codegen | arm64 for Apple Silicon through MLIR and LLVM: object files, assembly and LLVM IR, a C ABI, saturating NEON instructions and vectorised loops |
-| Demo | [Edge detection](demo.md): a Pia image pipeline, proved and compiled into a program you can run with `bazel run //examples/edges` |
+| Demo | [Edge detection](demo.md): a Pia image pipeline, proved and compiled into a program you can run with `bazel run //examples/edges`; [stream delineation](streams.pia.md), a literate program with sink filling, D8 directions, flow accumulation and watersheds, run with `bazel run //examples/streams` |
 | Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension, and [`pia repl`](repl.md), a verified REPL with a JIT, a JSON mode and an MCP server (`pia mcp`) |
 
 ## Known limitations
@@ -40,7 +40,7 @@ The plan is a sequence of milestones, each a GitHub issue, building towards the 
 | [M11](https://github.com/deanberris/pia-lang/issues/12) | Floats: strict IEEE, and three ways to allow reassociation | |
 | [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency: `spread`, collectives, and compile-time checks that collectives match | |
 | [M13](https://github.com/deanberris/pia-lang/issues/14) | PNG and GIF decoding and encoding, written in Pia | |
-| [M14](https://github.com/deanberris/pia-lang/issues/15) | The stream delineation demo | |
+| [M14](https://github.com/deanberris/pia-lang/issues/15) | The stream delineation demo: delineation [done](streams.pia.md), sediment transport and Pia image codecs next | |
 
 Alongside these, a Presburger stage will decide affine goals such as aliasing and loop-carried dependence ([ADR 0020](adr/0020-presburger-for-affine-goals.md)). After a 0.1 release, Pia will be offered to [Compiler Explorer](https://github.com/deanberris/pia-lang/issues/30).
 

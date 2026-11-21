@@ -5,6 +5,7 @@ exports_files([
     "index.md",
     "repl.md",
     "status.md",
+    "streams.pia.md",
     "tour.md",
     "verification.md",
 ])

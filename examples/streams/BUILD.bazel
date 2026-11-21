@@ -1,0 +1,62 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/piac:pia.bzl", "pia_object")
+
+# The stream delineation demo. The program is the literate page
+# docs/streams.pia.md, which is also its documentation; main.c reads and
+# writes images around it with macOS's ImageIO, because Pia has no I/O yet.
+#
+#   bazel run //examples/streams                     # a synthetic terrain
+#   bazel run //examples/streams -- in.png out.png [threshold]
+#
+# Everything here runs only on Apple Silicon, the one target piac compiles
+# for so far.
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+# Every goal in the page must be proved, or piac refuses to compile it.
+pia_object(
+    name = "streams_obj",
+    src = "//docs:streams.pia.md",
+    target_compatible_with = APPLE_SILICON,
+)
+
+cc_library(
+    name = "streams_pia",
+    srcs = [":streams_obj"],
+    hdrs = ["pia_streams.h"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+cc_binary(
+    name = "streams",
+    srcs = ["main.c"],
+    linkopts = [
+        "-framework",
+        "ApplicationServices",
+        "-framework",
+        "ImageIO",
+        "-framework",
+        "CoreFoundation",
+    ],
+    target_compatible_with = APPLE_SILICON,
+    deps = [":streams_pia"],
+)
+
+cc_test(
+    name = "streams_test",
+    srcs = ["streams_test.c"],
+    target_compatible_with = APPLE_SILICON,
+    deps = [":streams_pia"],
+)
+
+# The demo itself runs too: it draws the terrain and writes both images.
+sh_test(
+    name = "streams_run_test",
+    srcs = ["streams_run_test.sh"],
+    args = ["$(rootpath :streams)"],
+    data = [":streams"],
+    target_compatible_with = APPLE_SILICON,
+)

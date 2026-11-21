@@ -57,6 +57,7 @@ average_fixed.pia:2:3: proved: the postcondition holds [smt]
 
 - [Getting started](getting-started.md): build `piac`, prove a program, set up VS Code
 - [Demo: edge detection](demo.md): a real program built with Pia, and a bug the compiler catches
+- [Demo: stream delineation](streams.pia.md): a literate Pia program that finds the streams and watersheds in a terrain, with every step proved
 - [A tour of Pia](tour.md): the language as it is today, every example tested
 - [How verification works](verification.md): goals, intervals, Z3 and counterexamples
 - [Status and roadmap](status.md): what works, what does not yet, and what is next

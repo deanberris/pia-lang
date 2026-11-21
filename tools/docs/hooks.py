@@ -10,6 +10,9 @@ import re
 
 REPO = "https://github.com/deanberris/pia-lang"
 LINK = re.compile(r"\]\((\.\./[^)\s#]*)(#[^)\s]*)?\)")
+# Pygments has no Pia lexer yet. OCaml's is close enough to colour the
+# ```pia blocks of a literate page (docs/streams.pia.md).
+PIA_FENCE = re.compile(r"^(\s*)```pia\s*$", re.MULTILINE)
 
 
 def on_page_markdown(markdown, page, config, files):
@@ -22,4 +25,4 @@ def on_page_markdown(markdown, page, config, files):
         kind = "tree" if target.endswith("/") or "." not in posixpath.basename(target) else "blob"
         return f"]({REPO}/{kind}/main/{target}{m.group(2) or ''})"
 
-    return LINK.sub(rewrite, markdown)
+    return PIA_FENCE.sub(r"\1```ocaml", LINK.sub(rewrite, markdown))
