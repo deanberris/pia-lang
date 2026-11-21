@@ -106,7 +106,9 @@ Every goal on this page is proved:
 
 ```console
 $ piac --verify bun-readfile.pia.md
-...
+bun-readfile.pia.md:102:34: proved: the value fits in usize [smt]
+bun-readfile.pia.md:99:3: proved: the postcondition holds [smt]
+2 proved, 0 failed, 0 skipped
 ```
 
 ## What this says about safe build modes
