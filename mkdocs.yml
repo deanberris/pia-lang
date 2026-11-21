@@ -77,6 +77,7 @@ nav:
       - Cloudbleed: cases/cloudbleed.pia.md
       - "CrowdStrike Channel File 291": cases/crowdstrike.pia.md
       - "Rust str::repeat": cases/rust-str-repeat.pia.md
+      - "Rust VecDeque::reserve": cases/rust-vecdeque.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md
