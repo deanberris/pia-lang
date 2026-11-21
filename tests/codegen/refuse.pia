@@ -1,0 +1,12 @@
+(* Code is generated only when no obligation fails: piac prints the
+   verifier's report instead.
+// RUN: not piac --emit=obj -o /dev/null %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK: refuse.pia:12:36: failed: '+' does not overflow u8
+// CHECK-NEXT: counterexample:
+// CHECK: 0 proved, 1 failed, 0 skipped
+*)
+
+let bad (a : u8) (b : u8) : u8 = a + b

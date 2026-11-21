@@ -118,6 +118,13 @@ void PiaDialect::registerTypes() {
 LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
                                                    unsigned argIndex,
                                                    NamedAttribute attr) {
+  // `{pia.signed}`: codegen records that an argument's range type was
+  // signed once it is lowered to a signless integer (docs/codegen.md).
+  if (attr.getName() == "pia.signed") {
+    if (isa<UnitAttr>(attr.getValue())) return success();
+    return op->emitError() << "'pia.signed' on argument " << argIndex
+                           << " must be a unit attribute";
+  }
   if (attr.getName() != getModifiersAttrName())
     return op->emitError() << "unknown pia argument attribute '"
                            << attr.getName() << "'";

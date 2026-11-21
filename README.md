@@ -31,7 +31,9 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//tests/dialect:dialect_tests` | Dialect round-trip, folding and verifier tests |
 | `//tests/irgen:irgen_tests` | `piac --emit=mlir` tests checked with FileCheck |
 | `//tests/verify:verify_tests` | `piac --verify` reports checked with FileCheck |
-| `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--dump-ast` prints the syntax tree |
+| `//tests/codegen:codegen_tests` | `piac --emit=core` and `--emit=llvm` checked with FileCheck |
+| `//tests/codegen:saturate_test` | Compiled Pia linked with a C harness and compared with C reference code (arm64 macOS only) |
+| `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--emit=obj -o f.o` compiles for Apple Silicon ([docs/codegen.md](docs/codegen.md)), `--dump-ast` prints the syntax tree |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |
 
