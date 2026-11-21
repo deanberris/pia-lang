@@ -61,7 +61,9 @@ let uv_fs_read (req_result : isize) : i32 = req_result
 
 ```console
 $ piac --verify uv.pia
-...
+uv.pia:1:45: failed: the value fits in i32
+  counterexample: req_result = 1946436263233978368, value = 1946436263233978368
+0 proved, 1 failed, 0 skipped
 ```
 
 That is the first narrowing, the one C never checks, refused with a
@@ -76,7 +78,9 @@ let bytes_read (rc : i32) : usize = rc
 
 ```console
 $ piac --verify cast.pia
-...
+cast.pia:1:37: failed: the value fits in usize
+  counterexample: rc = -2147483648, value = -2147483648
+0 proved, 1 failed, 0 skipped
 ```
 
 The counterexample is the crash: a negative `int`, which no `usize` can
