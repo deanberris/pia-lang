@@ -113,11 +113,9 @@ Both calls fail: the inner one when `x` is 255, and the outer one when `x` is 25
 
 Codegen runs only when no goal has failed. It erases every contract and everything only contracts used, such as quantifiers and `old`. A proved index needs no bounds check and a proved addition needs no overflow check, so the machine code has none. Proved facts are also what lets LLVM vectorise loops safely.
 
-Skipped goals are not failures, so `piac` compiles the program, but it warns that they were not proved. Today that means goals inside loops; see [Status](status.md).
+A skipped goal is not proved either, so `piac` refuses it too, and `piac --verify` fails, unless `--allow-unproved` accepts that case. Today that means a `while` loop or a recursive call with no `decreases` measure; see [Status](status.md).
 
 ## Where it goes next
 
-- **Loops.** The verifier will cut each loop at its invariant: prove it on entry and after each iteration, assume it at the head, and forget only what the loop assigns. Then the goals inside loops will be proved, and the warning goes away.
 - **Presburger arithmetic for affine goals.** Subscripts such as `xs.[2*i + 1]`, aliasing between buffers and loop-carried dependence are linear integer problems. MLIR's Presburger library will decide them between intervals and Z3 ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
-- **Termination.** `decreases` measures will be proved.
 - **Modules and proof certificates.** Each compiled module will carry a certificate naming the hashes of the interfaces it was proved against, and the linker will refuse a stale one ([ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md)).

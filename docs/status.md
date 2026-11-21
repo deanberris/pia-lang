@@ -18,8 +18,8 @@ Pia is an experimental language under active development. The compiler works end
 
 ## Known limitations
 
-- **Goals inside loops are not proved yet.** They are reported as `skipped`, and `piac` warns and compiles anyway. After a loop, the values it assigned are unknown to the verifier, so goals after the loop that depend on what it did can fail.
-- **Termination is not checked.** `decreases` clauses are parsed and reported as skipped.
+- **Loops need invariants.** After a loop, only its invariant is known, so a goal after the loop that depends on what it did needs an invariant that says so.
+- **Termination is checked for loops and direct recursion only.** A `while` loop or a recursive call without `decreases` is a skipped goal, which `piac` refuses unless `--allow-unproved` accepts it. Mutual recursion is not checked.
 - **Calls inside contracts** are unknown values, so a contract cannot rely on what another function computes.
 - **Counterexamples do not show array contents** yet, only lengths and scalar values.
 - **Not compiled yet:** function values and lambdas outside metaprograms, variants, `match`, `dyn`, floats, `vec<T, k>`, slicing `xs.[a .. b]`, refinement types and `where`, generics and concepts, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
@@ -40,7 +40,7 @@ The plan is a sequence of milestones, each a GitHub issue, building towards the 
 | [M13](https://github.com/deanberris/pia-lang/issues/14) | PNG and GIF decoding and encoding, written in Pia | |
 | [M14](https://github.com/deanberris/pia-lang/issues/15) | The stream delineation demo | |
 
-Alongside these, the verifier will learn to cut loops at their invariants and to prove termination, and a Presburger stage will decide affine goals such as aliasing and loop-carried dependence ([ADR 0020](adr/0020-presburger-for-affine-goals.md)). After a 0.1 release, Pia will be offered to [Compiler Explorer](https://github.com/deanberris/pia-lang/issues/30).
+Alongside these, a Presburger stage will decide affine goals such as aliasing and loop-carried dependence ([ADR 0020](adr/0020-presburger-for-affine-goals.md)). After a 0.1 release, Pia will be offered to [Compiler Explorer](https://github.com/deanberris/pia-lang/issues/30).
 
 ## Following along
 
