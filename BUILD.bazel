@@ -1,1 +1,3 @@
 # Pia: see README.md and docs/architecture.md.
+
+exports_files(["README.md"])
