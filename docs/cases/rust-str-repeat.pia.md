@@ -65,7 +65,7 @@ The capacity calculation, written as plainly as Rust wrote it:
 <!-- example: capacity.pia -->
 <!-- expect: fail -->
 ```ocaml
-let capacity (len : usize) (n : usize) : usize = len * n
+let capacity (size : usize) (n : usize) : usize = size * n
 ```
 
 ```console
@@ -87,9 +87,9 @@ it down as one:
 <!-- example: capacity_wrap.pia -->
 <!-- expect: fail -->
 ```ocaml
-let capacity (len : usize) (n : usize) : usize @overflow(wrap)
-  ensures result = len * n
-= len * n
+let capacity (size : usize) (n : usize) : usize @overflow(wrap)
+  ensures result = size * n
+= size * n
 ```
 
 ```console
@@ -97,7 +97,7 @@ $ piac --verify capacity_wrap.pia
 ...
 ```
 
-Arithmetic in a contract is exact, so `len * n` in the postcondition is
+Arithmetic in a contract is exact, so `size * n` in the postcondition is
 the true product, and the wrapped result is not equal to it. The comment
 the unsafe code relied on becomes a goal, and the goal fails. Defined
 behaviour is not correct behaviour.
@@ -119,13 +119,13 @@ true one:
 ```pia
 let capacity = type { ok : bool; bytes : usize }
 
-let checked_capacity (len : usize) (n : usize) : capacity
-  ensures result.ok = (len * n <= 18446744073709551615)
-  ensures result.ok ==> result.bytes = len * n
+let checked_capacity (size : usize) (n : usize) : capacity
+  ensures result.ok = (size * n <= 18446744073709551615)
+  ensures result.ok ==> result.bytes = size * n
 =
   if n = 0 then { ok = true; bytes = 0 }
-  else if len > 18446744073709551615 / n then { ok = false; bytes = 0 }
-  else { ok = true; bytes = len * n }
+  else if size > 18446744073709551615 / n then { ok = false; bytes = 0 }
+  else { ok = true; bytes = size * n }
 ```
 
 Every goal on this page is proved:
@@ -135,7 +135,7 @@ $ piac --verify rust-str-repeat.pia.md
 ...
 ```
 
-The division is the usual trick: `len * n` fits exactly when `len` is at
+The division is the usual trick: `size * n` fits exactly when `size` is at
 most the largest `usize` divided by `n`. The verifier proves that this
 test is equivalent to the true product fitting, which is the property the
 Rust code needed and never stated.
