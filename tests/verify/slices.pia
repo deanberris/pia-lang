@@ -48,3 +48,34 @@ let checked_div (a : u32) (b : u32) : u32
 = if b = 0 then abort () else a / b
 
 let reachable (a : u32) : u32 = if a > 10 then abort () else a
+
+(* Expected report, in order.
+// CHECK: slices.pia:9:11: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:9:26: proved: the index is within bounds [smt]
+// CHECK: slices.pia:8:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:12:44: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:12:59: failed: the index is within bounds
+// CHECK-NEXT: counterexample: index = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: slices.pia:15:55: failed: the slice is within bounds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, n = {{-?[0-9]+}}, start = {{-?[0-9]+}}, end = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: slices.pia:20:8: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:27:5: proved: the loop invariant holds on entry [smt]
+// CHECK: slices.pia:28:6: proved: the index is within bounds [smt]
+// CHECK: slices.pia:27:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: slices.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:33:9: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:38:11: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:38:34: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:38:48: proved: the index is within bounds [smt]
+// CHECK: slices.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:43:8: proved: the slice is within bounds [smt]
+// CHECK: slices.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: slices.pia:48:17: proved: 'abort' is never reached [smt]
+// CHECK: slices.pia:48:33: proved: the divisor is not zero [smt]
+// CHECK: slices.pia:48:33: proved: '/' does not overflow u32 [intervals]
+// CHECK: slices.pia:50:48: failed: 'abort' is never reached
+// CHECK-NEXT: counterexample: a = {{-?[0-9]+}}
+// CHECK: 21 proved, 3 failed, 0 skipped
+*)
