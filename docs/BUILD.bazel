@@ -6,6 +6,7 @@ exports_files([
     "cases/rust-vecdeque.pia.md",
     "cases/heartbleed.pia.md",
     "cases/index.md",
+    "cases/libwebp.pia.md",
     "demo.md",
     "design.md",
     "getting-started.md",

@@ -43,6 +43,7 @@ CASES = [
     "//docs:cases/crowdstrike.pia.md",
     "//docs:cases/rust-str-repeat.pia.md",
     "//docs:cases/rust-vecdeque.pia.md",
+    "//docs:cases/libwebp.pia.md",
 ]
 
 py_test(
