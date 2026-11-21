@@ -107,3 +107,4 @@ nav:
       - adr/0023-minimal-core-self-hosted-stdlib.md
       - adr/0024-published-proof-certificates.md
       - adr/0027-coroutines-and-race-freedom.md
+      - adr/0029-comments-as-syntax-and-literate-pia.md

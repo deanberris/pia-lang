@@ -2,7 +2,7 @@
 
 This tour covers the language as `piac` implements it today. Every example on this page is a complete program, and the test suite proves each one with `piac --verify`. The [last section](#designed-but-not-built-yet) shows the parts of the language that are designed but not built yet, and those examples are marked as such.
 
-Pia's syntax is close to OCaml. Comments are `(* ... *)`.
+Pia's syntax is close to OCaml. Comments are `(* ... *)`, which nest, and `\` comments to the end of a line. `(** ... *)` is a doc comment. The compiler keeps every comment, so metaprograms and your editor can read them ([Comments and literate programs](#comments-and-literate-programs)).
 
 ## Bindings and functions
 
@@ -269,6 +269,41 @@ let wide = type { v : byte; w : u8 } @derive(eq)
 ```
 
 Quotes are hygienic: names a quote binds are renamed so they cannot capture yours, and free names in a quote refer to where the metaprogram is defined. [Metaprograms](meta.md) describes the interpreter, its builtins and the expansion loop.
+
+## Comments and literate programs
+
+Comments are part of the program. The compiler attaches each one to the code it describes, and a doc comment, `(** ... *)`, is the documentation that hovering over a name shows in your editor:
+
+```ocaml
+(** The number of elements in one SIMD tile. *)
+let tile : u32 = 16  \ a NEON register holds 16 bytes
+
+\ Two `\` lines in a row are one comment.
+\ Neither is a doc comment.
+let tiles (n : u32) : u32
+  requires n <= 4096
+= (n + 15) / 16
+```
+
+A metaprogram sees the comments too. `listing ()` gives it the program's items, and `doc x` an item's documentation, so a project can insist on documenting everything:
+
+<!-- example: documented.pia -->
+```ocaml
+(** Fails unless every top-level function has a doc comment. *)
+let meta require_docs () : item =
+  let check (item : expr) : unit =
+    if kind item = "LetItem" && doc item = "" then
+      fail (concat (name item) " has no doc comment")
+    else () in
+  fold (let (acc) (i) => check i) () (listing ())
+
+(** Adds one, saturating at 255. *)
+let bump (x : u8) : u8 = x +| 1
+
+require_docs ()
+```
+
+A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` blocks are the code. The prose before a block is the documentation of its first item, so the page you read and the program you prove are the same file. [Metaprograms](meta.md#comments-and-literate-programs) lists the builtins, and [ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md) the rules.
 
 ## Designed but not built yet
 

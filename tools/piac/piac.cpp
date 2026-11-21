@@ -18,6 +18,10 @@
 //   piac --dump-tokens file.pia     print the token stream
 //   piac --check file.pia           parse and report errors only
 //   piac --fragment=contracts ...   parse a file of contract clauses
+//   piac --comments --dump-ast ...  also print comment nodes (ADR 0029);
+//                                   works with --dump-expanded too
+//   piac --literate file.pia.md     read Markdown with code in ```pia blocks;
+//                                   implied by a .pia.md file name
 //
 // Exit status: 0 on success, 1 on an error in the program or an obligation
 // that does not hold, 2 on a usage error.
@@ -54,6 +58,7 @@ int usage() {
   std::cerr << "usage: piac (--verify | --emit=mlir | --dump-ast | "
                "--dump-expanded | --dump-tokens | --check) "
                "[--fragment=contracts] [--meta-cycles=N]\n"
+               "             [--literate] [--comments]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -218,6 +223,7 @@ int main(int argc, char **argv) {
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
   bool contracts = false, verify = false, dumpSmt = false;
+  bool literate = false, showComments = false;
   pia::meta::Options meta;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
@@ -250,6 +256,10 @@ int main(int argc, char **argv) {
       verify = dumpSmt = true;
     else if (arg == "--fragment=contracts")
       contracts = true;
+    else if (arg == "--literate")
+      literate = true;
+    else if (arg == "--comments")
+      showComments = true;
     else if (arg.rfind("--meta-cycles=", 0) == 0) {
       char *end = nullptr;
       long n = std::strtol(arg.c_str() + 14, &end, 10);
@@ -264,6 +274,10 @@ int main(int argc, char **argv) {
   if (verify && mode.empty()) mode = "--verify";
   if (verify && mode != "--verify" && mode != "--emit=mlir") return usage();
   if (mode.empty() || file.empty()) return usage();
+  if (pia::syntax::isLiterateFileName(file)) literate = true;
+  if (showComments && mode != "--dump-ast" && mode != "--dump-expanded")
+    return usage();
+  if (literate && contracts) return usage();
   bool codegen = mode == "--emit=core" || mode == "--emit=llvm" ||
                  mode == "--emit=asm" || mode == "--emit=obj";
   if (codegen && verify) return usage();
@@ -290,7 +304,10 @@ int main(int argc, char **argv) {
 
   pia::syntax::Diagnostics diags;
   if (mode == "--dump-tokens") {
-    for (const pia::syntax::Token &t : pia::syntax::tokenize(source, diags)) {
+    pia::syntax::LexOptions lex;
+    lex.literate = literate;
+    for (const pia::syntax::Token &t :
+         pia::syntax::tokenize(source, diags, lex)) {
       std::cout << t.loc.line << ":" << t.loc.column << " "
                 << pia::syntax::tokenKindName(t.kind);
       if (!t.text.empty()) std::cout << " " << t.text;
@@ -299,16 +316,16 @@ int main(int argc, char **argv) {
   } else {
     pia::syntax::NodePtr tree =
         contracts ? pia::syntax::parseContractFragment(source, diags)
-                  : pia::syntax::parseProgram(source, diags);
+                  : pia::syntax::parseProgram(source, diags, literate);
     if (!diags.hasErrors() && mode == "--dump-ast")
-      pia::syntax::dump(std::cout, *tree);
+      pia::syntax::dump(std::cout, *tree, showComments);
     // Everything past the syntax tree sees the program after its
     // metaprograms have run (docs/meta.md).
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check")
       pia::meta::expand(*tree, diags, meta);
     if (!diags.hasErrors() && mode == "--dump-expanded")
-      pia::syntax::dump(std::cout, *tree);
+      pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR
     if (!diags.hasErrors() &&
         (mode == "--emit=mlir" || mode == "--verify" || codegen)) {

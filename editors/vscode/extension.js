@@ -30,6 +30,10 @@ function verifySettings() {
   };
 }
 
+function isPia(document) {
+  return document.languageId === 'pia' || document.fileName.endsWith('.pia.md');
+}
+
 async function start(context) {
   const { command, args } = serverCommand();
   const executable = { command, args, transport: TransportKind.stdio };
@@ -38,7 +42,12 @@ async function start(context) {
     'Pia',
     { run: executable, debug: executable },
     {
-      documentSelector: [{ language: 'pia' }],
+      // Literate `.pia.md` files are Markdown with code in ```pia blocks
+      // (ADR 0029); the server reads them as such.
+      documentSelector: [
+        { language: 'pia' },
+        { language: 'markdown', pattern: '**/*.pia.md' },
+      ],
       initializationOptions: { verify: verifySettings() },
       synchronize: { configurationSection: 'pia' },
     });
@@ -55,7 +64,7 @@ async function activate(context) {
   context.subscriptions.push(
     vscode.commands.registerCommand('pia.verify', () => {
       const editor = vscode.window.activeTextEditor;
-      if (!client || !editor || editor.document.languageId !== 'pia') return;
+      if (!client || !editor || !isPia(editor.document)) return;
       // The language client registers the server's own command.
       return vscode.commands.executeCommand(
         'pia.server.verify', editor.document.uri.toString());

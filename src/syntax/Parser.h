@@ -43,12 +43,16 @@ void collectOperators(const Node &program, OperatorTable &table);
 // reports every broken item. Check `diags.hasErrors()` before using the tree.
 // Binary operators take their fixity from `operators`; one missing from it
 // gets a level from its first character, as in OCaml (docs/grammar.md).
+// Every comment is kept, attached to the node it describes (ADR 0029). With
+// `literate`, the source is a `.pia.md` file: Markdown prose, with code in
+// fenced `pia` blocks.
 NodePtr parseProgram(std::string_view source, Diagnostics &diags,
-                     const OperatorTable &operators);
+                     const OperatorTable &operators, bool literate = false);
 
 // The same, with the prelude's operators and those the program declares:
 // when it declares any, it is parsed again with them.
-NodePtr parseProgram(std::string_view source, Diagnostics &diags);
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     bool literate = false);
 
 // Parses a sequence of contract clauses (`requires ...`, `ensures ...`) on
 // their own, as in a design-doc fragment. Returns a Contracts node.
