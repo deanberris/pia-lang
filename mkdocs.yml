@@ -104,3 +104,4 @@ nav:
       - adr/0022-metaprogram-hygiene.md
       - adr/0023-minimal-core-self-hosted-stdlib.md
       - adr/0024-published-proof-certificates.md
+      - adr/0030-published-object-layouts.md
