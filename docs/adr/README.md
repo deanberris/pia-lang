@@ -38,3 +38,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0032](0032-parallel-sliced-cached-proving.md) | Proofs run in parallel, one goal per solver, sliced, cached and selectable | Accepted |
 | [0033](0033-module-initialisation-and-registries.md) | Module initialisation: registries, proved `@init` hooks, and opt-in dynamic registration | Accepted |
 | [0034](0034-concepts-and-overload-resolution.md) | Concepts are checked signatures with laws; overloads are chosen by type, by constraint entailment and by proved preconditions | Proposed |
+| [0035](0035-substitution-failure-and-total-constraints.md) | Substitution failure removes an overload candidate; constraint metaprograms are proved to terminate | Proposed |
