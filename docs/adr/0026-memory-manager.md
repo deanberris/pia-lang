@@ -23,6 +23,8 @@ Dean: the runtime needs a real memory manager. Naive `malloc` and `free` aren't 
 
 The design is accepted when `Pia.Mem.Vec`, a growable array over explicit heap allocation, is implemented and proved end to end: indices in bounds, no uninitialised reads, no overflow in capacity arithmetic, growth that gives enough memory or fails leaving the vec unchanged, no double free or use after free, no leak (RAII on every exit), frees into the right allocator, and no vec outliving its allocator. The sketch is in [docs/stdlib.md](../stdlib.md#the-litmus-test-a-proved-growable-array).
 
+The second acceptance test is free-list reuse ([sketch](../stdlib.md#the-second-test-free-list-reuse)): a freed block handed out again provably aliases no live object, is reachable by no stale owner or borrow, and comes back `out`, so the old contents cannot be read. Free lists are side metadata (slot-index stacks per span), not pointers threaded through freed blocks, so `Pia.Mem` needs no `addr` and stays out of the trusted base.
+
 ## Consequences
 
 - Proved code cannot leak, double free or use after free, with no run-time cost and no pauses.

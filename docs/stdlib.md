@@ -312,6 +312,36 @@ What has to be proved, and which part of the design proves it:
 
 The sketch needs, from the core: generics, record invariants (`where` on a record type), spec functions with `seq`, slicing, `?`, `Drop`, `moved` fields with `replace`, and the `Pia.Mem` allocators. That makes it a good test of all of them together.
 
+#### The second test: free-list reuse
+
+A memory manager is only useful if freed memory comes back. So the second acceptance test is reuse: a block that was freed is handed out again, and the proof shows the new owner cannot alias any live object, cannot be reached through a stale reference, and cannot read the old owner's data.
+
+```ocaml
+let reuse (heap : borrowed general) : result unit OutOfMemory =
+  let nodes = Pool.create heap node 1024? in   (* a pool<node>, dropped at scope end *)
+  let a = Pool.take nodes? in                  (* a box<node>: one slot, owned *)
+  a.value <- 1;
+  let r = a.value in                           (* a copy, not a reference *)
+  Pool.give nodes a;                           (* a is moved: dead from here *)
+  let b = Pool.take nodes? in                  (* may be a's old slot *)
+  b.value <- 2;                                (* b is out: written before it is read *)
+  assert r = 1;                                (* the copy is unaffected *)
+  Pool.give nodes b;
+  Ok ()
+```
+
+| Property | Proved by |
+| --- | --- |
+| A reused block aliases no live object | the allocator's invariant that free and live blocks are disjoint: `give` moves the block from live to free, `take` moves it back, and `fresh` in `alloc`'s postcondition |
+| No stale owner | `give` and `free` take the block `moved`, so the old name is dead (`a` above is a type error after `give`) |
+| No stale borrow | the borrow rule: a block cannot be moved while something borrowed from it is live, so every borrow of `a` ends before `give` |
+| No stale raw address | `addr` exists only in `@trusted` modules. In foreign code, ASan's quarantine delays reuse so a dangling C pointer is reported ([sanitizers](#sanitizers-compiler-rt)) |
+| The new owner cannot read the old data | the reused block comes back `out`, so its contents are unknown to the verifier and must be written before they are read. `alloc_zeroed` is there for code that wants zeroes |
+| Each block is in exactly one place | the free list, the live set, a per-task cache and the central list partition every span, and each move between them keeps the partition |
+| Reuse cannot cross allocators | the ghost `owns` fact, so a block freed into one pool or size class is only handed out by it |
+
+*Free lists are side metadata, not pointers in freed blocks.* TCMalloc threads its free lists through the freed blocks themselves. Doing that in Pia would mean writing through `addr`, and `Pia.Mem` would become trusted. Instead, each span keeps its free list as a stack of slot indices (`[u16]`, two bytes per slot) beside the blocks. Pushing and popping it are ordinary bounds-checked array operations, so the reuse invariants above are proved, and `Pia.Mem` stays out of the trusted base. Moving batches between a per-task cache and the central list happens under the central lists' leaf lock, so there is no lock-free ABA problem to prove.
+
 ### 8. POSIX: trusted declarations and typed wrappers
 
 The core calls POSIX directly. On macOS that means libSystem, not raw system call numbers: Apple changes the syscall ABI between releases and supports only calls through libSystem, which is why Go moved to libSystem on macOS in Go 1.12. So a Pia program links against libSystem like any C program, and nothing between the two is written in C.
