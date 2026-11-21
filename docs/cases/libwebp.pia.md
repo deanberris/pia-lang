@@ -100,10 +100,19 @@ let build (table : out mutable [u16]) (sizes : [u16]) (complete : bool) : usize 
 ```console
 $ piac --verify tables.pia
 ...
+tables.pia:7:25: failed: the index is within bounds
+  counterexample: len table = 1, len sizes = 1, complete = false, index = 1, length = 1
+...
+tables.pia:4:5: failed: the loop invariant holds after each iteration
+  counterexample: len table = 65546, len sizes = 1, complete = false
+2 proved, 4 failed, 0 skipped
 ```
 
-Nothing in the builder connects the sizes the input asks for to the
-space that was allocated. The worst-case analysis made that connection,
+The smallest counterexample is the whole bug: a one-entry buffer and an
+input asking for a table bigger than that, so the first write past the
+end happens at index 1. (The other two failures are the running offset
+overflowing on absurdly large inputs.) Nothing in the builder connects
+the sizes the input asks for to the space that was allocated. The worst-case analysis made that connection,
 for valid inputs, outside the program, where no compiler could check it,
 and the validity check came too late to matter.
 
@@ -139,6 +148,9 @@ Every goal on this page is proved:
 ```console
 $ piac --verify libwebp.pia.md
 ...
+libwebp.pia.md:135:5: proved: the loop invariant holds after each iteration [smt]
+libwebp.pia.md:130:3: proved: the postcondition holds [smt]
+8 proved, 0 failed, 0 skipped
 ```
 
 In Pia, a precomputed worst case can still be used, but only as a
