@@ -1,6 +1,6 @@
 # The standard library and its core
 
-Status: proposal, 2026-11-21 ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)). Nothing here is implemented yet. Code blocks show designed syntax.
+Status: accepted design, 2026-11-21 ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)). Nothing here is implemented yet. Code blocks show designed syntax.
 
 This page answers one question: **what is the smallest set of things the compiler has to provide, so that everything else in the standard library can be written in Pia and proved like any other Pia code?**
 
