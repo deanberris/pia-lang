@@ -26,3 +26,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0020](0020-presburger-for-affine-goals.md) | Decide affine aliasing and dependence goals with MLIR's Presburger library | Accepted |
 | [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Proposed |
 | [0022](0022-metaprogram-hygiene.md) | Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL | Accepted |
+| [0023](0023-minimal-core-self-hosted-stdlib.md) | A minimal core, with the standard library written and proved in Pia | Proposed |
