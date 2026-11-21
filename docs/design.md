@@ -274,7 +274,7 @@ import Pixels.PixelOps                (* only PixelOps is visible, so filter.pia
 
 - An interface is a set of exported symbols, each with its type, interface and pre- and postconditions. Each interface compiles on its own to a small artifact. Every module that imports it can then type check, verify and compile at once, in parallel.
 - Verification is assume-guarantee. A module proves its body meets its exported contracts while assuming the contracts of the interfaces it imports. No proof ever looks inside another module.
-- Each compiled module carries a proof certificate that records a hash of every interface it was proved against. The linker refuses to link when a hash does not match, so a stale proof cannot reach the binary.
+- Each compiled module carries a proof certificate that records a hash of every interface it was proved against. The linker refuses to link when a hash does not match, so a stale proof cannot reach the binary. Shared libraries publish their interfaces and certificates in the binary, and dyld and the Pia runtime refuse a library that does not provide the hashes a program was proved against ([abi.md](abi.md), [ADR 0024](adr/0024-published-proof-certificates.md)).
 - An interface may export a fixed value as a symbol. Importers see its name, type and refinement, and prove against those, so they still build in parallel. The value itself is resolved later, when cross-module constant folding runs. Changing an exported value invalidates the certificates that depend on it and forces dependents to recompile. Inlining works the same way through `let inline` and `const` symbols.
 
 ## Compilation pipeline

@@ -32,7 +32,7 @@ flowchart TD
 | Verifier | Turns contracts and implicit obligations (bounds, overflow, `out` fully written, exhaustiveness) into proofs. See below | MLIR dataflow framework, `smt` dialect, Z3 |
 | Optimiser | Uses proved facts to drop checks, erase `dyn` tags, fold constants and vectorise | MLIR canonicalisation and custom passes |
 | Codegen | Lowers to standard dialects and then LLVM for arm64 | Upstream MLIR conversions |
-| Interfaces and certificates | Emits `.piai` interface artifacts, records interface hashes in each object, refuses mismatched links | Small C++ library plus a Bazel rule |
+| Interfaces and certificates | Emits `.piai` interface artifacts, records interface hashes in each object, refuses mismatched links. Shared libraries embed interfaces, certificates and witness symbols checked at load ([abi.md](abi.md)) | Small C++ library, `pia-cert` tool, runtime check, Bazel rules |
 | Runtime | Concurrency (`spread` loops, collectives, later task graphs and futures) | C++ runtime library linked into Pia programs |
 | Standard library | Prelude (operators, `vec`, core concepts), `Image.Png`, `Image.Gif` | Written in Pia once the compiler can build it |
 
