@@ -663,6 +663,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
   std::map<std::string, std::vector<size_t>> byName;
   for (size_t i = 0; i < all.size(); ++i) byName[all[i].name].push_back(i);
   std::vector<bool> drop(all.size(), false);
+  // Reported in source order once every set is checked.
+  std::vector<std::pair<syntax::SourceLoc, std::string>> errors;
+  auto error = [&](syntax::SourceLoc at, std::string message) {
+    errors.emplace_back(at, std::move(message));
+  };
   for (auto &[name, group] : byName) {
     if (group.size() == 1) continue;
     const FuncSig *generic = nullptr;
@@ -673,7 +678,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       for (const syntax::NodePtr &p : item.kids[0]->kids)
         if (p->kind != NodeKind::ParamUnit) valueLike = false;
       if (valueLike && item.kids[0]->kids.empty()) {
-        diags.error(item.loc, "'" + name + "' is already defined; a "
+        error(item.loc, "'" + name + "' is already defined; a "
                               "definition with no parameters cannot be "
                               "overloaded");
         drop[group[k]] = true;
@@ -681,7 +686,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       }
       if (sig.isGeneric()) {
         if (generic) {
-          diags.error(item.loc, "'" + name + "' already has a generic "
+          error(item.loc, "'" + name + "' already has a generic "
                                 "overload; choosing between two needs "
                                 "concept-based ranking, which is not "
                                 "supported yet");
@@ -699,7 +704,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         for (size_t i = 0; i < sig.params.size(); ++i)
           same = same && sig.params[i].type == other.params[i].type;
         if (same) {
-          diags.error(item.loc, "'" + name + "' is already defined with "
+          error(item.loc, "'" + name + "' is already defined with "
                                 "these parameter types; overloads told "
                                 "apart by their preconditions are not "
                                 "supported yet");
@@ -715,6 +720,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     }
     for (size_t k : group) all[k].overloaded = true;
   }
+  std::stable_sort(errors.begin(), errors.end(), [](auto &a, auto &b) {
+    return std::make_pair(a.first.line, a.first.column) <
+           std::make_pair(b.first.line, b.first.column);
+  });
+  for (auto &[at, message] : errors) diags.error(at, message);
   std::map<std::string, FuncSig> sigs;
   for (size_t i = 0; i < all.size(); ++i)
     if (!drop[i]) sigs.emplace(all[i].name, std::move(all[i]));

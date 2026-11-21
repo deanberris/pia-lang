@@ -47,5 +47,16 @@ let general (b : bool) : u8
 = describe b
 
 (* Expected report, in order.
-// CHECK: placeholder to dump the report
+// CHECK: overloads.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:25:10: proved: '+' does not overflow usize [smt]
+// CHECK: overloads.pia:25:19: proved: '+' does not overflow usize [smt]
+// CHECK: overloads.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: overloads.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: 11 proved, 0 failed, 0 skipped
 *)
