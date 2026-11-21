@@ -34,6 +34,22 @@ let ok (a : u8) : u8 = a
 let broken (a : u8) : u8 = (a +
 """
 
+SHADOW = """\
+let helper (x : u8) : u8 = x
+
+let inner (x : u8) : u8 = let x = 1 in x + x
+
+let taken (x : u8) (x' : u8) : u8 = let x = x' in x
+"""
+
+SHADOW_FIXED = """\
+let helper (x : u8) : u8 = x
+
+let inner (x : u8) : u8 = let x' = 1 in x' + x'
+
+let taken (x : u8) (x' : u8) : u8 = let x = x' in x
+"""
+
 FAILING = """\
 let bad (a : u8) (b : u8) : u8 = a + b
 
@@ -239,6 +255,93 @@ class LspTest(unittest.TestCase):
         start = text.index("x :")
         start_units = len(text[:start].encode("utf-16-le")) // 2
         self.assertEqual(loc["range"]["start"]["character"], start_units)
+
+    def apply(self, text, edits):
+        """Applies LSP text edits to text."""
+        lines = text.split("\n")
+        def off(p):
+            return sum(len(l) + 1 for l in lines[:p["line"]]) + p["character"]
+        for e in sorted(edits, key=lambda e: off(e["range"]["start"]),
+                        reverse=True):
+            b, en = off(e["range"]["start"]), off(e["range"]["end"])
+            text = text[:b] + e["newText"] + text[en:]
+        return text
+
+    def test_references_and_rename(self):
+        uri = "file:///tmp/shadow.pia"
+        self.client.open(uri, SHADOW)
+        self.client.diagnostics(uri)
+        # The inner `x` of `inner`: its binder and both uses, not the
+        # parameter it shadows.
+        at = pos(SHADOW, "x + x")
+        refs = self.client.request("textDocument/references", {
+            "textDocument": {"uri": uri}, "position": at,
+            "context": {"includeDeclaration": True}})["result"]
+        starts = [r["range"]["start"] for r in refs]
+        self.assertEqual(starts, [pos(SHADOW, "x = 1"), pos(SHADOW, "x + x"),
+                                  pos(SHADOW, "x + x", delta=4)])
+        refs = self.client.request("textDocument/references", {
+            "textDocument": {"uri": uri}, "position": at,
+            "context": {"includeDeclaration": False}})["result"]
+        self.assertEqual(len(refs), 2)
+        prep = self.client.request("textDocument/prepareRename", {
+            "textDocument": {"uri": uri}, "position": at})["result"]
+        self.assertEqual(prep["start"], at)
+        edit = self.client.request("textDocument/rename", {
+            "textDocument": {"uri": uri}, "position": at,
+            "newName": "x'"})["result"]
+        self.assertEqual(self.apply(SHADOW, edit["changes"][uri]), SHADOW_FIXED)
+        bad = self.client.request("textDocument/rename", {
+            "textDocument": {"uri": uri}, "position": at, "newName": "let"})
+        self.assertIn("error", bad)
+
+    def test_shadowing_quick_fix(self):
+        uri = "file:///tmp/shadow.pia"
+        self.client.open(uri, SHADOW)
+        self.client.diagnostics(uri)
+        # The diagnostic IRGen reports, pointing at the `let` of `let x = 1`.
+        let_at = pos(SHADOW, "let x = 1")
+        diag = {"range": {"start": let_at, "end": let_at}, "severity": 1,
+                "source": "pia",
+                "message": "'x' shadows a local of the same name; Pia does "
+                           "not allow shadowing (ADR 0022), so rename it "
+                           "to x'"}
+        actions = self.client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri},
+            "range": {"start": let_at, "end": let_at},
+            "context": {"diagnostics": [diag]}})["result"]
+        self.assertEqual(len(actions), 1)
+        a = actions[0]
+        self.assertEqual(a["kind"], "quickfix")
+        self.assertEqual(a["title"], "Rename 'x' to 'x''")
+        self.assertEqual(self.apply(SHADOW, a["edit"]["changes"][uri]),
+                         SHADOW_FIXED)
+        # Other diagnostics get no action.
+        diag["message"] = "expected an expression"
+        actions = self.client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri},
+            "range": {"start": let_at, "end": let_at},
+            "context": {"diagnostics": [diag]}})["result"]
+        self.assertEqual(actions, [])
+
+    def test_shadowing_quick_fix_from_compiler(self):
+        if not self.verifier:
+            self.skipTest("pia-lsp was built without the verifier")
+        uri = "file:///tmp/shadow2.pia"
+        self.client.open(uri, SHADOW)
+        diags = self.client.diagnostics(
+            uri, lambda ds: any("shadows" in d["message"] for d in ds),
+            timeout=60)
+        diags = [d for d in diags if "rename it to" in d["message"]
+                 and d["range"]["start"]["line"] == 2]
+        if not diags:
+            self.skipTest("this compiler does not suggest a name yet")
+        actions = self.client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri}, "range": diags[0]["range"],
+            "context": {"diagnostics": diags[:1]}})["result"]
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(self.apply(SHADOW, actions[0]["edit"]["changes"][uri]),
+                         SHADOW_FIXED)
 
     def test_unknown_request(self):
         reply = self.client.request("textDocument/foldingRange", {

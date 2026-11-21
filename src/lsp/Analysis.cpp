@@ -243,6 +243,16 @@ class Resolver {
     return found_;
   }
 
+  // Every name in the program with the binding it resolves to.
+  static std::vector<std::pair<Range, Binding>> uses(std::string_view text,
+                                                     const Node &program) {
+    Resolver r(text, UINT32_MAX);
+    std::vector<std::pair<Range, Binding>> out;
+    r.uses_ = &out;
+    r.run(program);
+    return out;
+  }
+
   // Binds every top-level name, then the parameters of the item around
   // `target`, into `out`.
   static void visible(std::string_view text, const Node &program,
@@ -323,6 +333,15 @@ class Resolver {
     if (found_) return;
     uint32_t b = name.loc.offset;
     uint32_t e = b + static_cast<uint32_t>(name.text.size());
+    if (uses_) {
+      for (auto s = scopes_.rbegin(); s != scopes_.rend(); ++s)
+        for (auto it = s->rbegin(); it != s->rend(); ++it)
+          if (it->name == name.text) {
+            uses_->emplace_back(Range{b, e}, *it);
+            return;
+          }
+      return;
+    }
     if (target_ < b || target_ >= e) return;
     for (auto s = scopes_.rbegin(); s != scopes_.rend(); ++s)
       for (auto it = s->rbegin(); it != s->rend(); ++it)
@@ -468,6 +487,7 @@ class Resolver {
   uint32_t target_;
   std::vector<Scope> scopes_;
   std::optional<Binding> found_;
+  std::vector<std::pair<Range, Binding>> *uses_ = nullptr;
 };
 
 // ------------------------------------------------------------ symbols
@@ -629,6 +649,24 @@ std::optional<Binding> Analysis::resolve(uint32_t offset) const {
   Range tok = tokenAt(text_, offset);
   if (tok.begin == tok.end) return std::nullopt;
   return Resolver(text_, tok.begin).run(*tree_);
+}
+
+std::vector<Range> Analysis::references(uint32_t offset) const {
+  std::vector<Range> out;
+  std::optional<Binding> b = resolve(offset);
+  if (!b || b->nameRange.end == b->nameRange.begin) return out;
+  out.push_back(b->nameRange);
+  for (const auto &[use, binding] : Resolver::uses(text_, *tree_))
+    if (binding.nameRange.begin == b->nameRange.begin &&
+        binding.name == b->name)
+      out.push_back(use);
+  std::sort(out.begin(), out.end(), [](Range x, Range y) {
+    return x.begin < y.begin;
+  });
+  out.erase(std::unique(out.begin(), out.end(),
+                        [](Range x, Range y) { return x.begin == y.begin; }),
+            out.end());
+  return out;
 }
 
 std::vector<Binding> Analysis::completions(uint32_t offset) const {

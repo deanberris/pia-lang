@@ -111,6 +111,10 @@ class Analysis {
   // The binding of the name at `offset`, if it is a name and resolves.
   std::optional<Binding> resolve(uint32_t offset) const;
 
+  // The binding of the name at `offset` and every use that resolves to it,
+  // in order. Empty when the name does not resolve.
+  std::vector<Range> references(uint32_t offset) const;
+
   // Names worth offering at `offset`: the top-level definitions, and the
   // parameters of the item that contains `offset`.
   std::vector<Binding> completions(uint32_t offset) const;

@@ -215,6 +215,15 @@ class Server {
       return reply(id, documentSymbols(params));
     if (method == "textDocument/completion")
       return reply(id, completion(params));
+    if (method == "textDocument/codeAction")
+      return reply(id, codeActions(params));
+    if (method == "textDocument/references")
+      return reply(id, references(params));
+    if (method == "textDocument/documentHighlight")
+      return reply(id, highlights(params));
+    if (method == "textDocument/prepareRename")
+      return reply(id, prepareRename(params));
+    if (method == "textDocument/rename") return rename(params, id);
     if (method == "workspace/executeCommand")
       return reply(id, executeCommand(params));
     if (isRequest) sendError(id, -32601, "method not found: " + method);
@@ -233,6 +242,11 @@ class Server {
         {"definitionProvider", true},
         {"documentSymbolProvider", true},
         {"completionProvider", Json::Object{{"resolveProvider", false}}},
+        {"codeActionProvider",
+         Json::Object{{"codeActionKinds", Json::Array{"quickfix"}}}},
+        {"referencesProvider", true},
+        {"documentHighlightProvider", true},
+        {"renameProvider", Json::Object{{"prepareProvider", true}}},
         {"executeCommandProvider",
          Json::Object{{"commands", Json::Array{"pia.server.verify"}}}},
         {"experimental",
@@ -479,6 +493,130 @@ class Server {
           {"documentation", Json::Object{{"kind", "markdown"}, {"value", b.snippet}}}});
     }
     return Json::Object{{"isIncomplete", false}, {"items", std::move(items)}};
+  }
+
+  // ---------------------------------------------------------- renaming
+
+  // Edits that rename the name bound or used at `offset` to `to`, or none
+  // when it does not resolve.
+  Json::Array renameEdits(const Analysis &a, uint32_t offset,
+                          const std::string &to) {
+    Json::Array edits;
+    for (Range r : a.references(offset))
+      edits.push_back(Json::Object{{"range", range(a.index(), r)},
+                                   {"newText", to}});
+    return edits;
+  }
+
+  Json references(const Json &params) {
+    Document *doc = find(params);
+    if (!doc) return Json();
+    const Analysis &a = *doc->analysis;
+    std::vector<Range> refs = a.references(offsetOf(a.index(), params["position"]));
+    bool withDecl = params["context"]["includeDeclaration"].asBool(true);
+    Json::Array out;
+    std::optional<Binding> b = a.resolve(offsetOf(a.index(), params["position"]));
+    for (size_t i = 0; i < refs.size(); ++i) {
+      if (!withDecl && b && refs[i].begin == b->nameRange.begin) continue;
+      out.push_back(Json::Object{{"uri", doc->uri},
+                                 {"range", range(a.index(), refs[i])}});
+    }
+    return out;
+  }
+
+  Json highlights(const Json &params) {
+    Document *doc = find(params);
+    if (!doc) return Json();
+    const Analysis &a = *doc->analysis;
+    Json::Array out;
+    for (Range r : a.references(offsetOf(a.index(), params["position"])))
+      out.push_back(Json::Object{{"range", range(a.index(), r)}});
+    return out;
+  }
+
+  Json prepareRename(const Json &params) {
+    Document *doc = find(params);
+    if (!doc) return Json();
+    const Analysis &a = *doc->analysis;
+    uint32_t offset = offsetOf(a.index(), params["position"]);
+    if (a.references(offset).empty()) return Json();
+    return range(a.index(), tokenAt(a.text(), offset));
+  }
+
+  void rename(const Json &params, const Json &id) {
+    Document *doc = find(params);
+    const std::string &to = params["newName"].asString();
+    if (!doc) return reply(id, Json());
+    if (!isName(to))
+      return sendError(id, -32602, "'" + to + "' is not a Pia name");
+    const Analysis &a = *doc->analysis;
+    Json::Array edits = renameEdits(a, offsetOf(a.index(), params["position"]), to);
+    if (edits.empty()) return reply(id, Json());
+    reply(id, Json::Object{{"changes", Json::Object{{doc->uri, std::move(edits)}}}});
+  }
+
+  static bool isName(const std::string &s) {
+    if (s.empty()) return false;
+    auto start = [](char c) {
+      return std::isalpha(static_cast<unsigned char>(c)) || c == '_' ||
+             static_cast<unsigned char>(c) >= 0x80;
+    };
+    if (!start(s[0])) return false;
+    for (char c : s)
+      if (!start(c) && !std::isdigit(static_cast<unsigned char>(c)) && c != '\'')
+        return false;
+    for (std::string_view k : keywords())
+      if (s == k) return false;
+    return true;
+  }
+
+  // Quick fixes for the diagnostics the client sends back. A shadowing
+  // error (ADR 0022) ends "so rename it to <name>" and points at the
+  // binder, or at the `let` that binds it.
+  Json codeActions(const Json &params) {
+    Document *doc = find(params);
+    if (!doc) return Json();
+    const Analysis &a = *doc->analysis;
+    Json::Array actions;
+    for (const Json &d : params["context"]["diagnostics"].asArray()) {
+      const std::string &msg = d["message"].asString();
+      const std::string marker = "rename it to ";
+      size_t at = msg.rfind(marker);
+      if (msg.empty() || msg[0] != '\'' || at == std::string::npos) continue;
+      size_t close = msg.find('\'', 1);
+      if (close == std::string::npos) continue;
+      std::string from = msg.substr(1, close - 1);
+      std::string to = msg.substr(at + marker.size());
+      while (!to.empty() && (to.back() == '.' || std::isspace(static_cast<unsigned char>(to.back()))))
+        to.pop_back();
+      if (!isName(to)) continue;
+      // Find the binder: the name itself at the diagnostic, or the first
+      // occurrence of it on that line after the diagnostic.
+      uint32_t start = offsetOf(a.index(), d["range"]["start"]);
+      uint32_t lineEnd = start;
+      while (lineEnd < a.text().size() && a.text()[lineEnd] != '\n') ++lineEnd;
+      uint32_t binder = UINT32_MAX;
+      for (size_t pos = a.text().find(from, start);
+           pos != std::string::npos && pos < lineEnd;
+           pos = a.text().find(from, pos + 1)) {
+        Range tok = tokenAt(a.text(), static_cast<uint32_t>(pos));
+        if (tok.begin == pos && tok.end == pos + from.size()) {
+          binder = static_cast<uint32_t>(pos);
+          break;
+        }
+      }
+      if (binder == UINT32_MAX) continue;
+      Json::Array edits = renameEdits(a, binder, to);
+      if (edits.empty()) continue;
+      actions.push_back(Json::Object{
+          {"title", "Rename '" + from + "' to '" + to + "'"},
+          {"kind", "quickfix"},
+          {"isPreferred", true},
+          {"diagnostics", Json::Array{d}},
+          {"edit", Json::Object{{"changes",
+                                 Json::Object{{doc->uri, std::move(edits)}}}}}});
+    }
+    return actions;
   }
 
   std::istream &in_;
