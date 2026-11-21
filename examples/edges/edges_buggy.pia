@@ -1,0 +1,17 @@
+(* A buggy `mean_at` for the demo (docs/demo.md): its precondition leaves
+   room for the pixel below `m`, but not for the one below and to the
+   right, so `b + 1` can be past the end of the image. `piac --verify`
+   finds the input that breaks it, and `piac --emit=obj` refuses to
+   compile it.
+*)
+let mean_at (src : [u8]) (w : usize) (m : usize) : u8
+  requires w < m && m + w < len src
+=
+  let a = m - w in
+  let b = m + w in
+  let s : u16 =
+    src.[a - 1] + src.[a] + src.[a + 1]
+    + src.[m - 1] + src.[m] + src.[m + 1]
+    + src.[b - 1] + src.[b] + src.[b + 1]
+  in
+  s / 9

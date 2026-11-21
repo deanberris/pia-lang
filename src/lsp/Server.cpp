@@ -11,6 +11,7 @@
 #include <thread>
 
 #include "lsp/Analysis.h"
+#include "syntax/Lexer.h"
 
 namespace pia::lsp {
 
@@ -271,7 +272,8 @@ class Server {
     doc.uri = td["uri"].asString();
     doc.path = uriToPath(doc.uri);
     doc.version = static_cast<long>(td["version"].asNumber());
-    doc.analysis = std::make_unique<Analysis>(td["text"].asString());
+    doc.analysis = std::make_unique<Analysis>(
+        td["text"].asString(), syntax::isLiterateFileName(doc.uri));
     doc.proofVersion = -1;
     publish(doc);
     if (settings_.on != VerifyOn::Off) schedule(doc);
@@ -293,7 +295,8 @@ class Server {
       text = text.substr(0, b) + change["text"].asString() + text.substr(e);
     }
     doc->version = static_cast<long>(params["textDocument"]["version"].asNumber());
-    doc->analysis = std::make_unique<Analysis>(std::move(text));
+    doc->analysis = std::make_unique<Analysis>(
+        std::move(text), syntax::isLiterateFileName(doc->uri));
     publish(*doc);
     if (settings_.on == VerifyOn::Change) schedule(*doc);
   }

@@ -5,6 +5,7 @@
 #include "irgen/IRGen.h"
 #include "meta/Expand.h"
 #include "mlir/IR/MLIRContext.h"
+#include "syntax/Lexer.h"
 #include "syntax/Parser.h"
 #include "verify/Verifier.h"
 
@@ -28,7 +29,8 @@ ProofReport checkProofs(std::string_view source, const std::string &path,
                         unsigned timeoutMs) {
   ProofReport report;
   syntax::Diagnostics diags;
-  syntax::NodePtr tree = syntax::parseProgram(source, diags);
+  syntax::NodePtr tree = syntax::parseProgram(
+      source, diags, syntax::isLiterateFileName(path));
   if (diags.hasErrors()) return report;  // the front end reports these
 
   // Proofs are about the code after its metaprograms run (docs/meta.md).

@@ -1,4 +1,5 @@
 exports_files([
+    "demo.md",
     "design.md",
     "getting-started.md",
     "index.md",

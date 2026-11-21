@@ -218,6 +218,11 @@ class Lexer:
             if c == "(" and self.peek(1) == "*":
                 self.skip_comment()
                 continue
+            if c == "\\":
+                # A line comment runs to the end of the line (ADR 0029).
+                while self.peek() not in ("", "\n"):
+                    self.advance()
+                continue
 
             start, line = self.pos, self.line
             column = self.pos - self.line_start + 1

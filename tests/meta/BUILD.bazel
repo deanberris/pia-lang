@@ -4,6 +4,6 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # metaprograms produce, and `piac --verify` proves it.
 lit_tests(
     name = "meta_tests",
-    srcs = glob(["*.pia"]),
+    srcs = glob(["*.pia", "*.pia.md"]),
     tools = ["//tools/piac"],
 )
