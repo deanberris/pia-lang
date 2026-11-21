@@ -71,6 +71,7 @@ nav:
       - Language design: design.md
       - Grammar: grammar.md
       - Metaprograms: meta.md
+      - Shared libraries and certificates: abi.md
   - Compiler internals:
       - Architecture: architecture.md
       - IRGen: irgen.md
@@ -100,3 +101,4 @@ nav:
       - adr/0020-presburger-for-affine-goals.md
       - adr/0021-language-server.md
       - adr/0022-metaprogram-hygiene.md
+      - adr/0024-published-proof-certificates.md
