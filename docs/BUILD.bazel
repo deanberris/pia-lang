@@ -2,6 +2,7 @@ exports_files([
     "design.md",
     "getting-started.md",
     "index.md",
+    "repl.md",
     "status.md",
     "tour.md",
     "verification.md",

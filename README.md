@@ -86,6 +86,7 @@ The bounds goals inside the loop are proved first: `i < len dst` from the loop's
 - **Metaprogramming from day one.** Operators are not built in: `+` is a metaprogram in the prelude that expands to `add`. Derives such as `@derive(eq)` generate code that is then type checked and proved like code you wrote.
 - **Built on MLIR.** `piac` lowers Pia to its own MLIR dialects, proves the goals there, then compiles through LLVM to arm64 for Apple Silicon, with NEON vectorisation.
 - **Editor support.** A language server shows failed proofs and their counterexamples as you type, and a VS Code extension uses it.
+- **A verified REPL.** `pia repl` builds up an environment one definition at a time, like a Lisp REPL, proving each one before it joins and running expressions with a JIT. `pia repl --json` and the MCP server `pia mcp` let scripts and agents use it ([The REPL](docs/repl.md)).
 
 ## Status
 
@@ -96,7 +97,7 @@ Pia is early and experimental. The compiler proves and compiles straight-line co
 Pia builds with [Bazel](https://bazel.build) through [Bazelisk](https://github.com/bazelbuild/bazelisk). The first build compiles the parts of LLVM and MLIR that Pia uses, so it takes a while.
 
 ```sh
-bazel build //tools/piac //tools/pia-lsp
+bazel build //tools/piac //tools/pia-lsp //tools/pia
 bazel test //...
 ```
 
@@ -108,6 +109,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //
 
 - [Language tour](docs/tour.md): the language as it is implemented today, with every example checked by the test suite
 - [How verification works](docs/verification.md): goals, intervals, Z3 and counterexamples
+- [The REPL](docs/repl.md): `pia repl`, its JSON mode and the MCP server
 - [Language design](docs/design.md): the whole language as designed, including the parts still to come
 - [Compiler architecture](docs/architecture.md), [grammar](docs/grammar.md), [IRGen](docs/irgen.md), [verifier](docs/verifier.md), [codegen](docs/codegen.md) and [metaprograms](docs/meta.md)
 - [Architecture Decision Records](docs/adr/README.md): why Pia is the way it is

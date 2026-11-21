@@ -1,6 +1,6 @@
 """Checks every Pia example in the public documentation against piac.
 
-Usage: doc_examples_test.py <piac> <markdown file>...
+Usage: doc_examples_test.py <piac> [--pia <pia>] <markdown file>...
 
 Each ```ocaml block in a checked Markdown file is a complete Pia program.
 By default it must verify: `piac --verify` exits 0, so every goal in it is
@@ -11,6 +11,11 @@ proved. Comments just before a block change that:
     <!-- expect: fail -->        `piac --verify` must exit 1 (a goal fails)
     <!-- untested: reason -->    not checked, such as syntax that is
                                  designed but not implemented yet
+    <!-- repl: name.pia -->      a REPL session, written to that file but
+                                 not checked with piac --verify
+
+A ```console block whose first line is `$ pia ...` runs `pia` the same way,
+and `< file` on that line feeds the file to its standard input.
 
 A ```console block whose first line is `$ piac ...` runs that command in the
 directory holding the examples written so far, and its output (stdout and
@@ -26,7 +31,7 @@ import sys
 import tempfile
 
 FENCE = re.compile(r"^(\s*)```(\w*)\s*$")
-DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested)\s*:\s*(.*?)\s*-->$")
+DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|repl)\s*:\s*(.*?)\s*-->$")
 
 
 def blocks(path):
@@ -69,6 +74,10 @@ def matches(expected, actual):
 def main():
     piac = os.path.abspath(sys.argv[1])
     docs = sys.argv[2:]
+    pia = None
+    if docs[:1] == ["--pia"]:
+        pia = os.path.abspath(docs[1])
+        docs = docs[2:]
     failures = []
     checked = 0
     for doc in docs:
@@ -78,6 +87,11 @@ def main():
                 where = f"{doc}:{line}"
                 if info == "ocaml":
                     if "untested" in directives:
+                        continue
+                    if "repl" in directives:
+                        with open(os.path.join(tmp, directives["repl"]), "w",
+                                  encoding="utf-8") as f:
+                            f.write("\n".join(body) + "\n")
                         continue
                     count += 1
                     name = directives.get("example", f"example{count}.pia")
@@ -91,10 +105,20 @@ def main():
                         failures.append(
                             f"{where}: piac --verify {name} exited {run.returncode}, "
                             f"expected {want}\n{run.stdout}{run.stderr}")
-                elif info == "console" and body and body[0].startswith("$ piac"):
+                elif info == "console" and body and (
+                        body[0].startswith("$ piac") or
+                        (pia and body[0].startswith("$ pia "))):
                     argv = shlex.split(body[0][2:])
-                    run = subprocess.run([piac] + argv[1:], cwd=tmp,
+                    stdin = None
+                    if "<" in argv:
+                        k = argv.index("<")
+                        stdin = open(os.path.join(tmp, argv[k + 1]), encoding="utf-8")
+                        argv = argv[:k] + argv[k + 2:]
+                    tool = piac if argv[0] == "piac" else pia
+                    run = subprocess.run([tool] + argv[1:], cwd=tmp, stdin=stdin,
                                          capture_output=True, text=True)
+                    if stdin:
+                        stdin.close()
                     checked += 1
                     actual = [l.rstrip() for l in (run.stdout + run.stderr).splitlines()]
                     expected = [l.rstrip() for l in body[1:]]

@@ -66,6 +66,7 @@ nav:
   - Getting started: getting-started.md
   - A tour of Pia: tour.md
   - How verification works: verification.md
+  - The REPL: repl.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md
@@ -104,3 +105,4 @@ nav:
       - adr/0022-metaprogram-hygiene.md
       - adr/0023-minimal-core-self-hosted-stdlib.md
       - adr/0024-published-proof-certificates.md
+      - adr/0031-verified-repl-and-live-environment.md

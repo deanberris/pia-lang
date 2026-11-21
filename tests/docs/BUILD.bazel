@@ -9,13 +9,21 @@ DOCS = [
     "//docs:getting-started.md",
     "//docs:tour.md",
     "//docs:verification.md",
+    "//docs:repl.md",
     "//docs:status.md",
 ]
 
 py_test(
     name = "doc_examples_test",
     srcs = ["doc_examples_test.py"],
-    args = ["$(rootpath //tools/piac)"] + ["$(rootpath %s)" % d for d in DOCS],
-    data = DOCS + ["//tools/piac"],
+    args = [
+        "$(rootpath //tools/piac)",
+        "--pia",
+        "$(rootpath //tools/pia)",
+    ] + ["$(rootpath %s)" % d for d in DOCS],
+    data = DOCS + [
+        "//tools/pia",
+        "//tools/piac",
+    ],
     main = "doc_examples_test.py",
 )
