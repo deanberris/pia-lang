@@ -1,0 +1,778 @@
+// Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
+
+#include "codegen/Codegen.h"
+
+#include <algorithm>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "dialect/ContractDialect.h"
+#include "dialect/PiaDialect.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/TargetParser/Triple.h"
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
+#include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Func/Transforms/FuncConversions.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Transforms/Patterns.h"
+#include "mlir/ExecutionEngine/OptUtils.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Export.h"
+#include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Transforms/Passes.h"
+
+namespace pia::codegen {
+
+using llvm::APInt;
+using mlir::Location;
+using mlir::LogicalResult;
+using mlir::OpBuilder;
+using mlir::Type;
+using mlir::Value;
+
+namespace {
+
+template <typename OpTy, typename... Args>
+OpTy make(OpBuilder &b, Location loc, Args &&...args) {
+#if LLVM_VERSION_MAJOR >= 21
+  return OpTy::create(b, loc, std::forward<Args>(args)...);
+#else
+  return b.create<OpTy>(loc, std::forward<Args>(args)...);
+#endif
+}
+
+//===----------------------------------------------------------------------===//
+// Ranges and machine representations
+//===----------------------------------------------------------------------===//
+
+// Exact ranges are computed at a width no product of two Pia values can
+// leave: both factors lie in [-2^63, 2^64 - 1].
+constexpr unsigned kExact = 256;
+
+struct Range {
+  APInt lo, hi;  // kExact bits, signed
+};
+
+Range rangeOf(IntType t) {
+  return {t.getLo().sextOrTrunc(kExact), t.getHi().sextOrTrunc(kExact)};
+}
+
+Range join(const Range &a, const Range &b) {
+  return {a.lo.slt(b.lo) ? a.lo : b.lo, a.hi.sgt(b.hi) ? a.hi : b.hi};
+}
+
+// How a range is held in a machine integer.
+struct Repr {
+  unsigned width;
+  bool isSigned;
+};
+
+unsigned roundWidth(unsigned bits) {
+  for (unsigned w : {8u, 16u, 32u, 64u, 128u})
+    if (bits <= w) return w;
+  return (bits + 63) / 64 * 64;
+}
+
+Repr reprOf(const Range &r) {
+  if (!r.lo.isNegative())
+    return {roundWidth(std::max(1u, r.hi.getActiveBits())), false};
+  return {roundWidth(std::max(r.lo.getSignificantBits(),
+                              r.hi.getSignificantBits())),
+          true};
+}
+
+Repr reprOf(IntType t) { return reprOf(rangeOf(t)); }
+
+// A range type covers every value of a machine integer of its width, so
+// wrapping into it is truncation.
+bool isFullWidth(IntType t) {
+  Range r = rangeOf(t);
+  Repr repr = reprOf(r);
+  if (repr.isSigned)
+    return r.lo == APInt::getSignedMinValue(repr.width).sext(kExact) &&
+           r.hi == APInt::getSignedMaxValue(repr.width).sext(kExact);
+  return r.lo.isZero() && r.hi == APInt::getMaxValue(repr.width).zext(kExact);
+}
+
+enum class Arith { Add, Sub, Mul, Div, Rem };
+
+// The exact range of `a op b` for operands in the given ranges. Division
+// and remainder are bounded by the operands' magnitudes.
+Range exactRange(Arith kind, const Range &a, const Range &b) {
+  auto minOf = [](std::initializer_list<APInt> xs) {
+    APInt m = *xs.begin();
+    for (const APInt &x : xs)
+      if (x.slt(m)) m = x;
+    return m;
+  };
+  auto maxOf = [](std::initializer_list<APInt> xs) {
+    APInt m = *xs.begin();
+    for (const APInt &x : xs)
+      if (x.sgt(m)) m = x;
+    return m;
+  };
+  auto mag = [&](const Range &r) { return maxOf({r.lo.abs(), r.hi.abs()}); };
+  switch (kind) {
+    case Arith::Add:
+      return {a.lo + b.lo, a.hi + b.hi};
+    case Arith::Sub:
+      return {a.lo - b.hi, a.hi - b.lo};
+    case Arith::Mul: {
+      APInt p1 = a.lo * b.lo, p2 = a.lo * b.hi, p3 = a.hi * b.lo,
+            p4 = a.hi * b.hi;
+      return {minOf({p1, p2, p3, p4}), maxOf({p1, p2, p3, p4})};
+    }
+    case Arith::Div: {
+      APInt m = mag(a);
+      return {-m, m};
+    }
+    case Arith::Rem: {
+      APInt m = maxOf({mag(a), mag(b)});
+      return {-m, m};
+    }
+  }
+  return a;
+}
+
+// Sign- or zero-extends, or truncates, `v` to `width` bits.
+Value resize(OpBuilder &b, Location loc, Value v, bool isSigned,
+             unsigned width) {
+  unsigned from = v.getType().getIntOrFloatBitWidth();
+  if (from == width) return v;
+  Type to = b.getIntegerType(width);
+  if (from > width) return make<mlir::arith::TruncIOp>(b, loc, to, v);
+  if (isSigned) return make<mlir::arith::ExtSIOp>(b, loc, to, v);
+  return make<mlir::arith::ExtUIOp>(b, loc, to, v);
+}
+
+Value constant(OpBuilder &b, Location loc, const APInt &value,
+               unsigned width) {
+  Type t = b.getIntegerType(width);
+  return make<mlir::arith::ConstantOp>(
+      b, loc, t, b.getIntegerAttr(t, value.sextOrTrunc(width)));
+}
+
+// Brings an exact result `r`, held as `repr`, into the result type under
+// `mode`, and returns it in the result type's representation.
+Value finish(OpBuilder &b, Location loc, Value r, Repr repr, IntType result,
+             OverflowMode mode) {
+  Range rr = rangeOf(result);
+  Repr out = reprOf(rr);
+  switch (mode) {
+    case OverflowMode::proof:
+      // The verifier proved the exact value lies in the result type.
+      break;
+    case OverflowMode::saturate: {
+      Value lo = constant(b, loc, rr.lo, repr.width);
+      Value hi = constant(b, loc, rr.hi, repr.width);
+      if (repr.isSigned) {
+        r = make<mlir::arith::MaxSIOp>(b, loc, r, lo);
+        r = make<mlir::arith::MinSIOp>(b, loc, r, hi);
+      } else {
+        r = make<mlir::arith::MaxUIOp>(b, loc, r, lo);
+        r = make<mlir::arith::MinUIOp>(b, loc, r, hi);
+      }
+      break;
+    }
+    case OverflowMode::trap: {
+      using mlir::arith::CmpIPredicate;
+      Value lo = constant(b, loc, rr.lo, repr.width);
+      Value hi = constant(b, loc, rr.hi, repr.width);
+      Value below = make<mlir::arith::CmpIOp>(
+          b, loc, repr.isSigned ? CmpIPredicate::slt : CmpIPredicate::ult, r,
+          lo);
+      Value above = make<mlir::arith::CmpIOp>(
+          b, loc, repr.isSigned ? CmpIPredicate::sgt : CmpIPredicate::ugt, r,
+          hi);
+      Value outside = make<mlir::arith::OrIOp>(b, loc, below, above);
+      auto ifOp = make<mlir::scf::IfOp>(b, loc, outside, /*withElse=*/false);
+      OpBuilder::InsertionGuard guard(b);
+      b.setInsertionPoint(ifOp.thenBlock()->getTerminator());
+      make<mlir::LLVM::Trap>(b, loc);
+      break;
+    }
+    case OverflowMode::wrap: {
+      if (isFullWidth(result)) break;  // truncation below wraps
+      // lo + ((r - lo) mod size), with a non-negative mod, computed with
+      // room for r - lo.
+      unsigned w = repr.width * 2;
+      Value x = resize(b, loc, r, repr.isSigned, w);
+      APInt size = rr.hi - rr.lo + 1;
+      Value lo = constant(b, loc, rr.lo, w);
+      Value n = constant(b, loc, size, w);
+      Value zero = constant(b, loc, APInt(kExact, 0), w);
+      Value d = make<mlir::arith::SubIOp>(b, loc, x, lo);
+      Value m = make<mlir::arith::RemSIOp>(b, loc, d, n);
+      Value neg = make<mlir::arith::CmpIOp>(
+          b, loc, mlir::arith::CmpIPredicate::slt, m, zero);
+      Value fixed = make<mlir::arith::AddIOp>(b, loc, m, n);
+      m = make<mlir::arith::SelectOp>(b, loc, neg, fixed, m);
+      r = make<mlir::arith::AddIOp>(b, loc, m, lo);
+      repr = {w, true};
+      break;
+    }
+  }
+  return resize(b, loc, r, repr.isSigned, out.width);
+}
+
+//===----------------------------------------------------------------------===//
+// Type conversion
+//===----------------------------------------------------------------------===//
+
+class CoreTypes : public mlir::TypeConverter {
+ public:
+  CoreTypes() {
+    addConversion([](Type t) { return t; });
+    addConversion([](IntType t) -> Type {
+      return mlir::IntegerType::get(t.getContext(), reprOf(t).width);
+    });
+    addConversion([this](ArrayType t) -> std::optional<Type> {
+      Type elem = element(t.getElementType());
+      if (!elem) return std::nullopt;
+      return mlir::MemRefType::get({static_cast<int64_t>(t.getLength())},
+                                   elem);
+    });
+    addConversion([this](SliceType t) -> std::optional<Type> {
+      Type elem = element(t.getElementType());
+      if (!elem) return std::nullopt;
+      return mlir::MemRefType::get({mlir::ShapedType::kDynamic}, elem);
+    });
+    auto cast = [](OpBuilder &b, Type t, mlir::ValueRange in,
+                   Location loc) -> Value {
+      return make<mlir::UnrealizedConversionCastOp>(b, loc, t, in)
+          .getResult(0);
+    };
+    addSourceMaterialization(cast);
+    addTargetMaterialization(cast);
+  }
+
+ private:
+  // Buffers hold scalars only in v0.
+  Type element(Type t) {
+    Type c = convertType(t);
+    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType>(c)) return c;
+    return {};
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Patterns
+//===----------------------------------------------------------------------===//
+
+struct ConstantLowering : mlir::OpConversionPattern<ConstantOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ConstantOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto t = mlir::cast<IntType>(op.getResult().getType());
+    rw.replaceOp(op, constant(rw, op.getLoc(), op.getValue(),
+                              reprOf(t).width));
+    return mlir::success();
+  }
+};
+
+template <typename OpTy, Arith kind>
+struct ArithLowering : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+  using OpAdaptor = typename OpTy::Adaptor;
+  LogicalResult matchAndRewrite(
+      OpTy op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto lt = mlir::cast<IntType>(op.getLhs().getType());
+    auto rt = mlir::cast<IntType>(op.getRhs().getType());
+    auto res = mlir::cast<IntType>(op.getResult().getType());
+    OverflowMode mode = op.getOverflow();
+    Range ra = rangeOf(lt), rb = rangeOf(rt);
+    // The computation width holds both operands, the result type and,
+    // unless the result was proved to fit, the exact result.
+    Range span = join(join(ra, rb), rangeOf(res));
+    if (mode != OverflowMode::proof)
+      span = join(span, exactRange(kind, ra, rb));
+    Repr c = reprOf(span);
+    Value a = resize(rw, loc, adaptor.getLhs(), reprOf(lt).isSigned, c.width);
+    Value b = resize(rw, loc, adaptor.getRhs(), reprOf(rt).isSigned, c.width);
+    Value r;
+    switch (kind) {
+      case Arith::Add:
+        r = make<mlir::arith::AddIOp>(rw, loc, a, b);
+        break;
+      case Arith::Sub:
+        r = make<mlir::arith::SubIOp>(rw, loc, a, b);
+        break;
+      case Arith::Mul:
+        r = make<mlir::arith::MulIOp>(rw, loc, a, b);
+        break;
+      case Arith::Div:
+        r = c.isSigned ? Value(make<mlir::arith::DivSIOp>(rw, loc, a, b))
+                       : Value(make<mlir::arith::DivUIOp>(rw, loc, a, b));
+        break;
+      case Arith::Rem:
+        r = c.isSigned ? Value(make<mlir::arith::RemSIOp>(rw, loc, a, b))
+                       : Value(make<mlir::arith::RemUIOp>(rw, loc, a, b));
+        break;
+    }
+    rw.replaceOp(op, finish(rw, loc, r, c, res, mode));
+    return mlir::success();
+  }
+};
+
+struct ConvertLowering : mlir::OpConversionPattern<ConvertOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ConvertOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto in = mlir::cast<IntType>(op.getInput().getType());
+    auto res = mlir::cast<IntType>(op.getResult().getType());
+    Repr c = reprOf(join(rangeOf(in), rangeOf(res)));
+    Value v = resize(rw, op.getLoc(), adaptor.getInput(), reprOf(in).isSigned,
+                     c.width);
+    rw.replaceOp(op, finish(rw, op.getLoc(), v, c, res, op.getOverflow()));
+    return mlir::success();
+  }
+};
+
+struct CmpLowering : mlir::OpConversionPattern<CmpOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      CmpOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    using mlir::arith::CmpIPredicate;
+    Location loc = op.getLoc();
+    auto lt = mlir::cast<IntType>(op.getLhs().getType());
+    auto rt = mlir::cast<IntType>(op.getRhs().getType());
+    Repr c = reprOf(join(rangeOf(lt), rangeOf(rt)));
+    Value a = resize(rw, loc, adaptor.getLhs(), reprOf(lt).isSigned, c.width);
+    Value b = resize(rw, loc, adaptor.getRhs(), reprOf(rt).isSigned, c.width);
+    CmpIPredicate p = CmpIPredicate::eq;
+    switch (op.getPredicate()) {
+      case CmpPredicate::eq: p = CmpIPredicate::eq; break;
+      case CmpPredicate::ne: p = CmpIPredicate::ne; break;
+      case CmpPredicate::lt:
+        p = c.isSigned ? CmpIPredicate::slt : CmpIPredicate::ult;
+        break;
+      case CmpPredicate::le:
+        p = c.isSigned ? CmpIPredicate::sle : CmpIPredicate::ule;
+        break;
+      case CmpPredicate::gt:
+        p = c.isSigned ? CmpIPredicate::sgt : CmpIPredicate::ugt;
+        break;
+      case CmpPredicate::ge:
+        p = c.isSigned ? CmpIPredicate::sge : CmpIPredicate::uge;
+        break;
+    }
+    rw.replaceOpWithNewOp<mlir::arith::CmpIOp>(op, p, a, b);
+    return mlir::success();
+  }
+};
+
+struct ToIndexLowering : mlir::OpConversionPattern<ToIndexOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ToIndexOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Type index = rw.getIndexType();
+    if (reprOf(mlir::cast<IntType>(op.getInput().getType())).isSigned)
+      rw.replaceOpWithNewOp<mlir::arith::IndexCastOp>(op, index,
+                                                      adaptor.getInput());
+    else
+      rw.replaceOpWithNewOp<mlir::arith::IndexCastUIOp>(op, index,
+                                                        adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+struct FromIndexLowering : mlir::OpConversionPattern<FromIndexOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      FromIndexOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    // The index is proved to lie in the result type, so it is non-negative.
+    Type t = getTypeConverter()->convertType(op.getResult().getType());
+    rw.replaceOpWithNewOp<mlir::arith::IndexCastUIOp>(op, t,
+                                                      adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+struct LenLowering : mlir::OpConversionPattern<LenOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      LenOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    if (auto array = mlir::dyn_cast<ArrayType>(op.getBuffer().getType())) {
+      rw.replaceOpWithNewOp<mlir::arith::ConstantIndexOp>(
+          op, static_cast<int64_t>(array.getLength()));
+      return mlir::success();
+    }
+    rw.replaceOpWithNewOp<mlir::memref::DimOp>(op, adaptor.getBuffer(), 0);
+    return mlir::success();
+  }
+};
+
+struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      LoadOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::memref::LoadOp>(
+        op, adaptor.getBuffer(), mlir::ValueRange{adaptor.getIndex()});
+    return mlir::success();
+  }
+};
+
+struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      StoreOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::memref::StoreOp>(
+        op, adaptor.getValue(), adaptor.getBuffer(),
+        mlir::ValueRange{adaptor.getIndex()});
+    return mlir::success();
+  }
+};
+
+constexpr llvm::StringLiteral kSigned = "pia.signed";
+constexpr llvm::StringLiteral kInternalPrefix = "__pia_";
+
+bool isContractStatement(mlir::Operation *op) {
+  return mlir::isa<contract::RequiresOp, contract::EnsuresOp,
+                   contract::InvariantOp, contract::DecreasesOp,
+                   contract::AssertOp, contract::AssumeOp,
+                   contract::ObligationOp>(op);
+}
+
+// An op whose results are unused and that has no effect but reading.
+bool isDead(mlir::Operation *op) {
+  if (op->getNumResults() == 0 || !op->use_empty()) return false;
+  if (op->hasTrait<mlir::OpTrait::IsTerminator>()) return false;
+  if (mlir::isa<contract::ContractDialect>(op->getDialect())) return true;
+  if (mlir::isa<LoadOp>(op)) return true;
+  return mlir::isMemoryEffectFree(op);
+}
+
+}  // namespace
+
+//===----------------------------------------------------------------------===//
+// Stages
+//===----------------------------------------------------------------------===//
+
+void loadDialects(mlir::MLIRContext &ctx) {
+  ctx.loadDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                  mlir::func::FuncDialect, mlir::index::IndexDialect,
+                  mlir::LLVM::LLVMDialect, mlir::memref::MemRefDialect,
+                  mlir::scf::SCFDialect>();
+  mlir::registerBuiltinDialectTranslation(ctx);
+  mlir::registerLLVMDialectTranslation(ctx);
+}
+
+void eraseContracts(mlir::ModuleOp module) {
+  llvm::SmallVector<mlir::Operation *> statements;
+  module.walk([&](mlir::Operation *op) {
+    if (isContractStatement(op)) statements.push_back(op);
+  });
+  for (mlir::Operation *op : statements) op->erase();
+  // Whatever only fed a contract is now unused. Erase it, innermost and
+  // last first, until nothing changes.
+  for (bool changed = true; changed;) {
+    changed = false;
+    llvm::SmallVector<mlir::Operation *> dead;
+    module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation *op) {
+      if (isDead(op)) dead.push_back(op);
+    });
+    for (mlir::Operation *op : llvm::reverse(dead)) {
+      if (!op->use_empty()) continue;
+      op->erase();
+      changed = true;
+    }
+  }
+}
+
+LogicalResult lowerToCore(mlir::ModuleOp module) {
+  mlir::MLIRContext *ctx = module.getContext();
+  loadDialects(*ctx);
+
+  // Signedness is a property of pia types that iN loses, and the C entry
+  // points need it, so record it on the signature first.
+  module.walk([&](mlir::func::FuncOp f) {
+    mlir::FunctionType ft = f.getFunctionType();
+    for (unsigned i = 0; i < ft.getNumInputs(); ++i)
+      if (auto t = mlir::dyn_cast<IntType>(ft.getInput(i)); t && t.isSigned())
+        f.setArgAttr(i, kSigned, mlir::UnitAttr::get(ctx));
+    for (unsigned i = 0; i < ft.getNumResults(); ++i)
+      if (auto t = mlir::dyn_cast<IntType>(ft.getResult(i)); t && t.isSigned())
+        f.setResultAttr(i, kSigned, mlir::UnitAttr::get(ctx));
+  });
+
+  CoreTypes types;
+  mlir::ConversionTarget target(*ctx);
+  target.addLegalDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
+                         mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
+                         mlir::memref::MemRefDialect>();
+  target.addIllegalDialect<PiaDialect, contract::ContractDialect>();
+  target.addDynamicallyLegalOp<mlir::func::FuncOp>([&](mlir::func::FuncOp f) {
+    return types.isSignatureLegal(f.getFunctionType()) &&
+           types.isLegal(&f.getBody());
+  });
+  target.addDynamicallyLegalOp<mlir::func::CallOp, mlir::func::ReturnOp>(
+      [&](mlir::Operation *op) { return types.isLegal(op); });
+
+  mlir::RewritePatternSet patterns(ctx);
+  patterns.add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+               ArithLowering<SubOp, Arith::Sub>,
+               ArithLowering<MulOp, Arith::Mul>,
+               ArithLowering<DivOp, Arith::Div>,
+               ArithLowering<RemOp, Arith::Rem>, ConvertLowering, CmpLowering,
+               ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
+               StoreLowering>(types, ctx);
+  mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
+      patterns, types);
+  mlir::populateCallOpTypeConversionPattern(patterns, types);
+  mlir::populateReturnOpTypeConversionPattern(patterns, types);
+  mlir::scf::populateSCFStructuralTypeConversionsAndLegality(types, patterns,
+                                                             target);
+  if (mlir::failed(
+          mlir::applyPartialConversion(module, target, std::move(patterns))))
+    return mlir::failure();
+  // Tidy the casts and constants the conversion leaves behind.
+  mlir::PassManager pm(ctx);
+  pm.addPass(mlir::createCanonicalizerPass());
+  pm.addPass(mlir::createCSEPass());
+  return pm.run(module);
+}
+
+namespace {
+
+// A public function's C entry point, recorded before lowering.
+struct Entry {
+  std::string name;
+  mlir::FunctionType type;  // core types
+  std::vector<bool> argSigned;
+  bool resultSigned = false;
+  Location loc;
+};
+
+// The C types of one core argument: a buffer is its data pointer, plus its
+// length when that is not fixed by the type.
+void cArgTypes(Type t, mlir::MLIRContext *ctx, llvm::SmallVectorImpl<Type> &out) {
+  if (auto m = mlir::dyn_cast<mlir::MemRefType>(t)) {
+    out.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
+    if (m.isDynamicDim(0)) out.push_back(mlir::IntegerType::get(ctx, 64));
+    return;
+  }
+  if (mlir::isa<mlir::IndexType>(t)) {
+    out.push_back(mlir::IntegerType::get(ctx, 64));
+    return;
+  }
+  out.push_back(t);
+}
+
+// Small integers are extended to 32 bits at the call boundary, as Apple's
+// arm64 ABI and C compilers expect.
+std::optional<llvm::StringRef> extAttr(Type t, bool isSigned) {
+  auto i = mlir::dyn_cast<mlir::IntegerType>(t);
+  if (!i || i.getWidth() >= 32) return std::nullopt;
+  if (i.getWidth() == 1 || !isSigned)
+    return mlir::LLVM::LLVMDialect::getZExtAttrName();
+  return mlir::LLVM::LLVMDialect::getSExtAttrName();
+}
+
+LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
+  mlir::MLIRContext *ctx = module.getContext();
+  auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
+      (kInternalPrefix + e.name).str());
+  if (!internal) return mlir::emitError(e.loc) << "lost function " << e.name;
+  if (e.type.getNumResults() > 1 ||
+      (e.type.getNumResults() == 1 &&
+       mlir::isa<mlir::MemRefType>(e.type.getResult(0))))
+    return mlir::emitError(e.loc)
+           << "codegen v0 cannot return a buffer from '" << e.name << "'";
+
+  llvm::SmallVector<Type> argTypes;
+  for (Type t : e.type.getInputs()) cArgTypes(t, ctx, argTypes);
+  Type resultType = mlir::LLVM::LLVMVoidType::get(ctx);
+  if (e.type.getNumResults() == 1) {
+    llvm::SmallVector<Type, 1> r;
+    cArgTypes(e.type.getResult(0), ctx, r);
+    resultType = r[0];
+  }
+
+  OpBuilder b(ctx);
+  b.setInsertionPointAfter(internal);
+  auto entry = make<mlir::LLVM::LLVMFuncOp>(
+      b, e.loc, e.name, mlir::LLVM::LLVMFunctionType::get(resultType, argTypes));
+  mlir::Block *block = entry.addEntryBlock(b);
+  b.setInsertionPointToStart(block);
+
+  Type i64 = b.getI64Type();
+  auto c64 = [&](int64_t v) -> Value {
+    return make<mlir::LLVM::ConstantOp>(b, e.loc, i64, b.getI64IntegerAttr(v));
+  };
+  llvm::SmallVector<Value> operands;
+  unsigned arg = 0;
+  for (unsigned i = 0; i < e.type.getNumInputs(); ++i) {
+    Type t = e.type.getInput(i);
+    if (auto m = mlir::dyn_cast<mlir::MemRefType>(t)) {
+      // The memref descriptor: allocated and aligned pointers, offset,
+      // size and stride.
+      Value data = block->getArgument(arg++);
+      Value size =
+          m.isDynamicDim(0) ? block->getArgument(arg++) : c64(m.getDimSize(0));
+      operands.append({data, data, c64(0), size, c64(1)});
+      continue;
+    }
+    if (auto ext = extAttr(t, e.argSigned[i]))
+      entry.setArgAttr(arg, *ext, b.getUnitAttr());
+    operands.push_back(block->getArgument(arg++));
+  }
+  auto call = make<mlir::LLVM::CallOp>(b, e.loc, internal, operands);
+  if (e.type.getNumResults() == 1) {
+    if (auto ext = extAttr(e.type.getResult(0), e.resultSigned))
+      entry.setResultAttr(0, *ext, b.getUnitAttr());
+    make<mlir::LLVM::ReturnOp>(b, e.loc, call.getResult());
+  } else {
+    make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
+  }
+  return mlir::success();
+}
+
+}  // namespace
+
+LogicalResult lowerToLLVM(mlir::ModuleOp module) {
+  mlir::MLIRContext *ctx = module.getContext();
+  loadDialects(*ctx);
+
+  std::vector<Entry> entries;
+  for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
+    Entry e{f.getSymName().str(), f.getFunctionType(), {}, false, f.getLoc()};
+    for (unsigned i = 0; i < f.getNumArguments(); ++i)
+      e.argSigned.push_back(static_cast<bool>(f.getArgAttr(i, kSigned)));
+    e.resultSigned =
+        f.getNumResults() == 1 && static_cast<bool>(f.getResultAttr(0, kSigned));
+    // Pia's own attributes have no meaning in LLVM IR.
+    f.removeArgAttrsAttr();
+    f.removeResAttrsAttr();
+    if (f.isExternal() || !f.isPublic()) continue;
+    std::string internal = (kInternalPrefix + e.name).str();
+    if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
+            f, mlir::StringAttr::get(ctx, internal), module)))
+      return mlir::failure();
+    f.setSymName(internal);
+    f.setPrivate();
+    entries.push_back(std::move(e));
+  }
+
+  mlir::PassManager pm(ctx);
+  pm.addPass(mlir::createSCFToControlFlowPass());
+  pm.addPass(mlir::createConvertControlFlowToLLVMPass());
+  pm.addPass(mlir::createArithToLLVMConversionPass());
+  pm.addPass(mlir::createConvertIndexToLLVMPass());
+  pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass());
+  pm.addPass(mlir::createConvertFuncToLLVMPass());
+  pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+  if (mlir::failed(pm.run(module))) return mlir::failure();
+
+  for (const Entry &e : entries) {
+    if (mlir::failed(buildEntry(module, e))) return mlir::failure();
+    auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
+        (kInternalPrefix + e.name).str());
+    internal.setLinkage(mlir::LLVM::Linkage::Internal);
+    internal.setSymVisibility(std::nullopt);
+  }
+  return mlir::success();
+}
+
+namespace {
+
+std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
+                                                   std::string &error) {
+  static bool initialised = [] {
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmPrinters();
+    return true;
+  }();
+  (void)initialised;
+  llvm::Triple triple(options.triple);
+  const llvm::Target *target = llvm::TargetRegistry::lookupTarget(triple, error);
+  if (!target) return nullptr;
+  llvm::CodeGenOptLevel level = options.optLevel == 0
+                                    ? llvm::CodeGenOptLevel::None
+                                    : llvm::CodeGenOptLevel::Default;
+  std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+      triple, options.cpu, "", llvm::TargetOptions(), llvm::Reloc::PIC_,
+      std::nullopt, level));
+  if (!tm) error = "cannot create a target machine for " + options.triple;
+  return tm;
+}
+
+}  // namespace
+
+std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
+                                        llvm::LLVMContext &llvmCtx,
+                                        const Options &options,
+                                        std::string &error) {
+  std::unique_ptr<llvm::TargetMachine> tm = targetMachine(options, error);
+  if (!tm) return nullptr;
+  std::unique_ptr<llvm::Module> m = mlir::translateModuleToLLVMIR(module, llvmCtx);
+  if (!m) {
+    error = "translation to LLVM IR failed";
+    return nullptr;
+  }
+  m->setTargetTriple(tm->getTargetTriple());
+  m->setDataLayout(tm->createDataLayout());
+  auto optimise =
+      mlir::makeOptimizingTransformer(options.optLevel, 0, tm.get());
+  if (llvm::Error e = optimise(m.get())) {
+    error = llvm::toString(std::move(e));
+    return nullptr;
+  }
+  return m;
+}
+
+bool emitObject(llvm::Module &module, const Options &options,
+                llvm::raw_pwrite_stream &os, std::string &error,
+                bool assembly) {
+  std::unique_ptr<llvm::TargetMachine> tm = targetMachine(options, error);
+  if (!tm) return false;
+  llvm::legacy::PassManager pm;
+  if (tm->addPassesToEmitFile(pm, os, nullptr,
+                              assembly ? llvm::CodeGenFileType::AssemblyFile
+                                       : llvm::CodeGenFileType::ObjectFile)) {
+    error = "the target cannot emit an object file";
+    return false;
+  }
+  pm.run(module);
+  return true;
+}
+
+}  // namespace pia::codegen

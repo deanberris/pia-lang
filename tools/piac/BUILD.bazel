@@ -11,9 +11,11 @@ cc_binary(
     ],
     visibility = ["//visibility:public"],
     deps = [
+        "//src/codegen",
         "//src/irgen",
         "//src/syntax",
         "//src/verify",
+        "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:IR",
     ],

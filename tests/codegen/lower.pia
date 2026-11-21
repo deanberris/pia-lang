@@ -1,0 +1,65 @@
+(* Codegen v0: contracts are erased, range types become machine integers,
+   and each overflow mode has its own lowering (docs/codegen.md).
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+// RUN: piac --emit=llvm %s 2>&1 | FileCheck %s --check-prefix=LLVM
+*)
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: pia_contract
+// CHECK-LABEL: func.func @dec(%arg0: i8) -> i8
+// CHECK: arith.subi %arg0, %{{.*}} : i8
+// CHECK-NEXT: return
+
+// CHECK-LABEL: func.func @add_trap
+// CHECK: arith.addi %{{.*}}, %{{.*}} : i32
+// CHECK: scf.if
+// CHECK-NEXT: llvm.intr.trap
+// CHECK: arith.trunci %{{.*}} : i32 to i16
+
+// CHECK-LABEL: func.func @digit
+// CHECK: arith.remsi %{{.*}}, %{{.*}} : i16
+
+// CHECK-LABEL: func.func @less(%arg0: i8 {pia.signed}, %arg1: i8) -> i1
+// CHECK: arith.extsi %arg0 : i8 to i16
+// CHECK: arith.extui %arg1 : i8 to i16
+// CHECK: arith.cmpi slt
+
+// CHECK-LABEL: func.func @twice
+// CHECK: arith.minui
+// CHECK: call @dec
+
+// LLVM: target triple = "arm64-apple-macosx14.0.0"
+// LLVM-LABEL: define zeroext i8 @dec(i8 zeroext %0)
+// LLVM-LABEL: define zeroext i16 @add_trap(i16 zeroext %0, i16 zeroext %1)
+// LLVM: call void @llvm.trap()
+// LLVM-LABEL: @digit(i8 zeroext %0, i8 zeroext %1)
+// LLVM: urem i8 %{{.*}}, 10
+// LLVM-LABEL: define zeroext i1 @less(i8 signext %0, i8 zeroext %1)
+// LLVM-LABEL: @twice(i8 zeroext %0)
+// LLVM: call i8 @llvm.uadd.sat.i8(i8 %0, i8 4)
+// LLVM-NOT: call {{.*}}@__pia_dec
+*)
+
+(* The precondition, postcondition and assertion are proved, then erased.
+*)
+let dec (x : u8) : u8
+  requires x > 3
+  ensures result >= 3
+=
+  assert x >= 4;
+  x - 1
+
+let add_trap (a : u16) (b : u16) : u16 @overflow(trap) = a + b
+
+(* int{0..9} does not fill a machine integer, so wrapping reduces mod 10.
+*)
+let digit (a : int{0..9}) (b : int{0..9}) : int{0..9} @overflow(wrap) = a + b
+
+(* Comparing i8 with u8 needs a width that holds both ranges.
+*)
+let less (a : i8) (b : u8) : bool = a < b
+
+(* Pia functions call each other's internal versions, which LLVM inlines.
+*)
+let twice (x : u8) : u16 = dec (x +| 4) + 0

@@ -1,0 +1,14 @@
+(* Goals v0 skips, such as those inside loops, are not proved, so piac
+   warns and compiles anyway (docs/codegen.md, "Verification comes first").
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK: piac: warning: 2 obligations were skipped and not proved; see piac --verify
+// CHECK-LABEL: func.func @sum_to
+// CHECK: scf.for
+*)
+let sum_to (n : u32) : u64 =
+  let s : mutable u64 = 0 in
+  for i in 0..n do s <- s + 1 done;
+  s

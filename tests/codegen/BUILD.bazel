@@ -1,0 +1,34 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# Codegen v0 (M6). The lit tests check the lowering and run on any host.
+lit_tests(
+    name = "codegen_tests",
+    srcs = glob(["*.pia"], exclude = ["saturate.pia"]),
+    tools = ["//tools/piac"],
+)
+
+# saturate.pia compiled for Apple Silicon and linked with a C harness that
+# compares it with C reference implementations. It runs only on arm64 macOS.
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+genrule(
+    name = "saturate_obj",
+    srcs = ["saturate.pia"],
+    outs = ["saturate.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "saturate_test",
+    srcs = [
+        "saturate_test.c",
+        ":saturate_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)

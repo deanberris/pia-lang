@@ -66,7 +66,7 @@ Design points:
 6. **Counterexamples.** Map the model back to source variables and report it at the obligation's source location.
 7. **Model checking (later).** A separate pass checks collective protocols for the concurrency rules in ADR 0014.
 
-Verifier v0 (M5) implements steps 2 to 6 for code without loops; [verifier.md](verifier.md) has the details and the limits.
+Verifier v0 (M5) implements steps 2 to 6 for code without loops; [verifier.md](verifier.md) has the details and the limits. Codegen v0 (M6) erases contracts and lowers to an object file; see [codegen.md](codegen.md).
 
 ## Bootstrapping order
 
