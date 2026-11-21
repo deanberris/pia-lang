@@ -6,15 +6,15 @@
 
 let helper (x : u8) : u8 = x
 
-(* CHECK: shadowing.pia:[[@LINE+2]]:27: error: 'x' shadows a local of the same name; Pia does not allow shadowing (ADR 0022)
+(* CHECK: shadowing.pia:[[@LINE+2]]:27: error: 'x' shadows a local of the same name; Pia does not allow shadowing (ADR 0022), so rename it to x'
 *)
 let inner (x : u8) : u8 = let x = 1 in x
 
-(* CHECK: shadowing.pia:[[@LINE+2]]:12: error: 'helper' shadows the function 'helper'; Pia does not allow shadowing (ADR 0022)
+(* CHECK: shadowing.pia:[[@LINE+2]]:12: error: 'helper' shadows the function 'helper'; Pia does not allow shadowing (ADR 0022), so rename it to helper'
 *)
 let param (helper : u8) : u8 = helper
 
-(* CHECK: shadowing.pia:[[@LINE+2]]:36: error: 'i' shadows a local of the same name; Pia does not allow shadowing (ADR 0022)
+(* CHECK: shadowing.pia:[[@LINE+2]]:36: error: 'i' shadows a local of the same name; Pia does not allow shadowing (ADR 0022), so rename it to i'
 *)
 let loops (i : usize) : unit = for i in 0..4 do () done
 
@@ -22,3 +22,8 @@ let loops (i : usize) : unit = for i in 0..4 do () done
 let meta operator ( +^ ) : prec 6 left = let (a) (b) => `( let t = $a in t + $b )
 
 let fine (t : u8) (x : u8) : u8 = x +^ t
+
+(* The suggestion skips primed names already in use.
+   CHECK: shadowing.pia:[[@LINE+2]]:37: error: 'x' shadows a local of the same name; Pia does not allow shadowing (ADR 0022), so rename it to x''
+*)
+let taken (x : u8) (x' : u8) : u8 = let x = x' in x

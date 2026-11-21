@@ -71,7 +71,7 @@ void blend(uint8_t pr, uint8_t pg, uint8_t pb, uint8_t pa,
            uint8_t qr, uint8_t qg, uint8_t qb, uint8_t qa, struct pixel *out);
 ```
 
-Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. Returning a buffer is not supported yet.
+Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. A prime cannot appear in a C name, so each `'` in a function's name becomes `_prime` in its entry point: `step'` is called as `step_prime`. Two functions whose C names would be the same are an error. Returning a buffer is not supported yet.
 
 For example, `add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit` is called from C as:
 

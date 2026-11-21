@@ -234,8 +234,16 @@ class Gen {
     else if (sema::isCoreBuiltin(name)) what = "a core builtin";
     else return true;
     diags_.error(at, "'" + name + "' shadows " + what +
-                         "; Pia does not allow shadowing (ADR 0022)");
+                         "; Pia does not allow shadowing (ADR 0022), so "
+                         "rename it to " + primed(name));
     return false;
+  }
+
+  // The first of `x'`, `x''`, ... that nothing in scope uses.
+  std::string primed(const std::string &name) {
+    std::string p = name + "'";
+    while (lookup(p) || sigs_.count(p) || types_.named(p)) p += "'";
+    return p;
   }
 
   BindingPtr lookup(const std::string &name) {
