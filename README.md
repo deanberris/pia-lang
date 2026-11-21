@@ -102,6 +102,8 @@ bazel test //...
 
 See [Getting started](docs/getting-started.md) for the details, and [`editors/vscode`](editors/vscode/README.md) for the VS Code extension.
 
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //...` and `bazel test //...` on a GitHub-hosted Apple Silicon macOS runner for every pull request and every push to `main`. A run saves the Bazel disk cache once per set of dependencies, so only the first run builds LLVM, MLIR and Z3. A run that fails or times out saves what it built under its own key, and a failed run uploads its test logs.
+
 ## Learn more
 
 - [Language tour](docs/tour.md): the language as it is implemented today, with every example checked by the test suite
