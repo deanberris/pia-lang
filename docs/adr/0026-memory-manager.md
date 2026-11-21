@@ -11,13 +11,17 @@ Dean: the runtime needs a real memory manager. Naive `malloc` and `free` aren't 
 ## Decision
 
 - Pia has no garbage collector, now or later, and no `new` keyword. All memory is managed by allocators written in Pia over `mmap`, through ordinary function calls.
-- Allocators are explicit, `@linear` values that meet an `Allocator` concept (`alloc`, `free`, `resize`), passed as parameters. Library code never allocates from a hidden global, and `main` receives the root allocator.
+- Allocators are explicit values, reached through `borrowed` handles that many containers can share, that meet an `Allocator` concept (`alloc`, `free`, `resize`), passed as parameters. Library code never allocates from a hidden global, and `main` receives the root allocator.
 - `Pia.Mem` provides `pages`, `fixed_buffer`, `arena`, `scratch` (LIFO with marks), `pool<T>` (fixed-size slab), `general` (TCMalloc-style: size classes, per-task caches, central free lists and a page heap of spans) and `shared<a>` (thread-safe wrapper with per-thread caches). Each proves its invariants as module state.
 - Lifetimes are checked by two Sema rules, with no lifetime syntax in ordinary code: a `borrowed(m)` result cannot outlive `m`, and `m` cannot be moved while it is lent; and `with_arena` scopes a region so that nothing allocated in it escapes. Freeing into the wrong allocator is a proof goal, through a ghost `owns` fact.
 - Every `alloc` returns a `result` that must be handled where it is called (with `match` or `?`, ADR 0028); there is no trapping variant. Its proved postcondition is enough memory, disjoint from every live block, or `Err OutOfMemory` with the allocator unchanged. All free lists live in `Pia.Mem`, and the proof covers them.
 - Each task, worker and coroutine scope gets its own arena and `general` cache by default.
 - Allocators and their buffers have `Drop` instances, so memory not freed explicitly is freed at scope end (ADR 0028).
 - Concurrency: each task, worker or coroutine scope gets its own allocator by move. Stackless coroutine frames come from the task's allocator (ADR 0027). `shared<a>` is the only synchronised allocator, and its refill lock is a top-level leaf lock that never suspends.
+
+## Acceptance
+
+The design is accepted when `Pia.Mem.Vec`, a growable array over explicit heap allocation, is implemented and proved end to end: indices in bounds, no uninitialised reads, no overflow in capacity arithmetic, growth that gives enough memory or fails leaving the vec unchanged, no double free or use after free, no leak (RAII on every exit), frees into the right allocator, and no vec outliving its allocator. The sketch is in [docs/stdlib.md](../stdlib.md#the-litmus-test-a-proved-growable-array).
 
 ## Consequences
 

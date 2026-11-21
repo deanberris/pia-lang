@@ -100,7 +100,7 @@ Every API that can fail returns a `result`, so the library needs a way to pass e
 **`?` passes an error to the scope's handler.** `e?` is the `Ok` payload of `e`, or, for `Err x`, a jump to the nearest enclosing handler with `x`. A scope declares its handler with `handle`:
 
 ```ocaml
-let load (m : borrowed inout mutable general) (path : str) : result image LoadError =
+let load (m : borrowed general) (path : str) : result image LoadError =
   let f = open_read path? in            (* NoEntry | Denied | ... *)
   defer close f;
   let bytes = read_all m f? in          (* OutOfMemory | IoError *)
@@ -158,20 +158,20 @@ Pia does not allocate. Two things fix that: one type rule, and allocation writte
 
 ```ocaml
 let Allocator (a : type) : concept = sig
-  let alloc  : (m : borrowed inout mutable a) -> (t : type) -> (n : usize) -> result (borrowed(m) out mutable [t]) OutOfMemory
+  let alloc  : (m : borrowed a) -> (t : type) -> (n : usize) -> result (borrowed(m) out mutable [t]) OutOfMemory
     ensures match result with
             | Ok buf -> len buf = n && fresh m buf          (* enough memory, disjoint from every live block *)
             | Err OutOfMemory -> unchanged m               (* or a clean failure *)
-  let free   : (m : borrowed inout mutable a) -> (buf : moved [t]) -> unit
+  let free   : (m : borrowed a) -> (buf : moved [t]) -> unit
     requires owns m buf
-  let resize : (m : borrowed inout mutable a) -> (buf : moved [t]) -> (n : usize) -> result (borrowed(m) out mutable [t])
 end
 
-let read_all (m : borrowed inout mutable a) (f : fd) : result [u8] (OutOfMemory | IoError) where Allocator a =
+let read_all (m : borrowed a) (f : fd) : result [u8] (OutOfMemory | IoError) where Allocator a =
   let buf = m.alloc u8 (size f)? in      (* `?` hands OutOfMemory to the caller *)
   ...
 ```
 
+- An allocator is reached through a plain `borrowed` handle, so many containers can share one. Its state is module state that only `Pia.Mem` changes, and since an allocator that is not `shareable` stays in one task, sharing the handle is race-free.
 - The result is `out`, so reading memory before writing it is a proof goal.
 - **Every allocation can fail, and the failure must be handled at the call site.** `alloc` returns a `result`, a `result` cannot be ignored, and the caller either matches on it or passes the error on with `?` to the scope's handler ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)). There is no trapping variant. A program that wants to stop on out of memory says so in its handler.
 - **Enough memory, or fail.** The postcondition above is proved for every allocator: `Ok` means `n` elements, disjoint from every live block, and `Err OutOfMemory` means the allocator's state is unchanged. `fresh` and `unchanged` are spec functions over the allocator's ghost model of its live blocks.
@@ -218,6 +218,99 @@ Leaks are ruled out by cleanup at scope end. Allocators and the buffers they han
 *With sanitizers*, every allocator poisons the memory it hasn't handed out and the blocks it has freed, so foreign code that strays into them is reported ([sanitizers](#sanitizers-compiler-rt)).
 
 Prior art: Zig's explicit allocators, Odin's and Jai's allocator contexts, C++'s `std::pmr`, Rust's `bumpalo` and allocator API, mimalloc's sharded free lists, the Linux slab allocator, and Cyclone and the ML Kit for regions.
+
+#### The litmus test: a proved growable array
+
+The memory design is accepted when this works end to end: a dynamically growing array over explicit heap allocation, with its bounds, capacity, initialisation and freedom from leaks all proved. It is a sketch in designed syntax. `Pia.Mem.Vec` is the first target of the implementation.
+
+```ocaml
+(* Pia.Mem.Vec *)
+let vec = let (t : type) (a : type) => type {
+  heap : borrowed a;            (* where buf came from: the vec cannot outlive its allocator *)
+  buf  : moved mutable [t];     (* owned; len buf is the capacity *)
+  len  : usize;
+} where Allocator a
+    && len <= len buf
+    && owns heap buf            (* buf was handed out by heap, and not freed *)
+    && written buf 0 len        (* the first len elements are initialised *)
+
+(* What the vec means: its elements, as a sequence. *)
+let spec model (v : vec t a) : seq t = take v.len v.buf
+
+let empty (heap : borrowed a) : vec t a
+  ensures model result = []
+= { heap = heap; buf = Pia.Mem.empty_slice t; len = 0 }
+
+let get (v : vec t a) (i : usize) : t
+  requires i < v.len
+  ensures result = nth (model v) i
+= v.buf.[i]                                    (* in bounds: i < len <= len buf *)
+
+(* Doubles the capacity, or fails and leaves the vec exactly as it was. *)
+let grow (v : inout mutable vec t a) : result unit OutOfMemory
+  ensures match result with
+          | Ok () -> len v.buf > v.len && model v = old (model v)
+          | Err OutOfMemory -> v = old v
+=
+  let cap = len v.buf in
+  if cap >= max_elems t then Err OutOfMemory   (* doubling would overflow the address space *)
+  else
+    let cap' = if cap = 0 then 4 else min (cap + cap) (max_elems t) in
+    let buf' = Pia.Mem.alloc v.heap t cap'? in  (* on failure, nothing has changed yet *)
+    copy v.buf.[0 .. v.len] buf'.[0 .. v.len];
+    let old_buf = replace v.buf buf' in
+    Pia.Mem.free v.heap old_buf;               (* explicit free of the old buffer *)
+    Ok ()
+
+let push (v : inout mutable vec t a) (x : moved t) : result unit OutOfMemory
+  ensures match result with
+          | Ok () -> model v = append (old (model v)) x
+          | Err OutOfMemory -> model v = old (model v)
+=
+  if v.len = len v.buf then grow v?;
+  v.buf.[v.len] <- x;                          (* in bounds: grow made room *)
+  v.len <- v.len + 1;
+  Ok ()
+
+let pop (v : inout mutable vec t a) : option t
+  ensures match result with
+          | Some x -> old (model v) = append (model v) x
+          | None -> old v.len = 0
+= ...
+
+(* RAII: a vec that is not freed explicitly is dropped at scope end. *)
+let drop (v : moved vec t a) : unit = drop_each v.buf.[0 .. v.len]; Pia.Mem.free v.heap v.buf
+let drop_vec : adapter Drop (vec t a) = { drop = drop }
+```
+
+And a caller, where every allocation is handled and nothing can leak:
+
+```ocaml
+let squares (heap : borrowed general) (n : u32) : result (vec u64 general) OutOfMemory
+  ensures match result with Ok v -> len (model v) = n | Err _ -> true
+=
+  let v = Vec.empty heap in
+  for i in 0..n invariant len (model v) = i do
+    Vec.push v (mul_wide i i)?                (* on failure: v is dropped, and the error returned *)
+  done;
+  Ok v                                         (* moved out, so not dropped here *)
+```
+
+What has to be proved, and which part of the design proves it:
+
+| Property | Proved by |
+| --- | --- |
+| Every index in bounds | the type's `where`: `len <= len buf`, and `grow`'s postcondition |
+| No read of uninitialised memory | `alloc`'s `out` result, and `written buf 0 len` in the invariant |
+| Capacity arithmetic cannot overflow | `max_elems t`, and the ladder for `cap + cap` ([multiplication](#multiplication-in-the-verifier)) |
+| Growth gives enough memory or fails cleanly | `alloc`'s postcondition, and `grow` touching nothing before its `?` |
+| Elements survive growth | `copy`'s postcondition, so `model v = old (model v)` |
+| No double free, no use after free | `free` and `replace` take `buf` `moved` |
+| No leak | `Drop` on `vec` at scope end, on every exit including `?` |
+| Freed into the right allocator | the ghost `owns heap buf` in the invariant |
+| The vec cannot outlive its allocator | `heap : borrowed a`, by the borrow rule |
+
+The sketch needs, from the core: generics, record invariants (`where` on a record type), spec functions with `seq`, slicing, `?`, `Drop`, `moved` fields with `replace`, and the `Pia.Mem` allocators. That makes it a good test of all of them together.
 
 ### 8. POSIX: trusted declarations and typed wrappers
 
