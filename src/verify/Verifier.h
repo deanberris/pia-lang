@@ -45,10 +45,11 @@ struct Options {
   unsigned jobs = 0;
   // Drop the assertions that share no symbol with the goal before solving.
   // A sliced query that is not unsat is solved again in full, so slicing
-  // changes only how fast a goal is proved, never whether it is.
-  bool slice = true;
+  // changes only how fast a goal is proved, never whether it is. Off by
+  // default: on the benchmark it costs more than it saves (ADR 0032).
+  bool slice = false;
   // Proved goals are recorded here, one file per goal hash; empty for no
-  // cache. The hash covers the sliced query, the solver version and the
+  // cache. The hash covers the whole query, the solver version and the
   // rlimit, so a hit is the proof the solver would find again.
   std::string cacheDir;
   // Prove only the goals these specs select: a function name, a module

@@ -1639,9 +1639,10 @@ void solve(const Job &job, const Options &options, Outcome &out,
       js.sliced = true;
     }
   }
+  // Keyed by the whole query, so a goal proved either way is cached.
   std::string key;
   if (!options.cacheDir.empty()) {
-    key = goalHash(first->to_smt2(), options);
+    key = goalHash(job.script, options);
     unsigned long long cost = 0;
     if (cacheLookup(options, key, cost)) {
       js.cached = true;
@@ -1677,6 +1678,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.status = Status::Proved;
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
+        if (!key.empty()) cacheStore(options, key, now - before);
         return;
       }
     }

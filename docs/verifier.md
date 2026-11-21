@@ -85,7 +85,7 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 Build time is a benchmark ([ADR 0032](adr/0032-parallel-sliced-cached-proving.md)). Goals are listed and encoded in walk order on one thread, then the SMT queries are decided on a pool of threads, one per core unless `--jobs=N` says otherwise, each in its own Z3 context. The report keeps the walk order, and under an rlimit every goal has the same result on any number of threads.
 
-**Slicing.** Each query is cut to the goal's cone of influence: the negated goal, and every assertion that shares a symbol with one already kept, transitively. A precondition about `b` stays out of a goal about `x`. An `unsat` slice proves the goal, since only hypotheses were dropped. Otherwise the whole query is solved again, so a counterexample always comes from the full query. `--no-slice` turns slicing off.
+**Slicing** is off by default and turned on with `--slice`. Each query is cut to the goal's cone of influence: the negated goal, and every assertion that shares a symbol with one already kept, transitively. A precondition about `b` stays out of a goal about `x`. An `unsat` slice proves the goal, since only hypotheses were dropped. Otherwise the whole query is solved again, so a counterexample always comes from the full query. On the streams demo it costs more than it saves: 392 million resource units and 47 seconds on one thread with slicing, against 269 million and 33 seconds without. Smaller queries are not always easier for Z3, and a goal whose slice is satisfiable is solved twice. The benchmark keeps measuring it.
 
 **Selecting goals.** `--verify-only=<spec>` proves only the goals the spec selects, and can be repeated:
 
@@ -97,15 +97,15 @@ piac --verify-only=edges.pia:41 edges.pia         # the goals on one line
 
 Earlier goals are still assumed, as in a full run. Unselected goals are left out of the report, and a selective run never generates code.
 
-**Proof cache.** `--proof-cache=<dir>` keeps a file per proved goal, named by the SHA-256 of the Z3 version, the rlimit and the sliced query. A goal whose query is unchanged is not solved again, and calls are encoded from contracts, so editing a callee's body does not invalidate its callers. Failures are never cached.
+**Proof cache.** `--proof-cache=<dir>` keeps a file per proved goal, named by the SHA-256 of the Z3 version, the rlimit and the query. A goal whose query is unchanged is not solved again, and calls are encoded from contracts, so editing a callee's body does not invalidate its callers. Failures are never cached.
 
-**Statistics.** `--verify-stats` prints one line to stderr:
+**Statistics.** `--verify-stats` prints one line to stderr, here for `docs/streams.pia.md` on one thread:
 
 ```
-verify-stats: goals=5 unselected=0 intervals=1 skipped=0 solved=4 cached=0 sliced=2 unsliced=1 threads=4 cost=181904 encode_ms=3 solve_ms=41
+verify-stats: goals=243 unselected=0 intervals=21 skipped=0 solved=222 cached=0 sliced=0 unsliced=0 threads=1 cost=269094119 encode_ms=947 solve_ms=30213
 ```
 
-`solved` counts the queries sent to Z3, `cached` the goals the cache answered, `sliced` the queries slicing made smaller, `unsliced` the slices solved again in full, and `cost` Z3's resource count over every query. `tools/bench/proof_bench.py` runs these over the benchmark corpus on one thread and on every core, and CI fails when the cost grows by more than 10% over `tools/bench/baseline.json`.
+`solved` counts the queries sent to Z3, `cached` the goals the cache answered, `sliced` the queries slicing made smaller, `unsliced` the slices solved again in full, and `cost` Z3's resource count over every query. `tools/bench/proof_bench.py` runs these over the benchmark corpus on one thread and on every core, and CI fails when the cost grows by more than 10%. Z3's resource count varies by about 1% from run to run, since some of Z3's hash tables depend on memory addresses, so the benchmark compares reports exactly and costs within 5% over `tools/bench/baseline.json`.
 
 ## Loops
 

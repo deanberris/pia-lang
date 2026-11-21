@@ -23,8 +23,9 @@
 //                                   function, a module (file.pia) or a
 //                                   location file:line[:col]; repeatable
 //   piac --proof-cache=DIR ...      skip goals proved before, keyed by the
-//                                   hash of each sliced query
-//   piac --no-slice ...             give Z3 every assumption, unsliced
+//                                   hash of each query
+//   piac --slice ...                first try each goal with only the
+//                                   assumptions it shares symbols with
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
@@ -77,7 +78,7 @@ int usage() {
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
-               "             [--proof-cache=<dir>] [--no-slice] [--verify-stats]\n"
+               "             [--proof-cache=<dir>] [--slice] [--verify-stats]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -268,7 +269,7 @@ int main(int argc, char **argv) {
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
   std::string proofCache;
-  bool slice = true, verifyStats = false;
+  bool slice = false, verifyStats = false;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -324,8 +325,8 @@ int main(int argc, char **argv) {
       if (arg.size() == 14) return usage();
       proofCache = arg.substr(14);
     }
-    else if (arg == "--no-slice")
-      slice = false;
+    else if (arg == "--slice")
+      slice = true;
     else if (arg == "--verify-stats")
       verifyStats = true;
     else if (arg == "--solver-cost")
