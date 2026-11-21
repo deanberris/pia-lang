@@ -308,7 +308,7 @@ def Pia_ConstArrayOp : Pia_Op<"const_array", [Pure]> {
   }];
   let arguments = (ins ArrayAttr:$values, OptionalAttr<StrAttr>:$label);
   let results = (outs Pia_ArrayType:$result);
-  let assemblyFormat = "$values attr-dict `:` type($result)";
+  let assemblyFormat = "$values (`label` $label^)? attr-dict `:` type($result)";
   let hasVerifier = 1;
 }
 
