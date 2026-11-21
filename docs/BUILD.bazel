@@ -3,6 +3,7 @@ exports_files([
     "design.md",
     "getting-started.md",
     "index.md",
+    "repl.md",
     "status.md",
     "streams.pia.md",
     "tour.md",

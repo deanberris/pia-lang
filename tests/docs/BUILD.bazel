@@ -10,6 +10,7 @@ DOCS = [
     "//docs:demo.md",
     "//docs:tour.md",
     "//docs:verification.md",
+    "//docs:repl.md",
     "//docs:status.md",
     "//docs:streams.pia.md",
 ]
@@ -17,10 +18,15 @@ DOCS = [
 py_test(
     name = "doc_examples_test",
     srcs = ["doc_examples_test.py"],
-    args = ["$(rootpath //tools/piac)"] + ["$(rootpath %s)" % d for d in DOCS],
+    args = [
+        "$(rootpath //tools/piac)",
+        "--pia",
+        "$(rootpath //tools/pia)",
+    ] + ["$(rootpath %s)" % d for d in DOCS],
     data = DOCS + [
         "//examples/edges:edges.pia",
         "//examples/edges:edges_buggy.pia",
+        "//tools/pia",
         "//tools/piac",
     ],
     main = "doc_examples_test.py",

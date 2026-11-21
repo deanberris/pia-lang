@@ -1,0 +1,192 @@
+#include "repl/Mcp.h"
+
+#include <chrono>
+#include <string>
+
+namespace pia::repl {
+
+namespace {
+
+constexpr const char *kProtocolVersion = "2025-06-18";
+constexpr double kDefaultWaitMs = 10000;
+constexpr double kMaxWaitMs = 120000;
+
+lsp::Json schema(lsp::Json::Object properties, lsp::Json::Array required) {
+  lsp::Json s;
+  s["type"] = "object";
+  s["properties"] = std::move(properties);
+  s["required"] = std::move(required);
+  return s;
+}
+
+lsp::Json prop(const char *type, const char *description) {
+  lsp::Json p;
+  p["type"] = type;
+  p["description"] = description;
+  return p;
+}
+
+lsp::Json tools() {
+  lsp::Json execute;
+  execute["name"] = "execute";
+  execute["description"] =
+      "Run Pia code in a persistent, verified REPL session. A cell is Pia "
+      "code (definitions with let, expressions to evaluate) or a command "
+      "(:help, :type e, :proof f, :env, :source f, :redef code, :forget f, "
+      ":allow spec, :load file, :reset). Definitions join the environment "
+      "only if every proof obligation in the whole environment is proved; "
+      "failures come back with counterexamples. Expressions are proved, "
+      "then compiled and run. Defining a name that exists is an error (no "
+      "shadowing); use :redef to replace it, which re-verifies everything "
+      "that uses it. Returns the cell's events, or a job number to poll if "
+      "it is still running after wait_ms.";
+  execute["inputSchema"] = schema(
+      {{"code", prop("string", "The cell: Pia code or a :command")},
+       {"wait_ms", prop("number", "How long to wait for the result before "
+                                  "returning a job to poll (default 10000)")}},
+      {"code"});
+  lsp::Json poll;
+  poll["name"] = "poll";
+  poll["description"] =
+      "Wait for a job that execute returned, and get its state (queued, "
+      "running, done) and, once done, its result.";
+  poll["inputSchema"] = schema(
+      {{"job", prop("number", "The job number from execute")},
+       {"wait_ms", prop("number", "How long to wait (default 10000)")}},
+      {"job"});
+  lsp::Json result;
+  result["tools"] = lsp::Json::Array{execute, poll};
+  return result;
+}
+
+lsp::Json textContent(const std::string &text) {
+  lsp::Json c;
+  c["type"] = "text";
+  c["text"] = text;
+  return lsp::Json::Array{c};
+}
+
+std::chrono::milliseconds waitOf(const lsp::Json &args) {
+  double ms = args["wait_ms"].asNumber(kDefaultWaitMs);
+  if (ms < 0) ms = 0;
+  if (ms > kMaxWaitMs) ms = kMaxWaitMs;
+  return std::chrono::milliseconds(static_cast<long long>(ms));
+}
+
+lsp::Json reply(const lsp::Json &id, lsp::Json result) {
+  lsp::Json r;
+  r["jsonrpc"] = "2.0";
+  r["id"] = id;
+  r["result"] = std::move(result);
+  return r;
+}
+
+lsp::Json errorReply(const lsp::Json &id, int code, const std::string &message) {
+  lsp::Json e;
+  e["code"] = code;
+  e["message"] = message;
+  lsp::Json r;
+  r["jsonrpc"] = "2.0";
+  r["id"] = id;
+  r["error"] = std::move(e);
+  return r;
+}
+
+}  // namespace
+
+lsp::Json McpServer::jobResult(const Kernel::Status &s) {
+  lsp::Json structured;
+  structured["job"] = static_cast<double>(s.job);
+  structured["status"] = stateName(s.state);
+  std::string text;
+  bool isError = s.state == Kernel::State::Unknown;
+  if (s.result) {
+    lsp::Json cell = toJson(*s.result);
+    structured["result"] = cell;
+    text = render(*s.result);
+    if (text.empty()) text = s.result->ok ? "ok\n" : "failed\n";
+    isError = !s.result->ok;
+  } else if (s.state == Kernel::State::Unknown) {
+    text = "there is no job " + std::to_string(s.job) + "\n";
+  } else {
+    text = "job " + std::to_string(s.job) + " is " + stateName(s.state) +
+           "; call poll with this job number\n";
+  }
+  lsp::Json result;
+  result["content"] = textContent(text);
+  result["structuredContent"] = std::move(structured);
+  result["isError"] = isError;
+  return result;
+}
+
+lsp::Json McpServer::callTool(const std::string &name, const lsp::Json &args) {
+  if (name == "execute") {
+    if (!args["code"].isString()) {
+      lsp::Json r;
+      r["content"] = textContent("execute needs a \"code\" string\n");
+      r["isError"] = true;
+      return r;
+    }
+    uint64_t job = kernel_.submit(args["code"].asString());
+    return jobResult(kernel_.poll(job, waitOf(args)));
+  }
+  if (name == "poll") {
+    double job = args["job"].asNumber(0);
+    return jobResult(kernel_.poll(job < 0 ? 0 : static_cast<uint64_t>(job),
+                                  waitOf(args)));
+  }
+  lsp::Json r;
+  r["content"] = textContent("unknown tool " + name + "\n");
+  r["isError"] = true;
+  return r;
+}
+
+lsp::Json McpServer::handle(const lsp::Json &message) {
+  const lsp::Json &id = message["id"];
+  std::string method =
+      message["method"].isString() ? message["method"].asString() : "";
+  bool notification = !message.has("id");
+  if (method == "initialize") {
+    lsp::Json caps;
+    caps["tools"] = lsp::Json::Object{};
+    lsp::Json info;
+    info["name"] = "pia-repl";
+    info["version"] = "0.0.0";
+    lsp::Json result;
+    std::string version = message["params"]["protocolVersion"].isString()
+                              ? message["params"]["protocolVersion"].asString()
+                              : kProtocolVersion;
+    result["protocolVersion"] = version;
+    result["capabilities"] = std::move(caps);
+    result["serverInfo"] = std::move(info);
+    result["instructions"] =
+        "A persistent Pia REPL. Send code with execute; every definition is "
+        "proved before it joins the environment. Start with execute "
+        "{\"code\": \":help\"}.";
+    return reply(id, std::move(result));
+  }
+  if (notification) return lsp::Json();
+  if (method == "ping") return reply(id, lsp::Json::Object{});
+  if (method == "tools/list") return reply(id, tools());
+  if (method == "tools/call") {
+    const lsp::Json &params = message["params"];
+    if (!params["name"].isString())
+      return errorReply(id, -32602, "tools/call needs a tool name");
+    return reply(id, callTool(params["name"].asString(), params["arguments"]));
+  }
+  return errorReply(id, -32601, "method not found: " + method);
+}
+
+void McpServer::serve(std::istream &in, std::ostream &out) {
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.find_first_not_of(" \t\r") == std::string::npos) continue;
+    std::optional<lsp::Json> msg = lsp::Json::parse(line);
+    lsp::Json r = msg ? handle(*msg) : errorReply(lsp::Json(), -32700, "parse error");
+    if (r.isNull()) continue;
+    out << r.dump() << "\n";
+    out.flush();
+  }
+}
+
+}  // namespace pia::repl
