@@ -71,6 +71,7 @@ nav:
       - Language design: design.md
       - Grammar: grammar.md
       - Metaprograms: meta.md
+      - Standard library (proposal): stdlib.md
   - Compiler internals:
       - Architecture: architecture.md
       - IRGen: irgen.md
