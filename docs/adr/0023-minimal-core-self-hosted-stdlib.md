@@ -11,7 +11,7 @@ Pia needs a standard library, and Dean wants it written in Pia so that it is ver
 ## Decision
 
 - A feature is in the core only if Pia cannot express it, the verifier must know its meaning, or it shapes the language. Everything else is library code in Pia, proved when the library builds.
-- The core adds: integer bit builtins, `widen`/`narrow`/`mul_wide`, sum types and `match`, spec functions and lemmas, slicing and constant arrays, `@linear` types, `extern`, `unsafe`, `addr`, `@trusted`, metaprogram type queries, and later float, vector and atomic builtins. Modules (M8) and generics (M9) are core as already decided.
+- The core adds: integer bit builtins (with C-style prelude operators `& | ^ ~ << >>`, where `|` is bitwise or only inside parentheses), `widen`/`narrow`/`mul_wide`, sum types and `match`, spec functions and lemmas, slicing and constant arrays, `@linear` types, `extern`, `unsafe`, `addr`, `@trusted`, metaprogram type queries, and later float, vector and atomic builtins. Modules (M8) and generics (M9) are core as already decided.
 - FFI is `= extern "symbol"` as a function body. A foreign function with a `requires` or `ensures` clause is called normally: its preconditions are goals and its postconditions are trusted. One without a contract can only be called as `unsafe f x`, which assumes nothing about the result.
 - POSIX is reached through libSystem, declared with weak, cited contracts in one trusted module, `Pia.Sys.Posix`. The rest of `Pia.Sys` wraps it in strong types and is fully proved: errors are a `result` of a decoded `errno`, and handles such as `fd` are `@linear`, so they are closed exactly once.
 - `addr` and `assume` are only allowed in modules marked `@trusted`. Each module's certificate lists its own trusted items (foreign contracts, `unsafe` call sites, `assume`s, accepted unproved goals), and `piac --trust-report` computes a program's transitive trusted base from the certificates. The format is [ADR 0024](0024-published-proof-certificates.md)'s.
@@ -25,4 +25,4 @@ Pia needs a standard library, and Dean wants it written in Pia so that it is ver
 - The edge demo can drop `main.c` once files, `main` and arenas exist, and use BT.601 once per-goal widths land.
 - `unsafe` becomes a word the core gives meaning to, as `extern` does. Neither is a reserved keyword.
 - Much of the work (the multiplication ladder, bit builtins, spec functions, variants, FFI) does not need modules, so it can proceed alongside M8.
-- Still open: bit operator spellings, and whether libm is ever trusted.
+- libm is never trusted: every maths function is written and proved in Pia, with its error bound in its contract.

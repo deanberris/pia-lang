@@ -71,7 +71,19 @@ New builtins, each one or two MLIR ops, with exact SMT semantics (`bvand`, `bvsh
 | `mul_wide a b` | the full product in a type twice as wide, `u32 -> u32 -> u64` | none |
 | `bits` `from_bits` | reinterpret, once floats exist | none |
 
-The operators (`land` `lor` `lxor` `lsl` `lsr`, OCaml's names, or `&` `|` `^` `<<` `>>`) then go in the prelude as metaprograms, like `+` today.
+Their operators use C's symbols (Dean, 2026-11-21) and go in the prelude as metaprograms, like `+` today:
+
+| Operator | Builtin | Precedence |
+| --- | --- | --- |
+| `~x` | `bnot` | prefix, binds like `-x` |
+| `<<` `>>` | `shl` `shr` | 5, left (between comparisons and `+`) |
+| `&` | `band` | 6.5, left (between `+` and `*`) |
+| `^` | `bxor` | 6.4, left |
+| `\|` | `bor` | 6.3, left |
+
+Unlike C, bitwise operators bind tighter than comparisons, so `x & mask = 0` means `(x & mask) = 0`. The prelude's levels are whole numbers today, so the three bitwise levels need the prelude to allow more levels between 6 and 7. `~` needs prefix operator declarations, which the prelude does not have yet (`-x` is built in).
+
+`|` is already a grammar token: it separates variants and match arms, and starts a refinement's predicate ([grammar.md](grammar.md)). So `|` means bitwise or only inside parentheses or brackets opened within the expression. At the top level of a match arm's body or a refinement it keeps its grammar meaning, and `| A -> (x | y)` needs the parentheses. `||` and `&&` stay logical, and `^`, `&`, `<<` and `>>` are free today.
 
 Everything else about integers is library code: `min`, `max`, `clamp`, `abs`, `gcd`, `isqrt`, `ilog2`, checked or wrapping helpers, `is_power_of_two`, `align_up`, and byte-order reads such as `u32_be` (PNG is big-endian, BMP little-endian), each with a postcondition the verifier checks against the arithmetic definition.
 
@@ -206,7 +218,7 @@ Most failures are ruled out at compile time, but a few happen at run time by des
 
 These come with milestones M10 to M12, but they are core builtins, so they are listed here.
 
-- **Floats (M11)**: `fadd fsub fmul fdiv fneg fsqrt fma fabs fmin fmax`, comparisons, `ftoi` (with a range goal), `itof`, `is_nan`, `is_inf`, and the three reassociation choices from [ADR 0012](adr/0012-floating-point-reassociation.md). Elementary functions (`exp`, `log`, `sin`) are Pia in `Pia.Math`: range reduction and polynomials, with error bounds in their contracts. Only the sediment colour map needs them at first.
+- **Floats (M11)**: `fadd fsub fmul fdiv fneg fsqrt fma fabs fmin fmax`, comparisons, `ftoi` (with a range goal), `itof`, `is_nan`, `is_inf`, and the three reassociation choices from [ADR 0012](adr/0012-floating-point-reassociation.md). Elementary functions (`exp`, `log`, `sin`, `pow`) are Pia in `Pia.Math`, never libm: range reduction and polynomials, with error bounds (in ulps or absolute) proved in their contracts. Only the sediment colour map needs them at first.
 - **`vec<T, k>` (M10)**: `splat`, `lane` and `with_lane` (lane index proved), `vload xs i` and `vstore xs i v` (with `i + k <= len xs` proved), every integer and float builtin applied lane-wise with the same overflow modes, comparisons and `vselect`, constant `shuffle`, `vwiden_lo`/`vwiden_hi`/`vnarrow`, and horizontal `vreduce_add`/`vreduce_max`. They lower to MLIR's `vector` dialect, and to `arm_neon` where a pattern needs it. The verifier models a vector as `k` values.
 - **Atomics (M12)**: `atomic_load atomic_store atomic_swap atomic_cas atomic_add atomic_sub atomic_and atomic_or fence` on an `atomic<T>` cell, each with a memory order (`relaxed acquire release acq_rel seq_cst`), lowering to LLVM atomics and so to `ldar`, `stlr`, `ldadd` and `cas` on arm64.
 
@@ -312,7 +324,7 @@ The common lesson is that the trusted part should be small, listed, and tested a
 
 ## Decided in this proposal
 
-These were open questions in the first draft. ADR 0023 records the answers.
+These were open questions in the first draft. ADR 0023 records the answers. No open questions remain.
 
 - **Trusted items are listed in certificates.** Each certificate lists its own module's trusted items (foreign contracts, `unsafe` calls, `assume`s, accepted unproved goals), and `piac --trust-report` walks them for the whole program. `addr` and `assume` are only allowed in `@trusted` modules.
 - **Allocation failure is a `result`** by default, with a trapping variant clearly named.
@@ -320,9 +332,6 @@ These were open questions in the first draft. ADR 0023 records the answers.
 - **FFI needs explicit contracts.** A foreign function without one can only be called as `unsafe f x`, and each such call is a trusted item.
 - **Runtime errors go to one handler**, `Pia.Rt`, which prints the Pia source location, a stack trace, and debug info when it is available.
 - **Spec function unfolding**: one level of unfolding by default (Dafny's fuel of 1), with lemmas for anything deeper and a per-function `@fuel(n)` to raise it.
+- **libm is never trusted.** Every maths function is written and proved in Pia (Dean, 2026-11-21), with its error bound in its contract.
+- **Bit operators use C's symbols**: `&` `|` `^` `~` `<<` `>>`, with `|` as bitwise or only inside parentheses.
 - **`seq<T>` is a library type** whose model is an SMT array plus a length, introduced with ghost values. A core type can come later if the encoding needs it.
-
-## Open questions
-
-- **Operator spellings for bit operations**: OCaml's `land` `lor` `lsl`, or C's `&` `|` `<<`. Pia already uses `||` and `&&` for logic, so `|` and `&` would read as their bitwise forms, but `|` also separates variants.
-- **Whether libm is trusted**, or every float function is Pia with an error bound. This proposal writes them in Pia.
