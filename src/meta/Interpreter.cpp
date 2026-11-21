@@ -74,6 +74,8 @@ const std::map<std::string, size_t> &metaBuiltins() {
       {"listing", 1}, {"comments", 1}, {"doc", 1},   {"text", 1},
       {"style", 1},   {"place", 1},    {"kind", 1},  {"with_doc", 2},
       {"fail", 1},
+      // Pia.Live, in the REPL only (ADR 0031).
+      {"redefine", 1},
   };
   return table;
 }
@@ -504,6 +506,27 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     target->comments.insert(
         target->comments.begin(),
         syntax::makeComment(site_, args[0]->s, "doc", "leading"));
+    return syntaxValue(std::move(copy));
+  }
+  if (name == "redefine") {
+    // Marks each definition in the code as replacing the environment's
+    // definition of that name. The REPL verifies the replacement like a
+    // :redef cell before it commits it (docs/repl.md).
+    if (!live_)
+      throw MetaError{site_, "'redefine' is part of Pia.Live, which only the "
+                             "REPL provides"};
+    NodePtr copy = clone(needSyntax(args[0]));
+    std::vector<Node *> items;
+    if (copy->kind == NodeKind::Program)
+      for (NodePtr &k : copy->kids) items.push_back(k.get());
+    else
+      items.push_back(copy.get());
+    for (Node *item : items) {
+      if (item->kind != NodeKind::LetItem)
+        throw MetaError{site_, "'redefine' needs definitions, found " +
+                                   std::string(syntax::nodeKindName(item->kind))};
+      item->flags += item->flags.empty() ? "redef" : " redef";
+    }
     return syntaxValue(std::move(copy));
   }
   if (name == "fail") {

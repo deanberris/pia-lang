@@ -1,0 +1,9 @@
+(* Pia.Live belongs to the REPL (ADR 0031): a compiled program cannot
+   redefine anything, so piac refuses `redefine`.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+// CHECK: error: the metaprogram 'swap' failed: 'redefine' is part of Pia.Live, which only the REPL provides
+*)
+
+let meta swap () = redefine `( let limit : u8 = 2 )
+let limit : u8 = 1
+swap ()

@@ -94,6 +94,14 @@ Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md)
 | `with_doc s x` | a copy of the syntax `x` (or the first of a list of items) with a leading doc comment `s` |
 | `fail s` | stop with the error `s`, reported at the expansion site |
 
+In the REPL, metaprograms can also change definitions that already exist, through `Pia.Live` ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)). `listing ()` there lists the whole environment.
+
+| Builtin | Meaning |
+| --- | --- |
+| `redefine x` | the definitions in the syntax `x`, marked to replace the environment's definitions of the same names; the REPL proves the change like a `:redef` cell before it commits it ([repl.md](repl.md#live-redefinition)) |
+
+`piac` has no `Pia.Live`: a compiled program cannot redefine anything, so `redefine` fails there.
+
 Comments survive everything expansion does:
 
 - **Quotes** keep the comments written inside them, at the expansion site like the rest of the quote.

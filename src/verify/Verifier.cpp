@@ -1473,6 +1473,7 @@ void solve(const Query &q, unsigned width, const Options &options,
   z3::solver solver(ctx);
   z3::params p(ctx);
   p.set("timeout", options.timeoutMs);
+  if (options.rlimit) p.set("rlimit", options.rlimit);
   solver.set(p);
   try {
     solver.from_string(script.c_str());
@@ -1481,7 +1482,16 @@ void solve(const Query &q, unsigned width, const Options &options,
     out.method = std::string("the solver rejected the query: ") + e.msg();
     return;
   }
-  switch (solver.check()) {
+  z3::check_result result = solver.check();
+  if (options.reportCost) {
+    z3::stats st = solver.statistics();
+    for (unsigned i = 0; i < st.size(); ++i)
+      if (st.key(i) == "rlimit count")
+        out.cost = st.is_uint(i) ? st.uint_value(i)
+                                 : static_cast<unsigned long long>(
+                                       st.double_value(i));
+  }
+  switch (result) {
     case z3::unsat:
       out.status = Status::Proved;
       out.method = "smt";

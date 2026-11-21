@@ -205,6 +205,109 @@ class ReplTest(unittest.TestCase):
         self.assertFalse(reply["ok"])
 
 
+STEP = ("let step (a : u64) : u64\n"
+        "  requires a < 1000\n"
+        "  ensures result = 1\n"
+        "= 1")
+TOTAL = ("let total (n : u64) : u64\n"
+         "  requires n <= 8000000000\n"
+         "= let s : mutable u64 = 0 in\n"
+         "  for i in 0 .. n\n"
+         "    invariant s <= 2 * i\n"
+         "  do s <- s + step 5 done;\n"
+         "  s")
+# Long enough to still be running while the next few cells are checked.
+LONG = 4000000000
+
+
+class LiveTest(unittest.TestCase):
+    """Tasks, and redefinition while they run (ADR 0031)."""
+
+    def setUp(self):
+        self.repl = Repl()
+        self.assertTrue(self.repl.run(STEP)["ok"])
+        self.assertTrue(self.repl.run(TOTAL)["ok"])
+
+    def tearDown(self):
+        self.repl.close()
+
+    def spawn(self):
+        r = self.repl.run(f":spawn total {LONG}")
+        self.assertTrue(r["ok"], r)
+        [t] = kinds(r, "task")
+        self.assertEqual(t["status"], "running")
+        return t["name"]
+
+    def test_tasks_finish_with_a_value(self):
+        r = self.repl.run(":spawn total 1000")
+        self.assertEqual(kinds(r, "task")[0]["name"], "1")
+        r = self.repl.run(":wait 1")
+        [t] = kinds(r, "task")
+        self.assertEqual((t["status"], t["type"], t["value"]), ("done", "usize", "1000"))
+        self.assertEqual(kinds(self.repl.run(":tasks"), "task")[0]["value"], "1000")
+
+    def test_refinement_swaps_into_a_running_task(self):
+        task = self.spawn()
+        # The same contract and a new body: proved against the old contract,
+        # so it is swapped in while the task runs.
+        r = self.repl.run(":redef let step (a : u64) : u64 requires a < 1000 "
+                          "ensures result = 1 = 2 - 1")
+        self.assertTrue(r["ok"], r)
+        [d] = kinds(r, "redefined")
+        self.assertIn("swapped into running task " + task, d["text"])
+        self.assertEqual(self.repl.run("total 10")["events"][-1]["value"], "10")
+        r = self.repl.run(":wait " + task)
+        self.assertEqual(kinds(r, "task")[0]["value"], str(LONG))
+
+    def test_a_change_that_does_not_refine_waits_for_the_task(self):
+        task = self.spawn()
+        # total still verifies with this step, but the running task was
+        # proved against `result = 1`, which the new body breaks.
+        weaker = (":redef let step (a : u64) : u64 requires a < 1000 "
+                  "ensures result <= 2 = 2")
+        r = self.repl.run(weaker)
+        self.assertFalse(r["ok"], r)
+        self.assertIn("must refine", kinds(r, "error")[0]["text"])
+        self.assertEqual(self.repl.run("total 10")["events"][-1]["value"], "10")
+        self.repl.run(":wait " + task)
+        r = self.repl.run(weaker)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.repl.run("total 10")["events"][-1]["value"], "20")
+
+    def test_forget_waits_for_the_task(self):
+        task = self.spawn()
+        r = self.repl.run(":forget total")
+        self.assertFalse(r["ok"], r)
+        self.assertIn("running task", kinds(r, "error")[0]["text"])
+        r = self.repl.run(":reset")
+        self.assertFalse(r["ok"], r)
+        self.repl.run(":wait " + task)
+        self.assertTrue(self.repl.run(":forget total")["ok"])
+
+    def test_unrelated_definitions_while_a_task_runs(self):
+        task = self.spawn()
+        r = self.repl.run("let other (a : u8) : u8 = a")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.repl.run("other 4")["events"][-1]["value"], "4")
+        self.repl.run(":wait " + task)
+
+    def test_metaprograms_redefine_with_pia_live(self):
+        r = self.repl.run("let meta faster () = redefine `( let step (a : u64) : u64 "
+                          "requires a < 1000 ensures $!result = 1 = 1 + 0 )")
+        self.assertTrue(r["ok"], r)
+        task = self.spawn()
+        r = self.repl.run("faster ()")
+        self.assertTrue(r["ok"], r)
+        [d] = kinds(r, "redefined")
+        self.assertEqual(d["name"], "step")
+        self.assertIn("swapped into running task " + task, d["text"])
+        self.repl.run(":wait " + task)
+        # It stays redefined in later cells.
+        self.assertTrue(self.repl.run("let after : u8 = 1")["ok"])
+        r = self.repl.run(":source step")
+        self.assertTrue(r["ok"], r)
+
+
 class TextTest(unittest.TestCase):
     def test_pipe(self):
         script = (

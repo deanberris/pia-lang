@@ -13,6 +13,10 @@
 //                                   at SPEC = file:line or file:line:col
 //   piac --solver-timeout=MS ...    give Z3 MS milliseconds per obligation
 //                                   (default 10000)
+//   piac --solver-rlimit=N ...      give Z3 a deterministic resource limit
+//                                   of N per obligation (default none)
+//   piac --solver-cost file.pia     --verify, also printing each proved
+//                                   goal's Z3 resource count
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
@@ -61,6 +65,7 @@ int usage() {
                "--dump-expanded | --dump-tokens | --check) "
                "[--fragment=contracts] [--meta-cycles=N]\n"
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
+               "             [--solver-rlimit=<n>] [--solver-cost]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -80,7 +85,9 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
     switch (o.status) {
       case Status::Proved:
         ++proved;
-        os << o.where << ": proved: " << o.claim << " [" << o.method << "]\n";
+        os << o.where << ": proved: " << o.claim << " [" << o.method << "]";
+        if (o.cost) os << " (cost " << o.cost << ")";
+        os << "\n";
         break;
       case Status::Skipped:
         ++skipped;
@@ -230,6 +237,8 @@ int main(int argc, char **argv) {
   bool literate = false, showComments = false;
   pia::meta::Options meta;
   unsigned solverTimeoutMs = 0;  // 0: the verifier's default
+  unsigned solverRlimit = 0;     // 0: none
+  bool solverCost = false;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -262,6 +271,15 @@ int main(int argc, char **argv) {
         return usage();
       solverTimeoutMs = static_cast<unsigned>(ms);
     }
+    else if (arg.rfind("--solver-rlimit=", 0) == 0) {
+      char *end = nullptr;
+      unsigned long n = std::strtoul(arg.c_str() + 16, &end, 10);
+      if (arg.size() == 16 || *end != '\0' || n == 0 || n > 4000000000UL)
+        return usage();
+      solverRlimit = static_cast<unsigned>(n);
+    }
+    else if (arg == "--solver-cost")
+      verify = solverCost = true;
     else if (arg == "--verify")
       verify = true;
     else if (arg == "--dump-smt")
@@ -300,6 +318,8 @@ int main(int argc, char **argv) {
     return usage();
 #ifdef PIA_NO_MLIR
   (void)solverTimeoutMs;
+  (void)solverRlimit;
+  (void)solverCost;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
     return 2;
@@ -351,6 +371,8 @@ int main(int argc, char **argv) {
       pia::verify::Options options;
       options.dumpSmt = dumpSmt;
       if (solverTimeoutMs) options.timeoutMs = solverTimeoutMs;
+      options.rlimit = solverRlimit;
+      options.reportCost = solverCost;
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options);
       } else if (module && verify) {
