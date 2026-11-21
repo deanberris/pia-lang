@@ -282,10 +282,14 @@ class CoreTypes : public mlir::TypeConverter {
       return mlir::MemRefType::get({static_cast<int64_t>(t.getLength())},
                                    elem);
     });
+    // A slice may start part way into its storage (`xs.[a .. b]`), so its
+    // offset is dynamic. The descriptor is the same as an identity one's.
     addConversion([this](SliceType t) -> std::optional<Type> {
       Type elem = element(t.getElementType());
       if (!elem) return std::nullopt;
-      return mlir::MemRefType::get({mlir::ShapedType::kDynamic}, elem);
+      auto layout = mlir::StridedLayoutAttr::get(
+          t.getContext(), mlir::ShapedType::kDynamic, {1});
+      return mlir::MemRefType::get({mlir::ShapedType::kDynamic}, elem, layout);
     });
     auto cast = [](OpBuilder &b, Type t, mlir::ValueRange in,
                    Location loc) -> Value {
@@ -489,6 +493,53 @@ struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
   }
 };
 
+// `xs.[lo .. hi]`: the same storage, from the buffer's offset plus lo, with
+// hi - lo elements.
+struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      SliceOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!type) return mlir::failure();
+    Value src = adaptor.getBuffer();
+    auto meta = make<mlir::memref::ExtractStridedMetadataOp>(rw, loc, src);
+    Value offset = make<mlir::arith::AddIOp>(rw, loc, meta.getOffset(),
+                                             adaptor.getLo());
+    Value size =
+        make<mlir::arith::SubIOp>(rw, loc, adaptor.getHi(), adaptor.getLo());
+    rw.replaceOpWithNewOp<mlir::memref::ReinterpretCastOp>(
+        op, type, src, mlir::OpFoldResult(offset),
+        llvm::ArrayRef<mlir::OpFoldResult>{size},
+        llvm::ArrayRef<mlir::OpFoldResult>{rw.getIndexAttr(1)});
+    return mlir::success();
+  }
+};
+
+// `abort ()`: proved unreachable; if reached anyway, it traps. A result it
+// stands for is never used, so it is zero.
+struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      AbortOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    llvm::SmallVector<Value> results;
+    for (Type t : op.getResultTypes()) {
+      auto i = mlir::dyn_cast_or_null<mlir::IntegerType>(
+          getTypeConverter()->convertType(t));
+      if (!i) return mlir::failure();
+      results.push_back(make<mlir::arith::ConstantOp>(
+          rw, loc, i, rw.getIntegerAttr(i, 0)));
+    }
+    make<mlir::LLVM::Trap>(rw, loc);
+    rw.replaceOp(op, results);
+    return mlir::success();
+  }
+};
+
 struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -598,7 +649,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering>(types, ctx);
+               StoreLowering, SliceLowering, AbortLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

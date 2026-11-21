@@ -143,7 +143,7 @@ This group has no counterpart in an unverified language's core. Without it, the 
 
 ### 6. Buffers ★
 
-- **Slicing** `xs.[a .. b]`, as a view with proved bounds. The library cannot split work, recurse on halves, or return part of a buffer without it.
+- **Slicing** `xs.[a .. b]`, as a view with proved bounds. The library cannot split work, recurse on halves, or return part of a buffer without it. Implemented with `abort` (#50): `pia.slice` lowers to a strided memref view.
 - **Constant data**: array literals and module-level constant arrays (`let crc_table : [u32; 256] = ...`), placed in read-only data. Many library algorithms are table driven.
 - **Buffers of records** in codegen, which the scalariser does not lower yet.
 

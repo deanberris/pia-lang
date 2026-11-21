@@ -11,6 +11,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -106,6 +107,12 @@ std::optional<OverflowMode> arithMode(Operation *op) {
 // The storage width of a shift's left operand: the amount must be below it.
 unsigned shiftWidth(Operation *op) {
   return mlir::cast<IntType>(op->getOperand(0).getType()).getStorageWidth();
+}
+
+// The buffer whose storage a value views: itself, unless it is a slice.
+Value rootBuffer(Value buffer) {
+  while (auto s = buffer.getDefiningOp<SliceOp>()) buffer = s.getBuffer();
+  return buffer;
 }
 
 std::string shiftClaim(Operation *op) {
@@ -445,6 +452,10 @@ class Encoder {
                        "the index fits in " + sema::typeName(f.getType())});
     if (mlir::isa<LoadOp, StoreOp>(op))
       out.push_back({ObligationKind::inbounds, "the index is within bounds"});
+    if (mlir::isa<SliceOp>(op))
+      out.push_back({ObligationKind::inbounds, "the slice is within bounds"});
+    if (mlir::isa<AbortOp>(op))
+      out.push_back({ObligationKind::assert_, "'abort' is never reached"});
     if (mlir::isa<contract::AssertOp>(op))
       out.push_back({ObligationKind::assert_, "the assertion holds"});
     if (mlir::isa<contract::EnsuresOp>(op))
@@ -658,16 +669,18 @@ class Encoder {
     if (auto store = mlir::dyn_cast<StoreOp>(op)) {
       Value idx = term(store.getIndex());
       Value len = lengths_.lookup(store.getBuffer());
-      Value arr = arrays_.lookup(store.getBuffer());
-      if (!idx || !len || !arr) return true;
+      Value root = rootBuffer(store.getBuffer());
+      Value arr = arrays_.lookup(root);
+      Value at = elementIndex(store.getBuffer(), idx, views_);
+      if (!idx || !len || !arr || !at) return true;
       goal(ObligationKind::inbounds, op, "the index is within bounds",
            andOf(cmp(P::sge, idx, bv(0)), cmp(P::slt, idx, len)),
            indexByIntervals(store.getBuffer(), store.getIndex()),
            {{"index", idx}, {"length", len}});
       Value v = term(store.getValue());
       if (v)
-        arrays_[store.getBuffer()] = create<mlir::smt::ArrayStoreOp>(
-            arr.getType(), arr, idx, v);
+        arrays_[root] = create<mlir::smt::ArrayStoreOp>(arr.getType(), arr,
+                                                        at, v);
       return true;
     }
 
@@ -731,6 +744,18 @@ class Encoder {
                indexByIntervals(ld.getBuffer(), ld.getIndex()),
                {{"index", idx}, {"length", len}});
       }
+      if (auto sl = mlir::dyn_cast<SliceOp>(op)) {
+        Value lo = term(sl.getLo()), hi = term(sl.getHi());
+        Value len = lengths_.lookup(sl.getBuffer());
+        if (lo && hi && len)
+          goal(ObligationKind::inbounds, op, "the slice is within bounds",
+               andOf(andOf(cmp(P::sge, lo, bv(0)), cmp(P::sle, lo, hi)),
+                     cmp(P::sle, hi, len)),
+               false, {{"start", lo}, {"end", hi}, {"length", len}});
+      }
+      if (mlir::isa<AbortOp>(op))
+        goal(ObligationKind::assert_, op, "'abort' is never reached",
+             boolConst(false), false);
     }
 
     if (auto old = mlir::dyn_cast<contract::OldOp>(op)) {
@@ -757,7 +782,7 @@ class Encoder {
     llvm::SmallVector<Value> operands;
     for (Value v : op->getOperands()) operands.push_back(term(v));
     llvm::SmallVector<Value> results;
-    if (semantics(op, operands, arrays_, lengths_, results)) {
+    if (semantics(op, operands, arrays_, lengths_, views_, results)) {
       for (auto [r, t] : llvm::zip(op->getResults(), results)) env_[r] = t;
       if (auto ld = mlir::dyn_cast<LoadOp>(op))
         if (auto it = mlir::dyn_cast<IntType>(ld.getType()))
@@ -819,11 +844,66 @@ class Encoder {
     return x;
   }
 
+  // Where element `i` of `buffer` lives in its root buffer: `i` itself, or
+  // the slice's offset plus `i`. Null when a slice's offset is unknown.
+  Value elementIndex(Value buffer, Value i, llvm::DenseMap<Value, Value> &views) {
+    if (!i) return Value();
+    if (!buffer.getDefiningOp<SliceOp>()) return i;
+    Value off = views.lookup(buffer);
+    if (!off) off = views_.lookup(buffer);
+    if (!off) return Value();
+    return bvBin("add", off, i);
+  }
+
+  // `forall i. 0 <= i < len ==> f(i)`.
+  Value forallIndex(llvm::function_ref<Value(Value)> body) {
+    auto build = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+      return body(vars[0]);
+    };
+    return create<mlir::smt::ForallOp>(mlir::TypeRange{bvType()}, build)
+        .getResult();
+  }
+
+  // A fresh array that holds a slice's elements, read from `root` at
+  // `off`: what a callee sees as its parameter.
+  Value viewArray(Value root, Value off, Value len) {
+    using P = mlir::smt::BVCmpPredicate;
+    Value v = declare(root.getType(), "", false);
+    Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
+    assertTerm(forallIndex([&](Value i) {
+      Value inside = andOf(cmp(P::sge, i, bv(0)), cmp(P::slt, i, len));
+      Value same = eq(create<mlir::smt::ArraySelectOp>(elem, v, i),
+                      create<mlir::smt::ArraySelectOp>(
+                          elem, root, bvBin("add", off, i)));
+      return implies(inside, same);
+    }));
+    return v;
+  }
+
+  // The root after a call wrote the slice [off, off + len) of it: fresh,
+  // and equal to `root` everywhere else.
+  Value writtenThrough(Value root, Value off, Value len) {
+    using P = mlir::smt::BVCmpPredicate;
+    Value r = declare(root.getType(), "", false);
+    Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
+    Value end = bvBin("add", off, len);
+    assertTerm(forallIndex([&](Value j) {
+      Value outside = orOf(cmp(P::slt, j, off), cmp(P::sge, j, end));
+      Value same = eq(create<mlir::smt::ArraySelectOp>(elem, r, j),
+                      create<mlir::smt::ArraySelectOp>(elem, root, j));
+      return implies(outside, same);
+    }));
+    return r;
+  }
+
   // The value semantics shared by the forward walk and demand encoding.
   // Returns false for ops it does not model.
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
                  llvm::DenseMap<Value, Value> &arrays,
                  llvm::DenseMap<Value, Value> &lengths,
+                 llvm::DenseMap<Value, Value> &views,
                  llvm::SmallVectorImpl<Value> &out) {
     using P = mlir::smt::BVCmpPredicate;
     // Buffers are tracked in `arrays` and `lengths`, not as operand terms.
@@ -870,11 +950,24 @@ class Encoder {
       return true;
     }
     if (auto ld = mlir::dyn_cast<LoadOp>(op)) {
-      Value arr = arrays.lookup(ld.getBuffer());
+      Value arr = arrays.lookup(rootBuffer(ld.getBuffer()));
+      Value at = elementIndex(ld.getBuffer(), in[1], views);
       Type sort = sortOf(ld.getType());
-      if (!arr || !sort) return false;
-      out.push_back(
-          create<mlir::smt::ArraySelectOp>(sort, arr, in[1]));
+      if (!arr || !at || !sort) return false;
+      out.push_back(create<mlir::smt::ArraySelectOp>(sort, arr, at));
+      return true;
+    }
+    // A slice is its buffer's storage from an offset: its length and that
+    // offset are tracked, and its elements are read and written in the
+    // root buffer. The result term is a placeholder; buffers are not terms.
+    if (auto sl = mlir::dyn_cast<SliceOp>(op)) {
+      Value lo = in[1], hi = in[2];
+      if (!lo || !hi) return false;
+      Value base = elementIndex(sl.getBuffer(), lo, views);
+      if (!base) return false;
+      views[sl.getResult()] = base;
+      lengths[sl.getResult()] = bvBin("sub", hi, lo);
+      out.push_back(lo);
       return true;
     }
     if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
@@ -964,6 +1057,7 @@ class Encoder {
     llvm::DenseMap<Value, Value> values;
     llvm::DenseMap<Value, Value> arrays;
     llvm::DenseMap<Value, Value> lengths;
+    llvm::DenseMap<Value, Value> views;  // a slice's offset in its root
     std::optional<llvm::DenseMap<Value, Value>> oldArrays;
     llvm::DenseMap<Value, Value> memo;
     bool envForBlockArgs = false;
@@ -1015,10 +1109,11 @@ class Encoder {
   llvm::SmallVector<Value> writtenBuffers(Operation *loop) {
     llvm::SetVector<Value> out;
     loop->walk([&](Operation *op) {
-      if (auto st = mlir::dyn_cast<StoreOp>(op)) out.insert(st.getBuffer());
+      if (auto st = mlir::dyn_cast<StoreOp>(op))
+        out.insert(rootBuffer(st.getBuffer()));
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
         for (unsigned i = 0; i < call.getNumOperands(); ++i)
-          if (callWrites(call, i)) out.insert(call.getOperand(i));
+          if (callWrites(call, i)) out.insert(rootBuffer(call.getOperand(i)));
     });
     llvm::SmallVector<Value> tracked;
     for (Value b : out)
@@ -1238,6 +1333,17 @@ class Encoder {
     return true;
   }
 
+  // The array a callee sees for a buffer argument: the root's own array, or
+  // for a slice a fresh array of its elements.
+  Value calleeArray(Value actual) {
+    Value root = rootBuffer(actual);
+    Value arr = arrays_.lookup(root);
+    if (!arr || actual == root) return arr;
+    Value off = views_.lookup(actual), len = lengths_.lookup(actual);
+    if (!off || !len) return declare(arr.getType(), "", false);
+    return viewArray(arr, off, len);
+  }
+
   // A call is checked against the callee's contract, not its body: its
   // preconditions are goals, and its postconditions are assumed about a
   // fresh result.
@@ -1250,7 +1356,7 @@ class Encoder {
       for (unsigned i = 0; i < call.getNumOperands(); ++i) {
         Value formal = entry.getArgument(i), actual = call.getOperand(i);
         if (mlir::isa<ArrayType, SliceType>(actual.getType())) {
-          pre.arrays[formal] = arrays_.lookup(actual);
+          pre.arrays[formal] = calleeArray(actual);
           pre.lengths[formal] = lengths_.lookup(actual);
         } else {
           pre.values[formal] = term(actual);
@@ -1284,9 +1390,13 @@ class Encoder {
     for (Value r : call.getResults())
       if (auto v = havoc(r.getType())) env_[r] = *v;
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
-      Value actual = call.getOperand(i);
-      if (callWrites(call, i) && arrays_.count(actual))
-        arrays_[actual] = declare(arrays_[actual].getType(), "", false);
+      Value actual = call.getOperand(i), root = rootBuffer(actual);
+      if (!callWrites(call, i) || !arrays_.count(root)) continue;
+      Value off = views_.lookup(actual), len = lengths_.lookup(actual);
+      if (actual != root && off && len)
+        arrays_[root] = writtenThrough(arrays_[root], off, len);
+      else
+        arrays_[root] = declare(arrays_[root].getType(), "", false);
     }
     if (!hasBody) return true;
     Demand post = pre;
@@ -1295,7 +1405,7 @@ class Encoder {
     mlir::Block &entry = callee.getBody().front();
     for (unsigned i = 0; i < call.getNumOperands(); ++i)
       if (mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
-        post.arrays[entry.getArgument(i)] = arrays_.lookup(call.getOperand(i));
+        post.arrays[entry.getArgument(i)] = calleeArray(call.getOperand(i));
     callee.walk([&](mlir::func::ReturnOp ret) {
       for (auto [formal, actual] : llvm::zip(ret.getOperands(), call.getResults())) {
         Value result = env_.lookup(actual);
@@ -1351,7 +1461,7 @@ class Encoder {
       llvm::SmallVector<Value> operands;
       for (Value o : op->getOperands()) operands.push_back(demand(o, d));
       llvm::SmallVector<Value> results;
-      if (semantics(op, operands, d.arrays, d.lengths, results))
+      if (semantics(op, operands, d.arrays, d.lengths, d.views, results))
         result = results[mlir::cast<mlir::OpResult>(v).getResultNumber()];
     }
     if (!result) {
@@ -1426,6 +1536,7 @@ class Encoder {
 
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
+  llvm::DenseMap<Value, Value> views_;  // a slice's offset in its root buffer
   std::vector<Value> pc_;
   std::vector<Decl> decls_, witnesses_;
   int counter_ = 0;

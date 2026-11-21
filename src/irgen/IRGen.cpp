@@ -182,6 +182,16 @@ class Gen {
   // (narrowing becomes a proof obligation); other types must match.
   R coerce(const TV &v, Type target, const Node &at) {
     if (v.type == target) return v;
+    // An array passes as a slice of all of it.
+    if (auto a = mlir::dyn_cast<ArrayType>(v.type))
+      if (auto sl = mlir::dyn_cast<SliceType>(target))
+        if (a.getElementType() == sl.getElementType()) {
+          Location l = loc(at);
+          Value lo = create<mlir::arith::ConstantIndexOp>(l, 0);
+          Value hi = create<mlir::arith::ConstantIndexOp>(
+              l, static_cast<int64_t>(a.getLength()));
+          return TV{create<SliceOp>(l, sl, v.value, lo, hi), target};
+        }
     if (mlir::isa<IntType>(v.type) && mlir::isa<IntType>(target)) {
       Value c = create<ConvertOp>(
           loc(at), target, v.value,
@@ -659,6 +669,21 @@ class Gen {
     return TV{v, lt};
   }
 
+  // `abort ()`: proved unreachable. In a context that wants a value it has
+  // that type, though it never produces one.
+  R genAbort(const Node &n, Type expected) {
+    Location l = loc(n);
+    if (!expected || isUnit(expected)) {
+      create<AbortOp>(l, mlir::TypeRange{});
+      return unit();
+    }
+    if (!mlir::isa<IntType>(expected) && !isBool(expected))
+      return fail(n, "'abort' where a " + typeName(expected) +
+                         " is expected is not supported yet");
+    auto op = create<AbortOp>(l, mlir::TypeRange{expected});
+    return TV{op->getResult(0), expected};
+  }
+
   // `~x`: every bit of x's representation flipped. On an unsigned type that
   // is `max - x` at x's machine width; on a signed one, `-1 - x`.
   R genBNot(const Node &n, const Node &operand, Type expected) {
@@ -794,6 +819,11 @@ class Gen {
       }
     }
     if (!local) {
+      if (fn.text == "abort") {
+        if (argc != 1 || n.kids[1]->kind != NodeKind::Unit)
+          return fail(n, "'abort' takes '()'");
+        return genAbort(n, expected);
+      }
       if (fn.text == "bnot") {
         if (argc != 1) return fail(n, "'bnot' takes one argument");
         return genBNot(n, *n.kids[1], expected);
@@ -895,7 +925,8 @@ class Gen {
   // The index of `xs.[i]`, as an `index` value.
   std::optional<Value> genIndexValue(const Node &index) {
     if (index.kind == NodeKind::Range) {
-      fail(index, "slicing with a range is not supported yet");
+      fail(index, "a slice 'xs.[a .. b]' is a view to read or pass on; "
+                  "write through one inside a function that takes it 'out'");
       return std::nullopt;
     }
     R i = genExpr(index, types_.usize());
@@ -914,6 +945,17 @@ class Gen {
     if (!elem)
       return fail(*n.kids[0], "only arrays and slices can be indexed, found " +
                                   typeName(buf->type));
+    if (n.kids[1]->kind == NodeKind::Range) {
+      // `xs.[a .. b]`: a view of elements [a, b).
+      const Node &range = *n.kids[1];
+      auto lo = genIndexValue(*range.kids[0]);
+      if (!lo) return std::nullopt;
+      auto hi = genIndexValue(*range.kids[1]);
+      if (!hi) return std::nullopt;
+      Type t = SliceType::get(&ctx_, elem);
+      Value v = create<SliceOp>(loc(n), t, buf->value, *lo, *hi);
+      return TV{v, t};
+    }
     auto idx = genIndexValue(*n.kids[1]);
     if (!idx) return std::nullopt;
     Value v = create<LoadOp>(loc(n), elem, buf->value, *idx);

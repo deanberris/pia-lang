@@ -360,6 +360,13 @@ LogicalResult LoadOp::verify() {
   return success();
 }
 
+LogicalResult SliceOp::verify() {
+  if (getResult().getType().getElementType() !=
+      elementTypeOf(getBuffer().getType()))
+    return emitOpError("result must be a slice of the buffer's element type");
+  return success();
+}
+
 LogicalResult StoreOp::verify() {
   if (getValue().getType() != elementTypeOf(getBuffer().getType()))
     return emitOpError("stored value must have the buffer's element type");

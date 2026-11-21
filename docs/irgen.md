@@ -86,4 +86,4 @@ Each top-level `let f (x : T) ... : R = body` becomes `func.func @f`. Parameters
 
 ## Not yet
 
-Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), slicing `xs.[a .. b]`, type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.
+Local functions and lambdas, `match`, variants, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where`), modules, and concepts and generic types.

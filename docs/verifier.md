@@ -24,8 +24,8 @@ The verifier walks each function in order and collects these goals:
 | `nooverflow` | `pia.add`, `sub`, `mul`, `div`, `band`, `bor`, `bxor`, `shl`, `shr` and narrowing `pia.convert` in `overflow(proof)` mode, which is the default. Also `pia.to_index` on a signed type (the index is not negative) and `pia.from_index` to a type narrower than `usize`. |
 | `nonzero` | the divisor of `pia.div` and `pia.rem`, in every mode |
 | `shift` | the amount of `pia.shl` and `pia.shr` lies in [0, w), w the storage width of the shifted value's type, in every mode |
-| `inbounds` | `pia.load` and `pia.store`: `0 <= i < len` |
-| `assert` | `assert p` |
+| `inbounds` | `pia.load` and `pia.store`: `0 <= i < len`. `pia.slice`: `0 <= lo <= hi <= len` |
+| `assert` | `assert p`, and `pia.abort`, whose claim is `false`: the path to it is impossible |
 | `ensures` | each postcondition, at the return |
 | `requires` | each of the callee's preconditions, at a call |
 | `invariant` | each loop invariant, on entry and after each iteration ([Loops](#loops)) |
@@ -64,7 +64,7 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 **Booleans** are SMT booleans. In contracts `&&`, `||` and `==>` are already plain logic. In code they arrive as `scf.if`, which becomes `ite`.
 
-**Arrays and slices** are SMT arrays from index to element. A fixed array's length is its type's. A slice's length is a constant in `[0, 2^64 - 1]`. `pia.store` produces a new array term. After an `if`, the two branches' arrays merge with `ite`. Every loaded element is assumed to lie in its element type's range.
+**Arrays and slices** are SMT arrays from index to element. A fixed array's length is its type's. A slice's length is a constant in `[0, 2^64 - 1]`. `pia.store` produces a new array term. After an `if`, the two branches' arrays merge with `ite`. A slice `pia.slice` has no array of its own: the verifier tracks its length and its offset in the root buffer, and reads and writes it there. A callee sees a slice argument as a fresh array, linked to the root by `forall i. 0 <= i < len ==> v[i] = root[off + i]`. A callee that writes it leaves a fresh root that equals the old one outside `[off, off + len)`. Every loaded element is assumed to lie in its element type's range.
 
 **Control flow.** The two branches of `scf.if` are walked under the condition and its negation, and the results merge with `ite`.
 
