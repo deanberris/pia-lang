@@ -114,18 +114,23 @@ let mut buf = Vec::with_capacity(self.len().checked_mul(n).expect("capacity over
 panics on it. The same idea in Pia returns whether the product fits along
 with the product, and the postconditions say exactly when it fits and what
 it is. A caller cannot get a capacity without the proof that it is the
-true one:
+true one.
+
+The check itself is a saturating multiplication: in an
+`@overflow(saturate)` function, a product too big for a `usize` comes out
+as the largest `usize`. So a result below that is the true product, and
+the largest value itself is treated as overflow, which costs nothing,
+since Rust never allocates more than `isize::MAX` bytes anyway.
 
 ```pia
 let capacity = type { ok : bool; bytes : usize }
 
-let checked_capacity (size : usize) (n : usize) : capacity
-  ensures result.ok = (size * n <= 18446744073709551615)
+let checked_capacity (size : usize) (n : usize) : capacity @overflow(saturate)
+  ensures result.ok = (size * n < 18446744073709551615)
   ensures result.ok ==> result.bytes = size * n
 =
-  if n = 0 then { ok = true; bytes = 0 }
-  else if size > 18446744073709551615 / n then { ok = false; bytes = 0 }
-  else { ok = true; bytes = size * n }
+  let bytes : usize = size * n in
+  { ok = bytes < 18446744073709551615; bytes = bytes }
 ```
 
 Every goal on this page is proved:
@@ -135,10 +140,15 @@ $ piac --verify rust-str-repeat.pia.md
 ...
 ```
 
-The division is the usual trick: `size * n` fits exactly when `size` is at
-most the largest `usize` divided by `n`. The verifier proves that this
-test is equivalent to the true product fitting, which is the property the
-Rust code needed and never stated.
+The postconditions are exact, even in a saturating function: `size * n`
+in a contract is the true product, so the first one says `ok` is set
+exactly when the product fits. That is the property the Rust code needed
+and stated only in a comment.
+
+While this page was being written, the verifier itself had this bug: it
+applied a function's overflow mode to the arithmetic in its contracts, so
+the wrapping `capacity` above was wrongly proved. The fix landed with this
+page, and a test in `tests/verify/spec_exact.pia` keeps it fixed.
 
 ## What this says about `unsafe`
 
