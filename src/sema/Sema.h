@@ -78,6 +78,10 @@ class TypeResolver {
 // Whether a top-level `let` defines a type: `let pixel = type { ... }`.
 bool isTypeItem(const syntax::Node &item);
 
+// The core builtins that operators expand to, and `len` and `old`
+// (docs/meta.md). No definition may take their names.
+bool isCoreBuiltin(std::string_view name);
+
 struct Param {
   std::string name;
   mlir::Type type;

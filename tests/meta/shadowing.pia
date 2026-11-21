@@ -1,0 +1,24 @@
+(* Pia has no shadowing (ADR 0022). A name written in the source may not
+   reuse a local in scope, a function, a type or a core builtin. Names that
+   quotes bind are renamed, so expansion never shadows.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let helper (x : u8) : u8 = x
+
+(* CHECK: shadowing.pia:[[@LINE+2]]:27: error: 'x' shadows a local of the same name; Pia does not allow shadowing (ADR 0022)
+*)
+let inner (x : u8) : u8 = let x = 1 in x
+
+(* CHECK: shadowing.pia:[[@LINE+2]]:12: error: 'helper' shadows the function 'helper'; Pia does not allow shadowing (ADR 0022)
+*)
+let param (helper : u8) : u8 = helper
+
+(* CHECK: shadowing.pia:[[@LINE+2]]:36: error: 'i' shadows a local of the same name; Pia does not allow shadowing (ADR 0022)
+*)
+let loops (i : usize) : unit = for i in 0..4 do () done
+
+(* A quote's own `let t` cannot clash with the caller's `t`. *)
+let meta operator ( +^ ) : prec 6 left = let (a) (b) => `( let t = $a in t + $b )
+
+let fine (t : u8) (x : u8) : u8 = x +^ t

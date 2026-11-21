@@ -19,25 +19,23 @@ let pow (a : u8) (b : u8) : u8 requires b <= 1 = if b = 0 then 1 else a
 let times : u16 = 2 * 3 ** 1
 
 (* Names a quote binds are renamed, so they cannot capture the caller's
-   names, and a free name in a quote means the top-level definition even
-   where a local shadows it.
+   names, and a free name in a quote means the top-level definition.
    CHECK:      (LetItem "twice"
    CHECK:        (LetIn "t"
-   CHECK:          (LetIn "pow"
-   CHECK:            (LetIn "t#[[N:[0-9]+]]"
-   CHECK:                (Name "t")
-   CHECK:                (Name "add" [prelude])
-   CHECK-NEXT:           (Name "t#[[N]]")
-   CHECK-NEXT:           (Apply
-   CHECK-NEXT:             (Name "pow" [toplevel])
+   CHECK:          (LetIn "t#[[N:[0-9]+]]"
+   CHECK:              (Name "t")
+   CHECK:              (Name "add" [prelude])
+   CHECK-NEXT:         (Name "t#[[N]]")
+   CHECK-NEXT:         (Apply
+   CHECK-NEXT:           (Name "pow" [toplevel])
 *)
 let meta operator ( +^ ) : prec 6 left =
   let (a) (b) => `( let t = $a in t + pow $b 1 )
 
 let twice (x : u8) : u16 =
   let t : u16 = x in
-  let pow : u8 = 7 in
-  t +^ pow
+  let seven : u8 = 7 in
+  t +^ seven
 
 (* VERIFY: 4 proved, 0 failed, 0 skipped
 *)

@@ -1,0 +1,8 @@
+(* A definition may not take the name of a core builtin, since operators
+   expand to them (ADR 0022).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: builtin_name.pia:[[@LINE+2]]:1: error: 'add' is a core builtin; Pia does not allow shadowing (ADR 0022)
+*)
+let add (a : u8) (b : u8) : u8 = a
