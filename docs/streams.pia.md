@@ -30,7 +30,10 @@ The first command draws a synthetic terrain, saves it as
 each stage took; on an M-series iMac the whole 384x256 map takes about 30
 ms. The second reads your own heightmap, in any format
 macOS can open (PNG, GIF, JPEG, TIFF, BMP), where brighter means higher, and
-writes the map as PNG, or GIF if the name ends in `.gif`.
+writes the map as PNG, or GIF if the name ends in `.gif`. Use a 16-bit heightmap
+where you can: an 8-bit one has only 256 levels, so its terraces become
+flats, and filling slopes each flat gently towards its outlet, which the
+map shows as lake.
 
 ## The pipeline
 

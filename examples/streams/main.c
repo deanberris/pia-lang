@@ -23,7 +23,8 @@
 
 #include "examples/streams/pia_streams.h"
 
-// Reads an image as 16-bit brightness, (r + 2g + b) / 4.
+// Reads an image as 16-bit heights: a grayscale image's values, or a
+// colour image's brightness, (r + 2g + b) / 4.
 static uint16_t *read_heights(const char *path, long *w, long *h) {
   CFURLRef url = CFURLCreateFromFileSystemRepresentation(
       NULL, (const UInt8 *)path, (CFIndex)strlen(path), false);
@@ -37,6 +38,22 @@ static uint16_t *read_heights(const char *path, long *w, long *h) {
   }
   *w = (long)CGImageGetWidth(img);
   *h = (long)CGImageGetHeight(img);
+  long n = *w * *h;
+  uint16_t *dem = malloc(n * sizeof *dem);
+  CGColorSpaceRef own = CGImageGetColorSpace(img);
+  if (own && CGColorSpaceGetModel(own) == kCGColorSpaceModelMonochrome) {
+    // A grayscale heightmap is drawn in its own colour space, so its
+    // values arrive unchanged.
+    CGContextRef gray = CGBitmapContextCreate(
+        dem, *w, *h, 16, *w * 2, own,
+        kCGImageAlphaNone | kCGBitmapByteOrder16Little);
+    if (gray) {
+      CGContextDrawImage(gray, CGRectMake(0, 0, *w, *h), img);
+      CGContextRelease(gray);
+      CGImageRelease(img);
+      return dem;
+    }
+  }
   uint16_t *rgba = calloc((size_t)*w * *h * 4, sizeof *rgba);
   CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
   CGContextRef ctx = CGBitmapContextCreate(
@@ -46,8 +63,6 @@ static uint16_t *read_heights(const char *path, long *w, long *h) {
   CGContextDrawImage(ctx, CGRectMake(0, 0, *w, *h), img);
   CGContextRelease(ctx);
   CGImageRelease(img);
-  long n = *w * *h;
-  uint16_t *dem = malloc(n * sizeof *dem);
   for (long i = 0; i < n; ++i) {
     const uint16_t *p = rgba + 4 * i;
     dem[i] = (uint16_t)(((uint32_t)p[0] + 2u * p[1] + p[2]) / 4);
@@ -92,6 +107,34 @@ static int write_rgb(const char *path, long w, long h, const uint8_t *rgb) {
   CGDataProviderRelease(provider);
   CFRelease(data);
   free(rgba);
+  return ok;
+}
+
+// Writes 16-bit heights as a 16-bit grayscale PNG, so reading it back
+// gives the same heights.
+static int write_heights(const char *path, long w, long h, const uint16_t *dem) {
+  CFDataRef data = CFDataCreate(NULL, (const UInt8 *)dem, (CFIndex)(w * h * 2));
+  CGDataProviderRef provider = CGDataProviderCreateWithCFData(data);
+  CGColorSpaceRef cs = CGColorSpaceCreateWithName(kCGColorSpaceLinearGray);
+  CGImageRef img = CGImageCreate(w, h, 16, 16, w * 2, cs,
+                                 kCGImageAlphaNone | kCGBitmapByteOrder16Little,
+                                 provider, NULL, false, kCGRenderingIntentDefault);
+  CFURLRef url = CFURLCreateFromFileSystemRepresentation(
+      NULL, (const UInt8 *)path, (CFIndex)strlen(path), false);
+  CGImageDestinationRef dst =
+      CGImageDestinationCreateWithURL(url, CFSTR("public.png"), 1, NULL);
+  int ok = dst != NULL && img != NULL;
+  if (ok) {
+    CGImageDestinationAddImage(dst, img, NULL);
+    ok = CGImageDestinationFinalize(dst);
+  }
+  if (dst) CFRelease(dst);
+  if (!ok) fprintf(stderr, "%s: cannot write the image\n", path);
+  CFRelease(url);
+  if (img) CGImageRelease(img);
+  CGColorSpaceRelease(cs);
+  CGDataProviderRelease(provider);
+  CFRelease(data);
   return ok;
 }
 
@@ -207,12 +250,9 @@ int main(int argc, char **argv) {
   } else {
     w = 384, h = 256;
     dem = draw_terrain(w, h);
-    uint8_t *gray = malloc((size_t)w * h * 3);
-    for (long i = 0; i < w * h; ++i) memset(gray + 3 * i, dem[i] >> 8, 3);
     input = "streams-input.png";
-    int ok = write_rgb(resolve(input, in_buf, sizeof in_buf), w, h, gray);
-    free(gray);
-    if (!ok) return 1;
+    if (!write_heights(resolve(input, in_buf, sizeof in_buf), w, h, dem))
+      return 1;
     printf("drew a synthetic terrain: %s\n", input);
   }
   if (w < 3 || h < 3 || (unsigned long)w * h >= 4294967295ul) {

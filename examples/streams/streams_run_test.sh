@@ -16,6 +16,11 @@ grep -q '^map written to streams-output.png$' out.txt
 grep -E '^[ .:=+*~#o-]+$' out.txt > map.txt
 grep -q '#' map.txt
 grep -q 'o' map.txt
-# A GIF too.
-"$streams" streams-input.png map.gif > /dev/null
+# The saved terrain is 16-bit, so reading it back gives the same map; and
+# GIF output works too.
+"$streams" streams-input.png map.gif > again.txt
 [ "$(head -c 3 map.gif)" = GIF ]
+grep 'lake cells' out.txt > want.txt
+grep 'lake cells' again.txt | sed 's/ ([0-9.]* ms)//' > got.txt
+sed -i.bak 's/ ([0-9.]* ms)//' want.txt
+diff want.txt got.txt
