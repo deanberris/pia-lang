@@ -172,6 +172,14 @@ struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   }
 };
 
+// The field buffers of a buffer of records share one length, so a load,
+// store or slice copied to each of them is in bounds exactly when the first
+// copy is. The copies after the first are marked, and the verifier assumes
+// their bound instead of reporting it again.
+void shareBounds(mlir::ConversionPatternRewriter &rw, mlir::Operation *op) {
+  op->setAttr(PiaDialect::getBoundsSharedAttrName(), rw.getUnitAttr());
+}
+
 // `xs[i]` on a buffer of records reads element i of each field's buffer.
 struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -181,9 +189,11 @@ struct LoadLowering : mlir::OpConversionPattern<LoadOp> {
     if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
     Value index = adaptor.getIndex().front();
     llvm::SmallVector<Value> fields;
-    for (Value b : adaptor.getBuffer())
-      fields.push_back(
-          make<LoadOp>(rw, op.getLoc(), elementOf(b.getType()), b, index));
+    for (Value b : adaptor.getBuffer()) {
+      auto load = make<LoadOp>(rw, op.getLoc(), elementOf(b.getType()), b, index);
+      if (!fields.empty()) shareBounds(rw, load);
+      fields.push_back(load);
+    }
     llvm::SmallVector<llvm::SmallVector<Value>> results;
     results.push_back(std::move(fields));
     rw.replaceOpWithMultiple(op, std::move(results));
@@ -199,13 +209,18 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
       mlir::ConversionPatternRewriter &rw) const override {
     if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
     Value index = adaptor.getIndex().front();
+    bool first = true;
     for (auto [v, b] : llvm::zip_equal(adaptor.getValue(), adaptor.getBuffer())) {
       // A field read back from the same place, as `xs.[i].r <- v` leaves
       // the other fields, needs no write.
       if (auto load = v.getDefiningOp<LoadOp>();
           load && load.getBuffer() == b && load.getIndex() == index)
         continue;
-      make<StoreOp>(rw, op.getLoc(), v, b, index);
+      // The first store written carries the bounds goal, whichever field
+      // it is.
+      auto store = make<StoreOp>(rw, op.getLoc(), v, b, index);
+      if (!first) shareBounds(rw, store);
+      first = false;
     }
     rw.eraseOp(op);
     return mlir::success();
@@ -221,10 +236,13 @@ struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
     if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
     Value lo = adaptor.getLo().front(), hi = adaptor.getHi().front();
     llvm::SmallVector<Value> views;
-    for (Value b : adaptor.getBuffer())
-      views.push_back(make<SliceOp>(
+    for (Value b : adaptor.getBuffer()) {
+      auto view = make<SliceOp>(
           rw, op.getLoc(), SliceType::get(rw.getContext(), elementOf(b.getType())),
-          b, lo, hi));
+          b, lo, hi);
+      if (!views.empty()) shareBounds(rw, view);
+      views.push_back(view);
+    }
     llvm::SmallVector<llvm::SmallVector<Value>> results;
     results.push_back(std::move(views));
     rw.replaceOpWithMultiple(op, std::move(results));
@@ -271,6 +289,49 @@ std::string argName(mlir::BlockArgument arg) {
 
 }  // namespace
 
+// A load or slice of a buffer of records becomes one copy per field, and
+// a field nobody reads leaves its copy unused. An unused load would count
+// as program code, with a bounds goal of its own, even when the record was
+// read only by a contract, which raises none. So the unused copies of each
+// group are erased. When the first copy, which carries the goal, is among
+// them, the first copy still in use carries it instead. A group with no
+// copy in use keeps its first, as a load of a scalar nobody reads keeps
+// its goal.
+static void pruneFieldCopies(mlir::ModuleOp module) {
+  auto shared = [](mlir::Operation *op) {
+    return op->hasAttr(PiaDialect::getBoundsSharedAttrName());
+  };
+  auto sameBounds = [](mlir::Operation *a, mlir::Operation *b) {
+    if (a->getName() != b->getName()) return false;
+    // Operand 0 is the field's buffer; the rest are the index or bounds.
+    for (unsigned i = 1; i < a->getNumOperands(); ++i)
+      if (a->getOperand(i) != b->getOperand(i)) return false;
+    return true;
+  };
+  llvm::SmallVector<llvm::SmallVector<mlir::Operation *>> groups;
+  module.walk([&](mlir::Operation *op) {
+    if (!mlir::isa<LoadOp, SliceOp>(op) || shared(op)) return;
+    llvm::SmallVector<mlir::Operation *> group{op};
+    for (mlir::Operation *next = op->getNextNode();
+         next && shared(next) && sameBounds(op, next);
+         next = next->getNextNode())
+      group.push_back(next);
+    if (group.size() > 1) groups.push_back(std::move(group));
+  });
+  for (auto &group : groups) {
+    mlir::Operation *carrier = nullptr;
+    for (mlir::Operation *op : group)
+      if (!op->use_empty()) {
+        carrier = op;
+        break;
+      }
+    if (!carrier) carrier = group.front();
+    carrier->removeAttr(PiaDialect::getBoundsSharedAttrName());
+    for (mlir::Operation *op : group)
+      if (op != carrier && op->use_empty()) op->erase();
+  }
+}
+
 mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   if (!hasRecords(module)) return mlir::success();
   mlir::MLIRContext *ctx = module.getContext();
@@ -303,6 +364,26 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
     argAttrs.push_back(std::move(attrs));
   }
 
+  // A function with a buffer of records gets one buffer per field, whose
+  // facts the goal about one field never needs; the verifier slices its
+  // goals.
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    bool buffers = llvm::any_of(f.getArgumentTypes(), elementRecord) ||
+                   llvm::any_of(f.getResultTypes(), elementRecord);
+    if (!buffers && !f.isExternal())
+      f.walk([&](mlir::Operation *op) {
+        if (llvm::any_of(op->getResultTypes(), elementRecord) ||
+            llvm::any_of(op->getOperandTypes(), elementRecord)) {
+          buffers = true;
+          return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+      });
+    if (buffers)
+      f->setAttr(PiaDialect::getRecordBuffersAttrName(),
+                 mlir::UnitAttr::get(ctx));
+  }
+
   RecordTypes types;
   mlir::ConversionTarget target(*ctx);
   target.addIllegalOp<RecordOp, FieldOp>();
@@ -327,6 +408,7 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
     return mlir::failure();
+  pruneFieldCopies(module);
 
   for (size_t k = 0; k < params.size(); ++k) {
     auto &[f, ps] = params[k];

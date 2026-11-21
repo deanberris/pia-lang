@@ -35,6 +35,23 @@ def Pia_Dialect : Dialect {
     static constexpr ::llvm::StringLiteral getLengthOfAttrName() {
       return ::llvm::StringLiteral("pia.length_of");
     }
+
+    /// The unit attribute on a field buffer's load, store or slice after
+    /// the first, when a buffer of records is split into one buffer per
+    /// field: every copy has the same index and the same length, so the
+    /// first carries the bounds goal and the verifier only assumes it for
+    /// the others (docs/irgen.md, "Records").
+    static constexpr ::llvm::StringLiteral getBoundsSharedAttrName() {
+      return ::llvm::StringLiteral("pia.bounds_shared");
+    }
+
+    /// The unit attribute on a function whose signature or body had a
+    /// buffer of records before it was split into one buffer per field.
+    /// The verifier slices its goals automatically (docs/verifier.md,
+    /// "Slicing").
+    static constexpr ::llvm::StringLiteral getRecordBuffersAttrName() {
+      return ::llvm::StringLiteral("pia.record_buffers");
+    }
   }];
   let hasRegionArgAttrVerify = 1;
   // Folded `index` values become `arith.constant`; folded Pia integers become
