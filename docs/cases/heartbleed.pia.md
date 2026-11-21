@@ -180,28 +180,15 @@ it. In Pia, leaving it out is a compile error with a counterexample.
 
 ## The fix, proved
 
-The rest of this page is the fixed program. First the copy, which every
-other function relies on: its postcondition says the destination ends up
-equal to the source.
-
-```pia
-let copy (dst : out mutable [u8]) (src : [u8]) : unit
-  requires len src = len dst
-  ensures forall (k in 0..len dst). dst.[k] = src.[k]
-=
-  for i in 0..len dst
-    invariant forall (k in 0..i). dst.[k] = src.[k]
-  do dst.[i] <- src.[i] done
-```
-
-Then the handler, with both of OpenSSL's checks, and the request type
-checked as `tls1_process_heartbeat` does. It returns the length of the
-response it wrote, before padding, or 0 when RFC 6520 says to discard the
-message: "If the payload_length of a received HeartbeatMessage is too
+The rest of this page is the fixed program: the handler, with both of
+OpenSSL's checks, and the request type checked as `tls1_process_heartbeat`
+does. It returns the length of the response it wrote, before padding, or 0
+when RFC 6520 says to discard the message: "If the payload_length of a received HeartbeatMessage is too
 large, the received HeartbeatMessage MUST be discarded silently." The
 postcondition is the property Heartbleed broke, stated and proved: a
 response is never longer than the request it answers, and every payload
-byte in it came from that request.
+byte in it came from that request. The copy is written out as a loop, so
+its invariant carries that second fact straight to the postcondition.
 
 ```pia
 let heartbeat (req : [u8]) (resp : out mutable [u8]) : usize
@@ -218,7 +205,9 @@ let heartbeat (req : [u8]) (resp : out mutable [u8]) : usize
       resp.[0] <- 2;
       resp.[1] <- req.[1];
       resp.[2] <- req.[2];
-      copy (resp.[3 .. 3 + payload]) (req.[3 .. 3 + payload]);
+      for i in 3..3 + payload
+        invariant forall (k in 3..i). resp.[k] = req.[k]
+      do resp.[i] <- req.[i] done;
       3 + payload))
 ```
 
