@@ -116,3 +116,4 @@ nav:
       - adr/0029-comments-as-syntax-and-literate-pia.md
       - adr/0030-published-object-layouts.md
       - adr/0031-verified-repl-and-live-environment.md
+      - adr/0032-parallel-sliced-cached-proving.md

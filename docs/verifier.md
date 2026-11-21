@@ -81,6 +81,32 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 **Counterexamples** name the parameters, using the names IRGen records in the block arguments' locations, and slice lengths as `len xs`. They add the values that explain the goal: `result` for an overflow, `index` and `length` for bounds. Array contents are not shown yet.
 
+## Parallel, sliced and cached proving
+
+Build time is a benchmark ([ADR 0032](adr/0032-parallel-sliced-cached-proving.md)). Goals are listed and encoded in walk order on one thread, then the SMT queries are decided on a pool of threads, one per core unless `--jobs=N` says otherwise, each in its own Z3 context. The report keeps the walk order, and under an rlimit every goal has the same result on any number of threads.
+
+**Slicing.** Each query is cut to the goal's cone of influence: the negated goal, and every assertion that shares a symbol with one already kept, transitively. A precondition about `b` stays out of a goal about `x`. An `unsat` slice proves the goal, since only hypotheses were dropped. Otherwise the whole query is solved again, so a counterexample always comes from the full query. `--no-slice` turns slicing off.
+
+**Selecting goals.** `--verify-only=<spec>` proves only the goals the spec selects, and can be repeated:
+
+```sh
+piac --verify-only=settle streams.pia.md          # one function
+piac --verify-only=streams.pia.md streams.pia.md  # one module
+piac --verify-only=edges.pia:41 edges.pia         # the goals on one line
+```
+
+Earlier goals are still assumed, as in a full run. Unselected goals are left out of the report, and a selective run never generates code.
+
+**Proof cache.** `--proof-cache=<dir>` keeps a file per proved goal, named by the SHA-256 of the Z3 version, the rlimit and the sliced query. A goal whose query is unchanged is not solved again, and calls are encoded from contracts, so editing a callee's body does not invalidate its callers. Failures are never cached.
+
+**Statistics.** `--verify-stats` prints one line to stderr:
+
+```
+verify-stats: goals=5 unselected=0 intervals=1 skipped=0 solved=4 cached=0 sliced=2 unsliced=1 threads=4 cost=181904 encode_ms=3 solve_ms=41
+```
+
+`solved` counts the queries sent to Z3, `cached` the goals the cache answered, `sliced` the queries slicing made smaller, `unsliced` the slices solved again in full, and `cost` Z3's resource count over every query. `tools/bench/proof_bench.py` runs these over the benchmark corpus on one thread and on every core, and CI fails when the cost grows by more than 10% over `tools/bench/baseline.json`.
+
 ## Loops
 
 A loop is cut at its invariants, so the verifier never unrolls it.

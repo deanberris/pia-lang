@@ -1,0 +1,32 @@
+# 32. Proofs run in parallel, one goal per solver, sliced, cached and selectable
+
+Date: 2026-11-21
+
+Status: Proposed
+
+## Context
+
+Build time is a benchmark Pia always watches. Every build proves every goal, so proving is on the critical path of every edit, and it grows with the program: the stream delineation demo (`docs/streams.pia.md`) has a goal that costs Z3 about 57 million resource units.
+
+The verifier (`src/verify/Verifier.cpp`, [docs/verifier.md](../verifier.md)) already decides each goal in its own query, with its own `z3::context`, and calls use the callee's contract rather than its body. But it solved the queries one after another on one thread. Each query held everything before its goal (every parameter's range, every op, every earlier goal as an assumption) whether the goal needed it or not. There was no way to prove one function or one goal on its own, and an unchanged goal was proved again on every run. The Presburger stage of [ADR 0020](0020-presburger-for-affine-goals.md) is not implemented yet.
+
+[PR #108](https://github.com/deanberris/pia-lang/pull/108) made `pia_object` decide goals by Z3's deterministic resource limit (`--solver-rlimit`) instead of the wall clock, so a goal's result no longer depends on load. That is what makes parallel proving safe: running many queries at once can no longer turn a proof into a timeout.
+
+## Decision
+
+- **One goal, one solver, many threads.** Goals are still listed and encoded in walk order on one thread, because encoding builds `smt` dialect IR in the module's `MLIRContext`. The encoded SMT-LIB queries are then decided on a pool of threads, one per core by default (`--jobs=N`), each in a fresh `z3::context`. Larger queries start first. Each job writes only its own outcome, so the report keeps the walk order, and with an rlimit the result of every goal is the same on one thread or many. The REPL, `pia-lsp` and `pia_object` all get this through `verifyModule`.
+- **Goal slicing.** Before solving, a query is cut to its cone of influence: the goal's own assertion (the encoder asserts the negated goal last) plus, transitively, every assertion that shares an uninterpreted symbol with one already kept. Dropping assertions only weakens the hypotheses, so an `unsat` slice proves the goal. A slice that is `sat` or `unknown` may have lost an assumption that mattered, such as a contradictory path condition, so the whole query is solved again and its model is the counterexample. Slicing therefore changes how fast a goal is proved, never whether it is. `--no-slice` turns it off.
+- **Modular reasoning stays at contracts.** A call contributes its callee's `requires` as a goal and its `ensures` as assumptions, never the callee's body, so a callee is proved once, in its own function, and a caller's query does not grow with the callee's implementation. A goal's slice holds only the contracts its symbols reach.
+- **Selecting a subset.** `--verify-only=<spec>` (repeatable) proves only the goals a spec selects: a function name, a module (its file name, `edges.pia` or `streams.pia.md`), or a location `file:line[:col]`, the same forms as `--allow-unproved`. Earlier goals are still assumed, exactly as in a full run, since a full build proves them in their own queries. A selective run never generates code: `--verify-only` implies `--verify`.
+- **Proof cache.** `--proof-cache=<dir>` records each proved goal under the SHA-256 of a domain prefix, the Z3 version, the rlimit and the sliced query (`<dir>/<2 hex>/<hash>`, written to a temporary file and renamed, so concurrent builds can share a directory). A goal whose hash is present is not solved again. Only proofs are cached, so a failing goal always reports a fresh counterexample. The rlimit is in the key so that a warm cache cannot prove a goal that a cold build would give up on. Because a call is encoded from its callee's contract, a callee's body change leaves its callers' hashes alone, and a contract change changes them: the same rule as the interface hashes of [ADR 0024](0024-published-proof-certificates.md), at the granularity of one goal. When those interface hashes exist, a module's cached goals can be keyed by its imports' interface hashes as well. In Bazel, `pia_object` actions are already cached per file; the proof cache serves `piac`, the REPL and the language server between edits.
+- **Build time is a tracked benchmark.** `tools/bench/proof_bench.py` verifies the files in `tools/bench/corpus.txt` (the edges and streams demos and the verifier tests; the standard library joins as its modules land) on one thread and on every core. It records, per file, the goals, the solver queries, the total Z3 resource count and the wall times, and compares them with `tools/bench/baseline.json`. The resource count is deterministic, so CI fails when it grows by more than 10%. Wall times are gated (`--wall-threshold`) only against a baseline from the same host, and CI reports them in the job summary and keeps the JSON as an artifact. The benchmark also fails if the report or the cost differs between one thread and many. `--verify-stats` prints the same counters for any `piac` run.
+
+## Consequences
+
+- Proving scales with cores. A file with many SMT goals finishes in about the time of its costliest goal rather than the sum of all of them.
+- Slicing makes most queries smaller, and so cheaper, without risking a wrong result; the price is solving a failing goal twice.
+- One function or one goal can be proved on its own, for editors and for iterating on a hard goal, without loading every proof.
+- The resource count per goal changes with slicing, so the `pia_object` rlimit is re-measured against the benchmark rather than the old per-goal numbers.
+- Encoding is still sequential and costs time proportional to goals times function size. Making it parallel needs a thread-safe way to build queries outside the module's context (separate contexts per function, or encoding straight to SMT-LIB), and is left for when the benchmark shows it matters.
+- `pia_object` actions run in parallel in Bazel and each also uses every core, so a large build can oversubscribe the machine. That costs throughput, not correctness, because the rlimit decides results. A `solver_jobs` attribute can cap it if the benchmark shows a loss.
+- The Presburger stage (ADR 0020) slots in as another kind of job in the same pool.
