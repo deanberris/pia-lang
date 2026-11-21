@@ -41,6 +41,7 @@ CASES = [
     "//docs:cases/binary-search.pia.md",
     "//docs:cases/cloudbleed.pia.md",
     "//docs:cases/crowdstrike.pia.md",
+    "//docs:cases/rust-str-repeat.pia.md",
 ]
 
 py_test(
