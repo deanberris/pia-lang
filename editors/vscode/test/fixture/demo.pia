@@ -1,0 +1,7 @@
+let add (a : u8) (b : u8) : u16
+  ensures result >= a
+= a + b
+
+let twice (x : u8) : u16 = add x x
+
+let broken (y : u8) : u8 = (y +

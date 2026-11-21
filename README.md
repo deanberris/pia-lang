@@ -36,6 +36,12 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--emit=obj -o f.o` compiles for Apple Silicon ([docs/codegen.md](docs/codegen.md)), `--dump-ast` prints the syntax tree |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |
+| `//tools/pia-lsp` | The language server ([ADR 0021](docs/adr/0021-language-server.md)): syntax errors, failed goals with counterexamples, hover with proofs, definitions, outline and completion over LSP. `//tools/pia-lsp:pia-lsp-frontend` is the same without MLIR |
+| `//tests/lsp:lsp_test` | `pia-lsp` end to end over pipes; `lsp_frontend_test` runs it on the front-end build |
+
+### Editor support
+
+[`editors/vscode`](editors/vscode/README.md) is a VS Code extension that runs `pia-lsp`: build `//tools/pia-lsp`, then `npm install && npx vsce package` in that folder and install the `.vsix`. Any other LSP client can start `pia-lsp` too.
 
 ### Front end without Bazel
 
