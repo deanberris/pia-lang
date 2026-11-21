@@ -214,6 +214,44 @@ Most failures are ruled out at compile time, but a few happen at run time by des
 
 `Pia.Rt` is trusted, since it reads frames and signal contexts through `addr`, so its items appear in every program's trust report. The prior art is Rust's panic handler and `RUST_BACKTRACE`, and Go's runtime traceback on a fatal signal.
 
+#### Sanitizers (compiler-rt)
+
+Proved Pia code cannot overflow, index out of bounds, use freed memory or race, so sanitizers are not how Pia finds its own bugs. They earn their place at the edges of the proof, where the verifier takes something on trust ([ADR 0025](adr/0025-sanitizers.md)):
+
+- **Foreign code** behind `extern` and `unsafe`, which can corrupt Pia memory, free it, or race with Pia threads.
+- **Trusted contracts.** A wrong `extern` contract or `assume` makes a proof unsound without any failing goal. Run-time checks are the only way to catch it.
+- **The trusted Pia modules**, `Pia.Sys.Posix` and `Pia.Rt`, which use `addr`.
+- **The verifier itself.** A build that instruments everything and still finds nothing is evidence that the verifier, IRGen and codegen agree. A sanitizer report in proved code is a compiler bug.
+
+**What piac emits.** `piac --sanitize=<list>` adds instrumentation through LLVM's own passes, so Pia and C code in one binary share one sanitizer runtime and one report format:
+
+| Sanitizer | How piac emits it | Pia-specific part |
+| --- | --- | --- |
+| `address` (ASan) | `sanitize_address` on functions, then LLVM's `AddressSanitizerPass` | `Pia.Mem` poisons arena memory that has not been handed out, and freed buffers, with `__asan_poison_memory_region`, since ASan does not know about memory from `mmap` |
+| `thread` (TSan) | `sanitize_thread`, then `ThreadSanitizerPass`; atomics are instrumented by the pass | the worker pool behind `spread` uses libSystem pthreads, which TSan intercepts, so it needs no annotations |
+| `undefined` (UBSan) | LLVM has no UBSan pass; in clang it is front-end checks. Pia's equivalent is its goals | every goal that is not proved (skipped, or accepted with `--allow-unproved`) becomes a run-time check |
+| `contracts` (Pia only) | checks after each call | the `ensures` of every foreign function and every `assume` is checked at run time, so a wrong trust fails loudly |
+
+Other sanitizers wait for a need: MemorySanitizer and HWASan do not support macOS on arm64, LeakSanitizer comes with ASan where the platform supports it, and libFuzzer (`--sanitize=fuzzer`) is the natural next step for fuzzing the trusted boundary and the image decoders. ASan and TSan cannot be combined, and piac says so.
+
+**Proved accesses are not instrumented by default.** A load whose bounds goal was proved gets LLVM's `nosanitize` metadata, so ASan's cost falls on the trust boundary: buffers passed to foreign functions, slices made by `view`, and arena bookkeeping. `--sanitize-proved` instruments every access too, which is the build that checks the verifier. TSan always instruments everything, because a race needs both sides instrumented and the other side may be C.
+
+**With `Pia.Rt`.** A sanitizer runtime installs its own fatal-signal handlers and prints its own report. In a sanitized build, `Pia.Rt` does not install signal handlers, and so does not fight the runtime for `SIGSEGV`. It registers `__sanitizer_set_death_callback`, so that after the sanitizer's report it adds the Pia view: the trap site's Pia location and, for an `unsafe` or foreign call, the symbol being called. A Pia trap (`pia_trap`) in a sanitized build prints its stack with `__sanitizer_print_stack_trace`, so every report in one run looks the same. Both symbolise through DWARF, so sanitized builds also pass `-g`.
+
+**The runtime libraries.** compiler-rt's sanitizer runtimes are versioned with the instrumentation (`__asan_version_mismatch_check_vN`), so they must come from the same LLVM that piac links. They are built from the pinned `llvm-project` with `rules_foreign_cc` and CMake, as Z3 is, and cached. Xcode's runtimes (`libclang_rt.asan_osx_dynamic.dylib`) are a fallback only when their version matches.
+
+**Bazel.** Sanitizers follow the C++ toolchain's features, so one flag sanitizes the C and the Pia in a target together:
+
+```
+# .bazelrc
+build:asan --features=asan --copt=-fno-omit-frame-pointer --strip=never
+build:tsan --features=tsan
+build:ubsan --features=ubsan
+build:contracts --//tools/piac:sanitize=contracts
+```
+
+`pia_object` reads `ctx.features` and passes the matching `--sanitize` to piac. `contracts` has no C++ feature, so it is a Pia build setting that adds to whatever the features say. `bazel test --config=asan //...` runs the suite sanitized. In CI, `asan` and `tsan` run on the macOS runner beside the plain build, at first on main only, since each one builds LLVM's runtimes and doubles the test time.
+
 ### 10. SIMD, floats and atomics
 
 These come with milestones M10 to M12, but they are core builtins, so they are listed here.
@@ -330,6 +368,7 @@ These were open questions in the first draft. ADR 0023 records the answers. No o
 - **Allocation failure is a `result`** by default, with a trapping variant clearly named.
 - **`extern` is a function body**, `= extern "symbol"`, not a new declaration form, so `let` stays the only binding form.
 - **FFI needs explicit contracts.** A foreign function without one can only be called as `unsafe f x`, and each such call is a trusted item.
+- **Sanitizers are for the edges of the proof**: foreign code, trusted contracts and the verifier itself ([ADR 0025](adr/0025-sanitizers.md)).
 - **Runtime errors go to one handler**, `Pia.Rt`, which prints the Pia source location, a stack trace, and debug info when it is available.
 - **Spec function unfolding**: one level of unfolding by default (Dafny's fuel of 1), with lemmas for anything deeper and a per-function `@fuel(n)` to raise it.
 - **libm is never trusted.** Every maths function is written and proved in Pia (Dean, 2026-11-21), with its error bound in its contract.
