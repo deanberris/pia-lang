@@ -15,25 +15,59 @@
    they are working on, and the column loops keep a column on each side, so
    every neighbour is in bounds. Pia does not allocate memory yet, so the
    caller passes the buffers.
+
+   The file is written to keep the solver's work small. It adds where it
+   could multiply (`len dst + len dst + len dst`, `mr + mr`), because a
+   module that multiplies is encoded with wider bit-vectors
+   (docs/verifier.md). Each pixel is read by a function of its own, whose
+   precondition says the whole 3x3 window is in bounds, and the column
+   loops `assert` the step from the loop bounds to that precondition.
 *)
 
-(* BT.601 brightness in 8.8 fixed point. The weights add up to 256, so the
-   result fits in a byte. *)
+(* Brightness, as (r + 2g + b) / 4, a cheap stand-in for BT.601's
+   0.299r + 0.587g + 0.114b. The weights add up to 4, so the result fits in
+   a byte. *)
 let luma (r : u8) (g : u8) (b : u8) : u8 =
-  let y : u32 = 77 * r + 150 * g + 29 * b in
-  y / 256
+  let y : u16 = r + g + g + b in
+  y / 4
 
 let gray (rgb : [u8]) (dst : out mutable [u8]) : unit
-  requires len rgb = 3 * len dst
+  requires len rgb = len dst + len dst + len dst
 =
   for i in 0..len dst do
-    dst.[i] <- luma (rgb.[3 * i]) (rgb.[3 * i + 1]) (rgb.[3 * i + 2])
+    let j = i + i + i in
+    dst.[i] <- luma (rgb.[j]) (rgb.[j + 1]) (rgb.[j + 2])
   done
 
-(* The mean of each pixel and its eight neighbours. Border pixels are
-   copied unchanged. *)
+(* The mean of pixel `m` and its eight neighbours. *)
+let mean_at (src : [u8]) (w : usize) (m : usize) : u8
+  requires w < m && m + w + 1 < len src
+=
+  let a = m - w in
+  let b = m + w in
+  let s : u16 =
+    src.[a - 1] + src.[a] + src.[a + 1]
+    + src.[m - 1] + src.[m] + src.[m + 1]
+    + src.[b - 1] + src.[b] + src.[b + 1]
+  in
+  s / 9
+
+(* Blurs the row that starts at `r`, apart from its first and last
+   pixels. *)
+let blur_row (src : [u8]) (w : usize) (r : usize) (dst : inout mutable [u8])
+  : unit
+  requires len dst = len src && w >= 3 && w <= r && r + w + w <= len src
+=
+  for x in 1..w - 1 do
+    assert x + 1 < w;
+    assert r + x + 1 < r + w;
+    dst.[r + x] <- mean_at src w (r + x)
+  done
+
+(* A 3x3 box blur, which smooths out noise. Border pixels are copied
+   unchanged. *)
 let blur (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
-  requires len dst = len src && w >= 3 && 3 * w <= len src
+  requires len dst = len src && w >= 3 && w + w + w <= len src
 =
   for i in 0..len src do dst.[i] <- src.[i] done;
   let r : mutable usize = w in
@@ -41,49 +75,57 @@ let blur (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
     invariant w <= r && r + w <= len src
     decreases len src - r
   do
-    for x in 1..w - 1 do
-      let a = r - w + x in
-      let m = r + x in
-      let b = r + w + x in
-      let s : u16 =
-        src.[a - 1] + src.[a] + src.[a + 1]
-        + src.[m - 1] + src.[m] + src.[m + 1]
-        + src.[b - 1] + src.[b] + src.[b + 1]
-      in
-      dst.[m] <- s / 9
-    done;
+    blur_row src w r dst;
     r <- r + w
   done
 
-(* The Sobel gradient: how much brighter the right side of each pixel is
-   than its left side (gx), and its bottom than its top (gy). The edge
-   strength |gx| + |gy| is clamped to 255. Border pixels are 0. *)
-let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
-  requires len dst = len src && w >= 3 && 3 * w <= len src
+(* The Sobel gradient at a pixel, from its eight neighbours: how much
+   brighter its right side is than its left side (gx), and its bottom than
+   its top (gy). The edge strength |gx| + |gy| is clamped to 255. *)
+let strength (tl : u8) (tc : u8) (tr : u8) (ml : u8) (mr : u8) (bl : u8)
+    (bc : u8) (br : u8) : u8 =
+  let right : u16 = tr + mr + mr + br in
+  let left : u16 = tl + ml + ml + bl in
+  let bottom : u16 = bl + bc + bc + br in
+  let top : u16 = tl + tc + tc + tr in
+  let gx : u16 = if right > left then right - left else left - right in
+  let gy : u16 = if bottom > top then bottom - top else top - bottom in
+  let g : u32 = gx + gy in
+  if g > 255 then 255 else g
+
+(* The edge strength of pixel `m`. *)
+let strength_at (src : [u8]) (w : usize) (m : usize) : u8
+  requires w < m && m + w + 1 < len src
 =
-  for i in 0..len dst do dst.[i] <- 0 done;
+  let a = m - w in
+  let b = m + w in
+  strength (src.[a - 1]) (src.[a]) (src.[a + 1])
+    (src.[m - 1]) (src.[m + 1])
+    (src.[b - 1]) (src.[b]) (src.[b + 1])
+
+(* The edge strength of the row that starts at `r`, apart from its first
+   and last pixels. *)
+let sobel_row (src : [u8]) (w : usize) (r : usize) (dst : inout mutable [u8])
+  : unit
+  requires len dst = len src && w >= 3 && w <= r && r + w + w <= len src
+=
+  for x in 1..w - 1 do
+    assert x + 1 < w;
+    assert r + x + 1 < r + w;
+    dst.[r + x] <- strength_at src w (r + x)
+  done
+
+(* The edge strength of every pixel. Border pixels are 0. *)
+let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
+  requires len dst = len src && w >= 3 && w + w + w <= len src
+=
+  for i in 0..len src do dst.[i] <- 0 done;
   let r : mutable usize = w in
   while w <= len src - (r + w)
     invariant w <= r && r + w <= len src
     decreases len src - r
   do
-    for x in 1..w - 1 do
-      let a = r - w + x in
-      let m = r + x in
-      let b = r + w + x in
-      let gx : i32 =
-        (src.[a + 1] + 2 * src.[m + 1] + src.[b + 1])
-        - (src.[a - 1] + 2 * src.[m - 1] + src.[b - 1])
-      in
-      let gy : i32 =
-        (src.[b - 1] + 2 * src.[b] + src.[b + 1])
-        - (src.[a - 1] + 2 * src.[a] + src.[a + 1])
-      in
-      let ax : i32 = if gx < 0 then 0 - gx else gx in
-      let ay : i32 = if gy < 0 then 0 - gy else gy in
-      let g : i32 = ax + ay in
-      dst.[m] <- if g > 255 then 255 else g
-    done;
+    sobel_row src w r dst;
     r <- r + w
   done
 
@@ -91,8 +133,8 @@ let sobel (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
    images. *)
 let edges (rgb : [u8]) (w : usize) (luma_buf : out mutable [u8])
     (smooth : out mutable [u8]) (dst : out mutable [u8]) : unit
-  requires len rgb = 3 * len dst && len luma_buf = len dst
-  requires len smooth = len dst && w >= 3 && 3 * w <= len dst
+  requires len rgb = len dst + len dst + len dst && len luma_buf = len dst
+  requires len smooth = len dst && w >= 3 && w + w + w <= len dst
 =
   gray rgb luma_buf;
   blur luma_buf w smooth;

@@ -1,27 +1,17 @@
-(* A buggy blur for the demo (docs/demo.md): the row loop forgets that it
-   reads the row below the one it writes, so on the last row `b + 1` is
-   past the end of the image. `piac --verify` finds the input that breaks
-   it, and `piac --emit=obj` refuses to compile it.
+(* A buggy `mean_at` for the demo (docs/demo.md): its precondition leaves
+   room for the pixel below `m`, but not for the one below and to the
+   right, so `b + 1` can be past the end of the image. `piac --verify`
+   finds the input that breaks it, and `piac --emit=obj` refuses to
+   compile it.
 *)
-let blur (src : [u8]) (w : usize) (dst : out mutable [u8]) : unit
-  requires len dst = len src && w >= 3 && 3 * w <= len src
+let mean_at (src : [u8]) (w : usize) (m : usize) : u8
+  requires w < m && m + w < len src
 =
-  for i in 0..len src do dst.[i] <- src.[i] done;
-  let r : mutable usize = w in
-  while w <= len src - r
-    invariant w <= r && r <= len src
-    decreases len src - r
-  do
-    for x in 1..w - 1 do
-      let a = r - w + x in
-      let m = r + x in
-      let b = r + w + x in
-      let s : u16 =
-        src.[a - 1] + src.[a] + src.[a + 1]
-        + src.[m - 1] + src.[m] + src.[m + 1]
-        + src.[b - 1] + src.[b] + src.[b + 1]
-      in
-      dst.[m] <- s / 9
-    done;
-    r <- r + w
-  done
+  let a = m - w in
+  let b = m + w in
+  let s : u16 =
+    src.[a - 1] + src.[a] + src.[a + 1]
+    + src.[m - 1] + src.[m] + src.[m + 1]
+    + src.[b - 1] + src.[b] + src.[b + 1]
+  in
+  s / 9

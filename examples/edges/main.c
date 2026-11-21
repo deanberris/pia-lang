@@ -125,7 +125,7 @@ static void draw_scene(image *img) {
     for (long x = 0; x < w; ++x) {
       int r = 90 + (int)(y / 2), g = 140 + (int)(y / 3), b = 230;
       long dx = x - 250, dy = y - 50;
-      if (dx * dx + dy * dy < 28 * 28) r = 250, g = 220, b = 60;
+      if (dx * dx + dy * dy < 28 * 28) r = 255, g = 240, b = 120;
       if (y >= 150) r = 60, g = 150, b = 60;
       if (x >= 60 && x < 160 && y >= 95 && y < 160) r = 200, g = 80, b = 70;
       if (y >= 55 && y < 95 && x >= 60 + (95 - y) * 5 / 4 &&
@@ -133,7 +133,7 @@ static void draw_scene(image *img) {
         r = 120, g = 50, b = 40;
       if (x >= 85 && x < 115 && y >= 110 && y < 135) r = 240, g = 240, b = 200;
       seed = seed * 1103515245 + 12345;
-      int noise = (int)(seed >> 16) % 25 - 12;
+      int noise = (int)(seed >> 16) % 17 - 8;
       uint8_t *px = img->rgb + 3 * (y * w + x);
       int c[3] = {r + noise, g + noise, b + noise};
       for (int i = 0; i < 3; ++i) px[i] = c[i] < 0 ? 0 : c[i] > 255 ? 255 : c[i];
@@ -157,7 +157,7 @@ static void print_text(const char *title, long w, long h, const uint8_t *px,
       for (long y = y0; y < y1; ++y)
         for (long x = x0; x < x1; ++x) {
           const uint8_t *p = px + channels * (y * w + x);
-          long v = channels == 3 ? (77 * p[0] + 150 * p[1] + 29 * p[2]) / 256
+          long v = channels == 3 ? (p[0] + 2 * p[1] + p[2]) / 4
                                  : p[0];
           sum += v;
           if (v > peak) peak = v;

@@ -10,7 +10,7 @@
 
 static void ref_gray(const uint8_t *rgb, long n, uint8_t *dst) {
   for (long i = 0; i < n; ++i)
-    dst[i] = (77 * rgb[3 * i] + 150 * rgb[3 * i + 1] + 29 * rgb[3 * i + 2]) / 256;
+    dst[i] = (rgb[3 * i] + 2 * rgb[3 * i + 1] + rgb[3 * i + 2]) / 4;
 }
 
 static void ref_blur(const uint8_t *src, long w, long h, uint8_t *dst) {
