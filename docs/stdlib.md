@@ -161,6 +161,7 @@ let Allocator (a : type) : concept = sig
   let alloc  : (m : borrowed a) -> (t : type) -> (n : usize) -> result (borrowed(m) out mutable [t]) OutOfMemory
     ensures match result with
             | Ok buf -> len buf = n && fresh m buf          (* enough memory, disjoint from every live block *)
+                        && aligned buf (max 16 (align_of t))  (* low 4 bits of every block address are free *)
             | Err OutOfMemory -> unchanged m               (* or a clean failure *)
   let free   : (m : borrowed a) -> (buf : moved [t]) -> unit
     requires owns m buf
