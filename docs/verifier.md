@@ -44,7 +44,7 @@ Before calling the solver, the verifier tries the operand ranges. A value's rang
 - arithmetic whose exact range fits the result type
 - a divisor whose range excludes zero
 - a quotient of non-negative operands, which lies in `[0, a]`
-- an index into a fixed array whose range lies within the array, such as `lut.[i]` with `i : int{0..255}` and a 256-element `lut` ([design.md](design.md#integers))
+- an index into a fixed array whose range lies within the array, such as `lut.[i]` with `i : int{0..255}` and a 256-element `lut` ([design.md](design.md#primitive-types-and-overflow))
 
 Everything else goes to Z3.
 
