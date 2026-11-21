@@ -39,6 +39,10 @@
 // LLVM-LABEL: @twice(i8 zeroext %0)
 // LLVM: call i8 @llvm.uadd.sat.i8(i8 %0, i8 4)
 // LLVM-NOT: call {{.*}}@__pia_dec
+// LLVM-LABEL: define void @swap(i8 zeroext %0, i16 zeroext %1, ptr {{.*}}%2)
+// LLVM: store i16 %1, ptr %2, align 2
+// LLVM: getelementptr i8, ptr %2, i64 2
+// LLVM: store i8 %0
 *)
 
 (* The precondition, postcondition and assertion are proved, then erased.
@@ -63,3 +67,10 @@ let less (a : i8) (b : u8) : bool = a < b
 (* Pia functions call each other's internal versions, which LLVM inlines.
 *)
 let twice (x : u8) : u16 = dec (x +| 4) + 0
+
+(* A record result is written through a pointer to a C struct, each field
+   at its natural offset.
+*)
+let pair = type { x : u8; y : u16 }
+let swapped = type { y : u16; x : u8 }
+let swap (p : pair) : swapped = { y = p.y; x = p.x }

@@ -31,7 +31,8 @@ struct IntLiteral {
 };
 std::optional<IntLiteral> parseIntLiteral(std::string_view spelling);
 
-// A type as Pia spells it: `u8`, `int{-3..5}`, `[u8; 4]`, `bool`, `unit`.
+// A type as Pia spells it: `u8`, `int{-3..5}`, `[u8; 4]`, `bool`, `unit`,
+// or a record's name.
 std::string typeName(mlir::Type type);
 
 // Whether a modifier list such as "borrowed in mutable" has `word`.
@@ -52,6 +53,14 @@ class TypeResolver {
   // Built-in integer types by name (`u8`, `i32`, `usize`, ...), or null.
   mlir::Type builtin(std::string_view name);
 
+  // A named type from a `let name = type ...` item: a record or an alias.
+  void define(const std::string &name, mlir::Type type) { named_[name] = type; }
+  mlir::Type named(const std::string &name) const {
+    auto it = named_.find(name);
+    return it == named_.end() ? mlir::Type() : it->second;
+  }
+  const std::map<std::string, mlir::Type> &namedTypes() const { return named_; }
+
   mlir::Type usize() { return builtin("usize"); }
   mlir::Type i32() { return builtin("i32"); }
   mlir::Type boolType();
@@ -63,7 +72,11 @@ class TypeResolver {
 
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
+  std::map<std::string, mlir::Type> named_;
 };
+
+// Whether a top-level `let` defines a type: `let pixel = type { ... }`.
+bool isTypeItem(const syntax::Node &item);
 
 struct Param {
   std::string name;
@@ -79,8 +92,9 @@ struct FuncSig {
   const syntax::Node *item = nullptr;
 };
 
-// Collects the signature of every top-level `let`. Items outside the subset
-// are reported here, so IRGen only sees definitions it can lower.
+// Defines every type item, in order, then collects the signature of every
+// top-level function. Items outside the subset are reported here, so IRGen
+// only sees definitions it can lower.
 std::map<std::string, FuncSig> collectSignatures(const syntax::Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags);

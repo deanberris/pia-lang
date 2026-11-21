@@ -16,6 +16,13 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
               uint8_t *dst, uint64_t ndst);
 uint32_t sum4(const uint16_t *xs);
 
+struct pixel {
+  uint8_t r, g, b, a;
+};
+void blend(uint8_t pr, uint8_t pg, uint8_t pb, uint8_t pa, uint8_t qr,
+           uint8_t qg, uint8_t qb, uint8_t qa, struct pixel *out);
+uint16_t luma(uint8_t r, uint8_t g, uint8_t b, uint8_t a);
+
 static int failures = 0;
 
 #define EXPECT(cond, ...)          \
@@ -68,6 +75,16 @@ int main(void) {
 
   const uint16_t four[4] = {65535, 65535, 65535, 3};
   EXPECT(sum4(four) == 3u * 65535u + 3u, "sum4 = %u", sum4(four));
+
+  for (int v = 0; v < 256; v += 5) {
+    struct pixel out = {0, 0, 0, 0};
+    blend(v, 255 - v, v / 2, 7, 100, 100, v, 9, &out);
+    EXPECT(out.r == clamp(v + 100, 0, 255) && out.g == clamp(355 - v, 0, 255) &&
+               out.b == clamp(v / 2 + v, 0, 255) && out.a == 255,
+           "blend(%d) = {%d, %d, %d, %d}", v, out.r, out.g, out.b, out.a);
+    EXPECT(luma(v, 255, 255 - v, 1) == v + 255 + (255 - v), "luma(%d) = %d", v,
+           luma(v, 255, 255 - v, 1));
+  }
 
   if (failures) {
     fprintf(stderr, "%d mismatches\n", failures);

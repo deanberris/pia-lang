@@ -21,6 +21,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/Target/SMTLIB/ExportSMTLIB.h"
 #include "sema/Sema.h"
+#include "transforms/ScalarizeRecords.h"
 #include "z3++.h"
 
 namespace pia::verify {
@@ -896,8 +897,16 @@ class Encoder {
       if (mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
         post.arrays[entry.getArgument(i)] = arrays_.lookup(call.getOperand(i));
     callee.walk([&](mlir::func::ReturnOp ret) {
-      for (auto [formal, actual] : llvm::zip(ret.getOperands(), call.getResults()))
-        post.values[formal] = env_.lookup(actual);
+      for (auto [formal, actual] : llvm::zip(ret.getOperands(), call.getResults())) {
+        Value result = env_.lookup(actual);
+        // A parameter returned as it is already stands for the argument,
+        // which the result then equals.
+        if (auto known = pre.values.find(formal); known != pre.values.end()) {
+          if (result && known->second) assume(eq(result, known->second));
+          continue;
+        }
+        post.values[formal] = result;
+      }
     });
     callee.walk([&](contract::EnsuresOp e) {
       if (Value p = demand(e.getPredicate(), post)) assume(p);
@@ -1155,6 +1164,8 @@ void solve(const Query &q, unsigned width, const Options &options,
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options) {
   module.getContext()->loadDialect<mlir::smt::SMTDialect>();
+  // The encoding has no records: each record value becomes its fields.
+  (void)transforms::scalarizeRecords(module);
   unsigned width = encodingWidth(module);
   std::vector<Outcome> outcomes;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {

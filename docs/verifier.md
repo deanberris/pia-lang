@@ -64,7 +64,9 @@ Each remaining goal becomes one query in the upstream `smt` dialect. The query i
 
 **Control flow.** The two branches of `scf.if` are walked under the condition and its negation, and the results merge with `ite`.
 
-**Calls** use the callee's contract, not its body. Its preconditions become goals, with the arguments substituted. The result is a fresh value of the result type. The callee's postconditions are assumed about it, with `old` reading the arguments as they were before the call. Buffers the callee may write (`out` or `inout`) are fresh arrays afterwards. Recursion needs nothing special.
+**Records** are replaced with their fields before encoding ([irgen.md](irgen.md#records)). So a `pixel` parameter is four constants, and its counterexample values are named `p.r`, `p.g`, `p.b` and `p.a`.
+
+**Calls** use the callee's contract, not its body. Its preconditions become goals, with the arguments substituted. The result is a fresh value of the result type. The callee's postconditions are assumed about it, with `old` reading the arguments as they were before the call. A callee that returns one of its parameters unchanged gives a result equal to that argument. Buffers the callee may write (`out` or `inout`) are fresh arrays afterwards. Recursion needs nothing special.
 
 **`old e`** reads the function's arrays as they were on entry.
 

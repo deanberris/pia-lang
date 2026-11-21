@@ -8,6 +8,7 @@
 // print as the aliases !isize and !usize, defined at the top.
 // CHECK-DAG: !isize = !pia.int<-9223372036854775808, 9223372036854775807>
 // CHECK-DAG: !usize = !pia.int<0, 18446744073709551615>
+// CHECK-DAG: !pixel = !pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>>
 
 // The saturating pixel add from docs/design.md:
 //   let add_px (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
@@ -90,4 +91,14 @@ func.func @div_rem_index(%a: !pia.int<0, 255>, %b: !pia.int<0, 255>) -> !pia.int
   %i = pia.to_index %r : !pia.int<0, 255>
   %u = pia.from_index %i : !pia.int<0, 18446744073709551615>
   return %u : !pia.int<0, 18446744073709551615>
+}
+
+// Records (M7): a record prints as its name.
+// CHECK-LABEL: func.func @records
+// CHECK: %[[P:.*]] = pia.record(%{{.*}}, %{{.*}} : !pia.int<0, 255>, !pia.int<0, 255>) : !pixel
+// CHECK: pia.field %[[P]], "g" : !pixel -> !pia.int<0, 255>
+func.func @records(%a: !pia.int<0, 255>) -> !pia.int<0, 255> {
+  %p = pia.record(%a, %a : !pia.int<0, 255>, !pia.int<0, 255>) : !pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>>
+  %g = pia.field %p, "g" : !pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>> -> !pia.int<0, 255>
+  return %g : !pia.int<0, 255>
 }

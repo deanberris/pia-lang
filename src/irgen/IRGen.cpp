@@ -89,9 +89,14 @@ bool isArith(const std::string &op) {
 
 // Every name assigned with `x <- ...` inside `n`.
 void collectAssigned(const Node &n, std::set<std::string> &out) {
-  if (n.kind == NodeKind::Assign && !n.kids.empty() &&
-      n.kids[0]->kind == NodeKind::Name)
-    out.insert(n.kids[0]->text);
+  if (n.kind == NodeKind::Assign && !n.kids.empty()) {
+    const Node &place = *n.kids[0];
+    if (place.kind == NodeKind::Name) out.insert(place.text);
+    // `p.r <- v` rebinds the record `p`.
+    if (place.kind == NodeKind::Field && !place.kids.empty() &&
+        place.kids[0]->kind == NodeKind::Name)
+      out.insert(place.kids[0]->text);
+  }
   for (const syntax::NodePtr &k : n.kids) collectAssigned(*k, out);
 }
 
@@ -394,6 +399,10 @@ class Gen {
         return genApply(n);
       case NodeKind::Index:
         return genIndex(n);
+      case NodeKind::RecordLit:
+        return genRecordLit(n, expected);
+      case NodeKind::Field:
+        return genField(n);
       case NodeKind::Assign:
         return genAssign(n);
       case NodeKind::If:
@@ -520,6 +529,9 @@ class Gen {
             a.value, c.value);
         return TV{v, boolType()};
       }
+      if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
+        return fail(n, "comparing records with '" + op +
+                           "' is not supported yet");
       auto u = unify(a, c, n);
       if (!u) return std::nullopt;
       CmpPredicate p = op == "="    ? CmpPredicate::eq
@@ -758,9 +770,101 @@ class Gen {
     return TV{v, elem};
   }
 
+  // `{ r = x; g = 0 }`: the record type comes from the context or, failing
+  // that, from the one record whose fields are exactly these.
+  R genRecordLit(const Node &n, Type expected) {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(expected);
+    if (!rt) {
+      std::set<std::string> written;
+      for (const syntax::NodePtr &f : n.kids) written.insert(f->text);
+      std::vector<RecordType> matches;
+      for (const auto &[name, t] : types_.namedTypes()) {
+        auto r = mlir::dyn_cast<RecordType>(t);
+        if (!r || r.getName() != name) continue;
+        std::set<std::string> fields;
+        for (mlir::StringAttr f : r.getFieldNames()) fields.insert(f.str());
+        if (fields == written) matches.push_back(r);
+      }
+      if (matches.size() != 1)
+        return fail(n, matches.empty()
+                           ? "no record type has exactly these fields"
+                           : "more than one record type has these fields; "
+                             "annotate the type, as in 'let p : T = { ... }'");
+      rt = matches[0];
+    }
+    for (const syntax::NodePtr &f : n.kids)
+      if (!rt.fieldIndex(f->text))
+        return fail(*f, typeName(rt) + " has no field '" + f->text + "'");
+    llvm::SmallVector<Value> fields;
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
+      const Node *init = nullptr;
+      for (const syntax::NodePtr &f : n.kids) {
+        if (f->text != name.getValue()) continue;
+        if (init)
+          return fail(*f, "the field '" + f->text + "' is given twice");
+        init = f.get();
+      }
+      if (!init)
+        return fail(n, "the field '" + name.str() + "' of " + typeName(rt) +
+                           " is missing");
+      R v = genExpr(*init->kids[0], ft);
+      if (!v) return v;
+      R c = coerce(*v, ft, *init->kids[0]);
+      if (!c) return c;
+      fields.push_back(c->value);
+    }
+    return TV{create<RecordOp>(loc(n), rt, fields), rt};
+  }
+
+  R genField(const Node &n) {
+    R obj = genExpr(*n.kids[0], Type());
+    if (!obj) return obj;
+    auto rt = mlir::dyn_cast<RecordType>(obj->type);
+    if (!rt)
+      return fail(n, "'." + n.text + "' needs a record, found " +
+                         typeName(obj->type));
+    std::optional<unsigned> i = rt.fieldIndex(n.text);
+    if (!i) return fail(n, typeName(rt) + " has no field '" + n.text + "'");
+    Type ft = rt.getFieldTypes()[*i];
+    Value v = create<FieldOp>(loc(n), ft, obj->value, b_.getStringAttr(n.text));
+    return TV{v, ft};
+  }
+
   R genAssign(const Node &n) {
     const Node &place = *n.kids[0];
     const Node &valueNode = *n.kids[1];
+    if (place.kind == NodeKind::Field) {
+      // `p.r <- v` rebuilds the record `p` with one field replaced.
+      const Node &obj = *place.kids[0];
+      if (obj.kind != NodeKind::Name)
+        return fail(obj, "only a field of a named record can be assigned");
+      BindingPtr b = lookup(obj.text);
+      if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      auto rt = mlir::dyn_cast<RecordType>(b->type);
+      if (!rt)
+        return fail(place, "'." + place.text + "' needs a record, found " +
+                               typeName(b->type));
+      if (!b->isMutable)
+        return fail(obj, "'" + obj.text + "' is not mutable; declare it "
+                         "as 'let " + obj.text + " : mutable T = ...'");
+      std::optional<unsigned> i = rt.fieldIndex(place.text);
+      if (!i)
+        return fail(place, typeName(rt) + " has no field '" + place.text + "'");
+      Type ft = rt.getFieldTypes()[*i];
+      R v = genExpr(valueNode, ft);
+      if (!v) return v;
+      R c = coerce(*v, ft, valueNode);
+      if (!c) return c;
+      Location l = loc(n);
+      llvm::SmallVector<Value> fields;
+      for (auto [j, name] : llvm::enumerate(rt.getFieldNames()))
+        fields.push_back(j == *i ? c->value
+                                 : create<FieldOp>(l, rt.getFieldTypes()[j],
+                                                   b->value, name)
+                                       .getResult());
+      b->value = create<RecordOp>(l, rt, fields);
+      return unit();
+    }
     if (place.kind == NodeKind::Name) {
       BindingPtr b = lookup(place.text);
       if (!b) return fail(place, "unknown name '" + place.text + "'");

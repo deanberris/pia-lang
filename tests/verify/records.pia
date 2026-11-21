@@ -1,0 +1,37 @@
+(* Records are verified field by field: each parameter's fields are named
+   after it in counterexamples.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+
+let luma (p : pixel) : u16 = p.r + p.g + p.b
+
+let bad (p : pixel) : u8 = p.r + p.g
+
+(* A postcondition about one field of the result.
+*)
+let opaque (p : pixel) : pixel
+  ensures result.a = 255 && result.r = p.r
+=
+  let q : mutable pixel = p in
+  q.a <- 255;
+  q
+
+(* A callee's postcondition is assumed about its record result.
+*)
+let check (p : pixel) : u8
+  requires p.r < 100
+=
+  let q = opaque p in
+  q.r + 100
+
+(* Expected report, in order.
+// CHECK: records.pia:8:34: proved: '+' does not overflow u16 [intervals]
+// CHECK: records.pia:8:40: proved: '+' does not overflow u16 [intervals]
+// CHECK: records.pia:10:32: failed: '+' does not overflow u8
+// CHECK-NEXT: counterexample: p.r = {{-?[0-9]+}}, p.g = {{-?[0-9]+}}, p.b = {{-?[0-9]+}}, p.a = {{-?[0-9]+}}, result = {{-?[0-9]+}}
+// CHECK: records.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: records.pia:27:7: proved: '+' does not overflow u8 [smt]
+// CHECK: 4 proved, 1 failed, 0 skipped
+*)

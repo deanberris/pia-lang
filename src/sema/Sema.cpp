@@ -93,6 +93,7 @@ std::string typeName(mlir::Type t) {
            std::to_string(a.getLength()) + "]";
   if (auto s = mlir::dyn_cast<SliceType>(t))
     return "[" + typeName(s.getElementType()) + "]";
+  if (auto r = mlir::dyn_cast<RecordType>(t)) return r.getName().str();
   std::string out;
   llvm::raw_string_ostream os(out);
   t.print(os);
@@ -149,6 +150,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
     case NodeKind::TypeName: {
       if (mlir::Type t = builtin(type.text)) return t;
+      if (mlir::Type t = named(type.text)) return t;
       diags_.error(type.loc, "unknown type '" + type.text + "'");
       return {};
     }
@@ -183,11 +185,19 @@ mlir::Type TypeResolver::resolve(const Node &type) {
                      "an array length must be an integer literal for now");
         return {};
       }
+      if (mlir::isa<RecordType>(elem)) {
+        diags_.error(type.loc, "arrays of records are not supported yet");
+        return {};
+      }
       return ArrayType::get(&ctx_, lit->value.getZExtValue(), elem);
     }
     case NodeKind::SliceType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
+      if (mlir::isa<RecordType>(elem)) {
+        diags_.error(type.loc, "slices of records are not supported yet");
+        return {};
+      }
       return SliceType::get(&ctx_, elem);
     }
     default:
@@ -206,11 +216,80 @@ mlir::Type TypeResolver::resolveAnnot(const Node &annot) {
   return resolve(*annot.kids[1]);
 }
 
+bool isTypeItem(const Node &item) {
+  return item.kind == NodeKind::LetItem && item.kids.size() > 3 &&
+         item.kids[0]->kids.empty() && item.kids[3]->kind == NodeKind::TypeValue;
+}
+
+namespace {
+
+// `let name = type <body>`: a record, or another name for a type.
+void defineType(const Node &item, TypeResolver &types,
+                syntax::Diagnostics &diags) {
+  const Node &value = *item.kids[3];
+  const Node &body = *value.kids[0];
+  if (!value.kids[1]->kids.empty()) {
+    const Node &attr = *value.kids[1]->kids[0];
+    diags.error(attr.loc, "the attribute @" + attr.text +
+                              " on a type is not supported yet");
+  }
+  if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
+    diags.error(value.kids[2]->loc,
+                "refinements ('where') are not supported yet");
+    return;
+  }
+  if (types.named(item.text) || types.builtin(item.text)) {
+    diags.error(item.loc, "the type '" + item.text + "' is already defined");
+    return;
+  }
+  mlir::MLIRContext *ctx = types.boolType().getContext();
+  if (body.kind != NodeKind::RecordType) {
+    mlir::Type t = types.resolve(body);
+    if (t) types.define(item.text, t);
+    return;
+  }
+  llvm::SmallVector<mlir::StringAttr> names;
+  llvm::SmallVector<mlir::Type> fieldTypes;
+  for (const syntax::NodePtr &f : body.kids) {
+    mlir::Type t = types.resolveAnnot(*f->kids[0]);
+    if (!t) return;
+    if (!f->kids[0]->kids[0]->text.empty()) {
+      diags.error(f->loc, "a field cannot have modifiers");
+      return;
+    }
+    if (types.isUnit(t)) {
+      diags.error(f->loc, "a field cannot have type unit");
+      return;
+    }
+    if (mlir::isa<ArrayType, SliceType>(t)) {
+      diags.error(f->loc, "a record field cannot be an array or slice yet");
+      return;
+    }
+    for (mlir::StringAttr n : names)
+      if (n.getValue() == f->text) {
+        diags.error(f->loc, "the field '" + f->text + "' is already declared");
+        return;
+      }
+    names.push_back(mlir::StringAttr::get(ctx, f->text));
+    fieldTypes.push_back(t);
+  }
+  if (names.empty()) {
+    diags.error(body.loc, "a record needs at least one field");
+    return;
+  }
+  types.define(item.text, RecordType::get(ctx, item.text, names, fieldTypes));
+}
+
+}  // namespace
+
 std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags) {
+  for (const syntax::NodePtr &item : program.kids)
+    if (isTypeItem(*item)) defineType(*item, types, diags);
   std::map<std::string, FuncSig> sigs;
   for (const syntax::NodePtr &item : program.kids) {
+    if (isTypeItem(*item)) continue;
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");
@@ -260,7 +339,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       sig.result = types.resolveAnnot(*ret.kids[0]);
       if (!sig.result) ok = false;
     }
-    if (sigs.count(sig.name)) {
+    if (sigs.count(sig.name) || types.named(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is already defined");
       continue;
     }

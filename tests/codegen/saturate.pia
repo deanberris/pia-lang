@@ -32,3 +32,13 @@ let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
 (* A fixed array is a pointer.
 *)
 let sum4 (xs : [u16; 4]) : u32 = xs.[0] + xs.[1] + xs.[2] + xs.[3]
+
+(* Records: a record parameter is its fields, and a record result comes
+   back through a pointer to a C struct of its fields.
+*)
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+
+let blend (p : pixel) (q : pixel) : pixel =
+  { r = p.r +| q.r; g = p.g +| q.g; b = p.b +| q.b; a = 255 }
+
+let luma (p : pixel) : u16 = p.r + p.g + p.b

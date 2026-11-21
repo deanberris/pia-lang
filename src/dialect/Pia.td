@@ -77,6 +77,24 @@ def Pia_SliceType : Pia_Type<"Slice", "slice"> {
   let assemblyFormat = "`<` $elementType `>`";
 }
 
+def Pia_RecordType : Pia_Type<"Record", "record"> {
+  let summary = "a named record of fields, a value like an integer";
+  let description = [{
+    `!pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>>` is
+    `let pixel = type { r : u8; g : u8 }`. Records are compared by name, so
+    two declarations with the same fields are different types.
+  }];
+  let parameters = (ins StringRefParameter<"the record's name">:$name,
+                        ArrayRefParameter<"::mlir::StringAttr", "field names">:$fieldNames,
+                        ArrayRefParameter<"::mlir::Type", "field types">:$fieldTypes);
+  let hasCustomAssemblyFormat = 1;
+  let genVerifyDecl = 1;
+  let extraClassDeclaration = [{
+    /// The position of the field called `name`, if there is one.
+    std::optional<unsigned> fieldIndex(::llvm::StringRef name) const;
+  }];
+}
+
 def Pia_DynType : Pia_Type<"Dyn", "dyn"> {
   let summary = "a tagged value whose tag is one of the listed types";
   let description = [{
@@ -91,6 +109,8 @@ def Pia_AnyInt : Type<CPred<"::llvm::isa<::pia::IntType>($_self)">,
                       "Pia range-typed integer", "::pia::IntType">;
 def Pia_Buffer : Type<CPred<"::llvm::isa<::pia::ArrayType, ::pia::SliceType>($_self)">,
                       "Pia array or slice">;
+def Pia_Record : Type<CPred<"::llvm::isa<::pia::RecordType>($_self)">,
+                       "Pia record", "::pia::RecordType">;
 def Pia_Dyn : Type<CPred<"::llvm::isa<::pia::DynType>($_self)">,
                    "Pia dyn value", "::pia::DynType">;
 
@@ -249,6 +269,35 @@ def Pia_StoreOp : Pia_Op<"store", [MemoryEffects<[MemWrite]>]> {
     custom<ElementType>(ref(type($buffer)), type($value))
   }];
   let hasVerifier = 1;
+}
+
+def Pia_RecordOp : Pia_Op<"record", [Pure]> {
+  let summary = "build a record from its fields, in declaration order";
+  let description = [{
+    `%p = pia.record(%r, %g : !pia.int<0, 255>, !pia.int<0, 255>) : !pia.record<...>`
+  }];
+  let arguments = (ins Variadic<AnyType>:$fields);
+  let results = (outs Pia_Record:$result);
+  let assemblyFormat = [{
+    `(` ($fields^ `:` type($fields))? `)` attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_FieldOp : Pia_Op<"field", [Pure]> {
+  let summary = "read a field of a record";
+  let description = [{ `%r = pia.field %p, "r" : !pia.record<...> -> !pia.int<0, 255>` }];
+  let arguments = (ins Pia_Record:$input, StrAttr:$field);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $input `,` $field attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasFolder = 1;
+  let extraClassDeclaration = [{
+    /// The field's position in the record type.
+    unsigned getIndex();
+  }];
 }
 
 def Pia_DynWrapOp : Pia_Op<"dyn.wrap", [Pure]> {

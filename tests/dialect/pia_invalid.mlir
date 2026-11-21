@@ -36,3 +36,24 @@ func.func @wrap_wrong_tag(%x: i32) {
 
 // expected-error @+1 {{invalid modifiers "in borrowed" on argument 0}}
 func.func @modifier_order(%a: f32 {pia.modifiers = "in borrowed"}) { return }
+
+// -----
+
+// expected-error @+1 {{record 'p' has two fields named 'x'}}
+func.func @duplicate_field(%a: !pia.record<"p", x : i1, x : i1>) { return }
+
+// -----
+
+func.func @missing_field(%a: !pia.int<0, 255>) {
+  // expected-error @+1 {{expected 2 fields}}
+  %p = pia.record(%a : !pia.int<0, 255>) : !pia.record<"p", x : !pia.int<0, 255>, y : !pia.int<0, 255>>
+  return
+}
+
+// -----
+
+func.func @no_such_field(%p: !pia.record<"p", x : i1>) {
+  // expected-error @+1 {{has no field 'y'}}
+  %y = pia.field %p, "y" : !pia.record<"p", x : i1> -> i1
+  return
+}
