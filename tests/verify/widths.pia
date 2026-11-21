@@ -23,3 +23,24 @@ let gray (rgb : [u8]) (dst : out mutable [u8]) : unit
 let wide (a : u64) (b : u64) : u64
   requires a < 4294967296 && b < 4294967296
 = a * b
+
+(* Expected report, in order.
+// CHECK: widths.pia:10:20: proved: '*' does not overflow u32 [intervals]
+// CHECK: widths.pia:10:30: proved: '*' does not overflow u32 [intervals]
+// CHECK: widths.pia:10:24: proved: '+' does not overflow u32 [intervals]
+// CHECK: widths.pia:10:39: proved: '*' does not overflow u32 [intervals]
+// CHECK: widths.pia:10:34: proved: '+' does not overflow u32 [intervals]
+// CHECK: widths.pia:11:5: proved: the divisor is not zero [intervals]
+// CHECK: widths.pia:11:5: proved: '/' does not overflow u32 [intervals]
+// CHECK: widths.pia:10:3: proved: the value fits in u8 [smt]
+// CHECK: widths.pia:17:15: proved: '+' does not overflow usize [smt]
+// CHECK: widths.pia:17:19: proved: '+' does not overflow usize [smt]
+// CHECK: widths.pia:18:22: proved: the index is within bounds [smt]
+// CHECK: widths.pia:18:39: proved: '+' does not overflow usize [smt]
+// CHECK: widths.pia:18:32: proved: the index is within bounds [smt]
+// CHECK: widths.pia:18:53: proved: '+' does not overflow usize [smt]
+// CHECK: widths.pia:18:46: proved: the index is within bounds [smt]
+// CHECK: widths.pia:18:5: proved: the index is within bounds [smt]
+// CHECK: widths.pia:25:5: proved: '*' does not overflow usize [smt]
+// CHECK: 17 proved, 0 failed, 0 skipped
+*)
