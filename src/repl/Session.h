@@ -73,6 +73,9 @@ struct Options {
   std::vector<std::string> allowUnproved;
   meta::Options meta;
   unsigned timeoutMs = 10000;  // per obligation
+  // How long a swap waits for running tasks to leave the definitions it
+  // changes together (ADR 0031, "Live redefinition").
+  unsigned quiesceMs = 2000;
   bool run = true;             // false: verify, but never compile or run
 };
 

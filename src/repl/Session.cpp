@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -22,6 +23,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Host.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
@@ -50,6 +52,34 @@ constexpr const char *kRefinesPrefix = "__pia_refines_";
 // and the REPL's slot that holds a definition's current code.
 constexpr const char *kInternalPrefix = "__pia_";
 constexpr const char *kSlotPrefix = "__pia_slot_";
+// The gate that counts the calls of a definition in progress, and the
+// helpers every call goes through, so a swap can find a moment when none of
+// a set of definitions is running (ADR 0031, "Live redefinition").
+constexpr const char *kGatePrefix = "__pia_gate_";
+constexpr const char *kWait = "__pia_repl_wait";
+
+// A definition's gate. `active` counts its calls in progress on every
+// thread. While `blocked` is set, a call waits unless it comes from a
+// definition that is blocked too, so the blocked set drains.
+struct Gate {
+  std::atomic<int64_t> active{0};
+  std::atomic<int32_t> blocked{0};
+};
+static_assert(sizeof(std::atomic<int64_t>) == 8 && alignof(Gate) == 8,
+              "the gated call in callThroughSlots assumes this layout");
+
+// The slow path of a gated call, taken only while `g` is blocked: the call
+// has counted itself in `g` and found it blocked. `from` is the caller's
+// gate, or null for a task's own expression.
+extern "C" void piaReplWait(Gate *g, Gate *from) {
+  for (;;) {
+    if (!g->blocked.load(std::memory_order_seq_cst)) return;
+    if (from && from->blocked.load(std::memory_order_seq_cst)) return;
+    g->active.fetch_sub(1, std::memory_order_seq_cst);
+    while (g->blocked.load(std::memory_order_seq_cst)) std::this_thread::yield();
+    g->active.fetch_add(1, std::memory_order_seq_cst);
+  }
+}
 
 // Names the session makes up, which the environment never shows.
 bool internalName(const std::string &n) {
@@ -105,14 +135,34 @@ OpTy build(mlir::OpBuilder &b, mlir::Location l, Args &&...args) {
 
 // Makes every call of a definition in `defs` go through its slot: an
 // external pointer the session owns and swaps when the definition changes
-// (ADR 0031, "Live redefinition"). The definitions' internal versions
-// become visible, so the session can find their code.
+// (ADR 0031, "Live redefinition"). With `gated`, for code a task may run,
+// each call also counts itself in the callee's gate before it loads the
+// slot, and uncounts itself when it returns, so the gate counts the calls
+// that may be running older code. The definitions' internal versions become
+// visible, so the session can find their code.
 mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
-                                     const std::set<std::string> &defs) {
+                                     const std::set<std::string> &defs,
+                                     bool gated) {
   mlir::MLIRContext *ctx = m.getContext();
   mlir::OpBuilder b(ctx);
   auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
   size_t prefix = std::strlen(kInternalPrefix);
+  auto voidTy = mlir::LLVM::LLVMVoidType::get(ctx);
+  auto i64 = mlir::IntegerType::get(ctx, 64), i32 = mlir::IntegerType::get(ctx, 32);
+  auto i8 = mlir::IntegerType::get(ctx, 8);
+  auto waitTy = mlir::LLVM::LLVMFunctionType::get(voidTy, {ptr, ptr});
+  auto global = [&](const std::string &name) {
+    if (m.lookupSymbol(name)) return;
+    b.setInsertionPointToStart(m.getBody());
+    build<mlir::LLVM::GlobalOp>(b, m.getLoc(), ptr, /*isConstant=*/false,
+                                mlir::LLVM::Linkage::External, name,
+                                mlir::Attribute());
+  };
+  mlir::LLVM::LLVMFuncOp wait;
+  if (gated) {
+    b.setInsertionPointToStart(m.getBody());
+    wait = build<mlir::LLVM::LLVMFuncOp>(b, m.getLoc(), kWait, waitTy);
+  }
   std::vector<mlir::LLVM::CallOp> calls;
   m.walk([&](mlir::LLVM::CallOp c) {
     std::optional<llvm::StringRef> callee = c.getCallee();
@@ -123,11 +173,44 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
   for (mlir::LLVM::CallOp c : calls) {
     std::string def = c.getCallee()->drop_front(prefix).str();
     std::string slot = kSlotPrefix + def;
-    if (!m.lookupSymbol(slot)) {
-      b.setInsertionPointToStart(m.getBody());
-      build<mlir::LLVM::GlobalOp>(b, m.getLoc(), ptr, /*isConstant=*/false,
-                                  mlir::LLVM::Linkage::External, slot,
-                                  mlir::Attribute());
+    global(slot);
+    mlir::Location l = c.getLoc();
+    mlir::Value g, one;
+    if (gated) {
+      // active += 1; if (blocked) wait (g, the caller's gate).
+      std::string gate = kGatePrefix + def;
+      global(gate);
+      mlir::Value from;
+      auto caller = c->getParentOfType<mlir::LLVM::LLVMFuncOp>();
+      llvm::StringRef cn = caller.getName();
+      b.setInsertionPoint(c);
+      if (cn.starts_with(kInternalPrefix) && defs.count(cn.drop_front(prefix).str())) {
+        std::string fg = kGatePrefix + cn.drop_front(prefix).str();
+        global(fg);
+        b.setInsertionPoint(c);
+        from = build<mlir::LLVM::AddressOfOp>(b, l, ptr, fg);
+      } else {
+        from = build<mlir::LLVM::ZeroOp>(b, l, ptr);
+      }
+      g = build<mlir::LLVM::AddressOfOp>(b, l, ptr, gate);
+      one = build<mlir::LLVM::ConstantOp>(b, l, i64, b.getI64IntegerAttr(1));
+      build<mlir::LLVM::AtomicRMWOp>(b, l, mlir::LLVM::AtomicBinOp::add, g, one,
+                                     mlir::LLVM::AtomicOrdering::seq_cst);
+      auto bp = build<mlir::LLVM::GEPOp>(b, l, ptr, i8, g,
+                                         llvm::ArrayRef<mlir::LLVM::GEPArg>{8});
+      auto blocked = build<mlir::LLVM::LoadOp>(b, l, i32, bp, /*alignment=*/4);
+      blocked.setOrdering(mlir::LLVM::AtomicOrdering::seq_cst);
+      auto zero = build<mlir::LLVM::ConstantOp>(b, l, i32, b.getI32IntegerAttr(0));
+      auto isBlocked = build<mlir::LLVM::ICmpOp>(b, l, mlir::LLVM::ICmpPredicate::ne,
+                                                 blocked, zero);
+      mlir::Block *before = c->getBlock();
+      mlir::Block *cont = before->splitBlock(c);
+      mlir::Block *slow = b.createBlock(cont);
+      b.setInsertionPointToEnd(slow);
+      build<mlir::LLVM::CallOp>(b, l, wait, mlir::ValueRange{g, from});
+      build<mlir::LLVM::BrOp>(b, l, mlir::ValueRange{}, cont);
+      b.setInsertionPointToEnd(before);
+      build<mlir::LLVM::CondBrOp>(b, l, isBlocked, slow, cont);
     }
     b.setInsertionPoint(c);
     auto addr = build<mlir::LLVM::AddressOfOp>(b, c.getLoc(), ptr, slot);
@@ -139,6 +222,11 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
                                           c.getCalleeFunctionType(), operands);
     c.replaceAllUsesWith(call.getResults());
     c.erase();
+    if (gated) {
+      b.setInsertionPointAfter(call);
+      build<mlir::LLVM::AtomicRMWOp>(b, l, mlir::LLVM::AtomicBinOp::sub, g, one,
+                                     mlir::LLVM::AtomicOrdering::seq_cst);
+    }
   }
   for (const std::string &def : defs)
     if (auto f = m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(kInternalPrefix + def)) {
@@ -164,6 +252,16 @@ unsigned countLines(std::string_view s) {
   unsigned n = 0;
   for (char c : s) n += c == '\n';
   return n;
+}
+
+// "'a'", "'a' and 'b'", "'a', 'b' and 'c'".
+std::string joinNames(const std::vector<std::string> &names, const char *last) {
+  std::string out;
+  for (size_t i = 0; i < names.size(); ++i) {
+    if (i) out += i + 1 == names.size() ? std::string(" ") + last + " " : ", ";
+    out += "'" + names[i] + "'";
+  }
+  return out;
 }
 
 std::string plural(size_t n, const char *word) {
@@ -227,12 +325,13 @@ std::string functionType(mlir::func::FuncOp fn) {
 }
 
 // A function's type without its parameter names, for comparing two
-// versions of a definition.
+// versions of a definition. Types are written in full, so a record whose
+// fields changed gives a different shape.
 std::string functionShape(mlir::func::FuncOp fn) {
-  mlir::FunctionType t = fn.getFunctionType();
   std::string out;
-  for (mlir::Type in : t.getInputs()) out += sema::typeName(in) + " -> ";
-  return out + (t.getNumResults() ? sema::typeName(t.getResult(0)) : "unit");
+  llvm::raw_string_ostream os(out);
+  fn.getFunctionType().print(os);
+  return os.str();
 }
 
 // The C layout of a record result: each field at its natural offset.
@@ -348,8 +447,9 @@ const char *helpText =
     "  :help             this list\n"
     "  :quit             leave\n"
     "A definition joins the environment only if everything still verifies.\n"
-    "While a task runs, a definition it can reach can be replaced only by one\n"
-    "proved against the old contract, and the swap reaches the task live.\n";
+    "While a task runs, a definition it can reach is swapped into it live: at\n"
+    "once if the new body is proved against the old contract, or else together\n"
+    "with its callers, at a moment when no task is running any of them.\n";
 
 }  // namespace
 
@@ -369,6 +469,7 @@ struct Session::Impl {
   // points at its newest code. Engines stay alive while a task runs code in
   // them.
   std::map<std::string, std::unique_ptr<std::atomic<void *>>> slots;
+  std::map<std::string, std::unique_ptr<Gate>> gates;
   std::vector<std::shared_ptr<mlir::ExecutionEngine>> engines;
   struct Task;
   std::vector<std::unique_ptr<Task>> tasks;
@@ -709,14 +810,21 @@ struct Session::Impl {
         r.ok = false;
       }
     if (!r.ok) return r;
-    std::map<std::string, std::string> refinesWhy;  // name -> why not
+    // Why a definition a task can reach does not refine its old version.
+    // Each such change is swapped together with its callers, at a moment
+    // when no task is running any of them.
+    std::map<std::string, std::string> refinesWhy;
     for (const std::string &n : mustRefine) {
       auto o = oldItems.find(n);
       auto nw = newItems.find(n);
       if (o == oldItems.end() || nw == newItems.end() ||
           sema::isTypeItem(*o->second) || sema::isTypeItem(*nw->second)) {
-        refinesWhy[n] = "a type or a generated definition cannot change "
-                        "while running code uses it";
+        error(r.events,
+              "'" + n + "' is in use by a running task (" + users[n] +
+                  "), and a generated definition cannot change while running "
+                  "code uses it; wait for the task with :wait",
+              Where{cellNo, 0, 0});
+        r.ok = false;
         continue;
       }
       if (!sameParams(*o->second, *nw->second)) {
@@ -728,6 +836,7 @@ struct Session::Impl {
       check->kids[2] = contractFor(*o->second, *nw->second);
       a.tree->add(std::move(check));
     }
+    if (!r.ok) return r;
 
     // Lower the whole environment and the cell, capturing MLIR's own
     // diagnostics too.
@@ -761,15 +870,20 @@ struct Session::Impl {
     std::map<std::string, std::string> newTypes;
     std::map<std::string, mlir::Type> results;
     std::map<std::string, std::string> newShapes;
+    std::set<std::string> nullary;  // compiling replaces the func ops
     for (auto &[name, f] : fns) {
+      if (f.getNumArguments() == 0) nullary.insert(name);
       newTypes[name] = functionType(f);
       newShapes[name] = functionShape(f);
       mlir::FunctionType t = f.getFunctionType();
       results[name] = t.getNumResults() ? t.getResult(0) : mlir::Type();
     }
     for (auto &[name, t] : evals) t = results[name];
-    for (const std::string &n : mustRefine)
-      if (!refinesWhy.count(n) && shapes.count(n) && newShapes[n] != shapes[n])
+    // A type that changed changes the shapes of the functions that use it,
+    // whether or not they were redefined.
+    for (const std::string &n : live)
+      if (!refinesWhy.count(n) && shapes.count(n) && newShapes.count(n) &&
+          newShapes[n] != shapes[n])
         refinesWhy[n] = "its type changed from " + types[n] + " to " + newTypes[n];
 
     if (mode == Mode::Type) {
@@ -847,16 +961,66 @@ struct Session::Impl {
       error(r.events, msg, Where{cellNo, 0, 0});
       return r;
     }
-    for (const auto &[n, why] : refinesWhy) {
-      error(r.events,
-            "'" + n + "' is in use by a running task (" + users[n] +
-                "), so its new definition must refine the old one, but " + why +
-                "; nothing was committed (wait for the task with :wait, or "
-                "keep the contract)",
-            Where{cellNo, 0, 0});
-      r.ok = false;
+    // The definitions to swap together: those that do not refine their old
+    // versions, and every definition that calls one of them, in its old
+    // version or its new one. Their callers outside the set rely only on
+    // contracts that did not change.
+    std::map<std::string, std::set<std::string>> newRefs;
+    for (const NodePtr &k : a.tree->kids)
+      if (k->kind == NodeKind::LetItem && !internalName(k->text))
+        collectRefs(*k, newRefs[k->text]);
+    std::set<std::string> quiet;
+    for (const auto &[n, why] : refinesWhy) quiet.insert(n);
+    for (const std::string &m : live)
+      for (const auto &[n, why] : refinesWhy) {
+        if (m == n) continue;
+        auto calls = [&](const std::map<std::string, std::set<std::string>> &rs) {
+          auto it = rs.find(m);
+          return it != rs.end() && it->second.count(n);
+        };
+        if (calls(refs) || calls(newRefs)) quiet.insert(m);
+      }
+
+    std::set<std::string> defs;
+    for (const auto &[name, t] : newTypes)
+      if (!internalName(name)) defs.insert(name);
+    std::shared_ptr<mlir::ExecutionEngine> engine;
+    if (!quiet.empty()) {
+      engine = options.run ? compile(*module, defs, r, mlirErrors, true) : nullptr;
+      std::vector<std::string> busy;
+      if (!engine || !install(engine, defs, quiet, busy)) {
+        std::vector<std::string> changed, callers;
+        std::string why;
+        for (const auto &[n, w] : refinesWhy) {
+          changed.push_back(n);
+          why += (why.empty() ? "" : "; ") +
+                 (refinesWhy.size() > 1 ? n + ": " : std::string()) + w;
+        }
+        for (const std::string &q : quiet)
+          if (!refinesWhy.count(q)) callers.push_back(q);
+        std::set<std::string> ts;
+        for (const std::string &q : quiet) ts.insert(users[q]);
+        std::string tasksList;
+        for (const std::string &t : ts) tasksList += (tasksList.empty() ? "" : ", ") + t;
+        std::string msg = joinNames(changed, "and") +
+                          " no longer refines what running code was proved "
+                          "against (" + why + "), so it can only be swapped";
+        if (!callers.empty())
+          msg += " together with " + joinNames(callers, "and") + ", which " +
+                 (callers.size() > 1 ? "call" : "calls") + " it,";
+        msg += " at a moment when no task is running any of them";
+        if (!engine)
+          msg += ", and the new code cannot be compiled";
+        else
+          msg += ", but " + tasksList + " stayed inside " +
+                 (busy.empty() ? std::string("them") : joinNames(busy, "and")) +
+                 " for " + std::to_string(options.quiesceMs) + " ms";
+        msg += "; nothing was committed (wait for the task with :wait)";
+        error(r.events, msg, Where{cellNo, 0, 0});
+        r.ok = false;
+        return r;
+      }
     }
-    if (!r.ok) return r;
 
     // Commit the definitions; the expressions are not kept.
     std::vector<Entry> kept;
@@ -866,9 +1030,29 @@ struct Session::Impl {
     shapes.clear();
     for (auto &[name, sh] : newShapes)
       if (!internalName(name)) shapes[name] = sh;
+
+    std::string quietList =
+        joinNames(std::vector<std::string>(quiet.begin(), quiet.end()), "or");
+    auto swapText = [&](const std::string &n) {
+      std::string t = "swapped into running " + users[n];
+      if (quiet.count(n)) t += " at a moment when no task was running " + quietList;
+      return t;
+    };
+    auto finish = [&](const std::vector<std::pair<std::string, mlir::Type>> &toRun,
+                      bool spawn) {
+      if (!engine) {
+        // Code a task may run counts its calls, so a later swap can wait
+        // for the task to leave what it changes.
+        engine = compile(*module, defs, r, mlirErrors, spawn || anyTaskRunning());
+        std::vector<std::string> busy;
+        if (!engine) return;
+        install(engine, defs, {}, busy);
+      }
+      execute(engine, toRun, r, spawn);
+    };
     if (mode == Mode::Check) {
-      if (options.run && anyTaskRunning() && !forgotten.empty())
-        run(*module, {}, r, mlirErrors, false);
+      if (options.run && anyTaskRunning() && (!forgotten.empty() || engine))
+        finish({}, false);
       return r;
     }
     std::vector<std::pair<std::string, mlir::Type>> toRun;
@@ -882,12 +1066,9 @@ struct Session::Impl {
         e.kind = redefined ? Event::Kind::Redefined : Event::Kind::Defined;
         e.name = n;
         e.type = types[n];
-        if (redefined && live.count(n))
-          e.text = "swapped into running " + users[n];
+        if (redefined && live.count(n)) e.text = swapText(n);
         r.events.push_back(std::move(e));
-        auto f = fns.find(n);
-        if (f != fns.end() && f->second.getNumArguments() == 0 &&
-            results[n] && showable(results[n]))
+        if (nullary.count(n) && results[n] && showable(results[n]))
           toRun.emplace_back(n, results[n]);
       }
       if (it.entry.kind == "type" || it.entry.kind == "meta" ||
@@ -899,6 +1080,9 @@ struct Session::Impl {
                      : Event::Kind::Defined;
         e.name = it.entry.head;
         e.type = it.entry.kind;
+        if (e.kind == Event::Kind::Redefined && !quiet.empty())
+          e.text = "swapped into running " + users[*quiet.begin()] +
+                   " at a moment when no task was running " + quietList;
         r.events.push_back(std::move(e));
       }
     }
@@ -912,7 +1096,7 @@ struct Session::Impl {
       e.kind = Event::Kind::Redefined;
       e.name = n;
       e.type = types[n];
-      if (live.count(n)) e.text = "swapped into running " + users[n];
+      if (live.count(n)) e.text = swapText(n);
       r.events.push_back(std::move(e));
     }
     for (auto &[name, t] : evals) {
@@ -925,29 +1109,26 @@ struct Session::Impl {
       toRun.emplace_back(name, t);
     }
     bool swap = !replaced.empty() && !live.empty();
-    if (!options.run || (toRun.empty() && !swap)) return r;
-    run(*module, toRun, r, mlirErrors, mode == Mode::Spawn);
+    if (!options.run || (toRun.empty() && !swap && !engine)) return r;
+    finish(toRun, mode == Mode::Spawn);
     return r;
   }
 
   // ---- compiling and running ---------------------------------------------
 
-  // Compiles the verified module into a new JIT engine, points every
-  // definition's slot at its new code, and runs each `(name, type)`, or
-  // starts it as a task.
-  void run(mlir::ModuleOp module,
-           const std::vector<std::pair<std::string, mlir::Type>> &toRun,
-           CellResult &r, std::vector<Event> &mlirErrors, bool spawn) {
-    std::set<std::string> defs;
-    for (const auto &[name, t] : types) defs.insert(name);
+  // Compiles the verified module into a new JIT engine whose calls between
+  // `defs` go through their slots and gates. Null if it cannot be compiled.
+  std::shared_ptr<mlir::ExecutionEngine> compile(
+      mlir::ModuleOp module, const std::set<std::string> &defs, CellResult &r,
+      std::vector<Event> &mlirErrors, bool gated) {
     codegen::eraseContracts(module);
     if (mlir::failed(codegen::lowerToCore(module)) ||
         mlir::failed(codegen::lowerToLLVM(module)) ||
-        mlir::failed(callThroughSlots(module, defs))) {
+        mlir::failed(callThroughSlots(module, defs, gated))) {
       for (Event &e : mlirErrors) r.events.push_back(std::move(e));
       error(r.events, "this cannot be compiled yet, so it was not run");
       r.ok = false;
-      return;
+      return nullptr;
     }
     codegen::Options cg;
     cg.triple = llvm::sys::getProcessTriple();
@@ -972,32 +1153,84 @@ struct Session::Impl {
                                      : (llvm::consumeError(created.takeError()),
                                         jitError)));
       r.ok = false;
-      return;
+      return nullptr;
     }
     std::shared_ptr<mlir::ExecutionEngine> engine = std::move(*created);
-    for (const std::string &n : defs)
+    for (const std::string &n : defs) {
       if (!slots.count(n)) slots[n] = std::make_unique<std::atomic<void *>>(nullptr);
+      if (!gates.count(n)) gates[n] = std::make_unique<Gate>();
+    }
     engine->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
       llvm::orc::SymbolMap map;
-      for (const auto &[n, slot] : slots)
-        map[interner(kSlotPrefix + n)] = {
-            llvm::orc::ExecutorAddr::fromPtr(slot.get()),
-            llvm::JITSymbolFlags::Exported};
+      auto add = [&](const std::string &name, void *p) {
+        map[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(p),
+                               llvm::JITSymbolFlags::Exported};
+      };
+      for (const auto &[n, slot] : slots) add(kSlotPrefix + n, slot.get());
+      for (const auto &[n, gate] : gates) add(kGatePrefix + n, gate.get());
+      add(kWait, reinterpret_cast<void *>(&piaReplWait));
       return map;
     });
     engine->initialize();
-    // Install the new code. Calls that start from now on run it; frames
-    // already running finish on the code they started in.
+    return engine;
+  }
+
+  // Points every definition's slot at the engine's code. Calls that start
+  // from now on run it; calls already running finish on the code they
+  // started in. With a `quiet` set, the slots change only at a moment when
+  // no call of any of them is in progress: calls into the set from outside
+  // it wait while it drains, for at most `quiesceMs`. On a timeout nothing
+  // changes, and `busy` names the definitions that were still running.
+  bool install(const std::shared_ptr<mlir::ExecutionEngine> &engine,
+               const std::set<std::string> &defs,
+               const std::set<std::string> &quiet,
+               std::vector<std::string> &busy) {
+    std::map<std::string, void *> code;
     for (const std::string &n : defs) {
       llvm::Expected<void *> fp = engine->lookup(kInternalPrefix + n);
       if (!fp) {
         llvm::consumeError(fp.takeError());
         continue;  // folded away, or not a function
       }
-      slots[n]->store(*fp, std::memory_order_release);
+      code[n] = *fp;
     }
+    std::vector<Gate *> held;
+    for (const std::string &n : quiet)
+      if (gates.count(n)) held.push_back(gates[n].get());
+    for (Gate *g : held) g->blocked.store(1, std::memory_order_seq_cst);
+    auto deadline = std::chrono::steady_clock::now() +
+                    std::chrono::milliseconds(options.quiesceMs);
+    std::set<std::string> neverIdle(quiet.begin(), quiet.end());
+    for (;;) {
+      bool idle = true;
+      for (const std::string &n : quiet) {
+        auto g = gates.find(n);
+        if (g == gates.end()) continue;
+        if (g->second->active.load(std::memory_order_seq_cst) != 0)
+          idle = false;
+        else
+          neverIdle.erase(n);
+      }
+      if (idle) break;
+      if (std::chrono::steady_clock::now() >= deadline) {
+        // The definitions a task never left: the ones keeping the set busy.
+        busy.assign(neverIdle.begin(), neverIdle.end());
+        for (Gate *g : held) g->blocked.store(0, std::memory_order_seq_cst);
+        return false;
+      }
+      std::this_thread::yield();
+    }
+    for (const auto &[n, fp] : code) slots[n]->store(fp, std::memory_order_release);
+    for (Gate *g : held) g->blocked.store(0, std::memory_order_seq_cst);
     reapEngines();
     engines.push_back(engine);
+    return true;
+  }
+
+  // Runs each `(name, type)` in the engine, or starts it as a task.
+  void execute(const std::shared_ptr<mlir::ExecutionEngine> &engine,
+               const std::vector<std::pair<std::string, mlir::Type>> &toRun,
+               CellResult &r, bool spawn) {
     for (const auto &[name, t] : toRun) {
       llvm::Expected<void *> fp = engine->lookup(cName(name));
       if (!fp) {
