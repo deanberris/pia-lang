@@ -1,10 +1,11 @@
 # The documentation site, published to GitHub Pages by
-# .github/workflows/docs.yml. Build it locally with:
+# .github/workflows/docs.yml at https://pia-lang.dev/ (the custom domain is
+# set in the repository's Settings > Pages). Build it locally with:
 #   pip install -r tools/docs/requirements.txt
 #   mkdocs serve
 site_name: Pia
 site_description: A programming language whose compiler proves your code correct before it runs.
-site_url: https://deanberris.github.io/pia-lang/
+site_url: https://pia-lang.dev/
 repo_url: https://github.com/deanberris/pia-lang
 repo_name: deanberris/pia-lang
 edit_uri: edit/main/docs/
@@ -107,5 +108,9 @@ nav:
       - adr/0022-metaprogram-hygiene.md
       - adr/0023-minimal-core-self-hosted-stdlib.md
       - adr/0024-published-proof-certificates.md
+      - adr/0025-sanitizers.md
+      - adr/0026-memory-manager.md
       - adr/0027-coroutines-and-race-freedom.md
+      - adr/0028-error-propagation-and-cleanup.md
       - adr/0029-comments-as-syntax-and-literate-pia.md
+      - adr/0030-published-object-layouts.md

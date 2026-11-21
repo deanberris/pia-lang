@@ -91,6 +91,40 @@ Everything else about integers is library code: `min`, `max`, `clamp`, `abs`, `g
 
 These are already designed (`let shape = type | Circle of f32 | ...`). Implementing variants and an exhaustive `match`, encoded as Z3 datatypes as [design.md](design.md#type-system) describes, unlocks `option`, `result`, `ordering`, and every API that can fail. Without them, the library can only report errors through out-parameters and flags.
 
+### Errors and scope cleanup ★
+
+Every API that can fail returns a `result`, so the library needs a way to pass errors on without writing a `match` at every call, and a way to clean up on every exit from a scope ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)).
+
+**Error sets.** `result t e` holds `Ok` of a `t`, or `Err` of an `e`, where `e` is a closed variant type or a union of them: `result [u8] (OutOfMemory | IoError)`. Error sets are part of a function's interface, as in Zig and Swift's typed throws, so a caller always knows the complete list. A `result` must be used: dropping one unexamined is a type error.
+
+**`?` passes an error to the scope's handler.** `e?` is the `Ok` payload of `e`, or, for `Err x`, a jump to the nearest enclosing handler with `x`. A scope declares its handler with `handle`:
+
+```ocaml
+let load (m : borrowed general) (path : str) : result image LoadError =
+  let f = open_read path? in            (* NoEntry | Denied | ... *)
+  defer close f;
+  let bytes = read_all m f? in          (* OutOfMemory | IoError *)
+  decode_png m bytes?                   (* PngError *)
+handle
+| NoEntry | Denied -> Err (Missing path)
+| OutOfMemory -> Err TooBig
+| IoError -> Err Unreadable
+| PngError p -> Err (BadImage p)
+```
+
+- **The handler covers a closed set.** The compiler computes the set of every error a `?` in the scope can produce, and the handler's arms must cover exactly that set: a missing case is an error, and so is a case that cannot happen. The verifier knows the `Ok` payload on the normal path and the `Err` value in the handler.
+- **Without a handler, `?` returns the error** from the function, and the function's declared error set must include it. Calling a function adds its error set to the scope's, and nothing is inferred across an interface.
+- `handle` attaches to a function body, a `let ... in` scope, or a loop body. It is one keyword, in Dean's style.
+
+**Cleanup at scope end.** Two forms, both run in reverse order of registration on every exit from the scope: falling off the end, `?`, a handler's result, and a loop's next iteration.
+
+- **`defer e`** registers `e` to run at scope end, as in Zig, Go and Swift. It is for one-off cleanup, such as `defer close f` above.
+- **RAII through `Drop`.** A type with a `Drop` instance (a concept, ADR 0009) is dropped at the end of the scope that owns it, unless it was moved or freed first. Buffers, arenas, read-only file descriptors and mappings have one, so anything not freed explicitly is freed by its scope. `@derive(drop)` drops each field.
+- **Cleanup cannot fail, suspend or lock.** `defer` bodies and `drop` have no error set, may not await, and may take no lock other than a top-level leaf lock, since cleanup also runs on exits from `lock` bodies ([ADR 0027](adr/0027-coroutines-and-race-freedom.md)). Freeing into `general` qualifies: its central lists are behind exactly such a lock. A resource whose cleanup can fail is `@linear` instead and must be consumed explicitly, so its error goes through `?` like any other.
+- **Cleanup is proved.** Each exit's cleanup is walked by the verifier like ordinary code at that exit, so a `drop`'s preconditions are goals there.
+- A trap does not run cleanup. It goes to `Pia.Rt`, which stops the process.
+- **With concurrency** (ADR 0027): `?` never crosses a task or a `lock` closure. In a spawned task it ends the task, and the error comes back from `join`. In a `lock` body it leaves the body, releases the lock, and becomes the body's result. A structured `scope` that exits early first joins, or cancels and then joins, every child still running, and only then runs its own cleanup, because children may borrow from it. Cancellation is an explicit token: operations that take it return `Err Cancelled`, so a cancelled task leaves through `?` and its cleanup runs in its own frame.
+
 ### 4. Generics and concepts ★
 
 M9 as designed: type parameters, concepts with laws, monomorphisation before verification. `Eq`, `Ord`, `Hash` and `Numeric` are then library code, and so are `@derive(ord, hash)`, written as metaprograms next to `derive_eq`.
@@ -116,23 +150,198 @@ This group has no counterpart in an unverified language's core. Without it, the 
 
 Pia does not allocate. Two things fix that: one type rule, and allocation written in Pia over `mmap`.
 
-**`@linear` types.** Pia already has `moved` parameters, which make a value dead in the caller after the call. A type marked `@linear` adds one rule to the type checker: a value of it must be consumed, by being passed as `moved` or returned, on every path out of its scope. File descriptors, mappings and arenas are linear, so leaking one is a type error and using one after it is closed is the existing `moved` rule. This is the idea behind ATS's and Austral's resource types, kept to one attribute and no typestate ([ADR 0006](adr/0006-contracts-and-module-state.md)).
+**`@linear` types.** Pia already has `moved` parameters, which make a value dead in the caller after the call. A type marked `@linear` adds one rule to the type checker: a value of it must be consumed, by being passed as `moved` or returned, on every path out of its scope. A `@linear` type is for a resource whose cleanup can fail, such as a file opened for writing, whose `close` can report a lost write: it must be consumed explicitly, so the error is handled. A resource whose cleanup cannot fail, such as a read-only `fd`, a mapping or an arena, has a `Drop` instance instead, and is cleaned up at scope end if it is not freed first ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)). Either way, using a value after it is closed is the existing `moved` rule. This is the idea behind ATS's and Austral's resource types, kept to one attribute and no typestate ([ADR 0006](adr/0006-contracts-and-module-state.md)).
 
-**Allocation.** `Pia.Mem` gives the allocation interface, with the ownership modifiers that already exist as its contract:
+**The memory manager.** `Pia.Mem` is a memory manager written in Pia over `mmap`, with no garbage collector, now or later ([ADR 0026](adr/0026-memory-manager.md)). There is no `new` keyword: allocation is a call of a function in `Pia.Mem`, and every allocation can fail and must be handled where it is called. Every free is explicit, or happens at scope end through a cleanup handler ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)), or comes from freeing the arena the memory lives in. A single global `malloc`/`free` is not enough. Different lifetimes want different allocators, and the verifier can prove more about a specialised allocator than about a general heap.
+
+*Allocators are explicit values.* Library code never allocates from a hidden global. A function that allocates takes an allocator parameter, as in Zig:
 
 ```ocaml
-(* Pia.Mem *)
-let alloc (t : type) (n : usize) : result (moved out mutable [t])   (* Ok: len = n, every element unwritten *)
-let free  (buf : moved inout [t]) : unit                            (* buf is dead after the call *)
+let Allocator (a : type) : concept = sig
+  let alloc  : (m : borrowed a) -> (t : type) -> (n : usize) -> result (borrowed(m) out mutable [t]) OutOfMemory
+    ensures match result with
+            | Ok buf -> len buf = n && fresh m buf          (* enough memory, disjoint from every live block *)
+                        && aligned buf (max 16 (align_of t))  (* low 4 bits of every block address are free *)
+            | Err OutOfMemory -> unchanged m               (* or a clean failure *)
+  let free   : (m : borrowed a) -> (buf : moved [t]) -> unit
+    requires owns m buf
+end
+
+let read_all (m : borrowed a) (f : fd) : result [u8] (OutOfMemory | IoError) where Allocator a =
+  let buf = m.alloc u8 (size f)? in      (* `?` hands OutOfMemory to the caller *)
+  ...
 ```
 
-- `moved` already means that the caller cannot use the buffer after the call, so use after free and double free are type errors, not proof goals.
-- `out` already means "written before it is read", so reading uninitialised memory is a proof goal.
-- Running out of memory is a `result` by default, the strongest guarantee. `alloc_or_trap` is the clearly named trapping variant, and its trap is visible in its contract.
+- An allocator is reached through a plain `borrowed` handle, so many containers can share one. Its state is module state that only `Pia.Mem` changes, and since an allocator that is not `shareable` stays in one task, sharing the handle is race-free.
+- The result is `out`, so reading memory before writing it is a proof goal.
+- **Every allocation can fail, and the failure must be handled at the call site.** `alloc` returns a `result`, a `result` cannot be ignored, and the caller either matches on it or passes the error on with `?` to the scope's handler ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)). There is no trapping variant. A program that wants to stop on out of memory says so in its handler.
+- **Enough memory, or fail.** The postcondition above is proved for every allocator: `Ok` means `n` elements, disjoint from every live block, and `Err OutOfMemory` means the allocator's state is unchanged. `fresh` and `unchanged` are spec functions over the allocator's ghost model of its live blocks.
+- `free` takes the buffer `moved`, so use after free and double free are type errors, not proof goals. `owns m buf` is a ghost fact recorded when `m` handed out `buf`, so freeing into the wrong allocator is a proof goal.
+- `main` gets the program's root allocator as an argument. Nothing else is global.
 
-`alloc` and `free` are Pia, not a runtime written in C. Their memory comes from `mmap` through [group 8](#8-posix-trusted-declarations-and-typed-wrappers). The first allocator is an **arena**: a `@linear` region from which slices are handed out, all freed together when the arena is consumed. That fits pipelines like the demos, which allocate a few large buffers up front. Its invariant (the bump pointer stays inside the region, handed-out slices are disjoint) is module state, proved once in `Pia.Mem`. A size-class allocator behind `alloc`/`free` follows. Zig's explicit allocators and F*'s Low* regions are the prior art.
+*The allocators.* Each is a `@linear` value built on a page source, and each states its invariants as module state, proved once in `Pia.Mem`:
 
-On top of these, `vec`, `string`, `hash_map`, a binary heap (priority-flood in the flagship demo needs one) are library code. They are the first place where specification functions and ghost models (group 5) pay off: `push` ensures `model result = append (model old) x`.
+| Allocator | Frees | Fits | Invariant proved |
+| --- | --- | --- | --- |
+| `pages` | `munmap` of whole mappings | the source for every other allocator; guard pages and huge-page hints | mappings are disjoint and page aligned |
+| `fixed_buffer` | all at once | allocation over a caller's buffer, with no OS at all; usable from `Pia.Core` | the bump pointer stays inside the buffer |
+| `arena` | all at once (`reset`, or consuming the arena) | pipelines and per-request or per-frame work, like the demos | handed-out slices are disjoint and inside the arena's chunks |
+| `scratch` | last in, first out, back to a `mark` | temporaries inside a function or a loop iteration | frees happen in reverse order of allocation |
+| `pool<T>` | one object at a time, O(1) | many objects of one type: graph nodes, tasks, coroutine frames | the free list and the live set partition the slab |
+| `general` | one buffer at a time | lifetimes that don't nest: TCMalloc-style size classes (below) | every block is in exactly one size class, and free or live |
+
+*The general allocator is TCMalloc-style.* Requests are rounded up to one of a fixed table of size classes (about 8 bytes to 256 KiB, spaced so the rounding waste stays under 12.5%), and larger ones go straight to the page heap. Three tiers keep the common path short:
+
+1. **A per-task cache** of free lists, one list per size class. It is a `@linear` handle moved into a task, worker or coroutine scope, so the fast path takes no lock and no atomic.
+2. **Central free lists**, one per size class, which refill and drain the caches in batches. They are behind the allocator's one lock, a top-level leaf lock that never suspends.
+3. **A page heap** of spans (runs of pages from `pages`), each span carved into blocks of one size class.
+
+All free lists live inside `Pia.Mem`, and the proof covers them. Every block on a free list is free, lies inside a span of its class, and overlaps no live block. A cache, central list and page heap together hold each block exactly once. And `alloc` is total: it returns a block of the right class from the cache, or refills from the central list, or carves a span from the page heap, or returns `Err OutOfMemory` when `mmap` fails, and in that last case nothing has changed.
+
+*Arenas for tasks, fibers and coroutines.* Every task, `spread` worker and coroutine scope gets an arena of its own by default, alongside its `general` cache. Its frame data and temporaries come from it, and the arena is freed when the task ends. A task that needs memory to outlive it allocates from an allocator its caller passed in.
+
+Containers (`vec`, `string`, `hash_map`, the binary heap that priority-flood needs) take an allocator as a parameter, as C++'s `pmr` containers do, so the same `vec` can live in an arena or in a pool. They are the first place where specification functions and ghost models (group 5) pay off: `push` ensures `model result = append (model old) x`.
+
+*Lifetimes are proved, not collected.* Two rules in Sema, with no lifetime syntax in ordinary code:
+
+1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them.
+2. **Regions can be scoped.** `with_arena n (let (a) => body)` makes an arena, runs `body`, and frees the arena. The arena's type is fresh to `body`, and `body`'s result type cannot mention it, so nothing allocated in the arena can escape. This is Haskell's `runST` trick, and the region idea from Cyclone and the ML Kit, without region inference.
+
+Leaks are ruled out by cleanup at scope end. Allocators and the buffers they hand out have a `Drop` instance ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): a buffer from `general` or a `pool` that is not freed explicitly is freed when its scope ends, on every exit including `?`, and so is an arena. A buffer from an arena needs nothing, because freeing the arena frees it. So proved code cannot leak, double free, or use after free, and none of that costs anything at run time beyond the frees themselves.
+
+*Threads and coroutines.* An allocator is a value, not a global, so concurrency needs no allocator locks by default. This follows the coroutine design in [ADR 0027](adr/0027-coroutines-and-race-freedom.md), which makes coroutines stackless:
+
+- A task, worker or coroutine scope gets its own allocator, `moved` to it. `spread` gives each tile's worker its own arena by default, and frees it when the worker joins. A `@linear` allocator is `sendable` (it can move to another thread) but not `shareable`.
+- Coroutine frames have a size known at compile time, and come from the allocator that the enclosing task scope was given, usually a `pool` of frames. Stackless coroutines need no green-thread stacks. The `pool` of fixed-size, guard-paged stacks is only for OS worker threads, so that a stack overflow faults into `Pia.Rt` instead of corrupting memory.
+- A coroutine may hold borrows from an arena across a suspension point, as long as the arena's region encloses the coroutine. Rule 1 enforces that the arena outlives every suspended borrow.
+- `general` is shareable by construction: its per-task caches are moved, and only its central lists are shared. `shared<a>` wraps any other allocator for use from several threads, in the same way. Both are `shareable`, it is the only allocator with synchronisation, and choosing it is explicit. The lock that refills its caches is a leaf lock at the top lock level, since it can be taken while user locks are held, and it never suspends. So allocating inside a `lock` body is allowed.
+
+*With sanitizers*, every allocator poisons the memory it hasn't handed out and the blocks it has freed, so foreign code that strays into them is reported ([sanitizers](#sanitizers-compiler-rt)).
+
+Prior art: Zig's explicit allocators, Odin's and Jai's allocator contexts, C++'s `std::pmr`, Rust's `bumpalo` and allocator API, mimalloc's sharded free lists, the Linux slab allocator, and Cyclone and the ML Kit for regions.
+
+#### The litmus test: a proved growable array
+
+The memory design is accepted when this works end to end: a dynamically growing array over explicit heap allocation, with its bounds, capacity, initialisation and freedom from leaks all proved. It is a sketch in designed syntax. `Pia.Mem.Vec` is the first target of the implementation.
+
+```ocaml
+(* Pia.Mem.Vec *)
+let vec = let (t : type) (a : type) => type {
+  heap : borrowed a;            (* where buf came from: the vec cannot outlive its allocator *)
+  buf  : moved mutable [t];     (* owned; len buf is the capacity *)
+  len  : usize;
+} where Allocator a
+    && len <= len buf
+    && owns heap buf            (* buf was handed out by heap, and not freed *)
+    && written buf 0 len        (* the first len elements are initialised *)
+
+(* What the vec means: its elements, as a sequence. *)
+let spec model (v : vec t a) : seq t = take v.len v.buf
+
+let empty (heap : borrowed a) : vec t a
+  ensures model result = []
+= { heap = heap; buf = Pia.Mem.empty_slice t; len = 0 }
+
+let get (v : vec t a) (i : usize) : t
+  requires i < v.len
+  ensures result = nth (model v) i
+= v.buf.[i]                                    (* in bounds: i < len <= len buf *)
+
+(* Doubles the capacity, or fails and leaves the vec exactly as it was. *)
+let grow (v : inout mutable vec t a) : result unit OutOfMemory
+  ensures match result with
+          | Ok () -> len v.buf > v.len && model v = old (model v)
+          | Err OutOfMemory -> v = old v
+=
+  let cap = len v.buf in
+  if cap >= max_elems t then Err OutOfMemory   (* doubling would overflow the address space *)
+  else
+    let cap' = if cap = 0 then 4 else min (cap + cap) (max_elems t) in
+    let buf' = Pia.Mem.alloc v.heap t cap'? in  (* on failure, nothing has changed yet *)
+    copy v.buf.[0 .. v.len] buf'.[0 .. v.len];
+    let old_buf = replace v.buf buf' in
+    Pia.Mem.free v.heap old_buf;               (* explicit free of the old buffer *)
+    Ok ()
+
+let push (v : inout mutable vec t a) (x : moved t) : result unit OutOfMemory
+  ensures match result with
+          | Ok () -> model v = append (old (model v)) x
+          | Err OutOfMemory -> model v = old (model v)
+=
+  if v.len = len v.buf then grow v?;
+  v.buf.[v.len] <- x;                          (* in bounds: grow made room *)
+  v.len <- v.len + 1;
+  Ok ()
+
+let pop (v : inout mutable vec t a) : option t
+  ensures match result with
+          | Some x -> old (model v) = append (model v) x
+          | None -> old v.len = 0
+= ...
+
+(* RAII: a vec that is not freed explicitly is dropped at scope end. *)
+let drop (v : moved vec t a) : unit = drop_each v.buf.[0 .. v.len]; Pia.Mem.free v.heap v.buf
+let drop_vec : adapter Drop (vec t a) = { drop = drop }
+```
+
+And a caller, where every allocation is handled and nothing can leak:
+
+```ocaml
+let squares (heap : borrowed general) (n : u32) : result (vec u64 general) OutOfMemory
+  ensures match result with Ok v -> len (model v) = n | Err _ -> true
+=
+  let v = Vec.empty heap in
+  for i in 0..n invariant len (model v) = i do
+    Vec.push v (mul_wide i i)?                (* on failure: v is dropped, and the error returned *)
+  done;
+  Ok v                                         (* moved out, so not dropped here *)
+```
+
+What has to be proved, and which part of the design proves it:
+
+| Property | Proved by |
+| --- | --- |
+| Every index in bounds | the type's `where`: `len <= len buf`, and `grow`'s postcondition |
+| No read of uninitialised memory | `alloc`'s `out` result, and `written buf 0 len` in the invariant |
+| Capacity arithmetic cannot overflow | `max_elems t`, and the ladder for `cap + cap` ([multiplication](#multiplication-in-the-verifier)) |
+| Growth gives enough memory or fails cleanly | `alloc`'s postcondition, and `grow` touching nothing before its `?` |
+| Elements survive growth | `copy`'s postcondition, so `model v = old (model v)` |
+| No double free, no use after free | `free` and `replace` take `buf` `moved` |
+| No leak | `Drop` on `vec` at scope end, on every exit including `?` |
+| Freed into the right allocator | the ghost `owns heap buf` in the invariant |
+| The vec cannot outlive its allocator | `heap : borrowed a`, by the borrow rule |
+
+The sketch needs, from the core: generics, record invariants (`where` on a record type), spec functions with `seq`, slicing, `?`, `Drop`, `moved` fields with `replace`, and the `Pia.Mem` allocators. That makes it a good test of all of them together.
+
+#### The second test: free-list reuse
+
+A memory manager is only useful if freed memory comes back. So the second acceptance test is reuse: a block that was freed is handed out again, and the proof shows the new owner cannot alias any live object, cannot be reached through a stale reference, and cannot read the old owner's data.
+
+```ocaml
+let reuse (heap : borrowed general) : result unit OutOfMemory =
+  let nodes = Pool.create heap node 1024? in   (* a pool<node>, dropped at scope end *)
+  let a = Pool.take nodes? in                  (* a box<node>: one slot, owned *)
+  a.value <- 1;
+  let r = a.value in                           (* a copy, not a reference *)
+  Pool.give nodes a;                           (* a is moved: dead from here *)
+  let b = Pool.take nodes? in                  (* may be a's old slot *)
+  b.value <- 2;                                (* b is out: written before it is read *)
+  assert r = 1;                                (* the copy is unaffected *)
+  Pool.give nodes b;
+  Ok ()
+```
+
+| Property | Proved by |
+| --- | --- |
+| A reused block aliases no live object | the allocator's invariant that free and live blocks are disjoint: `give` moves the block from live to free, `take` moves it back, and `fresh` in `alloc`'s postcondition |
+| No stale owner | `give` and `free` take the block `moved`, so the old name is dead (`a` above is a type error after `give`) |
+| No stale borrow | the borrow rule: a block cannot be moved while something borrowed from it is live, so every borrow of `a` ends before `give` |
+| No stale raw address | `addr` exists only in `@trusted` modules. In foreign code, ASan's quarantine delays reuse so a dangling C pointer is reported ([sanitizers](#sanitizers-compiler-rt)) |
+| The new owner cannot read the old data | the reused block comes back `out`, so its contents are unknown to the verifier and must be written before they are read. `alloc_zeroed` is there for code that wants zeroes |
+| Each block is in exactly one place | the free list, the live set, a per-task cache and the central list partition every span, and each move between them keeps the partition |
+| Reuse cannot cross allocators | the ghost `owns` fact, so a block freed into one pool or size class is only handed out by it |
+
+*Free lists are side metadata, not pointers in freed blocks.* TCMalloc threads its free lists through the freed blocks themselves. Doing that in Pia would mean writing through `addr`, and `Pia.Mem` would become trusted. Instead, each span keeps its free list as a stack of slot indices (`[u16]`, two bytes per slot) beside the blocks. Pushing and popping it are ordinary bounds-checked array operations, so the reuse invariants above are proved, and `Pia.Mem` stays out of the trusted base. Moving batches between a per-task cache and the central list happens under the central lists' leaf lock, so there is no lock-free ABA problem to prove.
 
 ### 8. POSIX: trusted declarations and typed wrappers
 
@@ -203,7 +412,7 @@ The first set of declarations, enough for files, memory, time, threads and the d
 
 ### 9. Runtime errors
 
-Most failures are ruled out at compile time, but a few happen at run time by design: `@overflow(trap)`, `alloc_or_trap`, `abort` reached through `--allow-unproved`, and faults inside foreign code (`SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`). All of them go to one runtime error handler in `Pia.Rt`, written in Pia.
+Most failures are ruled out at compile time, but a few happen at run time by design: `@overflow(trap)`, `abort` reached through `--allow-unproved`, and faults inside foreign code (`SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGFPE`). All of them go to one runtime error handler in `Pia.Rt`, written in Pia.
 
 - **One entry point.** Codegen lowers every trap to a call of `pia_trap (kind, site)`, where `site` indexes a table of source locations the compiler emits into the binary. So a trap reports its Pia file, line and column, and what failed ("overflow in `a + b`, `@overflow(trap)`"), even in a binary without debug info.
 - **Signals.** At start-up, `Pia.Rt` installs handlers with `sigaction` on an alternate signal stack (`sigaltstack`), so a stack overflow or a fault in foreign code also reaches the handler.
@@ -213,6 +422,44 @@ Most failures are ruled out at compile time, but a few happen at run time by des
 - **Replaceable.** A program can install its own handler with `Pia.Rt.on_trap`, for example to flush a log first. The default stays the strong one: print everything, then stop.
 
 `Pia.Rt` is trusted, since it reads frames and signal contexts through `addr`, so its items appear in every program's trust report. The prior art is Rust's panic handler and `RUST_BACKTRACE`, and Go's runtime traceback on a fatal signal.
+
+#### Sanitizers (compiler-rt)
+
+Proved Pia code cannot overflow, index out of bounds, use freed memory or race, so sanitizers are not how Pia finds its own bugs. They earn their place at the edges of the proof, where the verifier takes something on trust ([ADR 0025](adr/0025-sanitizers.md)):
+
+- **Foreign code** behind `extern` and `unsafe`, which can corrupt Pia memory, free it, or race with Pia threads.
+- **Trusted contracts.** A wrong `extern` contract or `assume` makes a proof unsound without any failing goal. Run-time checks are the only way to catch it.
+- **The trusted Pia modules**, `Pia.Sys.Posix` and `Pia.Rt`, which use `addr`.
+- **The verifier itself.** A build that instruments everything and still finds nothing is evidence that the verifier, IRGen and codegen agree. A sanitizer report in proved code is a compiler bug.
+
+**What piac emits.** `piac --sanitize=<list>` adds instrumentation through LLVM's own passes, so Pia and C code in one binary share one sanitizer runtime and one report format:
+
+| Sanitizer | How piac emits it | Pia-specific part |
+| --- | --- | --- |
+| `address` (ASan) | `sanitize_address` on functions, then LLVM's `AddressSanitizerPass` | `Pia.Mem` poisons arena memory that has not been handed out, and freed buffers, with `__asan_poison_memory_region`, since ASan does not know about memory from `mmap` |
+| `thread` (TSan) | `sanitize_thread`, then `ThreadSanitizerPass`; atomics are instrumented by the pass | the worker pool behind `spread` uses libSystem pthreads, which TSan intercepts, so it needs no annotations |
+| `undefined` (UBSan) | LLVM has no UBSan pass; in clang it is front-end checks. Pia's equivalent is its goals | every goal that is not proved (skipped, or accepted with `--allow-unproved`) becomes a run-time check |
+| `contracts` (Pia only) | checks after each call | the `ensures` of every foreign function and every `assume` is checked at run time, so a wrong trust fails loudly |
+
+Other sanitizers wait for a need: MemorySanitizer and HWASan do not support macOS on arm64, LeakSanitizer comes with ASan where the platform supports it, and libFuzzer (`--sanitize=fuzzer`) is the natural next step for fuzzing the trusted boundary and the image decoders. ASan and TSan cannot be combined, and piac says so.
+
+**Proved accesses are not instrumented by default.** A load whose bounds goal was proved gets LLVM's `nosanitize` metadata, so ASan's cost falls on the trust boundary: buffers passed to foreign functions, slices made by `view`, and arena bookkeeping. `--sanitize-proved` instruments every access too, which is the build that checks the verifier. TSan always instruments everything, because a race needs both sides instrumented and the other side may be C.
+
+**With `Pia.Rt`.** A sanitizer runtime installs its own fatal-signal handlers and prints its own report. In a sanitized build, `Pia.Rt` does not install signal handlers, and so does not fight the runtime for `SIGSEGV`. It registers `__sanitizer_set_death_callback`, so that after the sanitizer's report it adds the Pia view: the trap site's Pia location and, for an `unsafe` or foreign call, the symbol being called. A Pia trap (`pia_trap`) in a sanitized build prints its stack with `__sanitizer_print_stack_trace`, so every report in one run looks the same. Both symbolise through DWARF, so sanitized builds also pass `-g`.
+
+**The runtime libraries.** compiler-rt's sanitizer runtimes are versioned with the instrumentation (`__asan_version_mismatch_check_vN`), so they must come from the same LLVM that piac links. They are built from the pinned `llvm-project` with `rules_foreign_cc` and CMake, as Z3 is, and cached. Xcode's runtimes (`libclang_rt.asan_osx_dynamic.dylib`) are a fallback only when their version matches.
+
+**Bazel.** Sanitizers follow the C++ toolchain's features, so one flag sanitizes the C and the Pia in a target together:
+
+```
+# .bazelrc
+build:asan --features=asan --copt=-fno-omit-frame-pointer --strip=never
+build:tsan --features=tsan
+build:ubsan --features=ubsan
+build:contracts --//tools/piac:sanitize=contracts
+```
+
+`pia_object` reads `ctx.features` and passes the matching `--sanitize` to piac. `contracts` has no C++ feature, so it is a Pia build setting that adds to whatever the features say. `bazel test --config=asan //...` runs the suite sanitized. In CI, `asan` and `tsan` run on the macOS runner beside the plain build, at first on main only, since each one builds LLVM's runtimes and doubles the test time.
 
 ### 10. SIMD, floats and atomics
 
@@ -226,17 +473,16 @@ These come with milestones M10 to M12, but they are core builtins, so they are l
 
 ### 11. Metaprogram builtins
 
-The interpreter has `map fold length fields name concat` ([meta.md](meta.md)). Derives in the library need a few more, all read-only questions about types:
+The interpreter has `map fold length fields name concat` ([meta.md](meta.md)), and ADR 0029 adds `kind`, `fail` (stop expansion with an error) and the comment builtins. Derives in the library need a few more, all read-only questions about types:
 
 | Builtin | Answer |
 | --- | --- |
 | `field_type t f` | the type of field `f` of record `t` |
 | `variants t` | the constructors of a variant type, with their payload types |
-| `kind t` | `"record"`, `"variant"`, `"int"`, `"float"`, `"array"`, `"slice"` or `"vec"` |
+| `type_kind t` | `"record"`, `"variant"`, `"int"`, `"float"`, `"array"`, `"slice"` or `"vec"` (`kind`, from [ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md), is the kind of a syntax value) |
 | `size_of t`, `align_of t` | layout, as codegen will lay it out |
 | `int_bounds t` | the bounds of an integer or range type |
 | `attrs x` | the attributes on an item or field, with their arguments |
-| `error msg` | stop expansion with a diagnostic at the expansion site |
 | `nth` `zip` `range` | list helpers the library would otherwise write recursively |
 
 With these, `@derive(ord)`, `@derive(hash)`, `@derive(serialise)` and `@derive(deserialise)` are library metaprograms. A PNG chunk header can be declared as a record and read by a derived, bounds-proved reader.
@@ -266,7 +512,7 @@ flowchart TD
   core --> posix["Pia.Sys.Posix: extern declarations, @trusted"]
   posix --> sys["Pia.Sys: Fs, Mapping, Process, Clock, Thread"]
   posix --> rt["Pia.Rt: runtime error handler, @trusted"]
-  sys --> mem["Pia.Mem: arena, alloc, vec, heap"]
+  sys --> mem["Pia.Mem: allocators, vec, heap"]
   mem --> io["Pia.Io: readers, writers, formatting"]
   io --> par["Pia.Par: worker pool, collectives"]
   io --> img["Image: Bmp, Png, Gif"]
@@ -279,7 +525,7 @@ flowchart TD
 | `Pia.Sys.Posix` | group 8 | the trusted libSystem declarations, and nothing else |
 | `Pia.Rt` | groups 8 and 9 | the trap entry point, signal handlers, stack traces |
 | `Pia.Sys` | groups 7 and 8 | `fd`, `mapping`, `errno`, `args`, `exit`, clocks, threads: POSIX in strong types, fully proved |
-| `Pia.Mem` | group 7 | `arena`, `alloc` `free`, `vec`, `string`, `hash_map`, `heap` |
+| `Pia.Mem` | group 7 | the `Allocator` concept; `pages` `fixed_buffer` `arena` `scratch` `pool` `general` `shared`; `vec`, `string`, `hash_map`, `heap` |
 | `Pia.Io` | `Pia.Sys`, `Pia.Mem` | `reader` and `writer` concepts with bounds-proved reads, buffered file I/O, `str` as `[u8]` refined to valid UTF-8, printing |
 | `Pia.Math` | floats | elementary functions with error bounds |
 | `Pia.Par` | atomics, threads | the `spread` worker pool, collectives |
@@ -296,7 +542,7 @@ Each step unlocks a usable slice of the library, and the order follows the roadm
 1. **Per-goal widths and the multiplication ladder.** No language change, and it unblocks the edge demo's BT.601 grayscale today.
 2. **Integer primitives, slicing, constant arrays, `abort`.** Small compiler changes, and enough to write checksums, bit utilities and slice algorithms as a single-file library.
 3. **Spec functions and lemmas**, with `Pia.Core.Arith`. So the library can be specified as it is written, and not retrofitted later.
-4. **Sum types and `match`.** `option`, `result`, and fallible APIs.
+4. **Sum types and `match`, then `?`, `handle`, `defer` and `Drop`.** `option`, `result`, and fallible APIs.
 5. **`extern`, `unsafe`, `addr`, `@trusted`, `@linear`, `main`, `--trust-report`, and the runtime error handler.** `Pia.Sys.Posix`, `Pia.Sys.Fs` and `Pia.Rt`. A Pia program can read and write files without C. Until modules land, `piac` takes several source files compiled as one program, so this does not wait for M8.
 6. **Modules (M8)**, with the prelude moved into Pia. The library becomes importable, and the trusted-module boundary becomes a module boundary.
 7. **`Pia.Mem` and `Image.Bmp`.** The edge demo drops `main.c`.
@@ -327,9 +573,12 @@ The common lesson is that the trusted part should be small, listed, and tested a
 These were open questions in the first draft. ADR 0023 records the answers. No open questions remain.
 
 - **Trusted items are listed in certificates.** Each certificate lists its own module's trusted items (foreign contracts, `unsafe` calls, `assume`s, accepted unproved goals), and `piac --trust-report` walks them for the whole program. `addr` and `assume` are only allowed in `@trusted` modules.
-- **Allocation failure is a `result`** by default, with a trapping variant clearly named.
+- **Every allocation can fail** and must be handled at the call site. There is no `new` keyword and no trapping variant.
+- **Errors propagate with `?`** to a scope's `handle` block, which must cover the closed set of errors in that scope. **Cleanup** runs at scope end through `defer` and `Drop` ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)).
+- **No garbage collection, ever.** Memory is managed by explicit allocator values (arenas, scratch, pools, a general size-class allocator), with lifetimes proved by two Sema rules ([ADR 0026](adr/0026-memory-manager.md)).
 - **`extern` is a function body**, `= extern "symbol"`, not a new declaration form, so `let` stays the only binding form.
 - **FFI needs explicit contracts.** A foreign function without one can only be called as `unsafe f x`, and each such call is a trusted item.
+- **Sanitizers are for the edges of the proof**: foreign code, trusted contracts and the verifier itself ([ADR 0025](adr/0025-sanitizers.md)).
 - **Runtime errors go to one handler**, `Pia.Rt`, which prints the Pia source location, a stack trace, and debug info when it is available.
 - **Spec function unfolding**: one level of unfolding by default (Dafny's fuel of 1), with lemmas for anything deeper and a per-function `@fuel(n)` to raise it.
 - **libm is never trusted.** Every maths function is written and proved in Pia (Dean, 2026-11-21), with its error bound in its contract.
