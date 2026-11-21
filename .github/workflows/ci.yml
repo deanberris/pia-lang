@@ -1,0 +1,44 @@
+# Builds and tests everything on Apple Silicon, the target Pia compiles for.
+# The first run builds LLVM/MLIR and Z3 from source (about 30 minutes); the
+# Bazel disk cache below makes later runs incremental.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: bazel test (macOS arm64)
+    runs-on: macos-15
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Restore the Bazel disk cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}
+          restore-keys: |
+            bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-
+            bazel-disk-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build
+        run: bazel build --keep_going //...
+
+      - name: Test
+        run: bazel test --keep_going //...
+
+      # Saved even when a test fails, so the next run does not rebuild LLVM.
+      - name: Save the Bazel disk cache
+        if: always() && github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('MODULE.bazel.lock', '.bazelversion') }}-${{ github.sha }}

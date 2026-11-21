@@ -23,6 +23,8 @@ bazel test //...
 
 The first build compiles the parts of LLVM and MLIR that Pia uses and takes a while. Later builds reuse the disk cache in `~/.cache/pia-bazel-disk`.
 
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //...` and `bazel test //...` on a GitHub-hosted Apple Silicon macOS runner for every pull request and every push to `main`. Runs on `main` save the disk cache, and pull requests restore it.
+
 | Target | What it is |
 | --- | --- |
 | `//tools/pia-opt` | `mlir-opt` for Pia's dialects |
