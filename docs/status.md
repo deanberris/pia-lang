@@ -15,12 +15,8 @@ Pia is an experimental language under active development. The compiler works end
 | Metaprograms | `let meta` functions, quotes and splices, hygiene, operators defined in the prelude and by programs, `@derive(eq)`, expansion to a fixed point |
 | Comments | `(* *)`, `\` line and `(** *)` doc comments, kept in the syntax tree for metaprograms and hover; literate `.pia.md` files |
 | Codegen | arm64 for Apple Silicon through MLIR and LLVM: object files, assembly and LLVM IR, a C ABI, saturating NEON instructions and vectorised loops |
-<<<<<<< HEAD
-| Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension, and [`pia repl`](repl.md), a verified REPL with a JIT, a JSON mode and an MCP server (`pia mcp`) |
-=======
 | Demo | [Edge detection](demo.md): a Pia image pipeline, proved and compiled into a program you can run with `bazel run //examples/edges` |
-| Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension |
->>>>>>> origin/main
+| Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension, and [`pia repl`](repl.md), a verified REPL with a JIT, a JSON mode and an MCP server (`pia mcp`) |
 
 ## Known limitations
 
