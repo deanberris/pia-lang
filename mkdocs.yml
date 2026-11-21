@@ -71,6 +71,7 @@ nav:
       - Language design: design.md
       - Grammar: grammar.md
       - Metaprograms: meta.md
+      - Standard library (proposal): stdlib.md
       - Shared libraries and certificates: abi.md
   - Compiler internals:
       - Architecture: architecture.md
@@ -101,4 +102,5 @@ nav:
       - adr/0020-presburger-for-affine-goals.md
       - adr/0021-language-server.md
       - adr/0022-metaprogram-hygiene.md
+      - adr/0023-minimal-core-self-hosted-stdlib.md
       - adr/0024-published-proof-certificates.md

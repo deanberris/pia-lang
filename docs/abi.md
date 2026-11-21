@@ -1,6 +1,6 @@
 # Shared libraries and published proof certificates
 
-Status: proposed, 2026-11-21. Decision record: [ADR 0024](adr/0024-published-proof-certificates.md). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in `docs/stdlib.md` ([PR #37](https://github.com/deanberris/pia-lang/pull/37)).
+Status: proposed, 2026-11-21. Decision record: [ADR 0024](adr/0024-published-proof-certificates.md). Builds on [ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md) (modules, interfaces and certificates) and on the trusted-contract rules proposed in [docs/stdlib.md](stdlib.md).
 
 A Pia shared library carries, inside the binary, the interfaces it exports, their contracts and a proof certificate. Before a Pia program binds to that library, something checks that the library still provides exactly the interfaces the program was proved against. This page says what the certificate contains, what is hashed and what is re-checked, how a library can evolve without breaking its importers, how the check works on macOS/arm64 first, and what the certificate does and does not let you trust.
 
@@ -96,7 +96,7 @@ strings      string table for the names above
 Decisions behind the format:
 
 - **One certificate per image, with one entry per module.** An image can contain several Pia modules. The static link step merges the modules' object-file certificates into one image certificate and checks the requires against the provides it can already see.
-- **Trusted items are listed per module, not transitively.** A module's certificate records only its own trusted items. The whole trusted base of a program is computed by walking the certificates of every image it loads: `piac link --trust-report` at link time, and `pia-cert trust-report` on a built program. If a dependency replaces a proved body with an `@assume` behind an unchanged interface, the importer's proof is still valid by assume-guarantee, so its certificate should not go stale, but the report must still show the new trusted item. This answers the open question in `docs/stdlib.md` ([PR #37](https://github.com/deanberris/pia-lang/pull/37)): yes, certificates list trusted contracts, and the linker and the trust report read them.
+- **Trusted items are listed per module, not transitively.** A module's certificate records only its own trusted items. The whole trusted base of a program is computed by walking the certificates of every image it loads: `piac link --trust-report` at link time, and `pia-cert trust-report` on a built program. If a dependency replaces a proved body with an `@assume` behind an unchanged interface, the importer's proof is still valid by assume-guarantee, so its certificate should not go stale, but the report must still show the new trusted item. This answers the open question in [docs/stdlib.md](stdlib.md): yes, certificates list trusted contracts, and the linker and the trust report read them.
 - **Four kinds of trusted item.** An `extern` declaration's contract and an `@assume`, both allowed only in `@trusted` modules; an obligation accepted with `--allow-unproved`; and each `unsafe f x` call site, the required spelling for a call to a foreign function declared without a contract. The certificate also flags a module as `@trusted`.
 - **`--allow-unproved` goals are trusted items.** An obligation accepted with `--allow-unproved` ([verifier.md](verifier.md)) is recorded the same way as an `@assume`, so "this library has unproved goals" is visible to anyone who loads it.
 - **Fixed-size hashes in the certificate, short ones in symbols.** The certificate holds full 32-byte SHA-256 hashes. Witness symbols use the first 128 bits, base32-encoded, which keeps symbol names short while leaving accidental collisions out of reach.
@@ -207,7 +207,7 @@ What the certificate does **not** protect against: a malicious producer who sign
 
 ## Relation to the minimal core and stdlib
 
-The standard library (`docs/stdlib.md` and ADR 0023, [PR #37](https://github.com/deanberris/pia-lang/pull/37)) is the first big user. `Pia.Core`, `Pia.Mem` and `Pia.Io` can ship as one shared `libpia.dylib`, versioned by ABI baselines like any other library. Its `extern` POSIX contracts and `@assume`s appear as trusted items under `@trusted` modules, so `pia-cert trust-report` of any Pia program lists exactly which libSystem contracts it rests on.
+The standard library ([docs/stdlib.md](stdlib.md) and [ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)) is the first big user. `Pia.Core`, `Pia.Mem` and `Pia.Io` can ship as one shared `libpia.dylib`, versioned by ABI baselines like any other library. Its `extern` POSIX contracts and `@assume`s appear as trusted items under `@trusted` modules, so `pia-cert trust-report` of any Pia program lists exactly which libSystem contracts it rests on.
 
 ## Implementation plan
 
