@@ -28,5 +28,20 @@ test --test_output=errors
 # CI logs: no progress bar, and a progress line at most once a minute.
 common:ci --curses=no --show_progress_rate_limit=60
 
+# Release builds: optimised, with ThinLTO across Pia, LLVM, MLIR and Z3,
+# for the targets and for the tools Bazel runs (piac in pia_object). The
+# first build compiles everything again as LLVM bitcode, so day-to-day work
+# stays on the default fastbuild, and --config=lto is for releases and the
+# build-time benchmark.
+build:lto -c opt
+build:lto --copt=-flto=thin --linkopt=-flto=thin
+build:lto --host_copt=-flto=thin --host_linkopt=-flto=thin
+
+# Split DWARF (fission): on ELF, debug info goes to .dwo files beside the
+# objects, so links stay small and fast. Mach-O already works this way: ld64
+# never copies DWARF into the binary, which only points at the objects (or a
+# .dSYM made by dsymutil), so macOS needs no flag.
+build:linux --fission=dbg,fastbuild
+
 # Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
 try-import %workspace%/user.bazelrc

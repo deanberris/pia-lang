@@ -40,10 +40,17 @@ CASES = [
     "//docs:cases/heartbleed.pia.md",
     "//docs:cases/binary-search.pia.md",
     "//docs:cases/cloudbleed.pia.md",
+    "//docs:cases/crowdstrike.pia.md",
+    "//docs:cases/rust-str-repeat.pia.md",
+    "//docs:cases/rust-vecdeque.pia.md",
 ]
 
 py_test(
     name = "case_studies_test",
+    # Each page runs piac on its broken and fixed versions; under load on
+    # the iMac the whole set has taken 200 s, past a medium test's 300 s
+    # margin for comfort.
+    size = "large",
     srcs = ["doc_examples_test.py"],
     args = ["$(rootpath //tools/piac)"] + ["$(rootpath %s)" % d for d in CASES],
     data = CASES + ["//tools/piac"],
