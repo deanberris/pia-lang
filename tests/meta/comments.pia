@@ -1,0 +1,60 @@
+(* Comments are syntax (ADR 0029): the parser attaches each one to the node
+   it describes, and quotes, splices and expansion keep them.
+// RUN: piac --dump-ast --comments %s | FileCheck %s
+// RUN: piac --dump-expanded --comments %s | FileCheck %s --check-prefix=EXP
+// RUN: piac --dump-ast %s | FileCheck %s --check-prefix=PLAIN
+*)
+
+(** The tile width. *)
+let tile : u32 = 16  \ elements per SIMD tile
+
+\ A paragraph written
+\ with line comments.
+let scale (n : u16) : u16 =
+  let m = n + 1 in  \ one more
+  (* why *) m - 1
+
+(* CHECK:      (LetItem "tile"
+   CHECK-NEXT:   (Comment "Comments are syntax {{.*}}" [block detached])
+   CHECK-NEXT:   (Comment "The tile width." [doc leading])
+   CHECK-NEXT:   (Comment "elements per SIMD tile" [line trailing])
+   CHECK:      (LetItem "scale"
+   CHECK-NEXT:   (Comment "A paragraph written\nwith line comments." [line leading])
+   CHECK:        (Binary "+"
+   CHECK-NEXT:     (Comment "one more" [line trailing])
+   CHECK:        (Binary "-"
+   CHECK-NEXT:     (Comment "why" [block leading])
+   PLAIN-NOT:  Comment
+*)
+
+(** Made by a metaprogram. *)
+let meta make (e : expr) : item =
+  `( (** Generated. *)
+     let made (t : u16) : u16 =
+       (* the argument *) $e + t
+   )
+
+(* The call's comment moves to the item it makes. *)
+make `( (* spliced *) 3 )
+
+(** Has two fields. *)
+let pair = type { a : u8; b : u8 } @derive(eq)
+
+(* EXP:      (LetItem "tile"
+   EXP:      (LetItem "scale"
+   EXP:        (Apply
+   EXP-NEXT:     (Comment "one more" [line trailing])
+   EXP-NEXT:     (Name "add" [prelude])
+   EXP:      (LetItem "made"
+   EXP-NEXT:   (Comment "The call's comment moves to the item it makes." [block leading])
+   EXP-NEXT:   (Comment "Generated." [doc leading])
+   EXP:        (Apply
+   EXP-NEXT:     (Comment "the argument" [block leading])
+   EXP-NEXT:     (Name "add" [prelude])
+   EXP-NEXT:     (IntLit "3"
+   EXP-NEXT:       (Comment "spliced" [block leading])
+   EXP:      (LetItem "pair"
+   EXP-NEXT:   (Comment "Has two fields." [doc leading])
+   EXP:      (LetItem "eq_pair"
+   EXP-NEXT:   (Comment "Field-by-field equality for pair, made by @derive(eq)." [doc leading])
+*)

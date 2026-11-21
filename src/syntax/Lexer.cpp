@@ -1,5 +1,6 @@
 #include "syntax/Lexer.h"
 
+#include <algorithm>
 #include <cctype>
 #include <string>
 #include <unordered_map>
@@ -116,16 +117,23 @@ bool isCloser(TokenKind k) {
 
 class Lexer {
  public:
-  Lexer(std::string_view src, Diagnostics &diags) : src_(src), diags_(diags) {}
+  Lexer(std::string_view src, Diagnostics &diags, const LexOptions &options)
+      : src_(src),
+        diags_(diags),
+        literate_(options.literate),
+        comments_(options.comments) {}
 
   std::vector<Token> run() {
+    if (literate_) prose();
     while (!failed_) {
       skipTrivia();
       if (failed_) break;
       if (pos_ >= src_.size()) break;
       lexToken();
     }
-    if (!failed_ && !targs_.empty()) {
+    if (!failed_ && literate_ && inCode_) {
+      error(fence_, "this ```pia code block is never closed");
+    } else if (!failed_ && !targs_.empty()) {
       error(openers_[targs_.back() - 1],
             "'<' straight after a name opens type arguments, and this list "
             "is never closed; write 'a < b', with spaces, for less-than");
@@ -167,11 +175,34 @@ class Lexer {
 
   void skipTrivia() {
     for (;;) {
+      if (literate_ && inCode_ && pos_ == lineStart_ &&
+          src_.substr(pos_, 3) == "```") {
+        // The fence that closes a code block.
+        if (depth_ != 0) {
+          const Token &open = out_[openerIndex_.back()];
+          error(open.loc, "the code block ends before '" +
+                              std::string(open.text) + "' is closed");
+          return;
+        }
+        skipLine();
+        inCode_ = false;
+        prose();
+        continue;
+      }
       char c = peek();
       if (c == ' ' || c == '\t' || c == '\r' || c == '\n') {
         advance();
+      } else if (c == '\\') {
+        // `\` comments to the end of the line (ADR 0029).
+        SourceLoc start = here();
+        advance();
+        size_t body = pos_;
+        while (pos_ < src_.size() && peek() != '\n') advance();
+        record(RawComment::Style::Line, start, src_.substr(body, pos_ - body));
       } else if (c == '(' && peek(1) == '*') {
         SourceLoc start = here();
+        // `(** ... *)` is a doc comment; `(**)` and `(***` are not.
+        bool isDoc = peek(2) == '*' && peek(3) != '*' && peek(3) != ')';
         int depth = 0;
         for (;;) {
           if (pos_ >= src_.size()) {
@@ -188,10 +219,141 @@ class Lexer {
             advance();
           }
         }
+        size_t body = start.offset + (isDoc ? 3 : 2);
+        size_t bodyEnd = pos_ - 2;
+        record(isDoc ? RawComment::Style::Doc : RawComment::Style::Block,
+               start,
+               bodyEnd > body ? src_.substr(body, bodyEnd - body)
+                              : std::string_view());
       } else {
         return;
       }
     }
+  }
+
+  static std::string_view trim(std::string_view s) {
+    size_t b = 0, e = s.size();
+    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(b, e - b);
+  }
+
+  // Removes the indentation that every line after the first shares, so a
+  // block comment's text does not depend on where it sits.
+  static std::string dedent(std::string_view s) {
+    size_t nl = s.find('\n');
+    if (nl == std::string_view::npos) return std::string(s);
+    size_t indent = std::string_view::npos;
+    for (size_t at = nl + 1; at <= s.size();) {
+      size_t eol = s.find('\n', at);
+      if (eol == std::string_view::npos) eol = s.size();
+      std::string_view line = s.substr(at, eol - at);
+      size_t lead = line.find_first_not_of(" \t");
+      if (lead != std::string_view::npos) indent = std::min(indent, lead);
+      at = eol + 1;
+    }
+    if (indent == std::string_view::npos) indent = 0;
+    std::string out(s.substr(0, nl));
+    for (size_t at = nl + 1; at <= s.size();) {
+      size_t eol = s.find('\n', at);
+      if (eol == std::string_view::npos) eol = s.size();
+      std::string_view line = s.substr(at, eol - at);
+      out += '\n';
+      if (line.size() > indent) out += line.substr(indent);
+      at = eol + 1;
+    }
+    return out;
+  }
+
+  // Keeps a comment that ends at the current position.
+  void record(RawComment::Style style, SourceLoc start, std::string_view body) {
+    if (!comments_) return;
+    bool ownLine = true;
+    for (size_t i = start.offset - (start.column - 1); i < start.offset; ++i)
+      if (src_[i] != ' ' && src_[i] != '\t') ownLine = false;
+    std::string text = dedent(trim(body));
+    // Line comments alone on consecutive lines are one comment.
+    if (style == RawComment::Style::Line && ownLine && !comments_->empty()) {
+      RawComment &last = comments_->back();
+      if (last.style == RawComment::Style::Line && last.ownLine &&
+          last.tokensBefore == out_.size() && last.endLine + 1 == start.line) {
+        last.text += "\n";
+        last.text += text;
+        last.end = static_cast<uint32_t>(pos_);
+        last.endLine = line_;
+        return;
+      }
+    }
+    RawComment c;
+    c.style = style;
+    c.text = std::move(text);
+    c.loc = start;
+    c.end = static_cast<uint32_t>(pos_);
+    c.endLine = line_;
+    c.ownLine = ownLine;
+    c.tokensBefore = out_.size();
+    comments_->push_back(std::move(c));
+  }
+
+  void skipLine() {
+    while (pos_ < src_.size() && peek() != '\n') advance();
+    advance();
+  }
+
+  // Whether a line opens a fenced `pia` code block.
+  static bool isPiaFence(std::string_view line) {
+    if (line.substr(0, 6) != "```pia") return false;
+    return line.size() == 6 || std::isspace(static_cast<unsigned char>(line[6])) ||
+           line[6] == '{';
+  }
+
+  // Reads literate prose from the start of a line up to the next `pia`
+  // fence, or the end of the file, and keeps it as a prose comment.
+  void prose() {
+    size_t first = std::string_view::npos, lastEnd = 0;
+    SourceLoc firstLoc;
+    uint32_t lastLine = 0;
+    bool otherFence = false;
+    auto flush = [&] {
+      if (first == std::string_view::npos || !comments_) return;
+      RawComment c;
+      c.style = RawComment::Style::Prose;
+      c.text = std::string(trim(src_.substr(first, lastEnd - first)));
+      c.loc = firstLoc;
+      c.end = static_cast<uint32_t>(lastEnd);
+      c.endLine = lastLine;
+      c.ownLine = true;
+      c.tokensBefore = out_.size();
+      comments_->push_back(std::move(c));
+    };
+    while (pos_ < src_.size()) {
+      size_t eol = src_.find('\n', pos_);
+      if (eol == std::string_view::npos) eol = src_.size();
+      std::string_view line = src_.substr(pos_, eol - pos_);
+      if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+      if (!otherFence && isPiaFence(line)) {
+        flush();
+        fence_ = here();
+        skipLine();
+        inCode_ = true;
+        return;
+      }
+      if (line.substr(0, 3) == "```") otherFence = !otherFence;
+      if (!trim(line).empty()) {
+        if (first == std::string_view::npos) {
+          first = pos_;
+          firstLoc = here();
+        }
+        lastEnd = pos_ + line.size();
+        lastLine = line_;
+      }
+      if (eol < src_.size()) {
+        advance(eol - pos_ + 1);
+      } else {
+        advance(eol - pos_);
+      }
+    }
+    flush();
   }
 
   void push(TokenKind kind, SourceLoc start) {
@@ -435,6 +597,10 @@ class Lexer {
 
   std::string_view src_;
   Diagnostics &diags_;
+  bool literate_ = false;
+  bool inCode_ = false;     // literate: inside a ```pia block
+  SourceLoc fence_;         // literate: where that block opened
+  std::vector<RawComment> *comments_ = nullptr;
   std::vector<Token> out_;
   size_t pos_ = 0;
   uint32_t line_ = 1;
@@ -449,8 +615,25 @@ class Lexer {
 
 }  // namespace
 
-std::vector<Token> tokenize(std::string_view source, Diagnostics &diags) {
-  return Lexer(source, diags).run();
+std::vector<Token> tokenize(std::string_view source, Diagnostics &diags,
+                            const LexOptions &options) {
+  return Lexer(source, diags, options).run();
+}
+
+bool isLiterateFileName(std::string_view path) {
+  constexpr std::string_view suffix = ".pia.md";
+  return path.size() >= suffix.size() &&
+         path.substr(path.size() - suffix.size()) == suffix;
+}
+
+const char *commentStyleName(RawComment::Style style) {
+  switch (style) {
+    case RawComment::Style::Line: return "line";
+    case RawComment::Style::Block: return "block";
+    case RawComment::Style::Doc: return "doc";
+    case RawComment::Style::Prose: return "prose";
+  }
+  return "?";
 }
 
 }  // namespace pia::syntax

@@ -27,3 +27,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Proposed |
 | [0022](0022-metaprogram-hygiene.md) | Hygiene and name lookup: no shadowing, renamed quote binders, qualified names, ADL | Accepted |
 | [0024](0024-published-proof-certificates.md) | Shared libraries publish interfaces and proof certificates; loaders check them | Proposed |
+| [0029](0029-comments-as-syntax-and-literate-pia.md) | Comments are syntax: `\` line comments, doc comments, and literate `.pia.md` files | Accepted |

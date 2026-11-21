@@ -1,5 +1,6 @@
 #include "meta/Expand.h"
 
+#include <iterator>
 #include <set>
 #include <string>
 #include <vector>
@@ -131,6 +132,11 @@ class Expander {
     std::vector<NodePtr> out;
     std::vector<NodePtr> items = std::move(program_.kids);
     program_.kids.clear();
+    // `listing ()` sees the items as this pass found them. They stay alive
+    // until the pass ends.
+    std::vector<const Node *> listing;
+    for (const NodePtr &item : items) listing.push_back(item.get());
+    interp_.setListing(std::move(listing), &program_);
     for (NodePtr &item : items) {
       if (isMetaItem(*item)) {
         out.push_back(std::move(item));
@@ -140,6 +146,8 @@ class Expander {
         std::vector<NodePtr> generated;
         if (runCall(*item, *callee, generated)) {
           changed = true;
+          // The call's comments move to the first item it made.
+          if (!generated.empty()) moveComments(*item, *generated[0]);
           for (NodePtr &g : generated) out.push_back(std::move(g));
         } else {
           out.push_back(std::move(item));
@@ -153,7 +161,17 @@ class Expander {
       for (NodePtr &g : generated) out.push_back(std::move(g));
     }
     program_.kids = std::move(out);
+    interp_.setListing({}, &program_);
     return changed;
+  }
+
+  // Comments survive the code they were attached to being replaced
+  // (ADR 0029).
+  static void moveComments(Node &from, Node &to) {
+    to.comments.insert(to.comments.begin(),
+                       std::make_move_iterator(from.comments.begin()),
+                       std::make_move_iterator(from.comments.end()));
+    from.comments.clear();
   }
 
   // The callee of a top-level metaprogram call such as `gen 4`, or null.
@@ -284,7 +302,9 @@ class Expander {
         diags_.error(slot->loc, who + " must produce an expression");
         return changed;
       }
-      slot = clone(*v->syntax);
+      NodePtr replacement = clone(*v->syntax);
+      moveComments(*slot, *replacement);
+      slot = std::move(replacement);
       produced(who, slot->loc);
       return true;
     } catch (const MetaError &e) {

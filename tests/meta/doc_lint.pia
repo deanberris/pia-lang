@@ -1,0 +1,24 @@
+(* A metaprogram that walks the listing and insists on documentation.
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s
+*)
+
+(** Every top-level function needs a doc comment. *)
+let meta require_docs () : item =
+  let check (item : expr) : unit =
+    if kind item = "LetItem" && doc item = "" then
+      fail (concat "'" (concat (name item) "' has no doc comment"))
+    else () in
+  fold (let (acc) (i) => check i) () (listing ())
+
+(** Adds one. *)
+let inc (x : u8) : u16 = x + 1
+
+(* An ordinary comment is not documentation. *)
+let dec (x : u8) : u8 = x -| 1
+
+(* CHECK: doc_lint.pia:[[@LINE+2]]:1: error: the metaprogram 'require_docs' failed: 'dec' has no doc comment
+*)
+require_docs ()
+
+(* CHECK-NOT: error
+*)

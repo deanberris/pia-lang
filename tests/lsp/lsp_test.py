@@ -50,6 +50,29 @@ let inner (x : u8) : u8 = let x' = 1 in x' + x'
 let taken (x : u8) (x' : u8) : u8 = let x = x' in x
 """
 
+DOCUMENTED = """\
+(** Adds one, saturating at 255. *)
+let bump (x : u8) : u8 = x +| 1  \\ never wraps
+
+let twice (x : u8) : u8 = bump (bump x)
+"""
+
+LITERATE = """\
+# Counters
+
+`bump` adds one and stops at 255.
+
+```pia
+let bump (x : u8) : u8 = x +| 1
+```
+
+Using it twice:
+
+```pia
+let twice (x : u8) : u8 = bump (bump x)
+```
+"""
+
 FAILING = """\
 let bad (a : u8) (b : u8) : u8 = a + b
 
@@ -226,6 +249,49 @@ class LspTest(unittest.TestCase):
             "textDocument": {"uri": uri},
             "position": pos(GOOD, "ensures")})["result"]
         self.assertIsNone(hover)
+
+    def test_doc_comment_hover(self):
+        # A `(** ... *)` doc comment shows under the signature (ADR 0029).
+        uri = "file:///tmp/documented.pia"
+        self.client.open(uri, DOCUMENTED)
+        self.assertEqual(self.client.diagnostics(uri), [])
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(DOCUMENTED, "bump (bump")})["result"]
+        text = hover["contents"]["value"]
+        self.assertIn("let bump (x : u8) : u8", text)
+        self.assertIn("Adds one, saturating at 255.", text)
+        self.assertNotIn("never wraps", text)
+
+    def test_literate_file(self):
+        # A .pia.md file is Markdown with code in ```pia blocks; the prose
+        # before a block documents it, and positions are the Markdown's.
+        uri = "file:///tmp/counters.pia.md"
+        self.client.open(uri, LITERATE)
+        self.assertEqual(self.client.diagnostics(uri), [])
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(LITERATE, "bump (bump")})["result"]
+        self.assertIn("`bump` adds one and stops at 255.",
+                      hover["contents"]["value"])
+        loc = self.client.request("textDocument/definition", {
+            "textDocument": {"uri": uri},
+            "position": pos(LITERATE, "bump (bump")})["result"]
+        self.assertEqual(loc["range"]["start"], pos(LITERATE, "bump (x"))
+        syms = self.client.request("textDocument/documentSymbol", {
+            "textDocument": {"uri": uri}})["result"]
+        self.assertEqual([s["name"] for s in syms], ["bump", "twice"])
+        # A syntax error inside a block is reported on its Markdown line,
+        # and the other block still has symbols.
+        broken = LITERATE.replace("bump (bump x)", "bump (bump x")
+        self.client.notify("textDocument/didChange", {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": broken}]})
+        diags = self.client.diagnostics(uri, lambda d: len(d) > 0)
+        self.assertEqual(diags[0]["range"]["start"]["line"], 11)
+        syms = self.client.request("textDocument/documentSymbol", {
+            "textDocument": {"uri": uri}})["result"]
+        self.assertEqual([s["name"] for s in syms], ["bump"])
 
     def test_symbols_and_completion(self):
         uri = "file:///tmp/good.pia"
