@@ -1,1 +1,8 @@
-exports_files(["design.md"])
+exports_files([
+    "design.md",
+    "getting-started.md",
+    "index.md",
+    "status.md",
+    "tour.md",
+    "verification.md",
+])

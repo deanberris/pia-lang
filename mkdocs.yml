@@ -1,0 +1,102 @@
+# The documentation site, published to GitHub Pages by
+# .github/workflows/docs.yml. Build it locally with:
+#   pip install -r tools/docs/requirements.txt
+#   mkdocs serve
+site_name: Pia
+site_description: A programming language whose compiler proves your code correct before it runs.
+site_url: https://deanberris.github.io/pia-lang/
+repo_url: https://github.com/deanberris/pia-lang
+repo_name: deanberris/pia-lang
+edit_uri: edit/main/docs/
+docs_dir: docs
+strict: true
+
+exclude_docs: |
+  BUILD.bazel
+
+hooks:
+  - tools/docs/hooks.py
+
+theme:
+  name: material
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - search.highlight
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+validation:
+  omitted_files: warn
+  absolute_links: info
+  unrecognized_links: warn
+  anchors: warn
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - A tour of Pia: tour.md
+  - How verification works: verification.md
+  - Status and roadmap: status.md
+  - Design:
+      - Language design: design.md
+      - Grammar: grammar.md
+      - Metaprograms: meta.md
+  - Compiler internals:
+      - Architecture: architecture.md
+      - IRGen: irgen.md
+      - Verifier: verifier.md
+      - Codegen: codegen.md
+  - Decision records:
+      - Index: adr/README.md
+      - adr/0001-record-architecture-decisions.md
+      - adr/0002-single-let-binding-form.md
+      - adr/0003-static-typing-with-tagged-dyn.md
+      - adr/0004-strongest-guarantee-by-default.md
+      - adr/0005-parameter-modifiers.md
+      - adr/0006-contracts-and-module-state.md
+      - adr/0007-metaprogramming-fixed-point-expansion.md
+      - adr/0008-operators-via-metaprograms.md
+      - adr/0009-generics-concepts-adapters.md
+      - adr/0010-modules-interfaces-and-proof-certificates.md
+      - adr/0011-mlir-and-z3-implementation.md
+      - adr/0012-floating-point-reassociation.md
+      - adr/0013-auto-vectorisation.md
+      - adr/0014-concurrency-model.md
+      - adr/0015-device-placement.md
+      - adr/0016-stream-delineation-flagship-demo.md
+      - adr/0017-bazel-build.md
+      - adr/0018-dialect-layering.md
+      - adr/0019-grammar-disambiguation.md
+      - adr/0020-presburger-for-affine-goals.md
+      - adr/0021-language-server.md
+      - adr/0022-metaprogram-hygiene.md
