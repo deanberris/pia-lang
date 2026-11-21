@@ -64,7 +64,9 @@ class Expander {
         options_(options),
         interp_([this](const std::string &t) {
           return isBuiltinType(t) || types_.count(t);
-        }) {}
+        }) {
+    interp_.setLive(options.live);
+  }
 
   void run() {
     declare(preludeProgram());

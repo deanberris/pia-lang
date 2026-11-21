@@ -74,6 +74,56 @@ Pia has no shadowing ([ADR 0022](adr/0022-metaprogram-hygiene.md)), and the REPL
 
 A name that a metaprogram call generated belongs to that call: redefine the call instead.
 
+## Live redefinition
+
+`:spawn <expr>` proves an expression, then runs it on a thread of its own, so the session carries on while it runs. Redefining a function the task uses swaps the new code into the running task, as in Lisp, as long as the change is proved safe for code that is already running ([ADR 0031](adr/0031-verified-repl-and-live-environment.md)):
+
+- **Every definition is called through a slot.** In the REPL, a call from one definition to another loads the callee's current code from its slot. Committing a redefinition stores the new code in the slot, so each call that starts afterwards runs it, while calls already running finish on the code they started in. The engine holding old code stays alive until no task uses it.
+- **A definition a running task can reach must keep its contract.** The task's code was proved against the old definition's contract. So the new definition's body is proved against that old contract as well as its own, as a hidden function: its obligations under the old `requires`, and the old `ensures`. If that proof holds and the type is unchanged, the swap is safe for the running task, and the result says `swapped into running task 1`. If it does not, the redefinition is refused until the task finishes.
+- **Everything else is the same as without tasks.** The redefinition and everything that uses it are verified again, as one transaction. Definitions no running task can reach change freely. `:forget` and `:reset` wait for the tasks that need what they would remove.
+
+<!-- repl: live.pia -->
+```ocaml
+let step (a : u64) : u64
+  requires a < 1000
+  ensures result = 1
+= 1
+let total (n : u64) : u64
+  requires n <= 8000000000
+= let s : mutable u64 = 0 in
+  for i in 0 .. n
+    invariant s <= 2 * i
+  do s <- s + step 5 done;
+  s
+:spawn total 2000000000
+:redef let step (a : u64) : u64 requires a < 1000 ensures result = 1 = 2 - 1
+:redef let step (a : u64) : u64 requires a < 1000 ensures result <= 2 = 2
+:wait 1
+```
+
+```console
+$ pia repl < live.pia
+step : (a : usize) -> usize  (* 1 proved *)
+total : (n : usize) -> usize  (* 4 proved *)
+task 1 (total 2000000000) running
+step : (a : usize) -> usize  (redefined, swapped into running task 1)  (* 2 proved *)
+[5]: error: 'step' is in use by a running task (task 1), so its new definition must refine the old one, but the new body does not meet the old contract: the postcondition holds (the old contract at [4]:1:44); nothing was committed (wait for the task with :wait, or keep the contract)
+task 1 (total 2000000000) done: usize = 2000000000
+```
+
+The second `step` would still let `total` verify, but the running task was proved against `result = 1`, so the change waits for it.
+
+### Metaprograms that change the environment
+
+The REPL gives metaprograms the environment as data, through `Pia.Live`: `listing ()` lists every definition, and `redefine x` turns the definitions in the syntax `x` into replacements ([metaprograms](meta.md#comments-and-literate-programs)). A metaprogram's changes take exactly the same path as a `:redef` cell, so nothing it does can install code that is not proved, and a definition a running task uses is swapped in only if it refines the old one:
+
+```ocaml
+let meta faster () =
+  redefine `( let step ($!a : u64) : u64 requires $!a < 1000 ensures $!result = 1 = 1 + 0 )
+```
+
+`Pia.Live` exists only in the REPL. `piac` refuses `redefine`, and compiled programs call functions directly, with no slots.
+
 ## Commands
 
 | Command | |
@@ -85,6 +135,9 @@ A name that a metaprogram call generated belongs to that call: redefine the call
 | `:redef <code>` | replace the definitions of the names `code` defines |
 | `:forget <name>` | remove a definition that nothing uses |
 | `:allow [<spec>]` | accept unproved obligations in a function, or at `[cell]:line[:col]`; with no argument, list what is accepted |
+| `:spawn <expr>` | run an expression as a background task (see [Live redefinition](#live-redefinition)) |
+| `:tasks` | the tasks, running or done, with their values |
+| `:wait <n>` | wait for task `n` to finish, and show its value |
 | `:load <file>` | run a file as one cell |
 | `:reset` | empty the environment |
 | `:help` | the list of commands |
@@ -114,13 +167,14 @@ Each event has a `kind`:
 
 | Kind | Fields | |
 | --- | --- | --- |
-| `defined`, `redefined` | `name`, `type`, `value` | a definition joined the environment; `value` for a constant; `type` is `type`, `meta` or `operator` for those items |
+| `defined`, `redefined` | `name`, `type`, `value`, `text` | a definition joined the environment; `value` for a constant; `type` is `type`, `meta` or `operator` for those items; `text` says which running tasks a redefinition was swapped into |
 | `removed` | `name` | `:forget` removed it |
 | `value` | `type`, `value` | an expression's value |
 | `type` | `text`, `type` | `:type`'s answer |
 | `proof` | `name`, `status`, `text`, `method`, `counterexample`, `where` | one obligation: `status` is `proved`, `failed`, `unproved` or `allowed`, `text` the claim, `counterexample` an object of names and values |
 | `error` | `text`, `where` | |
 | `info` | `text` | command output and notes |
+| `task` | `name`, `text`, `type`, `status`, `value` | a background task: `name` is its number, `text` its expression, `status` `running` or `done`, and `value` its value once done |
 
 `where` is `{"cell", "line", "column"}`. The exit status is 1 if any cell failed.
 
@@ -151,4 +205,6 @@ Neither is part of the Pia runtime. Compiled programs never contain the session,
 - Each cell verifies and compiles the whole environment again. That is quick for interactive sizes; caching proofs per definition is planned.
 - Values of integer, `bool`, `unit` and record types can be shown. Arrays and slices cannot be returned yet, so they cannot be shown either.
 - Everything [not compiled yet](status.md#known-limitations) is not available in the REPL either.
-- Live redefinition of code that is still running, and metaprograms that read and rewrite the environment (`Pia.Live`), are designed in [ADR 0031](adr/0031-verified-repl-and-live-environment.md) but not built yet. Today each evaluation runs to completion before the next cell starts.
+- A task cannot be stopped before it finishes. Its termination is proved, but that does not bound how long it takes.
+- Swaps happen one definition at a time. A change to a group of definitions that a running task uses is accepted only if each one refines its old contract. A change to a type, or to a function's type, waits for the tasks that use it: migrating live values to a new layout is designed but not built.
+- Tasks have no I/O yet, so the only thing they produce is their value.

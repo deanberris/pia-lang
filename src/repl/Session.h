@@ -46,13 +46,16 @@ struct Event {
     Proof,      // an obligation: name (function), status, text (claim), method
     Error,      // text, where?
     Info,       // text: command output, notes, warnings
+    Task,       // a background task: name (its number), text (the
+                // expression), type, status ("running" or "done"), value
   };
   Kind kind = Kind::Info;
   std::string name;
   std::string type;
   std::string value;
   std::string text;
-  std::string status;  // Proof: "proved", "failed", "unproved" or "allowed"
+  std::string status;  // Proof: "proved", "failed", "unproved" or "allowed";
+                       // Task: "running" or "done"
   std::string method;  // Proof: "intervals", "smt", "presburger", or a reason
   std::vector<std::pair<std::string, std::string>> counterexample;
   Where where;

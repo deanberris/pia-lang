@@ -85,6 +85,9 @@ class Interpreter {
     program_ = program;
   }
 
+  // Makes the REPL-only builtins of Pia.Live available (ADR 0031).
+  void setLive(bool live) { live_ = live; }
+
   // Names a quote leaves free resolve to these builtins wherever the code
   // lands (docs/meta.md, "Hygiene").
   static bool isCoreBuiltin(const std::string &name);
@@ -111,6 +114,7 @@ class Interpreter {
   syntax::SourceLoc site_;
   std::vector<const syntax::Node *> listing_;
   const syntax::Node *program_ = nullptr;
+  bool live_ = false;
   uint64_t fuel_ = 0;
   unsigned fresh_ = 0;
   std::vector<std::string> ran_;

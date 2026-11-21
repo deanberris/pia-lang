@@ -72,8 +72,11 @@ struct Repl {
   }
 };
 
+// Whether `line` can start a new cell: it starts at column 1, and is not
+// the `=` that begins a definition's body after its contracts.
 bool startsAtColumnOne(const std::string &line) {
-  return !line.empty() && line[0] != ' ' && line[0] != '\t' && line[0] != '\r';
+  return !line.empty() && line[0] != ' ' && line[0] != '\t' && line[0] != '\r' &&
+         line[0] != '=';
 }
 
 // Cells from a pipe: a cell ends where the next line starts at column 1,

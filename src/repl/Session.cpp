@@ -1,6 +1,7 @@
 #include "repl/Session.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
 #include <cstdlib>
@@ -10,16 +11,20 @@
 #include <optional>
 #include <set>
 #include <sstream>
+#include <thread>
 
 #include "codegen/Codegen.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/Host.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
@@ -39,6 +44,108 @@ namespace {
 
 constexpr const char *kFile = "<repl>";
 constexpr const char *kEvalPrefix = "__pia_eval_";
+// The hidden function that proves a new body against an old contract.
+constexpr const char *kRefinesPrefix = "__pia_refines_";
+// Codegen's name for a function's internal version (codegen.md, "C ABI"),
+// and the REPL's slot that holds a definition's current code.
+constexpr const char *kInternalPrefix = "__pia_";
+constexpr const char *kSlotPrefix = "__pia_slot_";
+
+// Names the session makes up, which the environment never shows.
+bool internalName(const std::string &n) {
+  return n.rfind(kEvalPrefix, 0) == 0 || n.rfind(kRefinesPrefix, 0) == 0;
+}
+
+std::string shadowing(const std::string &n, unsigned cell) {
+  return "'" + n + "' is already defined in cell [" + std::to_string(cell) +
+         "]; Pia does not allow shadowing (ADR 0022), so name it " + n +
+         "' or replace it with :redef";
+}
+
+// Whether two function items take the same number and kinds of
+// parameters. Their types are compared after lowering.
+bool sameParams(const Node &a, const Node &b) {
+  const Node &pa = *a.kids[0], &pb = *b.kids[0];
+  if (pa.kids.size() != pb.kids.size()) return false;
+  for (size_t i = 0; i < pa.kids.size(); ++i)
+    if (pa.kids[i]->kind != pb.kids[i]->kind) return false;
+  return true;
+}
+
+// Renames the plain names in `n` by `map`, so an old contract can be read
+// with the new definition's parameter names (a quote renames parameters).
+void renameNames(Node &n, const std::map<std::string, std::string> &map) {
+  if (n.kind == NodeKind::Name && n.flags.empty()) {
+    auto it = map.find(n.text);
+    if (it != map.end()) n.text = it->second;
+  }
+  for (NodePtr &k : n.kids) renameNames(*k, map);
+}
+
+// The old definition's contract, with the new one's parameter names.
+NodePtr contractFor(const Node &oldItem, const Node &newItem) {
+  NodePtr c = syntax::clone(*oldItem.kids[2]);
+  std::map<std::string, std::string> map;
+  const Node &po = *oldItem.kids[0], &pn = *newItem.kids[0];
+  for (size_t i = 0; i < po.kids.size() && i < pn.kids.size(); ++i)
+    if (po.kids[i]->text != pn.kids[i]->text)
+      map[po.kids[i]->text] = pn.kids[i]->text;
+  if (!map.empty()) renameNames(*c, map);
+  return c;
+}
+
+template <typename OpTy, typename... Args>
+OpTy build(mlir::OpBuilder &b, mlir::Location l, Args &&...args) {
+#if LLVM_VERSION_MAJOR >= 21
+  return OpTy::create(b, l, std::forward<Args>(args)...);
+#else
+  return b.create<OpTy>(l, std::forward<Args>(args)...);
+#endif
+}
+
+// Makes every call of a definition in `defs` go through its slot: an
+// external pointer the session owns and swaps when the definition changes
+// (ADR 0031, "Live redefinition"). The definitions' internal versions
+// become visible, so the session can find their code.
+mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
+                                     const std::set<std::string> &defs) {
+  mlir::MLIRContext *ctx = m.getContext();
+  mlir::OpBuilder b(ctx);
+  auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+  size_t prefix = std::strlen(kInternalPrefix);
+  std::vector<mlir::LLVM::CallOp> calls;
+  m.walk([&](mlir::LLVM::CallOp c) {
+    std::optional<llvm::StringRef> callee = c.getCallee();
+    if (callee && callee->starts_with(kInternalPrefix) &&
+        defs.count(callee->drop_front(prefix).str()))
+      calls.push_back(c);
+  });
+  for (mlir::LLVM::CallOp c : calls) {
+    std::string def = c.getCallee()->drop_front(prefix).str();
+    std::string slot = kSlotPrefix + def;
+    if (!m.lookupSymbol(slot)) {
+      b.setInsertionPointToStart(m.getBody());
+      build<mlir::LLVM::GlobalOp>(b, m.getLoc(), ptr, /*isConstant=*/false,
+                                  mlir::LLVM::Linkage::External, slot,
+                                  mlir::Attribute());
+    }
+    b.setInsertionPoint(c);
+    auto addr = build<mlir::LLVM::AddressOfOp>(b, c.getLoc(), ptr, slot);
+    auto fp = build<mlir::LLVM::LoadOp>(b, c.getLoc(), ptr, addr, /*alignment=*/8);
+    fp.setOrdering(mlir::LLVM::AtomicOrdering::acquire);
+    llvm::SmallVector<mlir::Value> operands{fp};
+    operands.append(c.getArgOperands().begin(), c.getArgOperands().end());
+    auto call = build<mlir::LLVM::CallOp>(b, c.getLoc(),
+                                          c.getCalleeFunctionType(), operands);
+    c.replaceAllUsesWith(call.getResults());
+    c.erase();
+  }
+  for (const std::string &def : defs)
+    if (auto f = m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(kInternalPrefix + def)) {
+      f.setLinkage(mlir::LLVM::Linkage::External);
+    }
+  return mlir::success();
+}
 
 std::string trim(std::string_view s) {
   size_t b = 0, e = s.size();
@@ -107,6 +214,7 @@ std::string functionType(mlir::func::FuncOp fn) {
     std::string name;
     if (auto nl = mlir::dyn_cast<mlir::NameLoc>(fn.getArgument(i).getLoc()))
       name = nl.getName().str();
+    name = name.substr(0, name.find('#'));  // a quote's renamed parameter
     std::string mods;
     if (auto a = fn.getArgAttrOfType<mlir::StringAttr>(
             i, PiaDialect::getModifiersAttrName()))
@@ -116,6 +224,15 @@ std::string functionType(mlir::func::FuncOp fn) {
   }
   out += t.getNumResults() ? sema::typeName(t.getResult(0)) : "unit";
   return out;
+}
+
+// A function's type without its parameter names, for comparing two
+// versions of a definition.
+std::string functionShape(mlir::func::FuncOp fn) {
+  mlir::FunctionType t = fn.getFunctionType();
+  std::string out;
+  for (mlir::Type in : t.getInputs()) out += sema::typeName(in) + " -> ";
+  return out + (t.getNumResults() ? sema::typeName(t.getResult(0)) : "unit");
 }
 
 // The C layout of a record result: each field at its natural offset.
@@ -223,11 +340,16 @@ const char *helpText =
     "  :forget <name>    remove a definition nothing else uses\n"
     "  :allow [<spec>]   accept unproved obligations in a function or at\n"
     "                    [cell]:line[:col], like piac --allow-unproved\n"
+    "  :spawn <expr>     run an expression as a background task\n"
+    "  :tasks            list the tasks and their values\n"
+    "  :wait <n>         wait for task n to finish\n"
     "  :load <file>      run a file as one cell\n"
     "  :reset            empty the environment\n"
     "  :help             this list\n"
     "  :quit             leave\n"
-    "A definition joins the environment only if everything still verifies.\n";
+    "A definition joins the environment only if everything still verifies.\n"
+    "While a task runs, a definition it can reach can be replaced only by one\n"
+    "proved against the old contract, and the swap reaches the task live.\n";
 
 }  // namespace
 
@@ -239,6 +361,20 @@ struct Session::Impl {
   // The obligations of each function, from the last cell that committed.
   std::map<std::string, std::vector<Event>> proofs;
   std::map<std::string, std::string> types;  // name -> type, as shown
+  std::map<std::string, std::string> shapes;  // name -> type, unnamed
+  // What each definition refers to, for the reach of running tasks.
+  std::map<std::string, std::set<std::string>> refs;
+
+  // Live code (ADR 0031): each definition is called through its slot, which
+  // points at its newest code. Engines stay alive while a task runs code in
+  // them.
+  std::map<std::string, std::unique_ptr<std::atomic<void *>>> slots;
+  std::vector<std::shared_ptr<mlir::ExecutionEngine>> engines;
+  struct Task;
+  std::vector<std::unique_ptr<Task>> tasks;
+  unsigned taskCount = 0;
+  std::string pendingSpawn;                 // the expression :spawn runs
+  std::set<std::string> pendingSpawnRefs;   // and what it refers to
 
   explicit Impl(Options o) : options(std::move(o)) {
     irgen::loadDialects(ctx);
@@ -251,9 +387,22 @@ struct Session::Impl {
     (void)targets;
   }
 
+  ~Impl() {
+    // A task still running keeps its engine: the process is ending, and
+    // its code must not be freed under it.
+    for (auto &t : tasks) {
+      if (t->done.load(std::memory_order_acquire)) {
+        if (t->thread.joinable()) t->thread.join();
+      } else {
+        t->thread.detach();
+        new std::shared_ptr<mlir::ExecutionEngine>(t->engine);
+      }
+    }
+  }
+
   // ---- one attempt at the environment plus a cell ----------------------
 
-  enum class Mode { Define, Redefine, Type, Check };
+  enum class Mode { Define, Redefine, Type, Check, Spawn };
 
   struct Attempt {
     std::string source;
@@ -335,22 +484,23 @@ struct Session::Impl {
 
   // ---- cells -------------------------------------------------------------
 
+  struct Item {
+    Entry entry;
+    NodeKind kind;
+    uint32_t offset;
+  };
+
+  // A cell's code. `forgotten` names what :forget is taking out.
   CellResult code(std::string_view text, Mode mode, unsigned cellNo,
                   std::vector<std::string> forgotten = {}) {
     CellResult r;
     r.cell = cellNo;
     std::vector<Entry> base = env;
+    std::set<int> doomed;  // entries a redefinition replaces
 
-    // Parse once to learn what the cell defines, and take out what a
-    // redefinition replaces.
     Attempt a = parse(base, text, cellNo);
     if (!a.errors.empty()) return fail(r, std::move(a.errors));
 
-    struct Item {
-      Entry entry;
-      NodeKind kind;
-      uint32_t offset;
-    };
     std::vector<Item> items;
     for (size_t i = 0; i < a.tree->kids.size(); ++i) {
       const Node &k = *a.tree->kids[i];
@@ -383,11 +533,17 @@ struct Session::Impl {
     }
     if (items.empty() && mode != Mode::Check && mode != Mode::Type)
       return r;  // only comments
+    if (mode == Mode::Spawn &&
+        (items.size() != 1 || items[0].kind != NodeKind::ExprItem)) {
+      error(r.events, ":spawn needs one expression");
+      r.ok = false;
+      return r;
+    }
 
-    std::vector<std::string> replaced;
+    // What the cell's own definitions replace.
     for (const Item &it : items) {
       if (it.entry.head.empty()) continue;
-      int owner = ownerOf(base, it.entry.head);
+      int owner = ownerOf(base, it.entry.head, doomed);
       if (owner < 0) {
         if (mode == Mode::Redefine) {
           error(r.events, "there is no '" + it.entry.head + "' to redefine",
@@ -396,37 +552,75 @@ struct Session::Impl {
         }
         continue;
       }
-      const Entry &old = base[owner];
       if (mode != Mode::Redefine) {
-        error(r.events,
-              "'" + it.entry.head + "' is already defined in cell [" +
-                  std::to_string(old.cell) +
-                  "]; Pia does not allow shadowing (ADR 0022), so name it " +
-                  it.entry.head + "' or replace it with :redef",
+        error(r.events, shadowing(it.entry.head, base[owner].cell),
               Where{cellNo, it.entry.line, 1});
         r.ok = false;
-      } else if (old.kind == "expansion") {
+      } else if (base[owner].kind == "expansion") {
         error(r.events,
               "'" + it.entry.head + "' was generated by a metaprogram in cell [" +
-                  std::to_string(old.cell) + "]; redefine that instead",
+                  std::to_string(base[owner].cell) + "]; redefine that instead",
               Where{cellNo, it.entry.line, 1});
         r.ok = false;
       } else {
-        replaced.push_back(it.entry.head);
-        base.erase(base.begin() + owner);
+        doomed.insert(owner);
       }
     }
     if (!r.ok) return r;
-    if (!replaced.empty()) {
-      a = parse(base, text, cellNo);
-      if (!a.errors.empty()) return fail(r, std::move(a.errors));
-    }
 
-    // Run the metaprograms, then see who defines what.
+    // Run the metaprograms, with the definitions being replaced still in
+    // place, so the old and new versions can be compared.
     syntax::Diagnostics d;
-    meta::expand(*a.tree, d, options.meta);
+    meta::Options mo = options.meta;
+    mo.live = true;
+    meta::expand(*a.tree, d, mo);
     takeDiagnostics(a, d);
     if (!a.errors.empty()) return fail(r, std::move(a.errors));
+
+    // `redefine` (Pia.Live) marks generated definitions as replacements.
+    for (const NodePtr &k : a.tree->kids) {
+      if (k->kind != NodeKind::LetItem) continue;
+      size_t at = k->flags.find("redef");
+      if (at == std::string::npos) continue;
+      k->flags.erase(at, 5);
+      while (!k->flags.empty() && k->flags.back() == ' ') k->flags.pop_back();
+      while (!k->flags.empty() && k->flags.front() == ' ') k->flags.erase(0, 1);
+      for (const NodePtr &o : a.tree->kids) {
+        if (o.get() == k.get() || o->kind != NodeKind::LetItem || o->text != k->text)
+          continue;
+        const Segment *s = segmentAt(a, o->loc.offset);
+        if (!s || s->entry < 0 || doomed.count(s->entry)) continue;
+        if (base[s->entry].kind != "let" && base[s->entry].kind != "type" &&
+            base[s->entry].kind != "meta") {
+          error(r.events,
+                "'" + k->text + "' was generated by a metaprogram in cell [" +
+                    std::to_string(base[s->entry].cell) +
+                    "], so 'redefine' cannot replace it",
+                where(a, k->loc.line, k->loc.column));
+          r.ok = false;
+          continue;
+        }
+        doomed.insert(s->entry);
+      }
+    }
+    if (!r.ok) return r;
+
+    // Take the replaced definitions out, keeping a copy of each.
+    std::vector<std::string> replaced;
+    std::map<std::string, NodePtr> oldItems;
+    for (int i : doomed)
+      for (const std::string &n : base[i].names) replaced.push_back(n);
+    for (auto it = a.tree->kids.begin(); it != a.tree->kids.end();) {
+      const Segment *s = segmentAt(a, (*it)->loc.offset);
+      if (s && s->entry >= 0 && doomed.count(s->entry) &&
+          (*it)->kind != NodeKind::ExprItem) {
+        if ((*it)->kind == NodeKind::LetItem)
+          oldItems[(*it)->text] = std::move(*it);
+        it = a.tree->kids.erase(it);
+      } else {
+        ++it;
+      }
+    }
 
     std::map<int, std::vector<std::string>> envNames;  // entry -> names
     std::vector<std::string> cellNames;
@@ -443,6 +637,7 @@ struct Session::Impl {
         if (it.offset <= offset) best = &it;
       return best;
     };
+    std::map<std::string, const Node *> newItems;
     for (NodePtr &k : a.tree->kids) {
       const Segment *s = segmentAt(a, k->loc.offset);
       if (k->kind == NodeKind::ExprItem && s && s->entry < 0) {
@@ -462,9 +657,11 @@ struct Session::Impl {
       if (k->kind != NodeKind::LetItem || !s) continue;
       if (s->entry >= 0) {
         envNames[s->entry].push_back(k->text);
+        if (oldItems.count(k->text)) newItems[k->text] = k.get();
         continue;
       }
       cellNames.push_back(k->text);
+      newItems[k->text] = k.get();
       if (Item *it = cellItemAt(k->loc.offset))
         if (std::find(it->entry.names.begin(), it->entry.names.end(), k->text) ==
             it->entry.names.end())
@@ -476,6 +673,7 @@ struct Session::Impl {
     // What each older definition defines now: a metaprogram it calls may
     // generate different names than it did.
     for (size_t i = 0; i < base.size(); ++i) {
+      if (doomed.count(static_cast<int>(i))) continue;
       std::vector<std::string> names;
       if (!base[i].head.empty()) names.push_back(base[i].head);
       for (const std::string &n : envNames[static_cast<int>(i)])
@@ -486,17 +684,50 @@ struct Session::Impl {
     for (const Item &it : items)
       for (const std::string &n : it.entry.names) {
         if (n == it.entry.head) continue;  // checked above
-        int owner = ownerOf(base, n);
+        int owner = ownerOf(base, n, doomed);
         if (owner < 0) continue;
-        error(r.events,
-              "'" + n + "' is already defined in cell [" +
-                  std::to_string(base[owner].cell) +
-                  "]; Pia does not allow shadowing (ADR 0022), so name it " +
-                  n + "' or replace it with :redef",
+        if (oldItems.count(n)) continue;  // a `redefine`
+        error(r.events, shadowing(n, base[owner].cell),
               Where{cellNo, it.entry.line, 1});
         r.ok = false;
       }
     if (!r.ok) return r;
+
+    // While tasks run, a replaced definition they can reach must refine the
+    // one they were proved against (ADR 0031): its new body is proved
+    // against the old contract, as a hidden function.
+    std::set<std::string> live = reachedByTasks();
+    std::map<std::string, std::string> users;  // name -> "task 1, 2"
+    for (const std::string &n : live) users[n] = tasksReaching(n);
+    std::vector<std::string> mustRefine;
+    for (const std::string &n : replaced)
+      if (live.count(n)) mustRefine.push_back(n);
+    for (const std::string &n : forgotten)
+      if (live.count(n)) {
+        error(r.events, "'" + n + "' is in use by a running task (" +
+                            tasksReaching(n) + "); wait for it with :wait");
+        r.ok = false;
+      }
+    if (!r.ok) return r;
+    std::map<std::string, std::string> refinesWhy;  // name -> why not
+    for (const std::string &n : mustRefine) {
+      auto o = oldItems.find(n);
+      auto nw = newItems.find(n);
+      if (o == oldItems.end() || nw == newItems.end() ||
+          sema::isTypeItem(*o->second) || sema::isTypeItem(*nw->second)) {
+        refinesWhy[n] = "a type or a generated definition cannot change "
+                        "while running code uses it";
+        continue;
+      }
+      if (!sameParams(*o->second, *nw->second)) {
+        refinesWhy[n] = "its parameters changed";
+        continue;
+      }
+      NodePtr check = syntax::clone(*nw->second);
+      check->text = kRefinesPrefix + n;
+      check->kids[2] = contractFor(*o->second, *nw->second);
+      a.tree->add(std::move(check));
+    }
 
     // Lower the whole environment and the cell, capturing MLIR's own
     // diagnostics too.
@@ -529,12 +760,17 @@ struct Session::Impl {
     module->walk([&](mlir::func::FuncOp f) { fns[f.getSymName().str()] = f; });
     std::map<std::string, std::string> newTypes;
     std::map<std::string, mlir::Type> results;
+    std::map<std::string, std::string> newShapes;
     for (auto &[name, f] : fns) {
       newTypes[name] = functionType(f);
+      newShapes[name] = functionShape(f);
       mlir::FunctionType t = f.getFunctionType();
       results[name] = t.getNumResults() ? t.getResult(0) : mlir::Type();
     }
     for (auto &[name, t] : evals) t = results[name];
+    for (const std::string &n : mustRefine)
+      if (!refinesWhy.count(n) && shapes.count(n) && newShapes[n] != shapes[n])
+        refinesWhy[n] = "its type changed from " + types[n] + " to " + newTypes[n];
 
     if (mode == Mode::Type) {
       for (auto &[name, t] : evals) {
@@ -570,18 +806,25 @@ struct Session::Impl {
       e.where = whereOf(a, o.where);
       for (const verify::ModelValue &v : o.counterexample)
         e.counterexample.emplace_back(v.name, v.value);
+      bool refinement = o.function.rfind(kRefinesPrefix, 0) == 0;
       switch (o.status) {
         case verify::Status::Proved: e.status = "proved"; break;
-        case verify::Status::Failed: e.status = "failed"; ++bad; break;
+        case verify::Status::Failed: e.status = "failed"; break;
         case verify::Status::Skipped:
-          if (allowed(e)) {
-            e.status = "allowed";
-          } else {
-            e.status = "unproved";
-            ++unproved;
-          }
+          e.status = allowed(e) ? "allowed" : "unproved";
           break;
       }
+      if (refinement) {
+        std::string n = o.function.substr(std::strlen(kRefinesPrefix));
+        if ((e.status == "failed" || e.status == "unproved") &&
+            !refinesWhy.count(n))
+          refinesWhy[n] = "the new body does not meet the old contract: " +
+                          e.text + " (the old contract at " +
+                          formatWhere(e.where) + ")";
+        continue;
+      }
+      bad += e.status == "failed";
+      unproved += e.status == "unproved";
       proofs[o.function].push_back(e);
       if (mine.count(o.function) || (e.status != "proved" && e.status != "allowed"))
         proofEvents.push_back(std::move(e));
@@ -604,13 +847,30 @@ struct Session::Impl {
       error(r.events, msg, Where{cellNo, 0, 0});
       return r;
     }
-    if (mode == Mode::Check) {
-      commit(base, items, proofs, newTypes);
-      return r;
+    for (const auto &[n, why] : refinesWhy) {
+      error(r.events,
+            "'" + n + "' is in use by a running task (" + users[n] +
+                "), so its new definition must refine the old one, but " + why +
+                "; nothing was committed (wait for the task with :wait, or "
+                "keep the contract)",
+            Where{cellNo, 0, 0});
+      r.ok = false;
     }
+    if (!r.ok) return r;
 
     // Commit the definitions; the expressions are not kept.
-    commit(base, items, proofs, newTypes);
+    std::vector<Entry> kept;
+    for (size_t i = 0; i < base.size(); ++i)
+      if (!doomed.count(static_cast<int>(i))) kept.push_back(base[i]);
+    commit(kept, items, proofs, newTypes, *a.tree);
+    shapes.clear();
+    for (auto &[name, sh] : newShapes)
+      if (!internalName(name)) shapes[name] = sh;
+    if (mode == Mode::Check) {
+      if (options.run && anyTaskRunning() && !forgotten.empty())
+        run(*module, {}, r, mlirErrors, false);
+      return r;
+    }
     std::vector<std::pair<std::string, mlir::Type>> toRun;
     for (const Item &it : items) {
       if (it.entry.kind == "expression") continue;
@@ -622,6 +882,8 @@ struct Session::Impl {
         e.kind = redefined ? Event::Kind::Redefined : Event::Kind::Defined;
         e.name = n;
         e.type = types[n];
+        if (redefined && live.count(n))
+          e.text = "swapped into running " + users[n];
         r.events.push_back(std::move(e));
         auto f = fns.find(n);
         if (f != fns.end() && f->second.getNumArguments() == 0 &&
@@ -631,11 +893,27 @@ struct Session::Impl {
       if (it.entry.kind == "type" || it.entry.kind == "meta" ||
           it.entry.kind == "operator") {
         Event e;
-        e.kind = Event::Kind::Defined;
+        e.kind = std::find(replaced.begin(), replaced.end(), it.entry.head) !=
+                         replaced.end()
+                     ? Event::Kind::Redefined
+                     : Event::Kind::Defined;
         e.name = it.entry.head;
         e.type = it.entry.kind;
         r.events.push_back(std::move(e));
       }
+    }
+    // Definitions a `redefine` replaced in an older cell's expansion.
+    for (const std::string &n : replaced) {
+      bool shown = false;
+      for (const Event &e : r.events)
+        if (e.name == n && (e.kind == Event::Kind::Redefined)) shown = true;
+      if (shown || !types.count(n)) continue;
+      Event e;
+      e.kind = Event::Kind::Redefined;
+      e.name = n;
+      e.type = types[n];
+      if (live.count(n)) e.text = "swapped into running " + users[n];
+      r.events.push_back(std::move(e));
     }
     for (auto &[name, t] : evals) {
       if (!showable(t)) {
@@ -646,18 +924,26 @@ struct Session::Impl {
       }
       toRun.emplace_back(name, t);
     }
-    if (!options.run || toRun.empty()) return r;
-    run(*module, toRun, r, mlirErrors, a);
+    bool swap = !replaced.empty() && !live.empty();
+    if (!options.run || (toRun.empty() && !swap)) return r;
+    run(*module, toRun, r, mlirErrors, mode == Mode::Spawn);
     return r;
   }
 
-  // Compiles the verified module and runs each `(name, type)`.
+  // ---- compiling and running ---------------------------------------------
+
+  // Compiles the verified module into a new JIT engine, points every
+  // definition's slot at its new code, and runs each `(name, type)`, or
+  // starts it as a task.
   void run(mlir::ModuleOp module,
            const std::vector<std::pair<std::string, mlir::Type>> &toRun,
-           CellResult &r, std::vector<Event> &mlirErrors, Attempt &a) {
+           CellResult &r, std::vector<Event> &mlirErrors, bool spawn) {
+    std::set<std::string> defs;
+    for (const auto &[name, t] : types) defs.insert(name);
     codegen::eraseContracts(module);
     if (mlir::failed(codegen::lowerToCore(module)) ||
-        mlir::failed(codegen::lowerToLLVM(module))) {
+        mlir::failed(codegen::lowerToLLVM(module)) ||
+        mlir::failed(callThroughSlots(module, defs))) {
       for (Event &e : mlirErrors) r.events.push_back(std::move(e));
       error(r.events, "this cannot be compiled yet, so it was not run");
       r.ok = false;
@@ -678,22 +964,49 @@ struct Session::Impl {
     eo.transformer = keep;
     eo.enableGDBNotificationListener = false;
     eo.enablePerfNotificationListener = false;
-    llvm::Expected<std::unique_ptr<mlir::ExecutionEngine>> engine =
+    llvm::Expected<std::unique_ptr<mlir::ExecutionEngine>> created =
         mlir::ExecutionEngine::create(module, eo);
-    if (!engine) {
+    if (!created) {
       error(r.events, "JIT: " + (jitError.empty()
-                                     ? llvm::toString(engine.takeError())
-                                     : (llvm::consumeError(engine.takeError()),
+                                     ? llvm::toString(created.takeError())
+                                     : (llvm::consumeError(created.takeError()),
                                         jitError)));
       r.ok = false;
       return;
     }
-    (*engine)->initialize();
+    std::shared_ptr<mlir::ExecutionEngine> engine = std::move(*created);
+    for (const std::string &n : defs)
+      if (!slots.count(n)) slots[n] = std::make_unique<std::atomic<void *>>(nullptr);
+    engine->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
+      llvm::orc::SymbolMap map;
+      for (const auto &[n, slot] : slots)
+        map[interner(kSlotPrefix + n)] = {
+            llvm::orc::ExecutorAddr::fromPtr(slot.get()),
+            llvm::JITSymbolFlags::Exported};
+      return map;
+    });
+    engine->initialize();
+    // Install the new code. Calls that start from now on run it; frames
+    // already running finish on the code they started in.
+    for (const std::string &n : defs) {
+      llvm::Expected<void *> fp = engine->lookup(kInternalPrefix + n);
+      if (!fp) {
+        llvm::consumeError(fp.takeError());
+        continue;  // folded away, or not a function
+      }
+      slots[n]->store(*fp, std::memory_order_release);
+    }
+    reapEngines();
+    engines.push_back(engine);
     for (const auto &[name, t] : toRun) {
-      llvm::Expected<void *> fp = (*engine)->lookup(cName(name));
+      llvm::Expected<void *> fp = engine->lookup(cName(name));
       if (!fp) {
         error(r.events, "JIT: " + llvm::toString(fp.takeError()));
         r.ok = false;
+        continue;
+      }
+      if (spawn && name.rfind(kEvalPrefix, 0) == 0) {
+        startTask(*fp, t, engine, r);
         continue;
       }
       std::string value = callAndFormat(*fp, t);
@@ -711,22 +1024,140 @@ struct Session::Impl {
             e.value = value;
       }
     }
-    (void)a;
+  }
+
+  // ---- tasks ---------------------------------------------------------------
+
+  struct Task {
+    unsigned id = 0;
+    unsigned cell = 0;
+    std::string expr;
+    std::string type;
+    std::set<std::string> reach;  // definitions its code can call
+    std::shared_ptr<mlir::ExecutionEngine> engine;
+    std::thread thread;
+    std::atomic<bool> done{false};
+    std::string value;  // set before done
+  };
+
+  void startTask(void *fp, mlir::Type t, std::shared_ptr<mlir::ExecutionEngine> engine,
+                 CellResult &r) {
+    auto task = std::make_unique<Task>();
+    task->id = ++taskCount;
+    task->cell = r.cell;
+    task->expr = pendingSpawn;
+    task->type = t ? sema::typeName(t) : "unit";
+    task->reach = reachOf(pendingSpawnRefs);
+    task->engine = std::move(engine);
+    Task *raw = task.get();
+    task->thread = std::thread([raw, fp, t] {
+      raw->value = callAndFormat(fp, t);
+      raw->done.store(true, std::memory_order_release);
+    });
+    r.events.push_back(taskEvent(*raw));
+    tasks.push_back(std::move(task));
+  }
+
+  Event taskEvent(const Task &t) const {
+    Event e;
+    e.kind = Event::Kind::Task;
+    e.name = std::to_string(t.id);
+    e.text = t.expr;
+    e.type = t.type;
+    bool done = t.done.load(std::memory_order_acquire);
+    e.status = done ? "done" : "running";
+    if (done) e.value = t.value;
+    e.where = Where{t.cell, 0, 0};
+    return e;
+  }
+
+  bool anyTaskRunning() const {
+    for (const auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire)) return true;
+    return false;
+  }
+
+  // The definitions that running tasks can reach.
+  std::set<std::string> reachedByTasks() const {
+    std::set<std::string> out;
+    for (const auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire))
+        out.insert(t->reach.begin(), t->reach.end());
+    return out;
+  }
+
+  std::string tasksReaching(const std::string &n) const {
+    std::string out;
+    for (const auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire) && t->reach.count(n))
+        out += (out.empty() ? "task " : ", ") + std::to_string(t->id);
+    return out;
+  }
+
+  // Everything `roots` can call, through the environment's definitions.
+  std::set<std::string> reachOf(const std::set<std::string> &roots) const {
+    std::set<std::string> out;
+    std::vector<std::string> work(roots.begin(), roots.end());
+    while (!work.empty()) {
+      std::string n = work.back();
+      work.pop_back();
+      if (!types.count(n) || !out.insert(n).second) continue;
+      auto it = refs.find(n);
+      if (it != refs.end())
+        for (const std::string &m : it->second) work.push_back(m);
+    }
+    return out;
+  }
+
+  // Frees the engines no running task uses. The newest one stays, since
+  // the slots point into it.
+  void reapEngines() {
+    std::set<mlir::ExecutionEngine *> used;
+    for (const auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire)) used.insert(t->engine.get());
+    for (auto &t : tasks)
+      if (t->done.load(std::memory_order_acquire) && t->thread.joinable())
+        t->thread.join();
+    for (auto &t : tasks)
+      if (t->done.load(std::memory_order_acquire)) t->engine.reset();
+    std::vector<std::shared_ptr<mlir::ExecutionEngine>> keep;
+    for (auto &e : engines)
+      if (used.count(e.get())) keep.push_back(e);
+    engines = std::move(keep);
   }
 
   template <typename Items>
   void commit(std::vector<Entry> base, const Items &items,
               std::map<std::string, std::vector<Event>> proofsNow,
-              std::map<std::string, std::string> typesNow) {
+              std::map<std::string, std::string> typesNow, const Node &tree) {
     for (const auto &it : items)
       if (it.entry.kind != "expression") base.push_back(it.entry);
     env = std::move(base);
     proofs.clear();
     types.clear();
     for (auto &[name, list] : proofsNow)
-      if (name.rfind(kEvalPrefix, 0) != 0) proofs[name] = std::move(list);
+      if (internalName(name)) continue;
+      else proofs[name] = std::move(list);
     for (auto &[name, t] : typesNow)
-      if (name.rfind(kEvalPrefix, 0) != 0) types[name] = std::move(t);
+      if (internalName(name)) continue;
+      else types[name] = std::move(t);
+    refs.clear();
+    for (const NodePtr &k : tree.kids) {
+      if (k->kind != NodeKind::LetItem) continue;
+      std::set<std::string> rs;
+      collectRefs(*k, rs);
+      if (k->text.rfind(kEvalPrefix, 0) == 0) {
+        pendingSpawnRefs = rs;
+        continue;
+      }
+      refs[k->text] = std::move(rs);
+    }
+    // Running tasks can now reach what the new definitions call.
+    for (auto &t : tasks)
+      if (!t->done.load(std::memory_order_acquire)) {
+        std::set<std::string> more = reachOf(t->reach);
+        t->reach.insert(more.begin(), more.end());
+      }
   }
 
   // After a redefinition or :forget broke the build, says which
@@ -757,10 +1188,13 @@ struct Session::Impl {
     return r;
   }
 
-  int ownerOf(const std::vector<Entry> &entries, const std::string &name) const {
-    for (size_t i = 0; i < entries.size(); ++i)
+  int ownerOf(const std::vector<Entry> &entries, const std::string &name,
+              const std::set<int> &skip = {}) const {
+    for (size_t i = 0; i < entries.size(); ++i) {
+      if (skip.count(static_cast<int>(i))) continue;
       for (const std::string &n : entries[i].names)
         if (n == name) return static_cast<int>(i);
+    }
     return -1;
   }
 
@@ -903,8 +1337,36 @@ struct Session::Impl {
       std::stringstream buf;
       buf << in.rdbuf();
       return code(buf.str(), Mode::Define, cellNo);
+    } else if (word == "spawn") {
+      if (!needArg()) return r;
+      pendingSpawn = arg;
+      return code(arg, Mode::Spawn, cellNo);
+    } else if (word == "tasks") {
+      for (const auto &t : tasks) r.events.push_back(taskEvent(*t));
+      if (tasks.empty()) info("no tasks");
+    } else if (word == "wait") {
+      if (!needArg()) return r;
+      unsigned id = std::strtoul(arg.c_str(), nullptr, 10);
+      Task *task = nullptr;
+      for (auto &t : tasks)
+        if (t->id == id) task = t.get();
+      if (!task) {
+        error(r.events, "there is no task " + arg);
+        r.ok = false;
+        return r;
+      }
+      if (task->thread.joinable()) task->thread.join();
+      r.events.push_back(taskEvent(*task));
+      reapEngines();
     } else if (word == "reset") {
+      if (anyTaskRunning()) {
+        error(r.events, "tasks are still running; wait for them with :wait");
+        r.ok = false;
+        return r;
+      }
       env.clear();
+      refs.clear();
+      shapes.clear();
       proofs.clear();
       types.clear();
       info("the environment is empty");
@@ -947,6 +1409,17 @@ std::vector<std::string> Session::names() const {
 bool Session::isComplete(std::string_view text) {
   std::string t = trim(text);
   if (t.empty() || t[0] == ':') return true;
+  // A definition's contracts come before its `=`, so a last line that is a
+  // contract clause needs the body still to come.
+  size_t nl = t.rfind('\n');
+  std::string lastLine = trim(t.substr(nl == std::string::npos ? 0 : nl + 1));
+  for (const char *clause : {"requires", "ensures", "decreases"}) {
+    size_t n = std::strlen(clause);
+    if (lastLine.compare(0, n, clause) == 0 &&
+        (lastLine.size() == n ||
+         !std::isalnum(static_cast<unsigned char>(lastLine[n]))))
+      return false;
+  }
   syntax::Diagnostics d;
   std::vector<syntax::Token> tokens = syntax::tokenize(text, d);
   for (const syntax::Diagnostic &e : d.errors())
@@ -1013,6 +1486,7 @@ const char *kindName(Event::Kind k) {
     case Event::Kind::Proof: return "proof";
     case Event::Kind::Error: return "error";
     case Event::Kind::Info: return "info";
+    case Event::Kind::Task: return "task";
   }
   return "info";
 }
@@ -1043,7 +1517,8 @@ std::string render(const CellResult &result) {
           os << e.name << " : " << e.type;
           if (!e.value.empty()) os << " = " << e.value;
         }
-        if (e.kind == Event::Kind::Redefined) os << "  (redefined)";
+        if (e.kind == Event::Kind::Redefined)
+          os << "  (redefined" << (e.text.empty() ? "" : ", " + e.text) << ")";
         if (proved[e.name])
           os << "  (* " << proved[e.name] << " proved *)";
         os << "\n";
@@ -1078,6 +1553,13 @@ std::string render(const CellResult &result) {
         break;
       case Event::Kind::Error:
         os << at << "error: " << e.text << "\n";
+        break;
+      case Event::Kind::Task:
+        os << "task " << e.name << " (" << e.text << ") ";
+        if (e.status == "done")
+          os << "done: " << e.type << " = " << e.value << "\n";
+        else
+          os << "running\n";
         break;
       case Event::Kind::Info:
         os << e.text;

@@ -1,5 +1,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_test")
+load("//tests/lit:lit.bzl", "lit_tests")
 
 # `pia repl` end to end, through the JSON protocol and a pipe.
 py_test(
@@ -27,4 +28,11 @@ cc_test(
         "//src/repl",
         "@googletest//:gtest_main",
     ],
+)
+
+# Compiled programs have no Pia.Live.
+lit_tests(
+    name = "piac_tests",
+    srcs = glob(["*.pia"]),
+    tools = ["//tools/piac"],
 )
