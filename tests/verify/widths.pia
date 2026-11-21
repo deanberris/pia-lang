@@ -1,0 +1,25 @@
+(* The encoding width is chosen per function, from the products it can
+   compute (docs/verifier.md, "Encoding"). Narrow products, such as a
+   byte by a constant, keep the 68-bit encoding, so loop goals over them
+   prove quickly. A 64-bit product widens only its own function.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* BT.601 luma in fixed point: (77r + 150g + 29b) / 256. *)
+let luma (r : u8) (g : u8) (b : u8) : u8 =
+  let y : u32 = 77 * r + 150 * g + 29 * b in
+  y / 256
+
+let gray (rgb : [u8]) (dst : out mutable [u8]) : unit
+  requires len rgb = len dst + len dst + len dst
+=
+  for i in 0..len dst do
+    let j = i + i + i in
+    dst.[i] <- luma (rgb.[j]) (rgb.[j + 1]) (rgb.[j + 2])
+  done
+
+(* A product of two u64 values can need 128 bits, so this function is
+   encoded at 132 bits. The functions above are not. *)
+let wide (a : u64) (b : u64) : u64
+  requires a < 4294967296 && b < 4294967296
+= a * b
