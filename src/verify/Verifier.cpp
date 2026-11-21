@@ -1179,6 +1179,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       Outcome out;
       out.kind = g.kind;
       out.where = formatLoc(g.op->getLoc());
+      out.function = fn.getSymName().str();
       out.claim = g.claim;
       if (g.skipped) {
         out.status = Status::Skipped;

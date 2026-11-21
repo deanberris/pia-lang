@@ -7,6 +7,9 @@
 //   piac --emit=obj -o f.o f.pia    verify, then compile to an object (M6)
 //   piac --emit=asm|llvm|core ...   the same, stopping at assembly, LLVM IR
 //                                   or the core MLIR dialects
+//   piac --allow-unproved=SPEC ...  let codegen accept unproved obligations:
+//                                   all of them in function SPEC, or the ones
+//                                   at SPEC = file:line or file:line:col
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
@@ -51,7 +54,9 @@ int usage() {
                "--dump-expanded | --dump-tokens | --check) "
                "[--fragment=contracts] [--meta-cycles=N] <file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
-               "[--target=<triple>] [--cpu=<name>] [-O<n>] <file.pia>\n";
+               "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
+               "             [--allow-unproved=<function>|<file:line[:col]>]... "
+               "<file.pia>\n";
   return 2;
 }
 
@@ -93,26 +98,68 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
   return failed > 0;
 }
 
-// Verifies, then compiles to `mode`'s output. Code is generated only once
-// no obligation fails; skipped ones are reported, since v0 cannot prove
-// them yet (docs/verifier.md, "Limits of v0").
+// Whether `--allow-unproved=spec` accepts the unproved obligation `o`: a
+// spec without ':' names a function, and one with ':' is a location,
+// "file:line" (any column) or "file:line:col".
+bool allows(const std::string &spec, const pia::verify::Outcome &o) {
+  if (spec.find(':') == std::string::npos) return o.function == spec;
+  return o.where == spec || o.where.rfind(spec + ":", 0) == 0;
+}
+
+std::string obligations(size_t n) {
+  return std::to_string(n) + (n == 1 ? " obligation" : " obligations");
+}
+
+// Verifies, then compiles to `mode`'s output. Code is generated only when
+// every obligation is proved. A failed one stops it with the verifier's
+// report. So does an unproved one (v0 skips some, such as those in loops;
+// docs/verifier.md, "Limits of v0"), unless `allowUnproved` accepts it.
 int compile(mlir::ModuleOp module, const std::string &mode,
-            const std::string &output, const pia::codegen::Options &options) {
-  std::vector<pia::verify::Outcome> outcomes = pia::verify::verifyModule(module);
-  int skipped = 0;
+            const std::string &output, const pia::codegen::Options &options,
+            const std::vector<std::string> &allowUnproved) {
+  using pia::verify::Outcome;
+  using pia::verify::Status;
+  std::vector<Outcome> outcomes = pia::verify::verifyModule(module);
   bool failed = false;
-  for (const pia::verify::Outcome &o : outcomes) {
-    skipped += o.status == pia::verify::Status::Skipped;
-    failed |= o.status == pia::verify::Status::Failed;
+  std::vector<const Outcome *> unproved;
+  size_t allowed = 0;
+  std::vector<bool> used(allowUnproved.size(), false);
+  for (const Outcome &o : outcomes) {
+    failed |= o.status == Status::Failed;
+    if (o.status != Status::Skipped) continue;
+    bool ok = false;
+    for (size_t i = 0; i < allowUnproved.size(); ++i)
+      if (allows(allowUnproved[i], o)) used[i] = ok = true;
+    if (ok)
+      ++allowed;
+    else
+      unproved.push_back(&o);
   }
   if (failed) {
     report(outcomes, std::cerr);
     return 1;
   }
-  if (skipped > 0)
-    std::cerr << "piac: warning: " << skipped << " obligation"
-              << (skipped == 1 ? " was" : "s were")
-              << " skipped and not proved; see piac --verify\n";
+  for (size_t i = 0; i < allowUnproved.size(); ++i)
+    if (!used[i])
+      std::cerr << "piac: warning: --allow-unproved=" << allowUnproved[i]
+                << " matches no unproved obligation\n";
+  if (!unproved.empty()) {
+    for (const Outcome *o : unproved)
+      std::cerr << o->where << ": unproved: " << o->claim << " ["
+                << o->method << "] in '" << o->function << "'\n";
+    std::cerr << "piac: error: " << obligations(unproved.size())
+              << " not proved, so no code was generated\n"
+              << "piac: note: prove "
+              << (unproved.size() == 1 ? "it" : "them")
+              << ", or accept specific ones with "
+                 "--allow-unproved=<function> or "
+                 "--allow-unproved=<file:line[:col]>\n";
+    return 1;
+  }
+  if (allowed > 0)
+    std::cerr << "piac: warning: " << obligations(allowed)
+              << " not proved, accepted by --allow-unproved; see "
+                 "piac --verify\n";
 
   pia::codegen::eraseContracts(module);
   if (mlir::failed(pia::codegen::lowerToCore(module))) return 1;
@@ -156,6 +203,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
 int main(int argc, char **argv) {
   std::string mode, file, output;
+  std::vector<std::string> allowUnproved;
   bool contracts = false, verify = false, dumpSmt = false;
   pia::meta::Options meta;
 #ifndef PIA_NO_MLIR
@@ -179,6 +227,10 @@ int main(int argc, char **argv) {
              arg[2] <= '3')
       cg.optLevel = arg[2] - '0';
 #endif
+    else if (arg.rfind("--allow-unproved=", 0) == 0) {
+      if (arg.size() == 17) return usage();
+      allowUnproved.push_back(arg.substr(17));
+    }
     else if (arg == "--verify")
       verify = true;
     else if (arg == "--dump-smt")
@@ -202,6 +254,7 @@ int main(int argc, char **argv) {
   bool codegen = mode == "--emit=core" || mode == "--emit=llvm" ||
                  mode == "--emit=asm" || mode == "--emit=obj";
   if (codegen && verify) return usage();
+  if (!allowUnproved.empty() && !codegen) return usage();
   if (mode == "--emit=obj" && output.empty()) return usage();
   if (!output.empty() && !codegen) return usage();
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
@@ -253,7 +306,7 @@ int main(int argc, char **argv) {
         return 1;
       }
       if (module && codegen) {
-        return compile(*module, mode, output, cg);
+        return compile(*module, mode, output, cg, allowUnproved);
       } else if (module && verify) {
         pia::verify::Options options;
         options.dumpSmt = dumpSmt;
