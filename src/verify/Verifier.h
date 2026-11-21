@@ -28,10 +28,15 @@ struct Outcome {
   std::string claim;   // what must hold, e.g. "'+' does not overflow u8"
   std::string method;  // "intervals" or "smt" when proved, else the reason
   std::vector<ModelValue> counterexample;
+  unsigned long long cost = 0;  // Z3's resource count, with reportCost
 };
 
 struct Options {
-  unsigned timeoutMs = 10000;  // per obligation
+  unsigned timeoutMs = 10000;  // per obligation, wall clock
+  // Z3's deterministic resource limit per obligation; 0 for none. Unlike
+  // the timeout, it does not depend on how busy the machine is.
+  unsigned rlimit = 0;
+  bool reportCost = false;     // record each query's resource use
   bool dumpSmt = false;        // print each query's SMT-LIB to stderr
 };
 
