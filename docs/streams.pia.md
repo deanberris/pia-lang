@@ -389,9 +389,9 @@ let consider (fill : [u16]) (m : usize) (n : usize) (diagonal : bool)
           || (result.target < len fill && fill.[result.target] < fill.[m])
 =
   if fill.[n] < fill.[m] then
-    let d : u16 = fill.[m] - fill.[n] in
-    let slope : u32 = if diagonal then sevenfold d else tenfold d in
-    if slope > best.drop then { target = n; drop = slope } else best
+    (let d : u16 = fill.[m] - fill.[n] in
+     let slope : u32 = if diagonal then sevenfold d else tenfold d in
+     if slope > best.drop then { target = n; drop = slope } else best)
   else best
 ```
 
@@ -607,12 +607,12 @@ let paint (h : u16) (f : u16) (a : u32) (outlet : usize) (threshold : u32)
      else { red = 70; green = 140; blue = 240 })
   else if f > h then { red = 150; green = 205; blue = 235 }
   else
-    let t = tint outlet in
-    let shade : u16 = h / 256 in
-    let r : u16 = t.red + shade in
-    let g : u16 = t.green + shade in
-    let b : u16 = t.blue + shade in
-    { red = r / 2; green = g / 2; blue = b / 2 }
+    (let t = tint outlet in
+     let shade : u16 = h / 256 in
+     let r : u16 = t.red + shade in
+     let g : u16 = t.green + shade in
+     let b : u16 = t.blue + shade in
+     { red = r / 2; green = g / 2; blue = b / 2 })
 ```
 
 The picture, as packed RGB bytes, and the number of stream cells, which
