@@ -85,7 +85,8 @@ const char *builtinOperator(const std::string &name) {
       {"mul", "*"},     {"div", "/"},     {"rem", "%"},      {"eq", "="},
       {"ne", "<>"},     {"lt", "<"},      {"gt", ">"},       {"le", "<="},
       {"ge", ">="},     {"and", "&&"},    {"or", "||"},      {"implies", "==>"},
-      {"iff", "<==>"},
+      {"iff", "<==>"},  {"band", "&"},   {"bor", "|"},      {"bxor", "^"},
+      {"shl", "<<"},    {"shr", ">>"},
   };
   auto it = ops.find(name);
   return it == ops.end() ? nullptr : it->second;
@@ -97,8 +98,11 @@ bool isLogic(const std::string &op) {
 
 bool isArith(const std::string &op) {
   return op == "+" || op == "-" || op == "*" || op == "/" || op == "%" ||
-         op == "mod" || op == "+|" || op == "-|";
+         op == "mod" || op == "+|" || op == "-|" || op == "&" || op == "|" ||
+         op == "^" || op == "<<" || op == ">>";
 }
+
+bool isShift(const std::string &op) { return op == "<<" || op == ">>"; }
 
 // Every name assigned with `x <- ...` inside `n`.
 void collectAssigned(const Node &n, std::set<std::string> &out) {
@@ -596,6 +600,9 @@ class Gen {
       // context expects a wider integer, at that type: `dst.[i] <- src.[i] * 3`
       // with u8 `src` and u16 `dst` multiplies at u16.
       TV lhs = ops->first, rhs = ops->second;
+      // A shift happens at the type of the value shifted, widened to what
+      // the context expects; the amount keeps its own type.
+      if (isShift(op)) return genShift(n, op, lhs, rhs, lhsNode, expected);
       if (auto want = mlir::dyn_cast_or_null<IntType>(expected)) {
         auto lt = mlir::dyn_cast<IntType>(lhs.type);
         auto rt = mlir::dyn_cast<IntType>(rhs.type);
@@ -621,10 +628,61 @@ class Gen {
       else if (op == "-" || op == "-|") v = create<SubOp>(l, t, a, c, mode);
       else if (op == "*") v = create<MulOp>(l, t, a, c, mode);
       else if (op == "/") v = create<DivOp>(l, t, a, c, mode);
+      else if (op == "&") v = create<BAndOp>(l, t, a, c, mode);
+      else if (op == "|") v = create<BOrOp>(l, t, a, c, mode);
+      else if (op == "^") v = create<BXorOp>(l, t, a, c, mode);
       else v = create<RemOp>(l, t, a, c, mode);
       return TV{v, t};
     }
     return fail(n, "the operator '" + op + "' is not supported yet");
+  }
+
+  R genShift(const Node &n, const std::string &op, TV lhs, TV rhs,
+             const Node &lhsNode, Type expected) {
+    auto lt = mlir::dyn_cast<IntType>(lhs.type);
+    auto rt = mlir::dyn_cast<IntType>(rhs.type);
+    if (!lt || !rt)
+      return fail(n, "'" + op + "' needs integer operands, found " +
+                         typeName(lhs.type) + " and " + typeName(rhs.type));
+    if (auto want = mlir::dyn_cast_or_null<IntType>(expected)) {
+      IntType j = join(lt, want);
+      R l2 = coerce(lhs, j, lhsNode);
+      if (!l2) return std::nullopt;
+      lhs = *l2;
+      lt = j;
+    }
+    auto mode = OverflowModeAttr::get(&ctx_, overflow_);
+    Value v = op == "<<" ? Value(create<ShlOp>(loc(n), lt, lhs.value,
+                                               rhs.value, mode))
+                         : Value(create<ShrOp>(loc(n), lt, lhs.value,
+                                               rhs.value, mode));
+    return TV{v, lt};
+  }
+
+  // `~x`: every bit of x's representation flipped. On an unsigned type that
+  // is `max - x` at x's machine width; on a signed one, `-1 - x`.
+  R genBNot(const Node &n, const Node &operand, Type expected) {
+    R v = genExpr(operand, expected);
+    if (!v) return v;
+    auto t = mlir::dyn_cast<IntType>(v->type);
+    if (!t) return fail(n, "'~' needs an integer, found " + typeName(v->type));
+    Location l = loc(n);
+    auto mode = OverflowModeAttr::get(&ctx_, overflow_);
+    if (t.isSigned()) {
+      llvm::APInt m1 = llvm::APInt::getAllOnes(kWidth);
+      auto kt = IntType::get(&ctx_, m1, m1);
+      Value k = create<ConstantOp>(l, kt, b_.getIntegerAttr(
+                                              b_.getIntegerType(kWidth), m1));
+      Value r = create<SubOp>(l, t, k, v->value, mode);
+      return TV{r, t};
+    }
+    llvm::APInt ones =
+        llvm::APInt::getMaxValue(t.getStorageWidth()).zext(kWidth);
+    auto full = IntType::get(&ctx_, llvm::APInt(kWidth, 0), ones);
+    Value k = create<ConstantOp>(
+        l, full, b_.getIntegerAttr(b_.getIntegerType(kWidth), ones));
+    Value r = create<BXorOp>(l, full, v->value, k, mode);
+    return TV{r, full};
   }
 
   // `&&`, `||` and `==>` short-circuit in code, so they lower to `scf.if`.
@@ -736,6 +794,10 @@ class Gen {
       }
     }
     if (!local) {
+      if (fn.text == "bnot") {
+        if (argc != 1) return fail(n, "'bnot' takes one argument");
+        return genBNot(n, *n.kids[1], expected);
+      }
       if (const char *op = builtinOperator(fn.text)) {
         if (argc != 2)
           return fail(n, "'" + fn.text + "' takes two arguments");

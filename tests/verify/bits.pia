@@ -1,0 +1,82 @@
+(* Bit operators (#48, docs/stdlib.md group 2): exact results, the shift
+   amount goal, and intervals that keep masks and shifts off the solver.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A mask keeps the result in the mask's range, by intervals. *)
+let low_nibble (x : u8) : int{0..15} = x & 15
+
+(* Unlike C, `&` binds tighter than `=`. *)
+let is_even (x : u32) : bool
+  ensures result <==> x % 2 = 0
+= x & 1 = 0
+
+(* `|` and `^` of two u8 values are u8 values. *)
+let merge (a : u8) (b : u8) : u8 = (a | b) ^ (a & b)
+
+(* `~` flips every bit of a u8: 255 - x. *)
+let invert (x : u8) : u8
+  ensures result = 255 - x
+= ~x
+
+(* On a signed type it is -1 - x. *)
+let invert_i (x : i32) : i32
+  ensures result = -1 - x
+= ~x
+
+(* A shift by a constant below the width needs no proof. *)
+let times8 (x : u8) : u16 = x << 3
+
+(* A shift left is a product: in proof mode no bit may be lost. *)
+(* `|` is bitwise only inside brackets, so the body is in parentheses. *)
+let pack (hi : u8) (lo : u8) : u16
+  ensures result = 256u16 * hi + lo
+= ((hi << 8) | lo)
+
+(* The amount is a goal: here it can reach 8, which a u8 cannot shift by. *)
+let too_far (x : u8) (n : int{0..8}) : u8 @overflow(wrap) = x << n
+
+(* And a lossy shift left fails its overflow goal. *)
+let lossy (x : u8) : u8 = x << 1
+
+(* Arithmetic shift right rounds toward negative infinity. *)
+let floor_half (x : i32) : i32
+  ensures 2 * result <= x && x < 2 * result + 2
+= x >> 1
+
+(* Wrapping shifts drop the high bits, as in C. *)
+let rotl8 (x : u8) (n : u8) : u8 @overflow(wrap)
+  requires n < 8
+= ((x << n) | (x >> ((8 - n) % 8)))
+
+(* Expected report, in order.
+// CHECK: bits.pia:7:42: proved: '&' does not overflow u8 [intervals]
+// CHECK: bits.pia:7:42: proved: the value fits in int{0..15} [smt]
+// CHECK: bits.pia:12:5: proved: '&' does not overflow u32 [intervals]
+// CHECK: bits.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:15:39: proved: '|' does not overflow u8 [intervals]
+// CHECK: bits.pia:15:49: proved: '&' does not overflow u8 [intervals]
+// CHECK: bits.pia:15:44: proved: '^' does not overflow u8 [intervals]
+// CHECK: bits.pia:20:3: proved: '^' does not overflow u8 [intervals]
+// CHECK: bits.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:25:3: proved: '-' does not overflow i32 [intervals]
+// CHECK: bits.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:28:31: proved: the shift amount is less than 16 [intervals]
+// CHECK: bits.pia:28:31: proved: '<<' does not overflow u16 [intervals]
+// CHECK: bits.pia:34:8: proved: the shift amount is less than 16 [intervals]
+// CHECK: bits.pia:34:8: proved: '<<' does not overflow u16 [intervals]
+// CHECK: bits.pia:34:14: proved: '|' does not overflow u16 [intervals]
+// CHECK: bits.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:37:63: failed: the shift amount is less than 8
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, n = {{-?[0-9]+}}, amount = {{-?[0-9]+}}
+// CHECK: bits.pia:40:29: proved: the shift amount is less than 8 [intervals]
+// CHECK: bits.pia:40:29: failed: '<<' does not overflow u8
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, result = {{-?[0-9]+}}
+// CHECK: bits.pia:45:5: proved: the shift amount is less than 32 [intervals]
+// CHECK: bits.pia:45:5: proved: '>>' does not overflow i32 [intervals]
+// CHECK: bits.pia:44:3: proved: the postcondition holds [smt]
+// CHECK: bits.pia:50:7: proved: the shift amount is less than 8 [smt]
+// CHECK: bits.pia:50:30: proved: the divisor is not zero [intervals]
+// CHECK: bits.pia:50:18: proved: the shift amount is less than 8 [smt]
+// CHECK: 24 proved, 2 failed, 0 skipped
+*)

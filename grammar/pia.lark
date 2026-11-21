@@ -13,6 +13,7 @@
 %declare LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE DOT_LBRACKET
 %declare COMMA COLON SEMI SEP DOT QDOT DOTDOT
 %declare ARROW FATARROW LARROW EQ BAR OP_IMP OP_OR OP_AND OP_CMP OP_ADD OP_MUL
+%declare OP_SHIFT OP_BXOR OP_BAND OP_TILDE
 
 // ---------------------------------------------------------------- program
 
@@ -65,7 +66,7 @@ clause_eq.2: range_e EQ (range_e | quantifier) -> binop
 // `let meta operator ( + ) : prec 6 left = ...`
 // `let meta operator ( + ) for vec<T, k> = ...`
 meta_operator: LET META OPERATOR LPAREN operator RPAREN fixity? (FOR type)? EQ seq
-fixity: COLON IDENT INT IDENT            // prec <level> left|right|none
+fixity: COLON IDENT (INT | FLOAT) IDENT  // prec <level> left|right|none
 
 ?operator: OP_IMP | OP_OR | OP_AND | OP_CMP | OP_ADD | OP_MUL | EQ
 
@@ -194,7 +195,9 @@ qbinder: IDENT (COLON type)?                       -> qbinder_typed
 
 // Binary operators, loosest first. Levels match the bootstrap table:
 // ==> 1 right, || 2 right, && 3 right, comparisons 4 none, .. 5 none,
-// + 6 left, * 7 left.
+// << >> 5.5 left, + 6 left, ^ 6.4 left, & 6.5 left, * 7 left. Bitwise `|`
+// (6.3, only inside brackets) is left out: telling it from the `|` of match
+// arms needs the C++ parser's context flag, which this grammar does not model.
 // A quantifier may be the right operand of a logical operator or comparison
 // (`p ==> forall i. q i`); its body then extends as far right as possible.
 ?imp_e: or_e OP_IMP (imp_e | quantifier) -> binop
@@ -205,13 +208,20 @@ qbinder: IDENT (COLON type)?                       -> qbinder_typed
       | cmp_e
 ?cmp_e: range_e (OP_CMP | EQ) (range_e | quantifier) -> binop
       | range_e
-?range_e: add_e DOTDOT add_e -> range
+?range_e: shift_e DOTDOT shift_e -> range
+        | shift_e
+?shift_e: shift_e OP_SHIFT add_e -> binop
         | add_e
-?add_e: add_e OP_ADD mul_e -> binop
-      | mul_e
+?add_e: add_e OP_ADD bxor_e -> binop
+      | bxor_e
+?bxor_e: bxor_e OP_BXOR band_e -> binop
+       | band_e
+?band_e: band_e OP_BAND mul_e -> binop
+       | mul_e
 ?mul_e: mul_e OP_MUL unary -> binop
       | unary
 ?unary: OP_ADD unary -> neg
+      | OP_TILDE unary -> bnot
       | app
 
 ?app: postfix postfix+ -> apply

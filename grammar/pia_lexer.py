@@ -41,6 +41,8 @@ BOOTSTRAP_OPERATORS = {
     ">=": "OP_CMP",
     "+": "OP_ADD", "-": "OP_ADD", "+|": "OP_ADD", "-|": "OP_ADD",
     "*": "OP_MUL", "/": "OP_MUL", "%": "OP_MUL",
+    "<<": "OP_SHIFT", ">>": "OP_SHIFT", "^": "OP_BXOR", "&": "OP_BAND",
+    "~": "OP_TILDE",
 }
 
 

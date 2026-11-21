@@ -16,7 +16,8 @@
 namespace pia::syntax {
 
 // How a binary operator binds: its precedence level (1 binds loosest) and
-// associativity. Operators are declared by `let meta operator` items
+// associativity. A level may have one decimal place, `prec 6.5`, so `level`
+// holds tenths: 65. Operators are declared by `let meta operator` items
 // (ADR 0008); the standard ones live in the prelude.
 struct Fixity {
   enum class Assoc { Left, Right, None };
