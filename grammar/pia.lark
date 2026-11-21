@@ -5,7 +5,7 @@
 // layout rule that inserts SEP between top-level items.
 
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
-%declare WHILE STEP DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
+%declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
 %declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
@@ -37,7 +37,7 @@ path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
 
-let_item: LET REC? META? binder param* ret_annot? contract* EQ seq
+let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* EQ seq
 
 binder: IDENT | SPLICE_IDENT
 

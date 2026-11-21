@@ -43,7 +43,7 @@ That is enough for the edge detection demo (`examples/edges`), but not for a lib
 - **No bitwise operators or shifts.** Hashing, checksums, bitsets, UTF-8 and the PNG codec in M13 all need them.
 - **No memory allocation, and no calls to the outside world.** All memory comes from a C caller, and there is no I/O.
 - **Multiplication defeats the solver** once loops are involved.
-- **No calls inside contracts.** A call in a contract is an unknown value ([verifier.md](verifier.md#limits-of-v0)). So a library cannot state `ensures sorted xs`, or `ensures result = sum xs`.
+- **No calls inside contracts.** A call in a contract is an unknown value ([verifier.md](verifier.md#limits-of-v0)). So a library cannot state `ensures sorted xs`, or `ensures result = sum xs`. Spec functions and lemmas (#52) now lift this ([verifier.md](verifier.md#spec-functions-and-lemmas)).
 - **No slicing `xs.[a .. b]`, no buffers of records, no constant arrays, no function values.**
 
 ## The proposed minimal core

@@ -135,6 +135,12 @@ class Lexer:
                 self.line_start = self.pos + 1
             self.pos += 1
 
+    def name_follows(self):
+        i = self.pos
+        while i < len(self.text) and self.text[i] in " \t\r\n":
+            i += 1
+        return i < len(self.text) and _is_ident_start(self.text[i])
+
     def emit(self, type_, start, line, column):
         value = self.text[start:self.pos]
         tok = Tok(type_, value, line, column, start, self.pos)
@@ -237,6 +243,12 @@ class Lexer:
                 if word == "step" and self.for_headers and \
                         self.for_headers[-1] == self.depth:
                     kind = "STEP"
+                # `spec` and `lemma` are keywords only between `let` (or
+                # `let rec`) and the name they define.
+                if word in ("spec", "lemma") and self.out and \
+                        self.out[-1].type in ("LET", "REC") and \
+                        self.name_follows():
+                    kind = word.upper()
                 if kind in ("FOR", "SPREAD"):
                     self.for_headers.append(self.depth)
                 elif kind == "DO" and self.for_headers and \

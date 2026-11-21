@@ -1,0 +1,19 @@
+(* `spec` and `lemma` are keywords only between `let` (or `let rec`) and
+   the name they define; elsewhere they are ordinary names. *)
+let spec sorted (xs : [i32]) : bool =
+  forall (i in 1..len xs). xs.[i - 1] <= xs.[i]
+
+let spec total (xs : [u8]) (n : usize) : u32 @fuel(2)
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0 else total xs (n - 1) + xs.[n - 1]
+
+let lemma total_bound (xs : [u8]) (n : usize) : unit
+  requires n <= len xs
+  ensures total xs n <= n * 255
+  decreases n
+= if n > 0 then total_bound xs (n - 1)
+
+let spec = 3
+
+let lemma = spec + 1

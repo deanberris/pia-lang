@@ -226,12 +226,14 @@ class Parser {
     return p;
   }
 
-  // `let [rec] [meta] name params [: annot attrs] contracts = body [in body]`
+  // `let [rec] [spec|lemma] [meta] name params [: annot attrs] contracts = body [in body]`
   NodePtr let(bool allowItem, bool allowIn) {
     SourceLoc start = loc();
     expect(K::Let, "'let'");
     std::string flags;
     if (accept(K::Rec)) flags = "rec";
+    if (accept(K::Spec)) flags += flags.empty() ? "spec" : " spec";
+    else if (accept(K::Lemma)) flags += flags.empty() ? "lemma" : " lemma";
     if (accept(K::Meta)) flags += flags.empty() ? "meta" : " meta";
     if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name after 'let'");
     auto n = makeNode(N::LetItem, start, text());

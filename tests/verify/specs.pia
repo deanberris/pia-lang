@@ -1,0 +1,71 @@
+(* Spec functions and lemmas (#52, docs/stdlib.md group 5). A contract can
+   call a spec function, and the verifier knows its definition. A lemma is
+   proved once, and its postcondition holds after each call to it.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let spec max (a : u8) (b : u8) : u8 = if a < b then b else a
+
+(* The definition is known, so this is proved... *)
+let larger (a : u8) (b : u8) : u8
+  ensures result = max a b
+= if a > b then a else b
+
+(* ...and this is refuted. *)
+let smaller (a : u8) (b : u8) : u8
+  ensures result = max a b
+= if a < b then a else b
+
+(* A spec function's body may use a quantifier. *)
+let spec sorted (xs : [i32]) : bool =
+  forall (i in 1..len xs). xs.[i - 1] <= xs.[i]
+
+let first_two (xs : [i32]) : bool
+  requires len xs > 1 && sorted xs
+  ensures result
+= xs.[0] <= xs.[1]
+
+(* A recursive spec function needs a measure. Each call is unfolded once,
+   and its postcondition is known wherever its precondition holds. *)
+let spec count (xs : [u8]) (n : usize) (v : u8) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0 else count xs (n - 1) v + (if xs.[n - 1] = v then 1 else 0)
+
+(* One unfolding per iteration is all a loop needs. *)
+let count_loop (xs : [u8]) (v : u8) : usize
+  ensures result = count xs (len xs) v
+=
+  let c : mutable usize = 0 in
+  for i in 0..len xs
+    invariant c = count xs i v
+  do if xs.[i] = v then c <- c + 1 done;
+  c
+
+(* A fact about every n needs induction: a recursive lemma. *)
+let lemma split (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit
+  requires n <= len xs && v <> w
+  ensures count xs n v + count xs n w <= n
+  decreases n
+= if n > 0 then split xs (n - 1) v w
+
+let two_counts (xs : [u8]) : unit
+  ensures count xs (len xs) 1 + count xs (len xs) 2 <= len xs
+= split xs (len xs) 1 2
+
+(* Without the lemma, one unfolding is not enough. *)
+let without_lemma (xs : [u8]) : unit
+  ensures count xs (len xs) 1 + count xs (len xs) 2 <= len xs
+= ()
+
+(* `@fuel(3)` unfolds three levels, enough for a three-element array. *)
+let spec total (xs : [u8]) (n : usize) : u32 @fuel(3)
+  requires n <= len xs && n <= 3
+  ensures result <= n * 255
+  decreases n
+= if n = 0 then 0 else total xs (n - 1) + xs.[n - 1]
+
+let sum3 (xs : [u8; 3]) : u32
+  ensures result = total xs 3
+= xs.[0] + xs.[1] + xs.[2]

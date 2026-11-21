@@ -110,6 +110,20 @@ calls.pia:6:27: failed: the precondition of 'inc' holds
 
 Both calls fail: the inner one when `x` is 255, and the outer one when `x` is 254, because the inner call then returns 255. Adding `requires x < 200` to `twice` proves both. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.
 
+## Spec functions say what code means
+
+A contract often needs to name an idea, such as "the larger of two values" or "how many elements equal `v`". A spec function does that. It is pure and total, it can be used in contracts, and the verifier knows its definition, so a caller can prove things about it. Codegen erases it.
+
+```ocaml
+let spec max (a : u8) (b : u8) : u8 = if a < b then b else a
+
+let larger (a : u8) (b : u8) : u8
+  ensures result = max a b
+= if a > b then a else b
+```
+
+A recursive spec function needs a `decreases` measure, and each call is unfolded once. Facts that need induction, such as one about every prefix of an array, are lemmas: functions that return unit, proved once and erased from code, whose postcondition holds after each call. A recursive lemma is a proof by induction ([verifier.md](verifier.md#spec-functions-and-lemmas)).
+
 ## What it means for code generation
 
 Codegen runs only when no goal has failed. It erases every contract and everything only contracts used, such as quantifiers and `old`. A proved index needs no bounds check and a proved addition needs no overflow check, so the machine code has none. Proved facts are also what lets LLVM vectorise loops safely.

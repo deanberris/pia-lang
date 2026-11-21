@@ -1,0 +1,31 @@
+(* Errors in spec functions and lemmas (#52).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let spec twice (a : u8) : u16 = a + a
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'twice' is a spec function, so it can be used only in contracts, spec functions and lemmas
+*)
+let code (a : u8) : u16 = twice a
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a parameter of a spec function cannot be out, inout or mutable
+*)
+let spec writes (dst : out mutable [u8]) : bool = true
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:1: error: a lemma returns unit: what it proves goes in 'ensures'
+*)
+let lemma valued (a : u8) : u8 = a
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:1: error: a spec function must return a value
+*)
+let spec nothing (a : u8) : unit = ()
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @fuel applies only to a spec function
+*)
+let fueled (a : u8) : u8 @fuel(2) = a
+
+let lemma trivial (a : u8) : unit ensures a <= 255 = ()
+
+(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'trivial' is a lemma: call it as a statement, and its postcondition holds after the call
+*)
+let in_contract (a : u8) : unit requires trivial a = ()
