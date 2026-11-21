@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 
+#include <deque>
 #include <map>
 #include <memory>
 #include <optional>
@@ -136,6 +137,13 @@ class Gen {
     collectConstants();
     if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids) genFunction(item->text);
+    // Each instance of a generic function is generated once, after the
+    // function that first used it; an instance may use further instances.
+    while (!diags_.hasErrors() && !pendingInstances_.empty()) {
+      std::string key = pendingInstances_.front();
+      pendingInstances_.pop_front();
+      genFunction(key);
+    }
     if (diags_.hasErrors()) return nullptr;
     checkGhosts();
     if (diags_.hasErrors()) return nullptr;
@@ -248,7 +256,7 @@ class Gen {
     if (lookup(name)) what = "a local of the same name";
     else if (sigs_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
-    else if (types_.ctor(name)) what = "the constructor '" + name + "'";
+    else if (types_.isCtorName(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
     else if (sema::isCoreBuiltin(name)) what = "a core builtin";
@@ -371,10 +379,17 @@ class Gen {
 
   void genFunction(const std::string &name) {
     auto it = sigs_.find(name);
-    if (it == sigs_.end()) return;
+    if (it == sigs_.end() || it->second.isGeneric()) return;
     sema::FuncSig &sig = it->second;
     const Node &item = *sig.item;
     Location l = loc(item);
+    // An instance's body sees its type parameters as their arguments.
+    struct TypeScope {
+      sema::TypeResolver &types;
+      std::vector<std::map<std::string, Type>> saved;
+      ~TypeScope() { types.replaceTypeScopes(std::move(saved)); }
+    } typeScope{types_, types_.replaceTypeScopes({})};
+    if (!sig.typeArgs.empty()) types_.pushTypeScope(sig.typeArgs);
 
     llvm::SmallVector<Type> argTypes;
     for (const sema::Param &p : sig.params) argTypes.push_back(p.type);
@@ -386,6 +401,9 @@ class Gen {
     b_.setInsertionPointToEnd(module_.getBody());
     auto fn = create<mlir::func::FuncOp>(
         l, sig.name, b_.getFunctionType(argTypes, resultTypes(sig.result)));
+    // An instance is internal: C calls the generic's instances only through
+    // Pia functions, which name concrete types.
+    if (!sig.typeArgs.empty()) fn.setPrivate();
     for (size_t i = 0; i < sig.params.size(); ++i)
       if (!sig.params[i].modifiers.empty())
         fn.setArgAttr(i, PiaDialect::getModifiersAttrName(),
@@ -651,13 +669,20 @@ class Gen {
       case NodeKind::Unit:
         return unit();
       case NodeKind::Name:
-        return genName(n);
+        return genName(n, expected);
       case NodeKind::Binary:
         return genBinary(n, n.text, *n.kids[0], *n.kids[1], expected);
       case NodeKind::Neg:
         return genNeg(n, expected);
       case NodeKind::Apply:
         return genApply(n, expected);
+      case NodeKind::Instantiate: {
+        const Node &f = *n.kids[0];
+        auto it = f.kind == NodeKind::Name ? sigs_.find(f.text) : sigs_.end();
+        if (it == sigs_.end() || !it->second.isGeneric())
+          return fail(n, "only a generic function takes type arguments here");
+        return genGenericCall(n, it->second, &n, {}, expected);
+      }
       case NodeKind::Index:
         return genIndex(n);
       case NodeKind::ListLit: {
@@ -741,10 +766,12 @@ class Gen {
     return TV{c, t};
   }
 
-  R genName(const Node &n) {
+  R genName(const Node &n, Type expected) {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
-    if (const sema::Ctor *c = types_.ctor(n.text)) {
+    if (types_.isCtorName(n.text)) {
+      const sema::Ctor *c = ctorFor(n, n.text, expected, std::nullopt);
+      if (!c) return std::nullopt;
       if (c->payload)
         return fail(n, "'" + n.text + "' takes a payload of type " +
                            typeName(c->payload) + ", as in '" + n.text +
@@ -758,6 +785,8 @@ class Gen {
     }
     auto it = sigs_.find(n.text);
     if (it != sigs_.end()) {
+      if (it->second.isGeneric())
+        return genGenericCall(n, it->second, nullptr, {}, expected);
       if (!it->second.params.empty())
         return fail(n, "functions as values are not supported yet; apply '" +
                            n.text + "' to all its arguments");
@@ -902,6 +931,54 @@ class Gen {
     return TV{v, lt};
   }
 
+  // The instance of the generic that owns constructor `name`, when the
+  // expected type is one.
+  Type instanceFor(const std::string &name, Type expected) {
+    const sema::GenericCtor *g = types_.genericCtor(name);
+    const sema::Instance *inst = expected ? types_.instanceOf(expected) : nullptr;
+    return g && inst && inst->generic == g->generic ? expected : Type();
+  }
+
+  // The constructor `name` builds: of its own variant, or of the instance
+  // of its generic that the expected type or the payload's type gives.
+  const sema::Ctor *ctorFor(const Node &at, const std::string &name,
+                            Type expected, std::optional<Type> payload) {
+    if (const sema::Ctor *c = types_.ctor(name)) return c;
+    const sema::GenericCtor *g = types_.genericCtor(name);
+    if (!g) {
+      fail(at, "unknown constructor '" + name + "'");
+      return nullptr;
+    }
+    Type variant = instanceFor(name, expected);
+    if (!variant) {
+      const sema::Generic *gen = types_.generic(g->generic);
+      std::map<std::string, Type> bound;
+      if (payload && *payload && g->payload &&
+          !types_.unify(*g->payload, *payload, gen->params, bound)) {
+        fail(at, "cannot tell which " + g->generic + " '" + name +
+                     "' builds from a payload of type " + typeName(*payload));
+        return nullptr;
+      }
+      llvm::SmallVector<Type> args;
+      for (const std::string &p : gen->params) {
+        auto it = bound.find(p);
+        if (it == bound.end()) {
+          fail(at, "cannot tell which " + g->generic + " '" + name +
+                       "' builds: '" + p + "' is unknown; give the type, as "
+                       "in 'let r : " + g->generic + " ... = " + name + " ...'");
+          return nullptr;
+        }
+        args.push_back(it->second);
+      }
+      variant = types_.instantiate(g->generic, args, at.loc);
+      if (!variant) return nullptr;
+    }
+    const sema::Ctor *c = types_.ctorIn(name, variant);
+    if (!c) fail(at, "internal error: no constructor '" + name + "' in " +
+                         typeName(variant));
+    return c;
+  }
+
   // A variant value: its tag, the payload in its constructor's field, and a
   // fixed value in every other payload field, which nothing reads.
   R genCtor(const Node &n, const sema::Ctor &c, std::optional<TV> payload) {
@@ -983,31 +1060,45 @@ class Gen {
       if (catchAll)
         return fail(pat, "this arm is never reached: an earlier arm "
                          "matches everything");
-      if (pat.kind == NodeKind::PVar && !types_.ctor(pat.text)) {
+      if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
         catchAll = true;
         if (pat.text != "_") a.bind = pat.text;
       } else if (pat.kind == NodeKind::PVar ||
                  (pat.kind == NodeKind::PCtor)) {
-        const sema::Ctor *c = types_.ctor(pat.text);
-        if (!c)
+        const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
+        if (!c && !types_.isCtorName(pat.text))
           return fail(pat, "unknown constructor '" + pat.text + "'");
-        if (c->variant != s->type)
-          return fail(pat, "'" + pat.text + "' is a constructor of " +
-                               typeName(c->variant) + ", not of " +
+        if (!c) {
+          if (const sema::Ctor *other = types_.ctor(pat.text))
+            return fail(pat, "'" + pat.text + "' is a constructor of " +
+                                 typeName(other->variant) + ", not of " +
+                                 typeName(s->type));
+          return fail(pat, "'" + pat.text + "' is not a constructor of " +
                                typeName(s->type));
+        }
         if (covered.count(c->name))
           return fail(pat, "'" + c->name + "' is already matched by an "
                            "earlier arm");
         size_t subs = pat.kind == NodeKind::PCtor ? pat.kids.size() : 0;
-        if (subs > (c->payload ? 1u : 0u))
+        // `Ok ()` matches a constructor whose payload is unit.
+        bool unitSub = subs == 1 && !c->payload &&
+                       pat.kids[0]->kind == NodeKind::PLit &&
+                       pat.kids[0]->text == "()";
+        if (subs > (c->payload || unitSub ? 1u : 0u))
           return fail(pat, "'" + c->name + "' has " +
                                (c->payload ? "one payload" : "no payload"));
-        if (subs == 1) {
+        if (subs == 1 && !unitSub) {
           const Node &sub = *pat.kids[0];
-          if (sub.kind != NodeKind::PVar || types_.ctor(sub.text))
-            return fail(sub, "only a name or '_' can match a payload for "
-                             "now");
-          if (sub.text != "_") a.bind = sub.text;
+          // A constructor that is its variant's only one matches every
+          // payload, as `OutOfMemory` does in `Err OutOfMemory`.
+          bool only = sub.kind == NodeKind::PVar &&
+                      types_.ctorIn(sub.text, c->payload) &&
+                      types_.ctorsOf(c->payload).size() == 1;
+          if (!only && (sub.kind != NodeKind::PVar ||
+                        types_.isCtorName(sub.text)))
+            return fail(sub, "only a name, '_' or a variant's only "
+                             "constructor can match a payload for now");
+          if (!only && sub.text != "_") a.bind = sub.text;
         }
         covered.insert(c->name);
         a.ctor = c;
@@ -1083,7 +1174,7 @@ class Gen {
   // `#is s C` and `#payload s C`, which only `match` produces.
   R genMatchBuiltin(const Node &n) {
     BindingPtr b = lookup(n.kids[1]->text);
-    const sema::Ctor *c = types_.ctor(n.kids[2]->text);
+    const sema::Ctor *c = b ? types_.ctorIn(n.kids[2]->text, b->type) : nullptr;
     if (!b || !c) return fail(n, "internal error in 'match'");
     auto rt = mlir::cast<RecordType>(b->type);
     Location l = loc(n);
@@ -1233,7 +1324,14 @@ class Gen {
   }
 
   R genApply(const Node &n, Type expected) {
-    const Node &fn = *n.kids[0];
+    // `f<u8> x` names the type arguments; the rest are deduced.
+    const Node *targs = nullptr;
+    const Node *callee = n.kids[0].get();
+    if (callee->kind == NodeKind::Instantiate) {
+      targs = callee;
+      callee = callee->kids[0].get();
+    }
+    const Node &fn = *callee;
     if (fn.kind != NodeKind::Name)
       return fail(fn, "only named functions can be called for now");
     size_t argc = n.kids.size() - 1;
@@ -1247,21 +1345,45 @@ class Gen {
         std::vector<const Node *> args;
         for (size_t i = 1; i < n.kids.size(); ++i)
           args.push_back(n.kids[i].get());
+        if (it->second.isGeneric())
+          return genGenericCall(n, it->second, targs, args, expected);
+        if (targs)
+          return fail(*targs, "'" + fn.text + "' is not generic, so it takes "
+                              "no type arguments");
         return genCall(n, it->second, args);
       }
     }
-    if (!local && fn.flags != "prelude") {
-      if (const sema::Ctor *c = types_.ctor(fn.text)) {
-        if (!c->payload || argc != 1)
-          return fail(n, c->payload
-                             ? "'" + fn.text + "' takes one payload"
-                             : "'" + fn.text + "' takes no payload");
-        R v = genExpr(*n.kids[1], c->payload);
-        if (!v) return v;
-        R cv = coerce(*v, c->payload, *n.kids[1]);
-        if (!cv) return cv;
-        return genCtor(n, *c, *cv);
+    if (targs)
+      return fail(*targs, "only a generic function takes type arguments here; "
+                          "a constructor takes them from its type, as in "
+                          "'let r : option u8 = Some x'");
+    if (!local && fn.flags != "prelude" && types_.isCtorName(fn.text)) {
+      if (argc != 1) return fail(n, "'" + fn.text + "' takes one payload");
+      const Node &arg = *n.kids[1];
+      // A generic constructor with no expected instance takes its type
+      // arguments from the payload: `Some x` with x : u8 is option<u8>.
+      std::optional<TV> early;
+      const sema::Ctor *c = nullptr;
+      if (!types_.ctor(fn.text) && !instanceFor(fn.text, expected)) {
+        if (arg.kind != NodeKind::Unit) {
+          early = genExpr(arg, Type());
+          if (!early) return std::nullopt;
+        }
+        c = ctorFor(fn, fn.text, expected, early ? early->type : Type());
+      } else {
+        c = ctorFor(fn, fn.text, expected, std::nullopt);
       }
+      if (!c) return std::nullopt;
+      // `Ok ()` is `Ok` when the payload type is unit.
+      if (!c->payload) {
+        if (arg.kind == NodeKind::Unit) return genCtor(n, *c, std::nullopt);
+        return fail(n, "'" + fn.text + "' takes no payload");
+      }
+      R v = early ? early : genExpr(arg, c->payload);
+      if (!v) return v;
+      R cv = coerce(*v, c->payload, arg);
+      if (!cv) return cv;
+      return genCtor(n, *c, *cv);
     }
     if (fn.flags == "prelude" && (fn.text == "#is" || fn.text == "#payload"))
       return genMatchBuiltin(n);
@@ -1303,7 +1425,8 @@ class Gen {
   }
 
   R genCall(const Node &n, const sema::FuncSig &sig,
-            const std::vector<const Node *> &args) {
+            const std::vector<const Node *> &args,
+            const std::vector<std::optional<TV>> *early = nullptr) {
     if (args.size() != sig.params.size())
       return fail(n, "'" + sig.name + "' takes " +
                          plural(sig.params.size(), "argument") + ", given " +
@@ -1321,7 +1444,8 @@ class Gen {
                      "and its postcondition holds after the call");
     llvm::SmallVector<Value> operands;
     for (size_t i = 0; i < args.size(); ++i) {
-      R a = genExpr(*args[i], sig.params[i].type);
+      R a = early && (*early)[i] ? (*early)[i]
+                                 : genExpr(*args[i], sig.params[i].type);
       if (!a) return a;
       R c = coerce(*a, sig.params[i].type, *args[i]);
       if (!c) return c;
@@ -1332,6 +1456,139 @@ class Gen {
       operands.push_back(c->value);
     }
     return emitCall(n, sig, operands);
+  }
+
+  // A call of a generic function: the type arguments come from `targs`
+  // (`f<u8, t = u16>`), then from the arguments whose written types mention
+  // a type parameter, then from the type the call is expected to have. The
+  // call goes to the instance for those arguments, `f<u8>`, which is made
+  // on first use and generated after the current function.
+  R genGenericCall(const Node &n, const sema::FuncSig &generic,
+                   const Node *targs, const std::vector<const Node *> &args,
+                   Type expected) {
+    const Node &item = *generic.item;
+    const std::vector<std::string> &params = generic.typeParams;
+    std::map<std::string, Type> bound;
+    if (targs) {
+      size_t next = 0;
+      for (size_t i = 1; i < targs->kids.size(); ++i) {
+        const Node &t = *targs->kids[i];
+        std::string name;
+        const Node *typeNode = &t;
+        if (t.kind == NodeKind::NamedArg) {
+          name = t.text;
+          typeNode = t.kids[0].get();
+          if (!llvm::is_contained(params, name))
+            return fail(t, "'" + generic.name + "' has no type parameter '" +
+                               name + "'");
+        } else {
+          if (next >= params.size())
+            return fail(t, "'" + generic.name + "' takes " +
+                               plural(params.size(), "type argument") +
+                               ", given more");
+          name = params[next++];
+        }
+        // `t = u8` parses its value as an expression: a bare name is a
+        // type name there.
+        Node asType;
+        if (typeNode->kind == NodeKind::Name) {
+          asType.kind = NodeKind::TypeName;
+          asType.text = typeNode->text;
+          asType.loc = typeNode->loc;
+          typeNode = &asType;
+        }
+        Type ty = types_.resolve(*typeNode);
+        if (!ty) return std::nullopt;
+        if (!bound.emplace(name, ty).second)
+          return fail(t, "the type parameter '" + name + "' is given twice");
+      }
+    }
+
+    std::vector<const Node *> valueParams;
+    for (const syntax::NodePtr &p : item.kids[0]->kids)
+      if (p->kind != NodeKind::ParamUnit && !sema::isTypeParam(*p))
+        valueParams.push_back(p.get());
+    if (args.size() != valueParams.size())
+      return fail(n, "'" + generic.name + "' takes " +
+                         plural(valueParams.size(), "argument") + ", given " +
+                         std::to_string(args.size()) +
+                         "; partial application is not supported yet");
+
+    // Arguments whose types mention a type parameter not yet known are
+    // generated first, on their own, and their types bind the parameters.
+    std::vector<std::optional<TV>> early(args.size());
+    for (size_t i = 0; i < args.size(); ++i) {
+      const Node &p = *valueParams[i];
+      if (p.kids.empty() || p.kids[0]->kind != NodeKind::Annot)
+        return fail(p, "parameter '" + p.text +
+                           "' needs a type annotation for now");
+      const Node &annot = *p.kids[0];
+      if (!mentionsUnbound(*annot.kids[1], params, bound)) continue;
+      early[i] = genExpr(*args[i], Type());
+      if (!early[i]) return std::nullopt;
+      if (!types_.unify(annot, early[i]->type, params, bound))
+        return fail(*args[i], "'" + p.text + "' cannot have type " +
+                                  typeName(early[i]->type) + " here: " +
+                                  clashMessage(annot, early[i]->type, bound));
+    }
+    const Node &ret = *item.kids[1];
+    const Node *retAnnot =
+        ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+                ret.kids[0]->kind == NodeKind::Annot
+            ? ret.kids[0].get()
+            : nullptr;
+    if (expected && retAnnot && !isUnit(expected))
+      types_.unify(*retAnnot, expected, params, bound);
+    for (const std::string &t : params)
+      if (!bound.count(t))
+        return fail(n, "cannot tell what '" + t + "' is in this call of '" +
+                           generic.name + "'; give it, as in '" +
+                           generic.name + "<" + t + " = u8>'");
+
+    std::string key = generic.name + "<";
+    for (size_t i = 0; i < params.size(); ++i)
+      key += (i ? ", " : "") + typeName(bound[params[i]]);
+    key += ">";
+    auto it = sigs_.find(key);
+    if (it == sigs_.end()) {
+      sema::FuncSig inst = generic;
+      inst.name = key;
+      inst.typeArgs = bound;
+      inst.result = Type();
+      if (!sema::resolveSignature(inst, types_, diags_)) return std::nullopt;
+      if (!inst.result && retAnnot == nullptr)
+        return fail(item, "a generic function needs its return type for "
+                          "now, as in 'let " + generic.name + " ... : T = "
+                          "...'");
+      it = sigs_.emplace(key, std::move(inst)).first;
+      pendingInstances_.push_back(key);
+    }
+    return genCall(n, it->second, args, &early);
+  }
+
+  // Whether a written type mentions a type parameter that is not bound.
+  static bool mentionsUnbound(const Node &type,
+                              const std::vector<std::string> &params,
+                              const std::map<std::string, Type> &bound) {
+    if (type.kind == NodeKind::TypeName && llvm::is_contained(params, type.text))
+      return !bound.count(type.text);
+    for (const syntax::NodePtr &k : type.kids)
+      if (k && mentionsUnbound(*k, params, bound)) return true;
+    return false;
+  }
+
+  // Why an argument's type does not match its parameter's written type.
+  std::string clashMessage(const Node &annot, Type actual,
+                           const std::map<std::string, Type> &bound) {
+    std::map<std::string, Type> alone;
+    std::vector<std::string> names;
+    for (auto &[name, t] : bound) names.push_back(name);
+    if (types_.unify(annot, actual, names, alone))
+      for (auto &[name, t] : alone)
+        if (bound.count(name) && bound.at(name) != t)
+          return "'" + name + "' is already " + typeName(bound.at(name)) +
+                 ", but this makes it " + typeName(t);
+    return "it does not match its parameter's type";
   }
 
   static bool writes(const sema::Param &p) {
@@ -1945,6 +2202,7 @@ class Gen {
   OverflowMode overflow_ = OverflowMode::proof;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
+  std::deque<std::string> pendingInstances_;  // generic instances to generate
 };
 
 }  // namespace

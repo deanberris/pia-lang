@@ -1,0 +1,35 @@
+(* Errors in calls of generic functions (M9).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let pair = let (a : type) (b : type) => type { fst : a; snd : b }
+let id (t : type) (x : t) : t = x
+let none (t : type) : option t = None
+let count (t : type) (x : t) : u8 = 0
+let both (a : type) (b : type) (x : a) (p : pair a b) : b = p.snd
+let plain (x : u8) : u8 = x
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: cannot tell what 't' is in this call of 'none'; give it, as in 'none<t = u8>'
+*)
+let unknown () : u8 = count none
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' cannot have type pair<u16, u16> here: 'a' is already u8, but this makes it u16
+*)
+let clash (x : u8) (q : pair u16 u16) : u16 = both x q
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'plain' is not generic, so it takes no type arguments
+*)
+let not_generic (x : u8) : u8 = plain<u8> x
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'id' takes 1 type argument, given more
+*)
+let too_many (x : u8) : u8 = id<u8, u16> x
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'id' has no type parameter 's'
+*)
+let unknown_param (x : u8) : u8 = id<s = u8> x
+
+(* CHECK: generic_fn_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'id' takes 1 argument, given 2; partial application is not supported yet
+*)
+let two_args (x : u8) : u8 = id x x

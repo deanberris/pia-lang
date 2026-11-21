@@ -228,7 +228,38 @@ let roundtrip (x : u32) : u32
   | None -> 0
 ```
 
-A payload's type can be an integer, `bool` or a record. Arrays, slices and variants inside a variant are not supported yet, and nor are generic variants such as `option<T>`. Patterns are a constructor with a name or `_` for its payload, a name that matches anything, or `_`.
+A payload's type can be an integer, `bool`, a record, another variant or `unit`. Arrays and slices inside a variant are not supported yet. Patterns are a constructor with a name or `_` for its payload, `()` for a unit payload, a name that matches anything, or `_`.
+
+## Generics
+
+A generic type is a function from types to a type, and a generic function takes type parameters, written `(t : type)`, before its other parameters. Each use names concrete types: `option u8` is an instance of `option`, and a call of `unwrap_or` with an `option u16` calls its instance `unwrap_or<u16>`. Every instance is generated and proved on its own, so each goal is about concrete types. As with any call, a caller knows only what the instance's contract says, so `same` proves from `id`'s `ensures`:
+
+```ocaml
+let option = let (t : type) => type | None | Some of t
+let result = let (t : type) (e : type) => type | Ok of t | Err of e
+let oom = type | OutOfMemory
+
+let unwrap_or (t : type) (o : option t) (d : t) : t =
+  match o with
+  | Some v -> v
+  | None -> d
+
+let first (v : u16) : u16 = unwrap_or (Some v) 0
+
+let id (t : type) (x : t) : t
+  ensures result = x
+= x
+
+let same (v : u8) : u8
+  ensures result = v
+= id v
+
+let reserve (n : usize) : result unit oom =
+  if n > 4096 then Err OutOfMemory else Ok ()
+```
+
+The type arguments are deduced. A constructor takes its instance from the type it is expected to have, as `Err OutOfMemory` does from `reserve`'s result, or else from its payload, as `Some v` does. A call takes them from its arguments, then from the type it is expected to have. To force a choice, give them: `unwrap_or<u16> (Some v) 0`, or by name, `unwrap_or<t = u16>`. A generic function needs its return type written, and recursive generic types, such as a list, are not supported yet.
+
 
 ## Control flow
 
@@ -391,7 +422,7 @@ let describe (v : dyn) : str =
 
 **Generic types and concepts.** A generic type is a compile-time function that returns a type. Constraints are concepts, which are metaprograms and can state laws that every instance must prove:
 
-<!-- untested: generics and concepts are not implemented yet -->
+<!-- untested: concepts are not implemented yet -->
 ```ocaml
 let pair = let (a : type) (b : type) => type { fst : a; snd : b }
 

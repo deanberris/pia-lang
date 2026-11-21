@@ -274,6 +274,7 @@ quoted_items: (let_item | meta_operator) (SEP? (let_item | meta_operator))*
              | SPLICE_IDENT                  -> psplice
              | LPAREN pattern COLON type RPAREN -> ptyped
              | LPAREN pattern RPAREN
+             | LPAREN RPAREN                 -> punit
              | LBRACE pfields RBRACE         -> precord
 pfields: pfield (SEMI pfield)* SEMI?
 pfield: IDENT (EQ pattern)?

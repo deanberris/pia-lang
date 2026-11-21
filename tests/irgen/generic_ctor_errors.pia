@@ -1,0 +1,14 @@
+(* Constructors of generic variants need to know their instance (M9).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let shape = type | Circle of u8 | Dot
+
+(* CHECK: generic_ctor_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: cannot tell which option 'None' builds: 't' is unknown; give the type, as in 'let r : option ... = None ...'
+*)
+let unknown () : u8 = match None with | _ -> 0
+
+(* CHECK: generic_ctor_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Dot' is a constructor of shape, not of option<u8>
+*)
+let wrong (x : option u8) : u8 = match x with | Dot -> 0 | _ -> 1

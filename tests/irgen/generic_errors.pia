@@ -1,0 +1,22 @@
+(* Errors in generic types (M9).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+
+(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' is generic: it takes 1 type argument, as in 'option u8'
+*)
+let bare (x : option) : u8 = 0
+
+(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' takes 1 type argument, given 2
+*)
+let two (x : option u8 u16) : u8 = 0
+
+(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: only a generic type can take type arguments
+*)
+let applied (x : u8 u16) : u8 = 0
+
+(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the generic type 'loop' contains itself; recursive types are not supported yet
+*)
+let loop = let (t : type) => type | End | More of loop t
+let uses (x : loop u8) : u8 = 0
