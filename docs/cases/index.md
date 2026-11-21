@@ -25,8 +25,8 @@ code turns each of these from a production incident into a compile error.
 | [Cloudbleed](cloudbleed.pia.md) (Cloudflare) | 2017 | an HTML parser's end-of-buffer test used `==`, and a pointer stepped past the end | bounds and loop invariants | done |
 | [CrowdStrike Channel File 291](crowdstrike.pia.md) | 2024 | a template defined 21 input fields, the sensor supplied 20, and the 21st was read out of bounds | bounds and preconditions | done |
 | [Rust `str::repeat`](rust-str-repeat.pia.md) (CVE-2018-1000810) | 2018 | a wrapping multiplication sized a buffer that `unsafe` code then overran | overflow goals and postconditions | done |
-| Rust `VecDeque` (CVE-2018-1000657) | 2018 | a capacity calculation in `unsafe` code was wrong | contracts on capacity | next |
-| libwebp Huffman tables (CVE-2023-4863) | 2023 | crafted input overflowed a fixed-size table | bounds on table writes | planned |
+| [Rust `VecDeque`](rust-vecdeque.pia.md) (CVE-2018-1000657) | 2017 | `reserve` compared against the wrong "capacity", and `unsafe` code moved elements past the end | preconditions | done |
+| libwebp Huffman tables (CVE-2023-4863) | 2023 | crafted input overflowed a fixed-size table | bounds on table writes | next |
 | Zig integer casts | | a narrowing cast that is checked only in safe build modes | narrowing goals | planned |
 | Ariane 5 flight 501 | 1996 | a 64-bit float converted to a 16-bit integer overflowed | narrowing goals | needs floats ([M11](https://github.com/deanberris/pia-lang/issues/12)) |
 | Therac-25 | 1985 to 1987 | a race between operator input and the treatment setup | race proofs | needs concurrency ([M12](https://github.com/deanberris/pia-lang/issues/13)) |

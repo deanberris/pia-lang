@@ -3,6 +3,7 @@ exports_files([
     "cases/cloudbleed.pia.md",
     "cases/crowdstrike.pia.md",
     "cases/rust-str-repeat.pia.md",
+    "cases/rust-vecdeque.pia.md",
     "cases/heartbleed.pia.md",
     "cases/index.md",
     "demo.md",
