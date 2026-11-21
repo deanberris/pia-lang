@@ -224,6 +224,10 @@ struct FuncSig {
   std::vector<std::string> typeParams;
   std::map<std::string, mlir::Type> typeArgs;
   bool isGeneric() const { return !typeParams.empty() && typeArgs.empty(); }
+  // One of several functions that share the written name `item->text`
+  // (ADR 0034). `name`, the symbol, then carries the parameter types.
+  bool overloaded = false;
+  const std::string &source() const { return item->text; }
 };
 
 // Resolves the value parameters and result type of `item` into `sig`, with
@@ -236,7 +240,8 @@ bool isTypeParam(const syntax::Node &param);
 
 // Defines every type item, in order, then collects the signature of every
 // top-level function. Items outside the subset are reported here, so IRGen
-// only sees definitions it can lower.
+// only sees definitions it can lower. The map is keyed by symbol, which is
+// the written name unless the name is overloaded.
 std::map<std::string, FuncSig> collectSignatures(const syntax::Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags);

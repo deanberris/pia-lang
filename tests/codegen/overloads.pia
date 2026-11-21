@@ -1,0 +1,15 @@
+(* Each overload has its own symbol, which names its parameter types, and
+   its own C entry point, where `same(u8, u8)` becomes `same__u8_u8`
+   (ADR 0034). A name that is not overloaded keeps its plain entry point.
+// RUN: piac --emit=llvm %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-DAG: define {{.*}} @same__u8_u8(
+// CHECK-DAG: define {{.*}} @same__u16_u16(
+// CHECK-DAG: define {{.*}} @both(
+*)
+let same (a : u8) (b : u8) : bool = a = b
+let same (a : u16) (b : u16) : bool = a = b
+
+let both (a : u8) (b : u16) : bool = same a a && same b b

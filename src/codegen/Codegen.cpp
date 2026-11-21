@@ -3,6 +3,7 @@
 #include "codegen/Codegen.h"
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 #include <string>
 #include <utility>
@@ -771,10 +772,26 @@ std::optional<llvm::StringRef> extAttr(Type t, bool isSigned) {
 // The C name of a Pia function: each prime becomes `_prime`, so `step'`
 // is `step_prime` (codegen.md, "C ABI").
 std::string cName(llvm::StringRef name) {
+  // An overload's symbol names its parameter types, `eq(u8, u8)`, and its
+  // C entry point is `eq__u8_u8` (ADR 0034): `(` becomes `__`, and each
+  // other run of characters C does not allow becomes one `_`.
   std::string out;
+  bool gap = false, opened = false;
   for (char c : name) {
-    if (c == '\'') out += "_prime";
-    else out += c;
+    if (c == '\'') {
+      out += "_prime";
+    } else if (c == '(') {
+      out += "__";
+      gap = false;
+      opened = true;
+    } else if (std::isalnum(static_cast<unsigned char>(c)) || c == '_') {
+      if (gap) out += '_';
+      gap = false;
+      opened = false;
+      out += c;
+    } else if (!opened) {
+      gap = true;
+    }
   }
   return out;
 }

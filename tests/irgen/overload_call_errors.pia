@@ -1,0 +1,14 @@
+(* Errors in calls of overloaded functions (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let size (x : u8) : u8 = 1
+let size (x : u16) : u8 = 2
+
+(* CHECK: overload_call_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the call of 'size' with (an integer literal) is ambiguous between 'size(u16)' and 'size(u8)'; give the arguments' types, as in 'let x : u8 = ...'
+*)
+let literal () : u8 = size 3
+
+(* CHECK: overload_call_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: no overload of 'size' takes (bool); 'size(u16)' does not take these types; 'size(u8)' does not take these types
+*)
+let wrong (b : bool) : u8 = size b

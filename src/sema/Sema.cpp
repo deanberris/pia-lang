@@ -617,7 +617,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags) {
   defineTypes(program, types, diags);
-  std::map<std::string, FuncSig> sigs;
+  std::vector<FuncSig> all;
   for (const syntax::NodePtr &item : program.kids) {
     if (isTypeItem(*item) || isGenericTypeItem(*item)) continue;
     if (item->kind != NodeKind::LetItem) {
@@ -648,13 +648,86 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                              "to " + sig.name + "'");
       continue;
     }
-    if (sigs.count(sig.name) || types.named(sig.name) ||
-        types.generic(sig.name)) {
+    if (types.named(sig.name) || types.generic(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is already defined");
       continue;
     }
-    if (ok) sigs.emplace(sig.name, std::move(sig));
+    if (ok) all.push_back(std::move(sig));
   }
+
+  // Functions that share a name are overloads (ADR 0034). Each needs its
+  // own parameter types, and a definition with no parameters is a value,
+  // which cannot be overloaded. Overloads are named after their parameter
+  // types, `eq(u8, u8)`; a lone function keeps its name, and so does the
+  // generic overload, whose instances are named after their arguments.
+  std::map<std::string, std::vector<size_t>> byName;
+  for (size_t i = 0; i < all.size(); ++i) byName[all[i].name].push_back(i);
+  std::vector<bool> drop(all.size(), false);
+  // Reported in source order once every set is checked.
+  std::vector<std::pair<syntax::SourceLoc, std::string>> errors;
+  auto error = [&](syntax::SourceLoc at, std::string message) {
+    errors.emplace_back(at, std::move(message));
+  };
+  for (auto &[name, group] : byName) {
+    if (group.size() == 1) continue;
+    const FuncSig *generic = nullptr;
+    for (size_t k = 0; k < group.size(); ++k) {
+      FuncSig &sig = all[group[k]];
+      const Node &item = *sig.item;
+      bool valueLike = true;
+      for (const syntax::NodePtr &p : item.kids[0]->kids)
+        if (p->kind != NodeKind::ParamUnit) valueLike = false;
+      if (valueLike && item.kids[0]->kids.empty()) {
+        error(item.loc, "'" + name + "' is already defined; a "
+                              "definition with no parameters cannot be "
+                              "overloaded");
+        drop[group[k]] = true;
+        continue;
+      }
+      if (sig.isGeneric()) {
+        if (generic) {
+          error(item.loc, "'" + name + "' already has a generic "
+                                "overload; choosing between two needs "
+                                "concept-based ranking, which is not "
+                                "supported yet");
+          drop[group[k]] = true;
+        }
+        generic = &sig;
+        continue;
+      }
+      for (size_t j = 0; j < k; ++j) {
+        const FuncSig &other = all[group[j]];
+        if (drop[group[j]] || other.isGeneric() ||
+            other.params.size() != sig.params.size())
+          continue;
+        bool same = true;
+        for (size_t i = 0; i < sig.params.size(); ++i)
+          same = same && sig.params[i].type == other.params[i].type;
+        if (same) {
+          error(item.loc, "'" + name + "' is already defined with "
+                                "these parameter types; overloads told "
+                                "apart by their preconditions are not "
+                                "supported yet");
+          drop[group[k]] = true;
+          break;
+        }
+      }
+      if (drop[group[k]]) continue;
+      std::string symbol = name + "(";
+      for (size_t i = 0; i < sig.params.size(); ++i)
+        symbol += (i ? ", " : "") + typeName(sig.params[i].type);
+      sig.name = symbol + ")";
+    }
+    for (size_t k : group) all[k].overloaded = true;
+  }
+  std::stable_sort(errors.begin(), errors.end(), [](auto &a, auto &b) {
+    return std::make_pair(a.first.line, a.first.column) <
+           std::make_pair(b.first.line, b.first.column);
+  });
+  for (auto &[at, message] : errors) diags.error(at, message);
+  std::map<std::string, FuncSig> sigs;
+  for (size_t i = 0; i < all.size(); ++i)
+    if (!drop[i]) sigs.emplace(all[i].name, std::move(all[i]));
   return sigs;
 }
 

@@ -136,7 +136,14 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     collectConstants();
     if (diags_.hasErrors()) return nullptr;
-    for (const syntax::NodePtr &item : program.kids) genFunction(item->text);
+    std::map<const Node *, std::string> symbolOf;
+    for (auto &[symbol, sig] : sigs_) {
+      symbolOf[sig.item] = symbol;
+      overloads_[sig.source()].push_back(symbol);
+    }
+    for (const syntax::NodePtr &item : program.kids)
+      if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
+        genFunction(it->second);
     // Each instance of a generic function is generated once, after the
     // function that first used it; an instance may use further instances.
     while (!diags_.hasErrors() && !pendingInstances_.empty()) {
@@ -254,7 +261,7 @@ class Gen {
     if (name.find('#') != std::string::npos) return true;
     std::string what;
     if (lookup(name)) what = "a local of the same name";
-    else if (sigs_.count(name)) what = "the function '" + name + "'";
+    else if (overloads_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
     else if (types_.isCtorName(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
@@ -270,7 +277,8 @@ class Gen {
   // The first of `x'`, `x''`, ... that nothing in scope uses.
   std::string primed(const std::string &name) {
     std::string p = name + "'";
-    while (lookup(p) || sigs_.count(p) || consts_.count(p) || types_.named(p))
+    while (lookup(p) || overloads_.count(p) || consts_.count(p) ||
+           types_.named(p))
       p += "'";
     return p;
   }
@@ -678,10 +686,14 @@ class Gen {
         return genApply(n, expected);
       case NodeKind::Instantiate: {
         const Node &f = *n.kids[0];
-        auto it = f.kind == NodeKind::Name ? sigs_.find(f.text) : sigs_.end();
-        if (it == sigs_.end() || !it->second.isGeneric())
+        auto set = f.kind == NodeKind::Name
+                       ? overloadSet(f.text)
+                       : std::vector<sema::FuncSig *>{};
+        if (set.size() > 1)
+          return genOverloadedCall(n, f.text, set, &n, {}, expected);
+        if (set.empty() || !set[0]->isGeneric())
           return fail(n, "only a generic function takes type arguments here");
-        return genGenericCall(n, it->second, &n, {}, expected);
+        return genGenericCall(n, *set[0], &n, {}, expected);
       }
       case NodeKind::Index:
         return genIndex(n);
@@ -783,14 +795,17 @@ class Gen {
                                      b_.getStringAttr(n.text));
       return TV{op.getResult(), c->second.type};
     }
-    auto it = sigs_.find(n.text);
-    if (it != sigs_.end()) {
-      if (it->second.isGeneric())
-        return genGenericCall(n, it->second, nullptr, {}, expected);
-      if (!it->second.params.empty())
+    auto set = overloadSet(n.text);
+    if (set.size() > 1)
+      return genOverloadedCall(n, n.text, set, nullptr, {}, expected);
+    if (!set.empty()) {
+      sema::FuncSig &sig = *set[0];
+      if (sig.isGeneric())
+        return genGenericCall(n, sig, nullptr, {}, expected);
+      if (!sig.params.empty())
         return fail(n, "functions as values are not supported yet; apply '" +
                            n.text + "' to all its arguments");
-      return genCall(n, it->second, {});
+      return genCall(n, sig, {});
     }
     return fail(n, "unknown name '" + n.text + "'");
   }
@@ -1340,17 +1355,20 @@ class Gen {
     // to a local at the expansion site (docs/meta.md, "Hygiene").
     bool local = fn.flags.empty() && lookup(fn.text);
     if (!local && fn.flags != "prelude") {
-      auto it = sigs_.find(fn.text);
-      if (it != sigs_.end()) {
+      auto set = overloadSet(fn.text);
+      if (!set.empty()) {
         std::vector<const Node *> args;
         for (size_t i = 1; i < n.kids.size(); ++i)
           args.push_back(n.kids[i].get());
-        if (it->second.isGeneric())
-          return genGenericCall(n, it->second, targs, args, expected);
+        if (set.size() > 1)
+          return genOverloadedCall(n, fn.text, set, targs, args, expected);
+        sema::FuncSig &sig = *set[0];
+        if (sig.isGeneric())
+          return genGenericCall(n, sig, targs, args, expected);
         if (targs)
           return fail(*targs, "'" + fn.text + "' is not generic, so it takes "
                               "no type arguments");
-        return genCall(n, it->second, args);
+        return genCall(n, sig, args);
       }
     }
     if (targs)
@@ -1466,48 +1484,11 @@ class Gen {
   R genGenericCall(const Node &n, const sema::FuncSig &generic,
                    const Node *targs, const std::vector<const Node *> &args,
                    Type expected) {
-    const Node &item = *generic.item;
     const std::vector<std::string> &params = generic.typeParams;
     std::map<std::string, Type> bound;
-    if (targs) {
-      size_t next = 0;
-      for (size_t i = 1; i < targs->kids.size(); ++i) {
-        const Node &t = *targs->kids[i];
-        std::string name;
-        const Node *typeNode = &t;
-        if (t.kind == NodeKind::NamedArg) {
-          name = t.text;
-          typeNode = t.kids[0].get();
-          if (!llvm::is_contained(params, name))
-            return fail(t, "'" + generic.name + "' has no type parameter '" +
-                               name + "'");
-        } else {
-          if (next >= params.size())
-            return fail(t, "'" + generic.name + "' takes " +
-                               plural(params.size(), "type argument") +
-                               ", given more");
-          name = params[next++];
-        }
-        // `t = u8` parses its value as an expression: a bare name is a
-        // type name there.
-        Node asType;
-        if (typeNode->kind == NodeKind::Name) {
-          asType.kind = NodeKind::TypeName;
-          asType.text = typeNode->text;
-          asType.loc = typeNode->loc;
-          typeNode = &asType;
-        }
-        Type ty = types_.resolve(*typeNode);
-        if (!ty) return std::nullopt;
-        if (!bound.emplace(name, ty).second)
-          return fail(t, "the type parameter '" + name + "' is given twice");
-      }
-    }
+    if (!bindTypeArgs(generic, targs, bound)) return std::nullopt;
 
-    std::vector<const Node *> valueParams;
-    for (const syntax::NodePtr &p : item.kids[0]->kids)
-      if (p->kind != NodeKind::ParamUnit && !sema::isTypeParam(*p))
-        valueParams.push_back(p.get());
+    std::vector<const Node *> valueParams = valueParamsOf(generic);
     if (args.size() != valueParams.size())
       return fail(n, "'" + generic.name + "' takes " +
                          plural(valueParams.size(), "argument") + ", given " +
@@ -1531,20 +1512,206 @@ class Gen {
                                   typeName(early[i]->type) + " here: " +
                                   clashMessage(annot, early[i]->type, bound));
     }
-    const Node &ret = *item.kids[1];
-    const Node *retAnnot =
-        ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
-                ret.kids[0]->kind == NodeKind::Annot
-            ? ret.kids[0].get()
-            : nullptr;
-    if (expected && retAnnot && !isUnit(expected))
-      types_.unify(*retAnnot, expected, params, bound);
+    if (const Node *retAnnot = retAnnotOf(generic))
+      if (expected && !isUnit(expected))
+        types_.unify(*retAnnot, expected, params, bound);
     for (const std::string &t : params)
       if (!bound.count(t))
         return fail(n, "cannot tell what '" + t + "' is in this call of '" +
                            generic.name + "'; give it, as in '" +
                            generic.name + "<" + t + " = u8>'");
+    sema::FuncSig *inst = genericInstance(generic, bound);
+    if (!inst) return std::nullopt;
+    return genCall(n, *inst, args, &early);
+  }
 
+  // The functions a written name may call: one, or an overload set.
+  std::vector<sema::FuncSig *> overloadSet(const std::string &name) {
+    std::vector<sema::FuncSig *> out;
+    auto it = overloads_.find(name);
+    if (it == overloads_.end()) return out;
+    for (const std::string &symbol : it->second)
+      if (auto s = sigs_.find(symbol); s != sigs_.end())
+        out.push_back(&s->second);
+    return out;
+  }
+
+  // A call of an overloaded name (ADR 0034). Each argument that is not an
+  // integer literal is generated once, at its own type. A candidate is
+  // viable if it takes that many arguments, its type parameters can be
+  // deduced, and each argument converts to its parameter. A candidate beats
+  // another if it is as good for every argument and better for one (an
+  // exact type over a conversion), or equal on all of them and not
+  // generic while the other is. The unique candidate that beats every
+  // other viable one is called.
+  R genOverloadedCall(const Node &n, const std::string &name,
+                      const std::vector<sema::FuncSig *> &set,
+                      const Node *targs, const std::vector<const Node *> &args,
+                      Type expected) {
+    std::vector<std::optional<TV>> early(args.size());
+    for (size_t i = 0; i < args.size(); ++i)
+      if (!isLiteral(*args[i])) {
+        early[i] = genExpr(*args[i], Type());
+        if (!early[i]) return std::nullopt;
+      }
+    struct Candidate {
+      sema::FuncSig *sig;  // the candidate, or a generic's instance
+      bool generic = false;
+      std::map<std::string, Type> bound;
+      std::vector<int> score;  // per argument: 2 exact, 1 conversion
+    };
+    // The signatures of generic instances that are only being considered:
+    // an instance is made, and so generated and proved, only if it wins.
+    std::deque<sema::FuncSig> trial;
+    std::vector<Candidate> viable;
+    std::vector<std::string> rejected;
+    auto argTypes = [&] {
+      std::string out = "(";
+      for (size_t i = 0; i < args.size(); ++i)
+        out += (i ? ", " : "") +
+               (early[i] ? typeName(early[i]->type) : "an integer literal");
+      return out + ")";
+    };
+    for (sema::FuncSig *cand : set) {
+      std::string label = cand->isGeneric()
+                              ? "the generic '" + name + "'"
+                              : "'" + cand->name + "'";
+      sema::FuncSig *sig = cand;
+      std::map<std::string, Type> bound;
+      if (cand->isGeneric()) {
+        std::vector<const Node *> vps = valueParamsOf(*cand);
+        if (vps.size() != args.size()) {
+          rejected.push_back(label + " takes " +
+                             plural(vps.size(), "argument"));
+          continue;
+        }
+        if (!bindTypeArgs(*cand, targs, bound)) return std::nullopt;
+        bool clash = false;
+        for (size_t i = 0; i < args.size() && !clash; ++i) {
+          const Node &p = *vps[i];
+          if (!early[i] || p.kids.empty() ||
+              p.kids[0]->kind != NodeKind::Annot)
+            continue;
+          clash = !types_.unify(*p.kids[0], early[i]->type, cand->typeParams,
+                                bound);
+        }
+        if (const Node *ra = retAnnotOf(*cand))
+          if (expected && !isUnit(expected))
+            types_.unify(*ra, expected, cand->typeParams, bound);
+        std::string unknown;
+        for (const std::string &t : cand->typeParams)
+          if (!bound.count(t)) unknown = t;
+        if (clash || !unknown.empty()) {
+          rejected.push_back(label + (clash ? " does not fit these types"
+                                            : ": '" + unknown +
+                                                  "' cannot be deduced"));
+          continue;
+        }
+        trial.push_back(*cand);
+        sig = &trial.back();
+        sig->typeArgs = bound;
+        sig->result = Type();
+        if (!sema::resolveSignature(*sig, types_, diags_)) return std::nullopt;
+      } else if (targs) {
+        rejected.push_back(label + " is not generic");
+        continue;
+      } else if (sig->params.size() != args.size()) {
+        rejected.push_back(label + " takes " +
+                           plural(sig->params.size(), "argument"));
+        continue;
+      }
+      Candidate c{sig, cand->isGeneric(), bound, {}};
+      bool fits = true;
+      for (size_t i = 0; i < args.size() && fits; ++i) {
+        Type want = sig->params[i].type;
+        int score = 0;
+        if (!early[i])
+          score = mlir::isa<IntType>(want) ? 2 : 0;
+        else if (early[i]->type == want)
+          score = 2;
+        else if (converts(early[i]->type, want))
+          score = 1;
+        fits = score > 0;
+        c.score.push_back(score);
+      }
+      if (!fits) {
+        rejected.push_back(label + " does not take these types");
+        continue;
+      }
+      viable.push_back(std::move(c));
+    }
+    if (viable.empty()) {
+      std::string why = "no overload of '" + name + "' takes " + argTypes();
+      for (const std::string &r : rejected) why += "; " + r;
+      return fail(n, why);
+    }
+    auto beats = [](const Candidate &a, const Candidate &b) {
+      bool better = false;
+      for (size_t i = 0; i < a.score.size(); ++i) {
+        if (a.score[i] < b.score[i]) return false;
+        better = better || a.score[i] > b.score[i];
+      }
+      return better || (!a.generic && b.generic);
+    };
+    const Candidate *best = nullptr;
+    for (const Candidate &c : viable) {
+      bool all = true;
+      for (const Candidate &o : viable)
+        if (&o != &c && !beats(c, o)) all = false;
+      if (all) best = &c;
+    }
+    if (!best) {
+      std::string why = "the call of '" + name + "' with " + argTypes() +
+                        " is ambiguous between";
+      for (size_t i = 0; i < viable.size(); ++i)
+        why += (i ? (i + 1 == viable.size() ? " and '" : ", '") : " '") +
+               viable[i].sig->name + "'";
+      return fail(n, why + "; give the arguments' types, as in "
+                           "'let x : u8 = ...'");
+    }
+    sema::FuncSig *callee = best->sig;
+    if (best->generic) {
+      const sema::FuncSig *g = nullptr;
+      for (sema::FuncSig *cand : set)
+        if (cand->isGeneric()) g = cand;
+      callee = genericInstance(*g, best->bound);
+      if (!callee) return std::nullopt;
+    }
+    return genCall(n, *callee, args, &early);
+  }
+
+  // Whether `coerce` accepts a value of type `from` where `to` is wanted.
+  static bool converts(Type from, Type to) {
+    if (mlir::isa<IntType>(from) && mlir::isa<IntType>(to)) return true;
+    if (auto a = mlir::dyn_cast<ArrayType>(from))
+      if (auto sl = mlir::dyn_cast<SliceType>(to))
+        return a.getElementType() == sl.getElementType();
+    return false;
+  }
+
+  // The value parameters of a function as written: not `()` and not the
+  // type parameters.
+  static std::vector<const Node *> valueParamsOf(const sema::FuncSig &sig) {
+    std::vector<const Node *> out;
+    for (const syntax::NodePtr &p : sig.item->kids[0]->kids)
+      if (p->kind != NodeKind::ParamUnit && !sema::isTypeParam(*p))
+        out.push_back(p.get());
+    return out;
+  }
+
+  static const Node *retAnnotOf(const sema::FuncSig &sig) {
+    const Node &ret = *sig.item->kids[1];
+    return ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+                   ret.kids[0]->kind == NodeKind::Annot
+               ? ret.kids[0].get()
+               : nullptr;
+  }
+
+  // The instance of a generic function for `bound`, made and queued on
+  // first use. Null after an error.
+  sema::FuncSig *genericInstance(const sema::FuncSig &generic,
+                                 std::map<std::string, Type> bound) {
+    const std::vector<std::string> &params = generic.typeParams;
     std::string key = generic.name + "<";
     for (size_t i = 0; i < params.size(); ++i)
       key += (i ? ", " : "") + typeName(bound[params[i]]);
@@ -1555,15 +1722,64 @@ class Gen {
       inst.name = key;
       inst.typeArgs = bound;
       inst.result = Type();
-      if (!sema::resolveSignature(inst, types_, diags_)) return std::nullopt;
-      if (!inst.result && retAnnot == nullptr)
-        return fail(item, "a generic function needs its return type for "
-                          "now, as in 'let " + generic.name + " ... : T = "
-                          "...'");
+      if (!sema::resolveSignature(inst, types_, diags_)) return nullptr;
+      if (!inst.result && !retAnnotOf(generic)) {
+        fail(*generic.item, "a generic function needs its return type for "
+                            "now, as in 'let " + generic.name + " ... : T = "
+                            "...'");
+        return nullptr;
+      }
       it = sigs_.emplace(key, std::move(inst)).first;
       pendingInstances_.push_back(key);
     }
-    return genCall(n, it->second, args, &early);
+    return &it->second;
+  }
+
+  // Binds the type arguments `f<u8, t = u16>` gives. False after an error.
+  bool bindTypeArgs(const sema::FuncSig &generic, const Node *targs,
+                    std::map<std::string, Type> &bound) {
+    const std::vector<std::string> &params = generic.typeParams;
+    if (targs) {
+      size_t next = 0;
+      for (size_t i = 1; i < targs->kids.size(); ++i) {
+        const Node &t = *targs->kids[i];
+        std::string name;
+        const Node *typeNode = &t;
+        if (t.kind == NodeKind::NamedArg) {
+          name = t.text;
+          typeNode = t.kids[0].get();
+          if (!llvm::is_contained(params, name)) {
+            fail(t, "'" + generic.name + "' has no type parameter '" + name +
+                        "'");
+            return false;
+          }
+        } else {
+          if (next >= params.size()) {
+            fail(t, "'" + generic.name + "' takes " +
+                        plural(params.size(), "type argument") +
+                        ", given more");
+            return false;
+          }
+          name = params[next++];
+        }
+        // `t = u8` parses its value as an expression: a bare name is a
+        // type name there.
+        Node asType;
+        if (typeNode->kind == NodeKind::Name) {
+          asType.kind = NodeKind::TypeName;
+          asType.text = typeNode->text;
+          asType.loc = typeNode->loc;
+          typeNode = &asType;
+        }
+        Type ty = types_.resolve(*typeNode);
+        if (!ty) return false;
+        if (!bound.emplace(name, ty).second) {
+          fail(t, "the type parameter '" + name + "' is given twice");
+          return false;
+        }
+      }
+    }
+    return true;
   }
 
   // Whether a written type mentions a type parameter that is not bound.
@@ -2203,6 +2419,8 @@ class Gen {
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
   std::deque<std::string> pendingInstances_;  // generic instances to generate
+  // Each written function name and the symbols it may call (ADR 0034).
+  std::map<std::string, std::vector<std::string>> overloads_;
 };
 
 }  // namespace
