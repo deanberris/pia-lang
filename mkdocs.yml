@@ -77,6 +77,7 @@ nav:
       - Metaprograms: meta.md
       - Standard library (proposal): stdlib.md
       - Shared libraries and certificates: abi.md
+      - Module initialisation: init.md
       - Coroutines, races and deadlocks: concurrency.md
   - Compiler internals:
       - Architecture: architecture.md
@@ -117,3 +118,4 @@ nav:
       - adr/0030-published-object-layouts.md
       - adr/0031-verified-repl-and-live-environment.md
       - adr/0032-parallel-sliced-cached-proving.md
+      - adr/0033-module-initialisation-and-registries.md
