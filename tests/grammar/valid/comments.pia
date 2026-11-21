@@ -1,0 +1,16 @@
+(* Every kind of comment (ADR 0029). Comments never change how a program
+   parses: this file has the same tree as one with no comments. *)
+
+(** The tile width, a doc comment. *)
+let tile : u32 = 16  \ a line comment, to the end of the line
+
+\ Line comments on consecutive lines
+\ are one paragraph.
+let scale (n : u16) : u16 =
+  let m = n + 1 in  \ after `in`
+  (* (* block comments nest *) *) m - 1
+
+(**)
+let empty_comment : u8 = 0  (***) \ neither of these is a doc comment
+
+let product (a : u8) (b : u8) : u16 = ( * ) a b  \ `( * )` is still the operator

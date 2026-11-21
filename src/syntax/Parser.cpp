@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "syntax/Comments.h"
 #include "syntax/Lexer.h"
 
 namespace pia::syntax {
@@ -1193,20 +1194,27 @@ class Parser {
 }  // namespace
 
 NodePtr parseProgram(std::string_view source, Diagnostics &diags,
-                     const OperatorTable &operators) {
-  std::vector<Token> toks = tokenize(source, diags);
+                     const OperatorTable &operators, bool literate) {
+  std::vector<RawComment> comments;
+  LexOptions options;
+  options.literate = literate;
+  options.comments = &comments;
+  std::vector<Token> toks = tokenize(source, diags, options);
   if (diags.hasErrors()) return makeNode(NodeKind::Program, SourceLoc{});
-  return Parser(std::move(toks), diags, operators).program();
+  NodePtr tree = Parser(toks, diags, operators).program();
+  attachComments(*tree, toks, comments, source);
+  return tree;
 }
 
-NodePtr parseProgram(std::string_view source, Diagnostics &diags) {
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     bool literate) {
   // A program's own `let meta operator` declarations change how it parses,
   // so parse again with them until the table stops changing. Only the last
   // parse reports its errors.
   OperatorTable table = preludeOperators();
   for (int round = 0;; ++round) {
     Diagnostics local;
-    NodePtr tree = parseProgram(source, local, table);
+    NodePtr tree = parseProgram(source, local, table, literate);
     OperatorTable next = preludeOperators();
     collectOperators(*tree, next);
     if (next == table || round == 3 || local.hasErrors()) {
@@ -1218,9 +1226,14 @@ NodePtr parseProgram(std::string_view source, Diagnostics &diags) {
 }
 
 NodePtr parseContractFragment(std::string_view source, Diagnostics &diags) {
-  std::vector<Token> toks = tokenize(source, diags);
+  std::vector<RawComment> comments;
+  LexOptions options;
+  options.comments = &comments;
+  std::vector<Token> toks = tokenize(source, diags, options);
   if (diags.hasErrors()) return makeNode(NodeKind::Contracts, SourceLoc{});
-  return Parser(std::move(toks), diags, preludeOperators()).contractFragment();
+  NodePtr tree = Parser(toks, diags, preludeOperators()).contractFragment();
+  attachComments(*tree, toks, comments, source);
+  return tree;
 }
 
 void collectOperators(const Node &program, OperatorTable &table) {

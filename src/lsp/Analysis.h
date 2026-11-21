@@ -93,7 +93,8 @@ Range tokenFrom(std::string_view text, uint32_t offset);
 
 class Analysis {
  public:
-  explicit Analysis(std::string text);
+  // With `literate`, the text is a `.pia.md` file (ADR 0029).
+  explicit Analysis(std::string text, bool literate = false);
   Analysis(const Analysis &) = delete;
   Analysis &operator=(const Analysis &) = delete;
 

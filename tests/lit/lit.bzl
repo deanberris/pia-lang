@@ -7,13 +7,14 @@ def lit_tests(name, srcs, tools = ["//tools/pia-opt"]):
 
     Args:
       name: the test_suite's name.
-      srcs: .mlir or .pia test files with `// RUN:` lines.
+      srcs: .mlir, .pia or literate .pia.md test files with `// RUN:` lines.
       tools: binaries the RUN lines call by name; FileCheck is always there.
     """
     all_tools = tools + ["@llvm-project//llvm:FileCheck"]
     tests = []
     for src in srcs:
-        test_name = src.rsplit(".", 1)[0] + "_test"
+        stem = src[:-len(".pia.md")] if src.endswith(".pia.md") else src.rsplit(".", 1)[0]
+        test_name = stem + "_test"
         sh_test(
             name = test_name,
             srcs = ["//tests/lit:run_lit.sh"],

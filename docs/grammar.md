@@ -19,7 +19,31 @@ The phrase grammar uses EBNF. `x?` is optional, `x*` is zero or more, `x+` is on
 
 ### Whitespace and comments
 
-Spaces, tabs and newlines separate tokens. Comments are `(* ... *)` and nest, as in OCaml. Because `(*` always opens a comment, the multiplication operator value is written `( * )` with spaces.
+Spaces, tabs and newlines separate tokens. There are three kinds of comment ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md)):
+
+| Comment | Spelling | Notes |
+| --- | --- | --- |
+| Block | `(* ... *)` | Nests, as in OCaml. Because `(*` always opens a comment, the multiplication operator value is written `( * )` with spaces |
+| Doc | `(** ... *)` | A block comment that documents the code after it. `(**)` and `(***` are ordinary comments |
+| Line | `\` to the end of the line | Backslash is used nowhere else outside strings. `//` and `--` stay free for operators, and `#` for directives |
+
+Comments never change how a program parses, and they do not count for the layout rule. They are not thrown away either.
+
+### Comments in the syntax tree
+
+The parser keeps every comment as a `Comment` node attached to the node it describes, beside that node's children. Each has a style (`line`, `block`, `doc` or `prose`), a place and its text, which is the content without delimiters, trimmed, and with the indentation its later lines share removed. Line comments alone on consecutive lines are one comment.
+
+- A **trailing** comment has code before it on its line and none after it. It goes to the outermost node that ends at the token before it and starts on that line; if none starts on that line, as after `done`, to the innermost node that ends there. A `;`, `,` or `in` before the comment is skipped, so `let m = n + 1 in  \ one more` documents `n + 1`. After a token that leads into what follows (`=`, `->`, `=>`, `<-`, `then`, `else`, `with`, `|` or an opening bracket), a comment leads instead.
+- Any other comment is **leading** on the outermost node that starts at the next token, looking past opening brackets. A blank line in between makes it **detached**, like a section heading. Sequences, parameter lists, contract lists and other groups never take a comment; their first member does.
+- A comment with no code after it is detached on the program.
+
+`piac --dump-ast --comments` shows where each comment went.
+
+### Literate files
+
+A file whose name ends in `.pia.md`, or any file with `piac --literate`, is Markdown. Only fenced blocks whose info string is `pia` are code; other fences are prose. A code block must close every bracket it opens, and the last one needs its closing fence. Lines and columns are those of the Markdown file.
+
+The prose between two code blocks is one `prose` comment, leading on the first item of the block after it. Prose after the last block is detached on the program.
 
 ### Identifiers and keywords
 

@@ -51,6 +51,21 @@ struct Token {
   SourceLoc loc;
 };
 
+// A comment, as the lexer found it (docs/grammar.md, "Whitespace and
+// comments"; ADR 0029). The parser attaches each one to a syntax node.
+struct RawComment {
+  enum class Style : uint8_t { Line, Block, Doc, Prose };
+  Style style = Style::Block;
+  std::string text;       // the content without its delimiters, trimmed
+  SourceLoc loc;          // where it starts
+  uint32_t end = 0;       // byte offset just past it
+  uint32_t endLine = 0;   // the line it ends on
+  bool ownLine = false;   // only whitespace before it on its first line
+  size_t tokensBefore = 0;  // how many tokens the lexer had produced
+};
+
+const char *commentStyleName(RawComment::Style style);
+
 }  // namespace pia::syntax
 
 #endif  // PIA_SYNTAX_TOKEN_H

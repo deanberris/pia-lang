@@ -77,6 +77,14 @@ class Interpreter {
   // Code built by quotes takes the location of the expansion site.
   void setSite(syntax::SourceLoc site) { site_ = site; }
 
+  // What `listing ()` sees: the program's items as the current pass found
+  // them, and the program node, whose comments end the file (ADR 0029).
+  void setListing(std::vector<const syntax::Node *> items,
+                  const syntax::Node *program) {
+    listing_ = std::move(items);
+    program_ = program;
+  }
+
   // Names a quote leaves free resolve to these builtins wherever the code
   // lands (docs/meta.md, "Hygiene").
   static bool isCoreBuiltin(const std::string &name);
@@ -101,6 +109,8 @@ class Interpreter {
   std::function<bool(const std::string &)> isTypeDefined_;
   std::map<std::string, const syntax::Node *> globals_;
   syntax::SourceLoc site_;
+  std::vector<const syntax::Node *> listing_;
+  const syntax::Node *program_ = nullptr;
   uint64_t fuel_ = 0;
   unsigned fresh_ = 0;
   std::vector<std::string> ran_;
