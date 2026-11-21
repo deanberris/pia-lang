@@ -335,8 +335,14 @@ class Encoder {
       Type sort = sortOf(t);
       if (!sort) return;
       arrays_[arg] = declare(sort, "");
+      auto shared = fn_.getArgAttrOfType<mlir::IntegerAttr>(
+          index, PiaDialect::getLengthOfAttrName());
       if (auto a = mlir::dyn_cast<ArrayType>(t)) {
         lengths_[arg] = bv(APInt(64, a.getLength()));
+      } else if (shared) {
+        // A field buffer of a slice of records: the record slice has one
+        // length, which every field shares.
+        lengths_[arg] = lengths_[fn_.getArgument(shared.getInt())];
       } else {
         Value len = declare(bvType(), "len " + name);
         assertTerm(inRange(len, indexRange()));
@@ -400,6 +406,24 @@ class Encoder {
     done_ = true;
   }
 
+  // A field buffer's copy of a load, store or slice whose bound the first
+  // field's copy carries (transforms/ScalarizeRecords.cpp).
+  static bool boundsShared(Operation *op) {
+    return op->hasAttr(PiaDialect::getBoundsSharedAttrName());
+  }
+
+  // A bounds goal, or only its assumption on an op whose bound is shared.
+  void boundsGoal(Operation *op, std::string claim, Value term,
+                  bool byIntervals,
+                  std::vector<std::pair<std::string, Value>> witnesses) {
+    if (boundsShared(op)) {
+      assume(term);
+      return;
+    }
+    goal(ObligationKind::inbounds, op, std::move(claim), term, byIntervals,
+         std::move(witnesses));
+  }
+
   void skipped(ObligationKind kind, Operation *op, std::string claim,
                std::string reason) {
     counter_++;
@@ -461,9 +485,9 @@ class Encoder {
       if (!f.getType().contains(APInt::getMaxValue(64).zext(kBoundWidth)))
         out.push_back({ObligationKind::nooverflow,
                        "the index fits in " + sema::typeName(f.getType())});
-    if (mlir::isa<LoadOp, StoreOp>(op))
+    if (mlir::isa<LoadOp, StoreOp>(op) && !boundsShared(op))
       out.push_back({ObligationKind::inbounds, "the index is within bounds"});
-    if (mlir::isa<SliceOp>(op))
+    if (mlir::isa<SliceOp>(op) && !boundsShared(op))
       out.push_back({ObligationKind::inbounds, "the slice is within bounds"});
     if (mlir::isa<AbortOp>(op))
       out.push_back({ObligationKind::assert_, "'abort' is never reached"});
@@ -684,7 +708,7 @@ class Encoder {
       Value arr = arrays_.lookup(root);
       Value at = elementIndex(store.getBuffer(), idx, views_);
       if (!idx || !len || !arr || !at) return true;
-      goal(ObligationKind::inbounds, op, "the index is within bounds",
+      boundsGoal(op, "the index is within bounds",
            andOf(cmp(P::sge, idx, bv(0)), cmp(P::slt, idx, len)),
            indexByIntervals(store.getBuffer(), store.getIndex()),
            {{"index", idx}, {"length", len}});
@@ -750,7 +774,7 @@ class Encoder {
         Value idx = term(ld.getIndex());
         Value len = lengths_.lookup(ld.getBuffer());
         if (idx && len)
-          goal(ObligationKind::inbounds, op, "the index is within bounds",
+          boundsGoal(op, "the index is within bounds",
                andOf(cmp(P::sge, idx, bv(0)), cmp(P::slt, idx, len)),
                indexByIntervals(ld.getBuffer(), ld.getIndex()),
                {{"index", idx}, {"length", len}});
@@ -759,7 +783,7 @@ class Encoder {
         Value lo = term(sl.getLo()), hi = term(sl.getHi());
         Value len = lengths_.lookup(sl.getBuffer());
         if (lo && hi && len)
-          goal(ObligationKind::inbounds, op, "the slice is within bounds",
+          boundsGoal(op, "the slice is within bounds",
                andOf(andOf(cmp(P::sge, lo, bv(0)), cmp(P::sle, lo, hi)),
                      cmp(P::sle, hi, len)),
                false, {{"start", lo}, {"end", hi}, {"length", len}});
@@ -1685,6 +1709,7 @@ struct Job {
   Query query;
   unsigned width;
   std::string script;  // the query's declarations and assertions
+  bool autoSlice = false;  // in a function with a buffer of records
 };
 
 // What one job did, summed into Stats once every thread has finished.
@@ -1733,7 +1758,12 @@ std::vector<unsigned> symbolsOf(const z3::expr &e) {
 // the goal's negation last. Kept are that assertion and, transitively, every
 // assertion that shares a symbol with one already kept. Dropping the rest
 // only weakens the hypotheses, so an unsat slice proves the goal.
-std::vector<unsigned> sliceOf(const z3::expr_vector &assertions) {
+// `dropsDecl`, when given, is set when some symbol occurs only in dropped
+// assertions: the slice leaves out a whole declaration, not just facts
+// about symbols the goal can reach.
+std::vector<unsigned> sliceOf(const z3::expr_vector &assertions,
+                              bool *dropsDecl = nullptr) {
+  if (dropsDecl) *dropsDecl = false;
   unsigned n = assertions.size();
   std::vector<unsigned> all(n);
   for (unsigned i = 0; i < n; ++i) all[i] = i;
@@ -1763,6 +1793,12 @@ std::vector<unsigned> sliceOf(const z3::expr_vector &assertions) {
   std::vector<unsigned> out;
   for (unsigned i = 0; i < n; ++i)
     if (kept[i]) out.push_back(i);
+  if (dropsDecl)
+    for (const auto &entry : users)
+      if (!done.count(entry.first)) {
+        *dropsDecl = true;
+        break;
+      }
   return out;
 }
 
@@ -1848,10 +1884,14 @@ void solve(const Job &job, const Options &options, Outcome &out,
   z3::solver sliced(ctx);
   sliced.set(p);
   z3::solver *first = &full;
-  if (options.slice) {
+  if (options.slice == Options::Slice::On ||
+      (options.slice == Options::Slice::Auto && job.autoSlice)) {
     z3::expr_vector as = full.assertions();
-    std::vector<unsigned> keep = sliceOf(as);
-    if (keep.size() < as.size()) {
+    bool dropsDecl = false;
+    std::vector<unsigned> keep = sliceOf(as, &dropsDecl);
+    bool use = options.slice == Options::Slice::On ||
+               (job.autoSlice && dropsDecl);
+    if (use && keep.size() < as.size()) {
       for (unsigned i : keep) sliced.add(as[i]);
       first = &sliced;
       js.sliced = true;
@@ -2034,6 +2074,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                 buildQuery(module, fn, width, static_cast<int>(i), unused),
                 width, ""};
         job.script = scriptOf(job.query.smtlib);
+        job.autoSlice = fn->hasAttr(PiaDialect::getRecordBuffersAttrName());
         if (options.dumpSmt && !job.query.smtlib.empty())
           llvm::errs() << "; " << out.where << ": " << out.claim << "\n"
                        << job.query.smtlib << "\n";

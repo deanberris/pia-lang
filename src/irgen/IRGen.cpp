@@ -1355,12 +1355,58 @@ class Gen {
     return TV{v, ft};
   }
 
+  // `xs.[i].r <- v` reads element i, replaces its field and writes it back.
+  // Once records are scalarized, only the field's own buffer is written.
+  R genElementFieldAssign(const Node &n) {
+    const Node &place = *n.kids[0];
+    const Node &index = *place.kids[0];
+    const Node &obj = *index.kids[0];
+    if (obj.kind != NodeKind::Name)
+      return fail(obj, "only a named array or slice can be written");
+    BindingPtr b = lookup(obj.text);
+    if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+    Type elem = elementType(b->type);
+    if (!elem)
+      return fail(obj, "only arrays and slices can be indexed, found " +
+                           typeName(b->type));
+    auto rt = mlir::dyn_cast<RecordType>(elem);
+    if (!rt || types_.isVariant(rt))
+      return fail(place, "'." + place.text + "' needs a record, found " +
+                             typeName(elem));
+    if (!b->isParam || !(sema::hasModifier(b->modifiers, "out") ||
+                         sema::hasModifier(b->modifiers, "inout")))
+      return fail(obj, "cannot write to '" + obj.text +
+                           "': declare the parameter 'out' or 'inout'");
+    std::optional<unsigned> i = rt.fieldIndex(place.text);
+    if (!i)
+      return fail(place, typeName(rt) + " has no field '" + place.text + "'");
+    auto idx = genIndexValue(*index.kids[1]);
+    if (!idx) return std::nullopt;
+    Type ft = rt.getFieldTypes()[*i];
+    R v = genExpr(*n.kids[1], ft);
+    if (!v) return v;
+    R c = coerce(*v, ft, *n.kids[1]);
+    if (!c) return c;
+    Location l = loc(n);
+    Value old = create<LoadOp>(l, rt, b->value, *idx);
+    llvm::SmallVector<Value> fields;
+    for (auto [j, name] : llvm::enumerate(rt.getFieldNames()))
+      fields.push_back(j == *i ? c->value
+                               : create<FieldOp>(l, rt.getFieldTypes()[j], old,
+                                                 name)
+                                     .getResult());
+    create<StoreOp>(l, create<RecordOp>(l, rt, fields).getResult(), b->value,
+                    *idx);
+    return unit();
+  }
+
   R genAssign(const Node &n) {
     const Node &place = *n.kids[0];
     const Node &valueNode = *n.kids[1];
     if (place.kind == NodeKind::Field) {
       // `p.r <- v` rebuilds the record `p` with one field replaced.
       const Node &obj = *place.kids[0];
+      if (obj.kind == NodeKind::Index) return genElementFieldAssign(n);
       if (obj.kind != NodeKind::Name)
         return fail(obj, "only a field of a named record can be assigned");
       BindingPtr b = lookup(obj.text);

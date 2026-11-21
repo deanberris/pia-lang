@@ -26,6 +26,10 @@
 //                                   hash of each query
 //   piac --slice ...                first try each goal with only the
 //                                   assumptions it shares symbols with
+//                                   (by default, only in a function with
+//                                   a buffer of records, and only when
+//                                   that drops a declaration)
+//   piac --no-slice ...             always solve each goal's full query
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
@@ -78,7 +82,7 @@ int usage() {
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
-               "             [--proof-cache=<dir>] [--slice] [--verify-stats]\n"
+               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -269,7 +273,8 @@ int main(int argc, char **argv) {
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
   std::string proofCache;
-  bool slice = false, verifyStats = false;
+  int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
+  bool verifyStats = false;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -326,7 +331,9 @@ int main(int argc, char **argv) {
       proofCache = arg.substr(14);
     }
     else if (arg == "--slice")
-      slice = true;
+      slice = 1;
+    else if (arg == "--no-slice")
+      slice = -1;
     else if (arg == "--verify-stats")
       verifyStats = true;
     else if (arg == "--solver-cost")
@@ -429,7 +436,9 @@ int main(int argc, char **argv) {
       options.rlimit = solverRlimit;
       options.reportCost = solverCost;
       options.jobs = jobs;
-      options.slice = slice;
+      options.slice = slice > 0   ? pia::verify::Options::Slice::On
+                      : slice < 0 ? pia::verify::Options::Slice::Off
+                                  : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
       options.only = verifyOnly;
       if (module && codegen) {
