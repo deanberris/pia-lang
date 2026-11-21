@@ -75,6 +75,7 @@ nav:
       - Heartbleed: cases/heartbleed.pia.md
       - Binary search: cases/binary-search.pia.md
       - Cloudbleed: cases/cloudbleed.pia.md
+      - "CrowdStrike Channel File 291": cases/crowdstrike.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md
