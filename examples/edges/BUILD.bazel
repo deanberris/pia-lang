@@ -1,0 +1,72 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/piac:pia.bzl", "pia_object")
+
+# The edge detection demo (docs/demo.md). edges.pia is the image pipeline;
+# main.c reads and writes BMP files around it, because Pia has no I/O yet.
+#
+#   bazel run //examples/edges                  # draws a test scene
+#   bazel run //examples/edges -- photo.bmp out.bmp
+#
+# Everything here runs only on Apple Silicon, the one target piac compiles
+# for so far.
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+# Every goal in edges.pia must be proved, or piac refuses to compile it.
+pia_object(
+    name = "edges_obj",
+    src = "edges.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+cc_library(
+    name = "edges_pia",
+    srcs = [":edges_obj"],
+    hdrs = ["pia_edges.h"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+cc_binary(
+    name = "edges",
+    srcs = ["main.c"],
+    target_compatible_with = APPLE_SILICON,
+    deps = [":edges_pia"],
+)
+
+cc_test(
+    name = "edges_test",
+    srcs = ["edges_test.c"],
+    target_compatible_with = APPLE_SILICON,
+    deps = [":edges_pia"],
+)
+
+# The demo itself runs too: it draws the test scene and writes both images.
+sh_test(
+    name = "edges_run_test",
+    srcs = ["edges_run_test.sh"],
+    args = ["$(rootpath :edges)"],
+    data = [":edges"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# edges_buggy.pia must fail to verify. These run on any host.
+sh_test(
+    name = "edges_buggy_test",
+    srcs = ["edges_buggy_test.sh"],
+    args = [
+        "$(rootpath //tools/piac)",
+        "$(rootpath edges_buggy.pia)",
+    ],
+    data = [
+        "edges_buggy.pia",
+        "//tools/piac",
+    ],
+)
+
+exports_files([
+    "edges.pia",
+    "edges_buggy.pia",
+])

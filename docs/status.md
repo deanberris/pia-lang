@@ -14,6 +14,7 @@ Pia is an experimental language under active development. The compiler works end
 | Verification | Overflow, nonzero divisors, bounds, preconditions at calls, postconditions and assertions, by intervals and Z3, with counterexamples |
 | Metaprograms | `let meta` functions, quotes and splices, hygiene, operators defined in the prelude and by programs, `@derive(eq)`, expansion to a fixed point |
 | Codegen | arm64 for Apple Silicon through MLIR and LLVM: object files, assembly and LLVM IR, a C ABI, saturating NEON instructions and vectorised loops |
+| Demo | [Edge detection](demo.md): a Pia image pipeline, proved and compiled into a program you can run with `bazel run //examples/edges` |
 | Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension |
 
 ## Known limitations
