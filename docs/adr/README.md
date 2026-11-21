@@ -25,3 +25,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0019](0019-grammar-disambiguation.md) | Grammar disambiguation rules: contracts before bodies, layout, adjacency | Accepted |
 | [0020](0020-presburger-for-affine-goals.md) | Decide affine aliasing and dependence goals with MLIR's Presburger library | Accepted |
 | [0021](0021-language-server.md) | A language server, `pia-lsp`, with a VS Code client first | Proposed |
+| [0022](0022-metaprogram-hygiene.md) | Metaprogram hygiene: renamed binders, definition-site free names, `$!` to opt out | Proposed |

@@ -127,7 +127,9 @@ using NodePtr = std::unique_ptr<Node>;
 struct Node {
   NodeKind kind = NodeKind::None;
   std::string text;
-  std::string flags;  // LetItem/LetIn: "rec", "meta" or "rec meta"
+  // LetItem/LetIn: "rec", "meta" or "rec meta". Name: "prelude" or
+  // "toplevel" when a quote made it (docs/meta.md, "Hygiene").
+  std::string flags;
   SourceLoc loc;
   std::vector<NodePtr> kids;
 
@@ -138,6 +140,9 @@ struct Node {
 };
 
 NodePtr makeNode(NodeKind kind, SourceLoc loc, std::string text = "");
+
+// A deep copy of `node`.
+NodePtr clone(const Node &node);
 
 // Writes the tree as an indented S-expression, one node per line. This is the
 // `piac --dump-ast` format that the golden tests compare.

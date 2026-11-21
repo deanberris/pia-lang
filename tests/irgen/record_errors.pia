@@ -20,6 +20,6 @@ let wrong (p : pixel) : u8 = p.x
 *)
 let scalar (v : u8) : u8 = v.r
 
-(* CHECK: record_errors.pia:[[@LINE+2]]:45: error: comparing records with '=' is not supported yet
+(* CHECK: record_errors.pia:[[@LINE+2]]:45: error: comparing records of type pixel with '=' needs 'eq_pixel'; add @derive(eq) to 'pixel'
 *)
 let same (p : pixel) (q : pixel) : bool = p = q

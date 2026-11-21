@@ -1,0 +1,19 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The metaprogram engine (milestone M7): the interpreter and the expansion
+# loop. Like the front end, it has no LLVM dependency.
+cc_library(
+    name = "meta",
+    srcs = [
+        "Expand.cpp",
+        "Interpreter.cpp",
+    ],
+    hdrs = [
+        "Expand.h",
+        "Interpreter.h",
+    ],
+    copts = ["-Wall", "-Wextra", "-Werror"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = ["//src/syntax"],
+)

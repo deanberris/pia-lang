@@ -63,7 +63,7 @@ An operator is a maximal run of `+ - * / < > = | & ^ ~ ! % ?`. A few spellings a
 | `<-` | Assignment |
 | `\|` | Variant, match arm, union type, refinement |
 
-Every other operator gets its precedence from the operator table. Until the meta engine exists, the table is fixed ([Bootstrapping order](architecture.md#bootstrapping-order)); after M7 it comes from the prelude's `let meta operator` declarations. Operators not in the table get a level from their first character, as in OCaml.
+Every other operator gets its precedence from the operator table. The table comes from the `let meta operator` declarations in the prelude ([meta.md](meta.md#operators)) and in the program. Operators not in the table get a level from their first character, as in OCaml.
 
 | Level | Operators | Associativity |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ The levels match the design's `let meta operator ( + ) : prec 6 left`. A user op
 | --- | --- | --- |
 | `QUOTE_OPEN` | `` `( `` | Quoted syntax, closed by `)` |
 | `QIDENT` | `` `name `` | A quoted identifier, e.g. `` `sgemm_4x16 `` |
-| `SPLICE_IDENT` | `$name` | Splice a metaprogram value |
+| `SPLICE_IDENT` | `$name`, `$!name` | Splice a metaprogram value. `$!name` escapes hygiene ([meta.md](meta.md#hygiene)) |
 | `SPLICE_OPEN` | `$(` | Splice an expression, closed by `)` |
 | `ATTR`, `ATTR_OPEN` | `@name`, `@name(` | Attributes; arguments follow `(` with no space |
 | `TARGS_OPEN` | `<` straight after an identifier | Explicit type arguments, see below |

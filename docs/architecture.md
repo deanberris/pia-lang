@@ -70,7 +70,7 @@ Verifier v0 (M5) implements steps 2 to 6 for code without loops; [verifier.md](v
 
 ## Bootstrapping order
 
-Operators are defined by metaprograms (ADR 0008), but the metaprogramming engine needs a parser that already handles expressions. The parser therefore starts with a fixed operator table matching the planned prelude. Once the meta engine works, the table is generated from the prelude's `operator` declarations, and the hard-coded one is removed.
+Operators are defined by metaprograms (ADR 0008), but the metaprogramming engine needs a parser that already handles expressions. The parser therefore starts with a fixed operator table matching the planned prelude. Since M7 the table comes from the prelude's `operator` declarations ([meta.md](meta.md#operators)), and the hard-coded one is gone.
 
 ## Milestones
 

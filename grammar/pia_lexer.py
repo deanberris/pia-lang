@@ -285,7 +285,11 @@ class Lexer:
                 if self.peek() == "(":
                     self.advance()
                     self.emit("SPLICE_OPEN", start, line, column)
-                elif _is_ident_start(self.peek()):
+                elif _is_ident_start(self.peek()) or (
+                        self.peek() == "!" and _is_ident_start(self.peek(1))):
+                    # `$!name` escapes hygiene.
+                    if self.peek() == "!":
+                        self.advance()
                     self.scan_ident()
                     self.emit("SPLICE_IDENT", start, line, column)
                 else:

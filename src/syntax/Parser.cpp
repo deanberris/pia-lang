@@ -17,24 +17,12 @@ struct ParseError {
   std::string message;
 };
 
-enum class Assoc { Left, Right, None };
+using Assoc = Fixity::Assoc;
+using OpInfo = Fixity;  // level 0 means "not a binary operator"
 
-struct OpInfo {
-  int level = 0;  // 0 means "not a binary operator"
-  Assoc assoc = Assoc::Left;
-};
-
-// The bootstrap operator table (docs/grammar.md, "Operators"). After M7 it is
-// built from the prelude's `let meta operator` declarations.
-OpInfo operatorInfo(std::string_view op) {
-  if (op == "==>" || op == "<==>") return {1, Assoc::Right};
-  if (op == "||") return {2, Assoc::Right};
-  if (op == "&&") return {3, Assoc::Right};
-  if (op == "<>" || op == "<" || op == ">" || op == "<=" || op == ">=")
-    return {4, Assoc::None};
-  if (op == "+" || op == "-" || op == "+|" || op == "-|") return {6, Assoc::Left};
-  if (op == "*" || op == "/" || op == "%" || op == "mod") return {7, Assoc::Left};
-  // Operators not in the table get a level from their first character.
+// An operator with no declaration gets a level from its first character,
+// as in OCaml (docs/grammar.md, "Operators").
+OpInfo defaultFixity(std::string_view op) {
   if (op.substr(0, 2) == "||") return {2, Assoc::Right};
   if (op.substr(0, 2) == "&&") return {3, Assoc::Right};
   switch (op[0]) {
@@ -49,8 +37,9 @@ OpInfo operatorInfo(std::string_view op) {
 
 class Parser {
  public:
-  Parser(std::vector<Token> toks, Diagnostics &diags)
-      : toks_(std::move(toks)), diags_(diags) {}
+  Parser(std::vector<Token> toks, Diagnostics &diags,
+         const OperatorTable &operators)
+      : toks_(std::move(toks)), diags_(diags), operators_(operators) {}
 
   NodePtr program() {
     auto prog = makeNode(N::Program, loc());
@@ -914,7 +903,7 @@ class Parser {
 
   // Precedence climbing over the operator table.
   OpInfo binaryInfo() const {
-    if (at(K::Eq)) return {4, Assoc::None};
+    if (at(K::Eq)) return operatorInfo("=");
     if (at(K::DotDot)) return {5, Assoc::None};
     if (at(K::Op)) return operatorInfo(tok().text);
     return {};
@@ -1188,8 +1177,14 @@ class Parser {
     }
   }
 
+  OpInfo operatorInfo(std::string_view op) const {
+    auto it = operators_.find(op);
+    return it != operators_.end() ? it->second : defaultFixity(op);
+  }
+
   std::vector<Token> toks_;
   Diagnostics &diags_;
+  const OperatorTable &operators_;
   size_t pos_ = 0;
   bool contractMode_ = false;  // parsing a requires/ensures predicate
   bool clauseEnded_ = false;   // the predicate has ended at a body `=`
@@ -1197,16 +1192,65 @@ class Parser {
 
 }  // namespace
 
-NodePtr parseProgram(std::string_view source, Diagnostics &diags) {
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     const OperatorTable &operators) {
   std::vector<Token> toks = tokenize(source, diags);
   if (diags.hasErrors()) return makeNode(NodeKind::Program, SourceLoc{});
-  return Parser(std::move(toks), diags).program();
+  return Parser(std::move(toks), diags, operators).program();
+}
+
+NodePtr parseProgram(std::string_view source, Diagnostics &diags) {
+  // A program's own `let meta operator` declarations change how it parses,
+  // so parse again with them until the table stops changing. Only the last
+  // parse reports its errors.
+  OperatorTable table = preludeOperators();
+  for (int round = 0;; ++round) {
+    Diagnostics local;
+    NodePtr tree = parseProgram(source, local, table);
+    OperatorTable next = preludeOperators();
+    collectOperators(*tree, next);
+    if (next == table || round == 3 || local.hasErrors()) {
+      for (const Diagnostic &d : local.errors()) diags.error(d.loc, d.message);
+      return tree;
+    }
+    table = std::move(next);
+  }
 }
 
 NodePtr parseContractFragment(std::string_view source, Diagnostics &diags) {
   std::vector<Token> toks = tokenize(source, diags);
   if (diags.hasErrors()) return makeNode(NodeKind::Contracts, SourceLoc{});
-  return Parser(std::move(toks), diags).contractFragment();
+  return Parser(std::move(toks), diags, preludeOperators()).contractFragment();
+}
+
+void collectOperators(const Node &program, OperatorTable &table) {
+  for (const NodePtr &item : program.kids) {
+    if (item->kind != NodeKind::MetaOperator) continue;
+    const Node &fixity = *item->kids[0];
+    if (fixity.kind != NodeKind::Fixity) continue;
+    // "prec <level> <assoc>"
+    size_t a = fixity.text.find(' '), b = fixity.text.rfind(' ');
+    Fixity f;
+    f.level = std::stoi(fixity.text.substr(a + 1, b - a - 1));
+    std::string assoc = fixity.text.substr(b + 1);
+    f.assoc = assoc == "left"    ? Assoc::Left
+              : assoc == "right" ? Assoc::Right
+                                 : Assoc::None;
+    table[item->text] = f;
+  }
+}
+
+const OperatorTable &preludeOperators() {
+  // The prelude's own operators appear only inside quotes, so it parses
+  // with no table at all.
+  static const OperatorTable table = [] {
+    OperatorTable empty, out;
+    Diagnostics diags;
+    NodePtr prelude = parseProgram(preludeSource(), diags, empty);
+    collectOperators(*prelude, out);
+    return out;
+  }();
+  return table;
 }
 
 }  // namespace pia::syntax

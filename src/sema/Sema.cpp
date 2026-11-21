@@ -1,6 +1,7 @@
 #include "sema/Sema.h"
 
 #include <cctype>
+#include <set>
 
 #include "dialect/PiaDialect.h"
 #include "llvm/ADT/StringExtras.h"
@@ -280,13 +281,54 @@ void defineType(const Node &item, TypeResolver &types,
   types.define(item.text, RecordType::get(ctx, item.text, names, fieldTypes));
 }
 
+void typeNames(const Node &n, std::set<std::string> &out) {
+  if (n.kind == NodeKind::TypeName) out.insert(n.text);
+  for (const syntax::NodePtr &k : n.kids) typeNames(*k, out);
+}
+
+// Defines each type after the types it mentions, so a type may use one
+// defined later in the file, as metaprograms often produce. Types left in a
+// cycle are defined in source order, which reports the unknown name.
+void defineTypes(const Node &program, TypeResolver &types,
+                 syntax::Diagnostics &diags) {
+  std::vector<const Node *> pending;
+  std::set<std::string> declared;
+  for (const syntax::NodePtr &item : program.kids)
+    if (isTypeItem(*item)) {
+      pending.push_back(item.get());
+      declared.insert(item->text);
+    }
+  std::set<std::string> done;
+  while (!pending.empty()) {
+    std::vector<const Node *> blocked;
+    for (const Node *item : pending) {
+      std::set<std::string> uses;
+      typeNames(*item->kids[3], uses);
+      bool ready = true;
+      for (const std::string &u : uses)
+        if (u != item->text && declared.count(u) && !done.count(u))
+          ready = false;
+      if (ready) {
+        defineType(*item, types, diags);
+        done.insert(item->text);
+      } else {
+        blocked.push_back(item);
+      }
+    }
+    if (blocked.size() == pending.size()) {
+      for (const Node *item : blocked) defineType(*item, types, diags);
+      break;
+    }
+    pending = std::move(blocked);
+  }
+}
+
 }  // namespace
 
 std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  TypeResolver &types,
                                                  syntax::Diagnostics &diags) {
-  for (const syntax::NodePtr &item : program.kids)
-    if (isTypeItem(*item)) defineType(*item, types, diags);
+  defineTypes(program, types, diags);
   std::map<std::string, FuncSig> sigs;
   for (const syntax::NodePtr &item : program.kids) {
     if (isTypeItem(*item)) continue;

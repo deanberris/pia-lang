@@ -5,6 +5,9 @@
 #ifndef PIA_SYNTAX_PARSER_H
 #define PIA_SYNTAX_PARSER_H
 
+#include <functional>
+#include <map>
+#include <string>
 #include <string_view>
 
 #include "syntax/Diagnostics.h"
@@ -12,9 +15,39 @@
 
 namespace pia::syntax {
 
+// How a binary operator binds: its precedence level (1 binds loosest) and
+// associativity. Operators are declared by `let meta operator` items
+// (ADR 0008); the standard ones live in the prelude.
+struct Fixity {
+  enum class Assoc { Left, Right, None };
+  int level = 0;
+  Assoc assoc = Assoc::Left;
+  bool operator==(const Fixity &o) const {
+    return level == o.level && assoc == o.assoc;
+  }
+};
+using OperatorTable = std::map<std::string, Fixity, std::less<>>;
+
+// The source of the prelude every program imports (src/syntax/Prelude.cpp).
+std::string_view preludeSource();
+
+// The fixities the prelude declares.
+const OperatorTable &preludeOperators();
+
+// Adds the fixity of every top-level `let meta operator` in `program` to
+// `table`. A later declaration of an operator replaces an earlier one.
+void collectOperators(const Node &program, OperatorTable &table);
+
 // Parses a whole file into a Program node. On a syntax error the parser
 // reports it, skips to the next top-level item and carries on, so one run
 // reports every broken item. Check `diags.hasErrors()` before using the tree.
+// Binary operators take their fixity from `operators`; one missing from it
+// gets a level from its first character, as in OCaml (docs/grammar.md).
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     const OperatorTable &operators);
+
+// The same, with the prelude's operators and those the program declares:
+// when it declares any, it is parsed again with them.
 NodePtr parseProgram(std::string_view source, Diagnostics &diags);
 
 // Parses a sequence of contract clauses (`requires ...`, `ensures ...`) on

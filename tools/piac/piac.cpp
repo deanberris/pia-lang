@@ -9,6 +9,8 @@
 //                                   or the core MLIR dialects
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
+//   piac --dump-expanded file.pia   print it after metaprograms run (M7)
+//   piac --meta-cycles=N ...        cap metaprogram expansion at N passes
 //   piac --dump-tokens file.pia     print the token stream
 //   piac --check file.pia           parse and report errors only
 //   piac --fragment=contracts ...   parse a file of contract clauses
@@ -19,12 +21,14 @@
 // Built with -DPIA_NO_MLIR, piac has only the front end and needs no LLVM
 // (README, "Front end without Bazel").
 
+#include <cstdlib>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "meta/Expand.h"
 #include "syntax/Lexer.h"
 #include "syntax/Parser.h"
 #include "syntax/Syntax.h"
@@ -44,8 +48,8 @@ namespace {
 
 int usage() {
   std::cerr << "usage: piac (--verify | --emit=mlir | --dump-ast | "
-               "--dump-tokens | --check) "
-               "[--fragment=contracts] <file.pia>\n"
+               "--dump-expanded | --dump-tokens | --check) "
+               "[--fragment=contracts] [--meta-cycles=N] <file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
                "[--target=<triple>] [--cpu=<name>] [-O<n>] <file.pia>\n";
   return 2;
@@ -153,12 +157,14 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 int main(int argc, char **argv) {
   std::string mode, file, output;
   bool contracts = false, verify = false, dumpSmt = false;
+  pia::meta::Options meta;
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg == "--dump-ast" || arg == "--dump-tokens" || arg == "--check" ||
+    if (arg == "--dump-ast" || arg == "--dump-expanded" ||
+        arg == "--dump-tokens" || arg == "--check" ||
         arg == "--emit=mlir" || arg == "--emit=core" || arg == "--emit=llvm" ||
         arg == "--emit=asm" || arg == "--emit=obj")
       mode = arg;
@@ -179,6 +185,12 @@ int main(int argc, char **argv) {
       verify = dumpSmt = true;
     else if (arg == "--fragment=contracts")
       contracts = true;
+    else if (arg.rfind("--meta-cycles=", 0) == 0) {
+      char *end = nullptr;
+      long n = std::strtol(arg.c_str() + 14, &end, 10);
+      if (*end != '\0' || n < 0) return usage();
+      meta.maxCycles = static_cast<unsigned>(n);
+    }
     else if (!arg.empty() && arg[0] == '-')
       return usage();
     else
@@ -223,6 +235,13 @@ int main(int argc, char **argv) {
         contracts ? pia::syntax::parseContractFragment(source, diags)
                   : pia::syntax::parseProgram(source, diags);
     if (!diags.hasErrors() && mode == "--dump-ast")
+      pia::syntax::dump(std::cout, *tree);
+    // Everything past the syntax tree sees the program after its
+    // metaprograms have run (docs/meta.md).
+    if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
+        mode != "--check")
+      pia::meta::expand(*tree, diags, meta);
+    if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree);
 #ifndef PIA_NO_MLIR
     if (!diags.hasErrors() &&

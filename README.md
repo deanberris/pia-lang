@@ -9,6 +9,7 @@ The first milestone is a toy compiler, written in C++ on MLIR, that proves and c
 - [Language design](docs/design.md)
 - [Compiler architecture](docs/architecture.md)
 - [Grammar](docs/grammar.md)
+- [Metaprograms](docs/meta.md)
 - [Architecture Decision Records](docs/adr/README.md)
 
 ## Building
@@ -33,7 +34,7 @@ The first build compiles the parts of LLVM and MLIR that Pia uses and takes a wh
 | `//tests/verify:verify_tests` | `piac --verify` reports checked with FileCheck |
 | `//tests/codegen:codegen_tests` | `piac --emit=core` and `--emit=llvm` checked with FileCheck |
 | `//tests/codegen:saturate_test` | Compiled Pia linked with a C harness and compared with C reference code (arm64 macOS only) |
-| `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--emit=obj -o f.o` compiles for Apple Silicon ([docs/codegen.md](docs/codegen.md)), `--dump-ast` prints the syntax tree |
+| `//tools/piac` | The compiler driver: `piac --verify file.pia` proves the program's goals ([docs/verifier.md](docs/verifier.md)), `--emit=mlir` lowers to the pia dialects ([docs/irgen.md](docs/irgen.md)), `--emit=obj -o f.o` compiles for Apple Silicon ([docs/codegen.md](docs/codegen.md)), `--dump-ast` prints the syntax tree and `--dump-expanded` the tree after metaprograms run ([docs/meta.md](docs/meta.md)) |
 | `//tests/grammar:test_grammar` | The grammar tests ([docs/grammar.md](docs/grammar.md)) |
 | `//tests/parser:parser_golden_test` | `piac --dump-ast` golden tests |
 | `//tools/pia-lsp` | The language server ([ADR 0021](docs/adr/0021-language-server.md)): syntax errors, failed goals with counterexamples, hover with proofs, definitions, outline and completion over LSP. `//tools/pia-lsp:pia-lsp-frontend` is the same without MLIR |
