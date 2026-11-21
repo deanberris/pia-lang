@@ -1,0 +1,51 @@
+(* Overloading (ADR 0034): functions that share a name are an overload set,
+   and each call picks the one that fits its arguments best. An exact type
+   beats a conversion, and a function that is not generic beats a generic
+   one. Each overload is proved on its own, under its own symbol.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let pixel = type { r : u8; g : u8 }
+
+let size (x : u8) : usize
+  ensures result = 1
+= 1
+
+let size (x : u16) : usize
+  ensures result = 2
+= 2
+
+let size (p : pixel) : usize
+  ensures result = 2
+= 2
+
+(* `size a` is `size(u8)`, exact, rather than `size(u16)` by widening. *)
+let total (a : u8) (b : u16) (p : pixel) : usize
+  ensures result = 5
+= size a + size b + size p
+
+(* A binding with a type picks the overload: `w` is a u16. *)
+let widen (a : u8) : usize
+  ensures result = 2
+= let w : u16 = a in size w
+
+(* A generic overload, and one for u8 that wins over it for u8. *)
+let describe (t : type) (x : t) : u8
+  ensures result = 0
+= 0
+
+let describe (x : u8) : u8
+  ensures result = 1
+= 1
+
+let specific (a : u8) : u8
+  ensures result = 1
+= describe a
+
+let general (b : bool) : u8
+  ensures result = 0
+= describe b
+
+(* Expected report, in order.
+// CHECK: placeholder to dump the report
+*)
