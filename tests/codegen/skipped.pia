@@ -1,17 +1,19 @@
 (* Goals the verifier skips, such as the termination of a while loop with
    no `decreases` measure, are not proved, so piac generates no code for
    them unless --allow-unproved accepts them (docs/codegen.md,
-   "Verification comes first").
+   "Verification comes first"). piac --verify fails on them the same way.
 // RUN: not piac --emit=core %s 2>&1 | FileCheck %s --check-prefix=REFUSE
 // RUN: piac --emit=core --allow-unproved=drain %s 2>&1 | FileCheck %s --check-prefix=FUNCTION
-// RUN: piac --emit=core --allow-unproved=%s:33 %s 2>&1 | FileCheck %s --check-prefix=FUNCTION
-// RUN: not piac --emit=core --allow-unproved=%s:33:3 %s 2>&1 | FileCheck %s --check-prefix=ONE
+// RUN: piac --emit=core --allow-unproved=%s:42 %s 2>&1 | FileCheck %s --check-prefix=FUNCTION
+// RUN: not piac --emit=core --allow-unproved=%s:42:3 %s 2>&1 | FileCheck %s --check-prefix=ONE
 // RUN: piac --emit=core --allow-unproved=drain --allow-unproved=no_such_fn %s 2>&1 | FileCheck %s --check-prefix=UNUSED
+// RUN: not piac --verify %s 2>&1 | FileCheck %s --check-prefix=VERIFY
+// RUN: piac --verify --allow-unproved=drain %s 2>&1 | FileCheck %s --check-prefix=VERIFY-OK
 *)
 
 (*
-// REFUSE: skipped.pia:33:3: unproved: the loop terminates [it has no 'decreases' measure] in 'drain'
-// REFUSE-NEXT: skipped.pia:33:35: unproved: the loop terminates [it has no 'decreases' measure] in 'drain'
+// REFUSE: skipped.pia:42:3: unproved: the loop terminates [it has no 'decreases' measure] in 'drain'
+// REFUSE-NEXT: skipped.pia:42:35: unproved: the loop terminates [it has no 'decreases' measure] in 'drain'
 // REFUSE-NEXT: piac: error: 2 obligations not proved, so no code was generated
 // REFUSE-NEXT: piac: note: prove them, or accept specific ones with --allow-unproved=<function> or --allow-unproved=<file:line[:col]>
 // REFUSE-NOT: func.func
@@ -20,12 +22,19 @@
 // FUNCTION-LABEL: func.func @drain
 // FUNCTION: scf.while
 
-// ONE: skipped.pia:33:35: unproved: the loop terminates
+// ONE: skipped.pia:42:35: unproved: the loop terminates
 // ONE-NEXT: piac: error: 1 obligation not proved, so no code was generated
 
 // UNUSED: piac: warning: --allow-unproved=no_such_fn matches no unproved obligation
 // UNUSED-NEXT: piac: warning: 2 obligations not proved, accepted by --allow-unproved
 // UNUSED-LABEL: func.func @drain
+
+// VERIFY: skipped.pia:42:3: skipped: the loop terminates
+// VERIFY: 3 proved, 0 failed, 2 skipped
+// VERIFY-NEXT: piac: error: 2 obligations not proved; accept specific ones with --allow-unproved=<function> or --allow-unproved=<file:line[:col]>
+
+// VERIFY-OK: 3 proved, 0 failed, 2 skipped
+// VERIFY-OK-NOT: error
 *)
 let drain (a : u32) (b : u32) : u32 =
   let x : mutable u32 = a in

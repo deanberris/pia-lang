@@ -2,7 +2,7 @@
 
 Status: implemented in M5 ([#6](https://github.com/deanberris/pia-lang/issues/6)).
 
-`piac --verify file.pia` lowers a program ([irgen.md](irgen.md)) and tries to prove every goal in it. It prints one line per goal and a summary, and exits with status 1 if any goal fails:
+`piac --verify file.pia` lowers a program ([irgen.md](irgen.md)) and tries to prove every goal in it. It prints one line per goal and a summary, and exits with status 1 if any goal fails, or is skipped without `--allow-unproved` accepting it (the same flag as codegen, [codegen.md](codegen.md)):
 
 ```
 overflow.pia:18:36: failed: '+' does not overflow u8
@@ -102,7 +102,7 @@ A `while` loop's invariant is written before `do` and holds each time the condit
 
 A `for` loop always ends. A `while` loop ends when it has a measure, `decreases m`, that is never negative and goes down on each iteration. That is a `decreases` goal at the end of the body, `m >= 0 && m' < m`, where `m'` is the measure after the iteration. A function's `decreases` is checked the same way at each call of the function by itself: `gcd b (a mod b)` with `decreases b` needs `b >= 0` and `a mod b < b`, under the path condition `b <> 0`.
 
-A `while` loop or a recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So piac generates no code for it unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
+A `while` loop or a recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So `piac --verify` fails, and piac generates no code, unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
 
 ## Limits of v0
 

@@ -25,7 +25,7 @@ To compile anyway, accept specific unproved obligations with `--allow-unproved`,
 | `--allow-unproved=file.pia:30` | the unproved obligations on line 30 |
 | `--allow-unproved=file.pia:30:37` | the one at line 30, column 37 |
 
-The location is written the way piac prints it. Accepted obligations are still reported as a warning, and a flag that accepts nothing is reported too, so stale ones show up. A failed obligation cannot be accepted.
+The location is written the way piac prints it. Accepted obligations are still reported as a warning, and a flag that accepts nothing is reported too, so stale ones show up. A failed obligation cannot be accepted. `piac --verify` takes the same flag, and fails on a skipped goal that it does not accept.
 
 ## Stages
 
