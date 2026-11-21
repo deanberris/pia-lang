@@ -6,7 +6,7 @@ Every integer overflow, every array index and every contract in a Pia program is
 
 The name is the second half of *Sophia*, and it stands for **Proved In Advance**.
 
-[Documentation](https://deanberris.github.io/pia-lang/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [Status and roadmap](docs/status.md)
+[Documentation](https://deanberris.github.io/pia-lang/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Stream delineation](docs/streams.pia.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [Status and roadmap](docs/status.md)
 
 ## A first proof
 
