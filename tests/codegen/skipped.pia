@@ -1,12 +1,30 @@
 (* Goals v0 skips, such as those inside loops, are not proved, so piac
-   warns and compiles anyway (docs/codegen.md, "Verification comes first").
-// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+   generates no code for them unless --allow-unproved accepts them
+   (docs/codegen.md, "Verification comes first").
+// RUN: not piac --emit=core %s 2>&1 | FileCheck %s --check-prefix=REFUSE
+// RUN: piac --emit=core --allow-unproved=sum_to %s 2>&1 | FileCheck %s --check-prefix=FUNCTION
+// RUN: piac --emit=core --allow-unproved=%s:31 %s 2>&1 | FileCheck %s --check-prefix=FUNCTION
+// RUN: not piac --emit=core --allow-unproved=%s:31:7 %s 2>&1 | FileCheck %s --check-prefix=ONE
+// RUN: piac --emit=core --allow-unproved=sum_to --allow-unproved=no_such_fn %s 2>&1 | FileCheck %s --check-prefix=UNUSED
 *)
 
 (*
-// CHECK: piac: warning: 2 obligations were skipped and not proved; see piac --verify
-// CHECK-LABEL: func.func @sum_to
-// CHECK: scf.for
+// REFUSE: skipped.pia:31:7: unproved: the index fits in u32 [loops are not verified yet] in 'sum_to'
+// REFUSE-NEXT: skipped.pia:31:27: unproved: '+' does not overflow usize [loops are not verified yet] in 'sum_to'
+// REFUSE-NEXT: piac: error: 2 obligations not proved, so no code was generated
+// REFUSE-NEXT: piac: note: prove them, or accept specific ones with --allow-unproved=<function> or --allow-unproved=<file:line[:col]>
+// REFUSE-NOT: func.func
+
+// FUNCTION: piac: warning: 2 obligations not proved, accepted by --allow-unproved; see piac --verify
+// FUNCTION-LABEL: func.func @sum_to
+// FUNCTION: scf.for
+
+// ONE: skipped.pia:31:27: unproved: '+' does not overflow usize
+// ONE-NEXT: piac: error: 1 obligation not proved, so no code was generated
+
+// UNUSED: piac: warning: --allow-unproved=no_such_fn matches no unproved obligation
+// UNUSED-NEXT: piac: warning: 2 obligations not proved, accepted by --allow-unproved
+// UNUSED-LABEL: func.func @sum_to
 *)
 let sum_to (n : u32) : u64 =
   let s : mutable u64 = 0 in

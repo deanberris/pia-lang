@@ -15,7 +15,17 @@ Status: implemented in M6 ([#7](https://github.com/deanberris/pia-lang/issues/7)
 
 ## Verification comes first
 
-Code is generated only when no obligation fails. If one fails, piac prints the report from `--verify` and stops. Obligations that v0 skips, such as those inside loops, are not proved, so piac warns about them and compiles anyway. Once loops are cut with their invariants, the warning goes away.
+Code is generated only when every obligation is proved. If one fails, piac prints the report from `--verify` and stops. An obligation that is not proved either way, such as one that v0 skips inside a loop, also stops it: piac lists each unproved obligation with its function and generates nothing.
+
+To compile anyway, accept specific unproved obligations with `--allow-unproved`, which can be repeated:
+
+| Flag | Accepts |
+| --- | --- |
+| `--allow-unproved=add_rows` | every unproved obligation in the function `add_rows` |
+| `--allow-unproved=file.pia:30` | the unproved obligations on line 30 |
+| `--allow-unproved=file.pia:30:37` | the one at line 30, column 37 |
+
+The location is written the way piac prints it. Accepted obligations are still reported as a warning, and a flag that accepts nothing is reported too, so stale ones show up. A failed obligation cannot be accepted. Once loops are cut with their invariants, most of these flags can go.
 
 ## Stages
 
@@ -82,7 +92,7 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
 
 ## Tests
 
-- `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed obligation, and the warning for skipped ones. They run on any host whose LLVM includes the AArch64 target, which the Bazel build always does.
+- `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed or unproved obligation, and `--allow-unproved`. They run on any host whose LLVM includes the AArch64 target, which the Bazel build always does.
 - `//tests/codegen:saturate_test` compiles `saturate.pia` to an object file and links it with `saturate_test.c`. The harness compares saturating, wrapping and proof-mode arithmetic, a slice loop and a fixed array against C reference implementations. The 8-bit cases cover every input. The test runs on arm64 macOS only. On other hosts Bazel skips it as incompatible.
 
 ## Limits of v0
