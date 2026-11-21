@@ -52,6 +52,25 @@ def Pia_Dialect : Dialect {
     static constexpr ::llvm::StringLiteral getRecordBuffersAttrName() {
       return ::llvm::StringLiteral("pia.record_buffers");
     }
+
+    /// The unit attribute on a spec function (`let spec`): pure and total,
+    /// usable in contracts, and given to the solver as its definition
+    /// (docs/verifier.md, "Spec functions and lemmas").
+    static constexpr ::llvm::StringLiteral getSpecAttrName() {
+      return ::llvm::StringLiteral("pia.spec");
+    }
+
+    /// The unit attribute on a lemma (`let lemma`): proved once, erased
+    /// from code; a call adds its postcondition.
+    static constexpr ::llvm::StringLiteral getLemmaAttrName() {
+      return ::llvm::StringLiteral("pia.lemma");
+    }
+
+    /// `@fuel(n)` on a recursive spec function: how many times the
+    /// verifier unfolds a recursive call. One by default.
+    static constexpr ::llvm::StringLiteral getFuelAttrName() {
+      return ::llvm::StringLiteral("pia.fuel");
+    }
   }];
   let hasRegionArgAttrVerify = 1;
   // Folded `index` values become `arith.constant`; folded Pia integers become

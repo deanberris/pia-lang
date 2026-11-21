@@ -226,12 +226,14 @@ class Parser {
     return p;
   }
 
-  // `let [rec] [meta] name params [: annot attrs] contracts = body [in body]`
+  // `let [rec] [spec|lemma] [meta] name params [: annot attrs] contracts = body [in body]`
   NodePtr let(bool allowItem, bool allowIn) {
     SourceLoc start = loc();
     expect(K::Let, "'let'");
     std::string flags;
     if (accept(K::Rec)) flags = "rec";
+    if (accept(K::Spec)) flags += flags.empty() ? "spec" : " spec";
+    else if (accept(K::Lemma)) flags += flags.empty() ? "lemma" : " lemma";
     if (accept(K::Meta)) flags += flags.empty() ? "meta" : " meta";
     if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name after 'let'");
     auto n = makeNode(N::LetItem, start, text());
@@ -262,11 +264,11 @@ class Parser {
 
   // The longest-predicate rule (ADR 0019): `requires sorted xs = g xs` with no
   // later `=` reads as the predicate `sorted xs` and the body `g xs`. Split at
-  // the last `=` on the right spine of the final clause.
+  // the last `=` on the right spine of the final clause. A `decreases`
+  // measure is an integer, so `decreases n = f (n - 1)` splits the same way.
   NodePtr splitBodyFromContract(Node &contracts) {
     if (contracts.kids.empty()) return nullptr;
     Node &clause = *contracts.kids.back();
-    if (clause.kind == N::Decreases) return nullptr;
     NodePtr *slot = &clause.kids[0];
     while ((*slot)->kind == N::Binary && (*slot)->text != "=" &&
            operatorInfo((*slot)->text).level < 40)

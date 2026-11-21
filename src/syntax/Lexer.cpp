@@ -424,6 +424,15 @@ class Lexer {
     push(kind, start);
   }
 
+  // Whether a name starts after the blanks at the current position.
+  bool nameFollows() const {
+    size_t i = pos_;
+    while (i < src_.size() &&
+           (src_[i] == ' ' || src_[i] == '\t' || src_[i] == '\n' || src_[i] == '\r'))
+      ++i;
+    return i < src_.size() && isIdentStart(src_[i]);
+  }
+
   void lexToken() {
     SourceLoc start = here();
     char c = peek();
@@ -437,6 +446,13 @@ class Lexer {
       if (word == "step" && !forHeaders_.empty() &&
           forHeaders_.back() == depth_)
         kind = TokenKind::Step;
+      // `spec` and `lemma` are keywords only between `let` (or `let rec`)
+      // and the name they define: `let spec sorted ...`.
+      if ((word == "spec" || word == "lemma") && !out_.empty() &&
+          (out_.back().kind == TokenKind::Let ||
+           out_.back().kind == TokenKind::Rec) &&
+          nameFollows())
+        kind = word == "spec" ? TokenKind::Spec : TokenKind::Lemma;
       if (kind == TokenKind::For || kind == TokenKind::Spread) {
         forHeaders_.push_back(depth_);
       } else if (kind == TokenKind::Do && !forHeaders_.empty() &&

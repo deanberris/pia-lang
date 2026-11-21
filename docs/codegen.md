@@ -29,7 +29,7 @@ The location is written the way piac prints it. Accepted obligations are still r
 
 ## Stages
 
-1. **Erase contracts.** Every `pia_contract` op is removed: `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume` and `obligation`. Then everything only they used is removed too, including quantifiers, `old` and the arithmetic inside contracts. The verifier's `pia.proved` attributes stay.
+1. **Erase contracts.** Every `pia_contract` op is removed: `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume` and `obligation`. Then everything only they used is removed too, including quantifiers, `old` and the arithmetic inside contracts. Spec functions and lemmas (`pia.spec`, `pia.lemma`) are erased with every call to them: they exist only for the verifier. The verifier's `pia.proved` attributes stay.
 2. **Lower `pia` to core dialects.** This uses MLIR dialect conversion, with the type mapping below and the ops after it. `scf`, `func.call` and `func.return` are converted structurally.
 3. **Lower to the `llvm` dialect.** The upstream passes run in this order: `scf` to `cf`, then `cf`, `arith`, `index`, `memref` and `func` to `llvm`, then the reconciliation of casts. Then each public function gets its C entry point.
 4. **Translate and optimise.** The module is translated to LLVM IR, given the target's data layout, and run through LLVM's `-O2` pipeline.

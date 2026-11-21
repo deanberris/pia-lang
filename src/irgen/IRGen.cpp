@@ -137,6 +137,8 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids) genFunction(item->text);
     if (diags_.hasErrors()) return nullptr;
+    checkGhosts();
+    if (diags_.hasErrors()) return nullptr;
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
   }
@@ -407,10 +409,37 @@ class Gen {
     }
 
     overflow_ = OverflowMode::proof;
+    fuel_ = 0;
+    ghost_ = false;
     const Node &ret = *item.kids[1];
     if (ret.kind == NodeKind::RetAnnot && ret.kids.size() > 1 &&
         !genAttributes(*ret.kids[1]))
       return;
+    bool isSpec = hasFlag(item, "spec"), isLemma = hasFlag(item, "lemma");
+    ghost_ = isSpec || isLemma;
+    if (fuel_ && !isSpec) {
+      fail(item, "@fuel applies only to a spec function");
+      return;
+    }
+    if (isSpec || isLemma) {
+      // Specification code only says what other code means: it cannot
+      // write through its parameters (docs/verification.md).
+      for (const sema::Param &p : sig.params)
+        if (sema::hasModifier(p.modifiers, "out") ||
+            sema::hasModifier(p.modifiers, "inout") ||
+            sema::hasModifier(p.modifiers, "mutable")) {
+          diags_.error(p.loc, std::string("a parameter of a ") +
+                                  (isSpec ? "spec function" : "lemma") +
+                                  " cannot be out, inout or mutable");
+          return;
+        }
+      fn->setAttr(isSpec ? PiaDialect::getSpecAttrName()
+                         : PiaDialect::getLemmaAttrName(),
+                  b_.getUnitAttr());
+      if (fuel_)
+        fn->setAttr(PiaDialect::getFuelAttrName(),
+                    b_.getI64IntegerAttr(fuel_));
+    }
 
     const Node &contracts = *item.kids[2];
     for (const syntax::NodePtr &c : contracts.kids) {
@@ -429,14 +458,25 @@ class Gen {
       }
     }
 
+    // A spec function's body is specification, like a contract: it may
+    // use quantifiers, and it is never compiled.
     const Node &bodyNode = *item.kids[3];
-    R body = genExpr(bodyNode, sig.result);
+    R body = isSpec ? genContractExpr(bodyNode, sig.result)
+                    : genExpr(bodyNode, sig.result);
     if (!body) return;
     Type result = sig.result;
     if (!result) {
       result = body->type;
       sig.result = result;
       fn.setType(b_.getFunctionType(argTypes, resultTypes(result)));
+    }
+    if (isSpec && isUnit(result)) {
+      fail(item, "a spec function must return a value");
+      return;
+    }
+    if (isLemma && !isUnit(result)) {
+      fail(item, "a lemma returns unit: what it proves goes in 'ensures'");
+      return;
     }
     llvm::SmallVector<Value> rets;
     if (!isUnit(result)) {
@@ -466,6 +506,88 @@ class Gen {
     create<mlir::func::ReturnOp>(l, rets);
   }
 
+  static bool hasFlag(const Node &item, llvm::StringRef flag) {
+    llvm::SmallVector<llvm::StringRef> words;
+    llvm::StringRef(item.flags).split(words, ' ', -1, false);
+    return llvm::is_contained(words, flag);
+  }
+
+  syntax::SourceLoc sourceLoc(Location l) {
+    syntax::SourceLoc at;
+    if (auto f = mlir::dyn_cast<mlir::FileLineColLoc>(l)) {
+      at.line = f.getLine();
+      at.column = f.getColumn();
+    } else if (auto n = mlir::dyn_cast<mlir::NameLoc>(l)) {
+      return sourceLoc(n.getChildLoc());
+    }
+    return at;
+  }
+
+  // A spec function is pure and total, so the verifier can give its
+  // definition to the solver: no loops, no writes, no `abort`, and calls
+  // only to other spec functions. A recursive one needs a `decreases`
+  // measure, and spec functions cannot be mutually recursive yet. Lemmas
+  // are erased from code, so code cannot use what they compute.
+  void checkGhosts() {
+    auto isSpec = [](mlir::func::FuncOp f) {
+      return f && f->hasAttr(PiaDialect::getSpecAttrName());
+    };
+    std::map<std::string, std::vector<std::string>> calls;
+    for (auto f : module_.getOps<mlir::func::FuncOp>()) {
+      if (!isSpec(f)) continue;
+      std::string name = f.getSymName().str();
+      f.walk([&](mlir::Operation *op) {
+        if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op))
+          diags_.error(sourceLoc(op->getLoc()),
+                       "a spec function cannot contain a loop; write it "
+                       "with recursion and 'decreases'");
+        else if (mlir::isa<StoreOp>(op))
+          diags_.error(sourceLoc(op->getLoc()),
+                       "a spec function cannot write to a buffer");
+        else if (mlir::isa<AbortOp>(op))
+          diags_.error(sourceLoc(op->getLoc()),
+                       "a spec function cannot 'abort'; give it a "
+                       "precondition instead");
+        else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+          auto callee =
+              module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+          if (!isSpec(callee))
+            diags_.error(sourceLoc(op->getLoc()),
+                         "a spec function can call only spec functions, "
+                         "and '" + call.getCallee().str() + "' is not one");
+          else
+            calls[name].push_back(call.getCallee().str());
+        }
+      });
+      bool recursive = llvm::is_contained(calls[name], name);
+      bool measured = !f.getBody().front().getOps<contract::DecreasesOp>().empty();
+      if (recursive && !measured)
+        diags_.error(sourceLoc(f.getLoc()),
+                     "the recursive spec function '" + name +
+                         "' needs a 'decreases' measure");
+    }
+    // A cycle through two or more spec functions.
+    for (auto &[name, callees] : calls) {
+      std::set<std::string> seen;
+      std::vector<std::string> work;
+      for (const std::string &c : callees)
+        if (c != name) work.push_back(c);
+      while (!work.empty()) {
+        std::string c = work.back();
+        work.pop_back();
+        if (!seen.insert(c).second) continue;
+        if (c == name) {
+          auto f = module_.lookupSymbol<mlir::func::FuncOp>(name);
+          diags_.error(sourceLoc(f.getLoc()),
+                       "spec functions cannot be mutually recursive yet: '" +
+                           name + "' calls itself through other spec functions");
+          break;
+        }
+        for (const std::string &d : calls[c]) work.push_back(d);
+      }
+    }
+  }
+
   // `@overflow(wrap)` on the return annotation sets the function's mode.
   bool genAttributes(const Node &attrs) {
     for (const syntax::NodePtr &a : attrs.kids) {
@@ -480,6 +602,17 @@ class Gen {
           fail(*a, "@overflow takes proof, wrap, saturate or trap");
           return false;
         }
+        continue;
+      }
+      if (a->text == "fuel" && a->kids.size() == 1 &&
+          a->kids[0]->kind == NodeKind::IntLit) {
+        auto lit = sema::parseIntLiteral(a->kids[0]->text);
+        if (!lit || !lit->suffix.empty() || lit->value.isZero() ||
+            lit->value.ugt(16)) {
+          fail(*a, "@fuel takes a number from 1 to 16");
+          return false;
+        }
+        fuel_ = static_cast<unsigned>(lit->value.getZExtValue());
         continue;
       }
       fail(*a, "the attribute @" + a->text + " is not supported yet");
@@ -1180,6 +1313,12 @@ class Gen {
       return fail(n, "'" + sig.name + "' is used before its return type is "
                      "known; annotate it, as in 'let " + sig.name +
                      " ... : T = ...'");
+    if (sig.item && hasFlag(*sig.item, "spec") && !contract_ && !ghost_)
+      return fail(n, "'" + sig.name + "' is a spec function, so it can be "
+                     "used only in contracts, spec functions and lemmas");
+    if (sig.item && hasFlag(*sig.item, "lemma") && contract_)
+      return fail(n, "'" + sig.name + "' is a lemma: call it as a statement, "
+                     "and its postcondition holds after the call");
     llvm::SmallVector<Value> operands;
     for (size_t i = 0; i < args.size(); ++i) {
       R a = genExpr(*args[i], sig.params[i].type);
@@ -1804,6 +1943,8 @@ class Gen {
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
+  unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  bool ghost_ = false;  // generating a spec function or a lemma
 };
 
 }  // namespace

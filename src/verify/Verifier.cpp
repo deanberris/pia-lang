@@ -212,6 +212,7 @@ class Encoder {
   };
 
   void run() {
+    declareSpecFunctions();
     mlir::Block &entry = fn_.getBody().front();
     for (unsigned i = 0; i < entry.getNumArguments(); ++i) declareParam(entry.getArgument(i), i);
     entryArrays_ = arrays_;
@@ -1447,6 +1448,14 @@ class Encoder {
       }
     for (Value r : call.getResults())
       if (auto v = havoc(r.getType())) env_[r] = *v;
+    // A spec function's result is its definition applied to the arguments.
+    if (hasBody && isSpecFunction(callee))
+      for (unsigned k = 0; k < call.getNumResults(); ++k) {
+        Demand args = pre;
+        Value app = specCall(callee, k, args);
+        Value r = env_.lookup(call.getResult(k));
+        if (app && r) assume(eq(r, app));
+      }
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
@@ -1482,6 +1491,171 @@ class Encoder {
     return true;
   }
 
+  // --- spec functions ----------------------------------------------------
+  //
+  // A spec function `f` is an uninterpreted function `F` with one argument
+  // per scalar parameter and two (the array and its length) per buffer. Each
+  // call `f a` is `F a`, with its definition as a fact:
+  // `pre(a) ==> F a = body(a)`, where a recursive call in the body is `F`
+  // again, unfolded no further. `@fuel(n)` unfolds n levels. The
+  // precondition guards the definition because termination is proved only
+  // where it holds (docs/verifier.md, "Spec functions and lemmas").
+
+  mlir::func::FuncOp calleeOf(mlir::func::CallOp call) {
+    return module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+  }
+
+  static bool isSpecFunction(mlir::func::FuncOp f) {
+    return f && !f.isExternal() && f->hasAttr(PiaDialect::getSpecAttrName());
+  }
+
+  static unsigned fuelOf(mlir::func::FuncOp f) {
+    if (auto a = f->getAttrOfType<mlir::IntegerAttr>(PiaDialect::getFuelAttrName()))
+      return static_cast<unsigned>(a.getInt());
+    return 1;
+  }
+
+  void declareSpecFunctions() {
+    for (auto f : module_.getOps<mlir::func::FuncOp>()) {
+      if (!isSpecFunction(f)) continue;
+      llvm::SmallVector<Type> domain;
+      bool ok = true;
+      for (Type t : f.getFunctionType().getInputs()) {
+        Type sort = sortOf(t);
+        if (!sort) ok = false;
+        domain.push_back(sort);
+        if (mlir::isa<ArrayType, SliceType>(t)) domain.push_back(bvType());
+      }
+      llvm::SmallVector<Value> funs;
+      for (Type r : f.getFunctionType().getResults()) {
+        Type sort = sortOf(r);
+        if (!sort) ok = false;
+        if (!ok) break;
+        Type ft = domain.empty()
+                      ? sort
+                      : mlir::smt::SMTFuncType::get(ctx_, domain, sort);
+        funs.push_back(declare(ft, "", false));
+      }
+      if (ok && !funs.empty()) specFuns_[f.getOperation()] = std::move(funs);
+    }
+  }
+
+  // A definition: asserted, or a hypothesis of the enclosing quantifier.
+  void define(Value fact) {
+    if (quantifierDepth_ > 0) pendingDefs_.push_back(fact);
+    else assertTerm(fact);
+  }
+
+  // `f a`, result `k`, where `args` maps f's parameters to the arguments.
+  Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
+    auto it = specFuns_.find(callee.getOperation());
+    if (it == specFuns_.end()) return Value();
+    mlir::Block &entry = callee.getBody().front();
+    llvm::SmallVector<Value> flat;
+    for (mlir::BlockArgument a : entry.getArguments()) {
+      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
+        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
+        if (!arr || !len) return Value();
+        flat.append({arr, len});
+      } else {
+        Value v = args.values.lookup(a);
+        if (!v) return Value();
+        flat.push_back(v);
+      }
+    }
+    Type rt = callee.getFunctionType().getResult(k);
+    Value fun = it->second[k];
+    Value app = flat.empty() ? fun
+                             : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
+                                                              mlir::ValueRange(flat));
+    // The body was proved to return a value of the result type, and to
+    // meet the postconditions where the precondition holds.
+    if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
+    if (!llvm::is_contained(ensuresStack_, callee.getOperation())) {
+      ensuresStack_.push_back(callee.getOperation());
+      unsigned before = unknowns_;
+      Demand post;
+      post.values = args.values;
+      post.arrays = args.arrays;
+      post.lengths = args.lengths;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
+      });
+      Value pre = boolConst(true), facts = boolConst(true);
+      bool ok = callee.getNumResults() == 1;
+      for (auto r : entry.getOps<contract::RequiresOp>()) {
+        Value p = demand(r.getPredicate(), post);
+        if (!p) ok = false;
+        else pre = andOf(pre, p);
+      }
+      callee.walk([&](contract::EnsuresOp e) {
+        Value p = demand(e.getPredicate(), post);
+        if (!p) ok = false;
+        else facts = andOf(facts, p);
+      });
+      ensuresStack_.pop_back();
+      if (ok && unknowns_ == before) define(implies(pre, facts));
+    }
+    if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
+        fuelOf(callee))
+      return app;
+
+    specStack_.push_back(callee.getOperation());
+    unsigned before = unknowns_;
+    Demand body;
+    body.values = args.values;
+    body.arrays = args.arrays;
+    body.lengths = args.lengths;
+    Value def;
+    callee.walk([&](mlir::func::ReturnOp ret) {
+      if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
+    });
+    Value pre = boolConst(true);
+    for (auto r : entry.getOps<contract::RequiresOp>()) {
+      Value p = demand(r.getPredicate(), body);
+      if (!p) def = Value();
+      else pre = andOf(pre, p);
+    }
+    specStack_.pop_back();
+    // A definition with a value the encoding could not model would claim
+    // too much inside a quantifier; leave the call uninterpreted.
+    if (def && unknowns_ == before) define(implies(pre, eq(app, def)));
+    return app;
+  }
+
+  // A spec call met while demanding a contract.
+  Value demandSpecCall(mlir::func::CallOp call, unsigned k, Demand &d) {
+    mlir::func::FuncOp callee = calleeOf(call);
+    mlir::Block &entry = callee.getBody().front();
+    Demand args;
+    for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+      Value formal = entry.getArgument(i), actual = call.getOperand(i);
+      if (mlir::isa<ArrayType, SliceType>(actual.getType())) {
+        (void)demand(actual, d);  // a view records its offset and length
+        Value root = rootBuffer(actual);
+        Value arr = d.arrays.lookup(root);
+        Value len = d.lengths.lookup(actual);
+        if (!len) len = lengths_.lookup(actual);
+        if (!arr || !len) return Value();
+        if (actual != root) {
+          Value off = d.views.lookup(actual);
+          if (!off) off = views_.lookup(actual);
+          // A view needs a fact about a fresh array, which a quantifier
+          // cannot hold.
+          if (!off || quantifierDepth_ > 0) return Value();
+          arr = viewArray(arr, off, len);
+        }
+        args.arrays[formal] = arr;
+        args.lengths[formal] = len;
+      } else {
+        Value t = demand(actual, d);
+        if (!t) return Value();
+        args.values[formal] = t;
+      }
+    }
+    return specCall(callee, k, args);
+  }
+
   // --- demand encoding ---------------------------------------------------
 
   Value demand(Value v, Demand &d) {
@@ -1515,6 +1689,9 @@ class Encoder {
       Value t = demand(thenY.getOperand(i), d);
       Value e = demand(elseY.getOperand(i), d);
       if (c && t && e) result = ite(c, t, e);
+    } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+               call && isSpecFunction(calleeOf(call))) {
+      result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
       for (Value o : op->getOperands()) operands.push_back(demand(o, d));
@@ -1524,6 +1701,7 @@ class Encoder {
     }
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
+      ++unknowns_;
       auto h = havoc(v.getType());
       if (!h) return Value();
       result = *h;
@@ -1560,11 +1738,17 @@ class Encoder {
           range = andOf(range, inRange(var, it));
       }
       auto yield = mlir::cast<contract::YieldOp>(body.getTerminator());
+      size_t mark = pendingDefs_.size();
       Value p = demand(yield.getPredicate(), d);
       if (!p) {
         failed = true;
         p = boolConst(true);
       }
+      // Spec definitions instantiated at the bound variables hold for every
+      // value of them, so they join the range as hypotheses.
+      for (size_t k = mark; k < pendingDefs_.size(); ++k)
+        range = andOf(range, pendingDefs_[k]);
+      pendingDefs_.resize(mark);
       --quantifierDepth_;
       return isForall ? implies(range, p) : andOf(range, p);
     };
@@ -1600,6 +1784,13 @@ class Encoder {
   int counter_ = 0;
   int nextName_ = 0;
   int quantifierDepth_ = 0;
+  // Spec functions (ADR 0023, group 5): one uninterpreted function per
+  // result, the definitions being unfolded, and definitions made inside a
+  // quantifier, which it takes as hypotheses.
+  llvm::DenseMap<Operation *, llvm::SmallVector<Value>> specFuns_;
+  llvm::SmallVector<Operation *> specStack_, ensuresStack_;
+  std::vector<Value> pendingDefs_;
+  unsigned unknowns_ = 0;  // values demand() could not encode
   bool done_ = false;
 };
 

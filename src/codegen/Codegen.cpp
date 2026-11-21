@@ -631,9 +631,17 @@ void loadDialects(mlir::MLIRContext &ctx) {
 }
 
 void eraseContracts(mlir::ModuleOp module) {
+  // Lemmas and spec functions exist only for the verifier: calls to them,
+  // and the functions themselves, are erased (docs/codegen.md).
+  auto isLemma = [&](mlir::func::CallOp call) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    return f && f->hasAttr(PiaDialect::getLemmaAttrName());
+  };
   llvm::SmallVector<mlir::Operation *> statements;
   module.walk([&](mlir::Operation *op) {
     if (isContractStatement(op)) statements.push_back(op);
+    if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+      if (isLemma(call)) statements.push_back(op);
   });
   for (mlir::Operation *op : statements) op->erase();
   // Whatever only fed a contract is now unused. Erase it, innermost and
@@ -643,6 +651,12 @@ void eraseContracts(mlir::ModuleOp module) {
     llvm::SmallVector<mlir::Operation *> dead;
     module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation *op) {
       if (isDead(op)) dead.push_back(op);
+      // A spec function is pure, so an unused call to one, such as one
+      // that only a contract read, is dead too.
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (call->use_empty() && call.getNumResults() > 0)
+          if (auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
+            if (f->hasAttr(PiaDialect::getSpecAttrName())) dead.push_back(op);
     });
     for (mlir::Operation *op : llvm::reverse(dead)) {
       if (!op->use_empty()) continue;
@@ -650,6 +664,10 @@ void eraseContracts(mlir::ModuleOp module) {
       changed = true;
     }
   }
+  for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
+    if (f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+        f->hasAttr(PiaDialect::getSpecAttrName()))
+      f.erase();
 }
 
 LogicalResult lowerToCore(mlir::ModuleOp module) {

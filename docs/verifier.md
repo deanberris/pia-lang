@@ -133,11 +133,45 @@ A `for` loop always ends. A `while` loop ends when it has a measure, `decreases 
 
 A `while` loop or a recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So `piac --verify` fails, and piac generates no code, unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
 
+## Spec functions and lemmas
+
+`let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call.
+
+To the solver, `f` is an uninterpreted function `F` with one argument per scalar parameter and two, the array and its length, per buffer. A call `f a`, wherever it is, is `F a`, with these facts:
+
+- `F a` is in the result type's range.
+- `pre(a) ==> post(a, F a)`: f's postconditions, where its preconditions hold.
+- `pre(a) ==> F a = body(a)`: the definition, unfolded once. A recursive call in the body is `F` again, with the two facts above but no definition. `@fuel(n)` on the return annotation unfolds n levels.
+
+The definition is guarded by the precondition because termination is proved only where the precondition holds, so outside it the body could define `F` in terms of itself. Inside a quantifier, the facts for calls that mention the bound variables become hypotheses of the quantifier. A call that passes a view inside a quantifier is left uninterpreted, and so is a definition with a value the encoding cannot model.
+
+A call in code to a spec function is a goal for its precondition, as for any call. In a contract, the call is checked the same way where it is walked, and is a plain term inside quantifiers and `old`.
+
+`let lemma f ...` defines a lemma, which returns unit. It is proved once, like any function, and a call to it is a statement whose precondition is a goal and whose postcondition is assumed afterwards, by the usual rule for calls. Codegen erases lemmas and calls to them. A recursive lemma with `decreases` is a proof by induction:
+
+```ocaml
+let spec count (xs : [u8]) (n : usize) (v : u8) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0 else count xs (n - 1) v + (if xs.[n - 1] = v then 1 else 0)
+
+let lemma split (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit
+  requires n <= len xs && v <> w
+  ensures count xs n v + count xs n w <= n
+  decreases n
+= if n > 0 then split xs (n - 1) v w
+```
+
+One unfolding proves each step: the lemma's call for `n - 1`, plus `count`'s definition at `n`. Without the lemma, a goal about every `n` needs more unfoldings than any fixed fuel gives.
+
+Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `spec` and `lemma` are keywords only between `let` (or `let rec`) and the name ([grammar.md](grammar.md#identifiers-and-keywords)).
+
 ## Limits of v0
 
 - **Loops whose bounds or loop-carried values cannot be encoded** have every goal inside reported as `skipped`, and what they compute or write is unknown afterwards.
 - **Termination is checked for direct recursion only.** Mutual recursion is not checked, since each call is taken on its callee's contract.
 - **Affine goals in loops**, such as subscripts like `xs.[2*i + 1]`, aliasing and loop-carried dependence, still go to Z3. A Presburger stage will decide them first ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
-- **A call inside a contract** stands for an unknown value of its result type, so a contract that relies on another function's meaning cannot be proved yet.
+- **A call to an ordinary function inside a contract** stands for a value that meets the callee's postconditions, and inside a quantifier for an unknown value. To say what a function means in a contract, use a [spec function](#spec-functions-and-lemmas).
 - **Ops the verifier does not model** produce unknown values of their types, which is sound but may cause failures.
 - **Interval analysis** is local to each goal. Extending MLIR's integer range analysis, so that ranges flow through control flow, comes later.

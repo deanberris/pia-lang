@@ -64,6 +64,8 @@ borrowed moved out inout fixed mutable mod
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
 
+`spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
+
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
 ### Literals

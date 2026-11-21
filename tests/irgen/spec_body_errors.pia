@@ -1,0 +1,22 @@
+(* A spec function is pure and total (#52).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let plain (a : u8) : u8 = a
+
+(* CHECK: spec_body_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a spec function can call only spec functions, and 'plain' is not one
+*)
+let spec calls_code (a : u8) : u8 = plain a
+
+(* CHECK: spec_body_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a spec function cannot 'abort'; give it a precondition instead
+*)
+let spec aborts (a : u8) : u8 = if a = 0 then abort () else a
+
+(* CHECK: spec_body_errors.pia:[[@LINE+2]]:1: error: the recursive spec function 'forever' needs a 'decreases' measure
+*)
+let spec forever (a : u8) : bool = forever a
+
+(* CHECK: spec_body_errors.pia:[[@LINE+2]]:1: error: spec functions cannot be mutually recursive yet: 'ping' calls itself through other spec functions
+*)
+let spec ping (a : u8) : bool requires a > 0 decreases a = pong (a - 1)
+let spec pong (a : u8) : bool decreases a = if a = 0 then true else ping a

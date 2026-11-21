@@ -1,0 +1,23 @@
+(* Spec functions and lemmas exist only for the verifier (#52): codegen
+   erases them, and every call to them, so the code is the same as without
+   them (docs/codegen.md).
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: @max
+// CHECK-NOT: @max_ge
+// CHECK-LABEL: func.func @larger
+// CHECK-NOT: call
+// CHECK: return
+*)
+let spec max (a : u8) (b : u8) : u8 = if a < b then b else a
+
+let lemma max_ge (a : u8) (b : u8) : unit
+  ensures max a b >= a && max a b >= b
+= ()
+
+let larger (a : u8) (b : u8) : u8
+  ensures result = max a b && result >= a
+= max_ge a b;
+  if a > b then a else b
