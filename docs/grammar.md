@@ -178,7 +178,9 @@ param     = IDENT | SPLICE_IDENT
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
 contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
 
-lambda    = "let" lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
+lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
+captures  = "[" capture { "," capture } "]" ;
+capture   = [ "borrowed" | "inout" ] IDENT ;   (* copied, borrowed or referenced *)
 lparam    = "(" pattern [ ":" annot ] ")" | "(" ")" ;
 
 meta_operator = "let" "meta" "operator" "(" operator ")"

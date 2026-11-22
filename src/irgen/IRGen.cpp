@@ -91,8 +91,11 @@ struct Binding {
   bool writable = false;
   // A `with_arena`'s arena, which lends its own memory (#70).
   bool arena = false;
-  // A lambda's closure, which borrows the buffers it captures (ADR 0044).
+  // A lambda's closure, which borrows what it captures (ADR 0044).
   bool closure = false;
+  // Its referenced captures: each field, and the variable that sees the
+  // field's value after each call.
+  std::vector<std::pair<std::string, std::shared_ptr<Binding>>> refs;
   // A region (ADR 0042, step 2): what a parameter whose type mentions it
   // borrows from, outside the function.
   bool region = false;
@@ -618,6 +621,21 @@ class Gen {
             a = a->kids[0].get();
           if (a->kind == NodeKind::Name) out.insert(a->text);
         }
+      }
+    // A closure that writes a capture is threaded through each use, and
+    // so is what it writes (ADR 0044, section 6).
+    if (n.kind == NodeKind::Apply)
+      for (const syntax::NodePtr &k : n.kids) {
+        if (k->kind == NodeKind::Name && k->flags.empty())
+          if (BindingPtr b = lookup(k->text); b && !b->refs.empty()) {
+            out.insert(k->text);
+            for (auto &[field, target] : b->refs) out.insert(target->name);
+          }
+        if (k->kind == NodeKind::Lambda)
+          for (const syntax::NodePtr &c : k->kids)
+            if (c->kind == NodeKind::Captures)
+              for (const syntax::NodePtr &cap : c->kids)
+                if (cap->flags == "inout") out.insert(cap->text);
       }
     for (const syntax::NodePtr &k : n.kids) collectThreaded(*k, out);
   }
@@ -1253,23 +1271,48 @@ class Gen {
   // `abort`, so it always returns exactly what its body computes. A spec
   // function may call one, such as a concept's `less` for u8, and the
   // verifier unfolds it there (docs/verifier.md).
+  // A record of scalars counts as scalars: the verifier splits it into
+  // its fields, as for a lambda's closure (ADR 0044). A call is allowed
+  // to a spec function or another such function, without recursion.
+  static bool scalarish(mlir::Type t) {
+    if (mlir::isa<IntType>(t) || t.isInteger(1)) return true;
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      for (mlir::Type f : r.getFieldTypes())
+        if (!scalarish(f)) return false;
+      return true;
+    }
+    return false;
+  }
   static bool definesValue(mlir::func::FuncOp f) {
+    std::set<mlir::Operation *> visiting;
+    return definesValue(f, visiting);
+  }
+  static bool definesValue(mlir::func::FuncOp f,
+                           std::set<mlir::Operation *> &visiting) {
     if (!f || f.isExternal() || f.getNumResults() != 1) return false;
-    auto scalar = [](mlir::Type t) {
-      return mlir::isa<IntType>(t) || t.isInteger(1);
-    };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
-    // A lambda passed as a function object is its closure's `apply`,
-    // whose first parameter is the closure: its captures (ADR 0044).
-    bool closure = f.getSymName().starts_with("apply[lambda@");
-    for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
-      if (!scalar(t) && !(closure && i == 0)) return false;
+    // An imported function means what its interface's contract says.
+    if (f->hasAttr(PiaDialect::getImportAttrName())) return true;
+    if (!scalarish(f.getFunctionType().getResult(0))) return false;
+    for (mlir::Type t : f.getFunctionType().getInputs())
+      if (!scalarish(t)) return false;
+    if (!visiting.insert(f.getOperation()).second) return false;
+    auto module = f->getParentOfType<mlir::ModuleOp>();
     bool ok = true;
     f.walk([&](mlir::Operation *op) {
-      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                    AbortOp, LoadOp, StoreOp>(op))
+      if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+        auto callee =
+            module ? module.lookupSymbol<mlir::func::FuncOp>(c.getCallee())
+                   : mlir::func::FuncOp();
+        if (!callee ||
+            !(callee->hasAttr(PiaDialect::getSpecAttrName()) ||
+              definesValue(callee, visiting)))
+          ok = false;
+      } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp,
+                           LoadOp, StoreOp>(op)) {
         ok = false;
+      }
     });
+    visiting.erase(f.getOperation());
     return ok;
   }
 
@@ -1646,6 +1689,7 @@ class Gen {
         if (!c) return std::nullopt;
         R v = genExpr(*c->value, c->type);
         if (v && !c->lenders.empty()) lent_[&n] = c->lenders;
+        if (v) closureRefs_[&n] = c->refs;
         return v;
       }
       default:
@@ -1699,6 +1743,13 @@ class Gen {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) {
         if (!usable(b, n)) return std::nullopt;
+        // A referenced capture is the lambda's alone while it is live.
+        if (!contract_ && !ghost_)
+          if (auto [x, use] = writerOf(b, n); x)
+            return fail(n, "'" + b->name + "' is captured by '" + x->name +
+                               "' as 'inout', so it cannot be read here; " +
+                               stillUsed(x, n, use) + ", and its writes are "
+                               "seen after its last use");
         consumeValue(b, n);
         return TV{b->value, b->type};
       }
@@ -2793,6 +2844,9 @@ class Gen {
     if (sig.item && hasFlag(*sig.item, "spec") && !contract_ && !ghost_)
       return fail(n, "'" + sig.name + "' is a spec function, so it can be "
                      "used only in contracts, spec functions and lemmas");
+    if (effectful_.count(sig.name) && (contract_ || ghost_))
+      return fail(n, "this lambda writes a captured variable, so it cannot "
+                     "be called in a contract (ADR 0044, section 6)");
     if (sig.item && hasFlag(*sig.item, "lemma") && contract_)
       return fail(n, "'" + sig.name + "' is a lemma: call it as a statement, "
                      "and its postcondition holds after the call");
@@ -2917,6 +2971,14 @@ class Gen {
         if (!b) continue;
         b->value = withField(loc(n), b->value, rebind[k].path, 0,
                              threadedResults_[k]);
+        // A closure's referenced captures see what the call wrote.
+        if (rebind[k].path.empty())
+          if (auto rt = mlir::dyn_cast<RecordType>(b->type))
+            for (auto &[field, target] : b->refs)
+              if (std::optional<unsigned> i = rt.fieldIndex(field))
+                target->value = create<FieldOp>(loc(n), rt.getFieldTypes()[*i],
+                                                b->value, field)
+                                    .getResult();
       }
     // `(v : borrowed(m) inout mutable vec)`: the new value may hold a loan
     // from the argument passed as `m`, as `push m v x` stores a buffer from
@@ -3039,6 +3101,9 @@ class Gen {
   struct Capture {
     std::string name;
     BindingPtr binding;
+    // "" copied, "borrowed" a shared loan, "inout" an exclusive one
+    // (ADR 0044, section 6).
+    std::string mode;
   };
   using Captures = std::vector<Capture>;
 
@@ -3146,6 +3211,12 @@ class Gen {
       self->add(annotOf(*syntax::makeNode(NodeKind::TypeName, at,
                                           "lambda@" + placeOf(lam)),
                         at));
+      // A referenced capture is written through the closure, which the
+      // call threads back to the caller.
+      if (effectful(*caps)) {
+        self->kids[0]->kids[0]->text = "inout mutable";
+        effectful_.insert(symbol);
+      }
     }
     std::map<std::string, std::string> rename;
     // A lambda bound by `let` with untyped parameters is generic: each
@@ -3370,53 +3441,123 @@ class Gen {
     for (NodePtr &k : n->kids) throughSelf(k, caps);
   }
 
-  // The locals a lambda uses, in order of first use: its captures. A
-  // lambda may not assign one, and moving one in is step 7.
+  // What a lambda captures: the list it writes after `let`, each name
+  // copied, borrowed or referenced (ADR 0044, section 6). Every local the
+  // body uses must be listed, once, and every listed name used. A copied
+  // or borrowed capture cannot be assigned; a referenced one can.
   std::optional<Captures> capturesOf(const Node &lam) {
     std::set<std::string> params;
-    for (const NodePtr &k : lam.kids)
+    const Node *list = nullptr;
+    for (const NodePtr &k : lam.kids) {
       if (k->kind == NodeKind::LParam && !k->kids.empty() &&
           k->kids[0]->kind == NodeKind::PVar)
         params.insert(k->kids[0]->text);
+      if (k->kind == NodeKind::Captures) list = k.get();
+    }
     Captures caps;
-    std::set<std::string> seen;
+    std::set<std::string> rejected;  // listed, and already reported
     bool ok = true;
+    auto error = [&](const Node &at, std::string m) {
+      fail(at, std::move(m));
+      ok = false;
+    };
+    if (list)
+      for (const NodePtr &c : list->kids) {
+        rejected.insert(c->text);
+        BindingPtr b = lookup(c->text);
+        if (!b) {
+          error(*c, "'" + c->text + "' is not a local, so there is nothing "
+                    "to capture; top-level functions and constructors are "
+                    "used without capturing them");
+          continue;
+        }
+        if (std::any_of(caps.begin(), caps.end(),
+                        [&](const Capture &k) { return k.name == c->text; })) {
+          error(*c, "'" + c->text + "' is captured twice; list it once");
+          continue;
+        }
+        if (isLinear(b->type) || hasDrop(b->type)) {
+          error(*c, "'" + c->text + "' has the type " + typeName(b->type) +
+                    ", which is linear or has a 'drop', and moving one into a "
+                    "lambda comes later (ADR 0044, step 7)");
+          continue;
+        }
+        std::function<bool(Type)> copyable = [&](Type t) {
+          if (copied(t)) return true;
+          if (auto r = mlir::dyn_cast<RecordType>(t)) {
+            for (Type f : r.getFieldTypes())
+              if (!copyable(f)) return false;
+            return true;
+          }
+          return false;
+        };
+        if (c->flags.empty() && !copyable(b->type)) {
+          error(*c, "'" + c->text + "' is a " + typeName(b->type) +
+                    ", which cannot be copied into a lambda; borrow it, "
+                    "as in '[borrowed " + c->text + "]'");
+          continue;
+        }
+        if (c->flags == "inout" && !b->isMutable) {
+          error(*c, "'" + c->text + "' is not mutable, so a lambda cannot "
+                    "write it; capture it as '[" + c->text + "]' (copied) "
+                    "or '[borrowed " + c->text + "]'");
+          continue;
+        }
+        caps.push_back({c->text, b, c->flags});
+      }
+    auto modeOf = [&](const std::string &name) -> const Capture * {
+      for (const Capture &k : caps)
+        if (k.name == name) return &k;
+      return nullptr;
+    };
+    std::set<std::string> used, reported;
     std::function<void(const Node &)> walk = [&](const Node &k) {
-      if (k.kind == NodeKind::LParam) return;
+      if (k.kind == NodeKind::LParam || k.kind == NodeKind::Captures) return;
       if (k.kind == NodeKind::Assign && !k.kids.empty()) {
         const Node *root = k.kids[0].get();
         while ((root->kind == NodeKind::Field || root->kind == NodeKind::Index) &&
                !root->kids.empty())
           root = root->kids[0].get();
-        if (root->kind == NodeKind::Name && !params.count(root->text) &&
-            lookup(root->text)) {
-          fail(k, "a lambda cannot assign '" + root->text + "', which it "
-                  "captures: it copies a scalar when it is made and borrows "
-                  "a buffer (ADR 0044, section 6); take an accumulator as a "
-                  "parameter instead");
-          ok = false;
-          return;
+        if (root->kind == NodeKind::Name && !params.count(root->text))
+          if (const Capture *c = modeOf(root->text); c && c->mode != "inout")
+            error(k, "'" + root->text + "' is " +
+                         (c->mode.empty() ? "copied into" : "borrowed by") +
+                         " this lambda, so it cannot assign it; capture it "
+                         "as '[inout " + root->text + "]' to write it");
+      }
+      if (k.kind == NodeKind::Name && k.flags.empty() && !params.count(k.text)) {
+        if (modeOf(k.text)) {
+          used.insert(k.text);
+        } else if (lookup(k.text) && !rejected.count(k.text) &&
+                   reported.insert(k.text).second) {
+          const std::string &x = k.text;
+          error(k, "'" + x + "' is used but not captured: add it to the "
+                   "capture list as [" + x + "] (copied), [borrowed " + x +
+                   "] or [inout " + x + "]");
         }
       }
-      if (k.kind == NodeKind::Name && k.flags.empty() &&
-          !params.count(k.text) && !seen.count(k.text))
-        if (BindingPtr b = lookup(k.text)) {
-          seen.insert(k.text);
-          if (isLinear(b->type) || hasDrop(b->type)) {
-            fail(k, "a lambda cannot capture '" + k.text + "' yet: its "
-                    "type " + typeName(b->type) + " is linear or has a "
-                    "'drop', and capturing one comes later (ADR 0044, "
-                    "step 7)");
-            ok = false;
-            return;
-          }
-          caps.push_back({k.text, b});
-        }
       for (const NodePtr &c : k.kids) walk(*c);
     };
     for (const NodePtr &k : lam.kids) walk(*k);
+    if (list)
+      for (const NodePtr &c : list->kids)
+        if (modeOf(c->text) && !used.count(c->text))
+          error(*c, "'" + c->text + "' is captured but never used; remove it "
+                    "from the list");
     if (!ok) return std::nullopt;
     return caps;
+  }
+
+  static bool effectful(const Captures &caps) {
+    return std::any_of(caps.begin(), caps.end(),
+                       [](const Capture &c) { return c.mode == "inout"; });
+  }
+
+  // Whether a function type says it may have an effect: `inout` before
+  // the arrow, `(f : inout t -> unit)` (ADR 0044, section 6).
+  static bool effectfulArrow(const Arrow &a) {
+    return !a.domains.empty() && !a.domains[0]->kids.empty() &&
+           sema::hasModifier(a.domains[0]->kids[0]->text, "inout");
   }
 
   // A lambda as a value: its closure type, a record of its captures named
@@ -3428,6 +3569,8 @@ class Gen {
     std::string apply;
     const Node *value = nullptr;
     std::vector<BindingPtr> lenders;
+    // The referenced captures: each field and the variable it writes back.
+    std::vector<std::pair<std::string, BindingPtr>> refs;
   };
   std::optional<Closure> closureOf(const Node &lam, const Arrow *arrow,
                                    const std::vector<std::string> &typeParams,
@@ -3454,9 +3597,11 @@ class Gen {
     for (const Capture &k : caps) {
       Node *f = lit->add(syntax::makeNode(NodeKind::FieldInit, lam.loc, k.name));
       f->add(syntax::makeNode(NodeKind::Name, lam.loc, k.name));
-      if (mlir::isa<ArrayType, SliceType>(k.binding->type))
-        addLenders(c.lenders, {k.binding});
+      // A loan, shared or exclusive, ends at the closure's last use; a
+      // copy borrows nothing of the variable.
+      if (!k.mode.empty()) addLenders(c.lenders, {k.binding});
       addLenders(c.lenders, k.binding->lenders);
+      if (k.mode == "inout") c.refs.push_back({k.name, k.binding});
     }
     c.value = keep(std::move(lit));
     return c;
@@ -3802,9 +3947,11 @@ class Gen {
   R genHigherOrderCall(const Node &n, const sema::FuncSig &hof,
                        const Node *targs, const std::vector<const Node *> &args,
                        Type expected) {
-    if (contract_ || ghost_)
-      return fail(n, "a higher-order function cannot be called in a "
-                     "contract yet (ADR 0044)");
+    // A spec function over function values, such as a law, is what
+    // contracts call (ADR 0044, section 5).
+    if ((contract_ || ghost_) && !hasFlag(*hof.item, "spec"))
+      return fail(n, "only a spec function that takes a function can be "
+                     "called in a contract (ADR 0044)");
     std::vector<const Node *> valueParams = valueParamsOf(hof);
     if (args.size() != valueParams.size())
       return fail(n, "'" + hof.source() + "' takes " +
@@ -3817,6 +3964,16 @@ class Gen {
     // Function objects: each parameter's type, and what its applications
     // call, `apply` or a wrapper with the arrow's contract.
     std::map<std::string, std::pair<Type, std::string>> objects;
+    // The function parameters given closures that write a capture: the
+    // specialisation takes them `inout`, and each call writes back.
+    std::set<std::string> writing;
+    struct ScopeGuard {
+      Gen &g;
+      bool pushed = false;
+      ~ScopeGuard() {
+        if (pushed) g.popScope();
+      }
+    } hidden{*this};
     std::vector<const Node *> rest;
     for (size_t i = 0; i < args.size(); ++i) {
       const Node &p = *valueParams[i];
@@ -3843,6 +4000,14 @@ class Gen {
         if (types_.named(tname) != g->type)
           return fail(a, "a function object of the generic type " + tname +
                          " cannot be passed yet");
+        if (!g->refs.empty()) {
+          if (!effectfulArrow(arrow))
+            return fail(a, "'" + a.text + "' writes a captured variable, "
+                           "and " + what + " is not a function type that "
+                           "may: write it as '(" + p.text + " : inout t -> "
+                           "unit)' (ADR 0044, section 6)");
+          writing.insert(p.text);
+        }
         std::optional<std::string> via = objectApply(a, *ap, arrow);
         if (!via) return std::nullopt;
         objects[p.text] = {g->type, *via};
@@ -3864,6 +4029,28 @@ class Gen {
           if (!via) return std::nullopt;
           objects[p.text] = {c->type, *via};
           symbols.push_back("lambda@" + placeOf(a));
+          if (effectful(*caps)) {
+            if (!effectfulArrow(arrow))
+              return fail(a, "this lambda writes a captured variable, and " +
+                                 what + " is not a function type that may: "
+                                 "write it as '(" + p.text + " : inout t -> "
+                                 "unit)' (ADR 0044, section 6)");
+            // Made here, in a hidden mutable local the call threads, so
+            // its writes reach the captured variables after the call.
+            R v = genExpr(*c->value, c->type);
+            if (!v) return std::nullopt;
+            if (!hidden.pushed) {
+              pushScope();
+              hidden.pushed = true;
+            }
+            std::string name = std::string(kSelf) + placeOf(a);
+            BindingPtr hb = bind(name, v->value, c->type, true);
+            hb->refs = c->refs;
+            hb->lenders = c->lenders;
+            writing.insert(p.text);
+            rest.push_back(keep(syntax::makeNode(NodeKind::Name, a.loc, name)));
+            continue;
+          }
           rest.push_back(c->value);
           continue;
         }
@@ -3896,8 +4083,11 @@ class Gen {
       for (NodePtr &q : ps)
         if (auto o = objects.find(q->text);
             sema::isFunctionParam(*q) && o != objects.end())
+        {
           q->kids[0]->kids[1] = syntax::makeNode(
               NodeKind::TypeName, q->loc, typeName(o->second.first));
+          if (writing.count(q->text)) q->kids[0]->kids[0]->text = "inout mutable";
+        }
       for (auto &[name, object] : objects)
         applyThrough(*item, name, object.second);
       ps.erase(std::remove_if(ps.begin(), ps.end(),
@@ -5440,10 +5630,11 @@ class Gen {
           found = found || (sigs_.at(symbol).item &&
                             hasFlag(*sigs_.at(symbol).item, "spec") &&
                             sameSignature(r, *sigs_.at(symbol).item));
+        // A spec function over function values, such as a law (ADR 0044).
         if (auto h = hofs_.find(r.text); h != hofs_.end())
-          for (const sema::FuncSig &hof : h->second)
-            found = found || (hof.item && hasFlag(*hof.item, "spec") &&
-                              sameSignature(r, *hof.item));
+          for (const sema::FuncSig &f : h->second)
+            found = found || (hasFlag(*f.item, "spec") &&
+                              sameSignature(r, *f.item));
         if (!found)
           diags_.error(r.loc, unmet + "no spec function '" + r.text +
                                   "' with exactly this signature; a spec "
@@ -5464,11 +5655,9 @@ class Gen {
         for (const std::string &symbol : overloads_[r.text])
           found = found || (sigs_.at(symbol).isGeneric() &&
                             sameSignature(r, *sigs_.at(symbol).item));
-        // A higher-order function is generic in its function parameters
-        // (ADR 0044), and is called only through specialisations.
         if (auto h = hofs_.find(r.text); h != hofs_.end())
-          for (const sema::FuncSig &hof : h->second)
-            found = found || (hof.item && sameSignature(r, *hof.item));
+          for (const sema::FuncSig &f : h->second)
+            found = found || (f.isGeneric() && sameSignature(r, *f.item));
         if (!found)
           diags_.error(r.loc, unmet + "no generic function '" + r.text +
                                   "' with exactly this signature; a generic "
@@ -7603,6 +7792,19 @@ class Gen {
     return use;
   }
 
+  // A closure that captures `b` as `inout`, is in scope, and is used after
+  // `at`, if any, with that use (ADR 0044, section 6).
+  std::pair<BindingPtr, const Node *> writerOf(const BindingPtr &b,
+                                               const Node &at) {
+    for (const auto &scope : scopes_)
+      for (const auto &[name, x] : scope)
+        if (x != b && name.find('#') == std::string::npos &&
+            std::any_of(x->refs.begin(), x->refs.end(),
+                        [&](const auto &r) { return r.second == b; }))
+          if (const Node *use = usedAfter(x, at)) return {x, use};
+    return {nullptr, nullptr};
+  }
+
   // A named local that borrows from `b`, is in scope, and is used after
   // `at`, if any, with that use.
   std::pair<BindingPtr, const Node *> borrowerOf(const BindingPtr &b,
@@ -8577,6 +8779,12 @@ class Gen {
     b->lenders = lendersOf(valueNode);
     b->writable = writable(valueNode);
     b->closure = valueNode.kind == NodeKind::Lambda;
+    // A closure that writes a capture is threaded through its calls.
+    if (auto r = closureRefs_.find(&valueNode); r != closureRefs_.end() &&
+                                                !r->second.empty()) {
+      b->refs = r->second;
+      b->isMutable = true;
+    }
     b->scope = n.kids[4].get();
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
@@ -8751,6 +8959,10 @@ class Gen {
   // Higher-order functions by their written name (ADR 0044): called only
   // through their specialisations.
   std::map<std::string, std::vector<sema::FuncSig>> hofs_;
+  // The `apply`s of lambdas with referenced captures (ADR 0044).
+  std::set<std::string> effectful_;
+  std::map<const Node *, std::vector<std::pair<std::string, BindingPtr>>>
+      closureRefs_;
   // Type-level metaprograms (ADR 0035): those that return a type, and
   // those that return a bool, by name; the interpreter that runs them; and
   // each type a metaprogram has seen, by its spelling.

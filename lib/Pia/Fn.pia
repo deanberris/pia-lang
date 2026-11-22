@@ -1,0 +1,82 @@
+(* Pia.Fn: the laws of function arguments (ADR 0044, section 5), spec
+   predicates over function values that a higher-order function states as
+   preconditions, as `sort` does with `requires strict_weak_order less`.
+   The function that takes them assumes them, and each caller proves them
+   for its argument: for a lambda over a small type the lambda unfolds and
+   the law is a bit-vector fact, and for a comparator that meets
+   Pia.Core.Order's Ord the law follows from its contract.
+
+   Each is generic over its element type and exported with its
+   definition, so an importer instantiates it at its own types, as for
+   Pia.Core.Algo.Search's spec functions. The rest of <functional> (C++'s
+   std::function, bind_front and friends) is the library's (ADR 0040,
+   docs/cpp-std.md); this module holds only the laws. *)
+module Pia.Fn : Laws
+
+interface Laws = sig
+  let spec irreflexive : (t : type) -> (rel : (a : t) -> (b : t) -> bool) -> bool
+  let spec reflexive : (t : type) -> (rel : (a : t) -> (b : t) -> bool) -> bool
+  let spec symmetric : (t : type) -> (rel : (a : t) -> (b : t) -> bool) -> bool
+  let spec transitive : (t : type) -> (rel : (a : t) -> (b : t) -> bool) -> bool
+  let spec strict_weak_order : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let spec equivalence : (t : type) -> (eq : (a : t) -> (b : t) -> bool) -> bool
+  let spec associative : (t : type) -> (op : (a : t) -> (b : t) -> t) -> bool
+  let spec commutative : (t : type) -> (op : (a : t) -> (b : t) -> t) -> bool
+  let spec identity : (t : type) -> (op : (a : t) -> (b : t) -> t) -> (e : t) -> bool
+  let spec sorted : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> bool
+  let spec sorted_prefix : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (k : usize) -> bool
+end
+
+(* `rel a a` never holds. *)
+let spec irreflexive (t : type) (rel : (a : t) -> (b : t) -> bool) : bool =
+  forall (a : t). rel a a = false
+
+(* `rel a a` always holds. *)
+let spec reflexive (t : type) (rel : (a : t) -> (b : t) -> bool) : bool =
+  forall (a : t). rel a a
+
+(* `rel a b` gives `rel b a`. *)
+let spec symmetric (t : type) (rel : (a : t) -> (b : t) -> bool) : bool =
+  forall (a : t) (b : t). rel a b ==> rel b a
+
+(* `rel a b` and `rel b c` give `rel a c`. *)
+let spec transitive (t : type) (rel : (a : t) -> (b : t) -> bool) : bool =
+  forall (a : t) (b : t) (c : t). rel a b && rel b c ==> rel a c
+
+(* C++'s Compare requirement: irreflexive, transitive, and with
+   incomparability (neither `less a b` nor `less b a`) transitive. *)
+let spec strict_weak_order (t : type) (less : (a : t) -> (b : t) -> bool) : bool =
+  (forall (a : t). less a a = false) &&
+  (forall (a : t) (b : t) (c : t). less a b && less b c ==> less a c) &&
+  (forall (a : t) (b : t) (c : t).
+     less a b = false && less b a = false &&
+     less b c = false && less c b = false ==>
+       less a c = false && less c a = false)
+
+(* An equivalence relation: reflexive, symmetric and transitive. *)
+let spec equivalence (t : type) (eq : (a : t) -> (b : t) -> bool) : bool =
+  (forall (a : t). eq a a) &&
+  (forall (a : t) (b : t). eq a b ==> eq b a) &&
+  (forall (a : t) (b : t) (c : t). eq a b && eq b c ==> eq a c)
+
+(* `op (op a b) c` is `op a (op b c)`, so a fold may group as it likes. *)
+let spec associative (t : type) (op : (a : t) -> (b : t) -> t) : bool =
+  forall (a : t) (b : t) (c : t). op (op a b) c = op a (op b c)
+
+(* `op a b` is `op b a`. *)
+let spec commutative (t : type) (op : (a : t) -> (b : t) -> t) : bool =
+  forall (a : t) (b : t). op a b = op b a
+
+(* `e` is an identity of `op` on both sides. *)
+let spec identity (t : type) (op : (a : t) -> (b : t) -> t) (e : t) : bool =
+  forall (a : t). op e a = a && op a e = a
+
+(* No element of xs is before an earlier one: for i < j, not
+   `less xs.[j] xs.[i]`. With a strict weak order this is C++'s
+   is_sorted. *)
+let spec sorted (t : type) (less : (a : t) -> (b : t) -> bool) (xs : [t]) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> less xs.[j] xs.[i] = false
+
+(* The first k elements of xs are sorted. *)
+let spec sorted_prefix (t : type) (less : (a : t) -> (b : t) -> bool) (xs : [t]) (k : usize) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && j < k ==> less xs.[j] xs.[i] = false
