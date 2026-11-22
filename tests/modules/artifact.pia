@@ -1,0 +1,25 @@
+(* `piac --emit=interface` writes one canonical artifact per interface
+   (ADR 0039): comments go, whitespace is normalised, and nothing private
+   is in it. So a change to a private item, a body, a comment or the
+   layout leaves the artifact byte-identical, and importers need not be
+   rebuilt.
+// RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
+// RUN: FileCheck %s < %t/Image.Pixels.Ops.piai
+// RUN: FileCheck --check-prefix=C %s < %t/Image.Pixels.C.piai
+// RUN: mkdir %t/changed
+// RUN: piac --emit=interface -o %t/changed %S/Inputs/pixels_private_change.pia
+// RUN: cmp %t/Image.Pixels.Ops.piai %t/changed/Image.Pixels.Ops.piai
+// RUN: cmp %t/Image.Pixels.C.piai %t/changed/Image.Pixels.C.piai
+*)
+
+(*
+// CHECK:      {{^}}module Image.Pixels{{$}}
+// CHECK-NEXT: {{^}}interface Ops = sig{{$}}
+// CHECK-NEXT: {{^}}  let mix : (a : u8) -> (b : u8) -> u8 ensures result <= a || result <= b{{$}}
+// CHECK-NEXT: {{^}}  let luma : (r : u8) -> (g : u8) -> (b : u8) -> u8 requires r <= 250{{$}}
+// CHECK-NEXT: {{^}}end{{$}}
+// CHECK-NOT:  helper
+
+// C:      {{^}}module Image.Pixels{{$}}
+// C-NEXT: {{^}}interface C @abi(c) = sig{{$}}
+*)

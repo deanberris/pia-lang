@@ -2886,7 +2886,9 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   llvm::DenseSet<Operation *> partial;  // ops with an unselected goal
   std::vector<Job> jobs;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
-    if (fn.isExternal()) continue;
+    // An imported function is proved by its own module (ADR 0039).
+    if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))
+      continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;

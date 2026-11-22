@@ -586,9 +586,12 @@ class Gen {
     // An instance is internal: C calls the generic's instances only through
     // Pia functions, which name concrete types.
     if (!sig.typeArgs.empty()) fn.setPrivate();
-    if (auto e = exports_.find(sig.name); e != exports_.end())
+    if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
+      if (abiC_.count(sig.name))
+        fn->setAttr(PiaDialect::getAbiCAttrName(), b_.getUnitAttr());
+    }
     for (size_t i = 0; i < sig.params.size(); ++i)
       if (!sig.params[i].modifiers.empty())
         fn.setArgAttr(i, PiaDialect::getModifiersAttrName(),
@@ -637,6 +640,11 @@ class Gen {
       fn.setPrivate();
       fn->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
       fn->setAttr(PiaDialect::getAbstractAttrName(), b_.getUnitAttr());
+      return;
+    }
+    // An imported function's body is in another module (ADR 0039).
+    if (hasFlag(item, "import")) {
+      genImport(item, sig, fn);
       return;
     }
     // `int` and `real` exist only for the verifier, so code can neither
@@ -758,6 +766,44 @@ class Gen {
     }
     popScope();
     create<mlir::func::ReturnOp>(l, rets);
+  }
+
+  // A function imported from another module's interface (ADR 0039): the
+  // interface's `requires`, a result the verifier knows nothing more about,
+  // and the interface's `ensures` about it. Callers are checked against
+  // that contract, as against any callee's; the function itself is not
+  // verified here, since its module proves it meets the interface.
+  void genImport(const Node &item, const sema::FuncSig &sig,
+                 mlir::func::FuncOp fn) {
+    std::string from;
+    llvm::SmallVector<llvm::StringRef> words;
+    llvm::StringRef(item.flags).split(words, ' ', -1, false);
+    for (llvm::StringRef w : words)
+      if (w.consume_front("from:")) from = w.str();
+    fn->setAttr(PiaDialect::getImportAttrName(), b_.getStringAttr(from));
+    fn.setPrivate();
+    const Node &contracts = *item.kids[2];
+    for (const syntax::NodePtr &c : contracts.kids) {
+      if (c->kind != NodeKind::Requires) continue;
+      R p = genPredicate(*c->kids[0]);
+      if (!p) return;
+      create<contract::RequiresOp>(loc(*c), p->value);
+    }
+    llvm::SmallVector<Value> rets;
+    pushScope();
+    if (sig.result && !isUnit(sig.result)) {
+      Value r = create<ArbitraryOp>(loc(item), sig.result).getResult();
+      rets.push_back(r);
+      bind("result", r, sig.result, false);
+    }
+    for (const syntax::NodePtr &c : contracts.kids) {
+      if (c->kind != NodeKind::Ensures) continue;
+      R p = genPredicate(*c->kids[0]);
+      if (!p) return;
+      create<contract::EnsuresOp>(loc(*c), p->value);
+    }
+    popScope();
+    create<mlir::func::ReturnOp>(loc(item), rets);
   }
 
   // An axiom (ADR 0036): its preconditions and postconditions, and its
@@ -3336,7 +3382,10 @@ class Gen {
     }
     // `main` is the program's entry point, and is never in an interface.
     for (const std::string &symbol : overloads_["main"])
-      if (!sigs_.at(symbol).overloaded) exports_[symbol] = "";
+      if (!sigs_.at(symbol).overloaded) {
+        exports_[symbol] = header ? header->text : "";
+        abiC_.insert(symbol);
+      }
     if (!header) return;
     for (const syntax::NodePtr &a : header->kids[0]->kids)
       if (a->text != "trusted" || !a->kids.empty())
@@ -3469,8 +3518,8 @@ class Gen {
       if (sigs_.at(symbol).isGeneric() || !sigs_.at(symbol).typeArgs.empty())
         continue;
       // A function in a C interface keeps its C name.
-      auto [e, fresh] = exports_.emplace(symbol, hasAbiC(iface) ? "" : header.text);
-      if (!fresh && hasAbiC(iface)) e->second = "";
+      exports_.emplace(symbol, header.text);
+      if (hasAbiC(iface)) abiC_.insert(symbol);
     }
   }
 
@@ -5208,6 +5257,8 @@ class Gen {
   // Exported function symbols (ADR 0039), each with its module's path, or
   // empty for a plain C name.
   std::map<std::string, std::string> exports_;
+  // The exported functions whose C entry points keep their plain names.
+  std::set<std::string> abiC_;
   // The program's top-level type items, by name.
   std::vector<std::pair<std::string, const Node *>> typeItems_;
   unsigned matchCounter_ = 0;

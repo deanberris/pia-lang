@@ -2,6 +2,8 @@
 # A minimal lit: runs every `// RUN:` line of a test file.
 #
 #   %s     the test file
+#   %S     the directory that holds it, for its inputs
+#   %t     a fresh, empty directory of its own
 #   <tool> each tool passed on the command line, by its file name
 #          (pia-opt, piac, FileCheck)
 #   not    inverts the exit status of the command after it
@@ -20,10 +22,16 @@ for tool in "$@"; do
   eval "$name() { \"$path\" \"\$@\"; }"
 done
 
+DIR="$(dirname "$TEST")"
+TMP="$(mktemp -d "${TEST_TMPDIR:-${TMPDIR:-/tmp}}/lit.XXXXXX")"
+trap 'rm -rf "$TMP"' EXIT
+
 ran=0
 while IFS= read -r line; do
   cmd="${line#*RUN:}"
   cmd="${cmd//%s/$TEST}"
+  cmd="${cmd//%S/$DIR}"
+  cmd="${cmd//%t/$TMP}"
   echo "RUN: $cmd"
   if ! eval "set -o pipefail; $cmd"; then
     echo "FAILED: $cmd" >&2
