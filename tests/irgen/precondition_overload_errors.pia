@@ -1,0 +1,16 @@
+(* Overloads with the same parameter types must be ordered by their
+   preconditions, and return the same type (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let f (x : u8) : u8 requires x < 10 = 0
+
+(* CHECK-DAG: precondition_overload_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the preconditions of this overload of 'f' and the one at line 6 are not ordered: the 'requires' of one must include each 'requires' of the other
+*)
+let f (x : u8) : u8 requires x > 2 = 1
+
+let g (x : u8) : u8 = 0
+
+(* CHECK-DAG: precondition_overload_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'g' has an overload with these parameter types at line 12 that returns u8; overloads told apart by their preconditions return the same type
+*)
+let g (x : u8) : u16 requires x < 3 = 1

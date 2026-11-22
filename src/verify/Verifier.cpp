@@ -2223,6 +2223,79 @@ bool selects(const std::string &spec, const std::string &where,
   return function == spec;
 }
 
+mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
+                                     const Options &options) {
+  struct Site {
+    std::string fn;
+    unsigned index;  // among the function's calls, in walk order
+    mlir::func::CallOp call;
+    std::vector<std::string> candidates;
+  };
+  std::vector<Site> sites;
+  for (auto fn : module.getOps<mlir::func::FuncOp>()) {
+    unsigned i = 0;
+    fn.walk([&](mlir::func::CallOp c) {
+      if (auto a = c->getAttrOfType<mlir::ArrayAttr>("pia.overload_candidates")) {
+        Site s{fn.getSymName().str(), i, c, {}};
+        for (auto ref : a.getAsRange<mlir::FlatSymbolRefAttr>())
+          s.candidates.push_back(ref.getValue().str());
+        sites.push_back(std::move(s));
+      }
+      ++i;
+    });
+  }
+  if (sites.empty()) return mlir::success();
+  module.getContext()->loadDialect<mlir::smt::SMTDialect>();
+  // Encoding needs a module without records; the choices are copied back.
+  mlir::OwningOpRef<mlir::ModuleOp> copy = module.clone();
+  if (mlir::failed(transforms::scalarizeRecords(*copy))) return mlir::failure();
+  Options o = options;
+  o.only.clear();
+  for (Site &s : sites) {
+    auto fn = copy->lookupSymbol<mlir::func::FuncOp>(s.fn);
+    if (!fn) return mlir::failure();
+    mlir::func::CallOp target;
+    unsigned i = 0;
+    fn.walk([&](mlir::func::CallOp c) {
+      if (i++ == s.index) target = c;
+    });
+    if (!target) return mlir::failure();
+    unsigned width = encodingWidth(*copy, fn);
+    std::string chosen;
+    for (size_t k = 0; k + 1 < s.candidates.size() && chosen.empty(); ++k) {
+      target.setCallee(s.candidates[k]);
+      std::vector<Goal> goals;
+      buildQuery(*copy, fn, width, -1, goals);
+      bool all = true;
+      for (size_t g = 0; g < goals.size() && all; ++g) {
+        if (goals[g].op != target.getOperation() ||
+            goals[g].kind != ObligationKind::requires_)
+          continue;
+        if (goals[g].byIntervals) continue;
+        if (goals[g].skipped) {
+          all = false;
+          continue;
+        }
+        std::vector<Goal> unused;
+        Job job{0, buildQuery(*copy, fn, width, static_cast<int>(g), unused),
+                width, ""};
+        job.script = scriptOf(job.query.smtlib);
+        Outcome out;
+        JobStats js;
+        solve(job, o, out, js);
+        all = out.status == Status::Proved;
+      }
+      if (all) chosen = s.candidates[k];
+    }
+    if (chosen.empty()) chosen = s.candidates.back();
+    target.setCallee(chosen);
+    target->removeAttr("pia.overload_candidates");
+    s.call.setCallee(chosen);
+    s.call->removeAttr("pia.overload_candidates");
+  }
+  return mlir::success();
+}
+
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options, Stats *stats) {
   auto start = std::chrono::steady_clock::now();

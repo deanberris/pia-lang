@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -146,6 +147,7 @@ class Gen {
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
     checkGenericOverloads();
+    checkPreconditionOverloads();
     if (diags_.hasErrors()) return nullptr;
     // Each generic body is checked once, at its definition, against what
     // its constraints promise (ADR 0034, "Definition check").
@@ -1747,6 +1749,40 @@ class Gen {
       if (all) best = &c;
     }
     if (!best) {
+      // Candidates no other beats, all with the same parameter types:
+      // overloads told apart by their preconditions (ADR 0034). The call
+      // goes to the least specific; the verifier may choose a more
+      // specific one whose precondition it proves at the call.
+      std::vector<const Candidate *> top;
+      for (const Candidate &c : viable) {
+        bool beaten = false;
+        for (const Candidate &o : viable)
+          if (&o != &c && beats(o, c)) beaten = true;
+        if (!beaten) top.push_back(&c);
+      }
+      auto twins = top.empty() ? preconditionOrder_.end()
+                               : preconditionOrder_.find(top[0]->sig->name);
+      bool tied = top.size() > 1 && twins != preconditionOrder_.end();
+      for (const Candidate *c : top)
+        tied = tied && !c->generic &&
+               llvm::is_contained(twins->second, c->sig->name);
+      if (tied) {
+        std::vector<std::string> order;
+        for (const std::string &sym : twins->second)
+          for (const Candidate *c : top)
+            if (c->sig->name == sym) order.push_back(sym);
+        sema::FuncSig &general = sigs_.at(order.back());
+        // A contract means the same in every build: it uses the general
+        // overload.
+        if (!contract_) {
+          llvm::SmallVector<mlir::Attribute> refs;
+          for (const std::string &sym : order)
+            refs.push_back(mlir::FlatSymbolRefAttr::get(&ctx_, sym));
+          openCandidates_ = b_.getArrayAttr(refs);
+          openFor_ = order.back();
+        }
+        return genCall(n, general, args, &early);
+      }
       std::string why = "the call of '" + name + "' with " + argTypes() +
                         " is ambiguous between";
       bool generic = false;
@@ -2552,6 +2588,110 @@ class Gen {
     }
   }
 
+  // --- overloads told apart by preconditions (ADR 0034, step 6) --------
+
+  // The `requires` clauses of `sig`, with its parameters renamed by
+  // position, as text: two overloads' clauses compare equal when they say
+  // the same of the same arguments.
+  std::set<std::string> requiresOf(const sema::FuncSig &sig) {
+    std::map<std::string, std::string> rename;
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      rename[sig.params[i].name] = "#" + std::to_string(i);
+    std::set<std::string> out;
+    for (const syntax::NodePtr &c : sig.item->kids[2]->kids) {
+      if (c->kind != NodeKind::Requires) continue;
+      NodePtr copy = syntax::clone(*c->kids[0]);
+      renameNames(*copy, rename, nullptr);
+      if (copy->kind == NodeKind::Name)
+        if (auto it = rename.find(copy->text); it != rename.end())
+          copy->text = it->second;
+      std::ostringstream os;
+      syntax::dump(os, *copy);
+      out.insert(os.str());
+    }
+    return out;
+  }
+
+  // Overloads with the same parameter types must be ordered by their
+  // preconditions: each one's `requires` clauses include every clause of
+  // the next. That is a proof that each precondition implies the next,
+  // so the most specific proved at a call is well defined. They must also
+  // return the same type.
+  void checkPreconditionOverloads() {
+    for (auto &[name, symbols] : overloads_) {
+      // Grouped in the order the overloads are visited: mlir::Type has no
+      // ordering, and pointer order would make the diagnostics' order vary.
+      std::vector<std::pair<std::vector<Type>,
+                            std::vector<const sema::FuncSig *>>>
+          byTypes;
+      for (const std::string &sym : symbols) {
+        const sema::FuncSig &f = sigs_.at(sym);
+        if (f.isGeneric()) continue;
+        std::vector<Type> ts;
+        for (const sema::Param &p : f.params) ts.push_back(p.type);
+        auto it = std::find_if(byTypes.begin(), byTypes.end(),
+                               [&](const auto &e) { return e.first == ts; });
+        if (it == byTypes.end()) {
+          byTypes.emplace_back(ts, std::vector<const sema::FuncSig *>{});
+          it = std::prev(byTypes.end());
+        }
+        it->second.push_back(&f);
+      }
+      for (auto &[ts, group] : byTypes) {
+        if (group.size() < 2) continue;
+        std::sort(group.begin(), group.end(), [](auto *x, auto *y) {
+          return std::make_pair(x->item->loc.line, x->item->loc.column) <
+                 std::make_pair(y->item->loc.line, y->item->loc.column);
+        });
+        std::vector<std::pair<std::set<std::string>, const sema::FuncSig *>>
+            ranked;
+        bool ok = true;
+        for (const sema::FuncSig *f : group) {
+          std::set<std::string> req = requiresOf(*f);
+          for (auto &[other, g] : ranked) {
+            std::string at = " at line " + std::to_string(g->item->loc.line);
+            if (f->result != g->result) {
+              diags_.error(f->item->loc,
+                           "'" + name + "' has an overload with these "
+                           "parameter types" + at + " that returns " +
+                           typeName(g->result) + "; overloads told apart by "
+                           "their preconditions return the same type");
+              ok = false;
+            } else if (req == other) {
+              diags_.error(f->item->loc,
+                           "'" + name + "' already has an overload with "
+                           "these parameter types and the same "
+                           "preconditions" + at + ", so no call could "
+                           "choose between them");
+              ok = false;
+            } else if (!std::includes(req.begin(), req.end(), other.begin(),
+                                      other.end()) &&
+                       !std::includes(other.begin(), other.end(),
+                                      req.begin(), req.end())) {
+              diags_.error(f->item->loc,
+                           "the preconditions of this overload of '" + name +
+                           "' and the one" + at + " are not ordered: the "
+                           "'requires' of one must include each 'requires' "
+                           "of the other");
+              ok = false;
+            }
+            if (!ok) break;
+          }
+          if (!ok) break;
+          ranked.emplace_back(std::move(req), f);
+        }
+        if (!ok) continue;
+        // Most specific first: the most clauses.
+        std::stable_sort(ranked.begin(), ranked.end(), [](auto &x, auto &y) {
+          return x.first.size() > y.first.size();
+        });
+        std::vector<std::string> order;
+        for (auto &[req, f] : ranked) order.push_back(f->name);
+        for (const std::string &sym : order) preconditionOrder_[sym] = order;
+      }
+    }
+  }
+
   // Records that the constraints promise `cname` for `args`, with what it
   // includes, and the requirement functions they promise.
   void promise(const std::string &cname, const std::vector<Type> &args) {
@@ -2784,6 +2924,12 @@ class Gen {
     if (!isUnit(sig.result)) results.push_back(sig.result);
     auto call = create<mlir::func::CallOp>(loc(n), sig.name, results,
                                               operands);
+    // A call left open between overloads told apart by their
+    // preconditions: the verifier chooses (verify::resolveOverloads).
+    if (openCandidates_ && sig.name == openFor_) {
+      call->setAttr("pia.overload_candidates", openCandidates_);
+      openCandidates_ = {};
+    }
     if (results.empty()) return unit();
     return TV{call.getResult(0), sig.result};
   }
@@ -3395,6 +3541,11 @@ class Gen {
     std::vector<const Node *> constraints;
   };
   bool checking_ = false;
+  // Overloads with the same parameter types, most specific precondition
+  // first, by each one's symbol; and the call being made open between them.
+  std::map<std::string, std::vector<std::string>> preconditionOrder_;
+  mlir::ArrayAttr openCandidates_;
+  std::string openFor_;
   std::map<std::string, int> specificity_;  // "a|b": moreSpecific(a, b)
   llvm::DenseMap<Type, Archetype> archetypes_;
   std::set<std::string> promised_;
