@@ -1,7 +1,8 @@
 (* #257: an imported definition that calls another function of its module
    by its own name resolves it among that module's overloads, the
    higher-order ones included. Before, the importer saw only the value
-   overload, and `pick xs p` was a call of the one-argument `pick`.
+   overload, and `pick xs p` was a call of the one-argument `pick`. And
+   `none`'s body reads back as its body, not as part of its ensures (#259).
 // RUN: piac --emit=interface -o %t %S/Inputs/hof_overloads.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
@@ -12,10 +13,12 @@ let calls (xs : [u8]) : unit =
   assert a <= len xs;
   let b = Over.Picks.either xs (let (x : u8) : bool => x > 1) in
   assert b <= len xs;
+  let c = Over.Picks.none xs (let (x : u8) : bool => x > 1) in
+  assert c ==> len xs >= 0;
   ()
 
 (*
 // CHECK-NOT: error
 // CHECK-NOT: failed
-// CHECK: 7 proved, 0 failed, 0 skipped
+// CHECK: 11 proved, 0 failed, 0 skipped
 *)

@@ -10,5 +10,6 @@
 // IFACE: module Pia.Fn
 // IFACE: let spec strict_weak_order : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> bool
 // IFACE: let spec sorted : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> bool
-// IFACE: let spec strict_weak_order (t : type) (less : (a : t) -> (b : t) -> bool) : bool =
+// IFACE: let spec strict_weak_order (t : type) (less : (a : t) -> (b : t) -> bool) : bool{{$}}
+// IFACE-NEXT: = 
 *)

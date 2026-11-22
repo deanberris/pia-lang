@@ -7,6 +7,8 @@ interface Picks = sig
   let pick : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
   let first : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
   let either : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
+  let spec nonempty : (t : type) -> (xs : [t]) -> bool
+  let none : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> bool
 end
 
 let pick (t : type) (xs : [t]) : usize
@@ -26,3 +28,12 @@ let first (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
 let either (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
   ensures result <= len xs
 = if pick xs p = 0 then pick xs else 0
+
+let spec nonempty (t : type) (xs : [t]) : bool = len xs > 0
+
+(* A body that is an equation after a contract that is one too: on the one
+   line an interface prints a definition on, only the line break before
+   its `=` says where the contracts end (#259). *)
+let none (t : type) (xs : [t]) (p : (a : t) -> bool) : bool
+  ensures nonempty xs ==> result ==> nonempty xs
+= pick xs p = len xs

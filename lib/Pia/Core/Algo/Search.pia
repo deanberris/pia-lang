@@ -439,7 +439,7 @@ let is_sorted_until (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : 
 let is_sorted (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : bool
   requires Pia.Fn.strict_weak_order less
   ensures result <==> Pia.Fn.sorted less xs
-= (is_sorted_until xs less = len xs)
+= is_sorted_until xs less = len xs
 
 (** C++: std::max_element with a comparator. *)
 let max_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
