@@ -145,6 +145,12 @@ class Gen {
     }
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
+    // Each generic body is checked once, at its definition, against what
+    // its constraints promise (ADR 0034, "Definition check").
+    for (const syntax::NodePtr &item : program.kids)
+      if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
+        if (sigs_.at(it->second).isGeneric()) checkDefinition(it->second);
+    if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids)
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         genFunction(it->second);
@@ -869,6 +875,16 @@ class Gen {
             a.value, c.value);
         return TV{v, boolType()};
       }
+      if (archetypes_.count(a.type) || archetypes_.count(c.type)) {
+        // A contract may compare values of a type parameter's type: what
+        // it means is decided for each instance.
+        if (contract_ && a.type == c.type && (op == "=" || op == "<>"))
+          return TV{boolConst(l, true), boolType()};
+        Type t = archetypes_.count(a.type) ? a.type : c.type;
+        return fail(n, "'" + op + "' is not defined for every '" +
+                           typeName(t) + "'; a generic body can use only "
+                           "what its constraints promise");
+      }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
@@ -1360,11 +1376,16 @@ class Gen {
     bool local = fn.flags.empty() && lookup(fn.text);
     if (!local && fn.flags != "prelude") {
       auto set = overloadSet(fn.text);
+      if (set.empty() && checking_ && !types_.isCtorName(fn.text))
+        if (std::string hint = notPromised(fn.text, {}); !hint.empty())
+          return fail(fn, hint);
       if (!set.empty()) {
         std::vector<const Node *> args;
         for (size_t i = 1; i < n.kids.size(); ++i)
           args.push_back(n.kids[i].get());
-        if (set.size() > 1)
+        // In a generic body, a call with an argument of a type parameter's
+        // type must find what it calls among what the constraints promise.
+        if (set.size() > 1 || (checking_ && !set[0]->isGeneric()))
           return genOverloadedCall(n, fn.text, set, targs, args, expected);
         sema::FuncSig &sig = *set[0];
         if (sig.isGeneric())
@@ -1535,10 +1556,13 @@ class Gen {
   std::vector<sema::FuncSig *> overloadSet(const std::string &name) {
     std::vector<sema::FuncSig *> out;
     auto it = overloads_.find(name);
-    if (it == overloads_.end()) return out;
-    for (const std::string &symbol : it->second)
-      if (auto s = sigs_.find(symbol); s != sigs_.end())
-        out.push_back(&s->second);
+    if (it != overloads_.end())
+      for (const std::string &symbol : it->second)
+        if (auto s = sigs_.find(symbol); s != sigs_.end())
+          out.push_back(&s->second);
+    // In a generic body, the requirements its constraints promise.
+    if (auto r = promisedFns_.find(name); r != promisedFns_.end())
+      for (sema::FuncSig *sig : r->second) out.push_back(sig);
     return out;
   }
 
@@ -1650,6 +1674,12 @@ class Gen {
         continue;
       }
       viable.push_back(std::move(c));
+    }
+    if (viable.empty() && checking_) {
+      std::vector<Type> abstract;
+      for (const std::optional<TV> &e : early)
+        if (e && archetypes_.count(e->type)) abstract.push_back(e->type);
+      if (!abstract.empty()) return fail(n, notPromised(name, abstract));
     }
     if (viable.empty()) {
       std::string why = "no overload of '" + name + "' takes " + argTypes();
@@ -1905,6 +1935,11 @@ class Gen {
   std::optional<std::string> unmet(const std::string &cname,
                                    const std::vector<Type> &args) {
     std::string key = cname + "<" + spellTypes(args) + ">";
+    for (Type t : args)
+      if (archetypes_.count(t)) {
+        if (promised_.count(key)) return std::nullopt;
+        return "it is not promised by " + constraintsText(t);
+      }
     if (auto it = met_.find(key); it != met_.end()) return it->second;
     // An `include` that comes back to this concept adds nothing new.
     met_[key] = std::nullopt;
@@ -2062,6 +2097,179 @@ class Gen {
     if (!sema::resolveSignature(sig, types_, diags_)) return;
     sigs_.emplace(symbol, std::move(sig));
     pendingInstances_.push_back(symbol);
+  }
+
+  // --- the definition check (ADR 0034) --------------------------------
+
+  // Generates the body of `symbol`, a generic, once with each type
+  // parameter standing for an unknown type: a record named after it with
+  // no fields. A call with an argument of such a type resolves against the
+  // requirements of the concepts its constraints promise, and nothing else
+  // it can do with a value of that type than pass it on. The generated
+  // function, and every instance it made, is thrown away.
+  void checkDefinition(const std::string &symbol) {
+    const sema::FuncSig &generic = sigs_.at(symbol);
+    std::map<std::string, Type> bound;
+    for (const std::string &t : generic.typeParams) {
+      Type a = RecordType::get(&ctx_, t, {}, {});
+      bound[t] = a;
+      archetypes_[a] = {t, {}};
+    }
+    for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
+      if (const Node *pred = wherePredicate(*p)) {
+        std::vector<const Node *> cs;
+        constraintsOf(*pred, cs);
+        archetypes_[bound[p->text]].constraints = cs;
+        for (const Node *c : cs) {
+          std::vector<Type> args;
+          for (size_t i = 1; i < c->kids.size(); ++i) {
+            auto b = bound.find(c->kids[i]->text);
+            Type ty;
+            if (b != bound.end()) {
+              ty = b->second;
+            } else {
+              Node asType;
+              asType.kind = NodeKind::TypeName;
+              asType.text = c->kids[i]->text;
+              asType.loc = c->kids[i]->loc;
+              ty = types_.resolve(asType);
+            }
+            if (!ty) {
+              archetypes_.clear();
+              promised_.clear();
+              promisedFns_.clear();
+              return;
+            }
+            args.push_back(ty);
+          }
+          promise(c->kids[0]->text, args);
+        }
+      }
+    std::string key = "definition of " + generic.name;
+    sema::FuncSig check = generic;
+    check.name = key;
+    check.typeArgs = bound;
+    check.result = Type();
+    std::map<std::string, std::optional<std::string>> savedMet = met_;
+    size_t pending = pendingInstances_.size();
+    std::set<std::string> before;
+    for (auto &[k, v] : sigs_) before.insert(k);
+    checking_ = true;
+    if (sema::resolveSignature(check, types_, diags_)) {
+      sigs_.emplace(key, std::move(check));
+      genFunction(key);
+    }
+    checking_ = false;
+    // Nothing the check made survives it.
+    if (auto f = module_.lookupSymbol<mlir::func::FuncOp>(key)) f.erase();
+    for (auto it = sigs_.begin(); it != sigs_.end();)
+      it = before.count(it->first) ? std::next(it) : sigs_.erase(it);
+    pendingInstances_.resize(pending);
+    met_ = std::move(savedMet);
+    promised_.clear();
+    promisedFns_.clear();
+    archetypes_.clear();
+  }
+
+  // Records that the constraints promise `cname` for `args`, with what it
+  // includes, and the requirement functions they promise.
+  void promise(const std::string &cname, const std::vector<Type> &args) {
+    auto c = concepts_.find(cname);
+    if (c == concepts_.end()) return;
+    std::string key = cname + "<" + spellTypes(args) + ">";
+    if (!promised_.insert(key).second) return;
+    const Node &item = *c->second;
+    std::map<std::string, Type> scope;
+    size_t i = 0;
+    for (const syntax::NodePtr &p : item.kids[0]->kids)
+      if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
+    std::vector<std::map<std::string, Type>> saved =
+        types_.replaceTypeScopes({scope});
+    for (const syntax::NodePtr &r : item.kids[3]->kids) {
+      if (r->kind == NodeKind::SigInclude) {
+        std::vector<Type> inner;
+        for (const syntax::NodePtr &a : r->kids)
+          if (Type t = types_.resolve(*a)) inner.push_back(t);
+        if (inner.size() == r->kids.size()) {
+          types_.replaceTypeScopes(std::move(saved));
+          promise(r->text, inner);
+          saved = types_.replaceTypeScopes({scope});
+        }
+        continue;
+      }
+      if (r->kind != NodeKind::SigVal) continue;
+      sema::FuncSig sig;
+      sig.name = key + "." + r->text;
+      sig.item = r.get();
+      bool ok = true;
+      const Node *cur = r->kids[0]->kids[1].get();
+      for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+        const Node &d = *cur->kids[0];
+        sema::Param param;
+        param.name = d.text.empty() ? "_" : d.text;
+        param.modifiers = d.kids[0]->text;
+        param.loc = d.loc;
+        param.type = types_.resolve(*d.kids[1]);
+        ok = ok && param.type;
+        sig.params.push_back(std::move(param));
+      }
+      sig.result = types_.resolve(*cur);
+      if (!ok || !sig.result) continue;
+      // Two concepts may promise the same function.
+      bool dup = false;
+      for (const sema::FuncSig *other : promisedFns_[r->text]) {
+        bool same = other->params.size() == sig.params.size() &&
+                    other->result == sig.result;
+        for (size_t k = 0; same && k < sig.params.size(); ++k)
+          same = other->params[k].type == sig.params[k].type;
+        dup = dup || same;
+      }
+      if (dup) continue;
+      promisedSigs_.push_back(std::move(sig));
+      promisedFns_[r->text].push_back(&promisedSigs_.back());
+    }
+    types_.replaceTypeScopes(std::move(saved));
+  }
+
+  // `Ord t`, as written, for each constraint of the type parameter `t`.
+  std::string constraintsText(Type archetype) {
+    const Archetype &a = archetypes_.at(archetype);
+    if (a.constraints.empty()) return "'" + a.name + "', which has no constraints";
+    std::string out;
+    for (size_t i = 0; i < a.constraints.size(); ++i) {
+      const Node &c = *a.constraints[i];
+      std::string one = c.kids[0]->text;
+      for (size_t k = 1; k < c.kids.size(); ++k) one += " " + c.kids[k]->text;
+      out += (i ? " && " : "") + one;
+    }
+    return "'" + out + "'";
+  }
+
+  // Why a generic body cannot call `name` with arguments of the type
+  // parameters' types `abstract`, with a concept that would promise it.
+  // Empty when no argument has such a type and no concept requires `name`.
+  std::string notPromised(const std::string &name,
+                          const std::vector<Type> &abstract) {
+    std::string suggestion;
+    for (auto &[cname, item] : concepts_) {
+      for (const syntax::NodePtr &r : item->kids[3]->kids)
+        if (r->kind == NodeKind::SigVal && r->text == name) {
+          suggestion = cname;
+          break;
+        }
+      if (!suggestion.empty()) break;
+    }
+    if (abstract.empty() && suggestion.empty()) return "";
+    std::string what = abstract.empty()
+                           ? std::string("the constraints of this generic")
+                           : constraintsText(abstract[0]);
+    std::string out = "'" + name + "' is not promised by " + what;
+    if (!suggestion.empty()) {
+      std::string t = abstract.empty() ? "t" : archetypes_.at(abstract[0]).name;
+      out += "; constrain '" + t + "' by a concept that requires it, such "
+             "as '" + suggestion + " " + t + "'";
+    }
+    return out;
   }
 
   // The instance of a generic function for `bound`, made and queued on
@@ -2782,6 +2990,17 @@ class Gen {
   std::map<std::string, std::optional<std::string>> met_;
   // Lemmas made for concepts' laws and requirement contracts.
   std::deque<syntax::NodePtr> synthesized_;
+  // While a generic's definition is checked: its type parameters' stand-in
+  // types, the concepts its constraints promise, and their requirements.
+  struct Archetype {
+    std::string name;
+    std::vector<const Node *> constraints;
+  };
+  bool checking_ = false;
+  llvm::DenseMap<Type, Archetype> archetypes_;
+  std::set<std::string> promised_;
+  std::map<std::string, std::vector<sema::FuncSig *>> promisedFns_;
+  std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
 };
