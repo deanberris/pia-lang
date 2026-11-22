@@ -1,0 +1,128 @@
+(* Size classes over pools (ADR 0041, step 4): `general` is two pools of
+   pool_alloc.pia, one per size class, 16 and 64 bytes. `alloc n` picks
+   the smallest class that holds n bytes, and its block remembers both
+   its class and its pool, so `free` gives it back to the pool it came
+   from. The pools' heaps, ids and owners are spec-only.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let blk = type int{0..63}
+
+let theory Alloc = sig
+  let sort heap
+  let spec none : heap
+  let spec live : (h : heap) -> (b : blk) -> bool
+  let spec take : (h : heap) -> (b : blk) -> heap
+  let spec give : (h : heap) -> (b : blk) -> heap
+
+  let axiom none_live (b : blk) ensures live none b = false
+  let axiom take_live (h : heap) (b : blk) (c : blk)
+    ensures live (take h b) c = (c = b || live h c)
+  let axiom give_live (h : heap) (b : blk) (c : blk)
+    ensures live (give h b) c = (c <> b && live h c)
+end
+
+\ The live blocks are bits of a u64.
+let model bits : Alloc = struct
+  let sort heap = u64
+  let spec none : u64 = 0
+  let spec live (h : u64) (b : blk) : bool = ((h >> b) & 1) = 1
+  let spec take (h : u64) (b : blk) : u64 = (h | (1 << b))
+  let spec give (h : u64) (b : blk) : u64 = h & ~(1 << b)
+end
+
+(* `id` and `owner` are spec-only too (ADR 0041, step 4): a block goes back
+   only to the pool that handed it out, and that costs nothing at run time. *)
+let pool = type { cap : usize; free : [u16]; pos : [u16]; top : usize; heap : Alloc.heap; id : int }
+let block = type { i : blk; owner : int } @linear
+
+(* The pool's own representation differs from pool.pia's: `free` holds
+   every slot, `pos` is its inverse, and the slots at `top` and above are
+   the live ones. The coupling invariant says the heap agrees. *)
+let spec ok (p : pool) : bool =
+  p.cap <= 64 && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  && (forall (j in 0 .. p.cap). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j)
+  && (forall (s : blk). s < p.cap ==> p.pos.[s] < p.cap && p.free.[p.pos.[s]] = s
+                                       && Alloc.live p.heap s = (p.pos.[s] >= p.top))
+
+(* Hands out a block that was not live, and the heap takes it. *)
+let take_slot (p : borrowed inout mutable pool) : result block oom
+  requires ok p
+  ensures ok p && p.cap = old p.cap && p.id = old p.id
+  ensures (match result with
+           | Ok b -> b.i < p.cap && b.owner = p.id && Alloc.live (old p.heap) b.i = false
+                     && p.heap = Alloc.take (old p.heap) b.i
+           | Err _ -> p.heap = old p.heap)
+= if p.top = 0 then Err OutOfMemory
+  else
+    (let j = p.top - 1 in
+     let s = p.free.[j] in
+     p.top <- j;
+     p.heap <- Alloc.take p.heap s;
+     Ok { i = s; owner = p.id })
+
+(* Takes back a live block, and the heap gives it: the block swaps places
+   with the slot at `top`, which is the lowest live one. *)
+let give_slot (p : borrowed inout mutable pool) (b : moved block) : unit
+  requires ok p && b.owner = p.id && b.i < p.cap && Alloc.live p.heap b.i
+  ensures ok p && p.cap = old p.cap && p.id = old p.id
+  ensures p.heap = Alloc.give (old p.heap) b.i
+= match b with
+  | { i } ->
+    let t = p.top in
+    let k = p.pos.[i] in
+    let u = p.free.[t] in
+    p.free.[t] <- i;
+    p.free.[k] <- u;
+    p.pos.[u] <- k;
+    p.pos.[i] <- t;
+    p.top <- t + 1;
+    p.heap <- Alloc.give p.heap i
+
+(* The size classes: class 0 has 16-byte blocks and class 1 64-byte ones. *)
+let class = type int{0..1}
+let spec bytes (c : class) : usize = if c = 0 then 16 else 64
+
+let general = type { small : pool; large : pool }
+let gblock = type { c : class; b : block } @linear
+
+(* Each class's pool is well formed, and the two are different pools. *)
+let spec gok (g : general) : bool =
+  ok g.small && ok g.large && g.small.id <> g.large.id
+
+(* A block from the pool of class c is live there. *)
+let spec held (g : general) (x : gblock) : bool =
+  (x.c = 0 ==> x.b.owner = g.small.id && x.b.i < g.small.cap && Alloc.live g.small.heap x.b.i)
+  && (x.c = 1 ==> x.b.owner = g.large.id && x.b.i < g.large.cap && Alloc.live g.large.heap x.b.i)
+
+(* At least n bytes, from the smallest class that holds them. *)
+let alloc (g : borrowed inout mutable general) (n : usize) : result gblock oom
+  requires gok g && n <= 64
+  ensures gok g
+  ensures (match result with
+           | Ok x -> bytes x.c >= n && held g x
+           | Err _ -> true)
+= if n <= 16 then
+    (match take_slot g.small with
+     | Ok b -> Ok { c = 0; b = b }
+     | Err e -> Err e)
+  else
+    (match take_slot g.large with
+     | Ok b -> Ok { c = 1; b = b }
+     | Err e -> Err e)
+
+(* Back to the pool of its class. *)
+let free (g : borrowed inout mutable general) (x : moved gblock) : unit
+  requires gok g && held g x
+  ensures gok g
+= match x with
+  | { c; b } -> if c = 0 then give_slot g.small b else give_slot g.large b
+
+(* A small and a large block, each freed into its own class. *)
+let both (g : borrowed inout mutable general) : result unit oom
+  requires gok g
+= let s = alloc g 10? in
+  match alloc g 40 with
+  | Ok l -> (free g l; free g s; Ok ())
+  | Err e -> (free g s; Err e)
