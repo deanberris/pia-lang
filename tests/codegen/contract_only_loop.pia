@@ -1,0 +1,29 @@
+(* A loop whose results only a contract reads is still code when its body
+   writes through a call: here the loop's counter is read only by the
+   assert after it, and each turn calls `bump`, which writes xs. Erasing
+   the loop with the contract left an insertion sort that did nothing
+   (tests/std:sort_run).
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+let bump (xs : borrowed inout mutable [u8]) : unit
+  requires len xs > 0
+= xs.[0] <- 1
+
+(*
+// CHECK-LABEL: func.func @thrice
+// CHECK: scf.while
+// CHECK: call @bump
+// CHECK: return
+*)
+let thrice (xs : borrowed inout mutable [u8]) : unit
+  requires len xs > 0
+= let j : mutable usize = 0 in
+  while j < 3
+    invariant j <= 3
+    decreases 3 - j
+  do
+    bump xs;
+    j <- j + 1
+  done;
+  assert j = 3

@@ -55,6 +55,15 @@
       "wall_ms_1": 26686.7,
       "wall_ms_n": 22005.5
     },
+    "lib/Pia/Core/Algo/Sort.pia": {
+      "cost": 51881305,
+      "goals": 70,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 62,
+      "wall_ms_1": 19410.7,
+      "wall_ms_n": 15908.1
+    },
     "lib/Pia/Core/Bit.pia": {
       "cost": 3124442,
       "goals": 164,

@@ -18,6 +18,7 @@ lit_tests(
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
         "//lib/Pia/Core/Algo:Remove.pia",
+        "//lib/Pia/Core/Algo:Sort.pia",
         "//lib/Pia/Core/Algo:Search.pia",
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Text/Json:Lex.pia",
@@ -147,5 +148,25 @@ sh_test(
     srcs = ["modify_run_test.sh"],
     args = ["$(rootpath :modify_run)"],
     data = [":modify_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "sort_run",
+    src = "Inputs/sort_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:sort",
+    ],
+)
+
+sh_test(
+    name = "sort_run_test",
+    srcs = ["sort_run_test.sh"],
+    args = ["$(rootpath :sort_run)"],
+    data = [":sort_run"],
     target_compatible_with = APPLE_SILICON,
 )

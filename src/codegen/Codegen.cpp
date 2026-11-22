@@ -911,7 +911,12 @@ void eraseContracts(mlir::ModuleOp module) {
       if (isStatement.count(p) || contractOnly.count(p)) return true;
     return false;
   };
-  auto writes = [](mlir::Operation *op) {
+  // Whether erasing `op` could lose an effect: a write, an allocation, or
+  // a call that may write, which is one that takes a buffer (an `inout`
+  // slice) or is inside a loop or branch being erased with it, unless it
+  // calls a spec function. A loop whose results only a contract reads,
+  // such as an insertion sort's inner loop, still moves elements.
+  auto writes = [&](mlir::Operation *op) {
     bool w = false;
     op->walk([&](mlir::Operation *in) {
       if (auto e = mlir::dyn_cast<mlir::MemoryEffectOpInterface>(in))
@@ -919,6 +924,16 @@ void eraseContracts(mlir::ModuleOp module) {
             e.hasEffect<mlir::MemoryEffects::Allocate>() ||
             e.hasEffect<mlir::MemoryEffects::Free>())
           w = true;
+      if (mlir::isa<StoreOp>(in)) w = true;
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(in)) {
+        auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+        bool spec = f && (f->hasAttr(PiaDialect::getSpecAttrName()) ||
+                          f->hasAttr(PiaDialect::getLemmaAttrName()));
+        bool buffers = llvm::any_of(call.getOperandTypes(), [](Type t) {
+          return mlir::isa<ArrayType, SliceType>(t);
+        });
+        if (!spec && (in != op || buffers)) w = true;
+      }
     });
     return w;
   };

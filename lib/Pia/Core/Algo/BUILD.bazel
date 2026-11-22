@@ -9,6 +9,7 @@ exports_files([
     "Modify.pia",
     "Permutation.pia",
     "Remove.pia",
+    "Sort.pia",
     "Search.pia",
 ])
 
@@ -56,4 +57,18 @@ pia_library(
     src = "Remove.pia",
     target_compatible_with = APPLE_SILICON,
     deps = ["//lib/Pia/Core:order"],
+)
+
+# Sorting with a comparator, sorted and a permutation of the input:
+# tests/std/sort.pia checks its goals; tests/std/sort_edges.pia and
+# :sort_run test it through its interface.
+pia_library(
+    name = "sort",
+    src = "Sort.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        ":permutation",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
 )
