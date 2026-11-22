@@ -5,11 +5,13 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "irgen",
     srcs = [
+        "Boxes.cpp",
         "IRGen.cpp",
         "Regions.cpp",
         "Theories.cpp",
     ],
     hdrs = [
+        "Boxes.h",
         "IRGen.h",
         "Regions.h",
         "Theories.h",

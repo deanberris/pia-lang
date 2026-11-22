@@ -168,6 +168,26 @@ struct ArbitraryLowering : mlir::OpConversionPattern<ArbitraryOp> {
   }
 };
 
+// An empty buffer of records is an empty buffer of each field.
+struct EmptyLowering : mlir::OpConversionPattern<EmptyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      EmptyOp op, OneToNOpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    llvm::SmallVector<Type> types;
+    if (mlir::failed(getTypeConverter()->convertType(op.getResult().getType(),
+                                                     types)))
+      return mlir::failure();
+    llvm::SmallVector<Value> fields;
+    for (Type t : types)
+      fields.push_back(make<EmptyOp>(rw, op.getLoc(), t).getResult());
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(fields));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
 // `old p` on a record is `old` of each field.
 struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -453,7 +473,8 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, OldLowering,
+  patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
+               OldLowering,
                LoadLowering,
                StoreLowering, SliceLowering, LenLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(

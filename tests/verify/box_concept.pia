@@ -1,0 +1,101 @@
+(* A box over a concept (ADR 0046, steps 2 to 4): `box Shape` holds a
+   value of any type that meets Shape, and a call through it is proved from
+   Shape alone. `box`'s parameter is `@unsized`, so it may be a concept;
+   `box Shape` is then a fat pointer, { slot; table }, and the verifier
+   knows its object only through Shape's requirement contracts and its
+   laws over one value. `widen` boxes a full `box t` and runs the use
+   check there: t must meet Shape, contracts and laws included, so those
+   facts hold of whatever a `box Shape` holds. Here a slice holds a square
+   and a rectangle, and their areas' sum is bounded through the boxes.
+   `fits` needs a positive width, a goal at each call through a box.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b.slot = 1 && b.state = 1
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let meta Shape (t : type) : concept = sig
+  let area : (s : t) -> u32 ensures result <= 10000
+  let fits : (s : t) -> (w : u32) -> bool requires w > 0
+  let lemma bounded (a : t) ensures area a <= 10000
+end
+
+let square = type { side : u8 }
+let area (s : square) : u32 ensures result <= 10000 =
+  if s.side <= 100 then s.side * s.side else 10000
+let fits (s : square) (w : u32) : bool requires w > 0 = s.side <= w
+
+let rect = type { w : u8; h : u8 }
+let area (s : rect) : u32 ensures result <= 10000 =
+  if s.w <= 100 && s.h <= 100 then s.w * s.h else 10000
+
+let fits (s : rect) (w : u32) : bool requires w > 0 = s.w <= w
+
+let total (xs : [box Shape]) : u32
+  requires len xs = 2
+  ensures result <= 20000
+= area xs.[0] + area xs.[1]
+
+let two (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : result u32 oom
+  requires len sq = 1 && len rc = 1 && len xs = 2
+= let ms : mutable bump square = { mem = sq; used = 0 } in
+  let mr : mutable bump rect = { mem = rc; used = 0 } in
+  let a = make ms { side = 3 }? in
+  let b = make mr { w = 2; h = 5 }? in
+  xs.[0] <- widen a;
+  xs.[1] <- widen b;
+  Ok (total xs)
+
+(* box Shape meets Shape itself, by forwarding, so generic code over
+   Shape instantiates at it. *)
+let twice (t : type where Shape t) (s : t) : u32
+  ensures result <= 20000
+= area s + area s
+
+let doubled (xs : [box Shape]) : u32
+  requires len xs = 2
+  ensures result <= 20000
+= twice xs.[1]
+
+(* A width of 0 breaks fits's precondition, through the box too. *)
+let narrow (xs : [box Shape]) : bool
+  requires len xs = 2
+= fits xs.[0] 0
+
+(* The sum is bounded through the boxes, from Shape's contract alone; the
+   boxes are made from a square and a rectangle, each of which the use
+   check at widen proved to meet Shape; twice, proved once over Shape, is
+   instantiated at box Shape and discharged by that proof; and fits
+   through a box with a width of 0 fails its precondition.
+// CHECK: box_concept.pia:59:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:68:13: proved: the precondition of 'widen<square>' holds [smt]
+// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen<rect>' holds [smt]
+// CHECK: box_concept.pia:70:7: proved: the precondition of 'total' holds [smt]
+// CHECK: box_concept.pia:80:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:86:3: failed: the precondition of 'fits(box_Shape, u32)' holds
+// CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
+// CHECK: 53 proved, 1 failed, 0 skipped
+*)

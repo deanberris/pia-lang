@@ -1,0 +1,21 @@
+(* A concept names a type only as the argument of an `@unsized` type
+   parameter, `box Shape` (ADR 0046, section 2): its values have no size
+   known here. Anywhere else it is an error that suggests a box.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let meta Shape (t : type) : concept = sig
+  let area : (s : t) -> u32
+end
+
+(* CHECK: box_concept_type_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the concept 'Shape' is not a type: a value of some type that meets it has no size known here, so it can only be held in a box, as in 'box Shape' (ADR 0046)
+*)
+let measure (s : Shape) : u32 = 0
+
+(* CHECK: box_concept_type_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the concept 'Shape' is not a type
+*)
+let scene = type { first : Shape; count : u8 }
+
+(* A box of it is a type, and so is a slice of boxes. *)
+let fine (xs : [box Shape]) : usize = len xs
