@@ -25,5 +25,9 @@ let general (x : u64) : u8
 = pick x
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: soft_failure.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: soft_failure.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: soft_failure.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: soft_failure.pia:12:3: proved: the postcondition holds [smt]
+// CHECK: 4 proved, 0 failed, 0 skipped
 *)

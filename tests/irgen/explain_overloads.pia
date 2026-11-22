@@ -13,12 +13,12 @@ let pick (x : bool) : u8 = 2
 
 (* Only the call on line 24 is explained.
 // CHECK-NOT: note: the call of 'pick' with (u8)
-// CHECK: explain_overloads.pia:24:{{[0-9]+}}: note: the call of 'pick' with (u64) has 3 candidates
+// CHECK: explain_overloads.pia:24:{{[0-9]+}}: note: the call of 'pick' with (i8) has 3 candidates
 // CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   the generic 'pick' at line 10: viable, and chosen
-// CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   removed: the generic 'pick' at line 11: the type 'widen u64' cannot be formed: no integer type is wider than u64
+// CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   removed: the generic 'pick' at line 11: the type 'widen i8' cannot be formed: no integer type is wider than i8
 // CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   removed: 'pick(bool)' does not take these types
 // CHECK-NOT: note:
 *)
 let small (x : u8) : u16 = pick x
 
-let big (x : u64) : u8 = pick x
+let big (x : i8) : u8 = pick x
