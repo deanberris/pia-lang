@@ -121,8 +121,9 @@ end
 interface Endian = sig
   (** C++: std::endian *)
   let endian = type | Little | Big
-  (** C++: std::endian::native, which is little on arm64 *)
-  let native : endian
+  (** C++: std::endian::native, which is little on arm64, shown with its
+      value so importers know it *)
+  let native : endian = Little
 end
 
 (* The functions of <bit> for the unsigned type `t` of `w` bits, written
