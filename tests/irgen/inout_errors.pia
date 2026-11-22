@@ -1,0 +1,10 @@
+(* A call gives an `inout` scalar or record a new value, so it needs a
+   mutable variable to rebind.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let step (x : inout mutable u8) : unit = x <- 1
+
+(* CHECK: inout_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'x' of 'step' is 'inout', so the call gives it a new value: pass a mutable variable, as in 'let x : mutable u8 = ...'
+*)
+let frozen (y : u8) : u8 = let x = y in step x; x

@@ -777,6 +777,7 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     sig.result = types.resolveAnnot(*ret.kids[0]);
     if (!sig.result) ok = false;
     sig.resultLender.clear();
+    sig.lentModifiers.clear();
     if (const Node *l = findLender(*ret.kids[0])) {
       auto p = std::find_if(sig.params.begin(), sig.params.end(),
                             [&](const Param &q) { return q.name == l->text; });
@@ -792,7 +793,9 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
         ok = false;
       } else {
         sig.resultLender = l->text;
-        sig.lentType = types.resolveAnnot(*findLentAnnot(*ret.kids[0]));
+        const Node &lent = *findLentAnnot(*ret.kids[0]);
+        sig.lentType = types.resolveAnnot(lent);
+        sig.lentModifiers = lent.kids[0]->text;
       }
     }
   }
