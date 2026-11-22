@@ -1,0 +1,55 @@
+(* In a contract, `=` on records, variants and buffers without an `eq_` is
+   equality of the values themselves (for a buffer, its length and
+   elements), so a generic contract that compares values of a type
+   parameter, which the definition check accepts, means the same in every
+   instance. A call that returns a buffer by value gives the caller an
+   array, which the callee's postcondition describes.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let point = type { x : u8; y : u8 }
+
+let same (t : type) (v : t) : t
+  ensures result = v
+= v
+
+let maybe (o : option u16) : option u16
+  ensures result = o
+= same o
+
+let here (p : point) : point
+  ensures result = p
+  ensures (result <> p) = false
+= same p
+
+let arr (xs : [u8; 4]) : [u8; 4]
+  ensures result = xs
+= same xs
+
+let slice (xs : borrowed in [u8]) : unit
+  ensures xs = xs && (xs <> xs) = false
+= ()
+
+let sevens () : [u8; 2]
+  ensures result.[1] = 7
+= [7; 7]
+
+let seven () : u8
+  ensures result = 7
+= let a = sevens in a.[1]
+
+(* Expected report, in order.
+// CHECK: contract_equality.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:40:21: proved: the index is within bounds [intervals]
+// CHECK: contract_equality.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: 11 proved, 0 failed, 0 skipped
+*)

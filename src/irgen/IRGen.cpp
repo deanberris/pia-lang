@@ -364,7 +364,9 @@ class Gen {
       const sema::FuncSig &sig = it->second;
       auto arr = mlir::dyn_cast_or_null<ArrayType>(sig.result);
       const Node &body = *sig.item->kids[3];
-      if (!sig.params.empty() || !arr || body.kind != NodeKind::ListLit) {
+      // One with contracts stays a function, so they are proved.
+      if (!sig.params.empty() || !arr || body.kind != NodeKind::ListLit ||
+          !sig.item->kids[2]->kids.empty()) {
         ++it;
         continue;
       }
@@ -943,6 +945,9 @@ class Gen {
                            typeName(t) + "'; a generic body can use only "
                            "what its constraints promise");
       }
+      if (contract_ && a.type == c.type && (op == "=" || op == "<>") &&
+          (mlir::isa<ArrayType>(a.type) || mlir::isa<SliceType>(a.type)))
+        return genBufferEq(n, op, a, c);
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
@@ -3534,6 +3539,21 @@ class Gen {
                      "found " + typeName(a.type) + " and " + typeName(c.type));
     std::string name = rt.getName().str();
     auto it = sigs_.find("eq_" + name);
+    // In a contract, `=` without an `eq_` is equality of the values
+    // themselves, which every type has: a generic contract that compares
+    // values of a type parameter means the same in each instance as at the
+    // definition, where it was accepted.
+    if (it == sigs_.end() && contract_) {
+      Location l = loc(n);
+      Value eq = sameValue(l, a.value, c.value, a.type);
+      if (!eq)
+        return fail(n, "comparing values of type " + name + " with '" + op +
+                           "' in a contract is not supported yet: a field's "
+                           "type has no equality there");
+      if (op == "<>")
+        eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+      return TV{eq, boolType()};
+    }
     if (it == sigs_.end())
       return fail(n, "comparing records of type " + name + " with '" + op +
                          "' needs 'eq_" + name + "'; add @derive(eq) to '" +
@@ -3550,6 +3570,105 @@ class Gen {
     Location l = loc(n);
     Value v = create<mlir::arith::XOrIOp>(l, eq->value, boolConst(l, true));
     return TV{v, boolType()};
+  }
+
+  // `=` on two arrays or slices in a contract: the same length and the
+  // same element at every index, as
+  // `len a = len b && forall (k in 0..len a). a.[k] = b.[k]`.
+  R genBufferEq(const Node &n, const std::string &op, TV a, TV c) {
+    syntax::SourceLoc at = n.loc;
+    unsigned k = matchCounter_++;
+    std::string an = "#eqa" + std::to_string(k), cn = "#eqb" + std::to_string(k),
+                kn = "#eqk" + std::to_string(k);
+    auto name = [&](const std::string &s) {
+      return syntax::makeNode(NodeKind::Name, at, s);
+    };
+    auto len = [&](const std::string &s) {
+      auto app = syntax::makeNode(NodeKind::Apply, at);
+      app->add(name("len"));
+      app->add(name(s));
+      return app;
+    };
+    auto index = [&](const std::string &s) {
+      auto ix = syntax::makeNode(NodeKind::Index, at);
+      ix->add(name(s));
+      ix->add(name(kn));
+      return ix;
+    };
+    auto range = syntax::makeNode(NodeKind::Range, at);
+    range->add(syntax::makeNode(NodeKind::IntLit, at, "0"));
+    range->add(len(an));
+    auto binder = syntax::makeNode(NodeKind::RangeBinder, at, kn);
+    binder->add(std::move(range));
+    auto same = syntax::makeNode(NodeKind::Binary, at, "=");
+    same->add(index(an));
+    same->add(index(cn));
+    auto all = syntax::makeNode(NodeKind::Quantifier, at, "forall");
+    all->add(std::move(binder));
+    all->add(std::move(same));
+    syntax::NodePtr pred = std::move(all);
+    if (mlir::isa<SliceType>(a.type)) {
+      auto lens = syntax::makeNode(NodeKind::Binary, at, "=");
+      lens->add(len(an));
+      lens->add(len(cn));
+      auto both = syntax::makeNode(NodeKind::Binary, at, "&&");
+      both->add(std::move(lens));
+      both->add(std::move(pred));
+      pred = std::move(both);
+    }
+    const Node &ref = *pred;
+    matchTrees_.push_back(std::move(pred));
+    pushScope();
+    bind(an, a.value, a.type, false);
+    bind(cn, c.value, c.type, false);
+    R r = genExpr(ref, boolType());
+    popScope();
+    if (!r || op == "=") return r;
+    Location l = loc(n);
+    return TV{create<mlir::arith::XOrIOp>(l, r->value, boolConst(l, true)),
+              boolType()};
+  }
+
+  // Whether `a` and `b`, of type `t`, are the same value: integers and
+  // bools compare, records field by field, and variants by tag and then by
+  // the payload of the constructor they hold. Null when some part of `t`
+  // has no such equality (a buffer).
+  Value sameValue(Location l, Value a, Value b, Type t) {
+    if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
+    if (isBool(t))
+      return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
+                                         a, b);
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (!rt) return Value();
+    auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
+      return create<FieldOp>(l, ft, v, b_.getStringAttr(name));
+    };
+    if (types_.isVariant(t)) {
+      Type tt = rt.getFieldTypes()[*rt.fieldIndex("tag")];
+      Value ta = field(a, "tag", tt), tb = field(b, "tag", tt);
+      Value all = cmp(l, CmpPredicate::eq, ta, tb);
+      for (const sema::Ctor *c : types_.ctorsOf(t)) {
+        if (!c->payload) continue;
+        Value same = sameValue(l, field(a, c->name, c->payload),
+                               field(b, c->name, c->payload), c->payload);
+        if (!same) return Value();
+        Value k = create<ConstantOp>(
+            l, tt,
+            b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                              llvm::APInt(kWidth, c->tag)));
+        Value holds = cmp(l, CmpPredicate::eq, ta, k);
+        all = create<mlir::arith::AndIOp>(l, all, implies(l, holds, same));
+      }
+      return all;
+    }
+    Value all = boolConst(l, true);
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
+      Value same = sameValue(l, field(a, name.getValue(), ft),
+                             field(b, name.getValue(), ft), ft);
+      if (!same) return Value();
+      all = create<mlir::arith::AndIOp>(l, all, same);
+    }
+    return all;
   }
 
   Type elementType(Type buffer) {
