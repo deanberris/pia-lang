@@ -149,3 +149,4 @@ nav:
       - adr/0046-box-over-a-type-or-a-concept.md
       - adr/0047-recursive-sum-types-and-shared-references.md
       - adr/0048-buffers-whose-elements-hold-slices.md
+      - adr/0049-targets-are-theories.md
