@@ -136,3 +136,4 @@ nav:
       - adr/0035-substitution-failure-and-total-constraints.md
       - adr/0036-library-theories.md
       - adr/0037-idiomatic-pia-and-lints.md
+      - adr/0038-float-kernels-against-real-theories.md
