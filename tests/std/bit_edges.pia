@@ -44,5 +44,5 @@ bit_edges "u64" 64
 
 (* Every goal is proved, from the interface alone.
 // CHECK-NOT: failed
-// CHECK: 108 proved, 0 failed, 0 skipped
+// CHECK: 96 proved, 0 failed, 0 skipped
 *)

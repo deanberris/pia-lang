@@ -2927,6 +2927,24 @@ class Gen {
         for (const std::string &symbol : m->second)
           if (auto s = sigs_.find(symbol); s != sigs_.end())
             if (!llvm::is_contained(out, &s->second)) out.push_back(&s->second);
+    // A concept's function, called by its own name in a generic over an
+    // imported concept, is also found in the concept's module: a generic of
+    // Pia.Core.Algo.Search calls `same`, which Pia.Core.Order defines for
+    // u8 as Pia.Core.Order.same (ADR 0039, section 6). Only when nothing
+    // else is found, so it can never make a call ambiguous.
+    if (out.empty() && name.find('.') == std::string::npos)
+      for (auto &[cname, item] : concepts_) {
+        llvm::StringRef module = llvm::StringRef(cname).rsplit('.').first;
+        if (module == cname) continue;
+        bool requires = false;
+        for (const syntax::NodePtr &r : item->kids[3]->kids)
+          requires |= r->kind == NodeKind::SigVal && r->text == name;
+        if (!requires) continue;
+        if (auto m = overloads_.find(module.str() + "." + name); m != overloads_.end())
+          for (const std::string &symbol : m->second)
+            if (auto s = sigs_.find(symbol); s != sigs_.end())
+              if (!llvm::is_contained(out, &s->second)) out.push_back(&s->second);
+      }
     return out;
   }
 
@@ -4549,6 +4567,7 @@ class Gen {
     if (!promiseConstraints(generic, bound)) {
       archetypes_.clear();
       promised_.clear();
+      promisedArgs_.clear();
       promisedFns_.clear();
       return;
     }
@@ -4595,6 +4614,7 @@ class Gen {
     pendingInstances_.resize(pending);
     met_ = std::move(savedMet);
     promised_.clear();
+      promisedArgs_.clear();
     promisedFns_.clear();
     archetypes_.clear();
   }
@@ -4729,7 +4749,13 @@ class Gen {
     for (size_t i = pending; i < pendingInstances_.size(); ++i) {
       std::string k = pendingInstances_[i];
       auto it = sigs_.find(k);
-      if (it == sigs_.end() || hasFlag(*it->second.item, "lemma")) continue;
+      if (it == sigs_.end()) continue;
+      // A concept's law or requirement contract at the stand-ins, such as
+      // `Ord<t>.irreflexive`, is assumed, not proved; a generic lemma's
+      // instance at them is part of the proof.
+      if (hasFlag(*it->second.item, "lemma") &&
+          promised_.count(llvm::StringRef(k).split('.').first.str()))
+        continue;
       if (module_.lookupSymbol<mlir::func::FuncOp>(k)) continue;
       size_t errors = diags_.count();
       genFunction(k);
@@ -4740,7 +4766,9 @@ class Gen {
     // `Ord<t>.less`, and its contract as that theory's axiom.
     std::vector<std::string> &decls = made;
     for (const sema::FuncSig &r : promisedSigs_) {
-      std::string theory = llvm::StringRef(r.name).split('.').first.str();
+      // The concept at the stand-ins, `Pia.Core.Order.Ord<t>`: the name
+      // up to its requirement.
+      std::string theory = llvm::StringRef(r.name).rsplit('.').first.str();
       if (!module_.lookupSymbol<mlir::func::FuncOp>(r.name)) {
         llvm::SmallVector<Type> ins;
         for (const sema::Param &p : r.params) ins.push_back(p.type);
@@ -4769,6 +4797,45 @@ class Gen {
       made.push_back(axiom);
       if (diags_.count() != errors) return dropProof(generic, made, errors);
     }
+    // Each law of each concept the constraints promise, as an axiom of the
+    // concept's theory (ADR 0043, step 3): the use check proves every law
+    // at every type that meets the concept.
+    for (auto &[key, ca] : promisedArgs_) {
+      auto c = concepts_.find(ca.first);
+      if (c == concepts_.end()) continue;
+      const Node &item = *c->second;
+      std::map<std::string, Type> scope;
+      size_t i = 0;
+      for (const syntax::NodePtr &p : item.kids[0]->kids)
+        if (sema::isTypeParam(*p) && i < ca.second.size())
+          scope[p->text] = ca.second[i++];
+      for (const syntax::NodePtr &r : item.kids[3]->kids) {
+        if (r->kind != NodeKind::SigLemma) continue;
+        std::string axiom = key + "." + r->text + ".law";
+        if (sigs_.count(axiom) || module_.lookupSymbol<mlir::func::FuncOp>(axiom))
+          continue;
+        size_t errors = diags_.count();
+        if (!queueLawAxiom(axiom, *r, scope)) {
+          made.push_back(axiom);
+          return dropProof(generic, made, errors);
+        }
+        genFunction(axiom);
+        if (diags_.count() != errors) {
+          made.push_back(axiom);
+          return dropProof(generic, made, errors);
+        }
+        // A law the solver could not instantiate is left out: the proof
+        // then assumes less, which is sound.
+        if (auto f = module_.lookupSymbol<mlir::func::FuncOp>(axiom)) {
+          verify::AxiomTriggers t = verify::axiomTriggers(module_, f);
+          if (t.triggers.empty()) {
+            f.erase();
+            continue;
+          }
+        }
+        made.push_back(axiom);
+      }
+    }
     for (const std::string &m : made) {
       auto f = module_.lookupSymbol<mlir::func::FuncOp>(m);
       if (!f) return;
@@ -4782,10 +4849,30 @@ class Gen {
         return;
       }
     }
+    // An imported generic was proved over sorts by its own module, which a
+    // build of it requires (ADR 0039: an exported generic is checked once,
+    // in its module). Its proof is kept here only so that instances can be
+    // matched against it; it is not proved again.
+    bool imported = llvm::StringRef(generic.item->flags).contains("from:");
+    // The theories a proof may use: the concepts its constraints promise.
+    llvm::SmallVector<mlir::Attribute> concepts;
+    for (auto &[key, ca] : promisedArgs_) concepts.push_back(b_.getStringAttr(key));
     for (const std::string &m : made) {
       auto f = module_.lookupSymbol<mlir::func::FuncOp>(m);
       if (!f->hasAttr("pia.generic_proof"))
         f->setAttr("pia.generic_proof", b_.getStringAttr(generic.name));
+      if (imported && !f.isExternal() &&
+          !f->hasAttr(PiaDialect::getAxiomAttrName()))
+        f->setAttr("pia.generic_imported", b_.getUnitAttr());
+      // An axiom belongs to its concept's theory, named in full.
+      if (f->hasAttr(PiaDialect::getAxiomAttrName())) {
+        llvm::StringRef n = f.getSymName();
+        // `Pia.Core.Order.Ord<t>.less.contract`, `...Ord<t>.irreflexive.law`.
+        llvm::StringRef theory = n.rsplit('.').first.rsplit('.').first;
+        f->setAttr("pia.theory", b_.getStringAttr(theory));
+      } else if (!f.isExternal()) {
+        f->setAttr("pia.concepts", b_.getArrayAttr(concepts));
+      }
       kept.insert(m);
     }
   }
@@ -4801,6 +4888,51 @@ class Gen {
     for (size_t i = 1; i < made.size(); ++i)
       if (auto g = module_.lookupSymbol<mlir::func::FuncOp>(made[i])) g.erase();
     notParametric(generic, why);
+  }
+
+  // The law `r` of a concept, `let lemma name (params) requires ...
+  // ensures ...`, as the axiom `name` at the stand-ins `scope`.
+  bool queueLawAxiom(const std::string &name, const Node &r,
+                     const std::map<std::string, Type> &scope) {
+    syntax::SourceLoc at = r.loc;
+    auto item = syntax::makeNode(NodeKind::LetItem, at, name);
+    item->flags = "axiom theory";
+    item->add(syntax::clone(*r.kids[0]));
+    Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::makeNode(NodeKind::TypeName, at, "unit"));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    Node *attrs = ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    // A law whose hypotheses chain calls, such as transitivity's `less a b`
+    // and `less b c`, is triggered by all of them together: one pattern of
+    // the calls its `requires` makes (ADR 0036, "Triggers").
+    std::vector<const Node *> calls;
+    std::function<void(const Node &)> collect = [&](const Node &n) {
+      if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+          n.kids[0]->kind == NodeKind::Name && promisedFns_.count(n.kids[0]->text)) {
+        calls.push_back(&n);
+        return;
+      }
+      for (const syntax::NodePtr &k : n.kids) collect(*k);
+    };
+    for (const syntax::NodePtr &c : r.kids[1]->kids)
+      if (c->kind == NodeKind::Requires) collect(*c);
+    if (calls.size() > 1) {
+      Node *trig = attrs->add(syntax::makeNode(NodeKind::Attribute, at, "trigger"));
+      for (const Node *c : calls) trig->add(syntax::clone(*c));
+    }
+    item->add(syntax::clone(*r.kids[1]));
+    item->add(syntax::makeNode(NodeKind::Unit, at));
+    sema::FuncSig sig;
+    sig.name = name;
+    sig.item = item.get();
+    sig.typeArgs = scope;
+    for (auto &[n, t] : scope) sig.typeParams.push_back(n);
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return false;
+    sigs_.emplace(name, std::move(sig));
+    return true;
   }
 
   // The axiom `name` about the requirement `r` at the stand-ins `scope`:
@@ -4948,6 +5080,7 @@ class Gen {
     auto savedFns = std::move(promisedFns_);
     archetypes_.clear();
     promised_.clear();
+      promisedArgs_.clear();
     promisedFns_.clear();
     std::map<std::string, Type> boundA = standIns(a);
     for (auto &[t, ty] : boundA) archetypes_[ty] = {t, {}, {}};
@@ -5185,6 +5318,7 @@ class Gen {
     if (c == concepts_.end()) return;
     std::string key = cname + "<" + spellTypes(args) + ">";
     if (!promised_.insert(key).second) return;
+    promisedArgs_[key] = {cname, args};
     const Node &item = *c->second;
     std::map<std::string, Type> scope;
     size_t i = 0;
@@ -7453,6 +7587,8 @@ class Gen {
   };
   std::vector<NotParametric> notParametric_;
   std::set<std::string> promised_;
+  // Each promised concept's name and arguments, for its laws (ADR 0043).
+  std::map<std::string, std::pair<std::string, std::vector<Type>>> promisedArgs_;
   std::map<std::string, std::vector<sema::FuncSig *>> promisedFns_;
   std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).

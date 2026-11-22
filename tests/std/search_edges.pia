@@ -1,0 +1,49 @@
+(* An importer instantiates Pia.Core.Algo.Search's generic functions at
+   its own types, and their contracts decide the edges C++ calls out: the
+   empty slice, one element, all equal, the extremes of a width, and an
+   empty pattern. The instances are discharged by the generic proofs made
+   in Pia.Core.Algo.Search (ADR 0043); the goals here are the importer's.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Search.Search as S
+
+let empty (none : [u8]) (v : u8) : unit
+  requires len none = 0
+= assert S.find none v = 0;
+  assert S.contains none v = false;
+  assert S.mismatch none none = 0;
+  assert S.equal none none;
+  assert S.starts_with none none;
+  assert S.ends_with none none;
+  assert S.search none none = 0;
+  assert S.adjacent_find none = 0;
+  assert S.min_element none = 0;
+  assert S.max_element none = 0;
+  assert S.is_sorted_until none = 0;
+  ()
+
+let one (x : i64) : unit =
+  let xs : [i64; 1] = [-9223372036854775808] in
+  assert S.min_element xs = 0;
+  assert S.max_element xs = 0;
+  assert S.is_sorted_until xs = 1;
+  assert S.adjacent_find xs = 1;
+  ()
+
+(* bool meets Ord too: false before true, by Pia.Core.Order's less. *)
+let bools (xs : [bool]) (b : bool) : unit
+  requires len xs = 0
+= assert S.find xs b = 0;
+  assert S.min_element xs = 0;
+  ()
+
+(* Values that need the solver to instantiate a contract's quantifier at
+   a concrete index, such as find of [5; 5; 5], are what search_run
+   checks: the solver does not instantiate it without a term to match. *)
+(*
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

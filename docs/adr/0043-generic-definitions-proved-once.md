@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed. Steps 1 and 2 are implemented ([verifier.md](../verifier.md#generic-functions)).
+Status: Proposed. Steps 1, 2 and 3 are implemented ([verifier.md](../verifier.md#generic-functions)).
 
 ## Context
 
@@ -141,6 +141,12 @@ The module costs 16.6M, up from 9.75M: the 6.86M of its generic proofs, while it
 - **Equality.** Step 1 encoded `=` on values of a type parameter as `true`: the stand-in record has no fields, and field-by-field equality of nothing holds. That made a generic proof of `ensures result = b` for a body `a` succeed, while the instance failed (tests/verify/generic_functions.pia, `pick`). Before instances were discharged that only mislabelled a report line, but step 2 would have made it unsound. `=` on a type parameter is now equality in its sort, a call of `pia.eq<t>` that the verifier encodes as SMT equality, and `pick` fails at its definition with a counterexample over the sort.
 
 `Pia.Core.Order` exports `lexicographical_compare` for all 8 integer types again, at 8.49M for the module: 73.1M when every instance was re-proved, 9.75M with `u8` only, 16.6M in step 1. Encoding takes 5.3 seconds of its 5.8-second run, and most of it is the per-instance proofs that remain. The three-way comparison still falls back, since it returns an `ordering`, so it stays exported for `u8` only. `tests/verify/generic_proofs.pia` falls from 28.8M to 7.2M.
+
+## Step 3 as built
+
+Laws are axioms of the concept's theory in every generic proof whose constraints promise the concept, with a multi-pattern trigger of the concept calls in a law's `requires` (transitivity's `less a b` and `less b c`). A law the solver could not instantiate is left out, which only assumes less. `Pia.Core.Algo.Search`'s `min_element` and `max_element` need transitivity and incomparability, and prove generically. Laws are not callable as lemmas yet, and an interface cannot list a lemma, so a generic exported with its body cannot call one.
+
+Two changes came with it, found by `Pia.Core.Algo.Search`, the first library module whose generics are over another module's concepts: an importer does not prove an imported generic again (it cost each importer of Search about 42M), and an importer's instance finds a concept's functions in the concept's module.
 
 ## Feasibility
 

@@ -179,6 +179,36 @@ bool insideQuantifier(Operation *op) {
 // semantics and no obligations of their own: `ensures result <= a + b`
 // means the mathematical sum, and a guarded `xs.[i]` in a contract may
 // read past the end without failing.
+// Whether `op` calls a function that only computes a value: a spec
+// function, a theory's or a concept's uninterpreted function, or a pure
+// function of scalars (no loop, call, buffer or abort). In a contract such
+// a call is specification like any other op, so a guarded `less xs.[i] v`
+// reads xs.[i] only where the guard holds.
+static bool pureCall(Operation *op) {
+  auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+  if (!call) return false;
+  auto module = op->getParentOfType<mlir::ModuleOp>();
+  auto f = module ? module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())
+                  : mlir::func::FuncOp();
+  if (!f || f->hasAttr(PiaDialect::getLemmaAttrName())) return false;
+  if (f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getAbstractAttrName()) ||
+      f->hasAttr("pia.generic_eq"))
+    return true;
+  if (f.isExternal() || f.getNumResults() != 1) return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  bool ok = true;
+  f.walk([&](Operation *inner) {
+    if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                  AbortOp, LoadOp, StoreOp>(inner))
+      ok = false;
+  });
+  return ok;
+}
+
 llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
   llvm::DenseSet<Operation *> spec;
   bool changed = true;
@@ -193,8 +223,9 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
         isSpec = mlir::isa<mlir::scf::IfOp>(y->getParentOp()) &&
                  spec.contains(y->getParentOp());
       } else if (op->getNumResults() > 0 &&
-                 !mlir::isa<mlir::func::CallOp, mlir::scf::ForOp,
-                            mlir::scf::WhileOp>(op)) {
+                 (!mlir::isa<mlir::func::CallOp, mlir::scf::ForOp,
+                             mlir::scf::WhileOp>(op) ||
+                  pureCall(op))) {
         isSpec = true;
         bool anyUser = false;
         for (Value r : op->getResults())
@@ -304,13 +335,27 @@ class Encoder {
     std::vector<bool> sent(axioms.size(), false);
     for (size_t i = 0; i < axioms.size(); ++i)
       sent[i] = llvm::is_contained(sentAxioms_, axioms[i].getSymName().str());
+    // A generic's proof (ADR 0043) may use only the theories of the
+    // concepts its own constraints promise.
+    std::set<std::string> allowed;
+    if (fn_)
+      if (auto cs = fn_->getAttrOfType<mlir::ArrayAttr>("pia.concepts"))
+        for (mlir::Attribute a : cs)
+          allowed.insert(mlir::cast<mlir::StringAttr>(a).getValue().str());
     for (bool changed = true; changed;) {
       changed = false;
       std::set<std::string> theories;
-      for (const std::string &f : theoryFuns_)
+      for (const std::string &f : theoryFuns_) {
         theories.insert(llvm::StringRef(f).split('.').first.str());
+        if (auto g = module_.lookupSymbol<mlir::func::FuncOp>(f))
+          if (!theoryOf(g).empty()) theories.insert(theoryOf(g));
+      }
       for (size_t i = 0; i < axioms.size(); ++i) {
         if (sent[i]) continue;
+        if (fn_ && fn_->hasAttr("pia.generic_proof") &&
+            axioms[i]->hasAttr("pia.generic_proof") &&
+            !allowed.count(theoryOf(axioms[i])))
+          continue;
         bool fire = false;
         if (all) {
           fire = theories.count(theoryOf(axioms[i])) > 0;
@@ -3912,6 +3957,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     if (fn->hasAttr("pia.extern")) continue;
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
+    // An imported generic's proof was made by its module (ADR 0043).
+    if (fn->hasAttr("pia.generic_imported")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;
