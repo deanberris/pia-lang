@@ -11,7 +11,7 @@
 (*
 // CHECK-NOT: failed
 // CHECK-DAG: not proved generically: 'same' is proved at each instance, since it takes a value of option<t> [generic]
-// CHECK: 78 proved, 0 failed, 0 skipped
+// CHECK: 14 proved, 0 failed, 0 skipped
 
 // IFACE:      {{^}}module Pia.Core.Option{{$}}
 // IFACE-NEXT: {{^}}interface Optional = sig{{$}}

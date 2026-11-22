@@ -10,7 +10,7 @@
 (* value of an error and error of a value are ruled out by preconditions.
 // CHECK-NOT: failed
 // CHECK-DAG: proved: 'abort' is never reached
-// CHECK: 182 proved, 0 failed, 0 skipped
+// CHECK: 118 proved, 0 failed, 0 skipped
 *)
 
 (*

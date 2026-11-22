@@ -11,10 +11,11 @@ let least (a : u8) (b : u8) : u8
   ensures result <= a && result <= b
 = Algo.Order.smaller<u8> a b
 
-(* No goal at the import, where an imported law or requirement contract
-   would be reported.
-// CHECK-NOT: certified.pia:8:
+(* Only this file's goal is proved: no law or requirement contract of
+   Before at u8, which would be reported at the import. The import line
+   still notes the instance of the imported generic.
+// CHECK-NOT: certified.pia:8:1: {{.*}}the postcondition holds
 // CHECK: certified.pia:11:3: proved: the postcondition holds
-// CHECK-NOT: certified.pia:8:
-// CHECK: 0 failed, 0 skipped
+// CHECK-NOT: certified.pia:8:1: {{.*}}the postcondition holds
+// CHECK: 2 proved, 0 failed, 0 skipped
 *)
