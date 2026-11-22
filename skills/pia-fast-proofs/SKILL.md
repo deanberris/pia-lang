@@ -43,6 +43,14 @@ two.pia:7:3: proved: the postcondition holds [smt]
 
 `--proof-cache=<dir>` keeps one file per proved goal, keyed by the SHA-256 of the Z3 version, the rlimit and the query. An unchanged query is not solved again. Since calls are encoded from contracts, editing a callee's *body* leaves its callers' queries, and so their cache entries, unchanged; editing its *contract* invalidates them. Failures are never cached, so a cached run can never hide a failure.
 
+A second run of an unchanged file answers from the cache (here on a two-function file):
+
+```text
+verify-stats: goals=4 unselected=0 intervals=2 skipped=0 solved=0 cached=2 sliced=0 unsliced=0 threads=2 cost=0 encode_ms=2 solve_ms=4
+```
+
+The report itself is the same as a full run, and a cached goal still prints its original method (`[smt]`). Check `cached=` in the statistics to see the cache working.
+
 Use one cache directory per checkout (outside the source tree or in `.gitignore`), and keep it across runs:
 
 ```sh
