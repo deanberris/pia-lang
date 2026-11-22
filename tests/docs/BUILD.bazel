@@ -62,3 +62,32 @@ py_test(
     data = CASES + ["//tools/piac"],
     main = "doc_examples_test.py",
 )
+
+# The agent skills (skills/): every command and example in them is run
+# against piac and pia, so the instructions an agent follows cannot drift
+# from what the tools really do.
+SKILLS = [
+    "//skills:README.md",
+    "//skills:pia-contracts/SKILL.md",
+    "//skills:pia-fast-proofs/SKILL.md",
+    "//skills:pia-mcp/SKILL.md",
+    "//skills:pia-proof-debugging/SKILL.md",
+    "//skills:pia-repl/SKILL.md",
+    "//skills:piac-verify/SKILL.md",
+]
+
+py_test(
+    name = "skills_test",
+    size = "medium",
+    srcs = ["doc_examples_test.py"],
+    args = [
+        "$(rootpath //tools/piac)",
+        "--pia",
+        "$(rootpath //tools/pia)",
+    ] + ["$(rootpath %s)" % s for s in SKILLS],
+    data = SKILLS + [
+        "//tools/pia",
+        "//tools/piac",
+    ],
+    main = "doc_examples_test.py",
+)

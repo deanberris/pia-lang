@@ -1,0 +1,3 @@
+# Agent skills (skills/README.md). Their examples are checked by
+# //tests/docs:skills_test.
+exports_files(glob(["*/SKILL.md"]) + ["README.md"])

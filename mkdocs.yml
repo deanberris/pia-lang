@@ -70,6 +70,7 @@ nav:
   - A tour of Pia: tour.md
   - How verification works: verification.md
   - The REPL: repl.md
+  - Agent skills: agents.md
   - Case studies:
       - Famous bugs, proved away: cases/index.md
       - Heartbleed: cases/heartbleed.pia.md
