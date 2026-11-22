@@ -415,7 +415,7 @@ A generic function is proved once at its definition, over its type parameters, a
 
 ## Higher-order functions proved once
 
-A higher-order function is proved once, like a generic (ADR 0044, step 6): its function parameters are values of types that meet a concept whose `apply` is uninterpreted and has the arrow's `ensures` as an axiom. Each specialisation at a lambda, a named function or a function object is reported as an instance of that proof, `'find[lambda@f.pia:12:9]' is an instance of the generic proof of 'find#proof'`. Arrows with `requires` or `inout`, and functions whose copy is not parametric, are still proved per specialisation.
+A higher-order function is proved once, like a generic (ADR 0044, step 6): its function parameters are values of types that meet a concept whose `apply` is uninterpreted and has the arrow's `ensures` as an axiom. Each specialisation at a lambda, a named function or a function object is reported as an instance of that proof, `'find[lambda@f.pia:12:9]' is an instance of the generic proof of 'find#proof'`. A law of a function parameter in a contract, `requires Pia.Fn.strict_weak_order less`, is part of the copy: it is applied to the abstract `apply`, and the law's spec function at the proof's stand-in and at an instance's argument count as the same call when the instance is discharged, so an insertion sort over any strict weak order is proved once and its instances at `a > b` or at Pia.Core.Order's `less` are discharged. A copy whose proof fails is dropped from the report, and its specialisations are proved each. Arrows with `requires` or `inout`, and functions whose copy is not parametric, are still proved per specialisation.
 
 ## Choosing overloads by precondition
 
