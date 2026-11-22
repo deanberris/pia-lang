@@ -151,5 +151,5 @@ end
 ### 3. A placement that cannot prove a tolerance is a hard error
 
 - **Explicit placement.** If a kernel with a tolerance contract is placed explicitly, with `@place(gpu)`, `@place(ane)` or `@place(auto, prefer = ...)` naming a device, on a device whose float model cannot prove the contract, compilation fails. The error names the device, the contract and the goal that failed under that device's model.
-- **`@place(auto)`.** The cost model never considers a device that cannot prove the contract. Since nothing was asked of that device, this is not an error, but the placement report lists the device as excluded and gives the reason.
+- **`@place(auto)`.** The cost model prefers devices whose float model proves the contract, and the placement report lists every device it excluded with the reason. If automatic placement still resolves to a device that cannot meet the tolerance (for example because it is the only device that fits, or `prefer` selects it), that is the same hard error as an explicit placement.
 - **No warning-only mode.** A tolerance contract that holds on one device and not on another is never downgraded to a warning.
