@@ -5,7 +5,12 @@ import Geo.Shapes.Shapes
 let main () : i32 =
   let p = Geo.Shapes.swap { first = 3; second = 7 } in
   let got = Geo.Shapes.first_or (Just 5) 0 in
-  match Geo.Shapes.side_of { x = -2; y = 1 } with
-  | Left -> if p.first = 7 && p.second = 3 && got = 5 then 0 else 1
-  | Right -> 2
-  | On -> 3
+  let far = Geo.Shapes.limit in
+  match Geo.Shapes.home with
+  | Left -> 4
+  | Right -> 5
+  | On ->
+    (match Geo.Shapes.side_of { x = -2; y = 1 } with
+     | Left -> if p.first = 7 && p.second = 3 && got = 5 && far = 100 then 0 else 1
+     | Right -> 2
+     | On -> 3)

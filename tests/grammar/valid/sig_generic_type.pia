@@ -5,6 +5,7 @@ interface Ops = sig
   let option = let (t : type) => type | None | Some of t
   let pair = let (a : type) (b : type) => type { fst : a; snd : b }
   let get : (o : option u8) -> (d : u8) -> u8
+  let size : u32 = 4096
 end
 
 (* A concept and a generic function over it, exported with their

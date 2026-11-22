@@ -687,6 +687,9 @@ class Parser {
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
         while (atContract()) cs->add(contract());
+        // `let n : u32 = 4096` shows a value, which importers' proofs may
+        // use (ADR 0039).
+        if (!isConcept && !meta && !spec && accept(K::Eq)) v->add(seq());
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);

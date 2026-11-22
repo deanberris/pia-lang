@@ -1,5 +1,7 @@
 (* A module that shows its types (ADR 0039, step 3): a variant, a record,
-   and two generic types, used by the functions it exports. *)
+   and two generic types, used by the functions it exports. It also exports
+   two values: `limit` shows its definition, which importers' proofs may
+   use, and `home` does not, so importers link to it. *)
 module Geo.Shapes : Shapes
 
 interface Shapes = sig
@@ -15,6 +17,8 @@ interface Shapes = sig
     ensures (match m with | Just v -> result = v | Nothing -> result = d)
   let swap : (p : pair u8) -> pair u8
     ensures result.first = p.second && result.second = p.first
+  let limit : i32 = 100
+  let home : side
 end
 
 let side = type | Left | Right | On
@@ -37,3 +41,7 @@ let first_or (m : maybe u8) (d : u8) : u8
 let swap (p : pair u8) : pair u8
   ensures result.first = p.second && result.second = p.first
 = { first = p.second; second = p.first }
+
+let limit : i32 = 100
+
+let home : side = On

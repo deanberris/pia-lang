@@ -97,6 +97,16 @@
       (Attrs)
       (Contracts)
     )
+    (SigVal "size"
+      (Annot
+        (Modifiers)
+        (TypeName "u32")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+      (IntLit "4096")
+    )
   )
   (Interface "Generic"
     (Attrs)

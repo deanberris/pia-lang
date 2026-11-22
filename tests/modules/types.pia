@@ -25,6 +25,13 @@ let get (v : u8) : u8
   ensures result = v
 = Geo.Shapes.first_or (Just v) 0
 
+(* A shown value is known to proofs; `home` is known only by its type. *)
+let twice_limit () : i32
+  ensures result = 200
+= Geo.Shapes.limit * 2
+
+let at_home () : u8 = code Geo.Shapes.home
+
 let fallback (d : u8) : u8
   ensures result = d
 = Geo.Shapes.first_or Geo.Shapes.Nothing d
