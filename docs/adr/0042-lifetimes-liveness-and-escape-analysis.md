@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed. Dean (2026-11-22): borrows end at their last use (implemented, step 1), and values are released at their last use, as in Mojo, so that a tail call can reuse the frame (section 5).
+Status: Accepted. Dean (2026-11-22) answered all three questions below yes: region parameters on types, spec-only generations, and escape analysis placing only compiler-owned memory. He also said borrows end at their last use (implemented, step 1), and values are released at their last use, as in Mojo, so that a tail call can reuse the frame (section 5).
 
 ## Context
 
@@ -123,8 +123,8 @@ Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls
 - A value's drop no longer runs at a fixed, visible place. Code that needs an effect at the scope's end writes a `defer`, as it does today.
 - Liveness errors are harder to explain than scope errors, because the cause can be a later use. So each error names that use.
 
-## Questions for Dean
+## Questions for Dean (answered 2026-11-22)
 
-1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name".
-2. **Generations.** Spec-only in proved code, with run-time counters only at FFI and REPL boundaries?
-3. **Stack placement.** Should escape analysis place only compiler-owned memory, and advise (through a lint) rather than rewrite `alloc` calls? This keeps allocation explicit and its failures handled.
+1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name". **Yes** (Dean chose region parameters on types).
+2. **Generations.** Spec-only in proved code, with run-time counters only at FFI and REPL boundaries? **Yes.**
+3. **Stack placement.** Should escape analysis place only compiler-owned memory, and advise (through a lint) rather than rewrite `alloc` calls? This keeps allocation explicit and its failures handled. **Yes.**
