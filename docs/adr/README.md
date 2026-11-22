@@ -49,3 +49,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0043](0043-generic-definitions-proved-once.md) | Generic definitions are proved once, against their concepts, and instances are discharged by that proof | Proposed |
 | [0044](0044-function-values-and-lambdas.md) | Function values: every lambda has its own type, arrow parameters are constrained by a Function concept, and proofs go through function arguments | Proposed |
 | [0045](0045-json-derived-codecs-and-conforming-dom.md) | JSON: derived streaming codecs, typed construction by passing the type, and a tape DOM proved to conform to a type | Proposed |
+| [0046](0046-box-over-a-type-or-a-concept.md) | A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape | Proposed |
