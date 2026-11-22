@@ -2403,6 +2403,16 @@ class Gen {
           !types_.unify(*vb[i]->kids[0], ai.params[i].type, b.typeParams,
                         mapB))
         return false;
+    // Deduction only binds b's type parameters; the types must also be
+    // the same once they are bound.
+    for (const std::string &t : b.typeParams)
+      if (!mapB.count(t)) return false;
+    sema::FuncSig bi = b;
+    bi.typeArgs = mapB;
+    bi.result = Type();
+    if (!sema::resolveSignature(bi, types_, diags_)) return false;
+    for (size_t i = 0; i < bi.params.size(); ++i)
+      if (bi.params[i].type != ai.params[i].type) return false;
     return true;
   }
 

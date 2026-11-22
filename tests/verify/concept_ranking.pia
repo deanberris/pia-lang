@@ -55,5 +55,13 @@ let off_diagonal (p : pair u8 u16) : u8
 = shape p
 
 (* Expected report, in order.
-// CHECK: 0 proved, 0 failed, 0 skipped
+// CHECK: concept_ranking.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:54:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: 8 proved, 0 failed, 0 skipped
 *)
