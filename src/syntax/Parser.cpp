@@ -268,11 +268,21 @@ class Parser {
     take();  // theory
     if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a theory name");
     n->text = std::string(take().text);
+    // `let theory T @solver(nlsat) = ...`: how Z3 solves its goals.
+    NodePtr theoryAttrs;
+    if (at(K::Attr) || at(K::AttrOpen)) {
+      theoryAttrs = attrs();
+      for (const NodePtr &a : theoryAttrs->kids)
+        if (a->text != "solver")
+          diags_.error(a->loc, "a theory takes only @solver, not @" + a->text);
+    }
     expect(K::Eq, "'='");
     // `let theory Conn = machine ...`: a metaprogram builds it (step 5).
+    // Its attributes stay beside the call, for the theory it builds.
     if (!at(K::Sig)) {
       n->flags = "call";
       n->add(application());
+      if (theoryAttrs) n->add(std::move(theoryAttrs));
       return n;
     }
     expect(K::Sig, "'sig'");
@@ -303,6 +313,7 @@ class Parser {
       skipSeps();
     }
     take();
+    if (theoryAttrs) applyTheoryAttrs(*n, *theoryAttrs);
     return n;
   }
 
@@ -1700,6 +1711,25 @@ const OperatorTable &preludeOperators() {
     return out;
   }();
   return table;
+}
+
+void applyTheoryAttrs(Node &theory, const Node &attrs) {
+  for (NodePtr &m : theory.kids) {
+    if (m->kind != NodeKind::LetItem || m->kids.size() < 2) continue;
+    NodePtr &ret = m->kids[1];
+    if (ret->kind != NodeKind::RetAnnot) {
+      auto r = makeNode(NodeKind::RetAnnot, ret->loc);
+      r->add(makeNode(NodeKind::None, ret->loc));
+      r->add(makeNode(NodeKind::Attrs, ret->loc));
+      ret = std::move(r);
+    }
+    Node &own = *ret->kids[1];
+    for (const NodePtr &a : attrs.kids) {
+      bool has = false;
+      for (const NodePtr &b : own.kids) has |= b->text == a->text;
+      if (!has) own.add(clone(*a));
+    }
+  }
 }
 
 }  // namespace pia::syntax

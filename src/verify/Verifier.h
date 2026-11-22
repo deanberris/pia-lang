@@ -4,6 +4,7 @@
 #ifndef PIA_VERIFY_VERIFIER_H
 #define PIA_VERIFY_VERIFIER_H
 
+#include <optional>
 #include <string>
 #include <vector>
 

@@ -20,7 +20,7 @@ let lemma valued (a : u8) : u8 = a
 *)
 let spec nothing (a : u8) : unit = ()
 
-(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @fuel applies only to a spec function
+(* CHECK: spec_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @fuel applies only to a spec function or a lemma
 *)
 let fueled (a : u8) : u8 @fuel(2) = a
 

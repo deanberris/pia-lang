@@ -1,0 +1,19 @@
+(* `@solver(...)` takes a Z3 tactic's name or a strategy that Z3 can
+   run (ADR 0036, step 6), checked when the program is compiled.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let lemma unknown (x : u8) : unit @solver(nosuch) ensures x = x = ()
+
+let lemma combinator (x : u8) : unit @solver(tactic = "(also smt)") ensures x = x = ()
+
+let lemma unclosed (x : u8) : unit @solver(tactic = "(then simplify smt") ensures x = x = ()
+
+let lemma number (x : u8) : unit @solver(3) ensures x = x = ()
+
+(* Each error, in order.
+// CHECK: solver_errors.pia:6:35: error: @solver: Z3 has no tactic 'nosuch'
+// CHECK: solver_errors.pia:8:38: error: @solver: 'also' is not a tactic combinator; use then, or-else, par-or, par-then, repeat, try-for or using-params
+// CHECK: solver_errors.pia:10:36: error: @solver: the strategy ends before a ')' closes it
+// CHECK: solver_errors.pia:12:34: error: @solver takes a Z3 tactic's name, as in @solver(nlsat), or a strategy, as in @solver(tactic = "(then simplify smt)")
+*)

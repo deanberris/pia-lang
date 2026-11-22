@@ -1,0 +1,57 @@
+(* Solver strategies (ADR 0036, step 6): `@solver(...)` on a lemma, a
+   function or a theory chooses how Z3 solves its goals, as
+   `check-sat-using` would. It changes how fast a goal is proved, never
+   whether it is, and it is part of the proof cache's key.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --verify --dump-smt %s 2>&1 | FileCheck %s --check-prefix=SMT
+// RUN: rm -rf $TEST_TMPDIR/cache && piac --verify --proof-cache=$TEST_TMPDIR/cache %s > /dev/null
+// RUN: piac --verify --verify-stats --proof-cache=$TEST_TMPDIR/cache %s 2>&1 | FileCheck %s --check-prefix=CACHED
+*)
+
+(* `nlsat` is Z3's strategy for nonlinear real arithmetic. *)
+let lemma product (x : real) (y : real) : unit @solver(nlsat)
+  requires x > 1.0 && y > 1.0
+  ensures x * y > 1.0
+= ()
+
+(* Any combination of Z3's tactics, in SMT-LIB's syntax. *)
+let lemma cube (x : real) : unit @solver(tactic = "(then simplify (or-else nlsat smt))")
+  requires x > 1.0
+  ensures x * x * x > 1.0
+= ()
+
+(* On a function, for every goal in it. *)
+let clamp (x : u8) : u8 @solver(tactic = "(using-params smt :random_seed 7)")
+  ensures result <= 100
+= if x > 100 then 100 else x
+
+(* On a theory, for every member without its own. *)
+let theory Sq @solver(nlsat) = sig
+  let lemma square (x : real) : unit requires x > 2.0 ensures x * x > 4.0 = ()
+  let lemma own (x : real) : unit @solver(smt) requires x > 2.0 ensures x + x > 4.0 = ()
+end
+
+(* Expected report.
+// CHECK: solver.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: solver.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: solver.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: solver.pia:30:55: proved: the postcondition holds [smt]
+// CHECK: solver.pia:31:65: proved: the postcondition holds [smt]
+// CHECK: 5 proved, 0 failed, 0 skipped
+*)
+
+(* Each query asks for its strategy.
+// SMT: solver.pia:14:3: the postcondition holds
+// SMT: (check-sat-using qfnra-nlsat)
+// SMT: solver.pia:20:3: the postcondition holds
+// SMT: (check-sat-using (then simplify (or-else nlsat smt)))
+// SMT: (check-sat-using (using-params smt :random_seed 7))
+// SMT: solver.pia:30:55: the postcondition holds
+// SMT: (check-sat-using qfnra-nlsat)
+// SMT: solver.pia:31:65: the postcondition holds
+// SMT: (check-sat-using smt)
+*)
+
+(* Goals with a strategy are cached like any other.
+// CACHED: verify-stats: goals={{[0-9]+}} {{.*}} cached=5
+*)

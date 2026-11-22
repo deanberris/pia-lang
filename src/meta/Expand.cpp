@@ -1,5 +1,6 @@
 #include "meta/Expand.h"
 
+#include <algorithm>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -182,6 +183,13 @@ class Expander {
       }
       std::vector<NodePtr> generated;
       if (isTypeItem(*item)) changed |= runDerives(*item, generated);
+      // `@by(t)` on a lemma, at the top level or in a theory (ADR 0036,
+      // step 6), before its operators expand, so the tactic sees the goal
+      // as written.
+      if (item->kind == NodeKind::LetItem) changed |= runTactic(*item);
+      if (item->kind == NodeKind::Theory && item->flags != "call")
+        for (NodePtr &m : item->kids)
+          if (m->kind == NodeKind::LetItem) changed |= runTactic(*m);
       changed |= expandOperators(item);
       out.push_back(std::move(item));
       for (NodePtr &g : generated) out.push_back(std::move(g));
@@ -312,6 +320,9 @@ class Expander {
         built = g->text;
         g->text = item.text;
         g->loc = item.loc;
+        // `let theory T @solver(...) = gen args` (ADR 0036, step 6).
+        if (item.kids.size() > 1 && item.kids[1]->kind == NodeKind::Attrs)
+          syntax::applyTheoryAttrs(*g, *item.kids[1]);
       }
     if (built.empty()) {
       diags_.error(item.loc, who + " must build a theory, a 'let theory ... "
@@ -362,6 +373,142 @@ class Expander {
       return std::nullopt;
     };
     return visit(name);
+  }
+
+  static bool hasWord(const std::string &flags, const char *word) {
+    size_t pos = 0;
+    std::string w = word;
+    while (pos <= flags.size()) {
+      size_t end = flags.find(' ', pos);
+      if (end == std::string::npos) end = flags.size();
+      if (flags.compare(pos, end - pos, w) == 0) return true;
+      pos = end + 1;
+    }
+    return false;
+  }
+
+  // `@by(t args)` on a lemma runs the tactic `t`, a metaprogram, on the
+  // lemma's goal and the arguments (ADR 0036, step 6). The goal is the
+  // lemma itself, read with `hypotheses`, `conclusion` and `params`; in
+  // the arguments, the lemma's parameters stand for themselves. The
+  // tactic returns proof steps, which go before the lemma's body and are
+  // proved like hand-written ones: lemma calls, `assert`s, case splits
+  // (`if`), quantifier instances, and `fuel n`, which is not code but
+  // asks for `@fuel(n)` on the lemma. So a tactic can make a proof
+  // possible, or faster, but never wrong. It must be total and pure, by
+  // the rules for type-level metaprograms (ADR 0035).
+  bool runTactic(Node &item) {
+    if (item.kids.size() < 4 || item.kids[1]->kind != NodeKind::RetAnnot ||
+        item.kids[1]->kids.size() < 2)
+      return false;
+    Node &attrs = *item.kids[1]->kids[1];
+    NodePtr by;
+    for (auto it = attrs.kids.begin(); it != attrs.kids.end(); ++it)
+      if ((*it)->text == "by") {
+        by = std::move(*it);
+        attrs.kids.erase(it);
+        break;
+      }
+    if (!by) return false;
+    if (!hasWord(item.flags, "lemma")) {
+      diags_.error(by->loc, "@by applies only to a lemma: a tactic writes "
+                            "the steps of a proof");
+      return true;
+    }
+    if (by->kids.size() != 1) {
+      diags_.error(by->loc, "@by takes one tactic, applied to its "
+                            "arguments, as in @by(induction n)");
+      return true;
+    }
+    const Node &e = *by->kids[0];
+    const Node &head = e.kind == NodeKind::Apply ? *e.kids[0] : e;
+    if (head.kind != NodeKind::Name || !interp_.isMeta(head.text)) {
+      diags_.error(by->loc, "a tactic is a 'let meta' that takes a goal and "
+                            "returns proof steps, and '" +
+                                (head.kind == NodeKind::Name ? head.text
+                                                             : std::string("this")) +
+                                "' is not one");
+      return true;
+    }
+    std::string who = "the tactic '" + head.text + "'";
+    if (std::optional<std::string> why = notTotal(head.text)) {
+      diags_.error(by->loc, "'" + head.text + "' is a tactic, so it must "
+                            "terminate and be pure, but " + *why);
+      return true;
+    }
+    std::vector<std::pair<std::string, ValuePtr>> bindings;
+    bindings.emplace_back("goal#", Interpreter::syntaxValue(clone(item)));
+    for (const NodePtr &p : item.kids[0]->kids)
+      if (p->kind == NodeKind::Param)
+        bindings.emplace_back(p->text, Interpreter::syntaxValue(
+                                           makeNode(NodeKind::Name, p->loc, p->text)));
+    auto call = makeNode(NodeKind::Apply, by->loc);
+    call->add(clone(head));
+    call->add(makeNode(NodeKind::Name, by->loc, "goal#"));
+    if (e.kind == NodeKind::Apply)
+      for (size_t i = 1; i < e.kids.size(); ++i) call->add(clone(*e.kids[i]));
+    ValuePtr v;
+    try {
+      interp_.setSite(by->loc);
+      v = interp_.evalWith(*call, bindings);
+      produced(head.text, by->loc);
+    } catch (const Deferred &d) {
+      diags_.error(by->loc, who + " needs the type '" + d.type + "'");
+      return true;
+    } catch (const MetaError &err) {
+      diags_.error(err.loc, who + " failed: " + err.message);
+      return true;
+    }
+    std::vector<ValuePtr> steps;
+    if (v->kind == Value::Kind::List)
+      steps = v->list;
+    else if (v->kind != Value::Kind::Unit)
+      steps.push_back(v);
+    std::vector<NodePtr> code;
+    for (const ValuePtr &step : steps) {
+      if (step->kind != Value::Kind::Syntax || !step->syntax ||
+          step->syntax->kind == NodeKind::Program ||
+          step->syntax->kind == NodeKind::LetItem) {
+        diags_.error(by->loc, who + " must return proof steps, which are "
+                              "expressions, not " +
+                                  std::string(step->kind == Value::Kind::Syntax &&
+                                                      step->syntax
+                                                  ? syntax::nodeKindName(step->syntax->kind)
+                                                  : Interpreter::kindName(step->kind)));
+        return true;
+      }
+      const Node &n = *step->syntax;
+      // `fuel n`: a hint, not code.
+      if (n.kind == NodeKind::Apply && n.kids.size() == 2 &&
+          n.kids[0]->kind == NodeKind::Name && n.kids[0]->text == "fuel" &&
+          n.kids[1]->kind == NodeKind::IntLit) {
+        NodePtr fuel;
+        for (NodePtr &a : attrs.kids)
+          if (a->text == "fuel") fuel = clone(*a);
+        attrs.kids.erase(std::remove_if(attrs.kids.begin(), attrs.kids.end(),
+                                        [](const NodePtr &a) { return a->text == "fuel"; }),
+                         attrs.kids.end());
+        auto hint = makeNode(NodeKind::Attribute, by->loc, "fuel");
+        const Node *keep = n.kids[1].get();
+        if (fuel && fuel->kids.size() == 1 &&
+            fuel->kids[0]->kind == NodeKind::IntLit &&
+            std::stoll(fuel->kids[0]->text) > std::stoll(keep->text))
+          keep = fuel->kids[0].get();
+        hint->add(clone(*keep));
+        attrs.add(std::move(hint));
+        continue;
+      }
+      code.push_back(clone(n));
+    }
+    NodePtr body = std::move(item.kids[3]);
+    for (auto it = code.rbegin(); it != code.rend(); ++it) {
+      auto seq = makeNode(NodeKind::Sequence, (*it)->loc);
+      seq->add(std::move(*it));
+      seq->add(std::move(body));
+      body = std::move(seq);
+    }
+    item.kids[3] = std::move(body);
+    return true;
   }
 
   // Runs each `@derive(x)` on a type item through `derive_x`.

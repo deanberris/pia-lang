@@ -1,0 +1,11 @@
+(* A theory takes only @solver, which its members inherit (ADR 0036,
+   step 6).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let theory T @fuel(2) = sig
+  let spec f : (x : u8) -> u8
+end
+
+(* CHECK: theory_attr_errors.pia:6:14: error: a theory takes only @solver, not @fuel
+*)

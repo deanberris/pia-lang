@@ -65,16 +65,21 @@ class Checker {
       auto s = smaller.find(e.text);
       return s != smaller.end() && s->second == i;
     }
+    // A goal's conclusion is part of it (ADR 0036, tactics).
     return e.kind == NodeKind::Apply && e.kids.size() == 2 &&
-           isName(*e.kids[0], "element") && reaches(*e.kids[1], i, smaller);
+           (isName(*e.kids[0], "element") ||
+            isName(*e.kids[0], "conclusion")) &&
+           reaches(*e.kids[1], i, smaller);
   }
 
-  // The parameter whose components the list `e` holds: `field_types p` or
-  // `type_args p`, for `p` the parameter or a component of it.
+  // The parameter whose components the list `e` holds: `field_types p`,
+  // `type_args p`, or, for syntax, `children p` and a goal's
+  // `hypotheses p`, for `p` the parameter or a component of it.
   std::optional<size_t> componentsOf(const Node &e,
                                      const Smaller &smaller) const {
     if (e.kind != NodeKind::Apply || e.kids.size() != 2 ||
-        !(isName(*e.kids[0], "field_types") || isName(*e.kids[0], "type_args")))
+        !(isName(*e.kids[0], "field_types") || isName(*e.kids[0], "type_args") ||
+          isName(*e.kids[0], "children") || isName(*e.kids[0], "hypotheses")))
       return std::nullopt;
     for (size_t i = 0; i < params_.size(); ++i)
       if (reaches(*e.kids[1], i, smaller)) return i;

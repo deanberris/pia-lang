@@ -75,6 +75,9 @@ const std::map<std::string, size_t> &metaBuiltins() {
       {"listing", 1}, {"comments", 1}, {"doc", 1},   {"text", 1},
       {"style", 1},   {"place", 1},    {"kind", 1},  {"with_doc", 2},
       {"fail", 1},
+      // Tactics (ADR 0036, step 6): a goal and the syntax of its terms.
+      {"hypotheses", 1}, {"conclusion", 1}, {"params", 1},
+      {"children", 1},   {"op", 1},         {"make_call", 2},
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
@@ -754,6 +757,85 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   if (name == "place") return strValue(syntax::commentPlace(needComment(args[0])));
   if (name == "kind")
     return strValue(syntax::nodeKindName(needSyntax(args[0]).kind));
+  // A goal is the lemma it is the goal of (ADR 0036, step 6): its
+  // hypotheses are its `requires`, its conclusion its `ensures`.
+  auto needGoal = [&](const ValuePtr &v) -> const Node & {
+    const Node &n = needSyntax(v);
+    if (n.kind != NodeKind::LetItem || n.kids.size() < 3)
+      throw MetaError{site_, "'" + name + "' needs a goal, found " +
+                                 syntax::nodeKindName(n.kind)};
+    return n;
+  };
+  if (name == "hypotheses" || name == "conclusion") {
+    const Node &g = needGoal(args[0]);
+    NodeKind want = name == "hypotheses" ? NodeKind::Requires : NodeKind::Ensures;
+    std::vector<ValuePtr> out;
+    NodePtr all;
+    for (const NodePtr &c : g.kids[2]->kids) {
+      if (c->kind != want || c->kids.empty()) continue;
+      out.push_back(syntaxValue(clone(*c->kids[0])));
+      if (!all) {
+        all = clone(*c->kids[0]);
+      } else {
+        auto both = makeNode(NodeKind::Binary, c->loc, "&&");
+        both->add(std::move(all));
+        both->add(clone(*c->kids[0]));
+        all = std::move(both);
+      }
+    }
+    if (name == "hypotheses") return listValue(std::move(out));
+    if (!all) all = makeNode(NodeKind::BoolLit, g.loc, "true");
+    return syntaxValue(std::move(all));
+  }
+  if (name == "params") {
+    std::vector<ValuePtr> out;
+    for (const NodePtr &p : needGoal(args[0]).kids[0]->kids)
+      if (p->kind == NodeKind::Param) out.push_back(strValue(p->text));
+    return listValue(std::move(out));
+  }
+  if (name == "children") {
+    std::vector<ValuePtr> out;
+    for (const NodePtr &k : needSyntax(args[0]).kids)
+      out.push_back(syntaxValue(clone(*k)));
+    return listValue(std::move(out));
+  }
+  if (name == "op") {
+    const Node &n = needSyntax(args[0]);
+    if (n.kind == NodeKind::Binary || n.kind == NodeKind::Name)
+      return strValue(n.text);
+    if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+        n.kids[0]->kind == NodeKind::Name)
+      return strValue(n.kids[0]->text);
+    return strValue("");
+  }
+  if (name == "make_call") {
+    auto code = [&](const ValuePtr &v) -> NodePtr {
+      switch (v->kind) {
+        case K::Syntax:
+          if (v->syntax && v->syntax->kind != NodeKind::Program)
+            return clone(*v->syntax);
+          break;
+        case K::Str: return makeNode(NodeKind::Name, site_, v->s);
+        case K::Int:
+          if (v->i >= 0) return makeNode(NodeKind::IntLit, site_, std::to_string(v->i));
+          break;
+        case K::Bool: return makeNode(NodeKind::BoolLit, site_, v->b ? "true" : "false");
+        default: break;
+      }
+      throw MetaError{site_, std::string("'make_call' cannot make code of ") +
+                                 kindName(v->kind)};
+    };
+    if (args[1]->kind != K::List)
+      throw MetaError{site_, std::string("'make_call' needs a list of "
+                                         "arguments, found ") +
+                                 kindName(args[1]->kind)};
+    NodePtr head = code(args[0]);
+    if (args[1]->list.empty()) return syntaxValue(std::move(head));
+    auto call = makeNode(NodeKind::Apply, site_);
+    call->add(std::move(head));
+    for (const ValuePtr &a : args[1]->list) call->add(code(a));
+    return syntaxValue(std::move(call));
+  }
   if (name == "with_doc") {
     if (args[0]->kind != K::Str)
       throw MetaError{site_, std::string("'with_doc' needs a string, found ") +

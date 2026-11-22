@@ -39,6 +39,7 @@
 #include "mlir/Target/SMTLIB/ExportSMTLIB.h"
 #include "sema/Sema.h"
 #include "transforms/ScalarizeRecords.h"
+#include "verify/Strategy.h"
 #include "verify/Triggers.h"
 #include "z3++.h"
 
@@ -234,7 +235,13 @@ class Encoder {
         ctx_(builder.getContext()),
         loc_(builder.getUnknownLoc()),
         spec_(specOps(fn)),
-        solverBlock_(builder.getInsertionBlock()) {}
+        solverBlock_(builder.getInsertionBlock()) {
+    // `@fuel(n)` on a lemma, written or from a tactic's fuel hint,
+    // unfolds every spec function at least n levels in its proof.
+    if (fn->hasAttr(PiaDialect::getLemmaAttrName()))
+      if (auto a = fn->getAttrOfType<mlir::IntegerAttr>(PiaDialect::getFuelAttrName()))
+        minFuel_ = static_cast<unsigned>(a.getInt());
+  }
 
   // The sort of a declared constant, so its model value can be read.
   enum class Sort { BitVector, Bool, Int, Real, Uninterpreted };
@@ -2001,7 +2008,7 @@ class Encoder {
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
-        fuelOf(callee))
+        std::max(fuelOf(callee), minFuel_))
       return app;
 
     specStack_.push_back(callee.getOperation());
@@ -2323,6 +2330,7 @@ class Encoder {
   mlir::smt::AssertOp goalAssert_;
   std::vector<std::string> sentAxioms_;
   std::vector<std::string> sentAssumes_;
+  unsigned minFuel_ = 0;  // a lemma's @fuel (ADR 0036, tactics)
 };
 
 // Values in the bit-vector encoding are signed and wide enough for every
@@ -2613,6 +2621,36 @@ Query buildTheoryQuery(mlir::ModuleOp module, mlir::func::FuncOp axiom,
   return q;
 }
 
+// --- solver strategies (ADR 0036) ------------------------------------------
+
+// The strategy a function's goals are solved with: `@solver(...)` on it,
+// or on its theory (ADR 0036).
+std::string strategyOf(mlir::func::FuncOp fn) {
+  if (auto s = fn->getAttrOfType<mlir::StringAttr>("pia.solver"))
+    return s.getValue().str();
+  return "";
+}
+
+// What is hashed for the proof cache: the query, and the strategy when
+// there is one, as the `check-sat-using` that asks for it.
+std::string keyed(const std::string &script, const std::string &strategy) {
+  if (strategy.empty()) return script;
+  return script + "(check-sat-using " + strategy + ")\n";
+}
+
+// The query as --dump-smt prints it: with `(check-sat-using ...)` when
+// the goal has a strategy.
+std::string withStrategy(const std::string &smtlib, const std::string &strategy) {
+  if (strategy.empty()) return smtlib;
+  std::string out = smtlib;
+  size_t at = out.find("(check-sat)");
+  if (at != std::string::npos)
+    out.replace(at, 11, "(check-sat-using " + strategy + ")");
+  else
+    out += "(check-sat-using " + strategy + ")\n";
+  return out;
+}
+
 // --- solving ---------------------------------------------------------------
 
 // One SMT goal, encoded and waiting for a solver thread.
@@ -2631,6 +2669,9 @@ struct Job {
   std::optional<Query> witness;
   std::string witnessScript, witnessModel;
   unsigned witnessWidth = 0;
+  // `@solver(...)`: the Z3 strategy every query of the goal is solved
+  // with, or empty for Z3's default (ADR 0036).
+  std::string strategy;
 };
 
 // What one job did, summed into Stats once every thread has finished.
@@ -2810,7 +2851,15 @@ void solve(const Job &job, const Options &options, Outcome &out,
   z3::params p(ctx);
   p.set("timeout", options.timeoutMs);
   if (options.rlimit) p.set("rlimit", options.rlimit);
-  z3::solver full(ctx);
+  std::optional<z3::solver> made;
+  try {
+    made.emplace(solverFor(ctx, job.strategy));
+  } catch (const std::exception &e) {
+    out.status = Status::Failed;
+    out.method = std::string("the solver strategy is invalid: ") + e.what();
+    return;
+  }
+  z3::solver &full = *made;
   full.set(p);
   try {
     full.from_string(job.script.c_str());
@@ -2819,7 +2868,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
     out.method = std::string("the solver rejected the query: ") + e.msg();
     return;
   }
-  z3::solver sliced(ctx);
+  z3::solver sliced = solverFor(ctx, job.strategy);
   sliced.set(p);
   z3::solver *first = &full;
   // A query with theory axioms is solved with each axiom tracked, so the
@@ -2855,7 +2904,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // Keyed by the whole query, so a goal proved either way is cached.
   std::string key;
   if (!options.cacheDir.empty()) {
-    key = goalHash(job.script, options);
+    key = goalHash(keyed(job.script, job.strategy), options);
     unsigned long long cost = 0;
     std::vector<std::string> core;
     if (cacheLookup(options, key, cost, &core)) {
@@ -2876,7 +2925,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // over the axioms, whose quantifiers can keep a solver looking for a
   // model for a long time. If the witness holds, the axioms decide.
   const Query *answer = &q;
-  z3::solver witness(ctx);
+  z3::solver witness = solverFor(ctx, job.strategy);
   z3::solver *last = &full;
   unsigned width = job.width;
   if (job.witness) {
@@ -2936,13 +2985,13 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // with every axiom of the theories the goal mentions, and take the
   // counterexample from that run, so a missing axiom never makes one up
   // (ADR 0036, "Fallback on failure").
-  z3::solver fallback(ctx);
+  z3::solver fallback = solverFor(ctx, job.strategy);
   if (job.fallback && last != &witness) {
     out.fallback = true;
     out.axioms = job.fallback->axioms;
     std::string fkey;
     if (!options.cacheDir.empty()) {
-      fkey = goalHash(job.fallbackScript, options);
+      fkey = goalHash(keyed(job.fallbackScript, job.strategy), options);
       unsigned long long cost = 0;
       std::vector<std::string> core;
       if (cacheLookup(options, fkey, cost, &core)) {
@@ -3148,6 +3197,7 @@ mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
         Job job{0, buildQuery(*copy, fn, width, static_cast<int>(g), unused),
                 width, ""};
         job.script = scriptOf(job.query.smtlib);
+        job.strategy = strategyOf(fn);
         Outcome out;
         JobStats js;
         solve(job, o, out, js);
@@ -3201,7 +3251,13 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       z3::params p(ctx);
       p.set("timeout", options.timeoutMs);
       if (options.rlimit) p.set("rlimit", options.rlimit);
-      z3::solver solver(ctx);
+      std::optional<z3::solver> made;
+      try {
+        made.emplace(solverFor(ctx, strategyOf(first)));
+      } catch (const std::exception &) {
+        made.emplace(ctx);
+      }
+      z3::solver &solver = *made;
       solver.set(p);
       try {
         solver.from_string(script.c_str());
@@ -3292,9 +3348,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                 width, ""};
         job.script = scriptOf(job.query.smtlib);
         job.autoSlice = fn->hasAttr(PiaDialect::getRecordBuffersAttrName());
+        job.strategy = strategyOf(fn);
         if (options.dumpSmt && !job.query.smtlib.empty())
           llvm::errs() << "; " << out.where << ": " << out.claim << "\n"
-                       << job.query.smtlib << "\n";
+                       << withStrategy(job.query.smtlib, job.strategy) << "\n";
         out.axioms = job.query.axioms;
         if (job.query.theories)
           if (auto w = witnessOf.find(fn.getSymName().str());
@@ -3317,7 +3374,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                 if (options.dumpSmt)
                   llvm::errs() << "; " << out.where << ": " << out.claim
                                << " (in the model '" << job.witnessModel
-                               << "')\n" << wq.smtlib << "\n";
+                               << "')\n" << withStrategy(wq.smtlib, job.strategy) << "\n";
                 job.witness = std::move(wq);
                 break;
               }
@@ -3331,7 +3388,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
             if (options.dumpSmt && !all.smtlib.empty())
               llvm::errs() << "; " << out.where << ": " << out.claim
                            << " (fallback, every axiom)\n"
-                           << all.smtlib << "\n";
+                           << withStrategy(all.smtlib, job.strategy) << "\n";
             job.fallback = std::move(all);
           }
         }
