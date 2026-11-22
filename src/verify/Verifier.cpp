@@ -2241,6 +2241,30 @@ class Encoder {
   // precondition guards the definition because termination is proved only
   // where it holds (docs/verifier.md, "Spec functions and lemmas").
 
+  // Whether a postcondition of `f` reads a buffer's elements, or calls
+  // something that might: only then does the memory a call to it sees
+  // matter to what the walk assumed of its result.
+  bool ensuresReadMemory(mlir::func::FuncOp f) {
+    if (!f || f.isExternal()) return true;
+    auto [it, fresh] = ensuresReadMemory_.try_emplace(f.getOperation(), false);
+    if (!fresh) return it->second;
+    bool reads = false;
+    llvm::SmallPtrSet<Operation *, 16> seen;
+    std::function<void(Value)> visit = [&](Value v) {
+      Operation *def = v.getDefiningOp();
+      if (!def || reads || !seen.insert(def).second) return;
+      if (mlir::isa<LoadOp, mlir::func::CallOp>(def) || def->getNumRegions()) {
+        reads = true;
+        return;
+      }
+      for (Value o : def->getOperands()) visit(o);
+    };
+    f.walk([&](contract::EnsuresOp e) { visit(e.getPredicate()); });
+    ensuresReadMemory_[f.getOperation()] = reads;
+    return reads;
+  }
+  llvm::DenseMap<Operation *, bool> ensuresReadMemory_;
+
   mlir::func::FuncOp calleeOf(mlir::func::CallOp call) {
     return module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
   }
@@ -2274,10 +2298,37 @@ class Encoder {
     auto scalar = [](Type t) {
       return mlir::isa<IntType>(t) || t.isInteger(1);
     };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
+    if (!scalar(f.getFunctionType().getResult(0))) {
+      // A spec-only result, such as an allocator's `held m : Alloc.heap`
+      // (ADR 0041), read from a record whose other fields may be buffers.
+      if (!mlir::isa<UnboundedIntType, RealType, SortType>(
+              f.getFunctionType().getResult(0)))
+        return false;
+      return projectsValue(f);
+    }
     for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
       if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
     return pureScalar(f, definesValue_);
+  }
+
+  // A function with a spec-only result whose body only computes on its
+  // parameters, without a call, a loop, an abort or a memory access, as
+  // `held (m : bump) : Alloc.heap = m.h` does.
+  static bool projectsValue(mlir::func::FuncOp f) {
+    for (Type t : f.getFunctionType().getInputs())
+      if (!mlir::isa<IntType, UnboundedIntType, RealType, SortType, ArrayType,
+                     SliceType>(t) &&
+          !t.isInteger(1))
+        return false;
+    bool ok = true;
+    f.walk([&](Operation *op) {
+      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                    AbortOp, LoadOp, StoreOp>(op))
+        ok = false;
+      for (Type t : op->getResultTypes())
+        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+    });
+    return ok;
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
   // The one value of each record type with no fields, by name.
@@ -2585,6 +2636,17 @@ class Encoder {
       if (semantics(op, operands, d.arrays, d.lengths, d.views, results))
         result = results[mlir::cast<mlir::OpResult>(v).getResultNumber()];
     }
+    // Under `old`, a call the walk has already stepped, with its contract
+    // assumed, is that value: its operands are the entry values there too,
+    // unless it reads a buffer, whose memory `old` reads from entry.
+    if (!result && d.envForBlockArgs)
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (llvm::none_of(call.getOperandTypes(),
+                          [](Type t) {
+                            return mlir::isa<ArrayType, SliceType>(t);
+                          }) ||
+            !ensuresReadMemory(calleeOf(call)))
+          result = env_.lookup(v);
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
       ++unknowns_;
@@ -4027,6 +4089,14 @@ static bool dischargedByGeneric(mlir::ModuleOp module, mlir::func::FuncOp inst,
     if (b->hasAttr("pia.generic_proof")) {
       std::string base = b.getSymName().split('<').first.str();
       auto of = a->getAttrOfType<mlir::StringAttr>("pia.instance_of");
+      // A spec function over function values, such as a law, made at the
+      // proof's abstract function and at the instance's argument: the
+      // same definition of each argument (ADR 0044, step 6).
+      if (a->hasAttr(PiaDialect::getSpecAttrName()) &&
+          b->hasAttr(PiaDialect::getSpecAttrName()) &&
+          a.getSymName().split('[').first == b.getSymName().split('[').first &&
+          b.getSymName().contains('['))
+        continue;
       if (!of || of.getValue() != base) return false;
       continue;
     }
@@ -4164,6 +4234,24 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
           held[g.getValue().str()] = false;
     for (auto &[g, ok] : held)
       if (ok) provedOnce.insert(g);
+    // A higher-order function's proved-once copy, `f#proof` (ADR 0044,
+    // step 6), is only a way to share its specialisations' proofs: when it
+    // does not hold, its goals are dropped, and each specialisation is
+    // proved on its own.
+    std::vector<Outcome> keptOutcomes;
+    std::vector<Operation *> keptOps;
+    for (size_t i = 0; i < outcomes.size(); ++i) {
+      bool drop = false;
+      if (auto f = module.lookupSymbol<mlir::func::FuncOp>(outcomes[i].function))
+        if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+          drop = g.getValue().ends_with("#proof") &&
+                 !provedOnce.count(g.getValue().str());
+      if (drop) continue;
+      keptOutcomes.push_back(std::move(outcomes[i]));
+      keptOps.push_back(opOf[i]);
+    }
+    outcomes = std::move(keptOutcomes);
+    opOf = std::move(keptOps);
   };
   for (size_t idx = 0; idx < fnOrder.size(); ++idx) {
     if (idx == firstPass) settleGenerics();
