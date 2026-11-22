@@ -11,7 +11,9 @@ lit_tests(
     data = [
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Int.pia",
+        "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
+        "//lib/Pia/Core:Result.pia",
     ],
     tools = ["//tools/piac"],
 )
@@ -63,5 +65,20 @@ sh_test(
     srcs = ["order_run_test.sh"],
     args = ["$(rootpath :order_run)"],
     data = [":order_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "result_run",
+    src = "Inputs/result_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:result"],
+)
+
+sh_test(
+    name = "result_run_test",
+    srcs = ["result_run_test.sh"],
+    args = ["$(rootpath :result_run)"],
+    data = [":result_run"],
     target_compatible_with = APPLE_SILICON,
 )

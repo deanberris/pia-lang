@@ -10,7 +10,9 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Bit.pia",
     "Int.pia",
+    "Option.pia",
     "Order.pia",
+    "Result.pia",
 ])
 
 APPLE_SILICON = [
@@ -41,5 +43,22 @@ pia_library(
 pia_library(
     name = "order",
     src = "Order.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+# <optional>: generic, so nothing can be imported from it yet;
+# tests/std/option.pia checks its goals.
+pia_library(
+    name = "option",
+    src = "Option.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+# <expected> on the language's result type: tests/std/result.pia checks its
+# goals; tests/std/result_edges.pia and :result_run test it through its
+# interface.
+pia_library(
+    name = "result",
+    src = "Result.pia",
     target_compatible_with = APPLE_SILICON,
 )

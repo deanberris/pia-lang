@@ -1,0 +1,47 @@
+(* Pia.Core.Option: C++'s <optional> without the monadic operations, which
+   wait for function values (ADR 0040, docs/cpp-std.md).
+
+   `option t` is a generic variant, None or Some of a t, and the functions
+   over it are generic. None of it can be imported yet: an interface
+   cannot list a generic type (ADR 0039, step 3), so this module claims no
+   interface, and its functions are proved at the instance `checks` uses
+   (each instance of a generic is proved where it is made, #203).
+
+   Not here yet, and why (docs/cpp-std.md):
+   - value, C++'s operator* with its undefined case as a precondition: a
+     generic body cannot yet `abort` where a value of a type parameter is
+     expected, so it waits; value_or is the total form.
+   - comparisons (C++'s ==, and < with nullopt first): they need Eq and
+     Ord from Pia.Core.Order, which cannot be imported yet.
+   - reset, emplace and swap: an option is an immutable value; None and
+     Some build one. *)
+module Pia.Core.Option
+
+(** C++: std::optional. *)
+let option = let (t : type) => type | None | Some of t
+
+(** C++: std::optional::has_value and operator bool. *)
+let has_value (t : type) (o : option t) : bool
+  ensures result <==> (match o with | Some _ -> true | None -> false)
+= match o with
+  | Some _ -> true
+  | None -> false
+
+(** C++: o == std::nullopt. *)
+let is_none (t : type) (o : option t) : bool
+  ensures result <==> (match o with | Some _ -> false | None -> true)
+= match o with
+  | Some _ -> false
+  | None -> true
+
+(** C++: std::optional::value_or. *)
+let value_or (t : type) (o : option t) (d : t) : t
+  ensures (match o with | Some v -> result = v | None -> result = d)
+= match o with
+  | Some v -> v
+  | None -> d
+
+(* Makes the u8 instances, so that the generic functions are proved. *)
+let checks (o : option u8) (d : u8) : u8
+  ensures (match o with | Some v -> result = v | None -> result = d)
+= if has_value<u8> o && is_none<u8> o = false then value_or<u8> o d else d

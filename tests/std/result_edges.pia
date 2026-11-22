@@ -1,0 +1,41 @@
+(* Importers of Pia.Core.Result see only its interface's contracts, and
+   those decide each accessor on values and on errors, and that value and
+   error are goals at the call: C++'s undefined behaviour and exceptions
+   become preconditions.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Result.pia
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Result.Expected
+
+let accessors (x : u32) (code : u32) : unit =
+  let good : result u32 u32 = Ok x in
+  let bad : result u32 u32 = Err code in
+  assert Pia.Core.Result.has_value good;
+  assert Pia.Core.Result.has_value bad = false;
+  assert Pia.Core.Result.value good = x;
+  assert Pia.Core.Result.error bad = code;
+  assert Pia.Core.Result.value_or bad 7 = 7;
+  assert Pia.Core.Result.value_or good 7 = x;
+  assert Pia.Core.Result.error_or good 9 = 9;
+  assert Pia.Core.Result.error_or bad 9 = code;
+  assert Pia.Core.Result.same good good;
+  assert Pia.Core.Result.same good bad = false;
+  ()
+
+(* The extremes of a signed value type. *)
+let extremes () : unit =
+  let lo : i64 = -9223372036854775808 in
+  let a : result i64 u32 = Ok lo in
+  let b : result i64 u32 = Ok 9223372036854775807 in
+  assert Pia.Core.Result.value a = lo;
+  assert Pia.Core.Result.same a b = false;
+  ()
+
+(* value of what may be an error is a goal at the call, and fails.
+// CHECK: result_edges.pia:[[@LINE+2]]:{{[0-9]+}}: failed: the precondition of 'Pia.Core.Result.value(result<u8, u32>)' holds
+*)
+let unchecked (r : result u8 u32) : u8 = Pia.Core.Result.value r
+
+(*
+// CHECK: 15 proved, 1 failed, 0 skipped
+*)
