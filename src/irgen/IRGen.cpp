@@ -1197,20 +1197,48 @@ class Gen {
   // `abort`, so it always returns exactly what its body computes. A spec
   // function may call one, such as a concept's `less` for u8, and the
   // verifier unfolds it there (docs/verifier.md).
+  // A record of scalars counts as scalars: the verifier splits it into
+  // its fields, as for a lambda's closure (ADR 0044). A call is allowed
+  // to a spec function or another such function, without recursion.
+  static bool scalarish(mlir::Type t) {
+    if (mlir::isa<IntType>(t) || t.isInteger(1)) return true;
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      for (mlir::Type f : r.getFieldTypes())
+        if (!scalarish(f)) return false;
+      return true;
+    }
+    return false;
+  }
   static bool definesValue(mlir::func::FuncOp f) {
+    std::set<mlir::Operation *> visiting;
+    return definesValue(f, visiting);
+  }
+  static bool definesValue(mlir::func::FuncOp f,
+                           std::set<mlir::Operation *> &visiting) {
     if (!f || f.isExternal() || f.getNumResults() != 1) return false;
-    auto scalar = [](mlir::Type t) {
-      return mlir::isa<IntType>(t) || t.isInteger(1);
-    };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
+    // An imported function means what its interface's contract says.
+    if (f->hasAttr(PiaDialect::getImportAttrName())) return true;
+    if (!scalarish(f.getFunctionType().getResult(0))) return false;
     for (mlir::Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
+      if (!scalarish(t)) return false;
+    if (!visiting.insert(f.getOperation()).second) return false;
+    auto module = f->getParentOfType<mlir::ModuleOp>();
     bool ok = true;
     f.walk([&](mlir::Operation *op) {
-      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                    AbortOp, LoadOp, StoreOp>(op))
+      if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+        auto callee =
+            module ? module.lookupSymbol<mlir::func::FuncOp>(c.getCallee())
+                   : mlir::func::FuncOp();
+        if (!callee ||
+            !(callee->hasAttr(PiaDialect::getSpecAttrName()) ||
+              definesValue(callee, visiting)))
+          ok = false;
+      } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp,
+                           LoadOp, StoreOp>(op)) {
         ok = false;
+      }
     });
+    visiting.erase(f.getOperation());
     return ok;
   }
 
@@ -3734,9 +3762,11 @@ class Gen {
   R genHigherOrderCall(const Node &n, const sema::FuncSig &hof,
                        const Node *targs, const std::vector<const Node *> &args,
                        Type expected) {
-    if (contract_ || ghost_)
-      return fail(n, "a higher-order function cannot be called in a "
-                     "contract yet (ADR 0044)");
+    // A spec function over function values, such as a law, is what
+    // contracts call (ADR 0044, section 5).
+    if ((contract_ || ghost_) && !hasFlag(*hof.item, "spec"))
+      return fail(n, "only a spec function that takes a function can be "
+                     "called in a contract (ADR 0044)");
     std::vector<const Node *> valueParams = valueParamsOf(hof);
     if (args.size() != valueParams.size())
       return fail(n, "'" + hof.source() + "' takes " +
@@ -5356,6 +5386,11 @@ class Gen {
           found = found || (sigs_.at(symbol).item &&
                             hasFlag(*sigs_.at(symbol).item, "spec") &&
                             sameSignature(r, *sigs_.at(symbol).item));
+        // A spec function over function values, such as a law (ADR 0044).
+        if (auto h = hofs_.find(r.text); h != hofs_.end())
+          for (const sema::FuncSig &f : h->second)
+            found = found || (hasFlag(*f.item, "spec") &&
+                              sameSignature(r, *f.item));
         if (!found)
           diags_.error(r.loc, unmet + "no spec function '" + r.text +
                                   "' with exactly this signature; a spec "
@@ -5376,6 +5411,9 @@ class Gen {
         for (const std::string &symbol : overloads_[r.text])
           found = found || (sigs_.at(symbol).isGeneric() &&
                             sameSignature(r, *sigs_.at(symbol).item));
+        if (auto h = hofs_.find(r.text); h != hofs_.end())
+          for (const sema::FuncSig &f : h->second)
+            found = found || (f.isGeneric() && sameSignature(r, *f.item));
         if (!found)
           diags_.error(r.loc, unmet + "no generic function '" + r.text +
                                   "' with exactly this signature; a generic "

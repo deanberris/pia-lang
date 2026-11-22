@@ -15,6 +15,7 @@ lit_tests(
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:Search.pia",
+        "//lib/Pia:Fn.pia",
     ],
     tools = ["//tools/piac"],
 )

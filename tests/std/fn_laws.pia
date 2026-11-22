@@ -1,0 +1,82 @@
+(* Laws of function arguments from Pia.Fn (ADR 0044, section 5). A
+   higher-order function states a law as a precondition and assumes it;
+   each caller proves it for its argument, where the argument is known: a
+   lambda over u8 unfolds, so the law is a bit-vector fact.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+
+(* Insertion sort with a comparator: sorted afterwards, by any strict weak
+   order. *)
+let sort (t : type) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  ensures Pia.Fn.sorted less xs
+= for i in 0 .. len xs
+    invariant Pia.Fn.sorted_prefix less xs i
+  do
+    let j : mutable usize = i in
+    while j > 0 && less xs.[j] xs.[j - 1]
+      invariant j <= i && i < len xs
+      invariant forall (p in 0 .. i + 1) (q in 0 .. i + 1).
+        p < q && p <> j && q <> j ==> less xs.[q] xs.[p] = false
+      invariant forall (q in 0 .. i + 1). j < q ==> less xs.[j] xs.[q]
+      decreases j
+    do
+      let a = xs.[j] in
+      xs.[j] <- xs.[j - 1];
+      xs.[j - 1] <- a;
+      j <- j - 1
+    done
+  done
+
+(* `>` is a strict weak order, so descending order sorts. *)
+let descending (xs : borrowed inout mutable [u8]) : unit
+  ensures forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] >= xs.[j]
+= sort xs (let (a) (b) => a > b)
+
+(* A comparator that meets Pia.Core.Order's Ord: the law follows from
+   the contract of its `less`, which the interface gives. *)
+let pick (t : type) (a : t) (b : t) (less : (x : t) -> (y : t) -> bool) : t
+  requires Pia.Fn.strict_weak_order less
+= if less b a then b else a
+
+let smaller (a : u16) (b : u16) : u16 =
+  pick a b (let (x) (y) => Pia.Core.Order.less x y)
+
+(* `>=` is not: `a >= a` holds, so it is not irreflexive.
+*)
+let wrong (xs : borrowed inout mutable [u8]) : unit =
+  sort xs (let (a) (b) => a >= b)
+
+(* A fold may group its steps as it likes when the operation is
+   associative. *)
+let accumulate (t : type) (xs : [t]) (init : t) (op : (a : t) -> (b : t) -> t) : t
+  requires Pia.Fn.associative op
+= let acc : mutable t = init in
+  for i in 0 .. len xs do acc <- op acc xs.[i] done;
+  acc
+
+let any_bits (xs : [u8]) : u8 = accumulate xs 0 (let (a) (b) => a | b)
+
+(* Saturating subtraction is not associative: (2 -| 1) -| 1 is 0, but
+   2 -| (1 -| 1) is 2.
+*)
+let drained (xs : [u8]) : u8 = accumulate xs 255 (let (a) (b) => a -| b)
+
+(* The other laws, proved of concrete lambdas. *)
+let laws (x : u8) : bool
+  ensures Pia.Fn.equivalence (let (a : u8) (b : u8) => a % 4 = b % 4)
+  ensures Pia.Fn.commutative (let (a : u8) (b : u8) : u8 => a & b)
+  ensures Pia.Fn.identity (let (a : u8) (b : u8) : u8 => a | b) 0
+  ensures Pia.Fn.transitive (let (a : u8) (b : u8) => a <= b)
+  ensures Pia.Fn.irreflexive (let (a : u8) (b : u8) => a < b)
+= true
+
+(* Expected report: the two arguments that do not meet their laws.
+// CHECK: fn_laws.pia:52:3: failed: the precondition of 'sort[lambda@fn_laws.pia:52:12]<u8>' holds
+// CHECK: fn_laws.pia:67:32: failed: the precondition of 'accumulate[lambda@fn_laws.pia:67:51]<u8>' holds
+// CHECK: 56 proved, 2 failed, 0 skipped
+*)

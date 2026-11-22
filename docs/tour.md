@@ -519,6 +519,8 @@ let smaller (a : u8) (b : u8) : u8 =
   min a b
 ```
 
+A higher-order function can require a **law** of its function argument, such as `requires Pia.Fn.strict_weak_order less` on a sort. `Pia.Fn` defines the laws as spec functions; the function assumes the law, and each caller proves it for its argument, which for a lambda over a small type is a bit-vector fact.
+
 Moving a value into a lambda, generic lambdas that capture, and functions stored in data or returned come in later steps of ADR 0044.
 
 ## Metaprograms
