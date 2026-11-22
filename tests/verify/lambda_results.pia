@@ -1,0 +1,77 @@
+(* Partial application, lambdas as results and moved captures (ADR 0044,
+   step 7). `below lim` with an argument left is a lambda that captures
+   `lim`; a function whose result is written as a function type returns
+   the closure its body makes, which callers apply; and a lambda may own
+   what it captures, `[moved t]`.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let below (lim : u8) (x : u8) : bool = (x < lim)
+
+(* Partial application as an argument and as a value. *)
+let first_small (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= find xs (below lim)
+
+let first_tiny (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] < 4
+= find xs (below 4)
+
+let check (x : u8) : bool
+  ensures result <==> x < 9
+= let small = below 9 in small x
+
+(* Lambdas as results. *)
+let adder (n : u8) : u8 -> u8 = let [n] (x : u8) : u8 => x +| n
+
+let five (x : u8) : u8
+  requires x < 100
+  ensures result = x + 5
+= let add5 = adder 5 in add5 x
+
+let compose (f : u8 -> u8) (g : u8 -> u8) : u8 -> u8 = let [f, g] (x : u8) : u8 => f (g x)
+
+let twice_inc (x : u8) : u8
+  requires x < 100
+  ensures result = x + 2
+= let h = compose (let (a : u8) : u8 => a +| 1) (let (b : u8) : u8 => b +| 1) in h x
+
+(* Moved captures: the closure owns the value. *)
+let token = type { id : u8 }
+let drop (t : moved token) : unit = match t with | { id } -> ()
+let make (x : u8) : token = { id = x }
+
+let owner (x : u8) : u8
+  ensures result = x
+= let t = make x in
+  let get = let [moved t] (y : u8) : u8 => t.id in
+  get 0
+
+(* Expected report, in order.
+// CHECK: lambda_results.pia:14:5: proved: the loop invariant holds on entry [generic]
+// CHECK: lambda_results.pia:13:25: proved: the index is within bounds [generic]
+// CHECK: lambda_results.pia:16:13: proved: '+' does not overflow usize [generic]
+// CHECK: lambda_results.pia:14:5: proved: the loop invariant holds after each iteration [generic]
+// CHECK: lambda_results.pia:15:5: proved: the measure decreases [generic]
+// CHECK: lambda_results.pia:10:3: proved: the postcondition holds [generic]
+// CHECK: lambda_results.pia:11:3: proved: the postcondition holds [generic]
+// CHECK: lambda_results.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:55:3: proved: the postcondition holds [smt]
+// CHECK: lambda_results.pia:9:1: proved: 'find[lambda@lambda_results.pia:24:12]' is an instance of the generic proof of 'find#proof' [generic]
+// CHECK: lambda_results.pia:9:1: proved: 'find[lambda@lambda_results.pia:28:12]' is an instance of the generic proof of 'find#proof' [generic]
+// CHECK: 15 proved, 0 failed, 0 skipped
+*)

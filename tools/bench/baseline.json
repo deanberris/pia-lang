@@ -19,14 +19,23 @@
       "wall_ms_1": 11290.2,
       "wall_ms_n": 4258.1
     },
+    "lib/Pia/Core/Algo/Modify.pia": {
+      "cost": 21365244,
+      "goals": 130,
+      "solve_ms_1": 143,
+      "solve_ms_n": 63,
+      "solved": 122,
+      "wall_ms_1": 2691.1,
+      "wall_ms_n": 1696.9
+    },
     "lib/Pia/Core/Algo/Search.pia": {
-      "cost": 47009833,
-      "goals": 315,
-      "solve_ms_1": 139,
-      "solve_ms_n": 60,
-      "solved": 307,
-      "wall_ms_1": 16269.5,
-      "wall_ms_n": 13343.6
+      "cost": 54819015,
+      "goals": 373,
+      "solve_ms_1": 145,
+      "solve_ms_n": 63,
+      "solved": 365,
+      "wall_ms_1": 19134.4,
+      "wall_ms_n": 15652.0
     },
     "lib/Pia/Core/Bit.pia": {
       "cost": 3124442,

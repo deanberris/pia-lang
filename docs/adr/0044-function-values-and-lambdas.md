@@ -158,14 +158,35 @@ The callee assumes the law, and each caller proves it for its argument. For `sor
 
 ### 6. Captures
 
-A lambda's free variables are its captures, inferred from use as in Rust. There is no capture list and no new keyword. A lambda's type is a record with one field per capture, and the rules are the rules a record field of that type would have:
+*Amended 2026-11-23: Dean asked for explicit captures, each one copied, borrowed or referenced. This replaces captures inferred from use, which steps 3 and 4 built.*
 
-- **Scalars and `fixed` copyable values are copied** when the lambda is made. Later changes to a `mutable` variable are not seen by the lambda, and a lambda may not assign a captured variable.
-- **Buffers, and values of linear or `drop` types, are borrowed.** The lambda's type then contains a lent type, so the lambda value borrows from the captured variable exactly as a record holding `borrowed(m)` would (#70, ADR 0042): it cannot outlive the variable, the variable cannot be moved or written while the lambda is live, and with ADR 0042's liveness rule the loan ends at the lambda's last use.
-- **Moving a capture into a lambda** happens when the body consumes it, by passing it `moved`. The lambda then owns it, and the lambda's type is linear or has `drop`, like a record holding it. This is the last step to be implemented (step 7).
-- **Writing through a capture** is not allowed in this ADR. A lambda that needs to accumulate takes the accumulator as a parameter, as `fold` does, which keeps every lambda that can appear in a contract pure. Effects through function values, `inout` parameters in function types, and `for_each` with state are left to a follow-up.
+A lambda lists what it captures, in brackets after `let`, before its parameters. Each capture says how it is captured, with the modifier words Pia already has, so no keyword is added:
 
-Captures are what make a lambda's type not empty, and nothing else changes: a lambda that captures nothing is a type with no fields, and costs nothing to pass.
+```ocaml
+let [lo, hi] (x : u8) => lo <= x && x <= hi           \ copied
+let [borrowed keys] (k : u32) => contains keys k        \ borrowed
+let [inout count] (x : u8) => count <- count + 1; x > 3 \ referenced
+```
+
+```ebnf
+lambda   = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
+captures = "[" capture { "," capture } "]" ;
+capture  = [ "borrowed" | "inout" ] IDENT ;
+```
+
+The three modes:
+
+- **Copied**, a bare name: the value is copied into the lambda when it is made. Only copyable values can be copied: scalars, `fixed` records and variants of them, never a buffer, a linear value or a `drop` value. Later changes to a `mutable` variable are not seen by the lambda, and the lambda cannot assign it.
+- **Borrowed**, `borrowed x`: a shared, read-only loan of `x`. The lambda's type holds a lent type, so it borrows from `x` exactly as a record holding `borrowed(m)` would (#70, [ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md)): it cannot outlive `x`, and `x` cannot be moved or written while the lambda is live. The loan ends at the lambda's last use. Any value can be borrowed, scalars included.
+- **Referenced**, `inout x`: an exclusive, writable loan of a `mutable` variable. The lambda may read and assign `x`, and its writes are seen by the enclosing code after the lambda's last use. While the lambda is live, nothing else may read, write or move `x`, which is the exclusive form of the same loan rule. A lambda with a referenced capture has an effect, so it is not pure (section 5): it can be called in code but not in a contract, and a higher-order function may take it only for a parameter whose arrow is marked as effectful (below). This replaces the "writing through a capture is not allowed" rule of the first version.
+
+A free variable of the body that is not in the list is an error that suggests the three forms: "'lim' is used but not captured: add it to the capture list as [lim] (copied), [borrowed lim] or [inout lim]". Listing a name twice, or listing one the body never uses, is also an error. A lambda with no captures has no list, so `let (x : u8) => x > 3` is unchanged. Top-level functions, constructors and other module items are not captures, since they are not values of the enclosing scope.
+
+**Effectful arrows.** A parameter that accepts lambdas with referenced captures writes `inout` before its arrow: `(f : inout t -> unit)`. Inside the higher-order function such a parameter is called only in code, never in a contract, and its calls are ordered as written. A pure lambda may be passed for an effectful arrow, but not the reverse. This is what `for_each` with state needs; the effects follow-up in section 8 is reduced to effects through `inout` parameters of function types, which this covers for captures.
+
+**Moved captures** stay step 7: `moved x` in the list, which makes the lambda own `x` and gives its type `drop` or linearity like a record holding it.
+
+A lambda's type is still a record with one field per capture, of the captured value for a copy and a lent type for a loan. A lambda that captures nothing is a type with no fields, and costs nothing to pass.
 
 ### 7. Code generation
 
@@ -176,7 +197,7 @@ A lambda's type is private to the module that defines it. A module can export a 
 ### 8. What this ADR does not decide
 
 - **Dynamic function values**, a value whose function is chosen at run time from different lambdas, such as a table of handlers. That needs a type-erased value, a code pointer and an environment, and with no garbage collector it must take an explicit allocator. It is the library's `box` over a concept, `box (Function a r)`, decided in [ADR 0046](0046-box-over-a-type-or-a-concept.md), so there is no separate `std::function` type. An arrow type in `box`'s position is sugar for `Function` at that arrow, contract included. A call through a box may appear in a contract only when the arrow is pure; otherwise it is code-only, with its facts from the arrow's contract (ADR 0046, section 5). An `if` that picks between two lambdas of the same type is not dynamic and needs no box.
-- **Effects through function values**: `inout` and `out` parameters in function types, and lambdas that write a capture.
+- **Effects through function values** beyond referenced captures (section 6): `inout` and `out` parameters inside function types.
 - **Recursion through function values**, such as a fixed-point combinator. A lambda cannot name itself; a recursive helper is a named `let rec`.
 
 ## Implementation order
@@ -185,7 +206,7 @@ Each step is a PR with lit tests in `tests/verify` and `tests/codegen`, and the 
 
 1. **Typed lambdas and named functions as arguments**, with no captures. Arrow-typed parameters are instantiated per argument (`find<lambda@file.pia:12:9>`), the argument is checked against the arrow's contract, and the lambda unfolds at the caller. The verifier sees instances only, as generics did before ADR 0043.
 2. **The `Function` concept and overloading on a function**: arrow parameters become constrained type parameters, function objects with `apply`, application syntax for them, and the value-or-function overload sets the library needs.
-3. **Captures by copy and by borrow**, with the lambda's type as a record of its captures and ADR 0042's loan rules.
+3. **Captures by copy and by borrow**, with the lambda's type as a record of its captures and ADR 0042's loan rules. Built inferred (PR #227); step 3b makes the list explicit and adds referenced captures and effectful arrows.
 4. **Generic lambdas**: untyped parameters from the expected type, implicit type parameters when there is none, and explicit `(t : type)` parameters.
 5. **Laws of function arguments** in `Pia.Fn` (`strict_weak_order`, `equivalence`, `associative` and friends), with the library's `sort` and `accumulate` using them.
 6. **Proved once**: function parameters as uninterpreted functions in ADR 0043's abstract encoding, so a higher-order function is proved at its definition and each instance is discharged by the argument's check.
@@ -197,13 +218,13 @@ Steps 1 and 2 are what the standard library needs first, for `find`, `count`, `a
 
 - The library can write one overload set per algorithm, as Dean asked, and a predicate overload is constrained on `Function` like any other generic.
 - A call with a lambda costs what the loop costs. Monomorphisation does mean one instance per lambda, so code size grows with the number of distinct lambdas, as in C++ and Rust. Step 6 makes their proofs cost one check per argument, not a re-proof of the algorithm.
-- Contracts can be written about predicates and comparators directly (`p xs.[result]`), because function values are pure and total by default. Effects through function values need their own design.
+- Contracts can be written about predicates and comparators directly (`p xs.[result]`), because function values are pure and total unless they reference a capture, which marks them effectful and keeps them out of contracts.
 - Laws such as strict weak ordering are ordinary preconditions. They are proved per call site, where a concrete lambda makes them decidable bit-vector facts, rather than being restated as contracts on every caller.
-- Captures need no syntax. The cost is that what a lambda captures, and whether it borrows, is visible only from its body; the language server shows a lambda's captures on hover.
+- Captures are written out, so what a lambda copies, borrows or references is visible at the lambda, at the cost of a short list on every lambda that captures.
 - There is no dynamic function value in the core. Code that needs one waits for `Pia.Fn`'s boxed type and passes it an allocator.
 
 ## Questions for Dean
 
 1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration? *Answered: any type with `apply`.*
-2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does?
+2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does? *Answered 2026-11-23 by Dean: copy by default (a bare name), with borrowing (`borrowed x`) and mutable references (`inout x`) supported.*
 3. **Dynamic function values.** Is a library box in `Pia.Fn` that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type? *Settled by ADR 0046: `box (Function a r)`.*

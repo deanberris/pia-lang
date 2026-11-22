@@ -113,7 +113,9 @@ namespace pia::syntax {
   X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
   X(Sequence)      /* stmt, stmt (right-nested) */                           \
   X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
-  X(Lambda)        /* LParam+, RetAnnot?, Contracts?, body (ADR 0044) */     \
+  X(Lambda)        /* Captures?, LParam+, RetAnnot?, Contracts?, body */     \
+  X(Captures)      /* Capture+: `[lo, borrowed keys, inout n]` (ADR 0044) */ \
+  X(Capture)       /* text=name; flags="" (copied), "borrowed" or "inout" */ \
   X(LParam)        /* pattern, Annot? */                                     \
   X(Match)         /* scrutinee, Arm+ */                                     \
   X(Arm)           /* pattern, body, Contracts? */                            \

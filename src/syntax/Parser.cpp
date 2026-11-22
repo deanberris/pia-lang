@@ -1120,7 +1120,8 @@ class Parser {
 
   NodePtr seq() {
     if (at(K::Let)) {
-      if (kind(1) == K::LParen) return lambda(/*elemBody=*/false);
+      if (kind(1) == K::LParen || kind(1) == K::LBracket)
+        return lambda(/*elemBody=*/false);
       return let(/*allowItem=*/false, /*allowIn=*/true);
     }
     if (at(K::Match)) return match();
@@ -1137,13 +1138,36 @@ class Parser {
   }
 
   NodePtr elem() {
-    if (at(K::Let) && kind(1) == K::LParen) return lambda(/*elemBody=*/true);
+    if (at(K::Let) && (kind(1) == K::LParen || kind(1) == K::LBracket))
+      return lambda(/*elemBody=*/true);
     return stmt();
   }
 
   NodePtr lambda(bool elemBody) {
     auto n = makeNode(N::Lambda, loc());
     take();  // let
+    // `let [lo, borrowed keys, inout count] (x : u8) => ...` (ADR 0044,
+    // section 6): what the lambda captures, and how. A bare name is
+    // copied.
+    if (at(K::LBracket)) {
+      auto cs = makeNode(N::Captures, loc());
+      take();
+      Bracket b(*this);
+      do {
+        auto c = makeNode(N::Capture, loc());
+        if (accept(K::Borrowed)) c->flags = "borrowed";
+        else if (accept(K::Inout)) c->flags = "inout";
+        else if (accept(K::Moved)) c->flags = "moved";
+        if (!at(K::Ident))
+          fail("expected a captured name, as in '[lim]', '[borrowed keys]' "
+               "or '[inout count]'");
+        c->text = text();
+        take();
+        cs->add(std::move(c));
+      } while (accept(K::Comma));
+      expect(K::RBracket, "']' after the captures");
+      n->add(std::move(cs));
+    }
     while (at(K::LParen)) {
       auto p = makeNode(N::LParam, loc());
       take();

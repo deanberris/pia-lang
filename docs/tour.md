@@ -482,7 +482,7 @@ let first_below (xs : [u8]) (lim : u8) : usize
   find xs b
 ```
 
-A lambda **captures** the locals it uses, with no capture list. A scalar is copied when the lambda is made, so later changes to a `mutable` variable are not seen, and a lambda may not assign what it captures. A buffer is borrowed: it cannot be written while the lambda is still used. Each lambda has its own type, a record of its captures that meets `Function`, so passing one costs what passing its captures does, and its body is still known at the call:
+A lambda lists what it **captures**, in brackets after `let`, and says how: a bare name is **copied** when the lambda is made, `borrowed x` is a shared read-only loan, and `inout x` is an exclusive loan the lambda may write. A local the body uses but does not list is an error that suggests the three forms. While the lambda is live, a borrowed variable cannot be written, and a referenced one cannot be touched at all; its writes are seen after the lambda's last use. A lambda with an `inout` capture has an effect, so it is never called in a contract, and it can be passed only for a parameter whose function type is written `(f : inout t -> unit)`. Each lambda has its own type, a record of its captures that meets `Function`, so passing one costs what passing its captures does, and its body is still known at the call:
 
 ```ocaml
 let find (xs : [u8]) (p : u8 -> bool) : usize
@@ -497,7 +497,18 @@ let find (xs : [u8]) (p : u8 -> bool) : usize
 
 let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
   ensures result < len xs ==> lo <= xs.[result] && xs.[result] <= hi
-= find xs (let (x : u8) => lo <= x && x <= hi)
+= find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
+```
+
+```ocaml
+let for_each (xs : [u8]) (f : inout u8 -> unit) : unit =
+  for i in 0 .. len xs do f xs.[i] done
+
+let count_small (xs : [u8]) : usize =
+  let n : mutable usize = 0 in
+  for_each xs (let [inout n] (x : u8) : unit =>
+    if x < 10 && n < 65535 then n <- n + 1 else ());
+  n
 ```
 
 A lambda's parameter types may be left out where it is passed: they come from the parameter's function type, once the other arguments have fixed its type parameters, so `find xs (let (x) => x > 3)` with `xs : [u8]` makes `x` a `u8`. A typed lambda fixes them itself. A `let` of a lambda with untyped parameters and no captures is **generic**, like a C++ `auto` lambda: each use is an instance, proved on its own. A lambda can also take type parameters with constraints, which is proved once over them. A lambda's result type, when not written, comes from its body:
@@ -519,7 +530,27 @@ let smaller (a : u8) (b : u8) : u8 =
   min a b
 ```
 
-Moving a value into a lambda, generic lambdas that capture, and functions stored in data or returned come in later steps of ADR 0044.
+A higher-order function can require a **law** of its function argument, such as `requires Pia.Fn.strict_weak_order less` on a sort. `Pia.Fn` defines the laws as spec functions; the function assumes the law, and each caller proves it for its argument, which for a lambda over a small type is a bit-vector fact.
+
+A function with parameters left is a value: `below lim` passes a lambda of the rest, capturing `lim`. A function whose result is written as a function type returns the closure its body makes, and a lambda can own what it captures with `[moved t]`, after which the closure is dropped like a record holding it:
+
+```ocaml
+let below (lim : u8) (x : u8) : bool = (x < lim)
+
+let adder (n : u8) : u8 -> u8 = let [n] (x : u8) : u8 => x +| n
+
+let compose (f : u8 -> u8) (g : u8 -> u8) : u8 -> u8 =
+  let [f, g] (x : u8) : u8 => f (g x)
+
+let five (x : u8) : u8
+  requires x < 100
+  ensures result = x + 5
+= let add5 = adder 5 in add5 x
+
+let small (x : u8) : bool = let is_small = below 9 in is_small x
+```
+
+Generic lambdas that capture, and functions stored in data, come later.
 
 ## Metaprograms
 
@@ -583,14 +614,6 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 ## Designed but not built yet
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
-
-**More function values.** Lambdas work today ([Function values](#function-values)). Returning them, partial application and moved captures are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
-
-<!-- untested: function results and partial application are not implemented yet -->
-```ocaml
-let between (lo : u8) (hi : u8) = let (x : u8) => lo <= x && x <= hi
-let compose f g = let (x) => f (g x)
-```
 
 **`dyn`**, a tagged value whose tags the prover can enumerate, and variants with record or float payloads:
 

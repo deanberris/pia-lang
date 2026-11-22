@@ -182,9 +182,32 @@ std::string smtSymbol(llvm::StringRef name) {
   std::string out;
   for (char c : name) {
     if (c == ' ') continue;
-    out += c == ',' ? '.' : c;
+    // A function parameter's stand-in type, `p#type` (ADR 0044, step 6).
+    out += c == ',' ? '.' : c == '#' ? '!' : c == ':' ? '$' : c;
   }
   return out;
+}
+
+// A lambda passed as a function object is its closure's `apply`, whose
+// first parameter is the closure. One that captures nothing is a record
+// with no fields, which has one value (ADR 0044).
+static bool closureParam(mlir::func::FuncOp f, Type t) {
+  auto r = mlir::dyn_cast<RecordType>(t);
+  return r && r.getFieldTypes().empty() &&
+         f.getSymName().starts_with("apply[lambda@");
+}
+
+// An imported function of scalars: to the solver, an uninterpreted
+// function with the interface's contract, wherever it is called.
+bool contractOnly(mlir::func::FuncOp f) {
+  if (!f || f.isExternal() || !f->hasAttr(PiaDialect::getImportAttrName()) ||
+      f.getNumResults() != 1)
+    return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  return true;
 }
 
 // An ordinary function whose body is a definition: one scalar result,
@@ -194,15 +217,20 @@ std::string smtSymbol(llvm::StringRef name) {
 // passed to a higher-order function is usually one (ADR 0044), and so is
 // the wrapper that gives a named function an arrow's contract.
 bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
+  // An imported function's body is in its module: here it is an
+  // arbitrary value with the interface's contract, which is not a
+  // definition (ADR 0039).
   if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getImportAttrName()) ||
+      f->hasAttr("pia.extern") ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
       f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
       f.getNumResults() != 1)
     return false;
   auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
   if (!scalar(f.getFunctionType().getResult(0))) return false;
-  for (Type t : f.getFunctionType().getInputs())
-    if (!scalar(t)) return false;
+  for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
+    if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
   if (auto it = memo.find(f.getOperation()); it != memo.end())
     return it->second;
   memo[f.getOperation()] = false;  // a cycle is recursion
@@ -210,10 +238,9 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   bool ok = true;
   f.walk([&](Operation *op) {
     if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
-      if (!module ||
-          !pureScalar(module.lookupSymbol<mlir::func::FuncOp>(c.getCallee()),
-                      memo))
-        ok = false;
+      auto callee = module ? module.lookupSymbol<mlir::func::FuncOp>(c.getCallee())
+                           : mlir::func::FuncOp();
+      if (!contractOnly(callee) && !pureScalar(callee, memo)) ok = false;
     } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp, LoadOp,
                          StoreOp>(op)) {
       ok = false;
@@ -515,7 +542,17 @@ class Encoder {
     // fields, which ScalarizeRecords leaves there: an uninterpreted sort.
     if (auto r = mlir::dyn_cast<RecordType>(t))
       if (r.getFieldTypes().empty() && fn_ && fn_->hasAttr("pia.generic_proof")) {
-        std::string name = "generic." + r.getName().str();
+        std::string name = "generic." + smtSymbol(r.getName());
+        sorts_.insert(name);
+        return mlir::smt::SortType::get(ctx_, name);
+      }
+    // Any other record left with no fields, such as the closure of a
+    // lambda that captures nothing passed as a function object (ADR 0044),
+    // has one value; as an uninterpreted sort, a spec function can still
+    // take it, and nothing is claimed about it.
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      if (r.getFieldTypes().empty()) {
+        std::string name = "unit." + smtSymbol(r.getName());
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
@@ -2129,7 +2166,7 @@ class Encoder {
     // and so is a pure function's, so a call in code and one in a contract
     // agree.
     if (hasBody && (isSpecFunction(callee) || definesValue(callee) ||
-                    importedScalar(callee)))
+                    contractOnly(callee)))
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
@@ -2238,25 +2275,7 @@ class Encoder {
   }
   bool hasSpecDecl(mlir::func::FuncOp f) {
     return isSpecFunction(f) || isAbstract(f) || definesValue(f) ||
-           importedScalar(f);
-  }
-
-  // A function of scalars imported from another module: its body here is
-  // its interface's contract, so in a spec body a call to it is an
-  // uninterpreted application that meets that contract. This is what lets
-  // an imported spec function, such as Pia.Core.Order's lex_from at u8,
-  // unfold at the importer through the module's `less`.
-  static bool importedScalar(mlir::func::FuncOp f) {
-    if (!f || f.isExternal() || !f->hasAttr(PiaDialect::getImportAttrName()) ||
-        f.getNumResults() != 1)
-      return false;
-    auto scalar = [](Type t) {
-      return mlir::isa<IntType>(t) || t.isInteger(1);
-    };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
-    for (Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
-    return true;
+           contractOnly(f);
   }
 
   // An ordinary function whose body is a definition: one scalar result,
@@ -2268,7 +2287,7 @@ class Encoder {
   // `ensures result = (if less b a then b else a)`, mean something at its
   // callers once `less` is a concrete function.
   bool definesValue(mlir::func::FuncOp f) {
-    // An imported function's body is only its contract (importedScalar).
+    // An imported function's body is only its contract (contractOnly).
     if (!f || f.isExternal() || isSpecFunction(f) || isAbstract(f) ||
         f->hasAttr("pia.lemma") || f.getNumResults() != 1 ||
         f->hasAttr(PiaDialect::getImportAttrName()))
@@ -2284,8 +2303,8 @@ class Encoder {
         return false;
       return projectsValue(f);
     }
-    for (Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
+    for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
+      if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
     return pureScalar(f, definesValue_);
   }
 
@@ -2309,6 +2328,8 @@ class Encoder {
     return ok;
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
+  // The one value of each record type with no fields, by name.
+  std::map<std::string, Value> unitValues_;
 
   // `f a` for an abstract `f`: the uninterpreted function applied, with
   // its result type's range, and nothing else.
@@ -2374,6 +2395,8 @@ class Encoder {
       if (ok && !funs.empty()) specFuns_[f.getOperation()] = std::move(funs);
     }
   }
+
+
 
   // A definition: asserted, or a hypothesis of the enclosing quantifier.
   void define(Value fact) {
@@ -2458,9 +2481,8 @@ class Encoder {
       ensuresStack_.pop_back();
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
-    // An imported function's body is its contract around an arbitrary
-    // result: the facts above are all there is to it.
-    if (importedScalar(callee)) return app;
+    // Its body is in its own module: the contract is all there is.
+    if (contractOnly(callee)) return app;
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
         std::max(fuelOf(callee), minFuel_)) {
       // Unfolded as far as the fuel allows: past here the function is
@@ -2531,6 +2553,16 @@ class Encoder {
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
     if (Value t = d.memo.lookup(v)) return t;
+    // A record with no fields has one value: the closure of a lambda that
+    // captures nothing is the same whatever made it (ADR 0044).
+    if (auto r = mlir::dyn_cast<RecordType>(v.getType()))
+      if (r.getFieldTypes().empty() && !(fn_ && fn_->hasAttr("pia.generic_proof"))) {
+        std::string key = r.getName().str();
+        auto it = unitValues_.find(key);
+        if (it == unitValues_.end())
+          it = unitValues_.emplace(key, declare(sortOf(r), "", false)).first;
+        return it->second;
+      }
     if (d.envOutside) {
       Operation *def = v.getDefiningOp();
       mlir::Region *r = v.getParentRegion();
@@ -2572,7 +2604,7 @@ class Encoder {
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
                call && (isSpecFunction(calleeOf(call)) ||
                         definesValue(calleeOf(call)) ||
-                        importedScalar(calleeOf(call)))) {
+                        contractOnly(calleeOf(call)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
@@ -2614,7 +2646,7 @@ class Encoder {
       if (!s) return Value();
       sorts.push_back(s);
     }
-    bool failed = false;
+    bool failed = false, hadDefs = false;
     auto build = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
@@ -2639,6 +2671,7 @@ class Encoder {
       }
       // Spec definitions instantiated at the bound variables hold for every
       // value of them, so they join the range as hypotheses.
+      hadDefs = hadDefs || pendingDefs_.size() > mark;
       for (size_t k = mark; k < pendingDefs_.size(); ++k)
         range = andOf(range, pendingDefs_[k]);
       pendingDefs_.resize(mark);
@@ -2655,6 +2688,40 @@ class Encoder {
       // The caller treats the quantifier as an unknown bool.
       q->erase();
       return Value();
+    }
+    // The definitions are facts for every value of the bound variables,
+    // whatever the quantifier's polarity, so they are also asserted on
+    // their own: as hypotheses alone, an assumed `forall` whose body calls
+    // an imported `same` would say nothing until the solver proved its
+    // contract at each element, which it cannot (Pia.Core.Algo.Modify's
+    // replace at u8).
+    if (quantifierDepth_ == 0 && hadDefs) {
+      bool again = false;
+      auto defsOnly = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
+        OpBuilder::InsertionGuard guard(b_);
+        b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+        ++quantifierDepth_;
+        Demand d = outer;
+        d.memo.clear();
+        Value range = boolConst(true);
+        for (auto [arg, var] : llvm::zip(body.getArguments(), vars)) {
+          d.values[arg] = var;
+          if (auto it = mlir::dyn_cast<IntType>(arg.getType()))
+            range = andOf(range, inRange(var, it));
+        }
+        auto yield = mlir::cast<contract::YieldOp>(body.getTerminator());
+        size_t mark = pendingDefs_.size();
+        if (!demand(yield.getPredicate(), d)) again = true;
+        Value defs = boolConst(true);
+        for (size_t k = mark; k < pendingDefs_.size(); ++k)
+          defs = andOf(defs, pendingDefs_[k]);
+        pendingDefs_.resize(mark);
+        --quantifierDepth_;
+        return implies(range, defs);
+      };
+      auto facts = create<mlir::smt::ForallOp>(mlir::TypeRange(sorts), defsOnly);
+      if (again) facts->erase();
+      else define(facts.getResult());
     }
     return q->getResult(0);
   }

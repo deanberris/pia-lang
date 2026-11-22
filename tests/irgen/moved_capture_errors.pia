@@ -1,0 +1,23 @@
+(* Errors in moved captures (ADR 0044, step 7).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let token = type { id : u8 }
+let drop (t : moved token) : unit = match t with | { id } -> ()
+let make (x : u8) : token = { id = x }
+
+(* Once moved in, the variable is gone.
+// CHECK-DAG: moved_capture_errors.pia:[[@LINE+5]]:{{[0-9]+}}: error: 't' was consumed by its use as a value
+*)
+let after (x : u8) : u8 =
+  let t = make x in
+  let get = let [moved t] (y : u8) : u8 => t.id in
+  t.id
+
+(* A value with a `drop` is moved or borrowed, never copied.
+// CHECK-DAG: moved_capture_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 't' has the type token, which is linear or has a 'drop'; move it into the lambda, as in '[moved t]', or borrow it
+*)
+let copies (x : u8) : u8 =
+  let t = make x in
+  let get = let [t] (y : u8) : u8 => t.id in
+  get 0

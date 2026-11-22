@@ -1,0 +1,108 @@
+(* Pia.Core.Algo.Modify: <algorithm>'s modifying sequence operations and
+   <numeric>'s algorithms (ADR 0040, phase 1.6, docs/cpp-std.md). This is
+   its first part: fill, copy, copy_backward, swap_ranges, reverse and
+   replace. The rest of the phase (rotate, shift_left, shift_right,
+   remove, unique, and <numeric>) follows in later pull requests.
+
+   Each is generic over the element type and proved once (ADR 0043). C++
+   writes through an output iterator; here the destination is an `out`
+   slice whose length the precondition fixes, so nothing is written past
+   it (ADR 0040, section 5). Pia's slices never alias a mutable one, so
+   copy and copy_backward mean the same; copy_backward writes from the
+   end, as C++'s does. Each contract states every element of the result,
+   and which are unchanged. replace takes a value, over Pia.Core.Order's
+   Eq, or a predicate, as C++'s replace_if (no _if names, ADR 0040,
+   section 6). *)
+module Pia.Core.Algo.Modify : Modify
+
+import Pia.Core.Order.Ops
+
+interface Modify = sig
+  let fill : (t : type) -> (xs : out mutable [t]) -> (v : t) -> unit
+  let copy : (t : type) -> (dst : out mutable [t]) -> (src : [t]) -> unit
+  let reverse : (t : type) -> (xs : borrowed inout mutable [t]) -> unit
+  let replace : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (old_v : t) -> (new_v : t) -> unit
+  let copy_backward : (t : type) -> (dst : out mutable [t]) -> (src : [t]) -> unit
+  let swap_ranges : (t : type) -> (xs : borrowed inout mutable [t]) -> (ys : borrowed inout mutable [t]) -> unit
+  let replace : (t : type) -> (f : type where Function f t bool) -> (xs : borrowed inout mutable [t]) -> (p : f) -> (new_v : t) -> unit
+end
+
+(** C++: std::fill. Every element becomes v. *)
+let fill (t : type) (xs : out mutable [t]) (v : t) : unit
+  ensures forall (k in 0..len xs). xs.[k] = v
+= for i in 0..len xs
+    invariant forall (k in 0..i). xs.[k] = v
+  do xs.[i] <- v done
+
+(** C++: std::copy, into a destination of the same length. *)
+let copy (t : type) (dst : out mutable [t]) (src : [t]) : unit
+  requires len dst = len src
+  ensures forall (k in 0..len dst). dst.[k] = src.[k]
+= for i in 0..len dst
+    invariant forall (k in 0..i). dst.[k] = src.[k]
+  do dst.[i] <- src.[i] done
+
+(** C++: std::reverse, in place. *)
+let reverse (t : type) (xs : borrowed inout mutable [t]) : unit
+  ensures forall (k in 0..len xs). xs.[k] = old (xs.[len xs - 1 - k])
+= let n = len xs in
+  let lo : mutable usize = 0 in
+  let hi : mutable usize = n in
+  while lo + 1 < hi
+    invariant lo <= hi && hi <= n && lo + hi = n
+    invariant forall (k in 0..lo). xs.[k] = old (xs.[n - 1 - k])
+    invariant forall (k in hi..n). xs.[k] = old (xs.[n - 1 - k])
+    invariant forall (k in lo..hi). xs.[k] = old (xs.[k])
+    decreases hi - lo
+  do
+    hi <- hi - 1;
+    let a = xs.[lo] in
+    let b = xs.[hi] in
+    xs.[lo] <- b;
+    xs.[hi] <- a;
+    lo <- lo + 1
+  done
+
+(** C++: std::replace: each element the same as old_v becomes new_v. *)
+let replace (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (old_v : t) (new_v : t) : unit
+  ensures forall (k in 0..len xs). (if same (old (xs.[k])) old_v then xs.[k] = new_v else xs.[k] = old (xs.[k]))
+= for i in 0..len xs
+    invariant forall (k in 0..i). (if same (old (xs.[k])) old_v then xs.[k] = new_v else xs.[k] = old (xs.[k]))
+    invariant forall (k in i..len xs). xs.[k] = old (xs.[k])
+  do if same xs.[i] old_v then xs.[i] <- new_v else () done
+
+(** C++: std::copy_backward, from the last element to the first. *)
+let copy_backward (t : type) (dst : out mutable [t]) (src : [t]) : unit
+  requires len dst = len src
+  ensures forall (k in 0..len dst). dst.[k] = src.[k]
+= let i : mutable usize = len dst in
+  while i > 0
+    invariant i <= len dst
+    invariant forall (k in i..len dst). dst.[k] = src.[k]
+    decreases i
+  do
+    i <- i - 1;
+    dst.[i] <- src.[i]
+  done
+
+(** C++: std::swap_ranges, of two slices of the same length. *)
+let swap_ranges (t : type) (xs : borrowed inout mutable [t]) (ys : borrowed inout mutable [t]) : unit
+  requires len xs = len ys
+  ensures forall (k in 0..len xs). xs.[k] = old (ys.[k]) && ys.[k] = old (xs.[k])
+= for i in 0..len xs
+    invariant forall (k in 0..i). xs.[k] = old (ys.[k]) && ys.[k] = old (xs.[k])
+    invariant forall (k in i..len xs). xs.[k] = old (xs.[k]) && ys.[k] = old (ys.[k])
+  do
+    let a = xs.[i] in
+    let b = ys.[i] in
+    xs.[i] <- b;
+    ys.[i] <- a
+  done
+
+(** C++: std::replace_if: each element for which p holds becomes new_v. *)
+let replace (t : type) (f : type where Function f t bool) (xs : borrowed inout mutable [t]) (p : f) (new_v : t) : unit
+  ensures forall (k in 0..len xs). (if p (old (xs.[k])) then xs.[k] = new_v else xs.[k] = old (xs.[k]))
+= for i in 0..len xs
+    invariant forall (k in 0..i). (if p (old (xs.[k])) then xs.[k] = new_v else xs.[k] = old (xs.[k]))
+    invariant forall (k in i..len xs). xs.[k] = old (xs.[k])
+  do if p xs.[i] then xs.[i] <- new_v else () done
