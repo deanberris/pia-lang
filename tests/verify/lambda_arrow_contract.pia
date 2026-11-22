@@ -1,0 +1,40 @@
+(* A function type's contract (ADR 0044): the higher-order function may
+   call `f` where its `requires` holds, and relies on its `ensures`. Each
+   lambda passed for `f` is proved to meet that `ensures` wherever that
+   `requires` holds, so a lambda that does not is a failure at the lambda.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let apply_twice (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result > y) : u8
+  requires x < 100
+  ensures result > x
+= let a = f x in
+  if a < 200 then f a else a
+
+(* `y + 1` meets the arrow's contract. *)
+let good (x : u8) : u8
+  requires x < 100
+  ensures result > x
+= apply_twice x (let (y : u8) => y + 1)
+
+(* `y` does not: the result must be greater than `y`.
+*)
+let bad (x : u8) : u8 requires x < 100 =
+  apply_twice x (let (y : u8) => y)
+
+(* Expected report, in order.
+// CHECK: lambda_arrow_contract.pia:18:3: proved: the precondition of 'apply_twice[lambda@lambda_arrow_contract.pia:18:18]' holds [smt]
+// CHECK: lambda_arrow_contract.pia:17:3: proved: the postcondition holds [smt]
+// CHECK: lambda_arrow_contract.pia:23:3: proved: the precondition of 'apply_twice[lambda@lambda_arrow_contract.pia:23:18]' holds [smt]
+// CHECK: lambda_arrow_contract.pia:18:36: proved: '+' does not overflow u8 [smt]
+// CHECK: lambda_arrow_contract.pia:18:18: proved: the postcondition holds [smt]
+// CHECK: lambda_arrow_contract.pia:11:11: proved: the precondition of 'lambda@lambda_arrow_contract.pia:18:18' holds [smt]
+// CHECK: lambda_arrow_contract.pia:12:19: proved: the precondition of 'lambda@lambda_arrow_contract.pia:18:18' holds [smt]
+// CHECK: lambda_arrow_contract.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: lambda_arrow_contract.pia:23:18: failed: the postcondition holds
+// CHECK-NEXT: counterexample: y = {{-?[0-9]+}}
+// CHECK: lambda_arrow_contract.pia:11:11: proved: the precondition of 'lambda@lambda_arrow_contract.pia:23:18' holds [smt]
+// CHECK: lambda_arrow_contract.pia:12:19: proved: the precondition of 'lambda@lambda_arrow_contract.pia:23:18' holds [smt]
+// CHECK: lambda_arrow_contract.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: 11 proved, 1 failed, 0 skipped
+*)

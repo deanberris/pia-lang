@@ -1,0 +1,64 @@
+(* Function values, step 1 (ADR 0044): a typed lambda passed to a
+   higher-order function. The call goes to a specialisation of `find` at
+   the lambda, and the lambda is a pure function whose body the caller
+   knows, so `find`'s contract, which names `p`, means `x > 3` at the call.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+  ensures forall (k in 0 .. result). p xs.[k] = false
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    invariant forall (k in 0 .. i). p xs.[k] = false
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+  ensures forall (k in 0 .. result). xs.[k] <= 3
+= find xs (let (x : u8) => x > 3)
+
+(* A lambda with its result type and contracts. *)
+let first_even (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] % 2 = 0
+= find xs (let (x : u8) : bool ensures result <==> x % 2 = 0 => x % 2 = 0)
+
+(* A lambda bound by `let` and applied. *)
+let square (x : u8) : u16 =
+  let sq = let (v : u8) : u16 ensures result = v * v => v * v in
+  sq x
+
+(* Expected report, in order.
+// CHECK: lambda_find.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:14:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_find.pia:15:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_find.pia:13:25: proved: the index is within bounds [smt]
+// CHECK: lambda_find.pia:17:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_find.pia:14:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_find.pia:15:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_find.pia:16:5: proved: the measure decreases [smt]
+// CHECK: lambda_find.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:28:67: proved: the divisor is not zero [intervals]
+// CHECK: lambda_find.pia:28:32: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:14:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_find.pia:15:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_find.pia:13:25: proved: the index is within bounds [smt]
+// CHECK: lambda_find.pia:17:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_find.pia:14:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_find.pia:15:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_find.pia:16:5: proved: the measure decreases [smt]
+// CHECK: lambda_find.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: lambda_find.pia:32:59: proved: '*' does not overflow u16 [intervals]
+// CHECK: lambda_find.pia:32:31: proved: the postcondition holds [smt]
+// CHECK: 27 proved, 0 failed, 0 skipped
+*)

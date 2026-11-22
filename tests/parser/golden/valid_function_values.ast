@@ -1,0 +1,162 @@
+(Program
+  (LetItem "apply_twice"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (Param "f"
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "y"
+              (Modifiers)
+              (TypeName "u8")
+              (None)
+            )
+            (TypeName "u8")
+            (Contracts
+              (Requires
+                (Binary "<"
+                  (Name "y")
+                  (IntLit "200")
+                )
+              )
+              (Ensures
+                (Binary ">"
+                  (Name "result")
+                  (Name "y")
+                )
+              )
+            )
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "<"
+          (Name "x")
+          (IntLit "100")
+        )
+      )
+    )
+    (Apply
+      (Name "f")
+      (Apply
+        (Name "f")
+        (Name "x")
+      )
+    )
+  )
+  (LetItem "next"
+    (Params)
+    (None)
+    (Contracts)
+    (Lambda
+      (LParam
+        (PVar "x")
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts
+        (Requires
+          (Binary "<"
+            (Name "x")
+            (IntLit "255")
+          )
+        )
+        (Ensures
+          (Binary "="
+            (Name "result")
+            (Binary "+"
+              (Name "x")
+              (IntLit "1")
+            )
+          )
+        )
+      )
+      (Binary "+"
+        (Name "x")
+        (IntLit "1")
+      )
+    )
+  )
+  (LetItem "good"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "apply_twice")
+      (Name "x")
+      (Lambda
+        (LParam
+          (PVar "y")
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (RetAnnot
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+          (Attrs)
+        )
+        (Contracts
+          (Requires
+            (Binary "<"
+              (Name "y")
+              (IntLit "250")
+            )
+          )
+        )
+        (Binary "+"
+          (Name "y")
+          (IntLit "1")
+        )
+      )
+    )
+  )
+)
