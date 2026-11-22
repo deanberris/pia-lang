@@ -15,6 +15,7 @@ exports_files([
     "index.md",
     "repl.md",
     "status.md",
+    "theories.md",
     "streams.pia.md",
     "tour.md",
     "verification.md",
