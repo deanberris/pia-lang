@@ -180,7 +180,7 @@ contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
 
 lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 captures  = "[" capture { "," capture } "]" ;
-capture   = [ "borrowed" | "inout" ] IDENT ;   (* copied, borrowed or referenced *)
+capture   = [ "borrowed" | "inout" | "moved" ] IDENT ;   (* copied, borrowed, referenced or moved *)
 lparam    = "(" pattern [ ":" annot ] ")" | "(" ")" ;
 
 meta_operator = "let" "meta" "operator" "(" operator ")"

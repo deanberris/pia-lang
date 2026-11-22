@@ -532,7 +532,25 @@ let smaller (a : u8) (b : u8) : u8 =
 
 A higher-order function can require a **law** of its function argument, such as `requires Pia.Fn.strict_weak_order less` on a sort. `Pia.Fn` defines the laws as spec functions; the function assumes the law, and each caller proves it for its argument, which for a lambda over a small type is a bit-vector fact.
 
-Moving a value into a lambda, generic lambdas that capture, and functions stored in data or returned come in later steps of ADR 0044.
+A function with parameters left is a value: `below lim` passes a lambda of the rest, capturing `lim`. A function whose result is written as a function type returns the closure its body makes, and a lambda can own what it captures with `[moved t]`, after which the closure is dropped like a record holding it:
+
+```ocaml
+let below (lim : u8) (x : u8) : bool = (x < lim)
+
+let adder (n : u8) : u8 -> u8 = let [n] (x : u8) : u8 => x +| n
+
+let compose (f : u8 -> u8) (g : u8 -> u8) : u8 -> u8 =
+  let [f, g] (x : u8) : u8 => f (g x)
+
+let five (x : u8) : u8
+  requires x < 100
+  ensures result = x + 5
+= let add5 = adder 5 in add5 x
+
+let small (x : u8) : bool = let is_small = below 9 in is_small x
+```
+
+Generic lambdas that capture, and functions stored in data, come later.
 
 ## Metaprograms
 
@@ -596,14 +614,6 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 ## Designed but not built yet
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
-
-**More function values.** Lambdas work today ([Function values](#function-values)). Returning them, partial application and moved captures are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
-
-<!-- untested: function results and partial application are not implemented yet -->
-```ocaml
-let between (lo : u8) (hi : u8) = let [lo, hi] (x : u8) => lo <= x && x <= hi
-let compose f g = let (x) => f (g x)
-```
 
 **`dyn`**, a tagged value whose tags the prover can enumerate, and variants with record or float payloads:
 

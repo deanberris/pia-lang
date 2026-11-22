@@ -1157,6 +1157,7 @@ class Parser {
         auto c = makeNode(N::Capture, loc());
         if (accept(K::Borrowed)) c->flags = "borrowed";
         else if (accept(K::Inout)) c->flags = "inout";
+        else if (accept(K::Moved)) c->flags = "moved";
         if (!at(K::Ident))
           fail("expected a captured name, as in '[lim]', '[borrowed keys]' "
                "or '[inout count]'");
