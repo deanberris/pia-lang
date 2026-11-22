@@ -100,6 +100,10 @@ let spec held (g : general) (x : gblock) : bool =
 let alloc (g : borrowed inout mutable general) (n : usize) : result gblock oom
   requires gok g && n <= 64
   ensures gok g
+  ensures g.small.id = old g.small.id && g.large.id = old g.large.id
+  ensures g.small.cap = old g.small.cap && g.large.cap = old g.large.cap
+  ensures forall (i : blk). Alloc.live (old g.small.heap) i ==> Alloc.live g.small.heap i
+  ensures forall (i : blk). Alloc.live (old g.large.heap) i ==> Alloc.live g.large.heap i
   ensures (match result with
            | Ok x -> bytes x.c >= n && held g x
            | Err _ -> true)
@@ -116,6 +120,10 @@ let alloc (g : borrowed inout mutable general) (n : usize) : result gblock oom
 let free (g : borrowed inout mutable general) (x : moved gblock) : unit
   requires gok g && held g x
   ensures gok g
+  ensures g.small.id = old g.small.id && g.large.id = old g.large.id
+  ensures g.small.cap = old g.small.cap && g.large.cap = old g.large.cap
+  ensures forall (i : blk). Alloc.live (old g.small.heap) i && (x.c <> 0 || i <> x.b.i) ==> Alloc.live g.small.heap i
+  ensures forall (i : blk). Alloc.live (old g.large.heap) i && (x.c <> 1 || i <> x.b.i) ==> Alloc.live g.large.heap i
 = match x with
   | { c; b } -> if c = 0 then give_slot g.small b else give_slot g.large b
 
