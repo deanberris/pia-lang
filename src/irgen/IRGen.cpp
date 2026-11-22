@@ -5125,7 +5125,12 @@ class Gen {
 
   Lenders lendersOf(const Node &n) {
     auto it = lent_.find(&n);
-    return it == lent_.end() ? Lenders{} : it->second;
+    if (it != lent_.end()) return it->second;
+    // A name read without `genExpr`, such as the hidden scrutinee of
+    // `#payload #match0 Ok`.
+    if (n.kind == NodeKind::Name && !contract_ && !ghost_)
+      if (BindingPtr b = lookup(n.text)) return b->lenders;
+    return {};
   }
 
   // `n` was generated as `other`, a tree made from it.

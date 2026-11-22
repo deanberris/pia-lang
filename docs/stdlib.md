@@ -207,7 +207,7 @@ Containers (`vec`, `string`, `hash_map`, the binary heap that priority-flood nee
 
 *Lifetimes are proved, not collected.* Two rules in Sema, with no lifetime syntax in ordinary code:
 
-1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them.
+1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them. Implemented: see [irgen.md](irgen.md#bindings-and-mutation).
 2. **Regions can be scoped.** `with_arena n (let (a) => body)` makes an arena, runs `body`, and frees the arena. The arena's type is fresh to `body`, and `body`'s result type cannot mention it, so nothing allocated in the arena can escape. This is Haskell's `runST` trick, and the region idea from Cyclone and the ML Kit, without region inference.
 
 Leaks are ruled out by cleanup at scope end. Allocators and the buffers they hand out have a `Drop` instance ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): a buffer from `general` or a `pool` that is not freed explicitly is freed when its scope ends, on every exit including `?`, and so is an arena. A buffer from an arena needs nothing, because freeing the arena frees it. So proved code cannot leak, double free, or use after free, and none of that costs anything at run time beyond the frees themselves.
