@@ -1,0 +1,76 @@
+(* A growable vector of bytes over the bump allocator (#86): the litmus
+   test of ADR 0026 in its first form. The allocator is passed to each call
+   that may grow the vector. `push` proves the new element is stored and
+   the earlier ones kept, and `grow` copies into a larger loan from the
+   allocator.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = type { mem : [u8]; used : usize }
+
+let alloc (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let vec = type { buf : [u8]; len : usize }
+
+let with_capacity (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) vec) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok v -> v.len = 0 && len v.buf = n
+           | Err _ -> true)
+= let b = alloc m n? in
+  Ok { buf = b; len = 0 }
+
+(* Moves the elements into a loan twice as large, plus one. *)
+let grow (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= let cap = len v.buf in
+  if cap > 1000000 then Err OutOfMemory
+  else
+    (let nb = alloc m (2 * cap + 1)? in
+     let old_buf = v.buf in
+     for i in 0 .. v.len
+       invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+     do nb.[i] <- old_buf.[i] done;
+     v.buf <- nb;
+     Ok ())
+
+let push (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) (x : u8) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= (if v.len = len v.buf then grow m v else Ok ())?;
+  let b = v.buf in
+  b.[v.len] <- x;
+  v.len <- v.len + 1;
+  Ok ()
+
+(* Two pushes, the second of which grows the vector. *)
+let demo (storage : borrowed [u8]) : result u8 oom =
+  let m : mutable bump = { mem = storage; used = 0 } in
+  let v : mutable vec = with_capacity m 1? in
+  push m v 7?;
+  push m v 9?;
+  let b = v.buf in
+  Ok (b.[0] + b.[1])

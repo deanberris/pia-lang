@@ -2510,8 +2510,22 @@ class Gen {
     }
     R out = emitCall(n, sig, operands);
     if (out)
-      for (size_t k = 0; k < rebind.size(); ++k)
-        if (rebind[k]) rebind[k]->value = threadedResults_[k];
+      for (size_t k = 0; k < rebind.size(); ++k) {
+        BindingPtr b = rebind[k];
+        if (!b) continue;
+        b->value = threadedResults_[k];
+        // Its new value may hold a loan from the call, as `push m v x`
+        // stores a buffer from `m` in `v`: it may borrow from any other
+        // argument the call was given.
+        if (mayBorrow(b->type))
+          for (size_t i = 0; i < args.size(); ++i)
+            if (args[i]->kind == NodeKind::Name && args[i]->flags.empty())
+              if (BindingPtr x = lookup(args[i]->text); x && x != b &&
+                                                       !copied(x->type)) {
+                addLenders(b->lenders, {x});
+                addLenders(b->lenders, x->lenders);
+              }
+      }
     // Recorded even when empty: a call's result borrows only what its
     // result type says.
     if (out) lent_[&n] = std::move(lenders);
@@ -5294,8 +5308,15 @@ class Gen {
   bool writable(const Node &n) {
     if (writable_.count(&n)) return true;
     if (n.kind == NodeKind::Name && !contract_ && !ghost_)
-      if (BindingPtr b = lookup(n.text)) return b->writable;
+      if (BindingPtr b = lookup(n.text)) return writableValue(*b);
     return false;
+  }
+
+  // Whether the buffers `b` holds may be written: a borrow that may, or an
+  // `out` or `inout` parameter, whose fields' buffers may be too.
+  static bool writableValue(const Binding &b) {
+    return b.writable || (b.isParam && (sema::hasModifier(b.modifiers, "out") ||
+                                        sema::hasModifier(b.modifiers, "inout")));
   }
 
   // `n` was generated as `other`, a tree made from it.
@@ -5319,7 +5340,7 @@ class Gen {
         if (n.flags.empty())
           if (BindingPtr b = lookup(n.text)) {
             l = b->lenders;
-            w = b->writable;
+            w = writableValue(*b);
           }
         break;
       case NodeKind::Apply:
