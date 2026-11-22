@@ -1,7 +1,7 @@
 (* Runs Pia.Core.Algo.Search's compiled code, instantiated here at u8 and
    i32, on examples, linked by pia_binary. It exits 0 when every result is
-   what C++'s <algorithm> gives, and otherwise with the number of the
-   first wrong one. *)
+   what C++'s <algorithm> gives, for the predicate overloads with lambdas
+   too, and otherwise with the number of the first wrong one. *)
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Search.Search as S
 
@@ -31,4 +31,17 @@ let main () : i32 =
   else if S.min_element same5 <> 0 then 16
   else if S.max_element same5 <> 0 then 17
   else if S.equal pre pre = false then 18
-  else 0
+  else (
+    let big = S.find xs (let (x : u8) : bool => x > 4) in
+    let odd = S.count xs (let (x : u8) : bool => x % 2 = 1) in
+    let small = S.all xs (let (x : u8) : bool => x < 10) in
+    let none9 = S.none xs (let (x : u8) : bool => x = 9) in
+    let lead = S.mismatch xs pre (let (a : u8) (b : u8) : bool => a = b) in
+    let atmost = S.equal pre pre (let (a : u8) (b : u8) : bool => a <= b) in
+    if big <> 4 then 19
+    else if odd <> 5 then 20
+    else if small = false then 21
+    else if none9 then 22
+    else if lead <> 2 then 23
+    else if atmost = false then 24
+    else 0)
