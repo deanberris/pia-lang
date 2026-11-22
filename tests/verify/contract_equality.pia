@@ -37,8 +37,19 @@ let sevens () : [u8; 2]
 
 let seven () : u8
   ensures result = 7
-= let a = sevens () in a.[1]
+= let a = sevens in a.[1]
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: contract_equality.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:40:21: proved: the index is within bounds [intervals]
+// CHECK: contract_equality.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: 11 proved, 0 failed, 0 skipped
 *)

@@ -364,7 +364,9 @@ class Gen {
       const sema::FuncSig &sig = it->second;
       auto arr = mlir::dyn_cast_or_null<ArrayType>(sig.result);
       const Node &body = *sig.item->kids[3];
-      if (!sig.params.empty() || !arr || body.kind != NodeKind::ListLit) {
+      // One with contracts stays a function, so they are proved.
+      if (!sig.params.empty() || !arr || body.kind != NodeKind::ListLit ||
+          !sig.item->kids[2]->kids.empty()) {
         ++it;
         continue;
       }
