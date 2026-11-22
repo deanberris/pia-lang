@@ -1304,7 +1304,7 @@ class Encoder {
       // Specification arithmetic is exact whatever the function's overflow
       // mode: in an @overflow(wrap) function, `ensures result = a * b`
       // means the mathematical product, so a wrapped result fails it.
-      if (spec_.contains(op) || insideQuantifier(op)) {
+      if (isSpecOp(op) || insideQuantifier(op)) {
         out.push_back(exact);
         return true;
       }
@@ -2438,6 +2438,21 @@ class Encoder {
   mlir::MLIRContext *ctx_;
   Location loc_;
   llvm::DenseSet<Operation *> spec_;
+  // The spec ops of other functions, whose contracts are encoded at calls.
+  llvm::DenseMap<Operation *, llvm::DenseSet<Operation *>> calleeSpec_;
+
+  // Whether `op` only feeds a contract, in this function or in the callee
+  // whose contract a call encodes. A callee's `ensures a * b <= 255` means
+  // the mathematical product at its callers too, whatever the callee's own
+  // overflow mode.
+  bool isSpecOp(Operation *op) {
+    auto f = op->getParentOfType<mlir::func::FuncOp>();
+    if (!f || f == fn_) return spec_.contains(op);
+    auto it = calleeSpec_.find(f);
+    if (it == calleeSpec_.end())
+      it = calleeSpec_.try_emplace(f, specOps(f)).first;
+    return it->second.contains(op);
+  }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
 
