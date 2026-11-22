@@ -18,6 +18,8 @@ interface Tracked @abi(c) = sig
     requires x < 255
   let count_up : (x : u8) -> tally
     requires x < 200
+  let tagged = type { steps : int; v : u8 }
+  let mark_all : (xs : inout [tagged]) -> unit
 end
 
 let blk = type int{0..63}
@@ -76,3 +78,17 @@ let count_up (x : u8) : tally
   ensures result.v = x + 10 && result.steps = 10
 = let steps : int = 10 in
   { v = x + 10; steps = steps }
+
+(* A spec-only field of a buffer's records: one buffer per field, and the
+   steps buffer is erased, so C passes only the vs and their length. *)
+let tagged = type { steps : int; v : u8 }
+
+let mark_all (xs : inout [tagged]) : unit
+  ensures len xs = old (len xs)
+  ensures forall (j : usize). j < len xs ==> xs.[j].v = 7 && xs.[j].steps = 1
+= let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs && len xs = old (len xs)
+    invariant forall (j : usize). j < i ==> xs.[j].v = 7 && xs.[j].steps = 1
+    decreases len xs - i
+  do xs.[i].steps <- 1; xs.[i].v <- 7; i <- i + 1 done

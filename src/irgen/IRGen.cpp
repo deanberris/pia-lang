@@ -375,17 +375,37 @@ class Gen {
 
   // Spec-only state in code (ADR 0041): a value whose type is spec-only
   // (`int`, `real` or a theory's sort), or a record holding one. The
-  // verifier sees it and codegen erases it. A buffer cannot hold it, since
-  // its elements are laid out in memory.
+  // verifier sees it and codegen erases it. A buffer of records is one
+  // buffer per field, so a spec-only field of its elements is a buffer
+  // codegen erases, as `box`'s state is in a `vec (box t)`. A buffer whose
+  // elements are wholly spec-only cannot be, since its length is in code,
+  // and neither can a buffer nested in an element.
   static bool isSpecScalar(Type t) {
     return mlir::isa_and_nonnull<UnboundedIntType, RealType, SortType>(t);
+  }
+  static bool hasCodeLeaf(Type t) {
+    if (isSpecScalar(t)) return false;
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      return llvm::any_of(r.getFieldTypes(), hasCodeLeaf);
+    return true;
+  }
+  static Type specInElement(Type e) {
+    if (!hasCodeLeaf(e)) return sema::specOnlyPart(e);
+    if (auto r = mlir::dyn_cast<RecordType>(e))
+      for (Type f : r.getFieldTypes()) {
+        if (mlir::isa<ArrayType, SliceType>(f))
+          if (Type x = sema::specOnlyPart(f)) return x;
+        if (mlir::isa<RecordType>(f))
+          if (Type x = specInElement(f)) return x;
+      }
+    return {};
   }
   static Type specInBuffer(Type t) {
     if (!t) return {};
     if (auto a = mlir::dyn_cast<ArrayType>(t))
-      return sema::specOnlyPart(a.getElementType());
+      return specInElement(a.getElementType());
     if (auto sl = mlir::dyn_cast<SliceType>(t))
-      return sema::specOnlyPart(sl.getElementType());
+      return specInElement(sl.getElementType());
     if (auto r = mlir::dyn_cast<RecordType>(t))
       for (Type f : r.getFieldTypes())
         if (Type x = specInBuffer(f)) return x;
@@ -394,8 +414,9 @@ class Gen {
   std::string specInBufferMessage(Type t) {
     return "type " + typeName(t) + ", whose buffer elements hold the "
            "spec-only type " + typeName(specInBuffer(t)) + "; spec-only state "
-           "can be a parameter, a local or a record field, but not an "
-           "element of a buffer (ADR 0041)";
+           "can be a parameter, a local, a record field or a field of a "
+           "buffer's records, but not a whole element of a buffer or part "
+           "of a buffer inside one (ADR 0041)";
   }
 
   // The spec-only `int` and `real` (ADR 0036).
@@ -7708,6 +7729,12 @@ class Gen {
   }
 
   // A `@linear` type, or a record, variant or instance holding one.
+  // Whether a value of type `t` owns the slices it holds: it is
+  // `@linear` or has a `drop`, so it is never copied (ADR 0048).
+  bool ownsSlices(Type t) {
+    return mlir::isa_and_nonnull<RecordType>(t) && (isLinear(t) || hasDrop(t));
+  }
+
   bool isLinear(Type t) {
     if (!t || linear_.empty()) return false;
     if (linear_.count(t.getAsOpaquePointer())) return true;
@@ -8004,6 +8031,30 @@ class Gen {
   // A copied value, such as an integer read from a borrowed slice, borrows
   // nothing.
   void noteLenders(const Node &n, const TV &r) {
+    // An element of a writable buffer that owns its slices, such as a box,
+    // may be written through (ADR 0048): ownership keeps the elements'
+    // slices apart.
+    if (!contract_ && !ghost_ && n.kind == NodeKind::Index &&
+        n.kids[1]->kind != NodeKind::Range && ownsSlices(r.type) &&
+        (writable(*n.kids[0]) ||
+         (n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
+          lookup(n.kids[0]->text) &&
+          writableBuffer(*lookup(n.kids[0]->text))))) {
+      writable_.insert(&n);
+      // What it holds is lent from the buffer while it is live, so the
+      // element cannot be replaced under it.
+      if (n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty())
+        if (BindingPtr b = lookup(n.kids[0]->text)) {
+          Lenders l = b->lenders;
+          addLenders(l, {b});
+          lent_[&n] = std::move(l);
+          lentTypes_.insert(r.type.getAsOpaquePointer());
+          return;
+        }
+    }
+    if (!contract_ && !ghost_ && n.kind == NodeKind::Field &&
+        n.kids[0]->kind == NodeKind::Index && writable_.count(n.kids[0].get()))
+      writable_.insert(&n);
     if (contract_ || ghost_ || lent_.count(&n) || !mayBorrow(r.type)) return;
     Lenders l;
     bool w = false;

@@ -1,15 +1,17 @@
 (* `int` and `real` are spec-only (ADR 0036): spec functions, lemmas,
    contracts and quantifiers compute with them, and code may not. Code may
    hold them as spec-only state, in a parameter, local or record field,
-   which codegen erases (ADR 0041), but not in a buffer.
+   which codegen erases (ADR 0041), and in a field of a buffer's records,
+   but not as a whole buffer element.
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
 let summary = type { width : usize; lip : real }
+let marks = type { lip : real; n : int }
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:11: error: the parameter 'xs' has type [summary], whose buffer elements hold the spec-only type real; spec-only state can be a parameter, a local or a record field, but not an element of a buffer (ADR 0041)
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:11: error: the parameter 'xs' has type [marks], whose buffer elements hold the spec-only type real; spec-only state can be a parameter, a local, a record field or a field of a buffer's records, but not a whole element of a buffer or part of a buffer inside one (ADR 0041)
 *)
-let many (xs : [summary]) : usize = len xs
+let many (xs : [marks]) : usize = len xs
 
 (* CHECK: spec_only_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
 *)

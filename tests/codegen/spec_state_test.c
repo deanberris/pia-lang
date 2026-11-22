@@ -12,6 +12,8 @@ struct tally {
 uint64_t take_two(uint8_t a, uint8_t b);
 uint8_t skip(uint8_t x);
 uint8_t count_up(uint8_t x);
+// tagged's steps are spec-only: C passes the vs and their length.
+void mark_all(uint8_t *v, int64_t n);
 
 static int failures = 0;
 
@@ -35,6 +37,9 @@ int main(void) {
   for (unsigned x = 0; x < 200; ++x)
     EXPECT(count_up((uint8_t)x) == x + 10, "count_up(%u) = %u", x,
            count_up((uint8_t)x));
+  uint8_t vs[5] = {1, 2, 3, 4, 5};
+  mark_all(vs, 5);
+  for (int i = 0; i < 5; ++i) EXPECT(vs[i] == 7, "mark_all: vs[%d] = %u", i, vs[i]);
   if (failures) return 1;
   puts("spec_state: ok");
   return 0;

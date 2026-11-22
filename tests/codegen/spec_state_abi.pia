@@ -1,5 +1,7 @@
 (* Spec-only parameters, locals and fields are erased (ADR 0041): the C
-   entry points leave them out, and no `pia.erased` reaches LLVM IR.
+   entry points leave them out, and no `pia.erased` reaches LLVM IR. A
+   spec-only field of a buffer's records is a buffer of its own, which C
+   does not pass: `[tagged]` is one pointer, to the `v`s, and a length.
 // RUN: piac --emit=core %s 2>&1 | FileCheck %s --check-prefix=CORE
 // RUN: piac --emit=llvm %s 2>&1 | FileCheck %s
 *)
@@ -11,14 +13,18 @@ interface Abi @abi(c) = sig
     requires x < 255
   let count_up : (x : u8) -> tally
     requires x < 200
+  let tagged = type { steps : int; v : u8 }
+  let count : (xs : borrowed [tagged]) -> usize
 end
 
 (*
 // CORE: func.func @skip({{.*}}: i1 {pia.erased}
 // CORE: func.func @count_up({{.*}}-> (i8, i1 {pia.erased})
+// CORE: func.func @count({{.*}}: memref<?xi1, {{.*}}> {pia.erased{{.*}}}, {{.*}}: memref<?xi8
 // CHECK-NOT: pia.erased
 // CHECK-DAG: define {{.*}}i8 @skip(i8 {{.*}}%{{[0-9]+}})
 // CHECK-DAG: define {{.*}}i8 @count_up(i8 {{.*}}%{{[0-9]+}})
+// CHECK-DAG: define {{.*}}i64 @count(ptr {{.*}}%{{[0-9]+}}, i64 {{.*}}%{{[0-9]+}})
 // CHECK-NOT: pia.erased
 *)
 
@@ -34,3 +40,7 @@ let count_up (x : u8) : tally
   ensures result.v = x + 10 && result.steps = 10
 = let steps : int = 10 in
   { v = x + 10; steps = steps }
+
+let tagged = type { steps : int; v : u8 }
+
+let count (xs : borrowed [tagged]) : usize = len xs

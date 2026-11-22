@@ -113,6 +113,17 @@ Type elementOf(Type buffer) {
   return mlir::cast<SliceType>(buffer).getElementType();
 }
 
+// A spec-only field's buffer (ADR 0041) is erased by codegen, so the
+// length every field's buffer shares is read from the first field in code.
+bool specOnlyLeaf(Type buffer) {
+  return mlir::isa<UnboundedIntType, RealType, SortType>(elementOf(buffer));
+}
+unsigned lengthCarrier(mlir::ValueRange buffers) {
+  for (auto [i, b] : llvm::enumerate(buffers))
+    if (!specOnlyLeaf(b.getType())) return i;
+  return 0;
+}
+
 llvm::SmallVector<Value> flatten(llvm::ArrayRef<mlir::ValueRange> ranges) {
   llvm::SmallVector<Value> out;
   for (mlir::ValueRange r : ranges) out.append(r.begin(), r.end());
@@ -289,15 +300,16 @@ struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
   }
 };
 
-// Every field's buffer has the same length; the first one's is used.
+// Every field's buffer has the same length; the first one in code is used.
 struct LenLowering : mlir::OpConversionPattern<LenOp> {
   using OpConversionPattern::OpConversionPattern;
   mlir::LogicalResult matchAndRewrite(
       LenOp op, OneToNOpAdaptor adaptor,
       mlir::ConversionPatternRewriter &rw) const override {
     if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
+    mlir::ValueRange buffers = adaptor.getBuffer();
     Value len = make<LenOp>(rw, op.getLoc(), rw.getIndexType(),
-                            adaptor.getBuffer().front());
+                            buffers[lengthCarrier(buffers)]);
     rw.replaceOp(op, len);
     return mlir::success();
   }
