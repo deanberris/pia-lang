@@ -825,6 +825,10 @@ int main(int argc, char **argv) {
       options.cacheDir = proofCache;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
+      // Which axioms each proof used is only reported by these, and kept
+      // in proof cache entries for later runs to report (ADR 0036).
+      options.trackAxioms =
+          verifyStats || trustReport || checkVacuity || !proofCache.empty();
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options,
                        verifyStats);

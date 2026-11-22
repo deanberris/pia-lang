@@ -3215,6 +3215,11 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // for a counterexample; only a proof is solved again, tracked, for its
   // core. That second run is the cost of knowing which axioms a goal used.
   auto used = [&](z3::solver &solved, const Query &query) {
+    if (!options.trackAxioms) {
+      std::set<std::string> all(query.axioms.begin(), query.axioms.end());
+      all.insert(query.assumes.begin(), query.assumes.end());
+      return std::vector<std::string>(all.begin(), all.end());
+    }
     if (std::unique_ptr<z3::solver> t = tracked(ctx, solved, query, p)) {
       unsigned long long before = rlimitCount(*t);
       z3::check_result r = t->check();
@@ -3318,7 +3323,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.status = Status::Proved;
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
-        if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
+        if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, key, now - before, &out.axiomsUsed);
         return;
       }
     } catch (const z3::exception &) {
@@ -3335,7 +3341,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
       if (options.reportCost) out.cost = now - before;
       if ((!q.axioms.empty() && !q.genericProof) || !q.assumes.empty())
         out.axiomsUsed = used(full, q);
-      if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
+      if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+        cacheStore(options, key, now - before, &out.axiomsUsed);
       return;
     }
     if (first != &full) {
@@ -3351,7 +3358,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
         if (!q.assumes.empty()) out.axiomsUsed = used(full, q);
-        if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
+        if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, key, now - before, &out.axiomsUsed);
         return;
       }
     }
@@ -3394,7 +3402,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
         out.axiomsUsed = used(fallback, *job.fallback);
-        if (!fkey.empty()) cacheStore(options, fkey, now - before, &out.axiomsUsed);
+        if (!fkey.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, fkey, now - before, &out.axiomsUsed);
         return;
       }
     } catch (const z3::exception &e) {
