@@ -1,0 +1,36 @@
+(* `moved` (docs/design.md): a local passed as a `moved` parameter is dead
+   in the caller after the call. Scalars are copied.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let token = type { id : u8 }
+
+let take (t : moved token) : u8 = t.id
+let peek (t : token) : u8 = t.id
+let count (n : moved u8) : u8 = n
+
+(* Fine: moved once, last. *)
+let once (x : u8) : u8 = let t : token = { id = x } in peek t + take t
+
+(* Fine: a scalar is copied. *)
+let copies (x : u8) : u8 = count x + x
+
+(* Fine: a `moved` parameter can be moved on. *)
+let along (t : moved token) : u8 = take t
+
+(* CHECK: move_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 't' was moved to 'take' at [[@LINE+2]]:{{[0-9]+}}, so it can no longer be used here
+*)
+let twice (x : u8) : u8 = let t : token = { id = x } in take t + peek t
+
+(* CHECK: move_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 't' may have been moved to 'take' at [[@LINE+2]]:{{[0-9]+}}, so it can no longer be used here (it is moved on some paths to here)
+*)
+let branch (b : bool) (x : u8) : u8 = let t : token = { id = x } in (if b then take t else 0) + peek t
+
+(* CHECK: move_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 't' is borrowed by this function, so it cannot be moved to 't' of 'take'; take it as 'moved', as in '(t : moved token)'
+*)
+let borrowed_param (t : token) : u8 = take t
+
+(* CHECK: move_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 't' is moved inside a loop, so the next iteration would use it after the move; bind it inside the loop, or move it after the loop
+*)
+let looped (x : u8) : unit =
+  let t : token = { id = x } in for i in 0..3 do let k = take t in () done

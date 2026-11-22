@@ -73,6 +73,7 @@ struct Binding {
   bool isMutable = false;
   std::string modifiers;  // a parameter's modifiers, empty for locals
   bool isParam = false;
+  unsigned loopDepth = 0;  // the loops open where it was bound
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -420,6 +421,7 @@ class Gen {
     b->value = v;
     b->type = t;
     b->isMutable = isMutable;
+    b->loopDepth = loopDepth_;
     scopes_.back()[name] = b;
     return b;
   }
@@ -710,6 +712,17 @@ class Gen {
       std::deque<Frame> saved;
       ~FrameScope() { frames = std::move(saved); }
     } frameScope{frames_, std::move(frames_)};
+    struct MovedScope {
+      std::map<BindingPtr, Move> &moved;
+      std::map<BindingPtr, Move> saved;
+      unsigned &depth, savedDepth;
+      ~MovedScope() {
+        moved = std::move(saved);
+        depth = savedDepth;
+      }
+    } movedScope{moved_, std::move(moved_), loopDepth_, loopDepth_};
+    moved_.clear();
+    loopDepth_ = 0;
     frames_.clear();
     frames_.emplace_back();
     frames_.back().result = sig.result;
@@ -1138,7 +1151,10 @@ class Gen {
 
   R genName(const Node &n, Type expected) {
     if (n.flags.empty())
-      if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+      if (BindingPtr b = lookup(n.text)) {
+        if (!usable(b, n)) return std::nullopt;
+        return TV{b->value, b->type};
+      }
     if (types_.isCtorName(n.text)) {
       const sema::Ctor *c = ctorFor(n, n.text, expected, std::nullopt);
       if (!c) return std::nullopt;
@@ -2031,6 +2047,9 @@ class Gen {
         return fail(*args[i], "constant data cannot be passed to '" +
                                   sig.params[i].name + "', which is 'out' or "
                                   "'inout'");
+      if (sema::hasModifier(sig.params[i].modifiers, "moved") &&
+          !moveArgument(*args[i], c->type, sig, sig.params[i]))
+        return std::nullopt;
       operands.push_back(c->value);
     }
     return emitCall(n, sig, operands);
@@ -4466,6 +4485,7 @@ class Gen {
         return fail(obj, "only a field of a named record can be assigned");
       BindingPtr b = lookup(obj.text);
       if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      if (!usable(b, obj)) return std::nullopt;
       auto rt = mlir::dyn_cast<RecordType>(b->type);
       if (!rt)
         return fail(place, "'." + place.text + "' needs a record, found " +
@@ -4504,6 +4524,7 @@ class Gen {
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
       b->value = c->value;
+      moved_.erase(b);  // a moved local holds a value again
       return unit();
     }
     if (place.kind == NodeKind::Index) {
@@ -4532,6 +4553,89 @@ class Gen {
     return fail(place, "only a name or an element can be assigned");
   }
 
+  // --- ownership: `moved` (docs/design.md) ---------------------------
+
+  // A local after it is moved, and where. `maybe` when only some paths to
+  // here move it.
+  struct Move {
+    syntax::SourceLoc at;
+    std::string callee;
+    bool maybe = false;
+  };
+
+  struct Deeper {
+    unsigned &depth;
+    explicit Deeper(unsigned &d) : depth(d) { ++depth; }
+    ~Deeper() { --depth; }
+  };
+
+  // Values of scalar types are copied, so passing one as `moved` leaves
+  // the caller's copy alive.
+  bool copied(Type t) {
+    return mlir::isa<IntType>(t) || isBool(t) || mlir::isa<mlir::FloatType>(t) ||
+           isUnit(t);
+  }
+
+  // Whether `b` may be used at `n`: not after it was moved. Contracts and
+  // ghost code may still name it, since they describe values, not use them.
+  bool usable(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_) return true;
+    auto m = moved_.find(b);
+    if (m == moved_.end()) return true;
+    fail(n, "'" + n.text + "' " + (m->second.maybe ? "may have been" : "was") +
+                " moved to '" + m->second.callee + "' at " +
+                std::to_string(m->second.at.line) + ":" +
+                std::to_string(m->second.at.column) +
+                ", so it can no longer be used here" +
+                (m->second.maybe ? " (it is moved on some paths to here)"
+                                 : ""));
+    return false;
+  }
+
+  // The argument `arg` passed as the `moved` parameter `p` of `sig`: a
+  // local is dead after the call.
+  bool moveArgument(const Node &arg, Type t, const sema::FuncSig &sig,
+                    const sema::Param &p) {
+    if (contract_ || ghost_ || copied(t)) return true;
+    if (arg.kind != NodeKind::Name || !arg.flags.empty()) return true;
+    BindingPtr b = lookup(arg.text);
+    if (!b) return true;
+    if (b->isParam && !sema::hasModifier(b->modifiers, "moved")) {
+      fail(arg, "'" + arg.text + "' is borrowed by this function, so it "
+                "cannot be moved to '" + p.name + "' of '" + sig.name +
+                "'; take it as 'moved', as in '(" + arg.text + " : moved " +
+                typeName(t) + ")'");
+      return false;
+    }
+    if (b->loopDepth < loopDepth_) {
+      fail(arg, "'" + arg.text + "' is moved inside a loop, so the next "
+                "iteration would use it after the move; bind it inside the "
+                "loop, or move it after the loop");
+      return false;
+    }
+    moved_[b] = Move{arg.loc, sig.name, false};
+    return true;
+  }
+
+  // After an `if`: a local moved on either branch is moved, or maybe
+  // moved, after it. `moved_` holds the else branch's moves.
+  void mergeMoves(const std::map<BindingPtr, Move> &thenMoves) {
+    std::map<BindingPtr, Move> out;
+    for (auto &[b, m] : thenMoves) {
+      auto e = moved_.find(b);
+      Move merged = m;
+      merged.maybe = m.maybe || e == moved_.end() || e->second.maybe;
+      out[b] = merged;
+    }
+    for (auto &[b, m] : moved_)
+      if (!thenMoves.count(b)) {
+        Move merged = m;
+        merged.maybe = true;
+        out[b] = merged;
+      }
+    moved_ = std::move(out);
+  }
+
   R genIf(const Node &n, Type expected) {
     Location l = loc(n);
     R c = genExpr(*n.kids[0], boolType());
@@ -4554,6 +4658,7 @@ class Gen {
     {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPointToEnd(thenBlock.get());
+      std::map<BindingPtr, Move> movedBefore = moved_;
       pushScope();
       R t = genExpr(thenNode, expected);
       popScope();
@@ -4561,6 +4666,8 @@ class Gen {
       tv = *t;
       thenVars = values(vars);
       setValues(vars, before);
+      std::map<BindingPtr, Move> movedThen = std::move(moved_);
+      moved_ = std::move(movedBefore);
       if (elseNode) {
         b_.setInsertionPointToEnd(elseBlock.get());
         pushScope();
@@ -4571,6 +4678,7 @@ class Gen {
       }
       elseVars = values(vars);
       setValues(vars, before);
+      mergeMoves(movedThen);
     }
 
     Type rt;
@@ -4702,6 +4810,7 @@ class Gen {
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
       LoopScope inLoop(frames_);
+      Deeper deeper(loopDepth_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
       if (r && !mustUse(*r, body)) r = std::nullopt;
       if (r) create<mlir::scf::YieldOp>(l, values(vars));
@@ -4748,6 +4857,7 @@ class Gen {
           pushScope();
           setValues(vars, args);
           LoopScope inLoop(frames_);
+          Deeper deeper(loopDepth_);
           R r = genExpr(body, Type());
           if (r && !mustUse(*r, body)) r = std::nullopt;
           if (r)
@@ -5326,6 +5436,10 @@ class Gen {
   unsigned matchCounter_ = 0;
   std::vector<syntax::NodePtr> matchTrees_;
   std::deque<Frame> frames_;
+  // The locals moved so far on the path being generated (`moved`), and the
+  // loops open there.
+  std::map<BindingPtr, Move> moved_;
+  unsigned loopDepth_ = 0;
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;
