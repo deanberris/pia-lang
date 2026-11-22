@@ -1,4 +1,5 @@
 #include "irgen/IRGen.h"
+#include "irgen/Regions.h"
 #include "irgen/Theories.h"
 #include "verify/Strategy.h"
 #include "verify/Triggers.h"
@@ -92,6 +93,12 @@ struct Binding {
   bool arena = false;
   // A lambda's closure, which borrows the buffers it captures (ADR 0044).
   bool closure = false;
+  // A region (ADR 0042, step 2): what a parameter whose type mentions it
+  // borrows from, outside the function.
+  bool region = false;
+  // For a region with no name, the parameter whose type holds it, as `v`
+  // in `(v : borrowed vec u8)`.
+  std::string regionOf;
   // A local's scope, the body of its `let`: a loan it holds ends at its
   // last use there (ADR 0042).
   const syntax::Node *scope = nullptr;
@@ -214,6 +221,7 @@ class Gen {
         interp_([](const std::string &) { return true; }) {}
 
   void setTheoryInfo(TheoryInfo info) { theoryInfo_ = std::move(info); }
+  void setRegionInfo(RegionInfo info) { regionInfo_ = std::move(info); }
   // Whether the file is marked `@trusted` (ADR 0023): only then may it use
   // `assume`.
   void setTrusted(bool trusted) { trusted_ = trusted; }
@@ -755,6 +763,7 @@ class Gen {
     b_.setInsertionPointToStart(entry);
 
     scopes_.clear();
+    regionBindings_.clear();
     pushScope();
     for (size_t i = 0; i < sig.params.size(); ++i) {
       const sema::Param &p = sig.params[i];
@@ -768,6 +777,11 @@ class Gen {
       b->modifiers = p.modifiers;
       b->isParam = true;
       b->entry = entry->getArgument(i);
+      for (const std::string &r : p.regions) b->lenders.push_back(regionBinding(r));
+      // A parameter of a type with regions, which names none, has one of
+      // its own.
+      if (p.regions.empty() && holdsRegionField(p.type))
+        b->lenders.push_back(regionBinding("'" + p.name + "'", p.name));
     }
 
     overflow_ = OverflowMode::proof;
@@ -958,7 +972,30 @@ class Gen {
       for (size_t i : threaded(sig))
         if (BindingPtr b = lookup(sig.params[i].name))
           for (const BindingPtr &l : b->lenders)
-            if (l->name != sig.params[i].lender) {
+            if (l->region && !l->regionOf.empty() &&
+                l->regionOf != sig.params[i].name) {
+              fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                                 "' a value borrowed from what '" +
+                                 l->regionOf + "' borrows from; give both "
+                                 "one region, as in '(r : region)', with " +
+                                 "the region in both their types");
+              return;
+            } else if (l->region && l->regionOf.empty() &&
+                       !llvm::is_contained(sig.params[i].regions, l->name)) {
+              fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                                 "' a value borrowed from the region '" +
+                                 l->name + "', which its type does not "
+                                 "mention");
+              return;
+            } else if (!l->region && sig.params[i].lender.empty() &&
+                       !sig.params[i].regions.empty()) {
+              fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                                 "' a value borrowed from '" + l->name +
+                                 "', which ends with '" + name + "'; '" +
+                                 b->name + "' may hold only loans from its "
+                                 "region '" + sig.params[i].regions[0] + "'");
+              return;
+            } else if (!l->region && l->name != sig.params[i].lender) {
               fail(bodyNode, "'" + name + "' stores a value borrowed from '" +
                                  l->name + "' in '" + b->name + "'; say so "
                                  "in its parameter, as in '(" + b->name +
@@ -969,7 +1006,21 @@ class Gen {
             }
     if (!isSpec && !ghost_)
       for (const BindingPtr &l : lendersOf(*bodyPtr))
-        if (l->name != sig.resultLender) {
+        if (l->region && !l->regionOf.empty()) {
+          fail(bodyNode, "'" + name + "' returns a value borrowed from what '" +
+                             l->regionOf + "' borrows from; give '" +
+                             l->regionOf + "' a region, as in '(r : region)' "
+                             "and a type that mentions it, and say so in the "
+                             "result type, as in ': borrowed(r) " +
+                             typeName(body->type) + "'");
+          return;
+        } else if (l->region && !llvm::is_contained(sig.resultRegions, l->name)) {
+          fail(bodyNode, "'" + name + "' returns a value borrowed from the "
+                             "region '" + l->name + "'; say so in its result "
+                             "type, as in ': borrowed(" + l->name + ") " +
+                             typeName(body->type) + "'");
+          return;
+        } else if (!l->region && l->name != sig.resultLender) {
           fail(bodyNode, "'" + name + "' returns a value borrowed from '" +
                              l->name + "'; say so in its result type, as in "
                              "': borrowed(" + l->name + ") " +
@@ -2792,6 +2843,13 @@ class Gen {
       operands.push_back(c->value);
     }
     Lenders lenders;
+    // A result that mentions a region borrows what the arguments for that
+    // region's parameters borrow, not the arguments themselves: so `alloc
+    // v.alloc n` does not lend `v` to the buffer it stores in `v`.
+    if (!sig.resultRegions.empty() && !contract_ && !ghost_) {
+      if (sig.lentType) lentTypes_.insert(sig.lentType.getAsOpaquePointer());
+      addLenders(lenders, regionLenders(sig, sig.resultRegions, args));
+    }
     if (!sig.resultLender.empty() && !contract_ && !ghost_) {
       if (sig.lentType) lentTypes_.insert(sig.lentType.getAsOpaquePointer());
       size_t i = 0;
@@ -2859,6 +2917,8 @@ class Gen {
       std::vector<size_t> through = threaded(sig);
       for (size_t k = 0; k < through.size(); ++k) {
         const sema::Param &p = sig.params[through[k]];
+        if (!p.regions.empty() && rebind[k].b)
+          addLenders(rebind[k].b->lenders, regionLenders(sig, p.regions, args));
         if (p.lender.empty() || !rebind[k].b) continue;
         size_t i = 0;
         while (sig.params[i].name != p.lender) ++i;
@@ -2876,7 +2936,7 @@ class Gen {
     // Recorded even when empty: a call's result borrows only what its
     // result type says.
     if (out) lent_[&n] = std::move(lenders);
-    if (out && !sig.resultLender.empty() &&
+    if (out && (!sig.resultLender.empty() || sig.lentFromRegion) &&
         (sema::hasModifier(sig.lentModifiers, "out") ||
          sema::hasModifier(sig.lentModifiers, "inout") ||
          sema::hasModifier(sig.lentModifiers, "mutable")))
@@ -7293,6 +7353,49 @@ class Gen {
       if (llvm::find(to, b) == to.end()) to.push_back(b);
   }
 
+  // The binding that stands for the region `r` in the current function.
+  BindingPtr regionBinding(const std::string &r, const std::string &of = "") {
+    BindingPtr &b = regionBindings_[r];
+    if (!b) {
+      b = std::make_shared<Binding>();
+      b->name = r;
+      b->region = true;
+      b->regionOf = of;
+    }
+    return b;
+  }
+
+  // Whether a value of type `t` holds a field that borrows from a region,
+  // as `vec<u8>` holds `buf`. Each such field's type then may borrow.
+  bool holdsRegionField(Type t, unsigned depth = 0) {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(t);
+    if (!rt || depth > 8) return false;
+    std::string base = rt.getName().split('<').first.str();
+    bool any = false;
+    for (auto [f, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
+      if (regionInfo_.lentFields.count(base + "." + f.str())) {
+        lentTypes_.insert(ft.getAsOpaquePointer());
+        any = true;
+      }
+      any |= holdsRegionField(ft, depth + 1);
+    }
+    return any;
+  }
+
+  // What the arguments for the regions `regions` of `sig` borrow from.
+  Lenders regionLenders(const sema::FuncSig &sig,
+                        const std::vector<std::string> &regions,
+                        const std::vector<const Node *> &args) {
+    Lenders out;
+    for (size_t i = 0; i < sig.params.size() && i < args.size(); ++i)
+      for (const std::string &r : sig.params[i].regions)
+        if (llvm::is_contained(regions, r)) {
+          addLenders(out, lendersOf(*args[i]));
+          break;
+        }
+    return out;
+  }
+
   Lenders lendersOf(const Node &n) {
     auto it = lent_.find(&n);
     if (it != lent_.end()) return it->second;
@@ -7394,9 +7497,11 @@ class Gen {
   bool mayBorrow(Type t, unsigned depth = 0) {
     if (!t || copied(t) || depth > 8) return false;
     if (lentTypes_.count(t.getAsOpaquePointer())) return true;
-    if (auto rt = mlir::dyn_cast<RecordType>(t))
+    if (auto rt = mlir::dyn_cast<RecordType>(t)) {
+      if (holdsRegionField(rt)) return true;
       for (Type f : rt.getFieldTypes())
         if (mayBorrow(f, depth + 1)) return true;
+    }
     if (Type e = elementType(t)) return mayBorrow(e, depth + 1);
     return false;
   }
@@ -8547,6 +8652,7 @@ class Gen {
   unsigned loopDepth_ = 0;
   // What each expression generated so far is borrowed from (#70).
   std::map<const Node *, std::vector<BindingPtr>> lent_;
+  std::map<std::string, BindingPtr> regionBindings_;  // per function
   std::set<const void *> lentTypes_;  // the types borrowed results borrow
   std::set<const Node *> writable_;    // borrowed buffers that may be written
   std::vector<Value> threadedResults_;  // the last call's threaded values
@@ -8567,6 +8673,7 @@ class Gen {
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
+  RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Concepts by name, and whether each (concept, arguments) is met: the
@@ -8638,9 +8745,18 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
+  // Region parameters (ADR 0042, step 2) are erased into marks first.
+  syntax::NodePtr erased;
+  RegionInfo regions;
+  if (hasRegions(program)) {
+    erased = syntax::clone(program);
+    eraseRegions(*erased, diags, regions);
+    if (diags.hasErrors()) return nullptr;
+  }
+  const syntax::Node &source = erased ? *erased : program;
   // Theories (ADR 0036) become ordinary items with qualified names.
-  if (hasTheories(program)) {
-    syntax::NodePtr flat = syntax::clone(program);
+  if (hasTheories(source)) {
+    syntax::NodePtr flat = syntax::clone(source);
     TheoryInfo info;
     flattenTheories(*flat, diags, &info);
     if (diags.hasErrors()) return nullptr;
@@ -8652,6 +8768,7 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                     std::to_string(at.line) + ":" + std::to_string(at.column)));
     Gen gen(ctx, filename, diags, options);
     gen.setTheoryInfo(std::move(info));
+    gen.setRegionInfo(regions);
     gen.setTrusted(isTrustedFile(program));
     auto module = gen.run(*flat);
     if (module && !grants.empty())
@@ -8659,8 +8776,9 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
     return module;
   }
   Gen gen(ctx, filename, diags, options);
+  gen.setRegionInfo(std::move(regions));
   gen.setTrusted(isTrustedFile(program));
-  return gen.run(program);
+  return gen.run(source);
 }
 
 }  // namespace pia::irgen

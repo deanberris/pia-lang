@@ -722,6 +722,16 @@ void defineTypeItems(const Node &program, TypeResolver &types,
   defineTypes(program, types, diags);
 }
 
+// "regions:r,s" (irgen/Regions.cpp) -> {r, s}.
+static std::vector<std::string> regionsOf(llvm::StringRef flags) {
+  std::vector<std::string> out;
+  if (!flags.consume_front("regions:")) return out;
+  llvm::SmallVector<llvm::StringRef> names;
+  flags.split(names, ',', -1, false);
+  for (llvm::StringRef n : names) out.push_back(n.str());
+  return out;
+}
+
 bool isTypeParam(const Node &p) {
   return p.kind == NodeKind::Param && !p.kids.empty() &&
          p.kids[0]->kind == NodeKind::Annot &&
@@ -757,7 +767,18 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     }
     const Node &annot = *p->kids[0];
     Param param;
-    if (const Node *l = findLender(annot)) {
+    param.regions = regionsOf(p->flags);
+    if (const Node *l = findLender(annot); l && l->flags == "region") {
+      const std::string &mods = annot.kids[0]->text;
+      if (findLentAnnot(annot) != &annot ||
+          !(hasModifier(mods, "inout") || hasModifier(mods, "out"))) {
+        diags.error(l->loc, "'borrowed(" + l->text + ")' on a parameter says "
+                            "what the new value of an 'inout' or 'out' "
+                            "parameter borrows; this one is just 'borrowed'");
+        ok = false;
+        continue;
+      }
+    } else if (const Node *l = findLender(annot)) {
       const std::string &mods = annot.kids[0]->text;
       if (findLentAnnot(annot) != &annot ||
           !(hasModifier(mods, "inout") || hasModifier(mods, "out"))) {
@@ -806,7 +827,14 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     if (!sig.result) ok = false;
     sig.resultLender.clear();
     sig.lentModifiers.clear();
-    if (const Node *l = findLender(*ret.kids[0])) {
+    sig.resultRegions = regionsOf(ret.flags);
+    sig.lentFromRegion = false;
+    if (const Node *l = findLender(*ret.kids[0]); l && l->flags == "region") {
+      const Node &lent = *findLentAnnot(*ret.kids[0]);
+      sig.lentType = types.resolveAnnot(lent);
+      sig.lentModifiers = lent.kids[0]->text;
+      sig.lentFromRegion = true;
+    } else if (const Node *l = findLender(*ret.kids[0])) {
       auto p = std::find_if(sig.params.begin(), sig.params.end(),
                             [&](const Param &q) { return q.name == l->text; });
       if (p == sig.params.end()) {

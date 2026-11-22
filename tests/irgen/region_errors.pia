@@ -1,0 +1,51 @@
+(* What a value of a type with regions may borrow (ADR 0042, step 2). A
+   parameter whose type mentions `r` holds loans from the region `r`,
+   which is outside the function: they may go into another such
+   parameter, or out in a result that says `borrowed(r)`, and nowhere
+   else. A parameter of such a type that names no region has one of its
+   own.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let span = let (r : region) => type { mem : borrowed(r) mutable [u8]; used : usize }
+
+(* CHECK: region_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'leak' returns a value borrowed from the region 'r'; say so in its result type, as in ': borrowed(r) [u8]'
+*)
+let leak (r : region) (s : borrowed span r) : [u8] = s.mem
+
+(* Said, it is fine. *)
+let keep (r : region) (s : borrowed span r) : borrowed(r) [u8] = s.mem
+
+(* CHECK: region_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'unnamed' returns a value borrowed from what 's' borrows from; give 's' a region, as in '(r : region)' and a type that mentions it, and say so in the result type, as in ': borrowed(r) [u8]'
+*)
+let unnamed (s : borrowed span) : [u8] = s.mem
+
+(* CHECK: region_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'stash' stores in 's' a value borrowed from what 'other' borrows from; give both one region, as in '(r : region)', with the region in both their types
+*)
+let stash (r : region) (s : inout mutable span r) (other : borrowed span) : unit =
+  s.mem <- other.mem
+
+(* One region for both is fine. *)
+let share (r : region) (s : inout mutable span r) (other : borrowed span r) : unit =
+  s.mem <- other.mem
+
+(* CHECK: region_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'local' stores in 's' a value borrowed from 'a', which ends with 'local'; 's' may hold only loans from its region 'r'
+*)
+let local (r : region) (s : inout mutable span r) : unit =
+  with_arena 16 (let (a) =>
+    s.mem <- a.mem)
+
+(* A span over an arena stays in it.
+// CHECK: region_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: this value is in the arena 'a', or borrowed from it, so it cannot leave the 'with_arena', which frees the arena here
+*)
+let escape (n : u8) : span =
+  with_arena 16 (let (a) =>
+    let s : span = { mem = a.mem; used = 0 } in
+    s)
+
+(* Inside it, a loan from the span's region is fine. *)
+let inside (n : u8) : usize =
+  with_arena 16 (let (a) =>
+    let s : span = { mem = a.mem; used = 0 } in
+    let m = keep s in
+    len m)
