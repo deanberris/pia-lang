@@ -105,7 +105,7 @@ let alloc (g : borrowed inout mutable general) (n : usize) : result gblock oom
   ensures forall (i : blk). Alloc.live (old g.small.heap) i ==> Alloc.live g.small.heap i
   ensures forall (i : blk). Alloc.live (old g.large.heap) i ==> Alloc.live g.large.heap i
   ensures (match result with
-           | Ok x -> bytes x.c >= n && held g x
+           | Ok x -> bytes x.c >= n && x.c = (if n <= 16 then 0 else 1) && held g x
            | Err _ -> true)
 = if n <= 16 then
     (match take_slot g.small with
@@ -134,3 +134,56 @@ let both (g : borrowed inout mutable general) : result unit oom
   match alloc g 40 with
   | Ok l -> (free g l; free g s; Ok ())
   | Err e -> (free g s; Err e)
+
+(* Expected report, in order.
+// CHECK: size_classes.pia:59:20: proved: '-' does not overflow usize [smt]
+// CHECK: size_classes.pia:60:14: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:62:34: proved: the value fits in int{0..63} [smt]
+// CHECK: size_classes.pia:63:15: proved: the value fits in int{0..63} [smt]
+// CHECK: size_classes.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:74:13: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:75:13: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:76:5: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:77:5: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:78:5: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:79:18: proved: the value fits in u16 [smt]
+// CHECK: size_classes.pia:79:5: proved: the index is within bounds [smt]
+// CHECK: size_classes.pia:80:16: proved: '+' does not overflow usize [smt]
+// CHECK: size_classes.pia:69:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:111:12: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: size_classes.pia:115:12: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: size_classes.pia:102:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:103:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:104:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:105:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:106:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:107:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:128:31: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: size_classes.pia:128:56: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: size_classes.pia:122:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:123:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:124:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:125:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:126:3: proved: the postcondition holds [smt]
+// CHECK: size_classes.pia:133:11: proved: the precondition of 'alloc' holds [smt]
+// CHECK: size_classes.pia:134:9: proved: the precondition of 'alloc' holds [smt]
+// CHECK: size_classes.pia:135:14: proved: the precondition of 'free' holds [smt]
+// CHECK: size_classes.pia:135:24: proved: the precondition of 'free' holds [smt]
+// CHECK: size_classes.pia:136:15: proved: the precondition of 'free' holds [smt]
+// CHECK: size_classes.pia:30:50: proved: the shift amount is less than 64 [intervals]
+// CHECK: size_classes.pia:30:50: proved: '>>' does not overflow usize [intervals]
+// CHECK: size_classes.pia:30:56: proved: '&' does not overflow usize [intervals]
+// CHECK: size_classes.pia:31:53: proved: the shift amount is less than 64 [intervals]
+// CHECK: size_classes.pia:31:53: proved: '<<' does not overflow usize [intervals]
+// CHECK: size_classes.pia:31:48: proved: '|' does not overflow usize [intervals]
+// CHECK: size_classes.pia:32:53: proved: the shift amount is less than 64 [intervals]
+// CHECK: size_classes.pia:32:53: proved: '<<' does not overflow usize [intervals]
+// CHECK: size_classes.pia:32:49: proved: '^' does not overflow usize [intervals]
+// CHECK: size_classes.pia:32:47: proved: '&' does not overflow usize [intervals]
+// CHECK: size_classes.pia:19:33: proved: the model 'bits' meets the axiom 'Alloc.none_live' [smt]
+// CHECK: size_classes.pia:21:5: proved: the model 'bits' meets the axiom 'Alloc.take_live' [smt]
+// CHECK: size_classes.pia:23:5: proved: the model 'bits' meets the axiom 'Alloc.give_live' [smt]
+// CHECK: 49 proved, 0 failed, 0 skipped
+*)
