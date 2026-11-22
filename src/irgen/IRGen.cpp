@@ -27,6 +27,7 @@
 #include "meta/Interpreter.h"
 #include "meta/Totality.h"
 #include "sema/Sema.h"
+#include "syntax/Parser.h"
 
 namespace pia::irgen {
 
@@ -142,6 +143,16 @@ class Gen {
         mlir::ModuleOp::create(mlir::FileLineColLoc::get(file_, 1, 1));
     module_ = *module;
     collectTypeFunctions(program);
+    // `result t e` comes with the language (ADR 0028), unless the program
+    // brings its own `result`, `Ok` or `Err`.
+    if (!definesResult(program)) {
+      syntax::Diagnostics ignored;
+      prelude_ = syntax::parseProgram(
+          "let result = let (t : type) (e : type) => type | Ok of t | Err of "
+          "e\n",
+          ignored);
+      if (prelude_) sema::defineTypeItems(*prelude_, types_, diags_);
+    }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
     collectConstants();
@@ -516,6 +527,17 @@ class Gen {
     // A spec function's body is specification, like a contract: it may
     // use quantifiers, and it is never compiled.
     const Node &bodyNode = *item.kids[3];
+    // The body is the first scope a `?` can leave (ADR 0028).
+    struct FrameScope {
+      std::deque<Frame> &frames;
+      std::deque<Frame> saved;
+      ~FrameScope() { frames = std::move(saved); }
+    } frameScope{frames_, std::move(frames_)};
+    frames_.clear();
+    frames_.emplace_back();
+    frames_.back().result = sig.result;
+    frames_.back().function = sig.source();
+    if (!isSpec) addTails(bodyNode);
     R body = isSpec ? genContractExpr(bodyNode, sig.result)
                     : genExpr(bodyNode, sig.result);
     if (!body) return;
@@ -705,6 +727,8 @@ class Gen {
   }
 
   R genExpr(const Node &n, Type expected) {
+    if (!frames_.empty() && frames_.back().tails.count(&n))
+      if (const Node *t = hoistable(n)) return genTry(n, *t, expected);
     switch (n.kind) {
       case NodeKind::IntLit: {
         auto lit = sema::parseIntLiteral(n.text);
@@ -762,8 +786,13 @@ class Gen {
       case NodeKind::Sequence: {
         R first = genExpr(*n.kids[0], Type());
         if (!first) return first;
+        if (!mustUse(*first, *n.kids[0])) return std::nullopt;
         return genExpr(*n.kids[1], expected);
       }
+      case NodeKind::Try:
+        return fail(n, tryMisplaced());
+      case NodeKind::Handle:
+        return genHandle(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
       case NodeKind::Assert:
@@ -1109,6 +1138,8 @@ class Gen {
     struct ArmInfo {
       const sema::Ctor *ctor = nullptr;
       std::string bind;
+      std::string as;  // `p as x` binds `x` to the whole value
+      syntax::SourceLoc asAt;
       const Node *body = nullptr;
       const Node *at = nullptr;
     };
@@ -1117,8 +1148,12 @@ class Gen {
     bool catchAll = false;
     for (size_t i = 1; i < n.kids.size(); ++i) {
       const Node &arm = *n.kids[i];
-      const Node &pat = *arm.kids[0];
+      const Node &pat = corePattern(*arm.kids[0]);
       ArmInfo a;
+      if (arm.kids[0]->kind == NodeKind::PAs) {
+        a.as = arm.kids[0]->text;
+        a.asAt = arm.kids[0]->loc;
+      }
       a.body = arm.kids[1].get();
       a.at = &pat;
       if (catchAll)
@@ -1191,26 +1226,40 @@ class Gen {
     auto hiddenName = [&]() {
       return syntax::makeNode(NodeKind::Name, at, hidden);
     };
-    auto armBody = [&](const ArmInfo &a) -> syntax::NodePtr {
-      syntax::NodePtr body = syntax::clone(*a.body);
-      if (a.bind.empty()) return body;
-      auto let = syntax::makeNode(NodeKind::LetIn, a.at->loc, a.bind);
-      let->add(syntax::makeNode(NodeKind::Params, a.at->loc));
-      let->add(syntax::makeNode(NodeKind::None, a.at->loc));
-      let->add(syntax::makeNode(NodeKind::Contracts, a.at->loc));
-      if (a.ctor) {
-        auto get = syntax::makeNode(NodeKind::Apply, a.at->loc);
-        auto fn = syntax::makeNode(NodeKind::Name, a.at->loc, "#payload");
-        fn->flags = "prelude";
-        get->add(std::move(fn));
-        get->add(hiddenName());
-        get->add(syntax::makeNode(NodeKind::Name, a.at->loc, a.ctor->name));
-        let->add(std::move(get));
-      } else {
-        let->add(hiddenName());
-      }
+    auto letIn = [&](const std::string &name, syntax::SourceLoc l,
+                     syntax::NodePtr value, syntax::NodePtr body) {
+      auto let = syntax::makeNode(NodeKind::LetIn, l, name);
+      let->add(syntax::makeNode(NodeKind::Params, l));
+      let->add(syntax::makeNode(NodeKind::None, l));
+      let->add(syntax::makeNode(NodeKind::Contracts, l));
+      let->add(std::move(value));
       let->add(std::move(body));
       return let;
+    };
+    bool tail = !frames_.empty() && frames_.back().tails.count(&n);
+    auto armBody = [&](const ArmInfo &a) -> syntax::NodePtr {
+      syntax::NodePtr body = syntax::clone(*a.body);
+      // An arm of a match that ends its scope ends it too, so a `?` there
+      // can end it as well.
+      if (tail) addTails(*body);
+      if (!a.bind.empty()) {
+        syntax::NodePtr value;
+        if (a.ctor) {
+          value = syntax::makeNode(NodeKind::Apply, a.at->loc);
+          auto fn = syntax::makeNode(NodeKind::Name, a.at->loc, "#payload");
+          fn->flags = "prelude";
+          value->add(std::move(fn));
+          value->add(hiddenName());
+          value->add(
+              syntax::makeNode(NodeKind::Name, a.at->loc, a.ctor->name));
+        } else {
+          value = hiddenName();
+        }
+        body = letIn(a.bind, a.at->loc, std::move(value), std::move(body));
+      }
+      if (!a.as.empty())
+        body = letIn(a.as, a.asAt, hiddenName(), std::move(body));
+      return body;
     };
     syntax::NodePtr chain = armBody(arms.back());
     for (size_t i = arms.size() - 1; i-- > 0;) {
@@ -3845,7 +3894,9 @@ class Gen {
       }
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
+      LoopScope inLoop(frames_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
+      if (r && !mustUse(*r, body)) r = std::nullopt;
       if (r) create<mlir::scf::YieldOp>(l, values(vars));
       popScope();
       if (!r) return r;
@@ -3889,7 +3940,9 @@ class Gen {
           b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
           pushScope();
           setValues(vars, args);
+          LoopScope inLoop(frames_);
           R r = genExpr(body, Type());
+          if (r && !mustUse(*r, body)) r = std::nullopt;
           if (r)
             create<mlir::scf::YieldOp>(l, values(vars));
           else
@@ -3899,6 +3952,352 @@ class Gen {
     if (!ok) return std::nullopt;
     setValues(vars, whileOp.getResults());
     return unit();
+  }
+
+  // --- `?` and `handle` (ADR 0028) -----------------------------------
+
+  // The scopes a `?` can leave (ADR 0028): the function body, and each
+  // `handle` inside it. A deque, so a frame stays put while inner ones come
+  // and go.
+  struct Frame {
+    const Node *handle = nullptr;  // null for the function body
+    Type result;                   // the function's result type, if written
+    std::string function;
+    // The nodes whose value is the scope's value: a `?` there can end the
+    // scope, since nothing after it in the scope still needs a value.
+    std::set<const Node *> tails;
+    unsigned loops = 0;            // loops open inside the scope
+    unsigned sites = 0;            // the `?`s that reach the handler
+    std::set<const Node *> armsUsed;
+    std::set<std::string> binds;   // the names the handled scope binds
+  };
+
+  static bool definesResult(const Node &n) {
+    if ((n.kind == NodeKind::LetItem && n.text == "result") ||
+        (n.kind == NodeKind::Ctor && (n.text == "Ok" || n.text == "Err")))
+      return true;
+    for (const syntax::NodePtr &k : n.kids)
+      if (definesResult(*k)) return true;
+    return false;
+  }
+  //
+  // A `?` ends its scope early, so it must sit where the rest of the scope
+  // is all that follows it: in a tail of the scope, unconditionally
+  // evaluated. There it becomes an `if` on the result's tag: `Ok` goes on
+  // with the rest of the scope, holding the payload where the `?` was, and
+  // `Err` becomes the scope's value, either `Err e` returned to the caller
+  // or the handler's arms for that error, generated at this `?`. So each
+  // arm is checked and proved once per `?` that can reach it, knowing only
+  // what holds there.
+
+  // Counts the loops open in the innermost scope, whose bodies a `?` cannot
+  // leave without a handler of their own.
+  struct LoopScope {
+    std::deque<Frame> &frames;
+    explicit LoopScope(std::deque<Frame> &f) : frames(f) {
+      if (!frames.empty()) ++frames.back().loops;
+    }
+    ~LoopScope() {
+      if (!frames.empty()) --frames.back().loops;
+    }
+  };
+
+  // Marks `n` and the nodes whose value is its value as tails of the
+  // innermost scope.
+  void addTails(const Node &n) {
+    frames_.back().tails.insert(&n);
+    switch (n.kind) {
+      case NodeKind::LetIn:
+        addTails(*n.kids[4]);
+        break;
+      case NodeKind::Sequence:
+        addTails(*n.kids[1]);
+        break;
+      case NodeKind::If:
+        addTails(*n.kids[1]);
+        if (n.kids.size() > 2 && n.kids[2]->kind != NodeKind::None)
+          addTails(*n.kids[2]);
+        break;
+      case NodeKind::Match:
+        for (size_t i = 1; i < n.kids.size(); ++i) addTails(*n.kids[i]->kids[1]);
+        break;
+      default:
+        break;
+    }
+  }
+
+  // The first `?` that `n` always evaluates before its tails, in
+  // evaluation order, or null.
+  static const Node *hoistable(const Node &n) {
+    switch (n.kind) {
+      case NodeKind::Try:
+        if (const Node *inner = hoistable(*n.kids[0])) return inner;
+        return &n;
+      case NodeKind::LetIn:
+        return n.kids[0]->kids.empty() ? hoistable(*n.kids[3]) : nullptr;
+      case NodeKind::Sequence:
+      case NodeKind::If:
+      case NodeKind::Match:
+        return hoistable(*n.kids[0]);
+      case NodeKind::For:
+        if (const Node *t = hoistable(*n.kids[1])) return t;
+        return hoistable(*n.kids[2]);
+      case NodeKind::Binary:
+        if (n.text == "&&" || n.text == "||" || n.text == "==>")
+          return hoistable(*n.kids[0]);
+        break;
+      case NodeKind::While:
+      case NodeKind::Handle:
+      case NodeKind::Lambda:
+      case NodeKind::Quantifier:
+      case NodeKind::Assert:
+      case NodeKind::Assume:
+        return nullptr;
+      default:
+        break;
+    }
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *t = hoistable(*k)) return t;
+    return nullptr;
+  }
+
+  static bool hasTry(const Node &n) {
+    if (n.kind == NodeKind::Try) return true;
+    for (const syntax::NodePtr &k : n.kids)
+      if (hasTry(*k)) return true;
+    return false;
+  }
+
+  // A copy of `n` with `target` replaced by `replacement`.
+  static syntax::NodePtr cloneWith(const Node &n, const Node *target,
+                                   syntax::NodePtr &replacement) {
+    if (&n == target) return std::move(replacement);
+    auto c = std::make_unique<Node>();
+    c->kind = n.kind;
+    c->text = n.text;
+    c->flags = n.flags;
+    c->loc = n.loc;
+    for (const syntax::NodePtr &k : n.kids)
+      c->kids.push_back(cloneWith(*k, target, replacement));
+    for (const syntax::NodePtr &k : n.comments)
+      c->comments.push_back(syntax::clone(*k));
+    return c;
+  }
+
+  static const Node &corePattern(const Node &p) {
+    return p.kind == NodeKind::PAs ? *p.kids[0] : p;
+  }
+
+  bool isResultType(Type t) const {
+    const sema::Instance *i = t ? types_.instanceOf(t) : nullptr;
+    return i && i->generic == "result" && i->args.size() == 2;
+  }
+
+  // A result may not be dropped unexamined (ADR 0028).
+  bool mustUse(const TV &v, const Node &at) {
+    if (!isResultType(v.type)) return true;
+    fail(at, "this result is never used; pass its error on with '?', or "
+             "'match' it");
+    return false;
+  }
+
+  std::string tryMisplaced() const {
+    if (!frames_.empty() && frames_.back().loops)
+      return "a '?' in a loop body needs a 'handle' on that body for now, "
+             "as in 'do step i? handle | e -> () done': its error cannot "
+             "leave the loop yet";
+    return "this '?' cannot end its scope from here: the scope still needs "
+           "a value from the branch, arm or expression it is in; bind it "
+           "with 'let' first, or give that part its own 'handle'";
+  }
+
+  static std::string where(const Node &n) {
+    return std::to_string(n.loc.line) + ":" + std::to_string(n.loc.column);
+  }
+
+  // The names that `n` binds: what a handler's arms may not use unless it
+  // is bound where the error is raised.
+  void collectBinds(const Node &n, std::set<std::string> &out) const {
+    if ((n.kind == NodeKind::LetIn || n.kind == NodeKind::PAs ||
+         (n.kind == NodeKind::PVar && !types_.isCtorName(n.text))) &&
+        n.text != "_")
+      out.insert(n.text);
+    for (const syntax::NodePtr &k : n.kids) collectBinds(*k, out);
+  }
+
+  // A name in `n` that the handled scope binds but that is not bound here,
+  // where the error is raised. `own` holds the names the arm binds itself.
+  const Node *unboundHere(const Node &n, const Frame &f,
+                          const std::set<std::string> &own) {
+    if (n.kind == NodeKind::Name && f.binds.count(n.text) &&
+        !own.count(n.text) && !lookup(n.text))
+      return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *u = unboundHere(*k, f, own)) return u;
+    return nullptr;
+  }
+
+  // The arms of `f`'s handler that take the errors of the `?` at `t`, in
+  // order, ending at the first catch-all.
+  std::optional<std::vector<const Node *>> armsFor(const Node &t, Type err,
+                                                   Frame &f) {
+    const Node &h = *f.handle;
+    std::vector<const sema::Ctor *> ctors = types_.ctorsOf(err);
+    std::vector<const Node *> take;
+    std::set<std::string> covered;
+    bool all = false;
+    for (size_t i = 1; i < h.kids.size() && covered.size() < ctors.size();
+         ++i) {
+      const Node &arm = *h.kids[i];
+      const Node &pat = corePattern(*arm.kids[0]);
+      if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
+        take.push_back(&arm);
+        all = true;
+        break;
+      }
+      if ((pat.kind == NodeKind::PVar || pat.kind == NodeKind::PCtor) &&
+          types_.ctorIn(pat.text, err)) {
+        take.push_back(&arm);
+        covered.insert(pat.text);
+      }
+    }
+    if (!all && covered.size() < ctors.size()) {
+      std::string missing;
+      for (const sema::Ctor *c : ctors)
+        if (!covered.count(c->name))
+          missing += (missing.empty() ? "" : ", ") + c->name;
+      fail(t, "this '?' can raise " + missing + ", which no arm of the "
+              "handler at " + where(h) + " takes; add an arm for each, or "
+              "a catch-all '| e -> ...'");
+      return std::nullopt;
+    }
+    for (const Node *arm : take) {
+      std::set<std::string> own;
+      collectBinds(*arm, own);
+      if (const Node *late = unboundHere(*arm->kids[1], f, own)) {
+        fail(*late, "this arm is reached from the '?' at " + where(t) +
+                        ", where '" + late->text + "' is not bound yet; an "
+                        "arm may use only what is bound at every '?' that "
+                        "reaches it (ADR 0028)");
+        return std::nullopt;
+      }
+      f.armsUsed.insert(arm);
+    }
+    return take;
+  }
+
+  // `n`, a tail of the innermost scope, with `t` the first `?` it
+  // evaluates.
+  R genTry(const Node &n, const Node &t, Type expected) {
+    R r = genExpr(*t.kids[0], Type());
+    if (!r) return r;
+    if (!isResultType(r->type))
+      return fail(t, "'?' passes on the error of a result, but this is " +
+                         typeName(r->type));
+    const sema::Instance *inst = types_.instanceOf(r->type);
+    Type ok = inst->args[0], err = inst->args[1];
+    if (!types_.isVariant(err))
+      return fail(t, "'?' needs an error type that is a variant, so a "
+                     "handler can match it; this result's errors are " +
+                         typeName(err));
+    Frame &f = frames_.back();
+    ++f.sites;
+    std::string hidden = "#try" + std::to_string(tryCounter_++);
+    syntax::SourceLoc at = t.loc;
+    auto name = [&](const std::string &text, const char *flags) {
+      auto x = syntax::makeNode(NodeKind::Name, at, text);
+      x->flags = flags;
+      return x;
+    };
+    auto builtin = [&](const char *which, const char *ctor) {
+      auto a = syntax::makeNode(NodeKind::Apply, at);
+      a->add(name(which, "prelude"));
+      a->add(name(hidden, ""));
+      a->add(name(ctor, ""));
+      return a;
+    };
+
+    syntax::NodePtr onErr;
+    if (!f.handle) {
+      Type fr = f.result;
+      if (!fr)
+        return fail(t, "'?' passes the error on to the caller, so '" +
+                           f.function + "' needs its return type written, "
+                           "as in ': result u8 " + typeName(err) + "'");
+      if (!isResultType(fr))
+        return fail(t, "'?' passes the error on to the caller, but '" +
+                           f.function + "' returns " + typeName(fr) +
+                           "; return a result, or give the scope a 'handle'");
+      Type ferr = types_.instanceOf(fr)->args[1];
+      if (ferr != err)
+        return fail(t, "this '?' passes on errors of type " +
+                           typeName(err) + ", but '" + f.function +
+                           "' returns errors of type " + typeName(ferr) +
+                           "; give the scope a 'handle' that converts them");
+      onErr = syntax::makeNode(NodeKind::Apply, at);
+      onErr->add(name("Err", ""));
+      onErr->add(builtin("#payload", "Err"));
+    } else {
+      auto arms = armsFor(t, err, f);
+      if (!arms) return std::nullopt;
+      onErr = syntax::makeNode(NodeKind::Match, at);
+      onErr->add(builtin("#payload", "Err"));
+      for (const Node *arm : *arms) onErr->add(syntax::clone(*arm));
+    }
+
+    syntax::NodePtr okValue = isUnit(ok)
+                                  ? syntax::makeNode(NodeKind::Unit, at)
+                                  : builtin("#payload", "Ok");
+    auto ifNode = syntax::makeNode(NodeKind::If, at);
+    ifNode->add(builtin("#is", "Ok"));
+    ifNode->add(cloneWith(n, &t, okValue));
+    ifNode->add(std::move(onErr));
+    const Node &chain = *ifNode;
+    matchTrees_.push_back(std::move(ifNode));  // diagnostics may point into it
+    // What follows the `?` is still a tail: it may raise again.
+    addTails(*chain.kids[1]);
+    pushScope();
+    bind(hidden, r->value, r->type, false);
+    R out = genExpr(chain, expected);
+    popScope();
+    return out;
+  }
+
+  // `body handle | p -> e ...`: the body with its `?`s handled here.
+  R genHandle(const Node &n, Type expected) {
+    if (frames_.empty())
+      return fail(n, "'handle' is only supported in a function body for now");
+    for (size_t i = 1; i < n.kids.size(); ++i)
+      if (hasTry(*n.kids[i]->kids[1]))
+        return fail(*n.kids[i]->kids[1],
+                    "a '?' inside a handler arm is not supported yet; "
+                    "'match' the result there instead");
+    Frame f;
+    f.handle = &n;
+    f.result = frames_.back().result;
+    f.function = frames_.back().function;
+    collectBinds(*n.kids[0], f.binds);
+    frames_.push_back(std::move(f));
+    addTails(*n.kids[0]);
+    R r = genExpr(*n.kids[0], expected);
+    Frame done = std::move(frames_.back());
+    frames_.pop_back();
+    if (!r) return r;
+    if (!done.sites)
+      return fail(n, "nothing in this scope passes an error on with '?', so "
+                     "its handler is never used");
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      const Node &arm = *n.kids[i];
+      if (done.armsUsed.count(&arm)) continue;
+      const Node &pat = corePattern(*arm.kids[0]);
+      if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text))
+        return fail(pat, "this arm is never reached: earlier arms take every "
+                         "error the '?'s in its scope can raise");
+      return fail(pat, "this arm is never reached: no '?' in its scope can "
+                       "raise '" + pat.text + "' before an earlier arm "
+                       "takes it");
+    }
+    return r;
   }
 
   R genLetIn(const Node &n, Type expected) {
@@ -4001,6 +4400,10 @@ class Gen {
   std::map<std::string, Constant> consts_;
   unsigned matchCounter_ = 0;
   std::vector<syntax::NodePtr> matchTrees_;
+  std::deque<Frame> frames_;
+  unsigned tryCounter_ = 0;
+  // The prelude's types (`result`), when the program does not define them.
+  syntax::NodePtr prelude_;
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;

@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22)
 
 ## Context
 

@@ -22,7 +22,7 @@ KEYWORDS = {
     "false": "FALSE", "borrowed": "BORROWED", "moved": "MOVED", "out": "OUT",
     "inout": "INOUT", "fixed": "FIXED", "mutable": "MUTABLE",
     # Errors and scope cleanup (ADR 0028).
-    "handle": "HANDLE", "defer": "DEFER",
+    "handle": "HANDLE", "defer": "DEFER", "as": "AS",
     # Alphanumeric operators from the bootstrap table.
     "mod": "OP_MUL",
 }

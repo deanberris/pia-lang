@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22), on the condition recorded under "Matching on types"
 
 ## Context
 
@@ -57,6 +57,47 @@ The step budget stays as a guard against interpreter bugs. Running out of it dur
 
 A constraint may require constraints on other types: `Eq (pair a b)` requires `Eq a` and `Eq b`. These obligations are also constraints, so they too must end. Each one must be on a strictly smaller type than the one that required it, which holds for components of the type by the same structural rule. A cycle that grows types, such as `C t` requiring `C (wrap t)`, is rejected at the concept's definition, because it has no decreasing measure.
 
+### Matching on types
+
+Accepted on a condition (Dean, 2026-11-22): metaprograms need a way to pattern-match on a type instead of cascading `if t = u8 then ... else if ...`. `match` already takes values, and types are values, so it takes a type too, with type patterns:
+
+```ocaml
+let meta widen (t : type) : type =
+  match t with
+  | u8 -> u16
+  | u16 -> u32
+  | u32 -> u64
+  | [e] -> [widen e]                 (* a slice, binding its element type *)
+  | option e -> option (widen e)     (* an instance, binding its arguments *)
+  | _ -> fail (concat "no integer type is wider than " (name t))
+```
+
+- A type name (`u8`, `pixel`) matches exactly that type. `[e]` and `[e; n]` match a slice or an array and bind its element type (and length). A generic's name applied to patterns, as in `option e` or `result t e`, matches its instances and binds or matches their type arguments.
+- A lower-case name that is not a type binds the whole type, and `_` matches anything. Kind patterns match by shape: `record fs` and `variant cs` bind the list of field or payload types, `int` matches every integer type. A name that is both a type and a binder is an error, as shadowing always is (ADR 0022).
+- Types are an open set, so a type `match` must end with a catch-all. An arm after one that already covers it is an error, as for value `match`.
+- The names a type pattern binds are components of the matched type, so a recursive call on them is structural recursion under "Constraints are total", with no `decreases` needed.
+- It is core `match`, not a library metaprogram. Dean weighed a `switch` metaprogram and chose core `match` (2026-11-22); a library form would also have needed declared expression forms and type constructors as metaprogram values. It is ordinary metaprogram code, so it needs no new keyword, and the interpreter evaluates it arm by arm. A predicate can use it as well: `let meta small (t : type) : bool = match t with | u8 -> true | [e; n] -> n <= 16 && small e | _ -> false`.
+
+**Arms carry contracts.** This is why the match is core and not a library form (Dean, 2026-11-22): a pattern can have a precondition and a postcondition, written between the pattern and `->`, with `result` naming the arm's value:
+
+```ocaml
+let meta widen (t : type) : type
+  ensures size_of result > size_of t
+=
+  match t with
+  | u8  ensures size_of result = 2 -> u16
+  | u16 ensures size_of result = 4 -> u32
+  | u32 ensures size_of result = 8 -> u64
+  | [e; n] requires n <= 4096 -> [widen e; n]
+  | _ -> fail (concat "no integer type is wider than " (name t))
+```
+
+- `requires c` on an arm is not a guard: it does not decide which arm runs. It is an obligation on every value that reaches the arm, proved where the `match` is. For a type match it is checked when the arm is taken, and a false one is the candidate's reason under soft failure, so a constraint can say why a type does not fit.
+- `ensures d` on an arm is proved for that arm's value, and after the `match` it is known under the arm's pattern: `t = u8 ==> size_of result = 2`. For a type-level metaprogram this is what the definition check of ADR 0034 is missing: it relates `widen t` to `t`, so a generic body that uses `widen t` can be checked once, from the arm postconditions and the metaprogram's own `ensures`, instead of in every instance.
+- The same syntax applies to a value `match` in ordinary code, where both are verifier goals: `| Some x requires x < len xs -> xs.[x]` proves the bound at the `match` for every value that can be `Some x`, and `| Err e ensures result = 0 -> 0` adds a fact to the `Err` path. A handler's arms are a value `match`, so they take contracts too, proved once per `?` that reaches them (ADR 0028).
+
+It is scheduled alongside `?` and the error handlers (#84).
+
 ### Results are cached
 
 A candidate's substitution result, viable with its instance's signature or failed with its reason, depends only on the candidate and the type arguments. It is computed once per pair in a build, and its proof goals (requirement contracts and laws) go through the proof cache of [ADR 0032](0032-parallel-sliced-cached-proving.md) like any other goal.
@@ -73,4 +114,5 @@ A candidate's substitution result, viable with its instance's signature or faile
 
 - Step 1 (type-level metaprograms in types, and `where` predicates): a `where` predicate is any conjunct that is a comparison, a connective other than `&&`, or a call of a type-level metaprogram returning `bool`; a false one removes the candidate with its reason. Until steps 2 and 3, a metaprogram's failure in a type or a predicate is a hard error. In the definition check, a type-level metaprogram applied to a type parameter gives a stand-in type, and a signature that has one is checked in each instance rather than once, since nothing yet relates `widen t` to `t`; concept requirements that mention type-level metaprograms would close that gap. A generic whose constraints state every predicate of another's is the more specific, and a generic body may only call a generic whose predicates its own constraints state.
 - Step 2 (the totality check): structural recursion is recognised on `element p` and on the elements of `field_types p` and `type_args p` that `map` or `fold` hand to a lambda, transitively. Since a type-level metaprogram's parameters are all types, an integer `decreases` measure has nothing to measure yet; it waits for metaprograms with value parameters in constraints. Local functions may not recurse, `listing` and `redefine` are impure, and a cycle between metaprograms is rejected.
+- Matching on types (the acceptance condition), with arm contracts on type and value matches: not implemented yet; it comes alongside `?` and the error handlers (#84).
 - Step 3 (soft failure): a metaprogram's `fail` while a candidate's signature is substituted, or while its predicates are evaluated, removes the candidate with the reason. Running out of steps there, and a use of a metaprogram that may not terminate, stay errors. Results are not cached per candidate and type arguments yet; concept checks already are. `--explain-overloads=<file:line>` prints the candidates, their reasons and the choice, as notes.

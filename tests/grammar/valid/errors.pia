@@ -15,3 +15,11 @@ let each (n : u8) : unit =
   handle
   | E -> ()
   done
+
+let wrap (path : u8) : result u8 app_error =
+  let f = open_read path? in
+  Ok f
+handle
+| NoEntry as e -> Err (Wrapped e)
+| PngError p -> Err (BadImage p)
+| e -> Err (Other e)

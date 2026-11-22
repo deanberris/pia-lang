@@ -59,6 +59,7 @@ const std::unordered_map<std::string_view, TokenKind> &keywords() {
       {"import", TokenKind::Import},   {"operator", TokenKind::Operator},
       // Errors and scope cleanup (ADR 0028).
       {"handle", TokenKind::Handle},   {"defer", TokenKind::Defer},
+      {"as", TokenKind::As},
       {"true", TokenKind::True},       {"false", TokenKind::False},
       {"borrowed", TokenKind::Borrowed},
       {"moved", TokenKind::Moved},     {"out", TokenKind::Out},
