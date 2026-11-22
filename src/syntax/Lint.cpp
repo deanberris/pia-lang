@@ -652,8 +652,13 @@ class Linter {
       }
       if (inInequality && n.kind == N::Binary && n.kids.size() == 2 &&
           (n.text == "*" || n.text == "/" || n.text == "%")) {
-        bool lc = constant(*n.kids[0]).has_value();
-        bool rc = constant(*n.kids[1]).has_value();
+        // A real literal is a constant too: `x / 2.0` is linear.
+        auto isConst = [](const Node &k) {
+          const Node &v = k.kind == N::Neg && k.kids.size() == 1 ? *k.kids[0] : k;
+          return constant(k).has_value() || v.kind == N::FloatLit;
+        };
+        bool lc = isConst(*n.kids[0]);
+        bool rc = isConst(*n.kids[1]);
         // A division by a variable is hard anywhere. A product of two
         // variables is flagged in a precondition, which every goal of the
         // function assumes, but not in a postcondition, where it is often
