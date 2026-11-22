@@ -53,3 +53,20 @@ let wrong (x : u8) : unit
 
 (* The amount is a goal: a u8 can be 32 or more. *)
 let too_far (x : u32) (n : u8) : u32 = rotl x n
+
+(* Expected report, in order.
+// CHECK: bit_counts.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:20:6: proved: '-' does not overflow int{0..32} [intervals]
+// CHECK: bit_counts.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:51:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: bit_counts.pia:55:40: failed: the shift amount is less than 32
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, n = {{-?[0-9]+}}, amount = {{-?[0-9]+}}
+// CHECK: 9 proved, 2 failed, 0 skipped
+*)

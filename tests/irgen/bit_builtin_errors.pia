@@ -3,14 +3,14 @@
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
-(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: 'popcount' needs an unsigned integer, found i32
+(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'popcount' needs an unsigned integer, found i32
 *)
 let signed_count (x : i32) : u8 = popcount x
 
-(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: 'rotl' takes two arguments
+(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'rotl' takes two arguments
 *)
 let one_arg (x : u32) : u32 = rotl x
 
-(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: 'clz' needs an unsigned integer, found bool
+(* CHECK-DAG: bit_builtin_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'clz' needs an unsigned integer, found bool
 *)
 let not_int (b : bool) : u8 = clz b
