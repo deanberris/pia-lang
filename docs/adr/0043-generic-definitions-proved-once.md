@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed. Steps 1, 2 and 3 are implemented ([verifier.md](../verifier.md#generic-functions)).
+Status: Accepted (Dean, 2026-11-22). Steps 1, 2 and 3 are implemented ([verifier.md](../verifier.md#generic-functions)).
 
 ## Context
 

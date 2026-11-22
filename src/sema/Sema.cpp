@@ -933,6 +933,12 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         drop[group[k]] = true;
         continue;
       }
+      // A higher-order overload is chosen by which arguments are functions
+      // (ADR 0044), and named after its line, `find#line12`.
+      if (sig.isHigherOrder()) {
+        sig.name = name + "#line" + std::to_string(item.loc.line);
+        continue;
+      }
       // Generic overloads are told apart by their parameter patterns and
       // constraints (ADR 0034); the first keeps the name, the others are
       // numbered, `sort#2`, and their instances are named after that.
@@ -946,7 +952,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       unsigned twins = 0;
       for (size_t j = 0; j < k; ++j) {
         const FuncSig &other = all[group[j]];
-        if (drop[group[j]] || other.isGeneric() ||
+        if (drop[group[j]] || other.isGeneric() || other.isHigherOrder() ||
             other.params.size() != sig.params.size())
           continue;
         bool same = true;

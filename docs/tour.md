@@ -442,7 +442,65 @@ let plus2 (x : u8) : u8
 = apply_twice x (let (y : u8) : u8 requires y < 250 => y + 1)
 ```
 
-For now a lambda's parameters must be typed, and a lambda is passed straight to such a parameter or bound by a `let` and applied. Lambdas that capture variables, untyped and generic lambdas, function objects, and functions stored in data or returned come in later steps of ADR 0044.
+A **function object** is any record or variant whose module defines `apply` for it. Applying it, `g x`, calls `apply g x`, and it can be passed wherever a function is expected, carrying state in its fields. `Function`, a standard concept, is what all of these meet, and a generic can say so itself, `(f : type where Function f t bool)`. A name may have one overload that takes a value and one that takes a function: a lambda, a named function or a function object only fits the second, and anything else only the first.
+
+<!-- example: find_either.pia -->
+```ocaml
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let find (t : type where Eq t) (xs : [t]) (v : t) : usize
+  ensures result <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && same xs.[i] v = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let below = type { lim : u8 }
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+let where3 (xs : [u8]) : usize = find xs 3
+
+let first_below (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= let b : below = { lim = lim } in
+  find xs b
+```
+
+A lambda **captures** the locals it uses, with no capture list. A scalar is copied when the lambda is made, so later changes to a `mutable` variable are not seen, and a lambda may not assign what it captures. A buffer is borrowed: it cannot be written while the lambda is still used. Each lambda has its own type, a record of its captures that meets `Function`, so passing one costs what passing its captures does, and its body is still known at the call:
+
+```ocaml
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
+  ensures result < len xs ==> lo <= xs.[result] && xs.[result] <= hi
+= find xs (let (x : u8) => lo <= x && x <= hi)
+```
+
+For now a lambda's parameters must be typed. Untyped and generic lambdas, moving a value into a lambda, and functions stored in data or returned come in later steps of ADR 0044.
 
 ## Metaprograms
 
@@ -507,9 +565,9 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
 
-**More function values.** Lambdas work today when their parameters are typed and they capture nothing ([Function values](#function-values)). Captures, generic lambdas and function results are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
+**More function values.** Lambdas work today when their parameters are typed ([Function values](#function-values)). Generic lambdas and function results are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
 
-<!-- untested: captures and generic lambdas are not implemented yet -->
+<!-- untested: generic lambdas and function results are not implemented yet -->
 ```ocaml
 let between (lo : u8) (hi : u8) = let (x : u8) => lo <= x && x <= hi
 let compose f g = let (x) => f (g x)

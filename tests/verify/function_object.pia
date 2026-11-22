@@ -1,0 +1,94 @@
+(* Function objects (ADR 0044, section 4): any record or variant whose
+   module defines `apply` for it is a function. `g x` calls `apply g x`,
+   and a function object can be passed where a function is expected, with
+   its fields as state the lambda forms will capture later (step 3).
+   `Function`, the standard concept, comes with the language, and a
+   generic written with it is proved once (ADR 0043).
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let below = type { lim : u8 }
+
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+(* Application syntax. *)
+let is_small (x : u8) : bool
+  ensures result <==> x < 10
+= let b : below = { lim = 10 } in
+  b x
+
+(* Passed for an arrow parameter: the specialisation keeps the object as
+   a parameter of its own type and applies it through `apply`, whose body
+   the caller knows. *)
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_below (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= let b : below = { lim = lim } in
+  find xs b
+
+(* The constraint written out: `f` meets `Function f t bool`. *)
+let count (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : usize
+  ensures result <= len xs
+= let n : mutable usize = 0 in
+  for i in 0 .. len xs
+    invariant n <= i
+  do if p xs.[i] then n <- n + 1 else () done;
+  n
+
+let small (xs : [u8]) : usize
+  ensures result <= len xs
+= let b : below = { lim = 10 } in
+  count xs b
+
+(* An arrow with a contract: the object's `apply` must meet it. *)
+let step = type { by : u8 }
+
+let apply (g : step) (x : u8) : u8
+  requires x < 200 && g.by < 50
+= x + g.by
+
+let bump (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result >= y) : u8
+  requires x < 100
+  ensures result >= x
+= f x
+
+(* `step`'s `apply` needs `g.by < 50`, which the arrow does not give.
+*)
+let up (x : u8) (s : step) : u8 requires x < 100 =
+  bump x s
+
+(* Expected report, in order.
+// CHECK: function_object.pia:43:5: proved: the loop invariant holds on entry [generic]
+// CHECK: function_object.pia:44:11: proved: the index is within bounds [generic]
+// CHECK: function_object.pia:44:30: proved: '+' does not overflow usize [generic]
+// CHECK: function_object.pia:43:5: proved: the loop invariant holds after each iteration [generic]
+// CHECK: function_object.pia:40:3: proved: the postcondition holds [generic]
+// CHECK: function_object.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:48:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:57:5: proved: '+' does not overflow u8 [smt]
+// CHECK: function_object.pia:67:3: proved: the precondition of 'bump[step]' holds [smt]
+// CHECK: function_object.pia:28:5: proved: the loop invariant holds on entry [smt]
+// CHECK: function_object.pia:27:25: proved: the index is within bounds [smt]
+// CHECK: function_object.pia:30:13: proved: '+' does not overflow usize [smt]
+// CHECK: function_object.pia:28:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: function_object.pia:29:5: proved: the measure decreases [smt]
+// CHECK: function_object.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:39:1: proved: 'count<u8, below>' is an instance of the generic proof of 'count' [generic]
+// CHECK: function_object.pia:67:10: failed: the precondition of 'apply(step, u8)' holds
+// CHECK-NEXT: counterexample: g.by = {{-?[0-9]+}}, y = {{-?[0-9]+}}
+// CHECK: function_object.pia:67:10: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:62:3: proved: the precondition of 'apply@function_object.pia:67:10' holds [smt]
+// CHECK: function_object.pia:61:3: proved: the postcondition holds [smt]
+// CHECK: 21 proved, 1 failed, 0 skipped
+*)

@@ -1,0 +1,39 @@
+(* Errors in calls of overload sets with higher-order functions (ADR 0044,
+   section 4).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let find (t : type where Eq t) (xs : [t]) (v : t) : usize = 0
+let find (t : type) (xs : [t]) (p : t -> bool) : usize = 0
+
+(* A record that meets Eq and is a function object of one argument fits
+   both, so the call is ambiguous.
+// CHECK-DAG: function_overload_errors.pia:[[@LINE+8]]:{{[0-9]+}}: error: the call of 'find' is ambiguous; these all fit:
+*)
+let key = type { k : u8 }
+let same (a : key) (b : key) : bool = (a.k = b.k)
+let apply (g : key) (x : key) : bool = (x.k < g.k)
+
+let lookup (xs : [key]) : usize =
+  let g : key = { k = 3 } in
+  find xs g
+
+(* Only a function fits a function parameter.
+// CHECK-DAG: function_overload_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: no 'count' takes these arguments:
+*)
+let count (xs : [u8]) (p : u8 -> bool) : usize = 0
+let count (xs : [u8]) (p : u8 -> bool) (q : u8 -> bool) : usize = 0
+let counted (xs : [u8]) : usize = count xs 3
+
+(* A record with no 'apply' of the right arity is not a function object.
+// CHECK-DAG: function_overload_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 'p' of 'only' is a function, and 'w' has type wrap, which has no 'apply' taking 1 argument after it, so it is not a function object
+*)
+let wrap = type { w : u8 }
+let only (xs : [u8]) (p : u8 -> bool) : usize = 0
+let unwrapped (xs : [u8]) : usize = let w : wrap = { w = 1 } in only xs w

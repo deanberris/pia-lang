@@ -4,7 +4,7 @@
 
 let apply (x : u8) (f : u8 -> u8) : u8 = f x
 
-(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a lambda can only be passed to a function whose parameter has a function type for now
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: give this lambda its result type for now
 *)
 let stored (x : u8) : u8 = id_of (let (y : u8) => y)
 let id_of (v : u8) : u8 = v
@@ -21,7 +21,7 @@ let curried (x : u8) : u8 = apply x (let (a : u8) (b : u8) => a)
 *)
 let local (x : u8) : u8 = apply x x
 
-(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: give a lambda bound by 'let' its result type for now
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: give this lambda its result type for now
 *)
 let bound (x : u8) : u8 = let g = let (y : u8) => y in g x
 
