@@ -102,7 +102,24 @@ let checksum (p : [u8]) : u16 @overflow(wrap) =
 
 ```console
 $ pia repl < tail.pia
-...
+[1]:2:46: failed: '-' does not overflow usize
+  counterexample: len src = 1, len dst = 0, k = 3, result = -2
+[1]:2:22: failed: the index is within bounds
+  counterexample: len src = 18446744073709551615, len dst = 0, k = 18446742974197923840, index = 18446742974197923839, length = 0
+[1]: error: 2 obligations failed; nothing was committed
+[2]:3:46: failed: '-' does not overflow usize
+  counterexample: len src = 0, len dst = 18446744073709486078, k = 256, result = -256
+[2]: error: 1 obligation failed; nothing was committed
+tail : (src : [u8]) -> (dst : out mutable [u8]) -> (k : usize) -> unit  (* 4 proved *)
+[4]:3:3: failed: the precondition of 'tail' holds
+  counterexample: len src = 0, len dst = 9223372036854775808
+[4]: error: 1 obligation failed; nothing was committed
+tail : (src : [u8]) -> (dst : out mutable [u8]) -> (k : usize) -> usize  (redefined)  (* 5 proved *)
+last4 : (src : [u8]) -> (dst : out mutable [u8]) -> usize  (* 1 proved *)
+[7]:3:33: failed: '+' does not overflow u16
+  counterexample: len p = 1, result = 65790
+[7]: error: 1 obligation failed; nothing was committed
+checksum : (p : [u8]) -> u16  (* 1 proved *)
 ```
 
 What each step shows:

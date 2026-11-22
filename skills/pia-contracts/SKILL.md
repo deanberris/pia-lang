@@ -54,9 +54,10 @@ let total (xs : [u8]) : u32
 
 ```console
 $ piac --verify total_bare.pia
-...
-total_bare.pia:4:31: failed: '+' does not overflow u32
-...
+total_bare.pia:4:36: proved: the index is within bounds [smt]
+total_bare.pia:4:34: failed: '+' does not overflow u32
+  counterexample: len xs = 1, result = 4294967550
+1 proved, 1 failed, 0 skipped
 ```
 
 Bound the accumulator by the loop variable. The same fact then gives the postcondition after the loop:
@@ -75,8 +76,12 @@ let total (xs : [u8]) : u32
 
 ```console
 $ piac --verify total.pia
-...
-0 failed, 0 skipped
+total.pia:6:5: proved: the loop invariant holds on entry [smt]
+total.pia:7:15: proved: the index is within bounds [smt]
+total.pia:7:13: proved: '+' does not overflow u32 [smt]
+total.pia:6:5: proved: the loop invariant holds after each iteration [smt]
+total.pia:3:3: proved: the postcondition holds [smt]
+5 proved, 0 failed, 0 skipped
 ```
 
 Patterns that come up again and again:

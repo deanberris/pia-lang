@@ -33,8 +33,10 @@ let halve (x : u32) : u32
 
 ```console
 $ piac --verify-only=halve two.pia
+two.pia:8:5: proved: the divisor is not zero [intervals]
+two.pia:8:5: proved: '/' does not overflow u32 [intervals]
 two.pia:7:3: proved: the postcondition holds [smt]
-1 proved, 0 failed, 0 skipped
+3 proved, 0 failed, 0 skipped
 ```
 
 ## 2. Cache proved goals
