@@ -44,14 +44,15 @@ let direct (a : u8) (b : u8) : bool = alike a b
 let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
 
 (* Expected report, in order.
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [generic]
 // CHECK: adapters.pia:17:5: proved: the postcondition holds [smt]
 // CHECK: adapters.pia:22:3: proved: the postcondition holds [smt]
 // CHECK: adapters.pia:28:5: proved: the postcondition holds [smt]
 // CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
-// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:34:1: proved: 'alike<pixel, Same = by_red>' is an instance of the generic proof of 'alike' [generic]
 // CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
-// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:34:1: proved: 'alike<u8>' is an instance of the generic proof of 'alike' [generic]
 // CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
-// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
-// CHECK: 9 proved, 0 failed, 0 skipped
+// CHECK: adapters.pia:34:1: proved: 'alike<u8, Same = always>' is an instance of the generic proof of 'alike' [generic]
+// CHECK: 10 proved, 0 failed, 0 skipped
 *)

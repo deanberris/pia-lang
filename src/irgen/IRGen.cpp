@@ -283,6 +283,13 @@ class Gen {
     checkAxioms();
     checkModels();
     if (diags_.hasErrors()) return nullptr;
+    // The generics proved only at their instances, for the report.
+    if (!notParametric_.empty()) {
+      llvm::SmallVector<mlir::Attribute> notes;
+      for (const NotParametric &n : notParametric_)
+        notes.push_back(b_.getStringAttr(n.where + "\t" + n.generic + "\t" + n.why));
+      (*module)->setAttr("pia.not_parametric", b_.getArrayAttr(notes));
+    }
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
   }
@@ -688,6 +695,15 @@ class Gen {
     // An instance is internal: C calls the generic's instances only through
     // Pia functions, which name concrete types.
     if (!sig.typeArgs.empty()) fn.setPrivate();
+    // An instance at concrete types, which the verifier counts against its
+    // generic's proof (ADR 0043).
+    if (!sig.typeArgs.empty() && !hasFlag(item, "lemma") && !checking_) {
+      bool concrete = true;
+      for (auto &[n, t] : sig.typeArgs) concrete &= !standIns_.contains(t);
+      if (concrete)
+        fn->setAttr("pia.instance_of",
+                    b_.getStringAttr(llvm::StringRef(sig.name).split('<').first));
+    }
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
@@ -1687,8 +1703,14 @@ class Gen {
       if (archetypes_.count(a.type) || archetypes_.count(c.type)) {
         // A contract may compare values of a type parameter's type: what
         // it means is decided for each instance.
-        if (contract_ && a.type == c.type && (op == "=" || op == "<>"))
-          return TV{boolConst(l, true), boolType()};
+        if (contract_ && a.type == c.type && (op == "=" || op == "<>")) {
+          // At the definition, equality of the values themselves, which a
+          // generic proof encodes as equality in its sort (ADR 0043).
+          Value eq = standInEq(l, a.value, c.value, a.type);
+          if (op == "<>")
+            eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+          return TV{eq, boolType()};
+        }
         Type t = archetypes_.count(a.type) ? a.type : c.type;
         return fail(n, "'" + op + "' is not defined for every '" +
                            typeName(t) + "'; a generic body can use only "
@@ -4338,20 +4360,289 @@ class Gen {
     // parameter, as in `: widen t`, has a type that is only known for
     // each instance, so its body is checked in each instance instead
     // (ADR 0035).
+    size_t errors = diags_.count();
+    bool generated = false;
     if (sema::resolveSignature(check, types_, diags_) && !opaqueStandIn_) {
       sigs_.emplace(key, std::move(check));
       genFunction(key);
+      generated = true;
     }
+    // A body that passed the check is proved once, over its type
+    // parameters as uninterpreted sorts, when it is parametric (ADR 0043,
+    // step 1). Otherwise only its instances are proved, and the report
+    // says why.
+    std::set<std::string> kept;
+    if (generated && diags_.count() == errors)
+      keepGenericProof(generic, key, bound, pending, kept);
+    else if (generated || opaqueStandIn_)
+      notParametric(generic, "its signature applies a type-level "
+                             "metaprogram to a type parameter");
     checking_ = false;
-    // Nothing the check made survives it.
-    if (auto f = module_.lookupSymbol<mlir::func::FuncOp>(key)) f.erase();
+    // Nothing else the check made survives it.
+    if (!kept.count(key))
+      if (auto f = module_.lookupSymbol<mlir::func::FuncOp>(key)) f.erase();
     for (auto it = sigs_.begin(); it != sigs_.end();)
-      it = before.count(it->first) ? std::next(it) : sigs_.erase(it);
+      it = before.count(it->first) || kept.count(it->first)
+               ? std::next(it)
+               : sigs_.erase(it);
     pendingInstances_.resize(pending);
     met_ = std::move(savedMet);
     promised_.clear();
     promisedFns_.clear();
     archetypes_.clear();
+  }
+
+  // --- generic proofs (ADR 0043, step 1) ------------------------------
+
+  // `a = b` for values of the stand-in type `t`: a call of `pia.eq<t>`,
+  // which the verifier encodes as equality in t's sort (ADR 0043).
+  Value standInEq(Location l, Value a, Value b, Type t) {
+    std::string name = "pia.eq<" + typeName(t) + ">";
+    if (!module_.lookupSymbol<mlir::func::FuncOp>(name)) {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToEnd(module_.getBody());
+      auto f = create<mlir::func::FuncOp>(l, name,
+                                          b_.getFunctionType({t, t}, {b_.getI1Type()}));
+      f.setPrivate();
+      f->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
+      f->setAttr("pia.generic_eq", b_.getUnitAttr());
+      f->setAttr("pia.generic_proof", b_.getStringAttr("="));
+    }
+    return create<mlir::func::CallOp>(l, name, mlir::TypeRange{b_.getI1Type()},
+                                      mlir::ValueRange{a, b})
+        .getResult(0);
+  }
+
+  // Records why `generic` is proved only at its instances, for the report.
+  void notParametric(const sema::FuncSig &generic, const std::string &why) {
+    for (const NotParametric &n : notParametric_)
+      if (n.generic == generic.name) return;
+    syntax::SourceLoc at = generic.item->loc;
+    notParametric_.push_back(
+        {file_.str() + ":" + std::to_string(at.line) + ":" +
+             std::to_string(at.column),
+         generic.name, why});
+  }
+
+  // Why the function `f`, made at stand-in types, is not one the verifier
+  // can prove over sorts, or empty. Values of a type parameter may only be
+  // passed on, stored in and loaded from buffers, chosen between by `if`,
+  // and given to the concepts' functions.
+  std::string notAbstract(mlir::func::FuncOp f) {
+    auto plain = [&](Type t) -> bool {
+      if (!t) return true;
+      if (standIns_.contains(t)) return true;
+      if (mlir::isa<RecordType>(t)) return false;
+      if (auto a = mlir::dyn_cast<ArrayType>(t))
+        return standIns_.contains(a.getElementType()) ||
+               !mlir::isa<RecordType>(a.getElementType());
+      if (auto sl = mlir::dyn_cast<SliceType>(t))
+        return standIns_.contains(sl.getElementType()) ||
+               !mlir::isa<RecordType>(sl.getElementType());
+      return true;
+    };
+    auto touches = [&](Type t) -> bool {
+      if (standIns_.contains(t)) return true;
+      if (auto a = mlir::dyn_cast<ArrayType>(t))
+        return standIns_.contains(a.getElementType());
+      if (auto sl = mlir::dyn_cast<SliceType>(t))
+        return standIns_.contains(sl.getElementType());
+      return false;
+    };
+    std::string why;
+    for (Type t : f.getArgumentTypes())
+      if (!plain(t)) why = "it takes a value of " + typeName(t);
+    for (Type t : f.getResultTypes())
+      if (!plain(t)) why = "it returns a value of " + typeName(t);
+    if (!why.empty()) return why;
+    f.walk([&](mlir::Operation *op) {
+      if (!why.empty()) return;
+      for (Type t : op->getResultTypes())
+        if (!plain(t)) why = "it makes a value of " + typeName(t);
+      for (Type t : op->getOperandTypes())
+        if (!plain(t)) why = "it uses a value of " + typeName(t);
+      if (!why.empty()) return;
+      bool abstract = llvm::any_of(op->getOperandTypes(), touches) ||
+                      llvm::any_of(op->getResultTypes(), touches);
+      if (!abstract) return;
+      if (mlir::isa<mlir::func::CallOp, mlir::func::ReturnOp,
+                    mlir::scf::IfOp, mlir::scf::YieldOp, mlir::scf::WhileOp,
+                    mlir::scf::ConditionOp, mlir::scf::ForOp, LoadOp,
+                    StoreOp, SliceOp, LenOp>(op))
+        return;
+      if (op->getDialect() &&
+          op->getDialect()->getNamespace() == "pia_contract")
+        return;
+      why = "it applies '" + op->getName().getStringRef().str() +
+            "' to a value of a type parameter";
+    });
+    return why;
+  }
+
+  // Keeps the check's body of `generic`, made at the stand-ins `bound`, as
+  // its generic proof: the instances it made at the stand-ins, each
+  // requirement of its constraints as an uninterpreted function, and each
+  // requirement's contract as an axiom about it. The use check proves
+  // every requirement contract at every type that meets the concept, so
+  // the axioms hold of every instance. Laws wait for step 3. `pending` is
+  // where the check's queued instances start; `kept` gets the symbols that
+  // survive.
+  void keepGenericProof(const sema::FuncSig &generic, const std::string &key,
+                        const std::map<std::string, Type> &bound,
+                        size_t pending, std::set<std::string> &kept) {
+
+    for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
+      if (const Node *pred = wherePredicate(*p)) {
+        std::vector<const Node *> cs, preds;
+        constraintsOf(*pred, cs, &preds);
+        if (!preds.empty()) {
+          notParametric(generic, "a 'where' predicate that is not a concept "
+                                 "constrains '" + p->text + "'");
+          return;
+        }
+      }
+    for (const sema::FuncSig &r : promisedSigs_) {
+      for (const syntax::NodePtr &c : r.item->kids[2]->kids)
+        if (c->kind == NodeKind::Requires) {
+          notParametric(generic, "the requirement '" + r.name +
+                                     "' has a precondition");
+          return;
+        }
+      if (!r.result || mlir::isa<RecordType>(r.result) &&
+                           !standIns_.contains(r.result)) {
+        notParametric(generic, "the requirement '" + r.name +
+                                   "' returns a record");
+        return;
+      }
+    }
+    std::vector<std::string> made = {key};
+    // The instances the body made at the stand-ins are part of its proof;
+    // the laws and contracts queued for the stand-ins are not proved, they
+    // are what the proof assumes.
+    for (size_t i = pending; i < pendingInstances_.size(); ++i) {
+      std::string k = pendingInstances_[i];
+      auto it = sigs_.find(k);
+      if (it == sigs_.end() || hasFlag(*it->second.item, "lemma")) continue;
+      if (module_.lookupSymbol<mlir::func::FuncOp>(k)) continue;
+      size_t errors = diags_.count();
+      genFunction(k);
+      made.push_back(k);
+      if (diags_.count() != errors) return dropProof(generic, made, errors);
+    }
+    // Each requirement: an uninterpreted function of the concept's theory,
+    // `Ord<t>.less`, and its contract as that theory's axiom.
+    std::vector<std::string> &decls = made;
+    for (const sema::FuncSig &r : promisedSigs_) {
+      std::string theory = llvm::StringRef(r.name).split('.').first.str();
+      if (!module_.lookupSymbol<mlir::func::FuncOp>(r.name)) {
+        llvm::SmallVector<Type> ins;
+        for (const sema::Param &p : r.params) ins.push_back(p.type);
+        llvm::SmallVector<Type> outs;
+        if (!isUnit(r.result)) outs.push_back(r.result);
+        b_.setInsertionPointToEnd(module_.getBody());
+        auto f = create<mlir::func::FuncOp>(loc(*r.item), r.name,
+                                            b_.getFunctionType(ins, outs));
+        f.setPrivate();
+        f->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
+        f->setAttr(PiaDialect::getAbstractAttrName(), b_.getUnitAttr());
+        f->setAttr("pia.theory", b_.getStringAttr(theory));
+        f->setAttr("pia.generic_proof", b_.getStringAttr(generic.name));
+        decls.push_back(r.name);
+      } else if (!llvm::is_contained(decls, r.name)) {
+        // Another generic's proof declared it: shared, and kept by it.
+      }
+      std::string axiom = r.name + ".contract";
+      if (r.item->kids[2]->kids.empty() || sigs_.count(axiom)) continue;
+      size_t errors = diags_.count();
+      if (!queueRequirementAxiom(r, axiom, bound)) {
+        made.push_back(axiom);
+        return dropProof(generic, made, errors);
+      }
+      genFunction(axiom);
+      made.push_back(axiom);
+      if (diags_.count() != errors) return dropProof(generic, made, errors);
+    }
+    for (const std::string &m : made) {
+      auto f = module_.lookupSymbol<mlir::func::FuncOp>(m);
+      if (!f) return;
+      if (f.isExternal()) continue;
+      std::string why = notAbstract(f);
+      if (!why.empty()) {
+        for (const std::string &k : made)
+          if (k != key)
+            if (auto g = module_.lookupSymbol<mlir::func::FuncOp>(k)) g.erase();
+        notParametric(generic, why);
+        return;
+      }
+    }
+    for (const std::string &m : made) {
+      auto f = module_.lookupSymbol<mlir::func::FuncOp>(m);
+      if (!f->hasAttr("pia.generic_proof"))
+        f->setAttr("pia.generic_proof", b_.getStringAttr(generic.name));
+      kept.insert(m);
+    }
+  }
+
+  // Gives up the generic proof of `generic`: erases what it made but its
+  // definition body, which the caller erases, and drops the errors after
+  // the first `errors`, which only meant the proof cannot be made.
+  void dropProof(const sema::FuncSig &generic,
+                 const std::vector<std::string> &made, size_t errors) {
+    std::string why = "it cannot be generated over its type parameters";
+    if (diags_.count() > errors) why += ": " + diags_.errors()[errors].message;
+    diags_.truncate(errors);
+    for (size_t i = 1; i < made.size(); ++i)
+      if (auto g = module_.lookupSymbol<mlir::func::FuncOp>(made[i])) g.erase();
+    notParametric(generic, why);
+  }
+
+  // The axiom `name` about the requirement `r` at the stand-ins `scope`:
+  // `forall params. requires ==> ensures`, with `result` as the call.
+  bool queueRequirementAxiom(const sema::FuncSig &r, const std::string &name,
+                             const std::map<std::string, Type> &scope) {
+    const Node &req = *r.item;
+    syntax::SourceLoc at = req.loc;
+    auto item = syntax::makeNode(NodeKind::LetItem, at, name);
+    item->flags = "axiom theory";
+    Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, req.text));
+    const Node *cur = req.kids[0]->kids[1].get();
+    std::vector<std::string> names;
+    for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+      const Node &d = *cur->kids[0];
+      if (d.text.empty()) return false;
+      names.push_back(d.text);
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, d.text));
+      Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
+      annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+      annot->add(syntax::clone(*d.kids[1]));
+      annot->add(syntax::makeNode(NodeKind::None, at));
+      call->add(syntax::makeNode(NodeKind::Name, at, d.text));
+    }
+    Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::makeNode(NodeKind::TypeName, at, "unit"));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    auto contracts = syntax::makeNode(NodeKind::Contracts, at);
+    for (const syntax::NodePtr &c : req.kids[2]->kids) {
+      NodePtr copy = syntax::clone(*c);
+      renameNames(*copy, {}, c->kind == NodeKind::Ensures ? call.get() : nullptr);
+      contracts->add(std::move(copy));
+    }
+    item->add(std::move(contracts));
+    item->add(syntax::makeNode(NodeKind::Unit, at));
+    sema::FuncSig sig;
+    sig.name = name;
+    sig.item = item.get();
+    sig.typeArgs = scope;
+    for (auto &[n, t] : scope) sig.typeParams.push_back(n);
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return false;
+    sigs_.emplace(name, std::move(sig));
+    return true;
   }
 
   // Records what the constraints of `generic` promise when its type
@@ -5051,6 +5342,10 @@ class Gen {
   // the payload of the constructor they hold. Null when some part of `t`
   // has no such equality (a buffer).
   Value sameValue(Location l, Value a, Value b, Type t) {
+    // A type parameter's stand-in has no fields, so field by field it would
+    // always equal itself: in a generic's proof its values are equal only
+    // when they are the same element of its sort (ADR 0043).
+    if (checking_ && standIns_.contains(t)) return standInEq(l, a, b, t);
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
     if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
       return create<ExactCmpOp>(l, b_.getI1Type(),
@@ -6940,6 +7235,11 @@ class Gen {
   std::string openFor_;
   std::map<std::string, int> specificity_;  // "a|b": moreSpecific(a, b)
   llvm::DenseMap<Type, Archetype> archetypes_;
+  // Generics proved only at their instances (ADR 0043): where, which, why.
+  struct NotParametric {
+    std::string where, generic, why;
+  };
+  std::vector<NotParametric> notParametric_;
   std::set<std::string> promised_;
   std::map<std::string, std::vector<sema::FuncSig *>> promisedFns_;
   std::deque<sema::FuncSig> promisedSigs_;

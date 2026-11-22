@@ -143,14 +143,18 @@ struct LintSwitch {
 #ifndef PIA_NO_MLIR
 // Prints one line per obligation and a summary. Returns whether any failed.
 bool report(const std::vector<pia::verify::Outcome> &outcomes,
-            std::ostream &os, bool showCost = false) {
+            std::ostream &os, bool showCost = false,
+            const pia::verify::Stats *stats = nullptr) {
   using pia::verify::Status;
   int proved = 0, failed = 0, skipped = 0;
   for (const pia::verify::Outcome &o : outcomes) {
     switch (o.status) {
       case Status::Proved:
         ++proved;
-        os << o.where << ": proved: " << o.claim << " [" << o.method << "]";
+        // A goal of a generic's proof over sorts says so, whatever proved
+        // it (ADR 0043).
+        os << o.where << ": proved: " << o.claim << " ["
+           << (o.generic ? "generic" : o.method) << "]";
         if (showCost && o.cost) os << " (cost " << o.cost << ")";
         os << "\n";
         break;
@@ -162,6 +166,7 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
         ++failed;
         os << o.where << ": failed: " << o.claim;
         if (o.method != "counterexample") os << " [" << o.method << "]";
+        if (o.generic) os << " [generic]";
         os << "\n";
         // A goal with no values to show, false in a model (ADR 0036).
         if (o.counterexample.empty() && !o.model.empty())
@@ -181,6 +186,11 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
         break;
     }
   }
+  // The generics proved only at their instances, and why (ADR 0043).
+  if (stats)
+    for (const auto &n : stats->notParametric)
+      os << n[0] << ": not proved generically: '" << n[1]
+         << "' is proved at each instance, since " << n[2] << " [generic]\n";
   os << proved << " proved, " << failed << " failed, " << skipped
      << " skipped\n";
   return failed > 0;
@@ -271,7 +281,9 @@ void printStats(const pia::verify::Stats &st) {
             << " type_cost=" << st.typeCost
             << " contract=" << st.contractGoals
             << " contract_smt=" << st.contractSmt
-            << " contract_cost=" << st.contractCost << "\n";
+            << " contract_cost=" << st.contractCost
+            << " generic=" << st.genericGoals << " instances=" << st.instances
+            << "\n";
   // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
   // line above the only `verify-stats:` line.
   // --check-vacuity's extra queries, on a line of their own.
@@ -461,7 +473,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   bool failed = false;
   for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
-    report(outcomes, std::cerr);
+    report(outcomes, std::cerr, false, &stats);
     return 1;
   }
   size_t allowed = 0;
@@ -841,7 +853,7 @@ int main(int argc, char **argv) {
         }
         bool failed =
             report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout,
-                   solverCost);
+                   solverCost, &stats);
         if (lints.on("costly_goal"))
           warnCostly(outcomes,
                      costlyGoal >= 0 ? static_cast<unsigned long long>(costlyGoal)
