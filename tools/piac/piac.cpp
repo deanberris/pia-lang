@@ -148,8 +148,13 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
         os << o.where << ": failed: " << o.claim;
         if (o.method != "counterexample") os << " [" << o.method << "]";
         os << "\n";
+        // A goal with no values to show, false in a model (ADR 0036).
+        if (o.counterexample.empty() && !o.model.empty())
+          os << "  false in the model '" << o.model << "'\n";
         if (!o.counterexample.empty()) {
-          os << "  counterexample:";
+          os << "  counterexample";
+          if (!o.model.empty()) os << " in the model '" << o.model << "'";
+          os << ":";
           const char *sep = " ";
           for (const pia::verify::ModelValue &v : o.counterexample) {
             os << sep << v.name << " = " << v.value;

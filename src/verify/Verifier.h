@@ -34,6 +34,9 @@ struct Outcome {
   // case `axioms` lists those.
   std::vector<std::string> axioms;
   bool fallback = false;
+  // When the counterexample was found in a model's witness copy of the
+  // function: that model's name.
+  std::string model;
 };
 
 struct Options {

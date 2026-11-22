@@ -1,0 +1,349 @@
+(Program
+  (Theory "Gauge"
+    (SortItem "reading")
+    (LetItem "value" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "r"
+              (Modifiers)
+              (TypeName "reading")
+              (None)
+            )
+            (TypeName "u8")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "bump" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "r"
+              (Modifiers)
+              (TypeName "reading")
+              (None)
+            )
+            (TypeName "reading")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "value_small" [axiom]
+      (Params
+        (Param "r"
+          (Annot
+            (Modifiers)
+            (TypeName "reading")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Ensures
+          (Binary "<="
+            (Apply
+              (Name "value")
+              (Name "r")
+            )
+            (IntLit "100")
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "bump_grows" [axiom]
+      (Params
+        (Param "r"
+          (Annot
+            (Modifiers)
+            (TypeName "reading")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Requires
+          (Binary "<"
+            (Apply
+              (Name "value")
+              (Name "r")
+            )
+            (IntLit "100")
+          )
+        )
+        (Ensures
+          (Binary "="
+            (Apply
+              (Name "value")
+              (Apply
+                (Name "bump")
+                (Name "r")
+              )
+            )
+            (Binary "+"
+              (Apply
+                (Name "value")
+                (Name "r")
+              )
+              (IntLit "1")
+            )
+          )
+        )
+      )
+      (None)
+    )
+  )
+  (LetItem "level"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "v"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (Binary "<="
+              (Name "v")
+              (IntLit "100")
+            )
+          )
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (Model "levels"
+    (TypeName "Gauge")
+    (SortItem "reading"
+      (TypeName "level")
+    )
+    (LetItem "value" [spec]
+      (Params
+        (Param "r"
+          (Annot
+            (Modifiers)
+            (TypeName "level")
+            (None)
+          )
+        )
+      )
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (Field "v"
+        (Name "r")
+      )
+    )
+    (LetItem "bump" [spec]
+      (Params
+        (Param "r"
+          (Annot
+            (Modifiers)
+            (TypeName "level")
+            (None)
+          )
+        )
+      )
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (TypeName "level")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (RecordLit
+        (FieldInit "v"
+          (If
+            (Binary "<"
+              (Field "v"
+                (Name "r")
+              )
+              (IntLit "100")
+            )
+            (Binary "+"
+              (Field "v"
+                (Name "r")
+              )
+              (IntLit "1")
+            )
+            (IntLit "100")
+          )
+        )
+      )
+    )
+  )
+  (LetItem "twice" [lemma]
+    (Params
+      (Param "r"
+        (Annot
+          (Modifiers)
+          (TypeName "Gauge.reading")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "<"
+          (Apply
+            (Field "value"
+              (Name "Gauge")
+            )
+            (Name "r")
+          )
+          (IntLit "99")
+        )
+      )
+      (Ensures
+        (Binary "="
+          (Apply
+            (Field "value"
+              (Name "Gauge")
+            )
+            (Apply
+              (Field "bump"
+                (Name "Gauge")
+              )
+              (Apply
+                (Field "bump"
+                  (Name "Gauge")
+                )
+                (Name "r")
+              )
+            )
+          )
+          (Binary "+"
+            (Apply
+              (Field "value"
+                (Name "Gauge")
+              )
+              (Name "r")
+            )
+            (IntLit "2")
+          )
+        )
+      )
+    )
+    (Unit)
+  )
+  (LetItem "too_far" [lemma]
+    (Params
+      (Param "r"
+        (Annot
+          (Modifiers)
+          (TypeName "Gauge.reading")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "<="
+          (Apply
+            (Field "value"
+              (Name "Gauge")
+            )
+            (Apply
+              (Field "bump"
+                (Name "Gauge")
+              )
+              (Name "r")
+            )
+          )
+          (IntLit "99")
+        )
+      )
+    )
+    (Unit)
+  )
+  (LetItem "sealed" [lemma]
+    (Params
+      (Param "r"
+        (Annot
+          (Modifiers)
+          (TypeName "Gauge.reading")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "="
+          (Apply
+            (Field "value"
+              (Name "Gauge")
+            )
+            (Name "r")
+          )
+          (IntLit "100")
+        )
+      )
+      (Ensures
+        (Binary "="
+          (Apply
+            (Field "value"
+              (Name "Gauge")
+            )
+            (Apply
+              (Field "bump"
+                (Name "Gauge")
+              )
+              (Name "r")
+            )
+          )
+          (IntLit "100")
+        )
+      )
+    )
+    (Unit)
+  )
+)

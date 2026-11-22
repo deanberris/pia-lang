@@ -3,7 +3,7 @@
 A *theory* teaches the verifier about a domain. It declares new sorts, functions on them that have no body, and axioms about them, and it lives in a library, not in the compiler ([ADR 0036](adr/0036-library-theories.md)). This page is a catalogue of worked theories. Each one shows the theory, a model that proves its axioms, a proof that uses the theory, and a mistake that the theory catches.
 
 !!! note "Status"
-    Theories are designed but not implemented yet. Each example below is marked `untested` and is skipped by the documentation test. When the implementation step that an example needs lands (the table below says which), its marker comes off and the example is proved by `piac --verify` in CI like every other example on these pages.
+    Theories, models and sealing are implemented (ADR 0036, steps 1 to 3), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. The examples that need `trusting` (step 4) or theory-building metaprograms (step 5) are still marked `untested` and skipped; the table below says which.
 
 ## How to read an entry
 
@@ -13,6 +13,8 @@ Every theory has the same four parts.
 2. **The model.** A `struct` that gives each sort a concrete type and each function a definition, so that every axiom becomes a lemma the solver proves. A theory with a proved model cannot contradict itself, so its axioms cannot make the verifier accept a false goal. Then the model is sealed: code that imports the theory sees the axioms, never the model.
 3. **A proof that uses it.** A lemma or a function contract that the axioms prove.
 4. **A mistake it catches.** A version that is wrong and fails with a counterexample.
+
+Pia has no modules yet, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
 
 An entry also says whether anything in it is **trusted**. A trusted theory has no model that the program can find, so it is declared in a `@trusted` module and imported with `trusting`. Trust covers the whole theory, and the compiler lists every axiom it brings in `piac --trust-report`.
 
@@ -34,9 +36,10 @@ The steps are the implementation order of ADR 0036: (1) spec-only `real` and `in
 
 `held` is the set of levels a task holds, and `below h n` says every held level is less than `n`:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: levels.pia -->
+<!-- expect: fail -->
 ```ocaml
-let level = int{0..63}
+let level = type int{0..63}
 
 let theory Levels = sig
   let sort held
@@ -57,7 +60,7 @@ let theory Levels = sig
   let axiom drop_below (h : held) (n : level) (m : level)
     requires below h m
     ensures below (drop h n) m
-  let axiom below_held (h : held) (n : level) (m : level)
+  let axiom below_held (h : held) (n : level) (m : level) @trigger(below h n, holds h m)
     requires below h n && holds h m
     ensures m < n
 end
@@ -66,34 +69,17 @@ end
 let model bits : Levels = struct
   let sort held = u64
   let spec none : u64 = 0
-  let spec take (h : u64) (n : level) : u64 = h | (1 << n)
+  let spec take (h : u64) (n : level) : u64 = (h | (1 << n))
   let spec drop (h : u64) (n : level) : u64 = h & ~(1 << n)
   let spec holds (h : u64) (n : level) : bool = ((h >> n) & 1) = 1
   let spec below (h : u64) (n : level) : bool = (h >> n) = 0
 end
-```
-
-The model's obligations are bit-vector facts, such as `(h >> n) = 0 && n < m ==> ((h | (1 << n)) >> m) = 0`, which Z3 decides.
-
-A lock manager's `acquire` takes the task's held set as a ghost argument and requires the new level to be above it, and its users prove their own lock orders from the axioms:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-```ocaml
-import Levels
 
 \ accounts are level 2 and the ledger is level 3
 let lemma transfer_order (h : Levels.held) : unit
   requires Levels.below h 2
   ensures Levels.below (Levels.take h 2) 3
 = ()
-```
-
-Taking the ledger first and then an account is the deadlock the rule exists to prevent, and it fails:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-<!-- expect: fail -->
-```ocaml
-import Levels
 
 let lemma ledger_then_account (h : Levels.held) : unit
   requires Levels.below h 3
@@ -101,13 +87,29 @@ let lemma ledger_then_account (h : Levels.held) : unit
 = ()
 ```
 
-The counterexample holds level 3, and `below_held` says a held level must be below 2.
+```console
+$ piac --verify levels.pia
+...
+levels.pia:40:3: proved: the postcondition holds [smt]
+levels.pia:45:3: failed: the postcondition holds
+  counterexample in the model 'bits': h = 0
+...
+levels.pia:24:5: proved: the model 'bits' meets the axiom 'Levels.below_held' [smt]
+19 proved, 1 failed, 0 skipped
+```
+
+The model's obligations are bit-vector facts, such as `(h >> n) = 0 && n < m ==> ((h | (1 << n)) >> m) = 0`, which Z3 decides. `piac` proves each axiom as a lemma over the model, and reports it as `the model 'bits' meets the axiom ...`.
+
+A lock manager's `acquire` takes the task's held set as a ghost argument and requires the new level to be above it, and its users prove their own lock orders from the axioms: `transfer_order` proves. Taking the ledger first and then an account, `ledger_then_account`, is the deadlock the rule exists to prevent, and it fails.
+
+The counterexample is in the model: from `h = 0`, taking level 3 sets bit 3, and `3 >> 2` is not 0, so the held set is not below 2. Over the axioms, `take_holds` says the task now holds level 3, and `below_held` says a held level must be below 2. `below_held` needs a written trigger with two terms, since neither `below h n` nor `holds h m` mentions all three of its parameters.
 
 ## Happens-before and memory orders
 
 [ADR 0027](adr/0027-coroutines-and-race-freedom.md) counts a happens-before edge from atomics only when the memory orders create one: a `release` store read by an `acquire` load. The usual bug is publishing data with a flag written `relaxed`. As a theory, the rule is four axioms over events:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: order.pia -->
+<!-- expect: fail -->
 ```ocaml
 let theory Order = sig
   let sort event
@@ -121,7 +123,7 @@ let theory Order = sig
   let axiom sync_hb (w : event) (r : event)
     requires rf w r && releases w && acquires r
     ensures hb w r
-  let axiom hb_trans (a : event) (b : event) (c : event)
+  let axiom hb_trans (a : event) (b : event) (c : event) @trigger(hb a b, hb b c)
     requires hb a b && hb b c
     ensures hb a c
   let axiom hb_irrefl (a : event) ensures hb a a = false
@@ -138,13 +140,6 @@ let model timeline : Order = struct
   let spec acquires (r : stamp) : bool = r.acq
   let spec hb (a : stamp) (b : stamp) : bool = a.time < b.time
 end
-```
-
-The message-passing idiom proves: the data store is before the flag's release store in its thread, the flag's acquire load reads it, and the data load comes after in the reader's thread, so the data store happens before the data load.
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-```ocaml
-import Order
 
 let lemma publish (data_w : Order.event) (flag_w : Order.event)
                   (flag_r : Order.event) (data_r : Order.event) : unit
@@ -153,14 +148,6 @@ let lemma publish (data_w : Order.event) (flag_w : Order.event)
   requires Order.po flag_r data_r
   ensures Order.hb data_w data_r
 = ()
-```
-
-With the flag stored `relaxed`, there is no `releases flag_w`, and the same goal fails:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-<!-- expect: fail -->
-```ocaml
-import Order
 
 let lemma publish_relaxed (data_w : Order.event) (flag_w : Order.event)
                           (flag_r : Order.event) (data_r : Order.event) : unit
@@ -171,13 +158,26 @@ let lemma publish_relaxed (data_w : Order.event) (flag_w : Order.event)
 = ()
 ```
 
-This entry shows why a model is sealed. In the `timeline` model, every execution is sequentially consistent, so `hb` is just "earlier in time" and `publish_relaxed` would be true. A client sees only the axioms, and they do not prove it, because on real hardware it is false. The model shows the axioms are consistent. It is not what clients reason with. A weaker memory model, such as RC11 for `relaxed`, is a larger theory of the same shape.
+```console
+$ piac --verify order.pia
+...
+order.pia:36:3: proved: the postcondition holds [smt]
+order.pia:44:3: failed: the postcondition holds
+  counterexample: data_w = Order.event!val!0, flag_w = Order.event!val!1, flag_r = Order.event!val!2, data_r = Order.event!val!3
+...
+order.pia:16:35: proved: the model 'timeline' meets the axiom 'Order.hb_irrefl' [smt]
+5 proved, 1 failed, 0 skipped
+```
+
+The message-passing idiom, `publish`, proves: the data store is before the flag's release store in its thread, the flag's acquire load reads it, and the data load comes after in the reader's thread, so the data store happens before the data load. With the flag stored `relaxed`, there is no `releases flag_w`, and the same goal, `publish_relaxed`, fails. `hb_trans` has two terms in its trigger, since no single term mentions all three events.
+
+Here the counterexample comes from the axioms, not the model, and this entry shows why a model is sealed. In the `timeline` model, every execution is sequentially consistent, so `hb` is just "earlier in time" and `publish_relaxed` would be true. A client sees only the axioms, and they do not prove it, because on real hardware it is false. The model shows the axioms are consistent. It is not what clients reason with. A weaker memory model, such as RC11 for `relaxed`, is a larger theory of the same shape.
 
 ## Probability
 
 Failure budgets, retries and randomised algorithms are arguments about probabilities. Here events are abstract and `pr` gives each one a probability:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: prob.pia -->
 ```ocaml
 let theory Prob = sig
   let sort event
@@ -207,19 +207,14 @@ let model bounds : Prob = struct
     { p = if a.p + b.p >= 1.0 then a.p + b.p - 1.0 else 0.0 }
   let spec opposite (a : chance) : chance = { p = 1.0 - a.p }
 end
-```
-
-A request fails if any of three stages fails. Each stage's failure rate is at most one in a thousand, so the request succeeds at least 99.7% of the time:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-```ocaml
-import Prob
 
 let lemma request_budget (a : Prob.event) (b : Prob.event) (c : Prob.event) : unit
   requires Prob.pr a <= 0.001 && Prob.pr b <= 0.001 && Prob.pr c <= 0.001
   ensures Prob.pr (Prob.opposite (Prob.either (Prob.either a b) c)) >= 0.997
 = ()
 ```
+
+A request fails if any of three stages fails. Each stage's failure rate is at most one in a thousand, so `request_budget` proves that the request succeeds at least 99.7% of the time. The refinement on `chance` is what makes the model meet `pr_range`: every `chance` has `0.0 <= p && p <= 1.0`, and each of the model's functions proves it of the `chance` it returns.
 
 **Independence is a trusted axiom.** A tighter bound, such as "two replicas both lose a write with probability at most p²", needs independence, and no deterministic random number generator is truly independent. That is the idealisation every analysis of a randomised algorithm makes, so Pia makes it visible: the axiom lives in a `@trusted` module, and its users must import that theory with `trusting`. Trust covers the whole theory, so `Ideal` holds only the axiom that needs it.
 
@@ -253,7 +248,8 @@ let lemma two_replicas : unit
 
 A controller must do something safe when its inputs cannot be trusted. Which command is safe depends on the plant: a gas valve fails *closed*, a fire door fails *open*. The theory names the safe command and says it keeps a safe plant safe:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: tank.pia -->
+<!-- expect: fail -->
 ```ocaml
 let command = type | Fill | Hold
 
@@ -284,13 +280,6 @@ let model levels : Tank = struct
     | Fill -> { level = if p.level + 10 <= 200 then p.level + 10 else 200 }
     | Hold -> p
 end
-```
-
-The controller passes the operator's command through when the sensor is healthy and the command is allowed, and holds otherwise. It fails closed:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-```ocaml
-import Tank
 
 let spec decide (want : command) (sensor_ok : bool) : command =
   if sensor_ok then want else Hold
@@ -300,14 +289,6 @@ let lemma fail_closed (p : Tank.plant) (want : command) (sensor_ok : bool) : uni
   requires sensor_ok ==> Tank.allows p want
   ensures Tank.safe (Tank.step p (decide want sensor_ok))
 = ()
-```
-
-A controller that keeps doing what it was told when the sensor fails, which is failing open for a tank, does not prove:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-<!-- expect: fail -->
-```ocaml
-import Tank
 
 let spec decide_open (want : command) (sensor_ok : bool) : command = want
 
@@ -318,7 +299,20 @@ let lemma fail_open (p : Tank.plant) (want : command) (sensor_ok : bool) : unit
 = ()
 ```
 
-The counterexample has `sensor_ok = false` and `want = Fill`, where nothing says the plant allows filling. The real controller in code reads integers from a sensor. It connects to the theory through an abstraction function from its readings to `Tank.plant`, defined in the model's module ([ADR 0036](adr/0036-library-theories.md#connecting-a-theory-to-code)), so its command function is proved with the same lemma.
+```console
+$ piac --verify tank.pia
+...
+tank.pia:37:3: proved: the postcondition holds [smt]
+tank.pia:45:3: failed: the postcondition holds
+  counterexample in the model 'levels': p.level = 150, want.tag = 0, sensor_ok = false
+...
+tank.pia:12:5: proved: the model 'levels' meets the axiom 'Tank.allowed_safe' [smt]
+10 proved, 1 failed, 0 skipped
+```
+
+The controller, `decide`, passes the operator's command through when the sensor is healthy and the command is allowed, and holds otherwise, so `fail_closed` proves. A controller that keeps doing what it was told when the sensor fails, `decide_open`, which is failing open for a tank, does not.
+
+The counterexample, found in the model, has `sensor_ok = false` and `want = Fill` (tag 0) at a level of 150, where filling would pass the safe limit and nothing says the plant allows it. The real controller in code reads integers from a sensor. It connects to the theory through an abstraction function from its readings to `Tank.plant`, defined in the model's module ([ADR 0036](adr/0036-library-theories.md#connecting-a-theory-to-code)), so its command function is proved with the same lemma.
 
 ## State machines
 
@@ -337,7 +331,7 @@ let theory Conn = machine conn_state Closed
 
 `machine` generates, for each event, an abstract function on an abstract sort `conn`, a predicate saying where the event is allowed, and an axiom saying where it leads. For `shutdown`, it generates:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: conn.pia -->
 ```ocaml
 let conn_state = type | Closed | Open | Draining
 
@@ -387,7 +381,8 @@ A variant type and spec functions could say the same thing without a theory. The
 
 Adding metres to seconds is a type error in physics. Dimensions form a group, and the obvious theory, with axioms for associativity and commutativity, makes Z3 instantiate those axioms over and over. A better theory reduces a dimension to its exponents, which is linear arithmetic, and has no axiom that can loop:
 
-<!-- untested: theories land in ADR 0036 step 3 -->
+<!-- example: dim.pia -->
+<!-- expect: fail -->
 ```ocaml
 let theory Dim = sig
   let sort dim
@@ -411,10 +406,9 @@ let theory Dim = sig
     ensures metres (per a b) = metres a - metres b
          && seconds (per a b) = seconds a - seconds b
          && kilograms (per a b) = kilograms a - kilograms b
-  let axiom same (a : dim) (b : dim)
+  let axiom same (a : dim) (b : dim) @trigger(metres a, metres b)
     requires metres a = metres b && seconds a = seconds b && kilograms a = kilograms b
     ensures a = b
-    @trigger(metres a, metres b)
 end
 
 let exps = type { m : int; s : int; kg : int }
@@ -430,13 +424,6 @@ let model exponents : Dim = struct
   let spec times (a : exps) (b : exps) : exps = { m = a.m + b.m; s = a.s + b.s; kg = a.kg + b.kg }
   let spec per (a : exps) (b : exps) : exps = { m = a.m - b.m; s = a.s - b.s; kg = a.kg - b.kg }
 end
-```
-
-A quantity library tags each value with a ghost `dim`, and `add` requires equal dimensions. Speed times time is a length, and a force is a mass times a length per time squared:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-```ocaml
-import Dim
 
 let lemma distance : unit
   ensures Dim.times (Dim.per Dim.length Dim.time) Dim.time = Dim.length
@@ -445,21 +432,27 @@ let lemma distance : unit
 let lemma newton : unit
   ensures Dim.metres (Dim.per (Dim.times Dim.mass Dim.length) (Dim.times Dim.time Dim.time)) = 1
 = ()
-```
-
-Treating a speed as a length fails:
-
-<!-- untested: theories land in ADR 0036 step 3 -->
-<!-- expect: fail -->
-```ocaml
-import Dim
 
 let lemma speed_is_length : unit
   ensures Dim.per Dim.length Dim.time = Dim.length
 = ()
 ```
 
-The counterexample is just the exponents: `seconds` is -1 on one side and 0 on the other. The `@trigger` on `same` is the one written by hand: it fires only when two dimensions' exponents are both in the query, which is when equality could matter.
+```console
+$ piac --verify dim.pia
+...
+dim.pia:43:3: proved: the postcondition holds [smt]
+dim.pia:47:3: proved: the postcondition holds [smt]
+dim.pia:51:3: failed: the postcondition holds
+  false in the model 'exponents'
+...
+dim.pia:25:5: proved: the model 'exponents' meets the axiom 'Dim.same' [smt]
+8 proved, 1 failed, 0 skipped
+```
+
+A quantity library tags each value with a ghost `dim`, and `add` requires equal dimensions. Speed times time is a length (`distance`), and a force is a mass times a length per time squared (`newton`). Treating a speed as a length, `speed_is_length`, fails.
+
+The lemma has no parameters, so there are no values to show: it is false in the model, where `per length time` has `seconds` -1 and `length` has 0. The `@trigger` on `same` is the one written by hand: it fires only when two dimensions' exponents are both in the query, which is when equality could matter.
 
 ## Network shapes and bounds
 

@@ -1,0 +1,30 @@
+(* A model, the lemmas that check it and its witness copies are spec-only
+   too (ADR 0036): codegen erases them all.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: T.
+// CHECK-NOT: m.
+// CHECK-LABEL: func.func @clamp
+// CHECK: return
+// CHECK-NOT: m.
+*)
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let axiom small (x : s) ensures f x < 10
+end
+
+let box = type { v : u8 where v < 10 }
+
+let model m : T = struct
+  let sort s = box
+  let spec f (x : box) : u8 = x.v
+end
+
+let lemma uses (x : T.s) : unit ensures T.f x <= 9 = ()
+
+let clamp (n : u8) : u8
+  ensures result <= n && forall (x : T.s). T.f x < 10
+= if n > 9 then 9 else n

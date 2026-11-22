@@ -2412,6 +2412,11 @@ struct Job {
   // solved when the relevance closure's query is not proved (ADR 0036).
   std::optional<Query> fallback;
   std::string fallbackScript;
+  // The goal in the model's witness copy of its function: a counterexample
+  // there is a real one, since the model meets the axioms.
+  std::optional<Query> witness;
+  std::string witnessScript, witnessModel;
+  unsigned witnessWidth = 0;
 };
 
 // What one job did, summed into Stats once every thread has finished.
@@ -2613,8 +2618,35 @@ void solve(const Job &job, const Options &options, Outcome &out,
     }
   }
   js.solved = true;
-  z3::check_result result;
-  try {
+  z3::check_result result = z3::unknown;
+  // With a model, the goal is first tried in the model's witness copy of
+  // its function (ADR 0036). There everything is concrete, so the solver
+  // decides it quickly, and a counterexample there is one to the axioms
+  // too, since the model meets them: the goal fails without the queries
+  // over the axioms, whose quantifiers can keep a solver looking for a
+  // model for a long time. If the witness holds, the axioms decide.
+  const Query *answer = &q;
+  z3::solver witness(ctx);
+  z3::solver *last = &full;
+  unsigned width = job.width;
+  if (job.witness) {
+    witness.set(p);
+    try {
+      witness.from_string(job.witnessScript.c_str());
+      unsigned long long before = rlimitCount(witness);
+      z3::check_result w = witness.check();
+      js.cost += rlimitCount(witness) - before;
+      if (w == z3::sat) {
+        answer = &*job.witness;
+        last = &witness;
+        result = z3::sat;
+        width = job.witnessWidth;
+        out.model = job.witnessModel;
+      }
+    } catch (const z3::exception &) {
+    }
+  }
+  if (last != &witness) try {
     unsigned long long before = rlimitCount(*first);
     result = first->check();
     unsigned long long now = rlimitCount(*first);
@@ -2651,10 +2683,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // with every axiom of the theories the goal mentions, and take the
   // counterexample from that run, so a missing axiom never makes one up
   // (ADR 0036, "Fallback on failure").
-  const Query *answer = &q;
   z3::solver fallback(ctx);
-  z3::solver *last = &full;
-  if (job.fallback) {
+  if (job.fallback && last != &witness) {
     out.fallback = true;
     out.axioms = job.fallback->axioms;
     std::string fkey;
@@ -2698,7 +2728,6 @@ void solve(const Job &job, const Options &options, Outcome &out,
   }
   out.status = Status::Failed;
   out.method = "counterexample";
-  unsigned width = job.width;
   z3::model m = last->get_model();
   using Sort = Encoder::Sort;
   auto value = [&](const Encoder::Decl &d) -> std::string {
@@ -2892,8 +2921,16 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   std::vector<Operation *> opOf;  // the op that raised each outcome
   llvm::DenseSet<Operation *> partial;  // ops with an unselected goal
   std::vector<Job> jobs;
+  // Each function's witness copy in a model (ADR 0036), and its goals.
+  std::map<std::string, mlir::func::FuncOp> witnessOf;
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (auto w = fn->getAttrOfType<mlir::StringAttr>("pia.witness_of"))
+      witnessOf[w.getValue().str()] = fn;
+  std::map<Operation *, std::vector<Goal>> witnessGoals;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
+    // A witness copy only explains another function's failures.
+    if (fn->hasAttr("pia.witness_of")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;
@@ -2941,6 +2978,32 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
           llvm::errs() << "; " << out.where << ": " << out.claim << "\n"
                        << job.query.smtlib << "\n";
         out.axioms = job.query.axioms;
+        if (job.query.theories)
+          if (auto w = witnessOf.find(fn.getSymName().str());
+              w != witnessOf.end()) {
+            mlir::func::FuncOp wf = w->second;
+            auto &wgoals = witnessGoals[wf.getOperation()];
+            unsigned wwidth = encodingWidth(module, wf);
+            if (wgoals.empty()) buildQuery(module, wf, wwidth, -1, wgoals);
+            for (size_t k = 0; k < wgoals.size(); ++k)
+              if (wgoals[k].kind == g.kind && !wgoals[k].skipped &&
+                  wgoals[k].op->getLoc() == g.op->getLoc()) {
+                std::vector<Goal> unused3;
+                Query wq = buildQuery(module, wf, wwidth, static_cast<int>(k),
+                                      unused3);
+                if (wq.smtlib.empty() || !wq.reached) break;
+                job.witnessScript = scriptOf(wq.smtlib);
+                job.witnessWidth = wwidth;
+                job.witnessModel =
+                    wf->getAttrOfType<mlir::StringAttr>("pia.model").getValue().str();
+                if (options.dumpSmt)
+                  llvm::errs() << "; " << out.where << ": " << out.claim
+                               << " (in the model '" << job.witnessModel
+                               << "')\n" << wq.smtlib << "\n";
+                job.witness = std::move(wq);
+                break;
+              }
+          }
         if (job.query.theories) {
           std::vector<Goal> unused2;
           Query all = buildQuery(module, fn, width, static_cast<int>(i),

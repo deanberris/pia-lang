@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "llvm/ADT/StringRef.h"
 #include "sema/Sema.h"
 
 namespace pia::irgen {
@@ -340,6 +341,86 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
   }
   program.kids = std::move(out);
   for (NodePtr &item : program.kids) resolveQualified(*item, theories, diags);
+  if (diags.hasErrors() || !info) return;
+
+  // Witnesses: each lemma and spec function outside a theory that uses a
+  // modelled theory, copied with the model's sorts and functions in place
+  // of the theory's. A goal that fails over the axioms is tried there,
+  // where everything is concrete: a counterexample in the model is one to
+  // the axioms too, since the model meets them (ADR 0036). Copies of items
+  // that use other copies call those; an item that uses a theory member a
+  // model does not define, such as a theory lemma, gets no copy.
+  for (const auto &[theoryName, modelName] : info->modelled) {
+    const Theory &t = theories.at(theoryName);
+    std::string prefix = t.name + ".";
+    std::map<std::string, Node *> users;
+    std::function<bool(const Node &)> mentions = [&](const Node &n) {
+      if ((n.kind == NodeKind::Name || n.kind == NodeKind::TypeName) &&
+          llvm::StringRef(n.text).starts_with(prefix))
+        return true;
+      for (const NodePtr &k : n.kids)
+        if (mentions(*k)) return true;
+      return false;
+    };
+    for (NodePtr &item : program.kids) {
+      if (item->kind != NodeKind::LetItem || item->text.empty() ||
+          hasFlag(*item, "theory") || hasFlag(*item, "model") ||
+          item->kids[3]->kind == NodeKind::None ||
+          (!hasFlag(*item, "lemma") && !hasFlag(*item, "spec")))
+        continue;
+      if (mentions(*item)) users[item->text] = item.get();
+    }
+    // Drop users of what no witness can stand for, to a fixed point.
+    std::function<bool(const Node &, const std::set<std::string> &)> usable =
+        [&](const Node &n, const std::set<std::string> &ok) {
+          if (n.kind == NodeKind::Name && n.flags.empty() &&
+              llvm::StringRef(n.text).starts_with(prefix) &&
+              !t.abstracts.count(n.text))
+            return false;
+          if (n.kind == NodeKind::TypeName &&
+              llvm::StringRef(n.text).starts_with(prefix) &&
+              !t.sorts.count(n.text))
+            return false;
+          if (n.kind == NodeKind::Name && n.flags.empty() &&
+              topLevel.count(n.text) && !ok.count(n.text)) {
+            // a top-level function: fine unless it is a user of the theory
+            // with no witness
+            for (const auto &[name, node] : users)
+              if (name == n.text) return false;
+          }
+          for (const NodePtr &k : n.kids)
+            if (!usable(*k, ok)) return false;
+          return true;
+        };
+    std::set<std::string> ok;
+    for (const auto &[name, node] : users) ok.insert(name);
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (auto it = ok.begin(); it != ok.end();) {
+        if (!usable(*users.at(*it), ok)) {
+          it = ok.erase(it);
+          changed = true;
+        } else {
+          ++it;
+        }
+      }
+    }
+    std::string wprefix = modelName + ".witness.";
+    std::function<void(Node &)> rename = [&](Node &n) {
+      if (n.kind == NodeKind::Name && n.flags.empty() && ok.count(n.text))
+        n.text = wprefix + n.text;
+      for (NodePtr &k : n.kids) rename(*k);
+    };
+    for (const std::string &name : ok) {
+      NodePtr copy = syntax::clone(*users.at(name));
+      substitute(*copy, t, modelName);
+      rename(*copy);
+      copy->text = wprefix + name;
+      info->witnesses[copy->text] = name;
+      info->modelOf[copy->text] = modelName;
+      program.kids.push_back(std::move(copy));
+    }
+  }
 }
 
 }  // namespace pia::irgen

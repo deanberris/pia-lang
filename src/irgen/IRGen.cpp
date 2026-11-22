@@ -629,6 +629,9 @@ class Gen {
     if (auto m = theoryInfo_.modelOf.find(sig.name);
         m != theoryInfo_.modelOf.end())
       fn->setAttr("pia.model", b_.getStringAttr(m->second));
+    if (auto w = theoryInfo_.witnesses.find(sig.name);
+        w != theoryInfo_.witnesses.end())
+      fn->setAttr("pia.witness_of", b_.getStringAttr(w->second));
     if (auto o = theoryInfo_.obligations.find(sig.name);
         o != theoryInfo_.obligations.end())
       fn->setAttr("pia.obligation",
@@ -779,9 +782,18 @@ class Gen {
   // `{ p : real where 0.0 <= p }`: a `requires` (or, for a result, an
   // `ensures`) per refined field of `v`'s record type, and of the records
   // in its fields, with the field's name standing for the field.
-  bool refine(Value v, Type t, bool ensures) {
+  bool refined(Type t) {
     auto rec = mlir::dyn_cast<RecordType>(t);
-    if (!rec) return true;
+    if (!rec) return false;
+    if (types_.refinements(rec.getName().str())) return true;
+    for (Type ft : rec.getFieldTypes())
+      if (refined(ft)) return true;
+    return false;
+  }
+
+  bool refine(Value v, Type t, bool ensures) {
+    if (!refined(t)) return true;
+    auto rec = mlir::cast<RecordType>(t);
     for (auto [name, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
       if (mlir::isa<RecordType>(ft)) {
         Value f = create<FieldOp>(b_.getUnknownLoc(), ft, v, name);
@@ -939,7 +951,9 @@ class Gen {
   // sorts replaced by the model's (ADR 0036).
   void checkModels() {
     for (const auto &[item, model] : theoryInfo_.modelOf) {
-      if (theoryInfo_.obligations.count(item)) continue;
+      if (theoryInfo_.obligations.count(item) ||
+          theoryInfo_.witnesses.count(item))
+        continue;
       auto f = module_.lookupSymbol<mlir::func::FuncOp>(item);
       if (!f) continue;
       std::string member = item.substr(model.size());  // ".x"
