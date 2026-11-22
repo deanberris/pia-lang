@@ -226,5 +226,5 @@ Steps 1 and 2 are what the standard library needs first, for `find`, `count`, `a
 ## Questions for Dean
 
 1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration? *Answered: any type with `apply`.*
-2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does? *Answered 2026-11-23: an explicit list, each capture copied, borrowed or referenced (section 6, amended).*
+2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does? *Answered 2026-11-23 by Dean: copy by default (a bare name), with borrowing (`borrowed x`) and mutable references (`inout x`) supported.*
 3. **Dynamic function values.** Is a library box in `Pia.Fn` that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type? *Settled by ADR 0046: `box (Function a r)`.*

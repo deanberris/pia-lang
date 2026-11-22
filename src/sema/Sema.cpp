@@ -821,7 +821,14 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     }
   }
   const Node &ret = *item.kids[1];
+  // A result written as a function type is the type of the function the
+  // body returns, which IRGen infers (ADR 0044, step 7).
   if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+      ret.kids[0]->kind == NodeKind::Annot &&
+      ret.kids[0]->kids[1]->kind == NodeKind::ArrowType) {
+    sig.result = mlir::Type();
+    sig.arrowResult = true;
+  } else if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
       ret.kids[0]->kind == NodeKind::Annot) {
     sig.result = types.resolveAnnot(*ret.kids[0]);
     if (!sig.result) ok = false;

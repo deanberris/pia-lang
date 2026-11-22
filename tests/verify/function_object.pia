@@ -72,23 +72,24 @@ let up (x : u8) (s : step) : u8 requires x < 100 =
 // CHECK: function_object.pia:44:30: proved: '+' does not overflow usize [generic]
 // CHECK: function_object.pia:43:5: proved: the loop invariant holds after each iteration [generic]
 // CHECK: function_object.pia:40:3: proved: the postcondition holds [generic]
+// CHECK: function_object.pia:28:5: proved: the loop invariant holds on entry [generic]
+// CHECK: function_object.pia:27:25: proved: the index is within bounds [generic]
+// CHECK: function_object.pia:30:13: proved: '+' does not overflow usize [generic]
+// CHECK: function_object.pia:28:5: proved: the loop invariant holds after each iteration [generic]
+// CHECK: function_object.pia:29:5: proved: the measure decreases [generic]
+// CHECK: function_object.pia:24:3: proved: the postcondition holds [generic]
+// CHECK: function_object.pia:25:3: proved: the postcondition holds [generic]
 // CHECK: function_object.pia:16:3: proved: the postcondition holds [smt]
 // CHECK: function_object.pia:34:3: proved: the postcondition holds [smt]
 // CHECK: function_object.pia:48:3: proved: the postcondition holds [smt]
 // CHECK: function_object.pia:57:5: proved: '+' does not overflow u8 [smt]
 // CHECK: function_object.pia:67:3: proved: the precondition of 'bump[step]' holds [smt]
-// CHECK: function_object.pia:28:5: proved: the loop invariant holds on entry [smt]
-// CHECK: function_object.pia:27:25: proved: the index is within bounds [smt]
-// CHECK: function_object.pia:30:13: proved: '+' does not overflow usize [smt]
-// CHECK: function_object.pia:28:5: proved: the loop invariant holds after each iteration [smt]
-// CHECK: function_object.pia:29:5: proved: the measure decreases [smt]
-// CHECK: function_object.pia:24:3: proved: the postcondition holds [smt]
-// CHECK: function_object.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: function_object.pia:23:1: proved: 'find[below]' is an instance of the generic proof of 'find#proof' [generic]
 // CHECK: function_object.pia:39:1: proved: 'count<u8, below>' is an instance of the generic proof of 'count' [generic]
 // CHECK: function_object.pia:67:10: failed: the precondition of 'apply(step, u8)' holds
 // CHECK-NEXT: counterexample: g.by = {{-?[0-9]+}}, y = {{-?[0-9]+}}
 // CHECK: function_object.pia:67:10: proved: the postcondition holds [smt]
 // CHECK: function_object.pia:62:3: proved: the precondition of 'apply@function_object.pia:67:10' holds [smt]
 // CHECK: function_object.pia:61:3: proved: the postcondition holds [smt]
-// CHECK: 21 proved, 1 failed, 0 skipped
+// CHECK: 22 proved, 1 failed, 0 skipped
 *)
