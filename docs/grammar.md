@@ -246,6 +246,7 @@ stmt   = postfix "<-" stmt
        | "while" seq { loop_annot } "do" handled "done"
        | quantifier
        | "assert" imp_e | "assume" imp_e
+       | "defer" imp_e
        | type_value
        | sig_value
        | imp_e ;
@@ -288,7 +289,7 @@ match = "match" seq "with" [ "|" ] arm { "|" arm } ;
 arm   = pattern { ( "requires" | "ensures" ) stmt } "->" seq ;
 ```
 
-`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer` is reserved for scope cleanup and is not accepted yet.
+`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer e; rest` registers `e` as cleanup for `rest`, the rest of the sequence it starts; `defer` with nothing after it is an error.
 
 ### Patterns
 

@@ -966,9 +966,12 @@ class Parser {
       case K::Forall:
       case K::Exists:
         return quantifier();
-      case K::Defer:
-        fail("'defer' is reserved for scope cleanup (ADR 0028), which is "
-             "not supported yet");
+      case K::Defer: {
+        auto n = makeNode(N::Defer, start);
+        take();
+        n->add(binary(0));
+        return n;
+      }
       case K::Assert:
       case K::Assume: {
         auto n = makeNode(at(K::Assert) ? N::Assert : N::Assume, start);

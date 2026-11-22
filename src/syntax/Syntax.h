@@ -104,6 +104,8 @@ namespace pia::syntax {
   X(Assert) X(Assume) /* predicate */                                        \
   X(Try)           /* operand: `e?` (ADR 0028) */                            \
   X(Handle)        /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */   \
+  X(Defer)         /* cleanup: `defer e`, first part of a Sequence */        \
+  X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
   X(Sequence)      /* stmt, stmt (right-nested) */                           \
   X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
   X(Lambda)        /* LParam+, body */                                       \

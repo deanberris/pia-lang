@@ -23,3 +23,9 @@ handle
 | NoEntry as e -> Err (Wrapped e)
 | PngError p -> Err (BadImage p)
 | e -> Err (Other e)
+
+(* `defer` runs cleanup at every exit from the rest of the sequence. *)
+let read (path : u8) : result u8 load_error =
+  let f = open_read path? in
+  defer close f;
+  read_all f?

@@ -227,4 +227,53 @@
       )
     )
   )
+  (LetItem "read"
+    (Params
+      (Param "path"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "result")
+          (TypeName "u8")
+          (TypeName "load_error")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (LetIn "f"
+      (Params)
+      (None)
+      (Contracts)
+      (Try
+        (Apply
+          (Name "open_read")
+          (Name "path")
+        )
+      )
+      (Sequence
+        (Defer
+          (Apply
+            (Name "close")
+            (Name "f")
+          )
+        )
+        (Try
+          (Apply
+            (Name "read_all")
+            (Name "f")
+          )
+        )
+      )
+    )
+  )
 )
