@@ -7795,6 +7795,15 @@ class Gen {
   // `moved` or used as a value, on every path out of its scope.
   void collectLinear(const Node &program) {
     for (const syntax::NodePtr &item : program.kids) {
+      // A generic type marked `@linear` makes each instance linear, as
+      // `box t r` is: `box<u16>`.
+      if (sema::isGenericTypeItem(*item)) {
+        const Node &tv = *item->kids[3]->kids.back();
+        if (tv.kids.size() >= 2)
+          for (const syntax::NodePtr &a : tv.kids[1]->kids)
+            if (a->text == "linear") linearGenerics_.insert(item->text);
+        continue;
+      }
       if (!sema::isTypeItem(*item)) continue;
       const Node &tv = *item->kids[3];
       if (tv.kids.size() < 2) continue;
@@ -7813,8 +7822,13 @@ class Gen {
   }
 
   bool isLinear(Type t) {
-    if (!t || linear_.empty()) return false;
+    if (!t || (linear_.empty() && linearGenerics_.empty())) return false;
     if (linear_.count(t.getAsOpaquePointer())) return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t)) {
+      llvm::StringRef name = rt.getName();
+      if (size_t lt = name.find('<'); lt != llvm::StringRef::npos)
+        if (linearGenerics_.count(name.substr(0, lt).str())) return true;
+    }
     if (auto rt = mlir::dyn_cast<RecordType>(t))
       for (Type f : rt.getFieldTypes())
         if (isLinear(f)) return true;
@@ -8113,15 +8127,16 @@ class Gen {
     // slices apart.
     if (!contract_ && !ghost_ && n.kind == NodeKind::Index &&
         n.kids[1]->kind != NodeKind::Range && ownsSlices(r.type) &&
-        (writable(*n.kids[0]) ||
-         (n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
-          lookup(n.kids[0]->text) &&
-          writableBuffer(*lookup(n.kids[0]->text))))) {
+        (writable(*n.kids[0]) || writablePath(*n.kids[0]))) {
       writable_.insert(&n);
-      // What it holds is lent from the buffer while it is live, so the
-      // element cannot be replaced under it.
-      if (n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty())
-        if (BindingPtr b = lookup(n.kids[0]->text)) {
+      // What it holds is lent from the buffer, or the record whose field
+      // holds it, while it is live, so the element cannot be replaced
+      // under it.
+      const Node *root = n.kids[0].get();
+      while (root->kind == NodeKind::Field && !root->kids.empty())
+        root = root->kids[0].get();
+      if (root->kind == NodeKind::Name && root->flags.empty())
+        if (BindingPtr b = lookup(root->text)) {
           Lenders l = b->lenders;
           addLenders(l, {b});
           lent_[&n] = std::move(l);
@@ -8201,6 +8216,19 @@ class Gen {
         if (mayBorrow(f, depth + 1)) return true;
     }
     if (Type e = elementType(t)) return mayBorrow(e, depth + 1);
+    return false;
+  }
+
+  // Whether the buffer `n` reaches may be written: one a writable name
+  // holds, a field of an `out` or `inout` record, or a field of an element
+  // that owns its slices of a writable buffer (ADR 0048).
+  bool writablePath(const Node &n) {
+    if (writable_.count(&n)) return true;
+    if (n.kind == NodeKind::Name && n.flags.empty() && !contract_ && !ghost_)
+      if (BindingPtr b = lookup(n.text))
+        return writableBuffer(*b) || writableValue(*b);
+    if (n.kind == NodeKind::Field && !n.kids.empty())
+      return writablePath(*n.kids[0]);
     return false;
   }
 
@@ -9374,6 +9402,7 @@ class Gen {
   std::set<const Node *> writable_;    // borrowed buffers that may be written
   std::vector<Value> threadedResults_;  // the last call's threaded values
   std::set<const void *> linear_;  // the `@linear` types
+  std::set<std::string> linearGenerics_;  // generic types marked `@linear`
   Type dropping_;                  // the type a `drop` being generated takes
   const Node *unsafeAt_ = nullptr; // the call an `unsafe` marks
   unsigned tryCounter_ = 0;

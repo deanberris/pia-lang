@@ -1,0 +1,128 @@
+(* A vector of boxes, `vec (box u16)` (ADR 0046's priority, ADR 0048 step 4).
+   `box t r` is `@linear`, so each element owns its slot: a write through
+   one element's box leaves every other's alone, with no apartness
+   invariant to write. The vector's buffer is one buffer per field, the
+   slots a buffer of slices and the spec-only states a buffer the verifier
+   sees and codegen erases. `push` moves a full box in, `set_at` writes
+   through an element's box, and `get_at` reads one. Growing the buffer
+   needs elements moved between buffers, which is not supported yet.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int } @linear
+
+let spec ok (t : type) (b : box t) : bool = len b.slot = 1 && (b.state = 0 || b.state = 1)
+let spec full (t : type) (b : box t) : bool = b.state = 1
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> ok b && full b && b.slot.[0] = v
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let vec = let (t : type) (r : region) (s : region) => type { buf : borrowed(s) mutable [box t r]; len : usize }
+
+let spec good (t : type) (v : vec t) : bool =
+  v.len <= len v.buf && forall (i in 0 .. v.len). ok v.buf.[i] && full v.buf.[i]
+
+let push (t : type) (r : region) (s : region) (v : inout mutable vec t r s) (b : moved box t r) : unit
+  requires good v && v.len < len v.buf && ok b && full b
+  ensures good v && v.len = old v.len + 1 && len v.buf = old (len v.buf)
+  ensures v.buf.[old v.len].slot.[0] = old (b.slot.[0])
+  ensures forall (j in 0 .. old v.len). v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+= (let n = v.len in v.buf.[n] <- b; v.len <- n + 1)
+
+let get_at (t : type) (r : region) (s : region) (v : borrowed vec t r s) (i : usize) : t
+  requires good v && i < v.len
+  ensures result = v.buf.[i].slot.[0]
+= v.buf.[i].slot.[0]
+
+let set_at (t : type) (r : region) (s : region) (v : inout mutable vec t r s) (i : usize) (x : t) : unit
+  requires good v && i < v.len
+  ensures good v && v.len = old v.len && len v.buf = old (len v.buf)
+  ensures v.buf.[i].slot.[0] = x
+  ensures forall (j in 0 .. v.len). j <> i ==> v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+= (v.buf.[i].slot.[0] <- x)
+
+let demo (slots : borrowed mutable [u16]) (cells : borrowed mutable [box u16]) : result u16 oom
+  requires len cells >= 2
+  ensures (match result with
+           | Ok x -> x = 17
+           | Err _ -> true)
+= let m : mutable bump u16 = { mem = slots; used = 0 } in
+  let v : mutable vec u16 = { buf = cells; len = 0 } in
+  push v (make m 7?);
+  push v (make m 8?);
+  set_at v 0 9;
+  Ok (get_at v 0 + get_at v 1)
+
+(* Wrong: the box was emptied, so it cannot be pushed. *)
+let empty_push (r : region) (s : region) (v : inout mutable vec u16 r s) (b : moved box u16 r) : unit
+  requires good v && v.len < len v.buf && ok b
+= push v b
+
+(* Expected report, in order.
+// CHECK: vec_boxes.pia:73:11: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: vec_boxes.pia:73:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_boxes.pia:74:11: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: vec_boxes.pia:74:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_boxes.pia:75:3: proved: the precondition of 'set_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:76:7: proved: the precondition of 'get_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:76:20: proved: the precondition of 'get_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:76:18: proved: '+' does not overflow u16 [smt]
+// CHECK: vec_boxes.pia:68:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:81:3: failed: the precondition of 'push<u16>' holds
+// CHECK-NEXT: counterexample: lens v.buf.slot = {{-?[0-9]+}}, len v.buf.slot = {{-?[0-9]+}}, len v.buf.state = {{-?[0-9]+}}, v.len = {{-?[0-9]+}}, len b.slot = {{-?[0-9]+}}, b.state = {{-?[0-9]+}}
+// CHECK: vec_boxes.pia:38:11: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: vec_boxes.pia:39:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:36:40: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:52:21: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:52:48: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:49:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:51:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:64:4: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:64:4: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:61:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:62:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:63:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:57:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:57:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:21:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:23:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:24:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:24:9: proved: the slice is within bounds [smt]
+// CHECK: vec_boxes.pia:17:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:15:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: vec_boxes.pia:29:1: not proved generically: 'ok' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: vec_boxes.pia:30:1: not proved generically: 'full' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: vec_boxes.pia:32:1: not proved generically: 'make' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: vec_boxes.pia:44:1: not proved generically: 'good' is proved at each instance, since it takes a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:47:1: not proved generically: 'push' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:54:1: not proved generically: 'get_at' is proved at each instance, since it takes a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:59:1: not proved generically: 'set_at' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: 33 proved, 1 failed, 0 skipped
+*)

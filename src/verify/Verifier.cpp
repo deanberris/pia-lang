@@ -403,6 +403,7 @@ class Encoder {
     mlir::Block &entry = fn_.getBody().front();
     for (unsigned i = 0; i < entry.getNumArguments(); ++i) declareParam(entry.getArgument(i), i);
     entryArrays_ = arrays_;
+    entryInner_ = innerLengths_;
     walkBlock(entry, nullptr);
   }
 
@@ -1314,6 +1315,7 @@ class Encoder {
     if (auto old = mlir::dyn_cast<contract::OldOp>(op)) {
       Demand d;
       d.arrays = entryArrays_;
+      d.inner = entryInner_;
       d.lengths = lengths_;
       d.envForBlockArgs = true;
       if (Value v = demand(old.getValue(), d)) env_[old.getResult()] = v;
@@ -1582,7 +1584,8 @@ class Encoder {
                  llvm::DenseMap<Value, Value> &arrays,
                  llvm::DenseMap<Value, Value> &lengths,
                  llvm::DenseMap<Value, Value> &views,
-                 llvm::SmallVectorImpl<Value> &out) {
+                 llvm::SmallVectorImpl<Value> &out,
+                 const llvm::DenseMap<Value, Value> *inner = nullptr) {
     using P = mlir::smt::BVCmpPredicate;
     // Buffers are tracked in `arrays` and `lengths`, not as operand terms.
     for (auto [v, operand] : llvm::zip(in, op->getOperands()))
@@ -1668,11 +1671,12 @@ class Encoder {
       // An element of a buffer of slices is a slice: its contents and its
       // length come from the buffer's (ADR 0048).
       if (mlir::isa<SliceType>(ld.getType())) {
-        Value inner = innerLengths_.lookup(root);
-        if (!inner) return false;
+        Value lens = inner ? inner->lookup(root) : Value();
+        if (!lens) lens = innerLengths_.lookup(root);
+        if (!lens) return false;
         arrays[ld.getResult()] = create<mlir::smt::ArraySelectOp>(sort, arr, at);
         lengths[ld.getResult()] =
-            create<mlir::smt::ArraySelectOp>(bvType(), inner, at);
+            create<mlir::smt::ArraySelectOp>(bvType(), lens, at);
         if (&arrays == &arrays_) {
           parent_[ld.getResult()] = {root, at};
           children_[root].push_back(ld.getResult());
@@ -1796,6 +1800,7 @@ class Encoder {
       return true;
     }
     auto before = arrays_;
+    auto innerBefore = innerLengths_;
     llvm::SmallVector<Value> thenYields, elseYields;
     // A buffer result: each branch's elements and length.
     llvm::SmallVector<std::pair<Value, Value>> thenBufs, elseBufs;
@@ -1814,7 +1819,9 @@ class Encoder {
     if (!ok) return false;
     buffers(ifOp.getThenRegion(), thenBufs);
     auto thenArrays = arrays_;
+    auto thenInner = innerLengths_;
     arrays_ = before;
+    innerLengths_ = innerBefore;
     if (!ifOp.getElseRegion().empty()) {
       pc_.push_back(notOf(c));
       ok = walkBlock(ifOp.getElseRegion().front(), &elseYields);
@@ -1825,6 +1832,12 @@ class Encoder {
     for (auto &[buffer, array] : arrays_) {
       Value t = thenArrays.lookup(buffer);
       if (t && t != array) array = ite(c, t, array);
+    }
+    // A buffer of slices' element lengths, which replacing an element in
+    // one branch changes (ADR 0048).
+    for (auto &[buffer, lens] : innerLengths_) {
+      Value t = thenInner.lookup(buffer);
+      if (t && t != lens) lens = ite(c, t, lens);
     }
     for (unsigned i = 0; i < ifOp.getNumResults(); ++i) {
       Value r = ifOp.getResult(i);
@@ -1843,6 +1856,18 @@ class Encoder {
           Value len = declare(bvType(), "", false);
           assertTerm(inRange(len, indexRange()));
           lengths_[r] = len;
+        }
+        if (holdsSlices(r.getType())) {
+          Value tn = i < thenBufs.size() && thenBufs[i].first
+                         ? calleeInner(ifOp.thenYield().getOperand(i))
+                         : Value();
+          Value en = i < elseBufs.size() && elseBufs[i].first
+                         ? calleeInner(ifOp.elseYield().getOperand(i))
+                         : Value();
+          innerLengths_[r] = tn && en ? ite(c, tn, en)
+                                      : declare(mlir::smt::ArrayType::get(
+                                                    ctx_, bvType(), bvType()),
+                                                "", false);
         }
         chosen_.insert(r);
         env_[r] = bv(0);  // a placeholder: buffers are not terms
@@ -1866,6 +1891,11 @@ class Encoder {
     llvm::DenseMap<Value, Value> lengths;
     llvm::DenseMap<Value, Value> views;  // a slice's offset in its root
     std::optional<llvm::DenseMap<Value, Value>> oldArrays;
+    // The element lengths of buffers of slices (ADR 0048) that differ from
+    // the walk's: a callee's parameters, or the memory `old` reads. Each
+    // falls back to innerLengths_.
+    llvm::DenseMap<Value, Value> inner;
+    std::optional<llvm::DenseMap<Value, Value>> oldInner;
     llvm::DenseMap<Value, Value> memo;
     bool envForBlockArgs = false;
     Operation *envOutside = nullptr;  // values defined outside it use env_
@@ -2175,6 +2205,17 @@ class Encoder {
     return viewArray(arr, off, len);
   }
 
+  // The element lengths a callee sees for a buffer of slices (ADR 0048):
+  // the root's own, or for a view of it, those of the elements it views.
+  Value calleeInner(Value actual) {
+    Value root = rootBuffer(actual);
+    Value lens = innerLengths_.lookup(root);
+    if (!lens || actual == root) return lens;
+    Value off = views_.lookup(actual), len = lengths_.lookup(actual);
+    if (!off || !len) return declare(lens.getType(), "", false);
+    return viewArray(lens, off, len);
+  }
+
   // A call is checked against the callee's contract, not its body: its
   // preconditions are goals, and its postconditions are assumed about a
   // fresh result.
@@ -2196,6 +2237,8 @@ class Encoder {
         if (mlir::isa<ArrayType, SliceType>(actual.getType())) {
           pre.arrays[formal] = calleeArray(actual);
           pre.lengths[formal] = lengths_.lookup(actual);
+          if (holdsSlices(actual.getType()))
+            if (Value lens = calleeInner(actual)) pre.inner[formal] = lens;
         } else {
           pre.values[formal] = term(actual);
         }
@@ -2231,6 +2274,9 @@ class Encoder {
         Type sort = sortOf(r.getType());
         if (!sort) continue;
         arrays_[r] = declare(sort, "", false);
+        if (holdsSlices(r.getType()))
+          innerLengths_[r] = declare(
+              mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
         if (auto a = mlir::dyn_cast<ArrayType>(r.getType())) {
           lengths_[r] = bv(APInt(64, a.getLength()));
         } else {
@@ -2278,10 +2324,15 @@ class Encoder {
     Demand post = pre;
     post.memo.clear();
     post.oldArrays = pre.arrays;
+    post.oldInner = pre.inner;
     mlir::Block &entry = callee.getBody().front();
     for (unsigned i = 0; i < call.getNumOperands(); ++i)
-      if (mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
+      if (mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType())) {
         post.arrays[entry.getArgument(i)] = calleeArray(call.getOperand(i));
+        if (holdsSlices(call.getOperand(i).getType()))
+          if (Value lens = calleeInner(call.getOperand(i)))
+            post.inner[entry.getArgument(i)] = lens;
+      }
     callee.walk([&](mlir::func::ReturnOp ret) {
       for (auto [formal, actual] : llvm::zip(ret.getOperands(), call.getResults())) {
         if (mlir::isa<ArrayType, SliceType>(formal.getType())) {
@@ -2293,9 +2344,13 @@ class Encoder {
             arrays_[actual] = post.arrays.lookup(formal);
             if (Value len = lengths_.lookup(call.getOperand(arg.getArgNumber())))
               lengths_[actual] = len;
+            if (Value lens = post.inner.lookup(formal))
+              innerLengths_[actual] = lens;
           } else {
             post.arrays[formal] = arrays_.lookup(actual);
             post.lengths[formal] = lengths_.lookup(actual);
+            if (Value lens = innerLengths_.lookup(actual))
+              post.inner[formal] = lens;
             // Known, so the callee's body is not encoded for it: `result`
             // is the call's array, not what the body built. Buffers are
             // not terms, so the term is a placeholder.
@@ -2466,6 +2521,8 @@ class Encoder {
         if (!sort) ok = false;
         domain.push_back(sort);
         if (mlir::isa<ArrayType, SliceType>(t)) domain.push_back(bvType());
+        if (holdsSlices(t))
+          domain.push_back(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()));
       }
       llvm::SmallVector<Value> funs;
       for (Type r : f.getFunctionType().getResults()) {
@@ -2521,6 +2578,13 @@ class Encoder {
         Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
         if (!arr || !len) return Value();
         flat.append({arr, len});
+        // A buffer of slices: its elements' lengths too (ADR 0048), so
+        // calls with different ones are different applications.
+        if (holdsSlices(a.getType())) {
+          Value lens = args.inner.lookup(a);
+          if (!lens) return Value();
+          flat.push_back(lens);
+        }
       } else {
         Value v = args.values.lookup(a);
         if (!v) return Value();
@@ -2568,6 +2632,7 @@ class Encoder {
       post.values = args.values;
       post.arrays = args.arrays;
       post.lengths = args.lengths;
+      post.inner = args.inner;
       callee.walk([&](mlir::func::ReturnOp ret) {
         if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
       });
@@ -2603,6 +2668,7 @@ class Encoder {
     body.values = args.values;
     body.arrays = args.arrays;
     body.lengths = args.lengths;
+    body.inner = args.inner;
     Value def;
     callee.walk([&](mlir::func::ReturnOp ret) {
       if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
@@ -2644,6 +2710,17 @@ class Encoder {
         }
         args.arrays[formal] = arr;
         args.lengths[formal] = len;
+        if (holdsSlices(actual.getType())) {
+          Value lens = d.inner.lookup(root);
+          if (!lens) lens = innerLengths_.lookup(root);
+          if (!lens) return Value();
+          if (actual != root) {
+            Value off = d.views.lookup(actual);
+            if (!off) off = views_.lookup(actual);
+            lens = viewArray(lens, off, len);
+          }
+          args.inner[formal] = lens;
+        }
       } else {
         Value t = demand(actual, d);
         if (!t) return Value();
@@ -2688,7 +2765,10 @@ class Encoder {
     if (auto old = mlir::dyn_cast<contract::OldOp>(op)) {
       Demand inner = d;
       inner.memo.clear();
-      if (d.oldArrays) inner.arrays = *d.oldArrays;
+      if (d.oldArrays) {
+        inner.arrays = *d.oldArrays;
+        inner.inner = d.oldInner ? *d.oldInner : entryInner_;
+      }
       result = demand(old.getValue(), inner);
     } else if (mlir::isa<contract::ForallOp, contract::ExistsOp>(op)) {
       result = quantifier(op, d);
@@ -2721,7 +2801,8 @@ class Encoder {
       llvm::SmallVector<Value> operands;
       for (Value o : op->getOperands()) operands.push_back(demand(o, d));
       llvm::SmallVector<Value> results;
-      if (semantics(op, operands, d.arrays, d.lengths, d.views, results))
+      if (semantics(op, operands, d.arrays, d.lengths, d.views, results,
+                    &d.inner))
         result = results[mlir::cast<mlir::OpResult>(v).getResultNumber()];
     }
     // Under `old`, a call the walk has already stepped, with its contract
@@ -2982,6 +3063,7 @@ class Encoder {
   // buffer and index it came from, so a write through it reaches the
   // buffer, and every other slice loaded from it sees the write.
   llvm::DenseMap<Value, Value> innerLengths_;
+  llvm::DenseMap<Value, Value> entryInner_;  // innerLengths_ on entry
   llvm::DenseMap<Value, std::pair<Value, Value>> parent_;
   llvm::DenseMap<Value, llvm::SmallVector<Value>> children_;
   llvm::DenseMap<Value, Value> views_;  // a slice's offset in its root buffer

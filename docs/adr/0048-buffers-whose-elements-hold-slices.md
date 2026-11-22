@@ -37,9 +37,9 @@ Each element slice is a pointer and a length. The buffer of slices becomes two b
 ## Implementation order
 
 1. Sema accepts buffers whose elements hold slices; IRGen stores them as buffers of slices, with the ownership rule for writes and the loan rule for slices taken out.
-2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Not yet: element lengths in callee contracts.)
+2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Element lengths in callee and spec-function contracts are encoded too.)
 3. Codegen: pointer and length buffers, and C entry points.
-4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type).
+4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Not yet: growing, which moves linear elements between buffers, and checking that an element written over is empty.)
 
 ## Consequences
 
