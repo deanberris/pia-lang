@@ -37,7 +37,7 @@ let count_big (xs : [u8]) : usize = count xs (let (x : u8) => x > 3)
 (* A lambda that captures `lo` and `hi` (ADR 0044, step 3): its closure's
    fields are passed to the specialisation, and still inline. *)
 let count_between (xs : [u8]) (lo : u8) (hi : u8) : usize =
-  count xs (let (x : u8) => lo <= x && x <= hi)
+  count xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 
 let is_digit (c : u8) : bool = (48 <= c && c <= 57)
 

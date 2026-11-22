@@ -21,7 +21,7 @@ let first_big (xs : [u8]) : usize
 (* Captures work the same way. *)
 let first_over (xs : [u16]) (lim : u16) : usize
   ensures result < len xs ==> xs.[result] > lim
-= find xs (let (x) => x > lim)
+= find xs (let [lim] (x) => x > lim)
 
 (* A typed lambda fixes a type parameter no other argument does. *)
 let exists_in (t : type) (p : t -> bool) (x : t) : bool

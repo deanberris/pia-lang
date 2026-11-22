@@ -13,4 +13,4 @@ let unknown (n : u8) : bool = holds (let (x) => true)
 // CHECK-DAG: generic_lambda_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: a lambda that captures needs its parameters' types for now
 *)
 let captured (n : u8) : bool =
-  let near = let (x) => x < n in near 3
+  let near = let [n] (x) => x < n in near 3
