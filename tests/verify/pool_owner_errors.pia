@@ -25,10 +25,27 @@ let own (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : un
   give p a;
   give q b
 
-(* Wrong: a came from p. *)
+(* Wrong, each way round: a block from one pool goes back to the other.
+   They are two functions because a failed goal is assumed after it, and
+   `give q a` failing would make `p.id = q.id`, which proves anything. *)
 let swapped (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : unit
   requires p.id <> q.id
 = let a = take p in
-  let b = take q in
-  give q a;
+  give q a
+
+let swapped_back (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : unit
+  requires p.id <> q.id
+= let b = take q in
   give p b
+
+(* Expected report, in order.
+// CHECK: pool_owner_errors.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: pool_owner_errors.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: pool_owner_errors.pia:25:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool_owner_errors.pia:26:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool_owner_errors.pia:34:3: failed: the precondition of 'give' holds
+// CHECK-NEXT: counterexample: p.top = {{-?[0-9]+}}, p.id = {{-?[0-9]+}}, q.top = {{-?[0-9]+}}, q.id = {{-?[0-9]+}}
+// CHECK: pool_owner_errors.pia:39:3: failed: the precondition of 'give' holds
+// CHECK-NEXT: counterexample: p.top = {{-?[0-9]+}}, p.id = {{-?[0-9]+}}, q.top = {{-?[0-9]+}}, q.id = {{-?[0-9]+}}
+// CHECK: 4 proved, 2 failed, 0 skipped
+*)
