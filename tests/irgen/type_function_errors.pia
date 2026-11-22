@@ -1,0 +1,19 @@
+(* Errors in types that apply a type-level metaprogram (ADR 0035).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta widen (t : type) : type =
+  if t = u8 then u16 else if t = u16 then u32 else if t = u32 then u64
+  else fail (concat "no integer type is wider than " (name t))
+
+(* CHECK: type_function_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the type 'widen i8' cannot be formed: no integer type is wider than i8
+*)
+let w (x : i8) : widen i8 = x
+
+(* CHECK: type_function_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'widen' is a type-level metaprogram: apply it to types, as in 'widen u8'
+*)
+let v (x : u8) : widen = x
+
+(* CHECK: type_function_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'widen' takes 1 type argument, found 2
+*)
+let u (x : u8) : widen u8 u8 = x

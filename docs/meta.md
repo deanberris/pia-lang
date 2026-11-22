@@ -58,6 +58,29 @@ Values are integers (64-bit), bools, strings, syntax, lists, functions and unit.
 
 Each expansion has a fuel budget of a million steps. Running out is an error.
 
+## Type-level metaprograms
+
+A `let meta` whose parameters are all types and that returns a `type` or a `bool` is type-level ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)). It stays in the program after expansion, because types and `where` predicates call it while the compiler checks types ([irgen.md](irgen.md#functions)):
+
+```ocaml
+let meta widen (t : type) : type =
+  if t = u8 then u16 else if t = u16 then u32 else if t = u32 then u64
+  else fail (concat "no integer type is wider than " (name t))
+
+let meta small (t : type) : bool = size_of t <= 2
+
+let add_wide (t : type where small t) (a : t) (b : t) : widen t = a + b
+```
+
+There, types are values. A type's name, such as `u8` or `pixel`, denotes the type, `=` and `<>` compare types, and `name t` spells one as Pia does (`u8`, `option<u8>`, `[u8]`).
+
+| Builtin | Meaning |
+| --- | --- |
+| `size_of t` | the bytes a value of `t` takes: an integer the smallest of 1, 2, 4 or 8 that holds its range, a bool 1, an array its elements', a record the sum of its fields'; a slice has no fixed size, which is an error |
+| `eq ne lt gt le ge add sub mul div rem and or implies iff` | the core builtins that a `where` predicate's operators expand to |
+
+A metaprogram that runs during expansion has no type values: a type's name there is an unknown name, as before.
+
 ## Quotes and splices
 
 `` `( ... ) `` builds syntax: an expression, one item, or several items. Inside a quote:

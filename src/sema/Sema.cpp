@@ -155,6 +155,12 @@ mlir::Type TypeResolver::resolve(const Node &type) {
         if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
       if (mlir::Type t = named(type.text)) return t;
+      if (isTypeFunction(type.text)) {
+        diags_.error(type.loc, "'" + type.text + "' is a type-level "
+                               "metaprogram: apply it to types, as in '" +
+                               type.text + " u8'");
+        return {};
+      }
       if (const Generic *g = generic(type.text)) {
         diags_.error(type.loc, "'" + type.text + "' is generic: it takes " +
                                    std::to_string(g->params.size()) +
@@ -168,6 +174,15 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     }
     case NodeKind::TypeApp: {
       const Node &head = *type.kids[0];
+      if (head.kind == NodeKind::TypeName && isTypeFunction(head.text)) {
+        llvm::SmallVector<mlir::Type> args;
+        for (size_t i = 1; i < type.kids.size(); ++i) {
+          mlir::Type a = resolve(*type.kids[i]);
+          if (!a) return {};
+          args.push_back(a);
+        }
+        return callTypeFunction_(head.text, args, type.loc);
+      }
       if (head.kind != NodeKind::TypeName || !generic(head.text)) {
         diags_.error(head.loc, "only a generic type can take type arguments");
         return {};
@@ -643,6 +658,9 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     }
     // Concepts are checked by IRGen, at each use (ADR 0034).
     if (syntax::isConceptItem(*item) && adapter.empty()) continue;
+    // Type-level metaprograms run in IRGen, when a type or a `where`
+    // predicate calls them (ADR 0035).
+    if (syntax::isTypeLevelMetaItem(*item) && adapter.empty()) continue;
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;
@@ -710,6 +728,10 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         if (++generics > 1) sig.name = name + "#" + std::to_string(generics);
         continue;
       }
+      // Overloads with the same parameter types are told apart by their
+      // preconditions (ADR 0034); IRGen checks that they can be. The
+      // second and later are numbered, `copy(out [u8], [u8])#2`.
+      unsigned twins = 0;
       for (size_t j = 0; j < k; ++j) {
         const FuncSig &other = all[group[j]];
         if (drop[group[j]] || other.isGeneric() ||
@@ -718,11 +740,17 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         bool same = true;
         for (size_t i = 0; i < sig.params.size(); ++i)
           same = same && sig.params[i].type == other.params[i].type;
-        if (same) {
-          error(item.loc, "'" + name + "' is already defined with "
-                                "these parameter types; overloads told "
-                                "apart by their preconditions are not "
-                                "supported yet");
+        twins += same;
+        // With no precondition on either, nothing could tell them apart.
+        auto hasRequires = [](const Node &it) {
+          for (const syntax::NodePtr &c : it.kids[2]->kids)
+            if (c->kind == NodeKind::Requires) return true;
+          return false;
+        };
+        if (same && !hasRequires(item) && !hasRequires(*other.item)) {
+          error(item.loc, "'" + name + "' is already defined with these "
+                                "parameter types, and neither has a "
+                                "precondition to tell them apart");
           drop[group[k]] = true;
           break;
         }
@@ -732,6 +760,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       for (size_t i = 0; i < sig.params.size(); ++i)
         symbol += (i ? ", " : "") + typeName(sig.params[i].type);
       sig.name = symbol + ")";
+      if (twins) sig.name += "#" + std::to_string(twins + 1);
     }
     for (size_t k : group) all[k].overloaded = true;
   }

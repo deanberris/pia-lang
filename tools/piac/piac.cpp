@@ -248,6 +248,10 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   using pia::verify::Outcome;
   using pia::verify::Status;
   pia::verify::Stats stats;
+  if (mlir::failed(pia::verify::resolveOverloads(module, verifyOptions))) {
+    std::cerr << "piac: internal error: cannot choose between overloads\n";
+    return 1;
+  }
   std::vector<Outcome> outcomes =
       pia::verify::verifyModule(module, verifyOptions, &stats);
   if (verifyStats) printStats(stats);
@@ -538,6 +542,11 @@ int main(int argc, char **argv) {
                        verifyStats);
       } else if (module && verify) {
         pia::verify::Stats stats;
+        if (mlir::failed(pia::verify::resolveOverloads(*module, options))) {
+          std::cerr << "piac: internal error: cannot choose between "
+                       "overloads\n";
+          return 1;
+        }
         std::vector<pia::verify::Outcome> outcomes =
             pia::verify::verifyModule(*module, options, &stats);
         if (verifyStats) printStats(stats);

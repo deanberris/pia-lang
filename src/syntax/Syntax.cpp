@@ -43,6 +43,26 @@ bool isConceptItem(const Node &item) {
          ret.kids[0]->kids[1]->text == "concept";
 }
 
+bool isTypeLevelMetaItem(const Node &item) {
+  if (item.kind != NodeKind::LetItem || item.kids.size() < 4 ||
+      item.flags.find("meta") == std::string::npos || isConceptItem(item))
+    return false;
+  const Node &params = *item.kids[0];
+  if (params.kids.empty()) return false;
+  for (const NodePtr &p : params.kids)
+    if (p->kind != NodeKind::Param || p->kids.empty() ||
+        p->kids[0]->kind != NodeKind::Annot ||
+        p->kids[0]->kids[1]->kind != NodeKind::TypeKind)
+      return false;
+  const Node &ret = *item.kids[1];
+  if (ret.kind != NodeKind::RetAnnot || ret.kids.empty() ||
+      ret.kids[0]->kind != NodeKind::Annot)
+    return false;
+  const Node &t = *ret.kids[0]->kids[1];
+  return t.kind == NodeKind::TypeKind ||
+         (t.kind == NodeKind::TypeName && t.text == "bool");
+}
+
 namespace {
 
 void writeQuoted(std::ostream &os, const std::string &s) {

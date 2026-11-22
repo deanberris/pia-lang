@@ -1,0 +1,61 @@
+(* Overloads told apart by their preconditions (ADR 0034): each call goes
+   to the most specific overload whose precondition is proved there, from
+   the caller's own contract and the branches it is under. The choice is
+   static: it never adds a test at run time.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let pick (x : u8) : u8
+  ensures result = 0
+= 0
+
+let pick (x : u8) : u8
+  requires x < 10
+  ensures result = 1
+= 1
+
+let pick (x : u8) : u8
+  requires x < 10
+  requires x > 2
+  ensures result = 2
+= 2
+
+let any (x : u8) : u8
+  ensures result = 0
+= pick x
+
+let under_ten (x : u8) : u8
+  requires x < 10
+  ensures result = 1
+= pick x
+
+let middle (x : u8) : u8
+  requires x < 10 && x > 2
+  ensures result = 2
+= pick x
+
+let by_branch (x : u8) : u8
+  ensures (x < 10 ==> result = 1) && (x >= 10 ==> result = 0)
+= if x < 10 then pick x else pick x
+
+let five () : u8
+  ensures result = 2
+= pick 5
+
+(* Expected report, in order.
+// CHECK: precondition_overloads.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:30:3: proved: the precondition of 'pick(u8)#2' holds [smt]
+// CHECK: precondition_overloads.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:35:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:35:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:39:18: proved: the precondition of 'pick(u8)#2' holds [smt]
+// CHECK: precondition_overloads.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:43:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:43:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: 14 proved, 0 failed, 0 skipped
+*)

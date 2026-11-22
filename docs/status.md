@@ -35,7 +35,7 @@ The plan is a sequence of milestones, each a GitHub issue, building towards the 
 | --- | --- | --- |
 | M0 to M7 | Bazel build, grammar, parser, MLIR dialects, IRGen, verifier, arm64 codegen, records and the metaprogram engine | done |
 | [M8](https://github.com/deanberris/pia-lang/issues/9) | Modules, explicit interface imports, proof certificates and a link check | next |
-| [M9](https://github.com/deanberris/pia-lang/issues/10) | Generic types, concepts with laws, adapters and call-site deduction | generic types and functions, overloading, concepts, the definition check, adapters and ranking by constraints done; choosing by preconditions next |
+| [M9](https://github.com/deanberris/pia-lang/issues/10) | Generic types, concepts with laws, adapters and call-site deduction | generic types and functions, overloading, concepts, the definition check, adapters, ranking by constraints and choosing by preconditions done (ADR 0034 complete); ADR 0035: type-level metaprograms in types and `where` predicates done, totality check next |
 | [M10](https://github.com/deanberris/pia-lang/issues/11) | Vectorisation driven by proved facts, and `vec<T, k>` | |
 | [M11](https://github.com/deanberris/pia-lang/issues/12) | Floats: strict IEEE, and three ways to allow reassociation | |
 | [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency: `spread`, collectives, and compile-time checks that collectives match | |

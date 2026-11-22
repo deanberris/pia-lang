@@ -102,7 +102,10 @@ class Expander {
     std::vector<NodePtr> kept;
     for (NodePtr &item : program_.kids)
       // A concept stays: the compiler checks types against it (ADR 0034).
-      if (!isMetaItem(*item) || syntax::isConceptItem(*item))
+      // So does a type-level metaprogram, which types and `where`
+      // predicates call (ADR 0035).
+      if (!isMetaItem(*item) || syntax::isConceptItem(*item) ||
+          syntax::isTypeLevelMetaItem(*item))
         kept.push_back(std::move(item));
     program_.kids = std::move(kept);
   }
