@@ -17,7 +17,7 @@ let late (x : u8) : result u16 app_error =
   let x'' = parse x'? in
   Ok x''
 handle
-(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this arm is reached from the '?' at 16:{{[0-9]+}}, where 'x''' is not bound yet; an arm may use only what is bound at every '?' that reaches it (ADR 0028)
+(* CHECK: handler_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this arm is reached from the '?' at 16:{{[0-9]+}}, where 'x''' is not bound yet; an arm may use only what is bound at every '?' that reaches it (ADR 0028)
 *)
 | NoEntry -> Err (Bad x'')
 | e -> Err Missing

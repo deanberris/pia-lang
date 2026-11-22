@@ -11,17 +11,17 @@ let parse_error = type | Empty | TooLong of u8
 let app_error = type | Missing | Unreadable of u8 | Bad of u16
 
 let open_file (x : u8) : result u16 open_error
-  ensures match result with | Ok v -> v = x | Err _ -> true
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
 = if x = 0 then Err NoEntry else Ok x
 
 let parse (v : u16) : result u16 parse_error
-  ensures match result with | Ok w -> w > v | Err _ -> true
+  ensures (match result with | Ok w -> w > v | Err _ -> true)
 = if v > 1000 then Err (TooLong 1) else Ok (v + 1)
 
 (* The arms for parse's errors know x' = x, from open_file's
    postcondition at the second `?`. *)
 let load (x : u8) : result u16 app_error
-  ensures match result with | Ok w -> w > x | Err _ -> true
+  ensures (match result with | Ok w -> w > x | Err _ -> true)
 =
   let x' = open_file x? in
   let x'' = parse x'? in
@@ -37,7 +37,7 @@ let check (x : u8) : result unit open_error
 = if x = 0 then Err Denied else Ok ()
 
 let opened (x : u8) : result u16 open_error
-  ensures match result with | Ok w -> w = x && x > 0 | Err _ -> true
+  ensures (match result with | Ok w -> w = x && x > 0 | Err _ -> true)
 = check x?;
   let v = open_file x? in
   assert v = x;
@@ -67,3 +67,7 @@ let count (n : u8) : u8
   | NoEntry -> ()
   done;
   c
+
+(* Expected report, in order.
+// CHECK: 0 failed, 0 skipped
+*)
