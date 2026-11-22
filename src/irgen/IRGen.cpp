@@ -89,6 +89,8 @@ struct Binding {
   bool writable = false;
   // A `with_arena`'s arena, which lends its own memory (#70).
   bool arena = false;
+  // A lambda's closure, which borrows the buffers it captures (ADR 0044).
+  bool closure = false;
   // A local's scope, the body of its `let`: a loan it holds ends at its
   // last use there (ADR 0042).
   const syntax::Node *scope = nullptr;
@@ -1571,12 +1573,18 @@ class Gen {
                        "quantifier for now");
       case NodeKind::Match:
         return genMatch(n, expected);
-      case NodeKind::Lambda:
-        return fail(n, "a lambda can only be passed to a function whose "
-                       "parameter has a function type for now, as in "
-                       "'find xs (let (x : u8) => x > 3)', or bound by a "
-                       "'let' and applied; storing or returning one comes "
-                       "later (ADR 0044)");
+      case NodeKind::Lambda: {
+        // A lambda as a value is its closure (ADR 0044, section 6).
+        if (contract_ || ghost_)
+          return fail(n, "a lambda cannot be a value in a contract yet");
+        std::optional<Captures> caps = capturesOf(n);
+        if (!caps) return std::nullopt;
+        std::optional<Closure> c = closureOf(n, nullptr, {}, "", *caps);
+        if (!c) return std::nullopt;
+        R v = genExpr(*c->value, c->type);
+        if (v && !c->lenders.empty()) lent_[&n] = c->lenders;
+        return v;
+      }
       default:
         return fail(n, std::string("'") + syntax::nodeKindName(n.kind) +
                            "' is not supported yet (IRGen covers the scalar "
@@ -2952,6 +2960,12 @@ class Gen {
   // private top-level function, `lambda@file.pia:12:9`, whose body the
   // verifier knows wherever it is called, as for any pure function.
 
+  struct Capture {
+    std::string name;
+    BindingPtr binding;
+  };
+  using Captures = std::vector<Capture>;
+
   // A function type as written: its parameters, its result, and the
   // contracts on its innermost arrow.
   struct Arrow {
@@ -3023,8 +3037,12 @@ class Gen {
   // arrow's, and its postconditions are its own and the arrow's.
   std::optional<std::string> liftLambda(const Node &lam, const Arrow *arrow,
                                         const std::vector<std::string> &typeParams,
-                                        const std::string &what) {
+                                        const std::string &what,
+                                        const Captures *caps = nullptr) {
     std::string symbol = "lambda@" + placeOf(lam);
+    // A lambda that captures is the `apply` of its closure type, whose
+    // first parameter holds the captures (ADR 0044, section 6).
+    if (caps) symbol = "apply[" + symbol + "]";
     if (sigs_.count(symbol)) return symbol;
     syntax::SourceLoc at = lam.loc;
     std::vector<const Node *> lparams;
@@ -3042,8 +3060,14 @@ class Gen {
                     "; partial application comes later (ADR 0044, step 7)");
       return std::nullopt;
     }
-    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    auto item = syntax::makeNode(NodeKind::LetItem, at, caps ? "apply" : symbol);
     Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    if (caps) {
+      Node *self = params->add(syntax::makeNode(NodeKind::Param, at, kSelf));
+      self->add(annotOf(*syntax::makeNode(NodeKind::TypeName, at,
+                                          "lambda@" + placeOf(lam)),
+                        at));
+    }
     std::map<std::string, std::string> rename;
     for (size_t i = 0; i < lparams.size(); ++i) {
       const Node &lp = *lparams[i];
@@ -3065,8 +3089,9 @@ class Gen {
     } else if (arrow && !mentionsUnbound(*arrow->result, typeParams, {})) {
       item->add(retAnnotNode(annotOf(*arrow->result, at), at));
     } else if (!arrow) {
-      fail(lam, "give a lambda bound by 'let' its result type for now, as "
-                "in 'let (x : i32) : i32 => x * x'");
+      fail(lam, "give this lambda its result type for now, as in "
+                "'let (x : i32) : i32 => x * x'; only a lambda passed for a "
+                "function parameter takes it from the parameter's type");
       return std::nullopt;
     } else {
       item->add(syntax::makeNode(NodeKind::None, at));
@@ -3098,15 +3123,127 @@ class Gen {
       body = std::move(seq);
     }
     item->add(std::move(body));
+    // A capture is a field of the closure.
+    if (caps)
+      for (size_t k = 2; k < item->kids.size(); ++k)
+        throughSelf(item->kids[k], *caps);
     sema::FuncSig sig;
     sig.name = symbol;
     sig.item = item.get();
     synthesized_.push_back(std::move(item));
     if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
     sigs_.emplace(symbol, std::move(sig));
-    overloads_[symbol].push_back(symbol);
+    overloads_[caps ? "apply" : symbol].push_back(symbol);
     pendingInstances_.push_back(symbol);
     return symbol;
+  }
+
+  // --- captures (ADR 0044, section 6) ---------------------------------
+
+  static constexpr const char *kSelf = "closure#";
+
+  // Each captured name rewritten as a field of the closure parameter.
+  static void throughSelf(NodePtr &n, const Captures &caps) {
+    if (n->kind == NodeKind::Name && n->flags.empty())
+      for (const Capture &c : caps)
+        if (c.name == n->text) {
+          auto f = syntax::makeNode(NodeKind::Field, n->loc, c.name);
+          f->add(syntax::makeNode(NodeKind::Name, n->loc, kSelf));
+          n = std::move(f);
+          return;
+        }
+    for (NodePtr &k : n->kids) throughSelf(k, caps);
+  }
+
+  // The locals a lambda uses, in order of first use: its captures. A
+  // lambda may not assign one, and moving one in is step 7.
+  std::optional<Captures> capturesOf(const Node &lam) {
+    std::set<std::string> params;
+    for (const NodePtr &k : lam.kids)
+      if (k->kind == NodeKind::LParam && !k->kids.empty() &&
+          k->kids[0]->kind == NodeKind::PVar)
+        params.insert(k->kids[0]->text);
+    Captures caps;
+    std::set<std::string> seen;
+    bool ok = true;
+    std::function<void(const Node &)> walk = [&](const Node &k) {
+      if (k.kind == NodeKind::LParam) return;
+      if (k.kind == NodeKind::Assign && !k.kids.empty()) {
+        const Node *root = k.kids[0].get();
+        while ((root->kind == NodeKind::Field || root->kind == NodeKind::Index) &&
+               !root->kids.empty())
+          root = root->kids[0].get();
+        if (root->kind == NodeKind::Name && !params.count(root->text) &&
+            lookup(root->text)) {
+          fail(k, "a lambda cannot assign '" + root->text + "', which it "
+                  "captures: it copies a scalar when it is made and borrows "
+                  "a buffer (ADR 0044, section 6); take an accumulator as a "
+                  "parameter instead");
+          ok = false;
+          return;
+        }
+      }
+      if (k.kind == NodeKind::Name && k.flags.empty() &&
+          !params.count(k.text) && !seen.count(k.text))
+        if (BindingPtr b = lookup(k.text)) {
+          seen.insert(k.text);
+          if (isLinear(b->type) || hasDrop(b->type)) {
+            fail(k, "a lambda cannot capture '" + k.text + "' yet: its "
+                    "type " + typeName(b->type) + " is linear or has a "
+                    "'drop', and capturing one comes later (ADR 0044, "
+                    "step 7)");
+            ok = false;
+            return;
+          }
+          caps.push_back({k.text, b});
+        }
+      for (const NodePtr &c : k.kids) walk(*c);
+    };
+    for (const NodePtr &k : lam.kids) walk(*k);
+    if (!ok) return std::nullopt;
+    return caps;
+  }
+
+  // A lambda as a value: its closure type, a record of its captures named
+  // after the lambda, which meets `Function` through its `apply`, and the
+  // record literal that makes the closure. Buffers are captured by
+  // borrowing, so the closure borrows from them.
+  struct Closure {
+    Type type;
+    std::string apply;
+    const Node *value = nullptr;
+    std::vector<BindingPtr> lenders;
+  };
+  std::optional<Closure> closureOf(const Node &lam, const Arrow *arrow,
+                                   const std::vector<std::string> &typeParams,
+                                   const std::string &what, const Captures &caps) {
+    std::string name = "lambda@" + placeOf(lam);
+    Closure c;
+    c.type = types_.named(name);
+    if (!c.type) {
+      llvm::SmallVector<mlir::StringAttr> names;
+      llvm::SmallVector<Type> fields;
+      for (const Capture &k : caps) {
+        names.push_back(b_.getStringAttr(k.name));
+        fields.push_back(k.binding->type);
+      }
+      c.type = RecordType::get(&ctx_, name, names, fields);
+      types_.define(name, c.type);
+    }
+    std::optional<std::string> symbol =
+        liftLambda(lam, arrow, typeParams, what, &caps);
+    if (!symbol) return std::nullopt;
+    c.apply = *symbol;
+    auto lit = syntax::makeNode(NodeKind::RecordLit, lam.loc);
+    for (const Capture &k : caps) {
+      Node *f = lit->add(syntax::makeNode(NodeKind::FieldInit, lam.loc, k.name));
+      f->add(syntax::makeNode(NodeKind::Name, lam.loc, k.name));
+      if (mlir::isa<ArrayType, SliceType>(k.binding->type))
+        addLenders(c.lenders, {k.binding});
+      addLenders(c.lenders, k.binding->lenders);
+    }
+    c.value = keep(std::move(lit));
+    return c;
   }
 
   // The symbol a top-level function passed as `arrow` is called by: its
@@ -3431,6 +3568,22 @@ class Gen {
         continue;
       }
       if (a.kind == NodeKind::Lambda) {
+        std::optional<Captures> caps = capturesOf(a);
+        if (!caps) return std::nullopt;
+        if (!caps->empty()) {
+          // A lambda that captures is passed as its closure, a function
+          // object whose fields are the captures.
+          std::optional<Closure> c =
+              closureOf(a, &arrow, hof.typeParams, what, *caps);
+          if (!c) return std::nullopt;
+          std::optional<std::string> via =
+              objectApply(a, sigs_.at(c->apply), arrow);
+          if (!via) return std::nullopt;
+          objects[p.text] = {c->type, *via};
+          symbols.push_back("lambda@" + placeOf(a));
+          rest.push_back(c->value);
+          continue;
+        }
         symbol = liftLambda(a, &arrow, hof.typeParams, what);
       } else if (a.kind == NodeKind::Name && a.flags.empty() &&
                  !overloadSet(a.text).empty()) {
@@ -6609,6 +6762,17 @@ class Gen {
       if (!writableBuffer(*b))
         return fail(obj, "cannot write to '" + obj.text +
                              "': declare the parameter 'out' or 'inout'");
+      // A lambda that captures the buffer reads it until its last use.
+      if (!contract_ && !ghost_)
+        for (const auto &scope : scopes_)
+          for (const auto &[name, x] : scope)
+            if (x->closure && llvm::is_contained(x->lenders, b))
+              if (const Node *use = usedAfter(x, obj))
+                return fail(obj, "'" + b->name + "' is lent to '" + x->name +
+                                     "', so it cannot be assigned here; " +
+                                     stillUsed(x, obj, use) +
+                                     ", and a borrow lasts until its last "
+                                     "use");
       auto idx = genIndexValue(*place.kids[1]);
       if (!idx) return std::nullopt;
       R v = genExpr(valueNode, elem);
@@ -7995,8 +8159,13 @@ class Gen {
                   "contracts on a local 'let' are not supported yet");
     // `let sq = let (x : i32) : i32 => x * x in sq 3` (ADR 0044): the
     // lambda is a function, and `sq` its name in the body.
+    std::optional<Captures> letCaps;
     if (n.kids[3]->kind == NodeKind::Lambda && ret.kind == NodeKind::None &&
         !contract_ && !ghost_) {
+      letCaps = capturesOf(*n.kids[3]);
+      if (!letCaps) return std::nullopt;
+    }
+    if (letCaps && letCaps->empty()) {
       if (!checkFresh(n.text, n.loc)) return std::nullopt;
       std::optional<std::string> symbol =
           liftLambda(*n.kids[3], nullptr, {}, "");
@@ -8045,6 +8214,7 @@ class Gen {
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     b->lenders = lendersOf(valueNode);
     b->writable = writable(valueNode);
+    b->closure = valueNode.kind == NodeKind::Lambda;
     b->scope = n.kids[4].get();
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
