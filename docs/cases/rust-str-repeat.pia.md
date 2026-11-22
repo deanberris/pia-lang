@@ -71,7 +71,7 @@ let capacity (size : usize) (n : usize) : usize = size * n
 ```console
 $ piac --verify capacity.pia
 capacity.pia:1:56: failed: '*' does not overflow usize
-  counterexample: size = 1828397664858756623, n = 12022660837723052030, result = 21982205001081651031079857090536094690
+  counterexample: size = 9142588120681479679, n = 9215138849259591680, result = 84250218973671143554552697525757470720
 0 proved, 1 failed, 0 skipped
 ```
 
@@ -97,7 +97,7 @@ let capacity (size : usize) (n : usize) : usize @overflow(wrap)
 ```console
 $ piac --verify capacity_wrap.pia
 capacity_wrap.pia:2:3: failed: the postcondition holds
-  counterexample: size = 18229368363665230819, n = 16679650292680605362
+  counterexample: size = 17288312707565342261, n = 9902898231160894403
 0 proved, 1 failed, 0 skipped
 ```
 

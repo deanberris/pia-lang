@@ -1978,8 +1978,10 @@ class Encoder {
       Value r = env_.lookup(call.getResult(0));
       if (app && r) assume(eq(r, app));
     }
-    // A spec function's result is its definition applied to the arguments.
-    if (hasBody && isSpecFunction(callee))
+    // A spec function's result is its definition applied to the arguments,
+    // and so is a pure function's, so a call in code and one in a contract
+    // agree.
+    if (hasBody && (isSpecFunction(callee) || definesValue(callee)))
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
@@ -2063,8 +2065,41 @@ class Encoder {
     return f && f->hasAttr(PiaDialect::getAbstractAttrName());
   }
   bool hasSpecDecl(mlir::func::FuncOp f) {
-    return isSpecFunction(f) || isAbstract(f);
+    return isSpecFunction(f) || isAbstract(f) || definesValue(f);
   }
+
+  // An ordinary function whose body is a definition: one scalar result,
+  // scalar parameters, and a body of arithmetic, comparisons and pure
+  // `if`s, with no call, loop, buffer or abort. It always returns, with
+  // exactly the value its body computes, so a call to it in a contract may
+  // be unfolded like a spec function's (guarded, as one is, by its
+  // precondition). This is what lets a generic's contract, such as
+  // `ensures result = (if less b a then b else a)`, mean something at its
+  // callers once `less` is a concrete function.
+  bool definesValue(mlir::func::FuncOp f) {
+    if (!f || f.isExternal() || isSpecFunction(f) || isAbstract(f) ||
+        f->hasAttr("pia.lemma") || f.getNumResults() != 1)
+      return false;
+    auto scalar = [](Type t) {
+      return mlir::isa<IntType>(t) || t.isInteger(1);
+    };
+    if (!scalar(f.getFunctionType().getResult(0))) return false;
+    for (Type t : f.getFunctionType().getInputs())
+      if (!scalar(t)) return false;
+    auto it = definesValue_.find(f.getOperation());
+    if (it != definesValue_.end()) return it->second;
+    bool ok = true;
+    f.walk([&](Operation *op) {
+      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                    AbortOp, LoadOp, StoreOp>(op))
+        ok = false;
+      for (Type t : op->getResultTypes())
+        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+    });
+    definesValue_[f.getOperation()] = ok;
+    return ok;
+  }
+  llvm::DenseMap<Operation *, bool> definesValue_;
 
   // `f a` for an abstract `f`: the uninterpreted function applied, with
   // its result type's range, and nothing else.
@@ -2289,7 +2324,8 @@ class Encoder {
       for (Value a : call.getOperands()) args.push_back(demand(a, d));
       result = abstractCall(calleeOf(call), args);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
-               call && isSpecFunction(calleeOf(call))) {
+               call && (isSpecFunction(calleeOf(call)) ||
+                        definesValue(calleeOf(call)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;

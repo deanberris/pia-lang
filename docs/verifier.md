@@ -135,7 +135,7 @@ A `while` loop or a recursive call with no measure gets a `skipped` goal ("the l
 
 ## Spec functions and lemmas
 
-`let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call.
+`let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions and pure functions of scalars. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call.
 
 To the solver, `f` is an uninterpreted function `F` with one argument per scalar parameter and two, the array and its length, per buffer. A call `f a`, wherever it is, is `F a`, with these facts:
 
@@ -166,6 +166,8 @@ let lemma split (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit
 One unfolding proves each step: the lemma's call for `n - 1`, plus `count`'s definition at `n`. Without the lemma, a goal about every `n` needs more unfoldings than any fixed fuel gives.
 
 Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `spec` and `lemma` are keywords only between `let` (or `let rec`) and the name ([grammar.md](grammar.md#identifiers-and-keywords)).
+
+**Pure functions of scalars.** An ordinary function with scalar parameters and one scalar result, whose body has no loop, call, buffer access or `abort`, always returns exactly what its body computes. A call to one, in a contract, a spec function or code, is unfolded like a spec function's: its result is its body's value where its precondition holds. So a generic's contract that names a concept function, such as `ensures result = (if less b a then b else a)` in `min`, means `b < a` at the `u8` instance, where `less` is `a < b`, and a spec function over `Ord t` can call `less` (`lex_from` in `lib/Pia/Core/Order.pia`). A call to any other function in a contract is still an unknown value, constrained only by the callee's own `ensures` (tests/verify/pure_calls.pia).
 
 ## Spec-only `int` and `real`
 

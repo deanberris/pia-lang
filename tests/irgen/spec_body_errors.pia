@@ -2,9 +2,14 @@
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
-let plain (a : u8) : u8 = a
+(* Not pure: it loops. A pure function of scalars, with no loop, call,
+   buffer or abort, may be called (tests/verify/pure_calls.pia). *)
+let plain (a : u8) : u8
+= let r : mutable u8 = 0 in
+  for i in 0..a do r <- i done;
+  r
 
-(* CHECK: spec_body_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a spec function can call only spec functions, and 'plain' is not one
+(* CHECK: spec_body_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a spec function can call only spec functions and pure functions of scalars (no loop, call, buffer or 'abort'), and 'plain' is neither
 *)
 let spec calls_code (a : u8) : u8 = plain a
 

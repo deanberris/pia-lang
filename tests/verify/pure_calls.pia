@@ -1,0 +1,43 @@
+(* A call in a contract to a pure function of scalars (no loop, call,
+   buffer or abort) means its body's value, as a spec function's does, so
+   a generic's contract that names a concept function keeps its meaning at
+   the generic's callers, and a spec function may call one.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+let meta Ord (t : type) : concept = sig
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let less (a : u8) (b : u8) : bool = (a < b)
+
+let min (t : type where Ord t) (a : t) (b : t) : t
+  ensures result = (if less b a then b else a)
+= if less b a then b else a
+
+(* min's contract says `less b a`, which is b < a here. *)
+let smaller (a : u8) (b : u8) : u8
+  ensures b < a ==> result = b
+  ensures b >= a ==> result = a
+= min<u8> a b
+
+(* A spec function over the concept's `less`. *)
+let spec before (t : type where Ord t) (a : t) (b : t) : bool = less a b
+
+let check (a : u8) (b : u8) : bool
+  ensures result = before a b
+= (a < b)
+
+(* A function with a loop is not unfolded: its contract is all callers see.
+// CHECK: pure_calls.pia:38:3: failed: the postcondition holds
+*)
+let count (n : u8) : u8
+= let i : mutable u8 = 0 in
+  for k in 0..n do i <- k done;
+  i
+let uses (n : u8) : u8
+  ensures result = count n
+= 0
+
+(*
+// CHECK: 5 proved, 1 failed, 0 skipped
+*)
