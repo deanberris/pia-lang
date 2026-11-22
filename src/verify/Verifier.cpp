@@ -196,12 +196,6 @@ static bool closureParam(mlir::func::FuncOp f, Type t) {
          f.getSymName().starts_with("apply[lambda@");
 }
 
-// An ordinary function whose body is a definition: one scalar result,
-// scalar parameters, and a body of arithmetic, comparisons, pure `if`s and
-// calls of such functions, with no loop, buffer or abort and no recursion.
-// It always returns, with exactly the value its body computes. A lambda
-// passed to a higher-order function is usually one (ADR 0044), and so is
-// the wrapper that gives a named function an arrow's contract.
 // An imported function of scalars: to the solver, an uninterpreted
 // function with the interface's contract, wherever it is called.
 bool contractOnly(mlir::func::FuncOp f) {
@@ -215,6 +209,12 @@ bool contractOnly(mlir::func::FuncOp f) {
   return true;
 }
 
+// An ordinary function whose body is a definition: one scalar result,
+// scalar parameters, and a body of arithmetic, comparisons, pure `if`s and
+// calls of such functions, with no loop, buffer or abort and no recursion.
+// It always returns, with exactly the value its body computes. A lambda
+// passed to a higher-order function is usually one (ADR 0044), and so is
+// the wrapper that gives a named function an arrow's contract.
 bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   // An imported function's body is in its module: here it is an
   // arbitrary value with the interface's contract, which is not a
