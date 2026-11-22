@@ -26,15 +26,17 @@ let wide (x : u8) : widen u8
   ensures result = x
 = x
 
-let same (t : type where small t) (x : t) : t
-  ensures result = x
-= x
+let one (t : type where small t) (x : t) : u8
+  ensures result = 1
+= 1
 
 let byte (x : u8) : u8
-  ensures result = x
-= same x
+  ensures result = 1
+= one x
 
-let maybe (o : option u16) : option u16 = same o
+let maybe (o : option u16) : u8
+  ensures result = 1
+= one o
 
 (* The arm's `requires` is proved from pick's precondition, and its
    `ensures` from its body. *)
