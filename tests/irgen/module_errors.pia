@@ -24,6 +24,9 @@ interface Ops = sig
 (* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'corner' is exported, but its type names 'point', which no interface of 'Shapes' lists
 *)
   let corner : (s : u8) -> point
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no spec function 'weight' with exactly this signature; a spec function is exported with its definition, so its interface entry repeats its parameters and result
+*)
+  let spec weight : (x : u8) -> int
 end
 
 interface Types = sig
@@ -51,3 +54,4 @@ let size = type { w : u8; h : u8 }
 let area (side : u8) : u32 = side * side
 let grow (x : u8) : u8 = x
 let corner (s : u8) : point = { x = s; y = s }
+let weight (x : u8) : u8 = x

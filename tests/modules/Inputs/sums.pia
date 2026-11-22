@@ -1,0 +1,29 @@
+(* A module that exports a spec function (ADR 0039, step 3): importers get
+   its definition, so they can reason with it in their own contracts and
+   proofs, and the functions it describes state their results with it. *)
+module Calc.Sums : Sums
+
+interface Sums = sig
+  let spec total : (xs : [u8]) -> (n : usize) -> int
+    requires n <= len xs
+  let sum : (xs : [u8]) -> u32
+    requires len xs <= 1000
+    ensures result = total xs (len xs)
+    ensures result <= 255 * len xs
+end
+
+let spec total (xs : [u8]) (n : usize) : int
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0 else total xs (n - 1) + xs.[n - 1]
+
+let sum (xs : [u8]) : u32
+  requires len xs <= 1000
+  ensures result = total xs (len xs)
+= let acc : mutable u32 = 0 in
+  for i in 0..len xs
+    invariant acc = total xs i && acc <= 255 * i
+  do
+    acc <- acc + xs.[i]
+  done;
+  acc

@@ -311,6 +311,7 @@ pfield: IDENT (EQ pattern)?
 interface_item: INTERFACE IDENT attribute* EQ SIG sig_item* END
 sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
         | LET META binder COLON annot                  -> sig_meta
+        | LET SPEC binder COLON annot ret_attrs contract* -> sig_spec
         | LET binder EQ type_value                     -> sig_type
         | LET binder EQ LET lparam+ FATARROW type_value -> sig_generic_type
         | HOLE                                         -> sig_hole

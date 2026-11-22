@@ -241,6 +241,22 @@ bool conceptItem(const Node &item) {
          item.kids.size() > 3 && item.kids[3]->kind == N::Sig;
 }
 
+// Whether an item is a spec function, `let spec f ...`.
+bool specItem(const Node &item) {
+  return item.kind == N::LetItem && hasWord(item.flags, "spec");
+}
+
+// Whether a sig entry is exported with its definition: a concept, a spec
+// function or a generic function (ADR 0039).
+bool inlinedSig(const Node &k) {
+  return k.kind == N::SigVal &&
+         (k.flags == "meta" || k.flags == "spec" || genericSig(k));
+}
+
+bool inlinedItem(const Node &item) {
+  return genericItem(item) || conceptItem(item) || specItem(item);
+}
+
 // The names an item uses, as names and as types.
 void namesIn(const Node &n, std::set<std::string> &out) {
   if ((n.kind == N::Name && n.flags.empty()) || n.kind == N::TypeName ||
@@ -308,16 +324,14 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
     for (const NodePtr &k : item->kids)
       if (k->kind == N::SigVal || k->kind == N::SigType) {
         listed.insert(k->text);
-        if (k->kind == N::SigVal && (k->flags == "meta" || genericSig(*k)))
-          inlined.insert(k->text);
+        if (inlinedSig(*k)) inlined.insert(k->text);
       }
     std::set<std::string> topLevel;
     for (const NodePtr &other : program.kids)
       if (other->kind == N::LetItem) topLevel.insert(other->text);
     for (size_t i = 0; i < program.kids.size(); ++i) {
       const Node &def = *program.kids[i];
-      if (!inlined.count(def.text) || !(genericItem(def) || conceptItem(def)))
-        continue;
+      if (!inlined.count(def.text) || !inlinedItem(def)) continue;
       std::set<std::string> uses;
       namesIn(def, uses);
       for (const std::string &u : uses)
@@ -408,11 +422,12 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     // names, as in the module (ADR 0039, section 6).
     std::set<std::string> typesAndConcepts, inlined;
     for (const NodePtr &k : iface->kids) {
+      // Spec functions are named through the module too: they are not
+      // overloaded, so the name finds the one definition.
       if (k->kind == N::SigType ||
-          (k->kind == N::SigVal && k->flags == "meta"))
+          (k->kind == N::SigVal && (k->flags == "meta" || k->flags == "spec")))
         typesAndConcepts.insert(k->text);
-      if (k->kind == N::SigVal && (k->flags == "meta" || genericSig(*k)))
-        inlined.insert(k->text);
+      if (inlinedSig(*k)) inlined.insert(k->text);
     }
     std::set<std::string> listed;
     for (const NodePtr &k : iface->kids) {
@@ -463,20 +478,23 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       const Node &def = *artifact->kids[i];
       if (def.kind == N::Comment) continue;
       if (def.kind != N::LetItem || !inlined.count(def.text) ||
-          !(genericItem(def) || conceptItem(def))) {
+          !inlinedItem(def)) {
         diags.error(at, "'" + found + "' is not an interface artifact: it "
                         "defines '" + def.text + "', which is not a generic "
-                        "function or concept the interface lists");
+                        "function, spec function or concept the interface "
+                        "lists");
         continue;
       }
       NodePtr copy = clone(def);
       copy->text = module + "." + def.text;
       copy->flags += copy->flags.empty() ? "from:" + module : " from:" + module;
       if (!imported.insert(copy->text + " = " + shape(*copy)).second) continue;
-      std::set<std::string> typeParams;
+      // Parameters keep their names; no binding shadows a member, since
+      // Pia has no shadowing.
+      std::set<std::string> params;
       for (const NodePtr &p : copy->kids[0]->kids)
-        if (p->kind == N::Param) typeParams.insert(p->text);
-      qualify(*copy, module, typesAndConcepts, typeParams, typeParams);
+        if (p->kind == N::Param) params.insert(p->text);
+      qualify(*copy, module, typesAndConcepts, params, params);
       relocate(*copy, at);
       out.push_back(std::move(copy));
     }

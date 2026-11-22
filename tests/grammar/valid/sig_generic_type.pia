@@ -11,5 +11,7 @@ end
    definitions. *)
 interface Generic = sig
   let meta Before : concept
+  let spec weight : (a : u8) -> int
+    ensures result >= 0
   let smaller : (t : type where Before t) -> (a : t) -> (b : t) -> t
 end

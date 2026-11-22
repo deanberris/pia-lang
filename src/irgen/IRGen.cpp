@@ -4233,6 +4233,27 @@ class Gen {
         continue;
       }
       const Node &type = *r.kids[0]->kids[1];
+      // `let spec f : ...`: a spec function, exported with its definition
+      // so importers reason with its body; codegen erases it, so it has
+      // no link symbol.
+      if (r.flags == "spec") {
+        if (std::optional<std::string> name = privateType(type, shown))
+          diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
+                                  "names '" + *name + "', which no "
+                                  "interface of '" + header.text + "' lists");
+        bool found = false;
+        for (const std::string &symbol : overloads_[r.text])
+          found = found || (sigs_.at(symbol).item &&
+                            hasFlag(*sigs_.at(symbol).item, "spec") &&
+                            sameSignature(r, *sigs_.at(symbol).item));
+        if (!found)
+          diags_.error(r.loc, unmet + "no spec function '" + r.text +
+                                  "' with exactly this signature; a spec "
+                                  "function is exported with its definition, "
+                                  "so its interface entry repeats its "
+                                  "parameters and result");
+        continue;
+      }
       // A generic function is exported with its definition, which
       // importers instantiate, so the interface repeats its signature and
       // contract exactly.

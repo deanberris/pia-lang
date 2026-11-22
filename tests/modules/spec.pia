@@ -1,0 +1,30 @@
+(* An importer reasons with a spec function from another module's
+   interface (ADR 0039, step 3): it names it as `Calc.Sums.total`, in its
+   own contracts and in its own spec code.
+// RUN: piac --emit=interface -o %t %S/Inputs/sums.pia
+// RUN: piac --verify %S/Inputs/sums.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Calc.Sums.Sums
+
+(* The total of no elements is zero, by the imported definition. *)
+let sum_none (xs : [u8]) : u32
+  requires len xs = 0
+  ensures result = 0
+= Calc.Sums.sum xs
+
+let spec twice (xs : [u8]) : int
+= 2 * Calc.Sums.total xs (len xs)
+
+let doubled (xs : [u8]) : u32
+  requires len xs <= 1000
+  ensures result = twice xs
+= let s = Calc.Sums.sum xs in
+  s + s
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

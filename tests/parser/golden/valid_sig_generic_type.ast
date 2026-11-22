@@ -109,6 +109,29 @@
       (Attrs)
       (Contracts)
     )
+    (SigVal "weight" [spec]
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "a"
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+          (TypeName "int")
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Ensures
+          (Binary ">="
+            (Name "result")
+            (IntLit "0")
+          )
+        )
+      )
+    )
     (SigVal "smaller"
       (Annot
         (Modifiers)

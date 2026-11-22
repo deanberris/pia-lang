@@ -649,13 +649,19 @@ class Parser {
       // `let meta C : concept` lists a concept, which an interface exports
       // with its definition (ADR 0039).
       bool meta = !isConcept && accept(K::Meta);
+      // `let spec f : ...` lists a spec function, which is exported with
+      // its definition, since importers reason with its body (ADR 0039).
+      bool spec = !isConcept && !meta && accept(K::Spec);
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
       if (meta && !at(K::Colon)) fail("expected ':' after a concept's name");
+      if (spec && !at(K::Colon))
+        fail("expected ':' after a spec function's name");
       if (accept(K::Colon)) {
         auto v = makeNode(N::SigVal, start, name);
         if (meta) v->flags = "meta";
+        if (spec) v->flags = "spec";
         v->add(annot());
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
