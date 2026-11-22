@@ -91,7 +91,7 @@ let empty_push (r : region) (s : region) (v : inout mutable vec u16 r s) (b : mo
 // CHECK: vec_boxes.pia:76:20: proved: the precondition of 'get_at<u16>' holds [smt]
 // CHECK: vec_boxes.pia:76:18: proved: '+' does not overflow u16 [smt]
 // CHECK: vec_boxes.pia:68:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:82:3: failed: the precondition of 'push<u16>' holds [the solver gave up: smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)]
+// CHECK: vec_boxes.pia:82:3: failed: the precondition of 'push<u16>' holds
 // CHECK: vec_boxes.pia:38:11: proved: the precondition of 'alloc<u16>' holds [smt]
 // CHECK: vec_boxes.pia:39:3: proved: the index is within bounds [smt]
 // CHECK: vec_boxes.pia:34:3: proved: the postcondition holds [smt]
