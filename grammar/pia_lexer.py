@@ -21,6 +21,8 @@ KEYWORDS = {
     "import": "IMPORT", "operator": "OPERATOR", "true": "TRUE",
     "false": "FALSE", "borrowed": "BORROWED", "moved": "MOVED", "out": "OUT",
     "inout": "INOUT", "fixed": "FIXED", "mutable": "MUTABLE",
+    # Errors and scope cleanup (ADR 0028).
+    "handle": "HANDLE", "defer": "DEFER",
     # Alphanumeric operators from the bootstrap table.
     "mod": "OP_MUL",
 }
@@ -30,6 +32,7 @@ OPERATOR_CHARS = set("+-*/<>=|&^~!%?")
 # Operators whose meaning is fixed by the grammar.
 RESERVED_OPERATORS = {
     "->": "ARROW", "=>": "FATARROW", "<-": "LARROW", "=": "EQ", "|": "BAR",
+    "?": "QUESTION",
 }
 
 # The bootstrap operator table. Once the meta engine exists (M7) this comes

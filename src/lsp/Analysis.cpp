@@ -124,7 +124,8 @@ const std::vector<std::string_view> &keywords() {
       "ensures",  "invariant", "decreases", "assert",  "assume",   "forall",
       "exists",   "interface", "sig",     "module",    "struct",   "end",
       "import",   "operator", "true",     "false",     "borrowed", "moved",
-      "out",      "inout",    "fixed",    "mutable",   "mod",      "step"};
+      "out",      "inout",    "fixed",    "mutable",   "mod",      "step",
+      "handle",   "defer"};
   return words;
 }
 

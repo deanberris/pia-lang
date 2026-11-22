@@ -59,7 +59,7 @@ Reserved words:
 let rec meta in type of where if then else match with for spread while do done
 requires ensures invariant decreases assert assume forall exists
 interface sig module struct end import operator true false
-borrowed moved out inout fixed mutable mod
+borrowed moved out inout fixed mutable mod handle defer
 ```
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
@@ -90,6 +90,7 @@ An operator is a maximal run of `+ - * / < > = | & ^ ~ ! % ?`. A few spellings a
 | `=>` | Function literal |
 | `<-` | Assignment |
 | `\|` | Variant, match arm, union type, refinement |
+| `?` | Passes an error on: `e?` ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)) |
 
 Every other operator gets its precedence from the operator table. The table comes from the `let meta operator` declarations in the prelude ([meta.md](meta.md#operators)) and in the program. Operators not in the table get a level from their first character, as in OCaml.
 
@@ -167,8 +168,9 @@ path      = IDENT { "." IDENT } ;
 ### Bindings
 
 ```ebnf
-let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" seq ;
-let_in    = "let" [ "rec" ] binder { param } [ ret_annot ] { contract } "=" seq "in" seq ;
+let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
+let_in    = "let" [ "rec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
+handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
 param     = IDENT | SPLICE_IDENT
           | "(" ( IDENT | SPLICE_IDENT ) ":" annot ")"
@@ -239,9 +241,9 @@ elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argu
 
 stmt   = postfix "<-" stmt
        | "if" seq "then" stmt [ "else" stmt ]
-       | "for" pattern "in" or_e [ "step" add_e ] { loop_annot } "do" seq "done"
-       | "spread" pattern "in" or_e { attribute } { loop_annot } "do" seq "done"
-       | "while" seq { loop_annot } "do" seq "done"
+       | "for" pattern "in" or_e [ "step" add_e ] { loop_annot } "do" handled "done"
+       | "spread" pattern "in" or_e { attribute } { loop_annot } "do" handled "done"
+       | "while" seq { loop_annot } "do" handled "done"
        | quantifier
        | "assert" imp_e | "assume" imp_e
        | type_value
@@ -261,7 +263,7 @@ range_e = add_e [ ".." add_e ] ;
 add_e   = mul_e { add_op mul_e } ;
 mul_e   = unary { mul_op unary } ;
 unary   = "-" unary | application ;
-application = postfix { postfix } ;
+application = postfix { postfix } { "?" } ;   (* f x? is (f x)? *)
 
 postfix = atom
         | postfix "." ( IDENT | SPLICE_IDENT )
@@ -270,7 +272,7 @@ postfix = atom
 
 atom = IDENT | INT | FLOAT | STRING | "true" | "false"
      | QIDENT | "..."
-     | "(" seq ")" | "(" ")" | "(" operator ")"
+     | "(" handled ")" | "(" ")" | "(" operator ")"
      | "[" [ elem { ";" elem } [ ";" ] ] "]"
      | "{" field_init { ";" field_init } [ ";" ] "}"
      | "{" postfix "with" field_init { ";" field_init } [ ";" ] "}"
@@ -285,6 +287,8 @@ quoted = let_item { [ SEP ] let_item }            (* items *)
 match = "match" seq "with" [ "|" ] arm { "|" arm } ;
 arm   = pattern "->" seq ;
 ```
+
+`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer` is reserved for scope cleanup and is not accepted yet.
 
 ### Patterns
 
