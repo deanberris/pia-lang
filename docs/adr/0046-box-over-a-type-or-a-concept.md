@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22), with his answers folded in: `release` and `remove` leave a box empty until it is filled again; a box over a concept forwards its interface directly, with no run-time checks; and a `vec` of boxes, above all `vec (box c)`, comes first.
 
 ## Context
 
@@ -36,8 +36,12 @@ What the language has today:
 
 - `box.make alloc v` moves `v` into a new allocation. It can fail, like every allocation, so its result is `result (box t) alloc_error`.
 - Reading and writing the contents are borrows: `box.get b : borrowed(b) t`, and `box.get_mut` for writes, which the borrow rules of #70 and [ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md) keep from outliving the box.
-- `box.into b` takes the value back out and frees the allocation.
-- A box is `Drop`. Dropping it drops the contents and then returns the memory to its allocator. A box of a `@linear` type is itself `@linear`.
+- **Emptying and refilling** (Dean). A box has a spec-only state `box.full b` ([ADR 0041](0041-allocator-semantics-as-a-theory.md)'s spec-only fields, erased by codegen), so there is no run-time flag:
+    - `box.release b : t` (for `box t`) moves the value out and leaves `b` empty. `box.remove b` (for any box, including `box c`, whose value is unsized and cannot be returned) drops the value in place and leaves `b` empty.
+    - An empty box keeps its allocation. `box.fill b v` requires `not (box.full b)` and a compatible value, and makes `b` full again: for `box t`, any `t`; for `box c`, a value of any type that meets `c` and whose size and alignment fit the allocation, which the box records from `make` (as a real field when its allocator's `give` needs the size, spec-only otherwise).
+    - `get`, `get_mut` and every call through a box require `box.full b`, proved where they are used. An empty box is invalid until it is filled, and using it is a failed goal, not a run-time check.
+    - `box.free b` requires `not (box.full b)` and returns the memory without dropping anything.
+- A box is `Drop`, and dropping requires it to be full: it drops the contents and then returns the memory to its allocator. A box that may be empty at scope end must be filled or freed first. A box of a `@linear` type is itself `@linear`.
 - There is no deleter. A different way to free is a different allocator.
 - There is no null box. A box that may be empty is `option (box t)`, and the layout ([ADR 0030](0030-published-object-layouts.md)) uses the null pointer as `None`, so it is still one pointer.
 - A box stores its allocator. A default allocator from module state ([ADR 0041](0041-allocator-semantics-as-a-theory.md)) has no fields, so with one, `box t` is a single pointer.
@@ -50,21 +54,23 @@ A concept applied to all of its arguments but the first names a type: the type o
 
 - **They are unsized.** Their size is not known when the program is compiled, so they may appear only as an argument of a type parameter marked `@unsized`. `box`'s parameter is the only one in the library at first: `let box (@unsized t : type) = ...`. Anywhere else, such as a `let`, a field, a slice element or a parameter, is a type error that suggests `box`.
 - **Arrow types are sugar.** `box ((x : u8) -> u8 requires x < 255 ensures result > x)` is a box of `Function` at that arrow type, contract included. That is `Pia.Fn`'s dynamic function value: C++'s `move_only_function`, with its contract in the type.
-- **Generic bodies at a concept.** `box Shape` is a concrete type. Code generic over `(t : type where Shape t)` is not instantiated at it, because an erased value is not a `t` that meets `Shape`: a `box Shape` has no `Shape` instance of its own unless an adapter is written for it.
+- **Generic code at a concept.** `box Shape` is a concrete type, and it meets `Shape` itself by forwarding (section 4), so code generic over `(t : type where Shape t)` is instantiated at `box Shape` like any type that meets `Shape`.
 
-### 3. Erasing is explicit and proves the shape
+### 3. Widening is explicit and proves the shape
 
-`box.erase b` turns a `box t` into a `box c`. Pia has no implicit conversions (ADR 0003), so the call is written out. Writing `box.erase b` where a `box Shape` is expected deduces `c` from the expected type.
+`box.widen b` turns a `box t` into a `box c`, as `widen` turns a value into a wider type elsewhere in Pia. Pia has no implicit conversions (ADR 0003), so the call is written out. Writing `box.widen b` where a `box Shape` is expected deduces `c` from the expected type. (The draft called this `box.erase`; it is renamed so it is not read as removing the contents, which is `box.remove`.)
 
 - **The use check runs there.** `t` must meet `c`, with instances found by argument-dependent lookup and adapters as ADR 0034 finds them. The requirements' contracts and the concept's laws are proved for `t` by the use check, as for any instance, once per type and not once per box.
 - **The table.** The erased box stores a pointer to the instance's table, which holds the requirement functions in the concept's declaration order, then `drop`, size and alignment. There is one table per pair of type and concept, emitted as a constant.
 - **Restrictions on what can be erased.** A `@linear` value cannot be erased unless the concept requires a consuming function, because the box would hide the obligation to release it. A value that borrows (`borrowed(m)`) cannot be erased, because the box could outlive its lender.
 
-### 4. Only some requirements can be called through a box
+### 4. A box forwards its concept's interface, and only some requirements can be forwarded
 
 A requirement can be called through a `box c` when its concept parameter appears exactly once among its parameters, as the receiver (`in`, `inout` or `moved`), and nowhere in its result. `area : (s : t) -> f32` qualifies. `lt : (a : t) -> (b : t) -> bool` and `clone : (s : t) -> t` do not, because two erased values may hold different types, and an erased result has no size. This is Rust's object safety. Pia has no run-time type information to check that two boxes hold the same type, and adding it would be a separate decision.
 
-A concept whose requirements are all excluded still erases. Only `drop` can then be called through the box, and a program that tries anything else gets an error naming the requirement and the reason.
+A concept whose requirements are all excluded can still be widened to. Only `drop` can then be called through the box, and a program that tries anything else gets an error naming the requirement and the reason.
+
+**Forwarding, proved, with no run-time checks** (Dean). When every requirement of `c` can be called through a box and every law of `c` mentions one value of the concept's type, the compiler gives `box c` an instance of `c` itself. Each requirement of that instance takes the box (as `in`, `inout` or `moved`, as the requirement takes its receiver), requires `box.full b`, and calls the boxed object's function through the table with the same arguments; nothing is checked at run time. The instance is checked like any other at the use check: its contracts are the requirement's own, which hold because the table's function was proved to meet them when the box was widened, and its laws hold for the same reason. So a `box Shape` exposes `Shape`'s interface, proved to forward directly to the object. A concept with a binary requirement or a law over two values (`Ord`'s transitivity) gives `box c` no instance, and its callable requirements are still usable on the box directly.
 
 ### 5. Proofs through a box
 
@@ -82,12 +88,12 @@ The proof is sound because erasing ran the use check, which proved each requirem
 
 ### 6. Relation to `dyn`
 
-`dyn` stays a closed sum: its tags are listed, a `match` takes it apart, and the prover enumerates its cases. A `box c` is open: any module can erase a new type into it, there is no `match` on what it holds, and no downcast. The two cover the two uses C++ gives `variant` and virtual base classes respectively.
+`dyn` stays a closed sum: its tags are listed, a `match` takes it apart, and the prover enumerates its cases. A `box c` is open: any module can widen a box of a new type into it, there is no `match` on what it holds, and no downcast. The two cover the two uses C++ gives `variant` and virtual base classes respectively.
 
 ### 7. Code generation and the ABI
 
 - A `box t` is one pointer, and the allocator's fields when it has any. A `box c` adds the table pointer, so it is a fat pointer, as in Rust.
-- A call through a box is an indirect call through the table, unless the optimiser can see which table it holds, for example right after `box.erase`, in which case it is a direct call.
+- A call through a box is an indirect call through the table, unless the optimiser can see which table it holds, for example right after `box.widen`, in which case it is a direct call.
 - Tables are part of the published ABI ([ADR 0030](0030-published-object-layouts.md), [ADR 0024](0024-published-proof-certificates.md)):
   - a concept's table layout is its requirements in declaration order;
   - the concept's interface hash goes in the certificate;
@@ -95,11 +101,13 @@ The proof is sound because erasing ran the use check, which proved each requirem
 
 ## Implementation order
 
-1. **`box t` in `Pia.Mem.Box`**, with the work on proved `Pia.Mem` ("Build Pia's core up to a proved Vec"), once allocators are stored (ADR 0041, step 5). This covers `make`, `get`, `get_mut`, `into`, `Drop`, and `option (box t)` as one pointer.
+Dean's priority is a `vec` of boxes, and most of all `vec (box c)`, so steps 1 to 5 aim at one end-to-end test: a `vec (box Shape)` holding two different shapes, with a `Shape` function called on each element and proved.
+
+1. **`box t` in `Pia.Mem.Box`**, built with the `Pia.Mem` work ("Build Pia's core up to a proved Vec") once records can hold their allocator (ADR 0042's region parameters). This covers `make`, `get`, `get_mut`, `release`, `remove`, `fill`, `free`, the spec-only `full` state, `Drop`, and `vec (box t)`. The one-pointer layout of `option (box t)` can follow with ADR 0030; a proved non-null invariant is enough at first.
 2. **Concepts as unsized types.** Parsing a partially applied concept in type position, `@unsized` parameters, the error everywhere else, and arrow types as `Function`.
-3. **`box.erase`.** The use check at erasure, tables as constants, the `@linear` and borrow restrictions.
-4. **Calls through a box.** The receiver rule, the verifier's one sort per box, contracts and laws as hypotheses, havoc after `inout`, and purity in contracts.
-5. **Code generation.** Fat pointers, indirect calls, and devirtualising when the table is known.
+3. **`box.widen`.** The use check at widening, tables as constants, the `@linear` and borrow restrictions.
+4. **Calls through a box and forwarding.** The receiver rule, the generated forwarding instance, the verifier's one sort per box, contracts and laws as hypotheses, havoc after `inout`, and purity in contracts.
+5. **Code generation.** Fat pointers, indirect calls, and devirtualising when the table is known. With step 1 this gives the `vec (box Shape)` test.
 6. **The ABI.** Table layout in the published interface, and the loader's check.
 7. **`Pia.Fn`'s dynamic function values** as `box` at arrow types, and the library's handler tables.
 
@@ -110,8 +118,8 @@ The proof is sound because erasing ran the use check, which proved each requirem
 - Binary requirements such as `lt`, and requirements returning the concept's type, cannot be called through a box. Code that needs them uses generics, or a concept written for the erased use.
 - Pia gains its first unsized type. The `@unsized` marker keeps unsized types out of every position that needs a size.
 
-## Questions for Dean
+## Dean's answers (2026-11-22)
 
-1. **Erasing.** Should `box.erase b` be written explicitly, as recommended, since Pia has no implicit conversions? Or should a `box t` convert to `box c` wherever a `box c` is expected?
-2. **Binary requirements.** Should calls through a box be limited to requirements with one receiver, as recommended and as Rust does? The alternative is a run-time check that two boxes hold the same type, which needs a type identity in the table.
-3. **Where the core work goes.** `box t` (step 1) needs stored allocators from the `Pia.Mem` work. Should it be built there, with steps 2 to 7 in the standard library work, as recommended?
+1. **Emptying.** Taking the contents out is `release` (or `remove`), and it leaves the box invalid until it is filled with another compatible value (section 1). Widening stays an explicit call, renamed from `erase` to `widen` (section 3).
+2. **Forwarding.** Whatever is placed in a box must be proved to expose the concept's interface and forward directly to the object, with no run-time checks (section 4). So there is no run-time type check for binary requirements, which stay uncallable through a box.
+3. **Where the work goes.** Yes: `box t` is built with the `Pia.Mem` work, and `vec` must hold `box t` values. A `vec (box c)` is the most valuable result, so the implementation order aims at it.
