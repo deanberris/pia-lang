@@ -138,6 +138,20 @@ bool hasModifier(std::string_view modifiers, std::string_view word) {
   return false;
 }
 
+const syntax::Node *findLentAnnot(const syntax::Node &annot) {
+  if (annot.kind == NodeKind::Annot && !annot.kids.empty() &&
+      annot.kids[0]->kind == NodeKind::Modifiers && !annot.kids[0]->kids.empty())
+    return &annot;
+  for (const syntax::NodePtr &k : annot.kids)
+    if (const syntax::Node *a = findLentAnnot(*k)) return a;
+  return nullptr;
+}
+
+const syntax::Node *findLender(const syntax::Node &annot) {
+  const syntax::Node *a = findLentAnnot(annot);
+  return a ? a->kids[0]->kids[0].get() : nullptr;
+}
+
 mlir::Type TypeResolver::builtin(std::string_view name) {
   auto make = [&](llvm::APInt lo, llvm::APInt hi) -> mlir::Type {
     return IntType::get(&ctx_, lo, hi);
@@ -178,6 +192,8 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
 
 mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
+    case NodeKind::Annot:  // `(borrowed(m) [u8])` in a result type (#70)
+      return resolveAnnot(type);
     case NodeKind::TypeName: {
       for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
         if (auto p = it->find(type.text); p != it->end()) return p->second;
@@ -713,6 +729,12 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       continue;
     }
     const Node &annot = *p->kids[0];
+    if (const Node *l = findLender(annot)) {
+      diags.error(l->loc, "'borrowed(" + l->text + ")' names the lender of a "
+                          "function's result; a parameter is just 'borrowed'");
+      ok = false;
+      continue;
+    }
     Param param;
     param.name = p->text;
     param.modifiers = annot.kids[0]->text;
@@ -734,6 +756,25 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       ret.kids[0]->kind == NodeKind::Annot) {
     sig.result = types.resolveAnnot(*ret.kids[0]);
     if (!sig.result) ok = false;
+    sig.resultLender.clear();
+    if (const Node *l = findLender(*ret.kids[0])) {
+      auto p = std::find_if(sig.params.begin(), sig.params.end(),
+                            [&](const Param &q) { return q.name == l->text; });
+      if (p == sig.params.end()) {
+        diags.error(l->loc, "'borrowed(" + l->text + ")': the result is "
+                            "borrowed from a parameter, and '" + item.text +
+                            "' has no parameter '" + l->text + "'");
+        ok = false;
+      } else if (hasModifier(p->modifiers, "moved")) {
+        diags.error(l->loc, "'" + l->text + "' is moved into '" + item.text +
+                            "', so it ends there and the result cannot "
+                            "borrow from it; take it 'borrowed'");
+        ok = false;
+      } else {
+        sig.resultLender = l->text;
+        sig.lentType = types.resolveAnnot(*findLentAnnot(*ret.kids[0]));
+      }
+    }
   }
   if (!sig.typeArgs.empty()) types.replaceTypeScopes(std::move(saved));
   return ok;

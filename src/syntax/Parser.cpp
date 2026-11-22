@@ -650,8 +650,23 @@ class Parser {
       m->text += w;
       take();
     };
-    if (at(K::Borrowed)) addWord("borrowed");
-    else if (at(K::Moved)) addWord("moved");
+    if (at(K::Borrowed)) {
+      // `borrowed(m)`, written with no space before the parenthesis: a
+      // result borrowed from the parameter `m` (#70). `borrowed (t)` is
+      // `borrowed` before a parenthesised type.
+      bool lender = kind(1) == K::LParen &&
+                    tok(1).loc.offset == tok().loc.offset + tok().text.size() &&
+                    kind(2) == K::Ident && kind(3) == K::RParen;
+      addWord("borrowed");
+      if (lender) {
+        take();
+        m->add(makeNode(N::Name, loc(), text()));
+        take();
+        take();
+      }
+    } else if (at(K::Moved)) {
+      addWord("moved");
+    }
     if (at(K::In)) addWord("in");
     else if (at(K::Out)) addWord("out");
     else if (at(K::Inout)) addWord("inout");
@@ -713,6 +728,14 @@ class Parser {
       arrow->add(std::move(dom));
       arrow->add(type());
       return arrow;
+    }
+    if (!mods->kids.empty()) {
+      // `result (borrowed(m) [u8]) e`: a lender inside a result type.
+      auto a = makeNode(N::Annot, start);
+      a->add(std::move(mods));
+      a->add(std::move(t));
+      a->add(makeNode(N::None, start));
+      return a;
     }
     if (!mods->text.empty()) fail("expected '->': modifiers only apply to a parameter");
     return t;

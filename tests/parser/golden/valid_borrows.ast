@@ -1,0 +1,118 @@
+(Program
+  (LetItem "first"
+    (Params
+      (Param "m"
+        (Annot
+          (Modifiers "borrowed")
+          (SliceType
+            (TypeName "u8")
+          )
+          (None)
+        )
+      )
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers "borrowed"
+          (Name "m")
+        )
+        (SliceType
+          (TypeName "u8")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "<="
+          (Name "n")
+          (Apply
+            (Name "len")
+            (Name "m")
+          )
+        )
+      )
+    )
+    (Index
+      (Name "m")
+      (Range
+        (IntLit "0")
+        (Name "n")
+      )
+    )
+  )
+  (LetItem "take"
+    (Params
+      (Param "m"
+        (Annot
+          (Modifiers "borrowed")
+          (TypeName "arena")
+          (None)
+        )
+      )
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "usize")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "result")
+          (Annot
+            (Modifiers "borrowed out mutable"
+              (Name "m")
+            )
+            (SliceType
+              (TypeName "u8")
+            )
+            (None)
+          )
+          (TypeName "OutOfMemory")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "alloc")
+      (Name "m")
+      (Name "u8")
+      (Name "n")
+    )
+  )
+  (LetItem "peek"
+    (Params
+      (Param "m"
+        (Annot
+          (Modifiers "borrowed")
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Name "m")
+  )
+)

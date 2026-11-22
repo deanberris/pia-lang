@@ -48,6 +48,12 @@ bool isBuiltinTypeName(std::string_view name);
 // Whether a modifier list such as "borrowed in mutable" has `word`.
 bool hasModifier(std::string_view modifiers, std::string_view word);
 
+// The lender `m` of a `borrowed(m)` anywhere in an annotation or type, as
+// in `result (borrowed(m) [u8]) e` (#70); null when there is none.
+const syntax::Node *findLender(const syntax::Node &annot);
+// The annotation that holds that `borrowed(m)`: `borrowed(m) [u8]`.
+const syntax::Node *findLentAnnot(const syntax::Node &annot);
+
 // A constructor of a variant type. A variant `let shape = type | A | B of t`
 // is held as a record named `shape` with a field `tag`, int{0..n-1}, and one
 // field per constructor with a payload, named after the constructor. The
@@ -286,6 +292,10 @@ struct FuncSig {
   std::map<std::string, std::vector<std::string>> adapted;
   // The adapter chosen for each concept and arguments, `Same<u8>`.
   std::map<std::string, std::string> adapterFor;
+  // `: borrowed(m) [u8]`: the result is borrowed from the parameter named
+  // here, so it cannot outlive it (#70). Empty when it borrows nothing.
+  std::string resultLender;
+  mlir::Type lentType;  // the part of the result that is borrowed
 };
 
 // Resolves the value parameters and result type of `item` into `sig`, with
