@@ -620,6 +620,43 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   }
 };
 
+// `unsafe view addr n`: a memref descriptor over foreign memory, built
+// as the LLVM struct a memref lowers to, so its uses lower as usual.
+struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ViewOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    Value addr = adaptor.getAddress();
+    auto i64 = rw.getI64Type();
+    if (!type || addr.getType() != i64) return mlir::failure();
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+    auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
+    auto desc = mlir::LLVM::LLVMStructType::getLiteral(
+        rw.getContext(), {ptr, ptr, i64, dims, dims});
+    Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
+    Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, adaptor.getLength());
+    Value zero = make<mlir::LLVM::ConstantOp>(rw, loc, i64,
+                                              rw.getI64IntegerAttr(0));
+    Value one = make<mlir::LLVM::ConstantOp>(rw, loc, i64,
+                                             rw.getI64IntegerAttr(1));
+    Value d = make<mlir::LLVM::UndefOp>(rw, loc, desc);
+    auto insert = [&](Value v, llvm::ArrayRef<int64_t> at) {
+      d = make<mlir::LLVM::InsertValueOp>(rw, loc, d, v, at);
+    };
+    insert(p, {0});
+    insert(p, {1});
+    insert(zero, {2});
+    insert(n, {3, 0});
+    insert(one, {4, 0});
+    rw.replaceOpWithNewOp<mlir::UnrealizedConversionCastOp>(op, type, d);
+    return mlir::success();
+  }
+};
+
 // `abort ()`: proved unreachable; if reached anyway, it traps. A result it
 // stands for is never used, so it is zero.
 struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
@@ -892,7 +929,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, EmptyLowering, RegionLowering, AbortLowering, ConstArrayLowering,
+               StoreLowering, SliceLowering, EmptyLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(
       types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(

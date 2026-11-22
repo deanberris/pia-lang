@@ -1,0 +1,27 @@
+(* Foreign memory (#55, #59): pages from mmap, seen as a slice with
+   `unsafe view`. Compiled for Apple Silicon and linked with pages_test.c,
+   which defines pages_map and pages_unmap over mmap and munmap.
+*)
+module Pages : PageOps
+
+interface PageOps @abi(c) = sig
+  let fill_sum : (n : usize) -> (v : u8) -> u64
+    requires n <= 65536
+end
+
+let os_map (n : usize) : usize = extern "pages_map"
+let os_unmap (addr : usize) (n : usize) : unit = extern "pages_unmap"
+
+(* Maps n bytes, fills them with v and sums them: n * v, or 0 if the
+   mapping fails. *)
+let fill_sum (n : usize) (v : u8) : u64
+  requires n <= 65536
+= let addr = unsafe os_map n in
+  if addr = 0 then 0
+  else
+    (let mem : [u8] = unsafe view addr n in
+     for i in 0..n do mem.[i] <- v done;
+     let s : mutable u64 = 0 in
+     for i in 0..n invariant s <= i * 255 do s <- s + mem.[i] done;
+     unsafe os_unmap addr n;
+     s)

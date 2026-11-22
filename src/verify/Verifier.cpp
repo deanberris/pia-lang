@@ -1282,6 +1282,16 @@ class Encoder {
       out.push_back(bv(0));  // a placeholder: buffers are not terms
       return true;
     }
+    // `unsafe view addr n`: foreign memory, trusted to be there and to
+    // overlap no other buffer; its contents are unknown.
+    if (auto v = mlir::dyn_cast<ViewOp>(op)) {
+      Type sort = sortOf(v.getType());
+      if (!sort || !in[1]) return false;
+      arrays[v.getResult()] = declare(sort, "", false);
+      lengths[v.getResult()] = in[1];
+      out.push_back(bv(0));  // a placeholder: buffers are not terms
+      return true;
+    }
     // A `with_arena`'s memory: a new array, every element zero.
     if (auto r = mlir::dyn_cast<RegionOp>(op)) {
       auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(

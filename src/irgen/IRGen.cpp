@@ -2331,7 +2331,7 @@ class Gen {
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
-      if (f.text == "unsafe") return genUnsafe(n);
+      if (f.text == "unsafe") return genUnsafe(n, expected);
       if (f.text == "with_arena")
         return fail(n, "'with_arena' takes the arena's size in bytes, an "
                        "integer literal, and a function of the arena, as "
@@ -5316,9 +5316,12 @@ class Gen {
 
   // `unsafe f x`: a call of a foreign function that has no contract. The
   // caller vouches for it; the verifier assumes nothing it does.
-  R genUnsafe(const Node &n) {
+  R genUnsafe(const Node &n, Type expected) {
     if (n.kids.size() < 2 || n.kids[1]->kind != NodeKind::Name)
       return fail(n, "'unsafe' marks one call, as in 'unsafe f x'");
+    if (n.kids[1]->text == "view" && n.kids[1]->flags.empty() &&
+        !lookup("view") && overloadSet("view").empty())
+      return genView(n, expected);
     syntax::NodePtr call;
     if (n.kids.size() == 2) {
       call = syntax::clone(*n.kids[1]);
@@ -5333,6 +5336,31 @@ class Gen {
     R r = genExpr(*c, Type());
     unsafeAt_ = saved;
     return r;
+  }
+
+  // `unsafe view addr n`: the n elements at the address addr, such as the
+  // pages a foreign `mmap` returned. The caller vouches that the memory is
+  // there and overlaps no other buffer; the view may be written, and it
+  // borrows nothing, since the foreign code that made it owns it.
+  R genView(const Node &n, Type expected) {
+    if (n.kids.size() != 4)
+      return fail(n, "'unsafe view' takes an address and a length, as in "
+                     "'unsafe view addr n'");
+    auto sl = mlir::dyn_cast_or_null<SliceType>(expected);
+    if (!sl || !mlir::isa<IntType>(sl.getElementType()))
+      return fail(n, "'unsafe view' needs its slice type from the context, "
+                     "a slice of integers, as in 'let mem : [u8] = unsafe "
+                     "view addr n'");
+    R addr = genExpr(*n.kids[2], types_.usize());
+    if (!addr) return addr;
+    addr = coerce(*addr, types_.usize(), *n.kids[2]);
+    if (!addr) return addr;
+    auto len = genIndexValue(*n.kids[3]);
+    if (!len) return std::nullopt;
+    auto op = create<ViewOp>(loc(n), sl, addr->value, *len);
+    op->setAttr("pia.unsafe", b_.getUnitAttr());
+    writable_.insert(&n);
+    return TV{op.getResult(), sl};
   }
 
   // --- `drop` (#85) -----------------------------------------------------

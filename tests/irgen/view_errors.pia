@@ -1,0 +1,11 @@
+(* `unsafe view addr n` (#55): a slice of foreign memory needs its type.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: view_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'unsafe view' needs its slice type from the context, a slice of integers, as in 'let mem : [u8] = unsafe view addr n'
+*)
+let untyped (addr : usize) : u8 = let mem = unsafe view addr 4 in mem.[0]
+
+(* CHECK: view_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'unsafe view' takes an address and a length, as in 'unsafe view addr n'
+*)
+let short (addr : usize) : usize = let mem : [u8] = unsafe view addr in len mem

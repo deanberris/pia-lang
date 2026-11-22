@@ -462,6 +462,22 @@ def Pia_RegionOp : Pia_Op<"region"> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def Pia_ViewOp : Pia_Op<"view"> {
+  let summary = "a slice of foreign memory: `unsafe view addr n`";
+  let description = [{
+    The `n` elements at the address `addr`, such as pages a foreign `mmap`
+    returned. Nothing proves that the memory is there, or that it overlaps
+    no other buffer: `unsafe` says the caller vouches for both, and the
+    trust report lists it. The verifier sees a new buffer of `n` elements
+    whose contents it does not know.
+  }];
+  let arguments = (ins Pia_AnyInt:$address, Index:$length);
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = [{
+    $address `,` $length attr-dict `:` type($address) `->` type($result)
+  }];
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{

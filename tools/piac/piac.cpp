@@ -380,6 +380,11 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
          << "of '" << c.getCallee().str() << "'\n";
       ++n;
     });
+    f.walk([&](pia::ViewOp v) {
+      os << pia::verify::formatLoc(v.getLoc()) << ": trusted: the unsafe view "
+         << "of foreign memory in '" << f.getSymName().str() << "'\n";
+      ++n;
+    });
     // An `assume` is trusted (ADR 0023): the goals whose proofs used it
     // are those whose unsat core names it.
     f.walk([&](pia::contract::AssumeOp a) {

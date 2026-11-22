@@ -4,7 +4,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -166,6 +166,25 @@ cc_test(
     srcs = [
         "arena_test.c",
         ":arena_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# pages.pia, foreign memory from mmap seen through `unsafe view`.
+genrule(
+    name = "pages_obj",
+    srcs = ["pages.pia"],
+    outs = ["pages.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "pages_test",
+    srcs = [
+        "pages_test.c",
+        ":pages_obj",
     ],
     target_compatible_with = APPLE_SILICON,
 )
