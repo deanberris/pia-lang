@@ -6,6 +6,7 @@
 #include <string.h>
 
 uint64_t count_big(const uint8_t *xs, uint64_t n);
+uint64_t count_between(const uint8_t *xs, uint64_t n, uint8_t lo, uint8_t hi);
 uint64_t count_digits(const uint8_t *xs, uint64_t n);
 
 int main(void) {
@@ -23,6 +24,14 @@ int main(void) {
   }
   if (count_big(xs, 0) != 0) {
     fprintf(stderr, "count_big of nothing is not 0\n");
+    ++failures;
+  }
+  uint64_t between = 0;
+  for (int i = 0; i < 300; ++i) between += xs[i] >= 2 && xs[i] <= 6;
+  if (count_between(xs, 300, 2, 6) != between) {
+    fprintf(stderr, "count_between = %llu, expected %llu\n",
+            (unsigned long long)count_between(xs, 300, 2, 6),
+            (unsigned long long)between);
     ++failures;
   }
   const char *s = "a1b22c333-x";
