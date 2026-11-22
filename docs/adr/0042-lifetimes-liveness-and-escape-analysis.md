@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Proposed. Dean (2026-11-22): borrows end at their last use (implemented, step 1), and values are released at their last use, as in Mojo, so that a tail call can reuse the frame (section 5).
 
 ## Context
 
@@ -29,7 +29,7 @@ Prior art:
 A loan ends at the last use of every value that holds it, not at the end of its scope. A liveness pass over each function's control flow decides this. It treats the following as uses:
 
 - a read, a call argument, a `match`, or a return;
-- a scope-end `drop` or `defer` that touches the value, so a value with `Drop` lives until its cleanup runs ([ADR 0028](0028-error-propagation-and-cleanup.md));
+- a `defer` that touches the value, which runs at the scope's exit ([ADR 0028](0028-error-propagation-and-cleanup.md)), so the value lives until then (a value's own `drop` is not such a use: it runs at the value's last use, section 5);
 - every path out of a handler arm that can still reach the value.
 
 The lexical checks in IRGen become liveness checks, with the same errors. Each error points at the later use that keeps the loan alive. For example:
@@ -81,6 +81,28 @@ A generational arena is a `Pia.Mem` allocator for memory whose lifetime is one g
 - **Run-time generations only where the verifier cannot see.** A handle that leaves proved code, such as one given to C, kept in a REPL session ([ADR 0031](0031-verified-repl-and-live-environment.md)) or sent through an untyped channel, carries a real generation counter. It is checked on the way back in.
 - **Escape analysis picks the generation.** The lint in section 3 points at the innermost generation that encloses every use of an allocation. `Alloc` (ADR 0041) states generational arenas as a refinement, so `next` gives back every block live in the old generation.
 
+### 5. Values are released at their last use, and tail calls reuse the frame
+
+Dean (2026-11-22) asked for Mojo's approach. Mojo destroys a value "as soon as possible", right after its last use, instead of at the end of its scope. Pia does the same.
+
+- **A value with `Drop` is dropped right after its last use** on each path, not at the end of its scope. The rule that decides a loan's end (section 1) also decides the drop's place.
+  - A value that is never used is dropped where it is bound.
+  - A value used on only one branch is dropped at its last use on that branch, and at the start of the other branch.
+  - `@linear` values are unchanged: they must still be consumed explicitly, so they have no implicit drop to move.
+- **`defer` is unchanged.** A `defer` runs at the scope's exit, in reverse order, as ADR 0028 says, because it is code the programmer placed there. A value that a `defer` mentions lives until the `defer` runs.
+- **Cleanup errors keep their rule.** A drop that can fail is a `defer?` in all but name, so ADR 0028's rule applies: it must not shadow an error in flight. A drop that runs early, before the error, cannot shadow it.
+- **Memory is released early too.** A `with_arena` region whose arena is dead is freed at the arena's last use. The same goes for a buffer from `general` or a pool that has a `Drop`. Stack slots end there (section 3), so later values can reuse them.
+
+**Tail calls reuse the frame.** A call in tail position, `f x` as the last thing a function does, is lowered to a guaranteed tail call (`musttail`). That happens when, after section 5's releases, nothing in the current frame is live across the call:
+
+- every local the call does not take has been dropped or moved by then;
+- no argument borrows from the frame: a `borrowed` argument must come from the caller's own parameters, not from a local or a `with_arena` region of the frame;
+- no `defer` of the frame is still pending, since a pending `defer` would run after the call.
+
+Under those conditions a tail-recursive loop runs in constant stack. When a call in tail position is not eligible, it is an ordinary call. A lint (ADR 0037) then names the local, borrow or `defer` that keeps the frame alive, so that a recursion the programmer meant to run in constant stack does not silently grow it. `@tail` on a call makes eligibility an error instead of a lint.
+
+Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls (`@call(.always_tail, ...)`).
+
 ## Implementation order
 
 1. Liveness-based loan ends in place of the lexical borrow check, with moves and `@linear` in the same pass, and the new error notes. (Loan ends: implemented, tests/irgen/borrow_liveness.pia.)
@@ -89,12 +111,16 @@ A generational arena is a `Pia.Mem` allocator for memory whose lifetime is one g
 4. Stack slot lifetimes in codegen, with a stack-size test of `with_arena`s in sequence.
 5. The generational arena in `Pia.Mem`, with its spec-only generations and its `Alloc` refinement.
 6. The escape lint, then run-time generations at FFI and REPL boundaries.
+7. Drops at last use (section 5), replacing scope-end drops.
+8. Guaranteed tail calls, the `@tail` attribute, and the frame lint.
 
 ## Consequences
 
 - Loans end where they are last used, so fewer correct programs are rejected. A lender is free again as soon as its borrowers are dead.
 - The only lifetime syntax is at boundaries: `borrowed(m)` (existing) and region parameters on types. Function bodies stay unannotated.
 - Stack use falls without new syntax, and coroutine frames shrink.
+- Memory and resources are released as early as possible, and tail-recursive functions run in constant stack.
+- A value's drop no longer runs at a fixed, visible place. Code that needs an effect at the scope's end writes a `defer`, as it does today.
 - Liveness errors are harder to explain than scope errors, because the cause can be a later use. So each error names that use.
 
 ## Questions for Dean
