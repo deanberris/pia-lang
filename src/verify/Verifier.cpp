@@ -175,6 +175,18 @@ bool insideQuantifier(Operation *op) {
          op->getParentOfType<contract::ExistsOp>();
 }
 
+// A symbol as an SMT-LIB simple symbol: a concept's requirement in a
+// generic proof is `Function<f, t, bool>.apply`, and a comma or a space
+// would end it.
+std::string smtSymbol(llvm::StringRef name) {
+  std::string out;
+  for (char c : name) {
+    if (c == ' ') continue;
+    out += c == ',' ? '.' : c;
+  }
+  return out;
+}
+
 // An ordinary function whose body is a definition: one scalar result,
 // scalar parameters, and a body of arithmetic, comparisons, pure `if`s and
 // calls of such functions, with no loop, buffer or abort and no recursion.
@@ -222,8 +234,12 @@ bool specCall(mlir::func::CallOp call, mlir::func::FuncOp caller,
   auto callee =
       module ? module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())
              : mlir::func::FuncOp();
-  if (!callee || callee == caller || !pureScalar(callee, memo)) return false;
-  if (!callee.getBody().front().getOps<contract::RequiresOp>().empty())
+  if (!callee || callee == caller) return false;
+  // A theory's or a generic proof's abstract function is a term too.
+  bool abstract = callee->hasAttr(PiaDialect::getAbstractAttrName());
+  if (!abstract && !pureScalar(callee, memo)) return false;
+  if (!abstract &&
+      !callee.getBody().front().getOps<contract::RequiresOp>().empty())
     return false;
   // Arithmetic in an argument stays code, with its goals: exact, it could
   // pass a value outside the parameter's type.
@@ -2224,7 +2240,7 @@ class Encoder {
         // that combine theories never confuse them (ADR 0036).
         if (!theoryOf(f).empty())
           funs.push_back(create<mlir::smt::DeclareFunOp>(
-              ft, b_.getStringAttr(f.getSymName())));
+              ft, b_.getStringAttr(smtSymbol(f.getSymName()))));
         else
           funs.push_back(declare(ft, "", false));
       }

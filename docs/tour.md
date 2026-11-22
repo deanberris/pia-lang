@@ -442,7 +442,47 @@ let plus2 (x : u8) : u8
 = apply_twice x (let (y : u8) : u8 requires y < 250 => y + 1)
 ```
 
-For now a lambda's parameters must be typed, and a lambda is passed straight to such a parameter or bound by a `let` and applied. Lambdas that capture variables, untyped and generic lambdas, function objects, and functions stored in data or returned come in later steps of ADR 0044.
+A **function object** is any record or variant whose module defines `apply` for it. Applying it, `g x`, calls `apply g x`, and it can be passed wherever a function is expected, carrying state in its fields. `Function`, a standard concept, is what all of these meet, and a generic can say so itself, `(f : type where Function f t bool)`. A name may have one overload that takes a value and one that takes a function: a lambda, a named function or a function object only fits the second, and anything else only the first.
+
+<!-- example: find_either.pia -->
+```ocaml
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let find (t : type where Eq t) (xs : [t]) (v : t) : usize
+  ensures result <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && same xs.[i] v = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let below = type { lim : u8 }
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+let where3 (xs : [u8]) : usize = find xs 3
+
+let first_below (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= let b : below = { lim = lim } in
+  find xs b
+```
+
+For now a lambda's parameters must be typed, and a lambda is passed straight to such a parameter or bound by a `let` and applied. Lambdas that capture variables (a function object does that today), untyped and generic lambdas, and functions stored in data or returned come in later steps of ADR 0044.
 
 ## Metaprograms
 
