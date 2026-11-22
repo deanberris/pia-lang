@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <functional>
 #include <map>
@@ -304,7 +305,10 @@ class Gen {
     while (!diags_.hasErrors() && !pendingInstances_.empty()) {
       std::string key = pendingInstances_.front();
       pendingInstances_.pop_front();
-      genFunction(key);
+      if (llvm::StringRef(key).starts_with(kDefinition))
+        checkDefinition(key.substr(std::strlen(kDefinition)));
+      else
+        genFunction(key);
     }
     if (diags_.hasErrors()) return nullptr;
     checkGhosts();
@@ -2887,11 +2891,15 @@ class Gen {
   // on first use and generated after the current function.
   R genGenericCall(const Node &n, const sema::FuncSig &generic,
                    const Node *targs, const std::vector<const Node *> &args,
-                   Type expected) {
+                   Type expected,
+                   const std::map<std::string, Type> *preBound = nullptr) {
     const std::vector<std::string> &params = generic.typeParams;
     std::map<std::string, Type> bound;
     std::map<std::string, std::string> named;
     if (!bindTypeArgs(generic, targs, bound, &named)) return std::nullopt;
+    // What a higher-order call deduced from its function arguments.
+    if (preBound)
+      for (auto &[t, type] : *preBound) bound.emplace(t, type);
 
     std::vector<const Node *> valueParams = valueParamsOf(generic);
     if (args.size() != valueParams.size())
@@ -3038,7 +3046,10 @@ class Gen {
   std::optional<std::string> liftLambda(const Node &lam, const Arrow *arrow,
                                         const std::vector<std::string> &typeParams,
                                         const std::string &what,
-                                        const Captures *caps = nullptr) {
+                                        const Captures *caps = nullptr,
+                                        const std::map<std::string, Type> *bound = nullptr) {
+    static const std::map<std::string, Type> none;
+    if (!bound) bound = &none;
     std::string symbol = "lambda@" + placeOf(lam);
     // A lambda that captures is the `apply` of its closure type, whose
     // first parameter holds the captures (ADR 0044, section 6).
@@ -3069,31 +3080,83 @@ class Gen {
                         at));
     }
     std::map<std::string, std::string> rename;
+    // A lambda bound by `let` with untyped parameters is generic: each
+    // untyped parameter has an implicit type parameter (ADR 0044, section
+    // 2). Explicit ones, `(t : type where Ord t)`, are kept as written.
+    std::vector<std::string> generics;
     for (size_t i = 0; i < lparams.size(); ++i) {
       const Node &lp = *lparams[i];
       const Node &pat = *lp.kids[0];
-      if (pat.kind != NodeKind::PVar || lp.kids.size() < 2 ||
-          lp.kids[1]->kind != NodeKind::Annot) {
-        fail(lp, "a lambda's parameters need names and types for now, as "
-                 "in 'let (x : u8) => x > 3'; types from the expected type "
-                 "come later (ADR 0044, step 4)");
+      bool typed = lp.kids.size() > 1 && lp.kids[1]->kind == NodeKind::Annot;
+      if (pat.kind != NodeKind::PVar) {
+        fail(lp, "a lambda's parameter must be a name for now, as in "
+                 "'let (x : u8) => x > 3'");
         return std::nullopt;
       }
       Node *p = params->add(syntax::makeNode(NodeKind::Param, lp.loc, pat.text));
-      p->add(syntax::clone(*lp.kids[1]));
+      if (typed && lp.kids[1]->kids[1]->kind == NodeKind::TypeKind) {
+        if (arrow || caps) {
+          fail(lp, "a lambda with type parameters can only be bound by "
+                   "'let' for now");
+          return std::nullopt;
+        }
+        p->add(syntax::clone(*lp.kids[1]));
+        generics.push_back(pat.text);
+        continue;
+      }
+      if (typed) {
+        p->add(syntax::clone(*lp.kids[1]));
+      } else if (arrow) {
+        // Its type comes from the parameter's type, with the type
+        // parameters the other arguments bound.
+        const Node &dom = *arrow->domains[i];
+        if (mentionsUnbound(*dom.kids[1], typeParams, *bound)) {
+          fail(lp, "cannot tell the type of '" + pat.text + "' from " + what +
+                       "; give it, as in '(" + pat.text + " : u8)'");
+          return std::nullopt;
+        }
+        Type t = resolveUnder(*dom.kids[1], *bound);
+        if (!t) return std::nullopt;
+        p->add(annotOf(*syntax::makeNode(
+                           NodeKind::TypeName, lp.loc,
+                           typeAlias(t, symbol + "#" + pat.text)),
+                       lp.loc));
+      } else if (caps) {
+        fail(lp, "a lambda that captures needs its parameters' types for "
+                 "now, as in 'let (x : u8) => x < lim'");
+        return std::nullopt;
+      } else {
+        // An implicit type parameter, `x#type`.
+        std::string t = pat.text + "#type";
+        Node *tp = params->kids.insert(
+                           params->kids.end() - 1,
+                           syntax::makeNode(NodeKind::Param, lp.loc, t))
+                       ->get();
+        auto annot = syntax::makeNode(NodeKind::Annot, lp.loc);
+        annot->add(syntax::makeNode(NodeKind::Modifiers, lp.loc));
+        annot->add(syntax::makeNode(NodeKind::TypeKind, lp.loc));
+        annot->add(syntax::makeNode(NodeKind::None, lp.loc));
+        tp->add(std::move(annot));
+        p = params->kids.back().get();
+        p->add(annotOf(*syntax::makeNode(NodeKind::TypeName, lp.loc, t),
+                       lp.loc));
+        generics.push_back(t);
+      }
       if (arrow && !arrow->domains[i]->text.empty())
         rename[arrow->domains[i]->text] = pat.text;
     }
     if (ret) {
       item->add(syntax::clone(*ret));
-    } else if (arrow && !mentionsUnbound(*arrow->result, typeParams, {})) {
-      item->add(retAnnotNode(annotOf(*arrow->result, at), at));
-    } else if (!arrow) {
-      fail(lam, "give this lambda its result type for now, as in "
-                "'let (x : i32) : i32 => x * x'; only a lambda passed for a "
-                "function parameter takes it from the parameter's type");
-      return std::nullopt;
+    } else if (arrow && !mentionsUnbound(*arrow->result, typeParams, *bound)) {
+      Type t = resolveUnder(*arrow->result, *bound);
+      if (!t) return std::nullopt;
+      item->add(retAnnotNode(
+          annotOf(*syntax::makeNode(NodeKind::TypeName, at,
+                                    typeAlias(t, symbol + "#result")),
+                  at),
+          at));
     } else {
+      // Inferred from the body, which is generated on its own first.
       item->add(syntax::makeNode(NodeKind::None, at));
     }
     Node *cs = item->add(syntax::makeNode(NodeKind::Contracts, at));
@@ -3130,12 +3193,96 @@ class Gen {
     sema::FuncSig sig;
     sig.name = symbol;
     sig.item = item.get();
+    sig.typeParams = generics;
     synthesized_.push_back(std::move(item));
+    if (!generics.empty()) {
+      // Instantiated at each use. A constrained one is proved once, over
+      // its type parameters (ADR 0043).
+      bool constrained = false;
+      for (const NodePtr &q : sig.item->kids[0]->kids)
+        constrained |= sema::isTypeParam(*q) &&
+                       q->kids[0]->kids[2]->kind != NodeKind::None;
+      sigs_.emplace(symbol, std::move(sig));
+      overloads_[symbol].push_back(symbol);
+      if (constrained) pendingInstances_.push_back(kDefinition + symbol);
+      return symbol;
+    }
     if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
+    if (!sig.result && !inferResult(sig, lam)) return std::nullopt;
     sigs_.emplace(symbol, std::move(sig));
     overloads_[caps ? "apply" : symbol].push_back(symbol);
     pendingInstances_.push_back(symbol);
     return symbol;
+  }
+
+  // A pending entry that checks a generic's definition, not an instance.
+  static constexpr const char *kDefinition = "#definition ";
+
+  // A written type with type parameters bound.
+  Type resolveUnder(const Node &type, const std::map<std::string, Type> &bound) {
+    if (!bound.empty()) types_.pushTypeScope(bound);
+    Type t = type.kind == NodeKind::Annot ? types_.resolveAnnot(type)
+                                          : types_.resolve(type);
+    if (!bound.empty()) types_.popTypeScope();
+    return t;
+  }
+
+  // A name for a type, so a synthesized item can write it.
+  std::string typeAlias(Type t, const std::string &name) {
+    std::string alias = "type#" + name;
+    types_.define(alias, t);
+    return alias;
+  }
+
+  // The result type of a lambda's function that does not write one: its
+  // body is generated once on its own, in a function thrown away after,
+  // and its type is the result. Errors there come again when the function
+  // is generated, so they are dropped.
+  bool inferResult(sema::FuncSig &sig, const Node &at) {
+    OpBuilder::InsertionGuard guard(b_);
+    b_.setInsertionPointToEnd(module_.getBody());
+    llvm::SmallVector<Type> argTypes;
+    for (const sema::Param &p : sig.params) argTypes.push_back(p.type);
+    auto tmp = create<mlir::func::FuncOp>(loc(at), "#infer",
+                                          b_.getFunctionType(argTypes, {}));
+    Block *entry = tmp.addEntryBlock();
+    b_.setInsertionPointToStart(entry);
+    auto savedScopes = std::move(scopes_);
+    scopes_.clear();
+    auto savedFrames = std::move(frames_);
+    frames_.clear();
+    frames_.emplace_back();
+    auto savedMoved = std::move(moved_);
+    moved_.clear();
+    unsigned savedDepth = loopDepth_;
+    loopDepth_ = 0;
+    bool savedContract = contract_, savedGhost = ghost_;
+    contract_ = false;
+    ghost_ = false;
+    std::vector<std::map<std::string, Type>> savedTypes =
+        types_.replaceTypeScopes({});
+    if (!sig.typeArgs.empty()) types_.pushTypeScope(sig.typeArgs);
+    pushScope();
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      bind(sig.params[i].name, entry->getArgument(i), sig.params[i].type, false);
+    size_t errors = diags_.count();
+    R r = genExpr(*sig.item->kids[3], Type());
+    diags_.truncate(errors);
+    types_.replaceTypeScopes(std::move(savedTypes));
+    scopes_ = std::move(savedScopes);
+    frames_ = std::move(savedFrames);
+    moved_ = std::move(savedMoved);
+    loopDepth_ = savedDepth;
+    contract_ = savedContract;
+    ghost_ = savedGhost;
+    tmp.erase();
+    if (!r || isUnit(r->type)) {
+      fail(at, "cannot tell what this lambda returns; give its result "
+               "type, as in 'let (x : i32) : i32 => x * x'");
+      return false;
+    }
+    sig.result = r->type;
+    return true;
   }
 
   // --- captures (ADR 0044, section 6) ---------------------------------
@@ -3216,7 +3363,8 @@ class Gen {
   };
   std::optional<Closure> closureOf(const Node &lam, const Arrow *arrow,
                                    const std::vector<std::string> &typeParams,
-                                   const std::string &what, const Captures &caps) {
+                                   const std::string &what, const Captures &caps,
+                                   const std::map<std::string, Type> *bound = nullptr) {
     std::string name = "lambda@" + placeOf(lam);
     Closure c;
     c.type = types_.named(name);
@@ -3231,7 +3379,7 @@ class Gen {
       types_.define(name, c.type);
     }
     std::optional<std::string> symbol =
-        liftLambda(lam, arrow, typeParams, what, &caps);
+        liftLambda(lam, arrow, typeParams, what, &caps, bound);
     if (!symbol) return std::nullopt;
     c.apply = *symbol;
     auto lit = syntax::makeNode(NodeKind::RecordLit, lam.loc);
@@ -3514,6 +3662,72 @@ class Gen {
     return genCall(n, sig, args);
   }
 
+  // The type parameters of a generic higher-order function that its
+  // arguments fix before any lambda is made: from named values, and from
+  // the written types of typed lambdas, function objects and named
+  // functions (ADR 0044, section 2). An untyped lambda then takes its
+  // parameter types from these.
+  std::map<std::string, Type> deduceFromArguments(
+      const sema::FuncSig &hof, const std::vector<const Node *> &valueParams,
+      const std::vector<const Node *> &args) {
+    std::map<std::string, Type> bound;
+    if (hof.typeParams.empty()) return bound;
+    const std::vector<std::string> &tps = hof.typeParams;
+    for (size_t i = 0; i < args.size() && i < valueParams.size(); ++i) {
+      const Node &p = *valueParams[i];
+      const Node &a = *args[i];
+      if (p.kids.empty() || p.kids[0]->kind != NodeKind::Annot) continue;
+      BindingPtr local = a.kind == NodeKind::Name && a.flags.empty()
+                             ? lookup(a.text)
+                             : nullptr;
+      if (!sema::isFunctionParam(p)) {
+        if (local) (void)types_.unify(*p.kids[0], local->type, tps, bound);
+        continue;
+      }
+      Arrow arrow = arrowOf(*p.kids[0]->kids[1]);
+      std::vector<Type> doms;
+      Type result;
+      if (a.kind == NodeKind::Lambda) {
+        for (const NodePtr &k : a.kids) {
+          if (k->kind == NodeKind::LParam)
+            doms.push_back(k->kids.size() > 1 &&
+                                   k->kids[1]->kind == NodeKind::Annot &&
+                                   k->kids[1]->kids[1]->kind != NodeKind::TypeKind
+                               ? quietResolve(*k->kids[1])
+                               : Type());
+          if (k->kind == NodeKind::RetAnnot && !k->kids.empty() &&
+              k->kids[0]->kind == NodeKind::Annot)
+            result = quietResolve(*k->kids[0]);
+        }
+      } else if (local) {
+        if (const sema::FuncSig *ap = applyFor(local->type, arrow.domains.size())) {
+          for (size_t j = 1; j < ap->params.size(); ++j)
+            doms.push_back(ap->params[j].type);
+          result = ap->result;
+        }
+      } else if (a.kind == NodeKind::Name && a.flags.empty()) {
+        std::vector<sema::FuncSig *> set = overloadSet(a.text);
+        if (set.size() == 1 && !set[0]->isGeneric()) {
+          for (const sema::Param &q : set[0]->params) doms.push_back(q.type);
+          result = set[0]->result;
+        }
+      }
+      for (size_t j = 0; j < doms.size() && j < arrow.domains.size(); ++j)
+        if (doms[j]) (void)types_.unify(*arrow.domains[j]->kids[1], doms[j], tps, bound);
+      if (result) (void)types_.unify(*arrow.result, result, tps, bound);
+    }
+    return bound;
+  }
+
+  // A written type resolved without reporting errors: a deduction that
+  // does not work out is reported where the type is used.
+  Type quietResolve(const Node &annot) {
+    size_t errors = diags_.count();
+    Type t = types_.resolveAnnot(annot);
+    diags_.truncate(errors);
+    return t;
+  }
+
   // A call of a higher-order function: to its specialisation at these
   // function arguments, `find[lambda@f.pia:12:9]`, made on first use, with
   // the other arguments.
@@ -3529,6 +3743,7 @@ class Gen {
                          plural(valueParams.size(), "argument") + ", given " +
                          std::to_string(args.size()) +
                          "; partial application is not supported yet");
+    std::map<std::string, Type> bound = deduceFromArguments(hof, valueParams, args);
     std::vector<std::string> symbols;
     std::map<std::string, std::string> rename;
     // Function objects: each parameter's type, and what its applications
@@ -3574,7 +3789,7 @@ class Gen {
           // A lambda that captures is passed as its closure, a function
           // object whose fields are the captures.
           std::optional<Closure> c =
-              closureOf(a, &arrow, hof.typeParams, what, *caps);
+              closureOf(a, &arrow, hof.typeParams, what, *caps, &bound);
           if (!c) return std::nullopt;
           std::optional<std::string> via =
               objectApply(a, sigs_.at(c->apply), arrow);
@@ -3584,7 +3799,7 @@ class Gen {
           rest.push_back(c->value);
           continue;
         }
-        symbol = liftLambda(a, &arrow, hof.typeParams, what);
+        symbol = liftLambda(a, &arrow, hof.typeParams, what, nullptr, &bound);
       } else if (a.kind == NodeKind::Name && a.flags.empty() &&
                  !overloadSet(a.text).empty()) {
         symbol = functionArgument(a, arrow, what);
@@ -3636,7 +3851,8 @@ class Gen {
       overloads_[key].push_back(key);
     }
     sema::FuncSig &spec = it->second;
-    if (spec.isGeneric()) return genGenericCall(n, spec, targs, rest, expected);
+    if (spec.isGeneric())
+      return genGenericCall(n, spec, targs, rest, expected, &bound);
     if (targs)
       return fail(*targs, "'" + hof.source() + "' is not generic, so it takes "
                           "no type arguments");
@@ -6194,6 +6410,11 @@ class Gen {
       inst.adapted = choice.adapted;
       inst.adapterFor = choice.adapterFor;
       if (!sema::resolveSignature(inst, types_, diags_)) return nullptr;
+      // A generic lambda's instance infers what it returns.
+      if (!inst.result && !retAnnotOf(generic) &&
+          llvm::StringRef(generic.name).starts_with("lambda@") &&
+          !inferResult(inst, *generic.item))
+        return nullptr;
       if (!inst.result && !retAnnotOf(generic)) {
         fail(*generic.item, "a generic function needs its return type for "
                             "now, as in 'let " + generic.name + " ... : T = "
