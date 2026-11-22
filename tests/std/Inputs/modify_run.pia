@@ -1,0 +1,36 @@
+(* Runs Pia.Core.Algo.Modify's compiled code, instantiated here at u8, on
+   buffers in an arena, linked by pia_binary. It exits 0 when every result
+   is what C++'s <algorithm> gives, and otherwise with the number of the
+   first wrong one. *)
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Modify.Modify as M
+
+(* xs and ys are 4 bytes each. *)
+let checks (xs : borrowed inout mutable [u8]) (ys : borrowed inout mutable [u8]) : i32
+  requires len xs = 4 && len ys = 4
+= M.fill xs 7;
+  if xs.[0] <> 7 || xs.[3] <> 7 then 1
+  else (
+    ys.[0] <- 1; ys.[1] <- 2; ys.[2] <- 3; ys.[3] <- 4;
+    M.copy xs ys;
+    if xs.[0] <> 1 || xs.[3] <> 4 then 2
+    else (
+      M.reverse xs;
+      if xs.[0] <> 4 || xs.[1] <> 3 || xs.[2] <> 2 || xs.[3] <> 1 then 3
+      else (
+        M.replace xs 3 9;
+        if xs.[1] <> 9 || xs.[0] <> 4 then 4
+        else (
+          M.replace xs (let (x : u8) : bool => x < 3) 0;
+          if xs.[2] <> 0 || xs.[3] <> 0 || xs.[0] <> 4 then 5
+          else (
+            M.swap_ranges xs ys;
+            if xs.[0] <> 1 || ys.[0] <> 4 || ys.[1] <> 9 then 6
+            else (
+              M.copy_backward ys xs;
+              if ys.[0] <> 1 || ys.[3] <> 4 then 7
+              else 0))))))
+
+let main () : i32 =
+  with_arena 8 (let (m) =>
+    checks (m.mem.[0 .. 4]) (m.mem.[4 .. 8]))

@@ -19,6 +19,15 @@
       "wall_ms_1": 11290.2,
       "wall_ms_n": 4258.1
     },
+    "lib/Pia/Core/Algo/Modify.pia": {
+      "cost": 21365244,
+      "goals": 130,
+      "solve_ms_1": 143,
+      "solve_ms_n": 63,
+      "solved": 122,
+      "wall_ms_1": 2691.1,
+      "wall_ms_n": 1696.9
+    },
     "lib/Pia/Core/Algo/Search.pia": {
       "cost": 54819015,
       "goals": 373,
