@@ -47,3 +47,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0041](0041-allocator-semantics-as-a-theory.md) | Allocator semantics are a theory, and allocators prove they refine it through spec-only state | Accepted |
 | [0042](0042-lifetimes-liveness-and-escape-analysis.md) | Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory | Proposed |
 | [0043](0043-generic-definitions-proved-once.md) | Generic definitions are proved once, against their concepts, and instances are discharged by that proof | Proposed |
+| [0044](0044-function-values-and-lambdas.md) | Function values: every lambda has its own type, arrow parameters are constrained by a Function concept, and proofs go through function arguments | Proposed |

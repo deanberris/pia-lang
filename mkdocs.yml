@@ -144,3 +144,4 @@ nav:
       - adr/0041-allocator-semantics-as-a-theory.md
       - adr/0042-lifetimes-liveness-and-escape-analysis.md
       - adr/0043-generic-definitions-proved-once.md
+      - adr/0044-function-values-and-lambdas.md
