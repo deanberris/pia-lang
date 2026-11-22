@@ -114,7 +114,9 @@ jobs:
       - uses: actions/checkout@v4
 
       # A hosted runner starts with about 14 GB free, and LLVM's build
-      # needs more. These preinstalled SDKs are never used here.
+      # needs more. These preinstalled SDKs are never used here. With the
+      # Android SDK gone, ANDROID_HOME must go too: Bazel's Android rules
+      # fail every target when it names a directory with no SDK in it.
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -136,12 +138,12 @@ jobs:
 
       - name: Build
         timeout-minutes: 300
-        run: bazel build --config=ci --keep_going //...
+        run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --keep_going //...
 
       - name: Test
         id: test
         timeout-minutes: 30
-        run: bazel test --config=ci --keep_going //...
+        run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
 
       # Z3 built on Linux may spend a different rlimit on the same query
       # from Z3 built by Apple clang, so Linux has its own baseline. Until
