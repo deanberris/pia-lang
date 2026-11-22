@@ -1,0 +1,36 @@
+(* Foreign functions (#55): a contracted one is called normally, with its
+   preconditions proved and its postconditions trusted; one without a
+   contract only through `unsafe`. --trust-report lists both.
+// RUN: piac --verify --trust-report %s | FileCheck %s
+*)
+
+let sum_bytes (xs : [u8]) (n : usize) : u32
+  requires n <= len xs
+  ensures true
+= extern "sum_bytes"
+
+let clamp (x : i32) : i32
+  ensures result >= 0 && result <= 100
+= extern "clamp_c"
+
+let raw (x : i32) : i32 = extern "raw_c"
+
+(* The precondition is proved at the call. *)
+let total (xs : [u8]) : u32 = sum_bytes xs (len xs)
+
+(* And fails when it does not hold. *)
+let over (xs : [u8]) (n : usize) : u32 = sum_bytes xs n
+
+(* The postcondition is assumed. *)
+let pct (x : i32) : i32
+  ensures result <= 100
+= clamp x
+
+(* Nothing is known about an unsafe call's result. *)
+let risky (x : i32) : i32
+  ensures result = 2 * x
+= unsafe raw x
+
+(* Expected report, in order.
+// CHECK: 0 skipped
+*)

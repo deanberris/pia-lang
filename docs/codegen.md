@@ -100,6 +100,14 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
               uint8_t *dst, uint64_t ndst);
 ```
 
+## Foreign functions
+
+`let f (x : i32) : i32 ensures ... = extern "sym"` declares a C function (#55). IRGen makes `f` a private function whose whole body is `pia.foreign "sym"(...)`, marked `pia.extern`, so callers see its contract like any other function's: preconditions are proved at each call and postconditions are assumed. The verifier never proves the stub itself; the contract is trusted, and `piac --verify --trust-report` lists it.
+
+A foreign function without a `requires` or `ensures` can be called only as `unsafe f x`. The call is marked `pia.unsafe`: the verifier assumes nothing about its result beyond its type, and treats every buffer passed to it as written. `--trust-report` lists each such call site.
+
+Codegen declares `sym` once, as a private function with C types, and calls it. An integer keeps its width, extended to 32 bits as Apple's arm64 ABI expects (`llvm.zeroext` or `llvm.signext`), and a bool is a zero-extended `i1`. A buffer is passed as a pointer to its first element, which for a view (`xs.[a .. b]`) is part way into its storage; pass its length as a separate `usize` argument. If the Pia declaration has the same name as the symbol, it is renamed `pia$ffi$sym`. For now a foreign function takes integers, bools and buffers of integers, and returns an integer, a bool or unit. tests/codegen/ffi_run.pia runs against C in ffi_test.c.
+
 ## Tests
 
 - `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed or unproved obligation, and `--allow-unproved`. They run on any host whose LLVM includes the AArch64 target, which the Bazel build always does.

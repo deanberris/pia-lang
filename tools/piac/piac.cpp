@@ -273,11 +273,25 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
   }
 }
 
-// `--trust-report`: what the program's proofs rest on without proof. Today
-// that is the axioms of theories with no model (ADR 0036, step 2).
+// `--trust-report`: what the program's proofs rest on without proof: the
+// axioms of theories with no model (ADR 0036, step 2), foreign functions'
+// contracts, and `unsafe` calls (#55).
 void printTrustReport(mlir::ModuleOp module, std::ostream &os) {
   unsigned n = 0;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (auto sym = f->getAttrOfType<mlir::StringAttr>("pia.extern")) {
+      os << pia::verify::formatLoc(f.getLoc())
+         << ": trusted: the contract of the foreign function '"
+         << f.getSymName().str() << "' (C symbol '" << sym.getValue().str()
+         << "')\n";
+      ++n;
+    }
+    f.walk([&](mlir::func::CallOp c) {
+      if (!c->hasAttr("pia.unsafe")) return;
+      os << pia::verify::formatLoc(c.getLoc()) << ": trusted: the unsafe call "
+         << "of '" << c.getCallee().str() << "'\n";
+      ++n;
+    });
     if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
     std::string theory;
     if (auto t = f->getAttrOfType<mlir::StringAttr>("pia.theory"))

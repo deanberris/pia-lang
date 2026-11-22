@@ -1386,6 +1386,8 @@ class Encoder {
       return false;
     auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
     if (!callee || callee.isExternal()) return true;
+    // An `unsafe` call may have written any buffer it was given (#55).
+    if (call->hasAttr("pia.unsafe")) return true;
     auto mods = callee.getArgAttrOfType<mlir::StringAttr>(
         i, PiaDialect::getModifiersAttrName());
     return mods && (sema::hasModifier(mods.getValue(), "out") ||
@@ -2887,6 +2889,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   std::vector<Job> jobs;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
+    // A foreign function's contract is trusted, not proved (#55).
+    if (fn->hasAttr("pia.extern")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;
