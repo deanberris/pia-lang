@@ -173,12 +173,12 @@ let_in    = "let" [ "rec" ] binder { param } [ ret_annot ] { contract } "=" hand
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
 param     = IDENT | SPLICE_IDENT
-          | "(" ( IDENT | SPLICE_IDENT ) ":" annot ")"
+          | "(" ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
 contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
 
-lambda    = "let" lparam { lparam } "=>" seq ;
+lambda    = "let" lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 lparam    = "(" pattern [ ":" annot ] ")" | "(" ")" ;
 
 meta_operator = "let" "meta" "operator" "(" operator ")"
@@ -186,7 +186,9 @@ meta_operator = "let" "meta" "operator" "(" operator ")"
                 [ "for" type ] "=" seq ;
 ```
 
-`let` followed by `(` is a function literal. `let` followed by a name is a binding. Pia has no tuple destructuring in `let` today; if it is added, the `=>` still tells the two apart.
+A parameter whose type is a function type may end with contracts, which belong to its innermost arrow and may name the arrow's parameters and `result`: `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`. Only a parameter's annotation takes them; after an item's result type, contracts are the item's own.
+
+`let` followed by `(` is a function literal, a lambda. Like a named function, it may give its result type and contracts before the `=>`, as in `let (x : u8) : u8 requires x < 255 => x + 1` ([ADR 0044](adr/0044-function-values-and-lambdas.md)). `let` followed by a name is a binding. Pia has no tuple destructuring in `let` today; if it is added, the `=>` still tells the two apart.
 
 ### Annotations and types
 

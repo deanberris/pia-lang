@@ -22,6 +22,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -239,6 +240,21 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     collectLinear(program);
     collectConstants();
+    if (diags_.hasErrors()) return nullptr;
+    // Higher-order functions are called only through specialisations.
+    for (auto it = sigs_.begin(); it != sigs_.end();) {
+      if (!it->second.isHigherOrder()) {
+        ++it;
+        continue;
+      }
+      if (it->second.overloaded || !it->second.adapter.empty())
+        diags_.error(it->second.item->loc,
+                     "'" + it->second.source() + "' takes a function, and "
+                     "overloading such a function comes later (ADR 0044, "
+                     "step 2)");
+      hofs_.emplace(it->second.source(), std::move(it->second));
+      it = sigs_.erase(it);
+    }
     if (diags_.hasErrors()) return nullptr;
     std::map<const Node *, std::string> symbolOf;
     for (auto &[symbol, sig] : sigs_) {
@@ -1546,6 +1562,12 @@ class Gen {
                        "quantifier for now");
       case NodeKind::Match:
         return genMatch(n, expected);
+      case NodeKind::Lambda:
+        return fail(n, "a lambda can only be passed to a function whose "
+                       "parameter has a function type for now, as in "
+                       "'find xs (let (x : u8) => x > 3)', or bound by a "
+                       "'let' and applied; storing or returning one comes "
+                       "later (ADR 0044)");
       default:
         return fail(n, std::string("'") + syntax::nodeKindName(n.kind) +
                            "' is not supported yet (IRGen covers the scalar "
@@ -1626,6 +1648,9 @@ class Gen {
                            n.text + "' to all its arguments");
       return genCall(n, sig, {});
     }
+    if (hofs_.count(n.text))
+      return fail(n, "'" + n.text + "' takes a function; passing it as a "
+                     "value comes later (ADR 0044)");
     return fail(n, "unknown name '" + n.text + "'");
   }
 
@@ -2545,6 +2570,13 @@ class Gen {
     // A name a quote made resolves where the metaprogram was defined, never
     // to a local at the expansion site (docs/meta.md, "Hygiene").
     bool local = fn.flags.empty() && lookup(fn.text);
+    if (!local && fn.flags != "prelude")
+      if (auto h = hofs_.find(fn.text); h != hofs_.end()) {
+        std::vector<const Node *> args;
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          args.push_back(n.kids[i].get());
+        return genHigherOrderCall(n, h->second, targs, args, expected);
+      }
     if (!local && fn.flags != "prelude") {
       auto set = overloadSet(fn.text);
       if (set.empty() && checking_ && !types_.isCtorName(fn.text))
@@ -2889,6 +2921,316 @@ class Gen {
     sema::FuncSig *inst = genericInstance(generic, bound, choice);
     if (!inst) return std::nullopt;
     return genCall(n, *inst, args, &early);
+  }
+
+  // --- function values (ADR 0044, step 1) ----------------------------
+  //
+  // A higher-order function, one with parameters of function type, is
+  // never lowered itself. Each call that passes a lambda or a top-level
+  // function for those parameters goes to a specialisation: a copy of the
+  // function without them, in which each one's name is the symbol of a
+  // function made from the argument. The copy keeps the type parameters,
+  // so a generic one is then called like any generic. A lambda becomes a
+  // private top-level function, `lambda@file.pia:12:9`, whose body the
+  // verifier knows wherever it is called, as for any pure function.
+
+  // A function type as written: its parameters, its result, and the
+  // contracts on its innermost arrow.
+  struct Arrow {
+    std::vector<const Node *> domains;  // Domain: modifiers, type, where?
+    const Node *result = nullptr;
+    const Node *contracts = nullptr;  // Contracts, or null
+  };
+  static Arrow arrowOf(const Node &type) {
+    Arrow a;
+    const Node *cur = &type;
+    for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+      a.domains.push_back(cur->kids[0].get());
+      if (cur->kids.size() > 2) a.contracts = cur->kids[2].get();
+    }
+    a.result = cur;
+    return a;
+  }
+
+  std::string placeOf(const Node &n) const {
+    return llvm::sys::path::filename(file_.getValue()).str() + ":" +
+           std::to_string(n.loc.line) + ":" + std::to_string(n.loc.column);
+  }
+
+  static NodePtr annotOf(const Node &type, syntax::SourceLoc at) {
+    if (type.kind == NodeKind::Annot) return syntax::clone(type);
+    auto annot = syntax::makeNode(NodeKind::Annot, at);
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::clone(type));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    return annot;
+  }
+
+  static NodePtr retAnnotNode(NodePtr annot, syntax::SourceLoc at) {
+    auto ret = syntax::makeNode(NodeKind::RetAnnot, at);
+    ret->add(std::move(annot));
+    ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    return ret;
+  }
+
+  static void relocateTree(Node &n, syntax::SourceLoc at) {
+    n.loc = at;
+    for (NodePtr &k : n.kids) relocateTree(*k, at);
+  }
+
+  // Adds the contracts of `arrow` of kind `kind` to `to`, with the
+  // arrow's parameter names renamed. With `at`, they are placed there, so
+  // that a failure points at the argument that does not meet them.
+  static void arrowContracts(const Arrow &arrow, NodeKind kind,
+                             const std::map<std::string, std::string> &rename,
+                             Node &to,
+                             std::optional<syntax::SourceLoc> at = std::nullopt) {
+    if (!arrow.contracts) return;
+    for (const NodePtr &c : arrow.contracts->kids) {
+      if (c->kind != kind) continue;
+      NodePtr copy = syntax::clone(*c);
+      if (at) relocateTree(*copy, *at);
+      renameNames(*copy, rename, nullptr);
+      if (copy->kids[0]->kind == NodeKind::Name)
+        if (auto it = rename.find(copy->kids[0]->text); it != rename.end())
+          copy->kids[0]->text = it->second;
+      to.add(std::move(copy));
+    }
+  }
+
+  // Makes the function a lambda stands for, once per lambda, and returns
+  // its symbol. `arrow` is the type it is passed as, or null when a `let`
+  // binds it. Its precondition is the arrow's, its own `requires` are
+  // asserted at the start of its body, so they must follow from the
+  // arrow's, and its postconditions are its own and the arrow's.
+  std::optional<std::string> liftLambda(const Node &lam, const Arrow *arrow,
+                                        const std::vector<std::string> &typeParams,
+                                        const std::string &what) {
+    std::string symbol = "lambda@" + placeOf(lam);
+    if (sigs_.count(symbol)) return symbol;
+    syntax::SourceLoc at = lam.loc;
+    std::vector<const Node *> lparams;
+    const Node *ret = nullptr, *contracts = nullptr;
+    for (size_t i = 0; i + 1 < lam.kids.size(); ++i) {
+      const Node &k = *lam.kids[i];
+      if (k.kind == NodeKind::LParam) lparams.push_back(&k);
+      else if (k.kind == NodeKind::RetAnnot) ret = &k;
+      else if (k.kind == NodeKind::Contracts) contracts = &k;
+    }
+    if (arrow && lparams.size() != arrow->domains.size()) {
+      fail(lam, "this lambda takes " + plural(lparams.size(), "parameter") +
+                    ", but " + what + " takes " +
+                    plural(arrow->domains.size(), "argument") +
+                    "; partial application comes later (ADR 0044, step 7)");
+      return std::nullopt;
+    }
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    std::map<std::string, std::string> rename;
+    for (size_t i = 0; i < lparams.size(); ++i) {
+      const Node &lp = *lparams[i];
+      const Node &pat = *lp.kids[0];
+      if (pat.kind != NodeKind::PVar || lp.kids.size() < 2 ||
+          lp.kids[1]->kind != NodeKind::Annot) {
+        fail(lp, "a lambda's parameters need names and types for now, as "
+                 "in 'let (x : u8) => x > 3'; types from the expected type "
+                 "come later (ADR 0044, step 4)");
+        return std::nullopt;
+      }
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, lp.loc, pat.text));
+      p->add(syntax::clone(*lp.kids[1]));
+      if (arrow && !arrow->domains[i]->text.empty())
+        rename[arrow->domains[i]->text] = pat.text;
+    }
+    if (ret) {
+      item->add(syntax::clone(*ret));
+    } else if (arrow && !mentionsUnbound(*arrow->result, typeParams, {})) {
+      item->add(retAnnotNode(annotOf(*arrow->result, at), at));
+    } else if (!arrow) {
+      fail(lam, "give a lambda bound by 'let' its result type for now, as "
+                "in 'let (x : i32) : i32 => x * x'");
+      return std::nullopt;
+    } else {
+      item->add(syntax::makeNode(NodeKind::None, at));
+    }
+    Node *cs = item->add(syntax::makeNode(NodeKind::Contracts, at));
+    if (arrow) arrowContracts(*arrow, NodeKind::Requires, rename, *cs);
+    std::vector<const Node *> asserted;
+    if (contracts)
+      for (const NodePtr &c : contracts->kids) {
+        if (c->kind == NodeKind::Requires) {
+          asserted.push_back(c->kids[0].get());
+        } else if (c->kind == NodeKind::Ensures) {
+          cs->add(syntax::clone(*c));
+        } else {
+          fail(*c, "a lambda takes only 'requires' and 'ensures'; a "
+                   "recursive helper is a named 'let rec'");
+          return std::nullopt;
+        }
+      }
+    if (arrow) arrowContracts(*arrow, NodeKind::Ensures, rename, *cs, at);
+    // The lambda's own preconditions hold wherever the arrow's do.
+    NodePtr body = syntax::clone(*lam.kids.back());
+    for (auto r = asserted.rbegin(); r != asserted.rend(); ++r) {
+      auto check = syntax::makeNode(NodeKind::Assert, (*r)->loc);
+      check->add(syntax::clone(**r));
+      auto seq = syntax::makeNode(NodeKind::Sequence, (*r)->loc);
+      seq->add(std::move(check));
+      seq->add(std::move(body));
+      body = std::move(seq);
+    }
+    item->add(std::move(body));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
+    sigs_.emplace(symbol, std::move(sig));
+    overloads_[symbol].push_back(symbol);
+    pendingInstances_.push_back(symbol);
+    return symbol;
+  }
+
+  // The symbol a top-level function passed as `arrow` is called by: its
+  // own, or, when the arrow has a contract, a wrapper's that has it, so
+  // the function's contract is checked against the arrow's.
+  std::optional<std::string> functionArgument(const Node &name,
+                                              const Arrow &arrow,
+                                              const std::string &what) {
+    std::vector<sema::FuncSig *> set = overloadSet(name.text);
+    if (set.size() != 1) {
+      fail(name, "'" + name.text + "' is overloaded, and passing an overload "
+                 "set as a function comes later (ADR 0044, step 2)");
+      return std::nullopt;
+    }
+    const sema::FuncSig &f = *set[0];
+    if (f.isGeneric()) {
+      fail(name, "'" + name.text + "' is generic, and passing a generic "
+                 "function comes later (ADR 0044, step 4); pass a lambda "
+                 "that calls it");
+      return std::nullopt;
+    }
+    if (f.params.size() != arrow.domains.size()) {
+      fail(name, "'" + name.text + "' takes " +
+                     plural(f.params.size(), "argument") + ", but " + what +
+                     " takes " + plural(arrow.domains.size(), "argument"));
+      return std::nullopt;
+    }
+    if (!arrow.contracts || arrow.contracts->kids.empty()) return f.name;
+    std::string symbol = f.name + "@" + placeOf(name);
+    if (sigs_.count(symbol)) return symbol;
+    const Node *fRet = retAnnotOf(f);
+    if (!fRet) {
+      fail(name, "'" + name.text + "' needs its return type written to be "
+                 "passed as a function with a contract");
+      return std::nullopt;
+    }
+    syntax::SourceLoc at = name.loc;
+    std::vector<const Node *> fParams = valueParamsOf(f);
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, f.source()));
+    for (size_t i = 0; i < arrow.domains.size(); ++i) {
+      std::string pname = arrow.domains[i]->text.empty()
+                              ? f.params[i].name
+                              : arrow.domains[i]->text;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, pname));
+      p->add(syntax::clone(*fParams[i]->kids[0]));
+      call->add(syntax::makeNode(NodeKind::Name, at, pname));
+    }
+    item->add(retAnnotNode(syntax::clone(*fRet), at));
+    Node *cs = item->add(syntax::makeNode(NodeKind::Contracts, at));
+    arrowContracts(arrow, NodeKind::Requires, {}, *cs);
+    arrowContracts(arrow, NodeKind::Ensures, {}, *cs, at);
+    item->add(std::move(call));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
+    sigs_.emplace(symbol, std::move(sig));
+    overloads_[symbol].push_back(symbol);
+    pendingInstances_.push_back(symbol);
+    return symbol;
+  }
+
+  // A call of a higher-order function: to its specialisation at these
+  // function arguments, `find[lambda@f.pia:12:9]`, made on first use, with
+  // the other arguments.
+  R genHigherOrderCall(const Node &n, const sema::FuncSig &hof,
+                       const Node *targs, const std::vector<const Node *> &args,
+                       Type expected) {
+    if (contract_ || ghost_)
+      return fail(n, "a higher-order function cannot be called in a "
+                     "contract yet (ADR 0044)");
+    std::vector<const Node *> valueParams = valueParamsOf(hof);
+    if (args.size() != valueParams.size())
+      return fail(n, "'" + hof.source() + "' takes " +
+                         plural(valueParams.size(), "argument") + ", given " +
+                         std::to_string(args.size()) +
+                         "; partial application is not supported yet");
+    std::vector<std::string> symbols;
+    std::map<std::string, std::string> rename;
+    std::vector<const Node *> rest;
+    for (size_t i = 0; i < args.size(); ++i) {
+      const Node &p = *valueParams[i];
+      if (!sema::isFunctionParam(p)) {
+        rest.push_back(args[i]);
+        continue;
+      }
+      Arrow arrow = arrowOf(*p.kids[0]->kids[1]);
+      std::string what = "'" + p.text + "' of '" + hof.source() + "'";
+      const Node &a = *args[i];
+      std::optional<std::string> symbol;
+      if (a.kind == NodeKind::Lambda) {
+        symbol = liftLambda(a, &arrow, hof.typeParams, what);
+      } else if (a.kind == NodeKind::Name && a.flags.empty() &&
+                 !lookup(a.text) && !overloadSet(a.text).empty()) {
+        symbol = functionArgument(a, arrow, what);
+      } else if (a.kind == NodeKind::Name && hofs_.count(a.text)) {
+        return fail(a, "'" + a.text + "' is a higher-order function, and "
+                       "passing one comes later (ADR 0044)");
+      } else {
+        return fail(a, what + " is a function: pass a lambda, as in "
+                       "'(let (x : u8) => x > 3)', or the name of a "
+                       "top-level function; other function values come "
+                       "later (ADR 0044)");
+      }
+      if (!symbol) return std::nullopt;
+      symbols.push_back(*symbol);
+      rename[p.text] = *symbol;
+    }
+    std::string key = hof.name + "[" + llvm::join(symbols, ", ") + "]";
+    auto it = sigs_.find(key);
+    if (it == sigs_.end()) {
+      NodePtr item = syntax::clone(*hof.item);
+      item->text = key;
+      std::vector<NodePtr> &ps = item->kids[0]->kids;
+      ps.erase(std::remove_if(ps.begin(), ps.end(),
+                              [](const NodePtr &q) {
+                                return sema::isFunctionParam(*q);
+                              }),
+               ps.end());
+      renameNames(*item, rename, nullptr);
+      sema::FuncSig sig;
+      sig.name = key;
+      sig.item = item.get();
+      sig.typeParams = hof.typeParams;
+      synthesized_.push_back(std::move(item));
+      if (!sig.isGeneric()) {
+        if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
+        pendingInstances_.push_back(key);
+      }
+      it = sigs_.emplace(key, std::move(sig)).first;
+      overloads_[key].push_back(key);
+    }
+    sema::FuncSig &spec = it->second;
+    if (spec.isGeneric()) return genGenericCall(n, spec, targs, rest, expected);
+    if (targs)
+      return fail(*targs, "'" + hof.source() + "' is not generic, so it takes "
+                          "no type arguments");
+    return genCall(n, spec, rest);
   }
 
   // The functions a written name may call: one, or an overload set.
@@ -7254,6 +7596,21 @@ class Gen {
     if (!contracts.kids.empty())
       return fail(*contracts.kids[0],
                   "contracts on a local 'let' are not supported yet");
+    // `let sq = let (x : i32) : i32 => x * x in sq 3` (ADR 0044): the
+    // lambda is a function, and `sq` its name in the body.
+    if (n.kids[3]->kind == NodeKind::Lambda && ret.kind == NodeKind::None &&
+        !contract_ && !ghost_) {
+      if (!checkFresh(n.text, n.loc)) return std::nullopt;
+      std::optional<std::string> symbol =
+          liftLambda(*n.kids[3], nullptr, {}, "");
+      if (!symbol) return std::nullopt;
+      NodePtr body = syntax::clone(*n.kids[4]);
+      std::map<std::string, std::string> rename{{n.text, *symbol}};
+      if (body->kind == NodeKind::Name && body->text == n.text)
+        body->text = *symbol;
+      renameNames(*body, rename, nullptr);
+      return genExpr(*keep(std::move(body)), expected);
+    }
     Type declared;
     std::string modifiers;
     if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
@@ -7457,6 +7814,9 @@ class Gen {
   std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
+  // Higher-order functions by their written name (ADR 0044): called only
+  // through their specialisations.
+  std::map<std::string, sema::FuncSig> hofs_;
   // Type-level metaprograms (ADR 0035): those that return a type, and
   // those that return a bool, by name; the interpreter that runs them; and
   // each type a metaprogram has seen, by its spelling.
