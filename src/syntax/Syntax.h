@@ -109,13 +109,15 @@ namespace pia::syntax {
   X(Lambda)        /* LParam+, body */                                       \
   X(LParam)        /* pattern, Annot? */                                     \
   X(Match)         /* scrutinee, Arm+ */                                     \
-  X(Arm)           /* pattern, body */                                       \
+  X(Arm)           /* pattern, body, Contracts? */                            \
   /* patterns */                                                             \
   X(PVar)          /* text=name */                                           \
   X(PLit)          /* text=spelling */                                       \
   X(PCtor)         /* text=ctor; pattern+ */                                 \
   X(PTyped)        /* pattern, type */                                       \
   X(PAs)           /* text=name; pattern */                                  \
+  X(PSlice)        /* element pattern: `[e]` */                              \
+  X(PArray)        /* element pattern, length pattern: `[e; n]` */           \
   X(PRecord)       /* PField* */                                             \
   X(PField)        /* text=field; pattern? */                                \
   X(PSplice)       /* text=name */                                           \

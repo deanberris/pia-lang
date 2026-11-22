@@ -892,8 +892,15 @@ class Parser {
     do {
       auto arm = makeNode(N::Arm, loc());
       arm->add(pattern());
+      // `| p requires c ensures d -> e` (ADR 0035): the arm's contracts.
+      NodePtr cs;
+      if (at(K::Requires) || at(K::Ensures)) {
+        cs = makeNode(N::Contracts, loc());
+        while (at(K::Requires) || at(K::Ensures)) cs->add(contract());
+      }
       expect(K::Arrow, "'->' after the pattern");
       arm->add(seq());
+      if (cs) arm->add(std::move(cs));
       n.add(std::move(arm));
     } while (accept(K::Bar));
   }
@@ -1272,7 +1279,7 @@ class Parser {
   static bool canStartPatternAtom(K k) {
     switch (k) {
       case K::Ident: case K::Int: case K::String: case K::True: case K::False:
-      case K::SpliceIdent: case K::LParen: case K::LBrace:
+      case K::SpliceIdent: case K::LParen: case K::LBrace: case K::LBracket:
         return true;
       default:
         return false;
@@ -1325,6 +1332,22 @@ class Parser {
           p = std::move(t);
         }
         expect(K::RParen, "')'");
+        return p;
+      }
+      case K::LBracket: {  // `[e]` and `[e; n]`, on types (ADR 0035)
+        take();
+        Bracket b(*this);
+        NodePtr elem = pattern();
+        NodePtr p;
+        if (accept(K::Semi)) {
+          p = makeNode(N::PArray, start);
+          p->add(std::move(elem));
+          p->add(pattern());
+        } else {
+          p = makeNode(N::PSlice, start);
+          p->add(std::move(elem));
+        }
+        expect(K::RBracket, "']'");
         return p;
       }
       case K::LBrace: {

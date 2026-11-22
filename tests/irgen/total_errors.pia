@@ -34,3 +34,14 @@ let d (t : type where via t) (x : t) : u8 = 0
 (* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'each' is used in a constraint, so it must terminate, but the recursive call at 13:31 has no argument that is a component of its parameter, such as 'element t'
 *)
 let e (t : type where each t) (x : t) : u8 = 0
+
+(* Through a `match`, only what a pattern binds below the matched type is
+   smaller: `x` is the whole type. *)
+let meta loop (t : type) : bool =
+  match t with
+  | [el] -> loop el
+  | x -> loop x
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'loop' is used in a constraint, so it must terminate, but the recursive call at {{[0-9]+}}:10 has no argument that is a component of its parameter
+*)
+let loops (t : type where loop t) (x : t) : u8 = 0

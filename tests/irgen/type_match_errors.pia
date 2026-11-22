@@ -1,0 +1,29 @@
+(* `match` on types (ADR 0035): a catch-all is required, an arm's contracts
+   are checked when it is taken. (Totality through a match is in
+   total_errors.pia.)
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta open_ended (t : type) : type = match t with | u8 -> u16
+
+let meta lying (t : type) : type =
+  match t with
+  | u8 ensures size_of result = 4 -> u16
+  | _ -> t
+
+let meta short (t : type) : type =
+  match t with
+  | [e; n] requires n <= 4 -> e
+  | _ -> t
+
+(* CHECK: type_match_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: {{.*}}is on a type, and types are an open set, so it must end with a catch-all '| _ -> ...'
+*)
+let a (x : u8) : open_ended u8 = 0
+
+(* CHECK: type_match_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: {{.*}}the arm at 11:5 gives u16, which does not meet its 'ensures' at 11:8
+*)
+let b (x : u8) : lying u8 = 0
+
+(* CHECK: type_match_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: {{.*}}reaches the arm at 16:5, but does not meet its 'requires' at 16:12
+*)
+let c (xs : [u8; 8]) : short [u8; 8] = 0

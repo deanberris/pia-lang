@@ -1,0 +1,149 @@
+(Program
+  (LetItem "widen" [meta]
+    (Params
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeKind)
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeKind)
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Match
+      (Name "t")
+      (Arm
+        (PVar "u8")
+        (Name "u16")
+        (Contracts
+          (Ensures
+            (Binary "="
+              (Apply
+                (Name "size_of")
+                (Name "result")
+              )
+              (IntLit "2")
+            )
+          )
+        )
+      )
+      (Arm
+        (PArray
+          (PVar "e")
+          (PVar "n")
+        )
+        (Name "e")
+        (Contracts
+          (Requires
+            (Binary "<="
+              (Name "n")
+              (IntLit "4096")
+            )
+          )
+        )
+      )
+      (Arm
+        (PSlice
+          (PVar "e")
+        )
+        (Name "e")
+      )
+      (Arm
+        (PCtor "option"
+          (PVar "e")
+        )
+        (Apply
+          (Name "widen")
+          (Name "e")
+        )
+      )
+      (Arm
+        (PCtor "record"
+          (PVar "fs")
+        )
+        (Name "t")
+      )
+      (Arm
+        (PVar "_")
+        (Apply
+          (Name "fail")
+          (StringLit "\"no wider type\"")
+        )
+      )
+    )
+  )
+  (LetItem "pick"
+    (Params
+      (Param "o"
+        (Annot
+          (Modifiers)
+          (TypeApp
+            (TypeName "option")
+            (TypeName "u8")
+          )
+          (None)
+        )
+      )
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (ArrayType
+            (TypeName "u8")
+            (IntLit "4")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Match
+      (Name "o")
+      (Arm
+        (PCtor "Some"
+          (PVar "i")
+        )
+        (Index
+          (Name "xs")
+          (Name "i")
+        )
+        (Contracts
+          (Requires
+            (Binary "<"
+              (Name "i")
+              (IntLit "4")
+            )
+          )
+          (Ensures
+            (Binary "="
+              (Name "result")
+              (Index
+                (Name "xs")
+                (Name "i")
+              )
+            )
+          )
+        )
+      )
+      (Arm
+        (PVar "None")
+        (IntLit "0")
+      )
+    )
+  )
+)

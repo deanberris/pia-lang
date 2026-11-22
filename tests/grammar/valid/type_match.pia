@@ -1,0 +1,14 @@
+(* `match` on types, and contracts on arms (ADR 0035). *)
+let meta widen (t : type) : type =
+  match t with
+  | u8 ensures size_of result = 2 -> u16
+  | [e; n] requires n <= 4096 -> e
+  | [e] -> e
+  | option e -> widen e
+  | record fs -> t
+  | _ -> fail "no wider type"
+
+let pick (o : option u8) (xs : [u8; 4]) : u8 =
+  match o with
+  | Some i requires i < 4 ensures result = xs.[i] -> xs.[i]
+  | None -> 0

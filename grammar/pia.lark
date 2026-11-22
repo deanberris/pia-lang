@@ -170,7 +170,9 @@ lparam: LPAREN pattern (COLON annot)? RPAREN
 
 match_e: MATCH seq WITH arms
 arms: BAR? arm (BAR arm)*
-arm: pattern ARROW seq
+arm: pattern arm_contract* ARROW seq
+arm_contract: REQUIRES stmt -> requires
+            | ENSURES stmt  -> ensures
 
 ?stmt: assign
      | if_e
@@ -288,6 +290,8 @@ quoted_items: (let_item | meta_operator) (SEP? (let_item | meta_operator))*
              | LPAREN pattern RPAREN
              | LPAREN RPAREN                 -> punit
              | LBRACE pfields RBRACE         -> precord
+             | LBRACKET pattern RBRACKET     -> pslice
+             | LBRACKET pattern SEMI pattern RBRACKET -> parray
 pfields: pfield (SEMI pfield)* SEMI?
 pfield: IDENT (EQ pattern)?
 

@@ -344,6 +344,8 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
                                    kindName(v->kind)};
       return intValue(-v->i);
     }
+    case NodeKind::Match:
+      return match(n, env);
     case NodeKind::Quote:
       return quote(n, env);
     case NodeKind::Splice:
@@ -351,6 +353,141 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
     default:
       throw MetaError{site_, std::string("'") + syntax::nodeKindName(n.kind) +
                                  "' is not supported in metaprograms yet"};
+  }
+}
+
+// `match v with | p requires c ensures d -> e ...` (ADR 0035). Arms are
+// tried in order; an arm's `requires` must hold for a value that reaches it
+// (it is not a guard), and its `ensures` must hold of its value, `result`.
+ValuePtr Interpreter::match(const Node &n, const EnvPtr &env) {
+  ValuePtr v = eval(*n.kids[0], env);
+  auto where = [](const Node &x) {
+    return std::to_string(x.loc.line) + ":" + std::to_string(x.loc.column);
+  };
+  auto describe = [](const ValuePtr &x) -> std::string {
+    switch (x->kind) {
+      case K::Type: return x->s;
+      case K::Int: return std::to_string(x->i);
+      case K::Bool: return x->b ? "true" : "false";
+      case K::Str: return "\"" + x->s + "\"";
+      default: return std::string("a ") + kindName(x->kind);
+    }
+  };
+  if (v->kind == K::Type) {
+    const Node &last = *n.kids.back()->kids[0];
+    const Node &core = last.kind == NodeKind::PAs ? *last.kids[0] : last;
+    bool catchAll = core.kind == NodeKind::PVar && core.text != "int" &&
+                    !(host_.named && host_.named(core.text));
+    if (!catchAll)
+      throw MetaError{site_, "the match at " + where(n) +
+                                 " is on a type, and types are an open set, "
+                                 "so it must end with a catch-all '| _ -> ...'"};
+  }
+  for (size_t i = 1; i < n.kids.size(); ++i) {
+    const Node &arm = *n.kids[i];
+    EnvPtr inner = env;
+    if (!matches(*arm.kids[0], v, inner)) continue;
+    const Node *contracts = arm.kids.size() > 2 ? arm.kids[2].get() : nullptr;
+    auto holds = [&](const Node &c, const EnvPtr &e) {
+      ValuePtr ok = eval(*c.kids[0], e);
+      if (ok->kind != K::Bool)
+        throw MetaError{site_, std::string("an arm's contract must be a "
+                                           "bool, found ") +
+                                   kindName(ok->kind)};
+      return ok->b;
+    };
+    if (contracts)
+      for (const NodePtr &c : contracts->kids)
+        if (c->kind == NodeKind::Requires && !holds(*c, inner))
+          throw MetaError{site_, describe(v) + " reaches the arm at " +
+                                     where(arm) + ", but does not meet its "
+                                     "'requires' at " + where(*c)};
+    ValuePtr out = eval(*arm.kids[1], inner);
+    if (contracts) {
+      auto withResult = std::make_shared<Env>();
+      withResult->name = "result";
+      withResult->value = out;
+      withResult->parent = inner;
+      for (const NodePtr &c : contracts->kids)
+        if (c->kind == NodeKind::Ensures && !holds(*c, withResult))
+          throw MetaError{site_, "the arm at " + where(arm) + " gives " +
+                                     describe(out) + ", which does not meet "
+                                     "its 'ensures' at " + where(*c)};
+    }
+    return out;
+  }
+  throw MetaError{site_, "no arm of the match at " + where(n) + " matches " +
+                             describe(v)};
+}
+
+// Whether the pattern `p` matches `v`, binding its names onto `env`.
+bool Interpreter::matches(const Node &p, const ValuePtr &v, EnvPtr &env) {
+  auto bindName = [&](const std::string &name, ValuePtr value) {
+    auto e = std::make_shared<Env>();
+    e->name = name;
+    e->value = std::move(value);
+    e->parent = env;
+    env = e;
+  };
+  bool isType = v->kind == K::Type;
+  TypeInfo info;
+  if (isType && host_.info) info = host_.info(v->s);
+  switch (p.kind) {
+    case NodeKind::PAs:
+      if (!matches(*p.kids[0], v, env)) return false;
+      bindName(p.text, v);
+      return true;
+    case NodeKind::PTyped:
+      return matches(*p.kids[0], v, env);
+    case NodeKind::PVar: {
+      if (p.text == "_") return true;
+      if (isType && p.text == "int") return info.kind == "int";
+      if (host_.named)
+        if (std::optional<std::string> t = host_.named(p.text))
+          return isType && v->s == *t;
+      bindName(p.text, v);
+      return true;
+    }
+    case NodeKind::PLit: {
+      if (p.text == "()") return v->kind == K::Unit;
+      if (p.text == "true" || p.text == "false")
+        return v->kind == K::Bool && v->b == (p.text == "true");
+      if (!p.text.empty() && p.text[0] == '"')
+        return v->kind == K::Str && v->s == unescape(p.text);
+      Node lit;
+      lit.kind = NodeKind::IntLit;
+      lit.text = p.text;
+      ValuePtr k = eval(lit, nullptr);
+      return v->kind == K::Int && v->i == k->i;
+    }
+    case NodeKind::PSlice:
+      if (!isType || info.kind != "slice" || !info.element) return false;
+      return matches(*p.kids[0], typeValue(*info.element), env);
+    case NodeKind::PArray:
+      if (!isType || info.kind != "array" || !info.element || !info.length)
+        return false;
+      return matches(*p.kids[0], typeValue(*info.element), env) &&
+             matches(*p.kids[1], intValue(*info.length), env);
+    case NodeKind::PCtor: {
+      if (!isType)
+        throw MetaError{site_, "a metaprogram matches constructors only of "
+                               "types for now"};
+      if ((p.text == "record" || p.text == "variant") && p.kids.size() == 1) {
+        if (info.kind != p.text) return false;
+        std::vector<ValuePtr> fs;
+        for (const std::string &f : info.fields) fs.push_back(typeValue(f));
+        return matches(*p.kids[0], listValue(std::move(fs)), env);
+      }
+      if (info.generic != p.text || info.args.size() != p.kids.size())
+        return false;
+      for (size_t i = 0; i < p.kids.size(); ++i)
+        if (!matches(*p.kids[i], typeValue(info.args[i]), env)) return false;
+      return true;
+    }
+    default:
+      throw MetaError{site_, std::string("this pattern is not supported in "
+                                         "metaprograms yet: ") +
+                                 syntax::nodeKindName(p.kind)};
   }
 }
 

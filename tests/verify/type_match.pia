@@ -1,0 +1,59 @@
+(* `match` on types, and contracts on arms (ADR 0035's condition). A
+   type-level metaprogram matches a type's name, its shape (`[e]`, `[e; n]`,
+   `int`) or the generic it is an instance of, and recursion on what a
+   pattern binds is structural. An arm's `requires` is proved for every
+   value that reaches it, and its `ensures` of the arm's value.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+
+let meta widen (t : type) : type =
+  match t with
+  | u8 ensures size_of result = 2 -> u16
+  | u16 ensures size_of result = 4 -> u32
+  | u32 -> u64
+  | _ -> fail (concat "no integer type is wider than " (name t))
+
+let meta small (t : type) : bool =
+  match t with
+  | int -> size_of t <= 2
+  | [e; n] requires n > 0 -> n <= 16 && small e
+  | option e -> small e
+  | _ -> false
+
+let wide (x : u8) : widen u8
+  ensures result = x
+= x
+
+let one (t : type where small t) (x : t) : u8
+  ensures result = 1
+= 1
+
+let byte (x : u8) : u8
+  ensures result = 1
+= one x
+
+let maybe (o : option u16) : u8
+  ensures result = 1
+= one o
+
+(* The arm's `requires` is proved from pick's precondition, and its
+   `ensures` from its body. *)
+let pick (o : option u8) (xs : [u8; 4]) : u8
+  requires (match o with | Some i -> i < 4 | None -> true)
+= match o with
+  | Some i requires i < 4 ensures result = xs.[i] -> xs.[i]
+  | None -> 0
+
+(* Expected report, in order.
+// CHECK: type_match.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:46:12: proved: the assertion holds [smt]
+// CHECK: type_match.pia:46:54: proved: the index is within bounds [smt]
+// CHECK: type_match.pia:46:27: proved: the assertion holds [smt]
+// CHECK: type_match.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: 8 proved, 0 failed, 0 skipped
+*)
