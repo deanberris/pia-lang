@@ -1051,6 +1051,7 @@ class Gen {
       case NodeKind::While:
         return genWhile(n);
       case NodeKind::Sequence: {
+        if (n.kids[0]->kind == NodeKind::Defer) return genDefer(n, expected);
         R first = genExpr(*n.kids[0], Type());
         if (!first) return first;
         if (!mustUse(*first, *n.kids[0])) return std::nullopt;
@@ -1060,6 +1061,12 @@ class Gen {
         return fail(n, tryMisplaced());
       case NodeKind::Handle:
         return genHandle(n, expected);
+      case NodeKind::Defer:
+        return fail(n, "'defer' registers cleanup for the rest of its "
+                       "sequence, so something must follow it, as in "
+                       "'defer close f; use f'");
+      case NodeKind::Cleanup:
+        return genCleanup(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
       case NodeKind::Assert:
@@ -4770,6 +4777,10 @@ class Gen {
     unsigned sites = 0;            // the `?`s that reach the handler
     std::set<const Node *> armsUsed;
     std::set<std::string> binds;   // the names the handled scope binds
+    // The `defer`s registered so far in the scope, outermost first: a `?`
+    // that leaves the scope runs them, innermost first, before its error
+    // reaches the handler or the caller.
+    std::vector<const Node *> defers;
   };
 
   static bool definesResult(const Node &n) {
@@ -4848,6 +4859,7 @@ class Gen {
         break;
       case NodeKind::While:
       case NodeKind::Handle:
+      case NodeKind::Defer:  // cleanup runs later, and cannot fail
       case NodeKind::Lambda:
       case NodeKind::Quantifier:
       case NodeKind::Assert:
@@ -5048,6 +5060,16 @@ class Gen {
       for (const Node *arm : *arms) onErr->add(syntax::clone(*arm));
     }
 
+    // Cleanup runs first, innermost first, on the way out (ADR 0028). The
+    // error is the `?`'s own immutable payload, read after the cleanup, so
+    // no cleanup can change or replace it.
+    for (const Node *d : f.defers) {
+      auto seq = syntax::makeNode(NodeKind::Sequence, at);
+      seq->add(syntax::clone(*d));
+      seq->add(std::move(onErr));
+      onErr = std::move(seq);
+    }
+
     syntax::NodePtr okValue = isUnit(ok)
                                   ? syntax::makeNode(NodeKind::Unit, at)
                                   : builtin("#payload", "Ok");
@@ -5064,6 +5086,97 @@ class Gen {
     R out = genExpr(chain, expected);
     popScope();
     return out;
+  }
+
+  // `defer d; rest`: `d` runs at every exit from `rest` (ADR 0028). Each
+  // normal exit, the nodes whose value is `rest`'s value, gets a copy of
+  // `d` after it, and each `?` that leaves the scope runs it before its
+  // error goes on, so every exit's cleanup is ordinary code there, which
+  // the verifier walks like the rest.
+  R genDefer(const Node &n, Type expected) {
+    const Node &d = *n.kids[0]->kids[0];
+    if (const Node *t = firstTry(d))
+      return fail(*t, "cleanup cannot fail, so a 'defer' cannot pass an "
+                      "error on with '?'; 'match' the result there");
+    syntax::NodePtr rest = withCleanup(*n.kids[1], d);
+    const Node &r = *rest;
+    matchTrees_.push_back(std::move(rest));  // diagnostics may point into it
+    if (frames_.empty()) return genExpr(r, expected);
+    if (frames_.back().tails.count(&n)) addTails(r);
+    frames_.back().defers.push_back(&d);
+    R out = genExpr(r, expected);
+    frames_.back().defers.pop_back();
+    return out;
+  }
+
+  static const Node *firstTry(const Node &n) {
+    if (n.kind == NodeKind::Try) return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *t = firstTry(*k)) return t;
+    return nullptr;
+  }
+
+  // A copy of `n` with `d` run after each node whose value is `n`'s value.
+  // An inner `defer`'s cleanup goes inside an outer one's, so they run in
+  // reverse order of registration.
+  static syntax::NodePtr withCleanup(const Node &n, const Node &d) {
+    auto copy = [&](std::initializer_list<size_t> exits) {
+      auto c = std::make_unique<Node>();
+      c->kind = n.kind;
+      c->text = n.text;
+      c->flags = n.flags;
+      c->loc = n.loc;
+      for (size_t i = 0; i < n.kids.size(); ++i) {
+        bool exit = false;
+        for (size_t e : exits) exit |= e == i;
+        c->kids.push_back(exit ? withCleanup(*n.kids[i], d)
+                               : syntax::clone(*n.kids[i]));
+      }
+      for (const syntax::NodePtr &k : n.comments)
+        c->comments.push_back(syntax::clone(*k));
+      return c;
+    };
+    switch (n.kind) {
+      case NodeKind::LetIn:
+        return copy({4});
+      case NodeKind::Sequence:
+      case NodeKind::Arm:
+        return copy({1});
+      case NodeKind::Cleanup:
+        return copy({0});
+      case NodeKind::If:
+        if (n.kids.size() > 2 && n.kids[2]->kind != NodeKind::None)
+          return copy({1, 2});
+        break;
+      case NodeKind::Match: {
+        auto c = copy({});
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          c->kids[i] = withCleanup(*n.kids[i], d);
+        return c;
+      }
+      default:
+        break;
+    }
+    auto c = syntax::makeNode(NodeKind::Cleanup, n.loc);
+    c->add(syntax::clone(n));
+    c->add(syntax::clone(d));
+    return c;
+  }
+
+  // An exit from a `defer`'s scope: its value, then the cleanup.
+  R genCleanup(const Node &n, Type expected) {
+    R v = genExpr(*n.kids[0], expected);
+    if (!v) return v;
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      R c = genExpr(*n.kids[i], Type());
+      if (!c) return c;
+      if (!isUnit(c->type))
+        return fail(*n.kids[i],
+                    "a 'defer' runs only for its effect, so its expression "
+                    "must have type unit, but this has type " +
+                        typeName(c->type));
+    }
+    return v;
   }
 
   // `body handle | p -> e ...`: the body with its `?`s handled here.

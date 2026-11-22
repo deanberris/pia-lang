@@ -187,6 +187,7 @@ arm_contract: REQUIRES stmt -> requires
      | quantifier
      | ASSERT imp_e  -> assert_e
      | ASSUME imp_e  -> assume_e
+     | DEFER imp_e   -> defer_e
      | type_value
      | sig_value
      | imp_e

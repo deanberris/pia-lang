@@ -227,4 +227,99 @@
       )
     )
   )
+  (LetItem "read"
+    (Params
+      (Param "path"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "result")
+          (TypeName "u8")
+          (TypeName "load_error")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (LetIn "f"
+      (Params)
+      (None)
+      (Contracts)
+      (Try
+        (Apply
+          (Name "open_read")
+          (Name "path")
+        )
+      )
+      (Sequence
+        (Defer
+          (Apply
+            (Name "close")
+            (Name "f")
+          )
+        )
+        (Try
+          (Apply
+            (Name "read_all")
+            (Name "f")
+          )
+        )
+      )
+    )
+  )
+  (LetItem "both"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Sequence
+      (Apply
+        (Name "note")
+        (IntLit "0")
+      )
+      (Sequence
+        (Defer
+          (Apply
+            (Name "note")
+            (IntLit "1")
+          )
+        )
+        (Sequence
+          (Defer
+            (Apply
+              (Name "note")
+              (IntLit "2")
+            )
+          )
+          (Apply
+            (Name "note")
+            (Name "x")
+          )
+        )
+      )
+    )
+  )
 )

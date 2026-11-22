@@ -1,0 +1,57 @@
+(* `defer` (#85, ADR 0028): cleanup runs at every exit from the rest of
+   its sequence, in reverse order of registration, and before a `?`'s
+   error reaches the caller or the handler.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let step_error = type | Zero
+
+let step (x : u8) : result u8 step_error
+  ensures (match result with | Ok v -> v = x && x <> 0 | Err _ -> x = 0)
+= if x = 0 then Err Zero else Ok x
+
+(* Pushes `v` onto a two-entry log, newest first. *)
+let mark (log : borrowed inout mutable [u8; 2]) (v : u8) : unit
+  ensures log.[0] = v && log.[1] = old (log.[0])
+= log.[1] <- log.[0]; log.[0] <- v
+
+(* Both exits, `Ok` and the `?`'s `Err`, run 2 and then 1. *)
+let work (log : borrowed inout mutable [u8; 2]) (x : u8) : result u8 step_error
+  ensures log.[0] = 1 && log.[1] = 2
+  ensures (match result with | Ok v -> v = x | Err _ -> x = 0)
+=
+  defer mark log 1;
+  defer mark log 2;
+  let v = step x? in
+  Ok v
+
+(* The cleanup has run when the handler's arm does, so the arm reads 7. *)
+let handled (log : borrowed inout mutable [u8; 2]) (x : u8) : u8
+  ensures log.[0] = 7
+  ensures (x = 0 ==> result = 1) && (x <> 0 ==> result = 0)
+= (defer mark log 7;
+   let v = step x? in 0
+   handle
+   | Zero -> log.[0] - 6)
+
+(* Each branch is an exit. *)
+let pick (log : borrowed inout mutable [u8; 2]) (b : bool) : u8
+  ensures log.[0] = 3 && (b ==> result = 1)
+= defer mark log 3;
+  if b then 1 else 2
+
+(* Expected report, in order.
+// CHECK: defer.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:16:14: proved: the index is within bounds [intervals]
+// CHECK: defer.pia:16:3: proved: the index is within bounds [intervals]
+// CHECK: defer.pia:16:23: proved: the index is within bounds [intervals]
+// CHECK: defer.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:35:14: proved: the index is within bounds [intervals]
+// CHECK: defer.pia:35:22: proved: '-' does not overflow u8 [smt]
+// CHECK: defer.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: defer.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: 12 proved, 0 failed, 0 skipped
+*)
