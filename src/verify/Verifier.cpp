@@ -4298,6 +4298,13 @@ static bool dischargedByGeneric(mlir::ModuleOp module, mlir::func::FuncOp inst,
     if (b->hasAttr("pia.generic_proof")) {
       std::string base = b.getSymName().split('<').first.str();
       auto of = a->getAttrOfType<mlir::StringAttr>("pia.instance_of");
+      // A higher-order function the proof calls at its stand-ins, proved by
+      // that function's own proof: the instance's call must be an instance
+      // of the same proof.
+      if (auto by = b->getAttrOfType<mlir::StringAttr>("pia.proved_by")) {
+        if (!of || of.getValue() != by.getValue()) return false;
+        continue;
+      }
       // A spec function over function values, such as a law, made at the
       // proof's abstract function and at the instance's argument: the
       // same definition of each argument (ADR 0044, step 6).
@@ -4441,12 +4448,38 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       if (auto f = op->getParentOfType<mlir::func::FuncOp>())
         if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
           held[g.getValue().str()] = false;
+    // A specialisation at a proof's stand-ins of a function proved once,
+    // `pia.proved_by`, is not proved again: the proof holds only if that
+    // one does, to a fixpoint along the chain of calls.
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (size_t k = 0; k < firstPass; ++k) {
+        auto by = fnOrder[k]->getAttrOfType<mlir::StringAttr>("pia.proved_by");
+        auto g = fnOrder[k]->getAttrOfType<mlir::StringAttr>("pia.generic_proof");
+        if (!by || !g) continue;
+        auto dep = held.find(by.getValue().str());
+        auto own = held.find(g.getValue().str());
+        if (own == held.end() || !own->second) continue;
+        if (dep != held.end() && dep->second) continue;
+        own->second = false;
+        changed = true;
+        llvm::StringRef name = g.getValue(), on = by.getValue();
+        name.consume_back("#proof");
+        on.consume_back("#proof");
+        st.notParametric.push_back(
+            {formatLoc(fnOrder[k].getLoc()), name.str(),
+             "its proof relies on the one of '" + on.str() +
+                 "', which did not hold"});
+      }
+    }
     for (auto &[g, ok] : held)
       if (ok) provedOnce.insert(g);
     // A higher-order function's proved-once copy, `f#proof` (ADR 0044,
     // step 6), is only a way to share its specialisations' proofs: when it
     // does not hold, its goals are dropped, and each specialisation is
-    // proved on its own.
+    // proved on its own. Each goal that stopped it is a note, so that a
+    // module that only defines the function, with no specialisation of its
+    // own, does not pass without saying so.
     std::vector<Outcome> keptOutcomes;
     std::vector<Operation *> keptOps;
     for (size_t i = 0; i < outcomes.size(); ++i) {
@@ -4455,6 +4488,18 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
         if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
           drop = g.getValue().ends_with("#proof") &&
                  !provedOnce.count(g.getValue().str());
+      llvm::StringRef name = outcomes[i].function;
+      name.consume_front("definition of ");
+      name.consume_back("#proof");
+      // A copy at another function's stand-in, `f[...]`, is f's to note.
+      if (drop && outcomes[i].status != Status::Proved && !name.contains('[')) {
+        st.notParametric.push_back(
+            {outcomes[i].where, name.str(),
+             "its proof over any function argument did not hold here: " +
+                 outcomes[i].claim + " is " +
+                 (outcomes[i].status == Status::Failed ? "false or unknown"
+                                                       : "unchecked")});
+      }
       if (drop) continue;
       keptOutcomes.push_back(std::move(outcomes[i]));
       keptOps.push_back(opOf[i]);
@@ -4474,6 +4519,9 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     if (fn->hasAttr("pia.spec_from")) continue;
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
+    // A specialisation at a proof's stand-ins of a function proved once
+    // is proved by that proof (settleGenerics).
+    if (fn->hasAttr("pia.proved_by")) continue;
     // An imported generic's proof was made by its module (ADR 0043).
     if (fn->hasAttr("pia.generic_imported")) continue;
     // A law or requirement contract of an imported concept, at a type of
