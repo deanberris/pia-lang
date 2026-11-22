@@ -6,17 +6,18 @@
    What C++ leaves undefined, or throws, is a precondition: `value` of an
    error and `error` of a value are goals at the call.
 
-   has_value, value_or and error_or are generic over t and e, and proved
-   at each instance. value, error and same are written for each instance:
-   a generic body cannot yet `abort` where a value of a type parameter is
-   expected, nor compare two values of one without a concept, and
-   Pia.Core.Order's Eq cannot be imported yet.
-   Interfaces cannot list generic functions yet (ADR 0039, step 3), so
-   what other modules can import is the instances for `result t u32`, an
-   error code, with t one of u8, u32, u64, i32 and i64, stamped out by the
-   metaprogram `result_family`. Each instance of a generic is proved
-   again (#203), so the set is kept small. *)
+   has_value, value_or, error_or and same are generic, over any t and e
+   (same over Pia.Core.Order's Eq), and exported (ADR 0039, step 3), so a
+   module instantiates them at its own value and error types, such as a
+   variant of its own errors. A generic over a variant is proved at each
+   instance (ADR 0043). value and error are written for each instance,
+   since a generic body cannot yet `abort` where a value of a type
+   parameter is expected: the interface lists them, with the generics'
+   instances, for `result t u32`, an error code, with t one of u8, u32,
+   u64, i32 and i64, stamped out by the metaprogram `result_family`. *)
 module Pia.Core.Result : Expected
+
+import Pia.Core.Order.Ops
 
 interface Expected = sig
   (** C++: std::expected::has_value. *)
@@ -129,6 +130,11 @@ interface Expected = sig
     ensures result <==> (match a with
       | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
       | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+  (** The generic functions, over any value type t and error type e. *)
+  let has_value : (t : type) -> (e : type) -> (r : result t e) -> bool
+  let value_or : (t : type) -> (e : type) -> (r : result t e) -> (d : t) -> t
+  let error_or : (t : type) -> (e : type) -> (r : result t e) -> (d : e) -> e
+  let same : (t : type where Pia.Core.Order.Eq t) -> (e : type where Pia.Core.Order.Eq e) -> (a : result t e) -> (b : result t e) -> bool
 end
 
 let has_value (t : type) (e : type) (r : result t e) : bool
@@ -148,6 +154,16 @@ let error_or (t : type) (e : type) (r : result t e) (d : e) : e
 = match r with
   | Ok _ -> d
   | Err x -> x
+
+(** C++: a == b. Two values are equal when they are the same, and so are
+    two errors; a value is never an error. *)
+let same (t : type where Pia.Core.Order.Eq t) (e : type where Pia.Core.Order.Eq e) (a : result t e) (b : result t e) : bool
+  ensures result <==> (match a with
+    | Ok x -> (match b with | Ok y -> same x y | Err _ -> false)
+    | Err x -> (match b with | Ok _ -> false | Err y -> same x y))
+= match a with
+  | Ok x -> (match b with | Ok y -> same x y | Err _ -> false)
+  | Err x -> (match b with | Ok _ -> false | Err y -> same x y)
 
 (* The instances for `result t u32`. *)
 let meta result_family (t : string) : item =
@@ -181,9 +197,7 @@ let meta result_family (t : string) : item =
        ensures $!result <==> (match $!a with
          | Ok $!x -> (match $!b with | Ok $!y -> $!x = $!y | Err _ -> false)
          | Err $!x -> (match $!b with | Ok _ -> false | Err $!y -> $!x = $!y))
-     = match $!a with
-       | Ok $!p -> (match $!b with | Ok $!q -> $!p = $!q | Err _ -> false)
-       | Err $!p -> (match $!b with | Ok _ -> false | Err $!q -> $!p = $!q) )
+     = same<$t, u32> $!a $!b )
 
 result_family "u8"
 result_family "u32"

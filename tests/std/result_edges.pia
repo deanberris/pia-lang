@@ -2,9 +2,11 @@
    those decide each accessor on values and on errors, and that value and
    error are goals at the call: C++'s undefined behaviour and exceptions
    become preconditions.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Result.pia
 // RUN: not piac --verify --iface-path=%t %s | FileCheck %s
 *)
+import Pia.Core.Order.Ops
 import Pia.Core.Result.Expected
 
 let accessors (x : u32) (code : u32) : unit =
@@ -31,11 +33,38 @@ let extremes () : unit =
   assert Pia.Core.Result.same a b = false;
   ()
 
+(* The generic functions at this module's own error type: same over
+   Pia.Core.Order's Eq, which parse_error meets by its `same`, whose laws
+   are proved here. A generic over a variant is proved at each instance,
+   here too (ADR 0043). *)
+let parse_error = type | Empty | Too_long | Bad_digit of u8
+
+let same (a : parse_error) (b : parse_error) : bool
+  ensures result <==> (match a with
+    | Empty -> (match b with | Empty -> true | Too_long -> false | Bad_digit _ -> false)
+    | Too_long -> (match b with | Empty -> false | Too_long -> true | Bad_digit _ -> false)
+    | Bad_digit x -> (match b with | Empty -> false | Too_long -> false | Bad_digit y -> x = y))
+= match a with
+  | Empty -> (match b with | Empty -> true | Too_long -> false | Bad_digit _ -> false)
+  | Too_long -> (match b with | Empty -> false | Too_long -> true | Bad_digit _ -> false)
+  | Bad_digit x -> (match b with | Empty -> false | Too_long -> false | Bad_digit y -> x = y)
+
+let own_errors (d : u16) : unit =
+  let ok : result u16 parse_error = Ok 9 in
+  let bad : result u16 parse_error = Err (Bad_digit 7) in
+  assert Pia.Core.Result.has_value<u16, parse_error> ok;
+  assert Pia.Core.Result.has_value<u16, parse_error> bad = false;
+  assert Pia.Core.Result.value_or<u16, parse_error> bad d = d;
+  assert Pia.Core.Result.error_or<u16, parse_error> ok Empty = Empty;
+  assert Pia.Core.Result.same<u16, parse_error> bad bad;
+  assert Pia.Core.Result.same<u16, parse_error> ok bad = false;
+  ()
+
 (* value of what may be an error is a goal at the call, and fails.
 // CHECK: result_edges.pia:[[@LINE+2]]:{{[0-9]+}}: failed: the precondition of 'Pia.Core.Result.value(result<u8, u32>)' holds
 *)
 let unchecked (r : result u8 u32) : u8 = Pia.Core.Result.value r
 
 (*
-// CHECK: 15 proved, 1 failed, 0 skipped
+// CHECK: 106 proved, 1 failed, 0 skipped
 *)

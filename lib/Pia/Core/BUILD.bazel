@@ -63,4 +63,5 @@ pia_library(
     name = "result",
     src = "Result.pia",
     target_compatible_with = APPLE_SILICON,
+    deps = [":order"],
 )

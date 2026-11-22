@@ -73,7 +73,10 @@ pia_binary(
     name = "result_run",
     src = "Inputs/result_run.pia",
     target_compatible_with = APPLE_SILICON,
-    deps = ["//lib/Pia/Core:result"],
+    deps = [
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core:result",
+    ],
 )
 
 sh_test(
