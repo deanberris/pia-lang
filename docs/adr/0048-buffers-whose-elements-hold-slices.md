@@ -40,7 +40,7 @@ A buffer of owning boxes need not point anywhere: each element's slot can be the
 
 The proofs do not change. The verifier still sees each element as owning a slice of length one, and a box taken out of the buffer borrows its slot in place, lent from the buffer as in section 2. Inline storage changes only where the slot lives.
 
-A box over a concept, `box c`, holds values of different sizes. Stored inline, each slot must fit the largest value it will hold, so the buffer carries a slot size and alignment, `vec (box c) n`. Widening a value into a slot is then a proof obligation that its type fits, and a type that may not fit stays out of line. A `box c` outside a buffer of inline boxes is the fat pointer of ADR 0046.
+A box over a concept, `box c`, holds values of different sizes. Stored inline, each slot must fit the largest value it will hold. The compiler knows which those are: every `widen` into a `box c` names its type, so the types that reach a given buffer of `box c` are known statically from the specialisations the program makes (Dean, 2026-11-23). The slot size and alignment are the largest of that set, and the user writes no bound. The set is part of the buffer's layout, which the ABI advertises (ADR 0030): a module that widens a new type into it changes the layout, and dynamic loading against the old one fails and requires a relink. A `box c` outside a buffer of inline boxes is the fat pointer of ADR 0046.
 
 ## Implementation order
 
@@ -60,4 +60,4 @@ A box over a concept, `box c`, holds values of different sizes. Stored inline, e
 
 1. **Writes only through owned slices?** The alternative, a region heap with explicit `apart` invariants, would allow writes through shared slices but needs quantified invariants that make proofs slower.
 2. **Is `Drop` enough to count as owning**, or must the type be `@linear`? `box` has a `Drop`; a `@linear` record cannot be dropped implicitly. Both stop copies, which is what the proof needs.
-3. **Inline `box c` slots**: should a buffer of boxes over a concept carry a slot size, `vec (box c) n`, or should such boxes always stay out of line, with only `box t` of a sized `t` inline?
+3. **Inline `box c` slots**: should a buffer of boxes over a concept carry a slot size, `vec (box c) n`, or should such boxes always stay out of line? Answered (Dean, 2026-11-23): neither. The slot fits the set of types the program statically widens into it, found from its specialisations (section 5).
