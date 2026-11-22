@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed. Dean chose question 1 (2026-11-22): a function object is any type whose module defines `apply`.
+Status: Accepted (Dean, 2026-11-22), with all three questions answered. Dean chose question 1 (2026-11-22): a function object is any type whose module defines `apply`.
 
 ## Context
 
