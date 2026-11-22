@@ -63,7 +63,7 @@
           "name": "keyword.other.contract.pia"
         },
         {
-          "match": "\\b(if|then|else|match|with|for|spread|while|do|done|step|in|where|of)\\b",
+          "match": "\\b(if|then|else|match|with|for|spread|while|do|done|step|in|where|of|handle|defer)\\b",
           "name": "keyword.control.pia"
         },
         {

@@ -24,7 +24,7 @@ struct SourceLoc {
   X(Requires) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume)         \
   X(Forall) X(Exists) X(Interface) X(Sig) X(Module) X(Struct) X(End)           \
   X(Import) X(Operator) X(True) X(False) X(Borrowed) X(Moved) X(Out)           \
-  X(Inout) X(Fixed) X(Mutable)                                                 \
+  X(Inout) X(Fixed) X(Mutable) X(Handle) X(Defer)                                                 \
   /* names and literals */                                                     \
   X(Ident) X(Int) X(Float) X(String) X(QIdent) X(SpliceIdent) X(SpliceOpen)    \
   X(QuoteOpen) X(Attr) X(AttrOpen) X(TargsOpen) X(TargsClose) X(LBraceAdj)     \

@@ -256,7 +256,7 @@ class Parser {
       body = splitBodyFromContract(*contracts);
       if (!body) fail("expected '=' and a definition");
     }
-    n->add(std::move(body));
+    n->add(withHandle(std::move(body)));
 
     if (allowIn && accept(K::In)) {
       n->kind = N::LetIn;
@@ -875,6 +875,12 @@ class Parser {
     take();
     n->add(seq());
     expect(K::With, "'with'");
+    arms(*n);
+    return n;
+  }
+
+  // `| p -> e ...`, the arms of a `match` or a `handle`.
+  void arms(Node &n) {
     accept(K::Bar);
     // An arm's body ends at the next `|`, even inside brackets.
     struct Restore {
@@ -888,9 +894,20 @@ class Parser {
       arm->add(pattern());
       expect(K::Arrow, "'->' after the pattern");
       arm->add(seq());
-      n->add(std::move(arm));
+      n.add(std::move(arm));
     } while (accept(K::Bar));
-    return n;
+  }
+
+  // `body handle | p -> e ...` (ADR 0028): the handler of the errors the
+  // `?`s in `body` raise. It ends a function body, a `let` value, a
+  // parenthesised expression or a loop body.
+  NodePtr withHandle(NodePtr body) {
+    if (!at(K::Handle)) return body;
+    auto h = makeNode(N::Handle, loc());
+    take();
+    h->add(std::move(body));
+    arms(*h);
+    return h;
   }
 
   NodePtr stmt() {
@@ -925,7 +942,7 @@ class Parser {
         }
         n->add(loopAnnots());
         expect(K::Do, "'do'");
-        n->add(seq());
+        n->add(withHandle(seq()));
         expect(K::Done, "'done'");
         return n;
       }
@@ -935,13 +952,16 @@ class Parser {
         n->add(seq());
         n->add(loopAnnots());
         expect(K::Do, "'do'");
-        n->add(seq());
+        n->add(withHandle(seq()));
         expect(K::Done, "'done'");
         return n;
       }
       case K::Forall:
       case K::Exists:
         return quantifier();
+      case K::Defer:
+        fail("'defer' is reserved for scope cleanup (ADR 0028), which is "
+             "not supported yet");
       case K::Assert:
       case K::Assume: {
         auto n = makeNode(at(K::Assert) ? N::Assert : N::Assume, start);
@@ -1088,11 +1108,21 @@ class Parser {
 
   NodePtr application() {
     NodePtr f = postfix();
-    if (!canStartAtom(kind())) return f;
-    auto app = makeNode(N::Apply, f->loc);
-    app->add(std::move(f));
-    while (canStartAtom(kind())) app->add(postfix());
-    return app;
+    if (canStartAtom(kind())) {
+      auto app = makeNode(N::Apply, f->loc);
+      app->add(std::move(f));
+      while (canStartAtom(kind())) app->add(postfix());
+      f = std::move(app);
+    }
+    // `e?` passes an error on (ADR 0028). It applies to the whole
+    // application, so `read_all m f?` is `(read_all m f)?`.
+    while (atOp("?")) {
+      auto t = makeNode(N::Try, loc());
+      take();
+      t->add(std::move(f));
+      f = std::move(t);
+    }
+    return f;
   }
 
   NodePtr postfix() {
@@ -1148,7 +1178,7 @@ class Parser {
           return n;
         }
         Bracket b(*this);
-        NodePtr e = seq();
+        NodePtr e = withHandle(seq());
         expect(K::RParen, "')'");
         return e;
       }

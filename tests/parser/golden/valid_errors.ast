@@ -1,0 +1,155 @@
+(Program
+  (LetItem "load"
+    (Params
+      (Param "path"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "result")
+          (TypeName "u8")
+          (TypeName "load_error")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Handle
+      (LetIn "f"
+        (Params)
+        (None)
+        (Contracts)
+        (Try
+          (Apply
+            (Name "open_read")
+            (Name "path")
+          )
+        )
+        (LetIn "bytes"
+          (Params)
+          (None)
+          (Contracts)
+          (Try
+            (Apply
+              (Name "read_all")
+              (Name "f")
+            )
+          )
+          (Binary "+"
+            (Try
+              (Apply
+                (Name "decode")
+                (Name "bytes")
+              )
+            )
+            (IntLit "1")
+          )
+        )
+      )
+      (Arm
+        (PVar "NoEntry")
+        (Apply
+          (Name "Err")
+          (Apply
+            (Name "Missing")
+            (Name "path")
+          )
+        )
+      )
+      (Arm
+        (PVar "OutOfMemory")
+        (Apply
+          (Name "Err")
+          (Name "TooBig")
+        )
+      )
+    )
+  )
+  (LetItem "local"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Handle
+      (LetIn "y"
+        (Params)
+        (None)
+        (Contracts)
+        (Try
+          (Apply
+            (Name "h")
+            (Name "x")
+          )
+        )
+        (Name "y")
+      )
+      (Arm
+        (PVar "E")
+        (IntLit "0")
+      )
+    )
+  )
+  (LetItem "each"
+    (Params
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (For
+      (PVar "i")
+      (Range
+        (IntLit "0")
+        (Name "n")
+      )
+      (None)
+      (LoopAnnots)
+      (Handle
+        (Try
+          (Apply
+            (Name "step")
+            (Name "i")
+          )
+        )
+        (Arm
+          (PVar "E")
+          (Unit)
+        )
+      )
+    )
+  )
+)

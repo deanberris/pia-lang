@@ -1,0 +1,17 @@
+(* `?` and `handle` (ADR 0028). *)
+let load (path : u8) : result u8 load_error =
+  let f = open_read path? in
+  let bytes = read_all f? in
+  decode bytes? + 1
+handle
+| NoEntry -> Err (Missing path)
+| OutOfMemory -> Err TooBig
+
+let local (x : u8) : u8 = (let y = h x? in y handle | E -> 0)
+
+let each (n : u8) : unit =
+  for i in 0..n do
+    step i?
+  handle
+  | E -> ()
+  done
