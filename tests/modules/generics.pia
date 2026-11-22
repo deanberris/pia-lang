@@ -1,0 +1,43 @@
+(* An importer uses a concept and generic functions from another module's
+   interface (ADR 0039, step 3). They come with their definitions, so it
+   instantiates them at its own types: `u8` meets the imported concept
+   `Algo.Order.Before` through the module's own `before`, and a local type
+   meets it through a local `before`.
+// RUN: piac --emit=interface -o %t %S/Inputs/order.pia
+// RUN: piac --verify %S/Inputs/order.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Algo.Order.Ord
+
+let least (a : u8) (b : u8) : u8
+  ensures result <= a && result <= b
+= Algo.Order.smaller<u8> a b
+
+let order (a : u8) (b : u8) : Algo.Order.ordering
+  ensures a < b ==> result = Lt
+= Algo.Order.compare a b
+
+(* A type of this module meets the imported concept. *)
+let rank = type | Low | High
+
+let before (a : rank) (b : rank) : bool
+  ensures result ==> before b a = false
+= match a with
+  | Low -> (match b with | High -> true | Low -> false)
+  | High -> false
+
+let lowest (a : rank) (b : rank) : rank
+= Algo.Order.smaller a b
+
+(* A generic function of this module, over the imported concept. *)
+let both_smaller (t : type where Algo.Order.Before t) (a : t) (b : t) (c : t) : t
+= Algo.Order.smaller a (Algo.Order.smaller b c)
+
+let three (a : u8) (b : u8) (c : u8) : u8 = both_smaller a b c
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

@@ -646,11 +646,16 @@ class Parser {
         n.add(std::move(law));
         continue;
       }
+      // `let meta C : concept` lists a concept, which an interface exports
+      // with its definition (ADR 0039).
+      bool meta = !isConcept && accept(K::Meta);
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
+      if (meta && !at(K::Colon)) fail("expected ':' after a concept's name");
       if (accept(K::Colon)) {
         auto v = makeNode(N::SigVal, start, name);
+        if (meta) v->flags = "meta";
         v->add(annot());
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));

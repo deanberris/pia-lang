@@ -1266,6 +1266,14 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     Entry e{f.getSymName().str(), cName(f.getSymName()), f.getFunctionType(),
             {}, false, f.getLoc()};
     e.internal = (kInternalPrefix + e.name).str();
+    // The name the module's interfaces give it (#204): plain unless they
+    // list several overloads of it.
+    std::string linkName = f.getSymName().str();
+    if (auto n = f->getAttrOfType<mlir::StringAttr>("pia.link_name")) {
+      linkName = n.getValue().str();
+      e.cname = cName(linkName);
+      f->removeAttr("pia.link_name");
+    }
     // An exported function's entry point is named by its module unless its
     // interface is `@abi(c)`, and its Pia calling convention stays
     // reachable, for importers, under its link symbol (ADR 0039).
@@ -1273,7 +1281,7 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
         f->getAttrOfType<mlir::StringAttr>(PiaDialect::getExportAttrName());
     if (exported && !exported.getValue().empty()) {
       if (exportsOnly) {
-        e.internal = linkSymbol(exported.getValue(), f.getSymName());
+        e.internal = linkSymbol(exported.getValue(), linkName);
         e.linked = true;
       }
       if (!f->hasAttr(PiaDialect::getAbiCAttrName())) {

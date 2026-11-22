@@ -98,4 +98,49 @@
       (Contracts)
     )
   )
+  (Interface "Generic"
+    (Attrs)
+    (SigVal "Before" [meta]
+      (Annot
+        (Modifiers)
+        (TypeName "concept")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "smaller"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "t"
+            (Modifiers)
+            (TypeKind)
+            (Apply
+              (Name "Before")
+              (Name "t")
+            )
+          )
+          (ArrowType
+            (Domain "a"
+              (Modifiers)
+              (TypeName "t")
+              (None)
+            )
+            (ArrowType
+              (Domain "b"
+                (Modifiers)
+                (TypeName "t")
+                (None)
+              )
+              (TypeName "t")
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
 )

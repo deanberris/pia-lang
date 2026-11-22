@@ -1,0 +1,15 @@
+(* A generic function is exported with its definition, so everything the
+   definition uses must be in the interface too (ADR 0039, step 3).
+// RUN: not piac --emit=interface -o %t %s 2>&1 | FileCheck %s
+*)
+module Leaky : Ops
+
+interface Ops = sig
+  let first : (t : type) -> (a : t) -> (b : t) -> t
+end
+
+let pick (t : type) (a : t) (b : t) : t = a
+
+(* CHECK: inline_errors.pia:[[@LINE+2]]:1: error: 'first' is exported with its definition, which uses 'pick', which the interface 'Ops' does not list
+*)
+let first (t : type) (a : t) (b : t) : t = pick a b

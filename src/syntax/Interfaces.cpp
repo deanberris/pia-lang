@@ -115,7 +115,8 @@ void qualify(Node &n, const std::string &module,
   if (n.kind == N::Name && n.flags.empty() && members.count(n.text) &&
       !params.count(n.text))
     n.text = module + "." + n.text;
-  if ((n.kind == N::TypeName || n.kind == N::TypeInst) &&
+  if ((n.kind == N::TypeName || n.kind == N::TypeInst ||
+       n.kind == N::SigInclude) &&
       members.count(n.text) && !typeParams.count(n.text))
     n.text = module + "." + n.text;
   for (NodePtr &k : n.kids) qualify(*k, module, members, params, typeParams);
@@ -206,6 +207,65 @@ std::optional<std::string> readFile(const std::string &path) {
   return buf.str();
 }
 
+// Whether a sig entry's type takes a type parameter, `(t : type) -> ...`.
+bool genericSig(const Node &val) {
+  for (const Node *cur = val.kids[0]->kids[1].get(); cur->kind == N::ArrowType;
+       cur = cur->kids[1].get())
+    if (cur->kids[0]->kids.size() > 1 &&
+        cur->kids[0]->kids[1]->kind == N::TypeKind)
+      return true;
+  return false;
+}
+
+// Whether an item is a generic function, `let f (t : type) ...`.
+bool genericItem(const Node &item) {
+  if (item.kind != N::LetItem || item.kids.empty()) return false;
+  for (const NodePtr &p : item.kids[0]->kids)
+    if (p->kind == N::Param && !p->kids.empty() &&
+        p->kids[0]->kids.size() > 1 && p->kids[0]->kids[1]->kind == N::TypeKind)
+      return true;
+  return false;
+}
+
+bool hasWord(const std::string &flags, const std::string &word) {
+  std::istringstream in(flags);
+  std::string w;
+  while (in >> w)
+    if (w == word) return true;
+  return false;
+}
+
+// Whether an item is a concept, `let meta C (t : type) : concept = sig`.
+bool conceptItem(const Node &item) {
+  return item.kind == N::LetItem && hasWord(item.flags, "meta") &&
+         item.kids.size() > 3 && item.kids[3]->kind == N::Sig;
+}
+
+// The names an item uses, as names and as types.
+void namesIn(const Node &n, std::set<std::string> &out) {
+  if ((n.kind == N::Name && n.flags.empty()) || n.kind == N::TypeName ||
+      n.kind == N::TypeInst || n.kind == N::SigInclude)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids) namesIn(*k, out);
+}
+
+// The canonical text of a top-level item: its tokens from `start` up to
+// `end`, on one line.
+std::string canonicalItem(const std::vector<Token> &tokens, uint32_t start,
+                          uint32_t end) {
+  std::string out;
+  const Token *prev = nullptr;
+  for (const Token &t : tokens) {
+    if (t.kind == K::Eof || t.loc.offset >= end) break;
+    if (t.loc.offset < start || t.kind == K::Sep) continue;
+    if (prev && prev->loc.offset + prev->text.size() != t.loc.offset)
+      out += " ";
+    out += t.text;
+    prev = &t;
+  }
+  return out + "\n";
+}
+
 }  // namespace
 
 std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
@@ -242,6 +302,35 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
     a.module = header->text;
     a.name = item->text;
     a.text = "module " + header->text + "\n" + canonical(tokens, first);
+    // Generic functions and concepts are exported with their definitions,
+    // which importers instantiate and run (ADR 0039): the inline surface.
+    std::set<std::string> listed, inlined;
+    for (const NodePtr &k : item->kids)
+      if (k->kind == N::SigVal || k->kind == N::SigType) {
+        listed.insert(k->text);
+        if (k->kind == N::SigVal && (k->flags == "meta" || genericSig(*k)))
+          inlined.insert(k->text);
+      }
+    std::set<std::string> topLevel;
+    for (const NodePtr &other : program.kids)
+      if (other->kind == N::LetItem) topLevel.insert(other->text);
+    for (size_t i = 0; i < program.kids.size(); ++i) {
+      const Node &def = *program.kids[i];
+      if (!inlined.count(def.text) || !(genericItem(def) || conceptItem(def)))
+        continue;
+      std::set<std::string> uses;
+      namesIn(def, uses);
+      for (const std::string &u : uses)
+        if (u != def.text && topLevel.count(u) && !listed.count(u))
+          diags.error(def.loc, "'" + def.text + "' is exported with its "
+                               "definition, which uses '" + u + "', which "
+                               "the interface '" + item->text +
+                               "' does not list");
+      uint32_t end = i + 1 < program.kids.size()
+                         ? program.kids[i + 1]->loc.offset
+                         : static_cast<uint32_t>(source.size());
+      a.text += canonicalItem(tokens, def.loc.offset, end);
+    }
     out.push_back(std::move(a));
   }
   return out;
@@ -293,7 +382,7 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     Diagnostics parsed;
     NodePtr artifact = parseProgram(*text, parsed);
     const Node *iface = nullptr, *header = nullptr;
-    if (!parsed.hasErrors() && artifact->kids.size() == 2) {
+    if (!parsed.hasErrors() && artifact->kids.size() >= 2) {
       header = artifact->kids[0].get();
       iface = artifact->kids[1].get();
     }
@@ -314,9 +403,26 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     for (const NodePtr &k : iface->kids)
       if (k->kind == N::SigVal || k->kind == N::SigType)
         members.insert(k->text);
+    // Shown types and concepts, which an inlined definition names through
+    // the module; its calls find the module's functions by their own
+    // names, as in the module (ADR 0039, section 6).
+    std::set<std::string> typesAndConcepts, inlined;
+    for (const NodePtr &k : iface->kids) {
+      if (k->kind == N::SigType ||
+          (k->kind == N::SigVal && k->flags == "meta"))
+        typesAndConcepts.insert(k->text);
+      if (k->kind == N::SigVal && (k->flags == "meta" || genericSig(*k)))
+        inlined.insert(k->text);
+    }
     std::set<std::string> listed;
     for (const NodePtr &k : iface->kids) {
       if (k->kind == N::Attrs || k->kind == N::Comment) continue;
+      // A generic function or a concept comes in with its definition,
+      // below.
+      if (k->kind == N::SigVal && inlined.count(k->text)) {
+        imp.items.insert(module + "." + k->text);
+        continue;
+      }
       if (k->kind == N::SigType) {
         std::string qualified = module + "." + k->text;
         // Two interfaces of one module may show the same type.
@@ -352,6 +458,27 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       if (!fn) continue;
       imp.items.insert(qualified);
       out.push_back(std::move(fn));
+    }
+    for (size_t i = 2; i < artifact->kids.size(); ++i) {
+      const Node &def = *artifact->kids[i];
+      if (def.kind == N::Comment) continue;
+      if (def.kind != N::LetItem || !inlined.count(def.text) ||
+          !(genericItem(def) || conceptItem(def))) {
+        diags.error(at, "'" + found + "' is not an interface artifact: it "
+                        "defines '" + def.text + "', which is not a generic "
+                        "function or concept the interface lists");
+        continue;
+      }
+      NodePtr copy = clone(def);
+      copy->text = module + "." + def.text;
+      copy->flags += copy->flags.empty() ? "from:" + module : " from:" + module;
+      if (!imported.insert(copy->text + " = " + shape(*copy)).second) continue;
+      std::set<std::string> typeParams;
+      for (const NodePtr &p : copy->kids[0]->kids)
+        if (p->kind == N::Param) typeParams.insert(p->text);
+      qualify(*copy, module, typesAndConcepts, typeParams, typeParams);
+      relocate(*copy, at);
+      out.push_back(std::move(copy));
     }
     imp.modules.insert(module);
   }

@@ -1,0 +1,38 @@
+(* A module that exports a concept and generic functions over it (ADR
+   0039, step 3): importers get their definitions and instantiate them. *)
+module Algo.Order : Ord
+
+interface Ord = sig
+  let meta Before : concept
+  let ordering = type | Lt | Eq | Gt
+  let before : (a : u8) -> (b : u8) -> bool
+    ensures result <==> a < b
+  let compare : (t : type where Before t) -> (a : t) -> (b : t) -> ordering
+  let smaller : (t : type where Before t) -> (a : t) -> (b : t) -> t
+end
+
+(** A strict order, by `before`. *)
+let meta Before (t : type) : concept = sig
+  let before : (a : t) -> (b : t) -> bool
+    ensures result ==> before b a = false
+  let lemma irreflexive (a : t) ensures before a a = false
+end
+
+let ordering = type | Lt | Eq | Gt
+
+let before (a : u8) (b : u8) : bool
+  ensures result <==> a < b
+= a < b
+
+let compare (t : type where Before t) (a : t) (b : t) : ordering
+  ensures result = Lt <==> before a b
+= if before a b then Lt else if before b a then Gt else Eq
+
+let smaller (t : type where Before t) (a : t) (b : t) : t
+  ensures result = (if before b a then b else a)
+= if before b a then b else a
+
+(* Instances, so that the generic bodies are proved here too. *)
+let check (a : u8) (b : u8) : u8
+  ensures result <= a && result <= b
+= smaller<u8> a b

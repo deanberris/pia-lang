@@ -1,0 +1,19 @@
+(* A private overload does not change an exported function's symbols
+   (#204): they come from what the interfaces list, so `twice`, listed
+   once, is linked and entered by its plain name.
+// RUN: piac --emit=llvm %s | FileCheck %s
+*)
+module Nums : Ops
+
+interface Ops = sig
+  let twice : (x : u8) -> u16
+end
+
+let twice (x : u8) : u16 = x + x
+let twice (x : u16) : u32 = x + x
+let twice (t : type) (x : t) : t = x
+
+(*
+// CHECK-DAG: define {{.*}}@"__pia$Nums$twice"(
+// CHECK-DAG: define {{.*}}@"pia$Nums$twice"(
+*)
