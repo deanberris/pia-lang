@@ -1,8 +1,9 @@
 (* In a contract, `=` on records, variants and buffers without an `eq_` is
-   equality
-   of the values themselves (a buffer's length and elements), so a generic contract that compares values of
-   a type parameter, which the definition check accepts, means the same in
-   every instance.
+   equality of the values themselves (for a buffer, its length and
+   elements), so a generic contract that compares values of a type
+   parameter, which the definition check accepts, means the same in every
+   instance. A call that returns a buffer by value gives the caller an
+   array, which the callee's postcondition describes.
 // RUN: piac --verify %s | FileCheck %s
 *)
 
@@ -29,6 +30,14 @@ let arr (xs : [u8; 4]) : [u8; 4]
 let slice (xs : borrowed in [u8]) : unit
   ensures xs = xs && (xs <> xs) = false
 = ()
+
+let sevens () : [u8; 2]
+  ensures result.[1] = 7
+= [7; 7]
+
+let seven () : u8
+  ensures result = 7
+= let a = sevens () in a.[1]
 
 (* Expected report, in order.
 // CHECK: 0 failed, 0 skipped

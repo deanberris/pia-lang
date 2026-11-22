@@ -1446,8 +1446,23 @@ class Encoder {
              decreasesTerm(now, next), false);
         if (done_) return false;
       }
-    for (Value r : call.getResults())
+    for (Value r : call.getResults()) {
+      // A buffer returned by value is a fresh array, with its length.
+      if (mlir::isa<ArrayType, SliceType>(r.getType())) {
+        Type sort = sortOf(r.getType());
+        if (!sort) continue;
+        arrays_[r] = declare(sort, "", false);
+        if (auto a = mlir::dyn_cast<ArrayType>(r.getType())) {
+          lengths_[r] = bv(APInt(64, a.getLength()));
+        } else {
+          Value len = declare(bvType(), "", false);
+          assertTerm(inRange(len, indexRange()));
+          lengths_[r] = len;
+        }
+        continue;
+      }
       if (auto v = havoc(r.getType())) env_[r] = *v;
+    }
     // A spec function's result is its definition applied to the arguments.
     if (hasBody && isSpecFunction(callee))
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
@@ -1475,6 +1490,21 @@ class Encoder {
         post.arrays[entry.getArgument(i)] = calleeArray(call.getOperand(i));
     callee.walk([&](mlir::func::ReturnOp ret) {
       for (auto [formal, actual] : llvm::zip(ret.getOperands(), call.getResults())) {
+        if (mlir::isa<ArrayType, SliceType>(formal.getType())) {
+          // A buffer parameter returned as it is: the result is the
+          // argument's array. Otherwise the callee's `result` is the
+          // fresh array.
+          auto arg = mlir::dyn_cast<mlir::BlockArgument>(formal);
+          if (arg && arg.getOwner() == &entry && post.arrays.lookup(formal)) {
+            arrays_[actual] = post.arrays.lookup(formal);
+            if (Value len = lengths_.lookup(call.getOperand(arg.getArgNumber())))
+              lengths_[actual] = len;
+          } else {
+            post.arrays[formal] = arrays_.lookup(actual);
+            post.lengths[formal] = lengths_.lookup(actual);
+          }
+          continue;
+        }
         Value result = env_.lookup(actual);
         // A parameter returned as it is already stands for the argument,
         // which the result then equals.
