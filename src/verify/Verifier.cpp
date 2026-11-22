@@ -1129,11 +1129,26 @@ class Encoder {
     auto bit = [&](int64_t i) {
       return eq(bvBin("and", bvBin("ashr", x, bv(i)), bv(1)), bv(1));
     };
+    // The SWAR count: bits summed in pairs, then nibbles, then bytes, and
+    // the bytes folded into the low one. Every partial sum stays below
+    // 2^w and no field carries into the next, so the value is exact. A
+    // dozen operations, where adding the w bits one by one made a circuit
+    // that was costly (and noisy) to bit-blast at 64 bits.
     if (mlir::isa<PopcountOp>(op)) {
-      Value sum = bv(0);
-      for (int64_t i = 0; i < w; ++i)
-        sum = bvBin("add", sum, bvBin("and", bvBin("ashr", x, bv(i)), bv(1)));
-      return sum;
+      uint64_t all = w == 64 ? ~0ull : (1ull << w) - 1;
+      auto mask = [&](uint64_t m) {
+        return bv(static_cast<int64_t>(m & all & 0x7fffffffffffffffull));
+      };
+      Value v = bvBin("sub", x, bvBin("and", bvBin("ashr", x, bv(1)),
+                                      mask(0x5555555555555555ull)));
+      v = bvBin("add", bvBin("and", v, mask(0x3333333333333333ull)),
+                bvBin("and", bvBin("ashr", v, bv(2)),
+                      mask(0x3333333333333333ull)));
+      v = bvBin("and", bvBin("add", v, bvBin("ashr", v, bv(4))),
+                mask(0x0f0f0f0f0f0f0f0full));
+      for (int64_t s = 8; s < w; s *= 2)
+        v = bvBin("add", v, bvBin("ashr", v, bv(s)));
+      return bvBin("and", v, bv(127));
     }
     if (mlir::isa<ClzOp>(op)) {
       Value r = bv(w);

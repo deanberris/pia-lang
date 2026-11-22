@@ -1,0 +1,27 @@
+(* Each overload in an interface is checked against its own definition: a
+   contract the second overload does not keep is a failed goal, even
+   though the first overload of the name keeps its own.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+module Num.Bad : Ops
+
+interface Ops = sig
+  let half : (x : u8) -> u8
+    ensures 2 * result <= x
+  let half : (x : u16) -> u16
+    ensures result = x
+end
+
+let half (x : u8) : u8
+  ensures 2 * result <= x
+= x / 2
+
+let half (x : u16) : u16
+  ensures 2 * result <= x
+= x / 2
+
+(*
+// CHECK-DAG: overload_conformance.pia:10:5: proved: the postcondition holds
+// CHECK-DAG: overload_conformance.pia:12:5: failed: the postcondition holds
+// CHECK: 7 proved, 1 failed, 0 skipped
+*)

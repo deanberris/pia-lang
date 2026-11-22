@@ -1,0 +1,26 @@
+(* An importer gets a whole overload set, and each call picks the overload
+   its arguments' types decide, with that overload's contract.
+// RUN: piac --emit=interface -o %t %S/Inputs/halves.pia
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Num.Halves.Ops
+
+let narrow (x : u8) : u8
+  ensures 2 * result <= x
+= Num.Halves.half x
+
+let wide (x : u16) : u16
+  ensures x <= 2 * result + 1
+= Num.Halves.half x
+
+(* The u8 overload promises no lower bound. *)
+let narrow_bound (x : u8) : u8
+  ensures x <= 2 * result + 1
+= Num.Halves.half x
+
+(*
+// CHECK-DAG: overload_imports.pia:9:3: proved: the postcondition holds
+// CHECK-DAG: overload_imports.pia:13:3: proved: the postcondition holds
+// CHECK-DAG: overload_imports.pia:18:3: failed: the postcondition holds
+// CHECK: 2 proved, 1 failed, 0 skipped
+*)

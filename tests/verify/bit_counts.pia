@@ -46,6 +46,18 @@ let rotate_keeps (x : u16) (n : int{0..15}) : unit
   ensures popcount (rotl x n) = popcount x
 = ()
 
+(* popcount is each bit added up, whatever the encoding counts with, at
+   u8 and u32. u64 uses the same masks and shifts with wider constants;
+   its compiled code is checked by the codegen harness and tests/std. *)
+let pop_bits8 (x : u8) : unit
+  ensures popcount x = ((x >> 0) & 1) + ((x >> 1) & 1) + ((x >> 2) & 1) + ((x >> 3) & 1) + ((x >> 4) & 1) + ((x >> 5) & 1) + ((x >> 6) & 1) + ((x >> 7) & 1)
+= ()
+
+let pop_bits32 (x : u32) : unit
+  ensures popcount x =
+    ((x >> 0) & 1) + ((x >> 1) & 1) + ((x >> 2) & 1) + ((x >> 3) & 1) + ((x >> 4) & 1) + ((x >> 5) & 1) + ((x >> 6) & 1) + ((x >> 7) & 1) + ((x >> 8) & 1) + ((x >> 9) & 1) + ((x >> 10) & 1) + ((x >> 11) & 1) + ((x >> 12) & 1) + ((x >> 13) & 1) + ((x >> 14) & 1) + ((x >> 15) & 1) + ((x >> 16) & 1) + ((x >> 17) & 1) + ((x >> 18) & 1) + ((x >> 19) & 1) + ((x >> 20) & 1) + ((x >> 21) & 1) + ((x >> 22) & 1) + ((x >> 23) & 1) + ((x >> 24) & 1) + ((x >> 25) & 1) + ((x >> 26) & 1) + ((x >> 27) & 1) + ((x >> 28) & 1) + ((x >> 29) & 1) + ((x >> 30) & 1) + ((x >> 31) & 1)
+= ()
+
 (* Refuted: 255 has all eight bits set. *)
 let wrong (x : u8) : unit
   ensures popcount x < 8
@@ -64,9 +76,11 @@ let too_far (x : u32) (n : u8) : u32 = rotl x n
 // CHECK: bit_counts.pia:36:3: proved: the postcondition holds [smt]
 // CHECK: bit_counts.pia:41:3: proved: the postcondition holds [smt]
 // CHECK: bit_counts.pia:46:3: proved: the postcondition holds [smt]
-// CHECK: bit_counts.pia:51:3: failed: the postcondition holds
+// CHECK: bit_counts.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: bit_counts.pia:63:3: failed: the postcondition holds
 // CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
-// CHECK: bit_counts.pia:55:40: failed: the shift amount is less than 32
+// CHECK: bit_counts.pia:67:40: failed: the shift amount is less than 32
 // CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, n = {{-?[0-9]+}}, amount = {{-?[0-9]+}}
-// CHECK: 9 proved, 2 failed, 0 skipped
+// CHECK: 11 proved, 2 failed, 0 skipped
 *)

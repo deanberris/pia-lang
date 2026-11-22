@@ -1,0 +1,179 @@
+(* Pia.Core.Bit: C++23's <bit> (ADR 0040, docs/cpp-std.md), for u8, u16,
+   u32 and u64. The counting, byte swapping and rotation of <bit>
+   (countl_zero, countr_zero, popcount, byteswap, rotl, rotr) are the core
+   builtins clz, ctz, popcount, bswap, rotl and rotr; this module has the
+   rest. Each function's contract states its C++ meaning exactly, so an
+   importer can rely on it without seeing the body. `bit_cast` is not here:
+   it needs a byte view of any type.
+
+   The bodies are written once, by the metaprogram `bit_family`, and
+   stamped out for each width; each instance is proved on its own. The
+   interface lists each width, as interfaces are written by hand. *)
+module Pia.Core.Bit : Bits, Endian
+
+interface Bits = sig
+  (** C++: std::has_single_bit *)
+  let has_single_bit : (x : u8) -> bool
+    ensures result <==> popcount x = 1
+    ensures result <==> x > 0 && x & (x - 1) = 0
+  (** C++: std::bit_width *)
+  let bit_width : (x : u8) -> int{0..8}
+    ensures result = 0 <==> x = 0
+    ensures x > 0 ==> 1 << (result - 1) <= x && x < 1 << result
+  (** C++: std::bit_floor *)
+  let bit_floor : (x : u8) -> u8
+    ensures x = 0 ==> result = 0
+    ensures x > 0 ==> popcount result = 1 && result <= x && x < 2 * result
+  (** C++: std::bit_ceil *)
+  let bit_ceil : (x : u8) -> u8
+    requires x <= 128
+    ensures popcount result = 1 && x <= result
+    ensures x <= 1 ==> result = 1
+    ensures x > 1 ==> result < 2 * x
+  (** C++: std::countl_one *)
+  let countl_one : (x : u8) -> int{0..8}
+    ensures x >> (8 - result) = (1 << result) - 1
+    ensures result < 8 ==> (x >> (7 - result)) & 1 = 0
+  (** C++: std::countr_one *)
+  let countr_one : (x : u8) -> int{0..8}
+    ensures x & ((1 << result) - 1) = (1 << result) - 1
+    ensures result < 8 ==> (x >> result) & 1 = 0
+  (** C++: std::has_single_bit *)
+  let has_single_bit : (x : u16) -> bool
+    ensures result <==> popcount x = 1
+    ensures result <==> x > 0 && x & (x - 1) = 0
+  (** C++: std::bit_width *)
+  let bit_width : (x : u16) -> int{0..16}
+    ensures result = 0 <==> x = 0
+    ensures x > 0 ==> 1 << (result - 1) <= x && x < 1 << result
+  (** C++: std::bit_floor *)
+  let bit_floor : (x : u16) -> u16
+    ensures x = 0 ==> result = 0
+    ensures x > 0 ==> popcount result = 1 && result <= x && x < 2 * result
+  (** C++: std::bit_ceil *)
+  let bit_ceil : (x : u16) -> u16
+    requires x <= 32768
+    ensures popcount result = 1 && x <= result
+    ensures x <= 1 ==> result = 1
+    ensures x > 1 ==> result < 2 * x
+  (** C++: std::countl_one *)
+  let countl_one : (x : u16) -> int{0..16}
+    ensures x >> (16 - result) = (1 << result) - 1
+    ensures result < 16 ==> (x >> (15 - result)) & 1 = 0
+  (** C++: std::countr_one *)
+  let countr_one : (x : u16) -> int{0..16}
+    ensures x & ((1 << result) - 1) = (1 << result) - 1
+    ensures result < 16 ==> (x >> result) & 1 = 0
+  (** C++: std::has_single_bit *)
+  let has_single_bit : (x : u32) -> bool
+    ensures result <==> popcount x = 1
+    ensures result <==> x > 0 && x & (x - 1) = 0
+  (** C++: std::bit_width *)
+  let bit_width : (x : u32) -> int{0..32}
+    ensures result = 0 <==> x = 0
+    ensures x > 0 ==> 1 << (result - 1) <= x && x < 1 << result
+  (** C++: std::bit_floor *)
+  let bit_floor : (x : u32) -> u32
+    ensures x = 0 ==> result = 0
+    ensures x > 0 ==> popcount result = 1 && result <= x && x < 2 * result
+  (** C++: std::bit_ceil *)
+  let bit_ceil : (x : u32) -> u32
+    requires x <= 2147483648
+    ensures popcount result = 1 && x <= result
+    ensures x <= 1 ==> result = 1
+    ensures x > 1 ==> result < 2 * x
+  (** C++: std::countl_one *)
+  let countl_one : (x : u32) -> int{0..32}
+    ensures x >> (32 - result) = (1 << result) - 1
+    ensures result < 32 ==> (x >> (31 - result)) & 1 = 0
+  (** C++: std::countr_one *)
+  let countr_one : (x : u32) -> int{0..32}
+    ensures x & ((1 << result) - 1) = (1 << result) - 1
+    ensures result < 32 ==> (x >> result) & 1 = 0
+  (** C++: std::has_single_bit *)
+  let has_single_bit : (x : u64) -> bool
+    ensures result <==> popcount x = 1
+    ensures result <==> x > 0 && x & (x - 1) = 0
+  (** C++: std::bit_width *)
+  let bit_width : (x : u64) -> int{0..64}
+    ensures result = 0 <==> x = 0
+    ensures x > 0 ==> 1 << (result - 1) <= x && x < 1 << result
+  (** C++: std::bit_floor *)
+  let bit_floor : (x : u64) -> u64
+    ensures x = 0 ==> result = 0
+    ensures x > 0 ==> popcount result = 1 && result <= x && x < 2 * result
+  (** C++: std::bit_ceil *)
+  let bit_ceil : (x : u64) -> u64
+    requires x <= 9223372036854775808
+    ensures popcount result = 1 && x <= result
+    ensures x <= 1 ==> result = 1
+    ensures x > 1 ==> result < 2 * x
+  (** C++: std::countl_one *)
+  let countl_one : (x : u64) -> int{0..64}
+    ensures x >> (64 - result) = (1 << result) - 1
+    ensures result < 64 ==> (x >> (63 - result)) & 1 = 0
+  (** C++: std::countr_one *)
+  let countr_one : (x : u64) -> int{0..64}
+    ensures x & ((1 << result) - 1) = (1 << result) - 1
+    ensures result < 64 ==> (x >> result) & 1 = 0
+end
+
+interface Endian = sig
+  (** C++: std::endian *)
+  let endian = type | Little | Big
+  (** C++: std::endian::native, which is little on arm64 *)
+  let native : endian
+end
+
+(* The functions of <bit> for the unsigned type `t` of `w` bits, written
+   once and stamped out for each width below, so there is one definition
+   to read. Each instance is proved on its own. *)
+let meta bit_family (t : string) (w : int) : item =
+  `( (** C++: std::has_single_bit *)
+     let has_single_bit ($!x : $t) : bool
+       ensures $!result <==> popcount $!x = 1
+       ensures $!result <==> $!x > 0 && $!x & ($!x - 1) = 0
+     = popcount $!x = 1
+
+     (** C++: std::bit_width *)
+     let bit_width ($!x : $t) : int{0..$w}
+       ensures $!result = 0 <==> $!x = 0
+       ensures $!x > 0 ==> 1 << ($!result - 1) <= $!x && $!x < 1 << $!result
+     = $w - clz $!x
+
+     (** C++: std::bit_floor *)
+     let bit_floor ($!x : $t) : $t
+       ensures $!x = 0 ==> $!result = 0
+       ensures $!x > 0 ==> popcount $!result = 1 && $!result <= $!x && $!x < 2 * $!result
+     = if $!x = 0 then 0 else 1 << ($(w - 1) - clz $!x)
+
+     (** C++: std::bit_ceil *)
+     let bit_ceil ($!x : $t) : $t
+       requires $!x <= 1 << $(w - 1)
+       ensures popcount $!result = 1 && $!x <= $!result
+       ensures $!x <= 1 ==> $!result = 1
+       ensures $!x > 1 ==> $!result < 2 * $!x
+     = if $!x <= 1 then 1 else 1 << ($w - clz ($!x - 1))
+
+     (** C++: std::countl_one *)
+     let countl_one ($!x : $t) : int{0..$w}
+       ensures $!x >> ($w - $!result) = (1 << $!result) - 1
+       ensures $!result < $w ==> ($!x >> ($(w - 1) - $!result)) & 1 = 0
+     = clz (~$!x)
+
+     (** C++: std::countr_one *)
+     let countr_one ($!x : $t) : int{0..$w}
+       ensures $!x & ((1 << $!result) - 1) = (1 << $!result) - 1
+       ensures $!result < $w ==> ($!x >> $!result) & 1 = 0
+     = ctz (~$!x) )
+
+bit_family "u8" 8
+bit_family "u16" 16
+bit_family "u32" 32
+bit_family "u64" 64
+
+(** C++: std::endian *)
+let endian = type | Little | Big
+
+(** C++: std::endian::native, which is little on arm64 *)
+let native : endian = Little

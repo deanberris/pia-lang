@@ -1,6 +1,6 @@
 # The C++23 standard library in Pia
 
-Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core; nothing in `lib/` is implemented yet.
+Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and `lib/` has its first module, `Pia.Core.Bit` (`lib/Pia/Core/Bit.pia`, tested in `tests/std/`).
 
 Pia gives what the C++ library lets a program do, in Pia's idioms: slices instead of iterator pairs, `result` and `?` instead of exceptions, explicit allocators instead of `std::allocator`, concepts instead of comparator objects, and metaprograms instead of type traits. Every function has a contract that the compiler proves, so what is undefined behaviour in C++ is a proof goal at the call in Pia.
 
@@ -102,7 +102,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 
 | Header | Pia | Kind | Status |
 | --- | --- | --- | --- |
-| `<bit>` | core builtins `popcount`, `clz` (`countl_zero`), `ctz` (`countr_zero`), `rotl`, `rotr` (amount proved below the width) and `bswap` (`byteswap`); the rest (`bit_width`, `bit_floor`, `bit_ceil`, `has_single_bit`, `countl_one`, `countr_one`, `endian`) in `Pia.Core.Bit` | Direct | builtins done; `Pia.Core.Bit` phase 1 |
+| `<bit>` | core builtins `popcount`, `clz` (`countl_zero`), `ctz` (`countr_zero`), `rotl`, `rotr` (amount proved below the width) and `bswap` (`byteswap`); the rest (`bit_width`, `bit_floor`, `bit_ceil`, `has_single_bit`, `countl_one`, `countr_one`, `endian`) in `Pia.Core.Bit` | Direct | builtins done; `Pia.Core.Bit` done, except `bit_cast` (needs a byte view of any type) |
 | `<cmath>`, `<numbers>`, `<complex>`, `<cfenv>` | `Pia.Math`, proved in Pia, never libm | Direct | deferred: floats (M11) |
 | `<valarray>` | `vec<T, k>` and `spread` | Out | n/a |
 | `<random>` | `Pia.Core.Rand`: integer engines and integer distributions; floating-point distributions later | Direct | phase 1, phase 4 |

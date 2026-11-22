@@ -3942,7 +3942,11 @@ class Gen {
       seq->add(std::move(body));
       body = std::move(seq);
     }
-    queueLemma(key + "." + req.text + ".contract", std::move(params),
+    // Each overload of a name meets its own requirement, so its lemma is
+    // named after the overload's symbol, as `eq(u8, u8)`: a lemma whose
+    // symbol is already queued is not queued again.
+    std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
+    queueLemma(key + "." + what + ".contract", std::move(params),
                std::move(contracts), std::move(body), scope, at, via);
   }
 

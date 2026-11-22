@@ -1,0 +1,48 @@
+(* Importers of Pia.Core.Bit see only its interface's contracts, and those
+   decide the edges C++ calls out: zero, one, the top bit and the largest
+   value of each width.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Bit.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Bit.Bits
+
+(* The same edges at each width `w` of the unsigned type `t`. *)
+let meta bit_edges (t : string) (w : int) : item =
+  let n = concat "edges_" t in
+  `( let $n () : unit =
+       let zero : $t = 0 in
+       let one : $t = 1 in
+       let top : $t = 1 << $(w - 1) in
+       let max : $t = ~zero in
+       assert Pia.Core.Bit.bit_width zero = 0;
+       assert Pia.Core.Bit.bit_width one = 1;
+       assert Pia.Core.Bit.bit_width top = $w;
+       assert Pia.Core.Bit.bit_width max = $w;
+       assert Pia.Core.Bit.bit_floor zero = 0;
+       assert Pia.Core.Bit.bit_floor one = 1;
+       assert Pia.Core.Bit.bit_floor top = top;
+       assert Pia.Core.Bit.bit_floor max = top;
+       assert Pia.Core.Bit.bit_ceil zero = 1;
+       assert Pia.Core.Bit.bit_ceil one = 1;
+       assert Pia.Core.Bit.bit_ceil top = top;
+       assert Pia.Core.Bit.has_single_bit zero = false;
+       assert Pia.Core.Bit.has_single_bit one;
+       assert Pia.Core.Bit.has_single_bit top;
+       assert Pia.Core.Bit.has_single_bit max = false;
+       assert Pia.Core.Bit.countl_one zero = 0;
+       assert Pia.Core.Bit.countl_one max = $w;
+       assert Pia.Core.Bit.countl_one top = 1;
+       assert Pia.Core.Bit.countr_one zero = 0;
+       assert Pia.Core.Bit.countr_one max = $w;
+       assert Pia.Core.Bit.countr_one one = 1;
+       () )
+
+bit_edges "u8" 8
+bit_edges "u16" 16
+bit_edges "u32" 32
+bit_edges "u64" 64
+
+(* Every goal is proved, from the interface alone.
+// CHECK-NOT: failed
+// CHECK: 108 proved, 0 failed, 0 skipped
+*)

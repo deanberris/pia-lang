@@ -1,0 +1,26 @@
+(* Runs Pia.Core.Bit's compiled code on examples, linked by pia_binary. It
+   exits 0 when every result is what C++'s <bit> gives, and otherwise with
+   the number of the first wrong one. *)
+import Pia.Core.Bit.Bits
+
+let main () : i32 =
+  let a : u8 = 0 in
+  let b : u16 = 1000 in
+  let c : u32 = 4294967295 in
+  let d : u64 = 4611686018427387905 in
+  let e : u32 = 2147483648 in
+  if Pia.Core.Bit.bit_width a <> 0 then 1
+  else if Pia.Core.Bit.bit_ceil a <> 1 then 2
+  else if Pia.Core.Bit.bit_floor b <> 512 then 3
+  else if Pia.Core.Bit.bit_ceil b <> 1024 then 4
+  else if Pia.Core.Bit.bit_width b <> 10 then 5
+  else if Pia.Core.Bit.countl_one c <> 32 then 6
+  else if Pia.Core.Bit.has_single_bit c then 7
+  else if Pia.Core.Bit.bit_width d <> 63 then 8
+  else if Pia.Core.Bit.countr_one d <> 1 then 9
+  else if Pia.Core.Bit.bit_floor d <> 4611686018427387904 then 10
+  else if Pia.Core.Bit.bit_ceil e <> e then 11
+  else if not_single e then 12
+  else 0
+
+let not_single (x : u32) : bool = Pia.Core.Bit.has_single_bit x = false

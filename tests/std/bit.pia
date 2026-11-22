@@ -1,0 +1,36 @@
+(* Pia.Core.Bit (ADR 0040): every goal of the module is proved, including
+   each overload's interface contract against its own definition, and its
+   interfaces are what importers see.
+// RUN: piac --verify %S/../../lib/Pia/Core/Bit.pia | FileCheck %s
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Bit.pia
+// RUN: FileCheck --check-prefix=BITS %s < %t/Pia.Core.Bit.Bits.piai
+// RUN: FileCheck --check-prefix=ENDIAN %s < %t/Pia.Core.Bit.Endian.piai
+*)
+
+(* A bit_ceil's own precondition follows from its interface's, for each
+   width, and nothing fails. (u64 is usize on arm64, and an overload's
+   symbol spells it usize.)
+// CHECK-NOT: failed
+// CHECK-DAG: proved: the precondition of 'bit_ceil(u8)' holds
+// CHECK-DAG: proved: the precondition of 'bit_ceil(u16)' holds
+// CHECK-DAG: proved: the precondition of 'bit_ceil(u32)' holds
+// CHECK-DAG: proved: the precondition of 'bit_ceil({{u64|usize}})' holds
+// CHECK: 164 proved, 0 failed, 0 skipped
+*)
+
+(* Six functions at each of four widths, and the endianness.
+// BITS:       {{^}}module Pia.Core.Bit{{$}}
+// BITS-NEXT:  {{^}}interface Bits = sig{{$}}
+// BITS-NEXT:  {{^}}  let has_single_bit : (x : u8) -> bool ensures
+// BITS-COUNT-5: {{^}}  let {{[a-z_]+}} : (x : u8) ->
+// BITS-COUNT-6: {{^}}  let {{[a-z_]+}} : (x : u16) ->
+// BITS-COUNT-6: {{^}}  let {{[a-z_]+}} : (x : u32) ->
+// BITS:       {{^}}  let bit_ceil : (x : u64) -> u64 requires x <= 9223372036854775808 ensures
+// BITS:       {{^}}  let countr_one : (x : u64) -> int{0..64} ensures
+// BITS-NEXT:  {{^}}end{{$}}
+
+// ENDIAN:      {{^}}interface Endian = sig{{$}}
+// ENDIAN-NEXT: {{^}}  let endian = type | Little | Big{{$}}
+// ENDIAN-NEXT: {{^}}  let native : endian{{$}}
+// ENDIAN-NEXT: {{^}}end{{$}}
+*)
