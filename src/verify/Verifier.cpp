@@ -244,7 +244,7 @@ bool specCall(mlir::func::CallOp call, mlir::func::FuncOp caller,
 // function of scalars (no loop, call, buffer or abort). In a contract such
 // a call is specification like any other op, so a guarded `less xs.[i] v`
 // reads xs.[i] only where the guard holds.
-static bool pureCall(Operation *op) {
+static bool pureCallUncached(Operation *op) {
   auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
   if (!call) return false;
   auto module = op->getParentOfType<mlir::ModuleOp>();
@@ -269,9 +269,19 @@ static bool pureCall(Operation *op) {
   return ok;
 }
 
+// specOps asks once per call per round, and a symbol lookup scans the
+// module, so the answer is kept per call.
+static bool pureCall(Operation *op, llvm::DenseMap<Operation *, bool> &memo) {
+  auto it = memo.find(op);
+  if (it != memo.end()) return it->second;
+  bool r = pureCallUncached(op);
+  memo[op] = r;
+  return r;
+}
+
 llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
   llvm::DenseSet<Operation *> spec;
-  llvm::DenseMap<Operation *, bool> pure;
+  llvm::DenseMap<Operation *, bool> pure, pureCalls;
   bool changed = true;
   while (changed) {
     changed = false;
@@ -285,7 +295,7 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
                  spec.contains(y->getParentOp());
       } else if (op->getNumResults() > 0 &&
                  !mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op) &&
-                 (!mlir::isa<mlir::func::CallOp>(op) || pureCall(op) ||
+                 (!mlir::isa<mlir::func::CallOp>(op) || pureCall(op, pureCalls) ||
                   specCall(mlir::cast<mlir::func::CallOp>(op), fn, pure))) {
         isSpec = true;
         bool anyUser = false;

@@ -26,7 +26,7 @@ let main () : i32 =
   else if S.max_element ys <> 2 then 11
   else if (S.minmax_element ys).lowest <> 1 then 12
   else if (S.minmax_element ys).highest <> 4 then 13
-  else if S.is_sorted_until ys <> 2 then 14
+  else if S.is_sorted_until ys <> 1 then 14
   else if S.is_sorted sorted = false then 15
   else if S.min_element same5 <> 0 then 16
   else if S.max_element same5 <> 0 then 17

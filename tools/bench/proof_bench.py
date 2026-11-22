@@ -30,13 +30,16 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RLIMIT = 1200000000  # as pia_object passes (tools/piac/pia.bzl)
 TIMEOUT_MS = 600000
+IFACE_DIR = None  # the corpus's interfaces, for files that import (ADR 0039)
 
 
 def corpus(path):
@@ -56,6 +59,8 @@ def run(piac, rel, jobs):
     cmd = [piac, "--verify", "--verify-stats", "--jobs=%d" % jobs,
            "--solver-rlimit=%d" % RLIMIT, "--solver-timeout=%d" % TIMEOUT_MS,
            os.path.basename(rel)]
+    if IFACE_DIR:
+        cmd[1:1] = ["--iface-path=%s" % IFACE_DIR]
     start = time.monotonic()
     p = subprocess.run(cmd, cwd=os.path.join(ROOT, os.path.dirname(rel)),
                        capture_output=True, text=True)
@@ -66,6 +71,19 @@ def run(piac, rel, jobs):
                  % (rel, p.returncode, p.stderr))
     stats = {k: int(v) for k, v in (kv.split("=") for kv in m.group(1).split())}
     return stats, wall_ms, p.stdout
+
+
+def interfaces(piac, files):
+    """Emits every library module's interface into a scratch directory, so
+    a module that imports another, such as Pia.Core.Algo.Search importing
+    Pia.Core.Order, verifies as its pia_library rule does. Shallower paths
+    go first; a file with no interface is skipped."""
+    out = tempfile.mkdtemp(prefix="proof_bench_iface.")
+    libs = [f for f in files if f.startswith("lib/")]
+    for rel in sorted(libs, key=lambda f: (f.count("/"), f)):
+        subprocess.run([piac, "--emit=interface", "-o", out,
+                        os.path.join(ROOT, rel)], capture_output=True)
+    return out
 
 
 def measure(piac, files, cores):
@@ -120,7 +138,13 @@ def main():
 
     piac = os.path.abspath(args.piac)
     cores = args.jobs or os.cpu_count() or 1
-    files, nondeterministic = measure(piac, corpus(args.corpus), cores)
+    global IFACE_DIR
+    listed = corpus(args.corpus)
+    IFACE_DIR = interfaces(piac, listed)
+    try:
+        files, nondeterministic = measure(piac, listed, cores)
+    finally:
+        shutil.rmtree(IFACE_DIR, ignore_errors=True)
     run_data = {"host": args.host, "cores": cores, "files": files,
                 "total": totals(files)}
     if args.out:
