@@ -16,7 +16,7 @@ The design's syntax is OCaml-like: application by juxtaposition, `=` for both bi
 
 ## Decision
 
-1. Comparisons do not associate, and a contract predicate takes the longest reading that still leaves a body. Then the `=` after a complete comparison starts the body.
+1. Comparisons do not associate, and a contract predicate takes the longest reading that still leaves a body. Then the `=` after a complete comparison starts the body. An `=` that starts a line always starts the body (#259): without it, a predicate that ends in an application, `ensures result <==> sorted less xs`, read a body that is itself an equation, `= is_sorted_until xs less = len xs`, as `sorted less xs = is_sorted_until xs less` and left the body `len xs`. An interface prints each exported definition on one line but keeps that line break, and `--emit=interface` parses its text back and checks each definition is the one written.
 2. Top-level items start in column 1. The lexer inserts an item separator before a column-1 token that can start an item, outside brackets, `sig`/`struct ... end` and `do ... done`. `;;` is an explicit separator.
 3. `<` straight after an identifier opens explicit type arguments. Less-than needs a space before it.
 4. `{` straight after an identifier opens a range type (`int{0..255}`).

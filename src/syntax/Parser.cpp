@@ -1411,6 +1411,14 @@ class Parser {
         }
         fail("comparisons do not associate; add parentheses");
       }
+      // An `=` that starts a line ends the predicate: it is the body's
+      // (#259). The predicate's own `=` never starts a line in this
+      // library, and a definition the interface prints keeps the break.
+      if (contractMode_ && at(K::Eq) && pos_ > 0 &&
+          tok().loc.line != toks_[pos_ - 1].loc.line) {
+        clauseEnded_ = true;
+        break;
+      }
       if (contractMode_ && at(K::Eq) && !canStartAtom(kind(1)) &&
           !(kind(1) == K::Op && tok(1).text == "-") && kind(1) != K::Forall &&
           kind(1) != K::Exists) {

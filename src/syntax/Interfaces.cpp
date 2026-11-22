@@ -335,15 +335,74 @@ void namesIn(const Node &n, std::set<std::string> &out) {
   for (const NodePtr &k : n.kids) namesIn(*k, out);
 }
 
+// Whether two trees are the same but for locations and comments: an
+// exported definition and what its interface's text parses back to.
+bool sameShape(const Node &a, const Node &b) {
+  if (a.kind != b.kind || a.text != b.text || a.flags != b.flags) return false;
+  std::vector<const Node *> x, y;
+  for (const NodePtr &k : a.kids)
+    if (k->kind != N::Comment) x.push_back(k.get());
+  for (const NodePtr &k : b.kids)
+    if (k->kind != N::Comment) y.push_back(k.get());
+  if (x.size() != y.size()) return false;
+  for (size_t i = 0; i < x.size(); ++i)
+    if (!sameShape(*x[i], *y[i])) return false;
+  return true;
+}
+
+// The first offset in `n`'s subtree: where its text begins, since a node's
+// own location may be its operator's.
+uint32_t firstOffset(const Node &n) {
+  uint32_t first = n.loc.offset;
+  for (const NodePtr &k : n.kids) first = std::min(first, firstOffset(*k));
+  return first;
+}
+
+// Where an exported function's body begins, or 0 when its text needs no
+// parentheses: a concept's `sig`, a type, an `extern`.
+uint32_t bodyStart(const Node &item) {
+  if (item.kind != N::LetItem || item.kids.size() < 4 || item.kids[0]->kids.empty())
+    return 0;
+  const Node &body = *item.kids[3];
+  if (body.kind == N::Sig || body.kind == N::TypeValue || body.kind == N::None ||
+      body.kind == N::Lambda)
+    return 0;
+  if (body.kind == N::Apply && !body.kids.empty() &&
+      body.kids[0]->kind == N::Name && body.kids[0]->text == "extern")
+    return 0;
+  return firstOffset(body);
+}
+
 // The canonical text of a top-level item: its tokens from `start` up to
-// `end`, on one line.
+// `end`, on one line. On one line, nothing marks where the contracts end
+// and the body begins, so `ensures r <==> p = f x = y` would read the body
+// into the clause (#259): a function's body, from `body`, is parenthesised.
 std::string canonicalItem(const std::vector<Token> &tokens, uint32_t start,
-                          uint32_t end) {
+                          uint32_t end, uint32_t body = 0) {
+  // The body's `=`: the last one before the body begins.
+  uint32_t eq = 0;
+  bool found = false;
+  for (const Token &t : tokens)
+    if (body && t.kind == K::Eq && t.loc.offset >= start && t.loc.offset < body) {
+      eq = t.loc.offset;
+      found = true;
+    }
+  auto nextIsBody = [&](const Token &t, uint32_t) {
+    return found && t.loc.offset == eq;
+  };
   std::string out;
   const Token *prev = nullptr;
+  bool opened = false;
   for (const Token &t : tokens) {
     if (t.kind == K::Eof || t.loc.offset >= end) break;
     if (t.loc.offset < start || t.kind == K::Sep) continue;
+    // The `=` before the body starts a line, where the parser ends the
+    // contracts, as it does in the source.
+    if (body && !opened && t.kind == K::Eq && nextIsBody(t, body)) {
+      out += "\n";
+      opened = true;
+      prev = nullptr;
+    }
     if (prev && prev->loc.offset + prev->text.size() != t.loc.offset)
       out += " ";
     out += t.text;
@@ -399,6 +458,7 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
     std::set<std::string> topLevel;
     for (const NodePtr &other : program.kids)
       if (other->kind == N::LetItem) topLevel.insert(other->text);
+    std::vector<const Node *> exported;
     for (size_t i = 0; i < program.kids.size(); ++i) {
       const Node &def = *program.kids[i];
       if (!inlined.count(def.text) || !inlinedItem(def)) continue;
@@ -413,7 +473,39 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
       uint32_t end = i + 1 < program.kids.size()
                          ? program.kids[i + 1]->loc.offset
                          : static_cast<uint32_t>(source.size());
-      a.text += canonicalItem(tokens, def.loc.offset, end);
+      a.text += canonicalItem(tokens, def.loc.offset, end, bodyStart(def));
+      exported.push_back(&def);
+    }
+    // Each exported definition must read back as it was written: importers
+    // instantiate and run what they parse, and a body read into a contract
+    // is a different function from the one proved (#259).
+    Diagnostics reread;
+    NodePtr back = parseProgram(a.text, reread, literate);
+    if (reread.hasErrors() || !back) {
+      diags.error(item->loc, "the interface '" + item->text + "' does not "
+                             "parse back from its text" +
+                             (reread.errors().empty()
+                                  ? std::string()
+                                  : ": " + reread.errors()[0].message +
+                                        " at line " +
+                                        std::to_string(reread.errors()[0].loc.line) +
+                                        " of it"));
+    } else {
+      std::map<std::string, size_t> seen;
+      for (const Node *def : exported) {
+        size_t nth = seen[def->text]++;
+        const Node *copy = nullptr;
+        size_t k = 0;
+        for (const NodePtr &b : back->kids)
+          if (b->kind == N::LetItem && b->text == def->text && k++ == nth) {
+            copy = b.get();
+            break;
+          }
+        if (!copy || !sameShape(*def, *copy))
+          diags.error(def->loc, "'" + def->text + "' would read back from "
+                                "the interface '" + item->text + "' as a "
+                                "different definition (#259)");
+      }
     }
     out.push_back(std::move(a));
   }

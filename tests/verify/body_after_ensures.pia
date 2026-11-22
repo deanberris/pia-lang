@@ -1,0 +1,22 @@
+(* #259: an `=` that starts a line ends a contract clause; it is the
+   body's. Here the ensures ends in an application and the body is an
+   equation, so without the line break `nonempty xs = pick xs = len xs`
+   would read the body's first operand into the clause, and the body
+   would be `len xs`, a usize where a bool is expected.
+// RUN: piac --verify %s | FileCheck %s
+*)
+let spec nonempty (xs : [u8]) : bool = len xs > 0
+
+let pick (xs : [u8]) : usize
+  ensures result = len xs
+= len xs
+
+let full (xs : [u8]) : bool
+  ensures nonempty xs ==> result ==> nonempty xs
+= pick xs = len xs
+
+(*
+// CHECK-NOT: error
+// CHECK: body_after_ensures.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: 0 failed
+*)
