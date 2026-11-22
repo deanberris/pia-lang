@@ -339,6 +339,8 @@ Here is what each step shows:
 
 The transcript is not checked by the documentation tests, since they cannot run an agent. Every cell's output is the REPL's text, which the sessions above are checked against.
 
+[Debugging C++ with the REPL](repl-debugging.md) follows a longer session, in which Claude uses the server to decide whether a piece of C++ has a bug.
+
 ## The session API
 
 Every front end is a thin layer over two C++ classes in `src/repl`, so the planned Jupyter kernel ([#64](https://github.com/deanberris/pia-lang/issues/64)) will share them too:

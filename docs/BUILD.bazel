@@ -14,6 +14,7 @@ exports_files([
     "idioms.md",
     "index.md",
     "repl.md",
+    "repl-debugging.md",
     "status.md",
     "theories.md",
     "streams.pia.md",
