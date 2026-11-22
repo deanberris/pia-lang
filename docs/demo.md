@@ -198,7 +198,7 @@ Every goal in it is proved:
 ```console
 $ piac --verify edges.pia
 ...
-110 proved, 0 failed, 0 skipped
+115 proved, 0 failed, 0 skipped
 ```
 
 The row loops are where the proofs matter. An image is stored row by row, so the pixel below `m` is `m + w`. In `blur` and `sobel`, the loop condition `w <= len src - (r + w)` says there is a whole row after row `r`, and the invariant `r + w <= len src` keeps that subtraction from going below zero. Together they prove the precondition of `blur_row` and `sobel_row`, `r + w + w <= len src`, and nothing in the loop can overflow: there is no `r + 2 * w` that could wrap around for a huge image. In the row functions, the column loop asserts `x + 1 < w` and then `r + x + 1 < r + w`. With `r + w + w <= len src`, that gives the precondition of `mean_at` and `strength_at` for pixel `m = r + x`: `w < m && m + w + 1 < len src`. That says the whole 3x3 window around `m` is in the image, from `m - w - 1` up to `b + 1 = m + w + 1`, so each of the nine reads is proved from it directly.

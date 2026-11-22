@@ -29,7 +29,7 @@ let clamp (lo : u8) (hi : u8) (x : u8) : u8
 = if x < lo then lo else if x > hi then hi else x
 
 let halve (x : u8) : u8
-  ensures result <= x
+  ensures result <= x / 2
 = x / 2
 
 let ratio (a : u8) (b : u8) : u8

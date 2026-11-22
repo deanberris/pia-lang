@@ -953,6 +953,14 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
              << "the C entry point of '" << e.name << "' would be named '"
              << e.cname << "', which another function already uses";
   }
+  // A module's private functions are internal to its object file
+  // (ADR 0039), so LLVM may inline them and drop the ones nothing calls.
+  if (exportsOnly)
+    for (auto f : module.getOps<mlir::LLVM::LLVMFuncOp>())
+      if (!f.isExternal() && f.isPrivate()) {
+        f.setLinkage(mlir::LLVM::Linkage::Internal);
+        f.setSymVisibility(std::nullopt);
+      }
   for (const Entry &e : entries) {
     if (mlir::failed(buildEntry(module, e))) return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(

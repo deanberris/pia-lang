@@ -12,25 +12,25 @@ module Shapes @fast : Ops, Ops, Missing, Types, Other.Ops, Attrs
 *)
 
 interface Ops = sig
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'area : u8 -> u16'
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'area : u8 -> u16'
 *)
   let area : (side : u8) -> u16
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'grow : u8 -> u8'
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'grow : u8 -> u8'
 *)
   let grow : (x : mutable u8) -> u8
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'nothing : u8'
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'nothing : u8'
 *)
   let nothing : u8
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: 'corner' is exported, but its type names 'point', which no interface of 'Shapes' lists
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'corner' is exported, but its type names 'point', which no interface of 'Shapes' lists
 *)
   let corner : (s : u8) -> point
 end
 
 interface Types = sig
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': no type 'colour'
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': no type 'colour'
 *)
   let colour : type
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': the type 'size' is defined differently; an interface that shows a type with '=' must show its definition exactly
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': the type 'size' is defined differently; an interface that shows a type with '=' must show its definition exactly
 *)
   let size = type { w : u8; h : u16 }
 end
@@ -40,7 +40,7 @@ end
 interface Attrs @abi(rust) = sig
 end
 
-(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the interface 'Attrs' is already defined
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the interface 'Attrs' is already defined
 *)
 interface Attrs = sig
 end

@@ -7,7 +7,7 @@
 (*
 // CHECK-NOT: define {{.*}} @mix(
 // CHECK-DAG: define {{.*}} @blend(
-// CHECK-DAG: define {{.*}} @pia$Image$Pixels$luma(
+// CHECK-DAG: define {{.*}} @"pia$Image$Pixels$luma"(
 // CHECK-NOT: define {{.*}} @mix(
 *)
 module Image.Pixels : C, Pia
