@@ -4004,6 +4004,14 @@ static bool dischargedByGeneric(mlir::ModuleOp module, mlir::func::FuncOp inst,
     if (b->hasAttr("pia.generic_proof")) {
       std::string base = b.getSymName().split('<').first.str();
       auto of = a->getAttrOfType<mlir::StringAttr>("pia.instance_of");
+      // A spec function over function values, such as a law, made at the
+      // proof's abstract function and at the instance's argument: the
+      // same definition of each argument (ADR 0044, step 6).
+      if (a->hasAttr(PiaDialect::getSpecAttrName()) &&
+          b->hasAttr(PiaDialect::getSpecAttrName()) &&
+          a.getSymName().split('[').first == b.getSymName().split('[').first &&
+          b.getSymName().contains('['))
+        continue;
       if (!of || of.getValue() != base) return false;
       continue;
     }
@@ -4141,6 +4149,24 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
           held[g.getValue().str()] = false;
     for (auto &[g, ok] : held)
       if (ok) provedOnce.insert(g);
+    // A higher-order function's proved-once copy, `f#proof` (ADR 0044,
+    // step 6), is only a way to share its specialisations' proofs: when it
+    // does not hold, its goals are dropped, and each specialisation is
+    // proved on its own.
+    std::vector<Outcome> keptOutcomes;
+    std::vector<Operation *> keptOps;
+    for (size_t i = 0; i < outcomes.size(); ++i) {
+      bool drop = false;
+      if (auto f = module.lookupSymbol<mlir::func::FuncOp>(outcomes[i].function))
+        if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+          drop = g.getValue().ends_with("#proof") &&
+                 !provedOnce.count(g.getValue().str());
+      if (drop) continue;
+      keptOutcomes.push_back(std::move(outcomes[i]));
+      keptOps.push_back(opOf[i]);
+    }
+    outcomes = std::move(keptOutcomes);
+    opOf = std::move(keptOps);
   };
   for (size_t idx = 0; idx < fnOrder.size(); ++idx) {
     if (idx == firstPass) settleGenerics();

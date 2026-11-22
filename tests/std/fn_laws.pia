@@ -29,7 +29,11 @@ let sort (t : type) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t)
       xs.[j] <- xs.[j - 1];
       xs.[j - 1] <- a;
       j <- j - 1
-    done
+    done;
+    (* Steps for the solver, over any strict weak order. *)
+    assert (forall (q in 0 .. i + 1). j < q ==> less xs.[q] xs.[j] = false);
+    assert j > 0 ==> less xs.[j] xs.[j - 1] = false;
+    assert (forall (p in 0 .. j). less xs.[j] xs.[p] = false)
   done
 
 (* `>` is a strict weak order, so descending order sorts. *)
@@ -45,6 +49,14 @@ let pick (t : type) (a : t) (b : t) (less : (x : t) -> (y : t) -> bool) : t
 
 let smaller (a : u16) (b : u16) : u16 =
   pick a b (let (x) (y) => Pia.Core.Order.less x y)
+
+(* The sort with a comparator that meets Pia.Core.Order's Ord: it is
+   proved once, over any strict weak order (ADR 0044, step 6), so this
+   instance needs only the law of `less`, which follows from its
+   interface's contract. The caller knows `sorted` of the comparator. *)
+let ascending (xs : borrowed inout mutable [u16]) : unit
+  ensures Pia.Fn.sorted (let (a : u16) (b : u16) => Pia.Core.Order.less a b) xs
+= sort xs (let (a) (b) => Pia.Core.Order.less a b)
 
 (* `>=` is not: `a >= a` holds, so it is not irreflexive.
 *)
@@ -76,7 +88,7 @@ let laws (x : u8) : bool
 = true
 
 (* Expected report: the two arguments that do not meet their laws.
-// CHECK: fn_laws.pia:52:3: failed: the precondition of 'sort[lambda@fn_laws.pia:52:12]<u8>' holds
-// CHECK: fn_laws.pia:67:32: failed: the precondition of 'accumulate[lambda@fn_laws.pia:67:51]<u8>' holds
-// CHECK: 64 proved, 2 failed, 0 skipped
+// CHECK: fn_laws.pia:64:3: failed: the precondition of 'sort[lambda@fn_laws.pia:64:12]<u8>' holds
+// CHECK: fn_laws.pia:79:32: failed: the precondition of 'accumulate[lambda@fn_laws.pia:79:51]<u8>' holds
+// CHECK: 54 proved, 2 failed, 0 skipped
 *)
