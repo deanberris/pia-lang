@@ -55,7 +55,7 @@ let put (p : borrowed inout mutable pool) (b : borrowed block) (k : int{0..15}) 
   requires b.i < p.cap && p.cap * 16 <= len p.mem
   ensures p.cap = old p.cap && p.top = old p.top && len p.mem = old (len p.mem)
   ensures len p.free = old (len p.free) && len p.pos = old (len p.pos)
-  ensures forall (j in 0 .. p.top). p.free.[j] = old (p.free.[j])
+  ensures forall (j in 0 .. p.top). p.free.[j] = old (p.free.[j]) && p.pos.[p.free.[j]] = old (p.pos.[p.free.[j]])
   ensures forall (s in 0 .. len p.pos). p.pos.[s] = old (p.pos.[s])
   ensures p.mem.[b.i * 16 + k] = v
 = p.mem.[b.i * 16 + k] <- v
@@ -79,3 +79,49 @@ let reuse (p : borrowed inout mutable pool) : result unit oom
   assert r = 1;
   give p b;
   Ok ()
+
+(* Expected report, in order.
+// CHECK: pool.pia:29:20: proved: '-' does not overflow usize [smt]
+// CHECK: pool.pia:30:14: proved: the index is within bounds [smt]
+// CHECK: pool.pia:31:6: proved: the index is within bounds [smt]
+// CHECK: pool.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:48:8: proved: the index is within bounds [smt]
+// CHECK: pool.pia:49:21: proved: the value fits in u16 [smt]
+// CHECK: pool.pia:49:8: proved: the index is within bounds [smt]
+// CHECK: pool.pia:50:19: proved: '+' does not overflow usize [smt]
+// CHECK: pool.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:61:14: proved: '*' does not overflow usize [intervals]
+// CHECK: pool.pia:61:19: proved: '+' does not overflow usize [intervals]
+// CHECK: pool.pia:61:3: proved: the index is within bounds [smt]
+// CHECK: pool.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:59:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:66:14: proved: '*' does not overflow usize [intervals]
+// CHECK: pool.pia:66:19: proved: '+' does not overflow usize [intervals]
+// CHECK: pool.pia:66:3: proved: the index is within bounds [smt]
+// CHECK: pool.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:73:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:73:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:74:3: proved: the precondition of 'put' holds [smt]
+// CHECK: pool.pia:75:11: proved: the precondition of 'get' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:77:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:77:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:78:3: proved: the precondition of 'put' holds [smt]
+// CHECK: pool.pia:79:3: proved: the assertion holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: 42 proved, 0 failed, 0 skipped
+*)

@@ -5171,7 +5171,15 @@ class Gen {
         if (!elem)
           return fail(obj, "only arrays and slices can be indexed, found " +
                                typeName(buf->type));
-        if (!writable(obj))
+        // The record the field chain starts from: an `out` or `inout`
+        // parameter, or a writable borrow, lets its buffers be written.
+        const Node *root = &obj;
+        while (root->kind == NodeKind::Field && !root->kids.empty())
+          root = root->kids[0].get();
+        BindingPtr rb = root->kind == NodeKind::Name && root->flags.empty()
+                            ? lookup(root->text)
+                            : nullptr;
+        if (!writable(obj) && !(rb && writableValue(*rb)))
           return fail(obj, "cannot write to this buffer: its record must be "
                            "an 'out' or 'inout' parameter or a writable "
                            "borrow");
@@ -5698,7 +5706,9 @@ class Gen {
   // At the end of `b`'s scope: a linear value must have been consumed on
   // every path.
   bool consumed(const BindingPtr &b, syntax::SourceLoc at) {
-    if (b->name.find('#') != std::string::npos || !isLinear(b->type))
+    // Contracts and ghost code describe values; they consume nothing.
+    if (contract_ || ghost_ || b->name.find('#') != std::string::npos ||
+        !isLinear(b->type))
       return true;
     auto m = moved_.find(b);
     if (m != moved_.end() && !m->second.maybe) return true;
