@@ -2986,6 +2986,27 @@ class Gen {
                            typeName(sig.params[i].type) + " = ...'");
       rebind.push_back({b, std::move(path)});
     }
+    // In a definition check, a requirement's precondition is a goal at
+    // each call, which its uninterpreted function cannot raise itself
+    // (ADR 0044: an arrow with `requires` proved once).
+    if (checking_ && !contract_ && !ghost_ && sig.item &&
+        sig.item->kind == NodeKind::SigVal &&
+        std::any_of(promisedSigs_.begin(), promisedSigs_.end(),
+                    [&](const sema::FuncSig &r) { return &r == &sig; })) {
+      pushScope();
+      for (size_t i = 0; i < sig.params.size() && i < operands.size(); ++i)
+        bind(sig.params[i].name, operands[i], sig.params[i].type, false);
+      for (const syntax::NodePtr &c : sig.item->kids[2]->kids) {
+        if (c->kind != NodeKind::Requires) continue;
+        R p = genPredicate(*c->kids[0]);
+        if (!p) {
+          popScope();
+          return std::nullopt;
+        }
+        create<contract::AssertOp>(loc(n), p->value);
+      }
+      popScope();
+    }
     R out = emitCall(n, sig, operands);
     if (out)
       for (size_t k = 0; k < rebind.size(); ++k) {
@@ -3861,7 +3882,8 @@ class Gen {
       if (effectfulArrow(arrow)) return;
       if (arrow.contracts)
         for (const NodePtr &c : arrow.contracts->kids)
-          if (c->kind != NodeKind::Ensures) return;
+          if (c->kind != NodeKind::Ensures && c->kind != NodeKind::Requires)
+            return;
       // Named after the function too: two proofs must not share the
       // instances made at their stand-ins.
       std::string tp = hof.name + "#" + q->text + "#type";
@@ -3879,7 +3901,9 @@ class Gen {
         a->add(syntax::makeNode(NodeKind::None, at));
         return a;
       };
-      typeParam(*cps, "f");
+      // The concept's parameter has the copy's name for it, so the
+      // requirement's contract reads the same in both.
+      typeParam(*cps, tp);
       for (const std::string &t : hof.typeParams) typeParam(*cps, t);
       concept->add(retAnnotNode(
           annotOf(*syntax::makeNode(NodeKind::TypeName, at, "concept"), at), at));
@@ -3901,7 +3925,7 @@ class Gen {
       auto self = syntax::makeNode(NodeKind::ArrowType, at);
       Node *dom = self->add(syntax::makeNode(NodeKind::Domain, at, "g"));
       dom->add(syntax::makeNode(NodeKind::Modifiers, at));
-      dom->add(syntax::makeNode(NodeKind::TypeName, at, "f"));
+      dom->add(syntax::makeNode(NodeKind::TypeName, at, tp));
       dom->add(syntax::makeNode(NodeKind::None, at));
       self->add(std::move(type));
       req->add(annotOf(*self, at));
@@ -6257,12 +6281,8 @@ class Gen {
         }
       }
     for (const sema::FuncSig &r : promisedSigs_) {
-      for (const syntax::NodePtr &c : r.item->kids[2]->kids)
-        if (c->kind == NodeKind::Requires) {
-          notParametric(generic, "the requirement '" + r.name +
-                                     "' has a precondition");
-          return;
-        }
+      // A requirement's precondition is a goal at each call in the body
+      // (genCall), and its axiom holds where the precondition does.
       if (!r.result || mlir::isa<RecordType>(r.result) &&
                            !standIns_.contains(r.result)) {
         notParametric(generic, "the requirement '" + r.name +

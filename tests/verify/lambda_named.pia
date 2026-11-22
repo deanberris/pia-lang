@@ -44,6 +44,8 @@ let stuck (x : u8) : u8 requires x < 100 =
   bump x same
 
 (* Expected report, in order.
+// CHECK: lambda_named.pia:25:3: proved: the assertion holds [generic]
+// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [generic]
 // CHECK: lambda_named.pia:12:5: proved: the loop invariant holds on entry [generic]
 // CHECK: lambda_named.pia:13:11: proved: the index is within bounds [generic]
 // CHECK: lambda_named.pia:13:30: proved: '+' does not overflow usize [generic]
@@ -59,11 +61,9 @@ let stuck (x : u8) : u8 requires x < 100 =
 // CHECK: lambda_named.pia:8:1: proved: 'count[is_digit]' is an instance of the generic proof of 'count#proof' [generic]
 // CHECK: lambda_named.pia:35:10: proved: the precondition of 'succ' holds [smt]
 // CHECK: lambda_named.pia:35:10: proved: the postcondition holds [smt]
-// CHECK: lambda_named.pia:25:3: proved: the precondition of 'succ@lambda_named.pia:35:10' holds [smt]
-// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:22:1: proved: 'bump[succ@lambda_named.pia:35:10]' is an instance of the generic proof of 'bump#proof' [generic]
 // CHECK: lambda_named.pia:44:10: failed: the postcondition holds
 // CHECK-NEXT: counterexample: y = {{-?[0-9]+}}
-// CHECK: lambda_named.pia:25:3: proved: the precondition of 'same@lambda_named.pia:44:10' holds [smt]
-// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:22:1: proved: 'bump[same@lambda_named.pia:44:10]' is an instance of the generic proof of 'bump#proof' [generic]
 // CHECK: 19 proved, 1 failed, 0 skipped
 *)
