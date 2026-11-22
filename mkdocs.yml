@@ -133,4 +133,5 @@ nav:
       - adr/0033-module-initialisation-and-registries.md
       - adr/0034-concepts-and-overload-resolution.md
       - adr/0035-substitution-failure-and-total-constraints.md
+      - adr/0036-library-theories.md
       - adr/0037-idiomatic-pia-and-lints.md

@@ -63,11 +63,23 @@ struct Deferred {
 // values spelled as Pia spells them; the compiler maps a spelling back to
 // its type. Outside the compiler's type checking these are unset, and type
 // names are not values.
+struct TypeInfo {
+  // "int", "bool", "unit", "array", "slice", "record" or "variant".
+  std::string kind;
+  std::optional<std::string> element;  // an array's or a slice's
+  // A record's field types, or a variant's payload types, in order.
+  std::vector<std::string> fields;
+  // A generic instance's type arguments, as in `pair<u8, u16>`.
+  std::vector<std::string> args;
+  // Its size in bytes, or nothing when it has no fixed size.
+  std::optional<int64_t> size;
+};
+
 struct TypeHost {
   // The spelling of the type a name denotes, such as `u8` or `pixel`.
   std::function<std::optional<std::string>(const std::string &)> named;
-  // Its size in bytes, or nothing when it has no fixed size.
-  std::function<std::optional<int64_t>(const std::string &)> sizeOf;
+  // What a type is made of, by its spelling.
+  std::function<TypeInfo(const std::string &)> info;
 };
 
 class Interpreter {

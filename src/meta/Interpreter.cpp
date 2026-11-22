@@ -78,7 +78,8 @@ const std::map<std::string, size_t> &metaBuiltins() {
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
-      {"size_of", 1},
+      {"size_of", 1}, {"type_kind", 1}, {"element", 1},
+      {"field_types", 1}, {"type_args", 1},
       // The core builtins that operators expand to, so a `where`
       // predicate, which is expanded code, can run (ADR 0035).
       {"eq", 2}, {"ne", 2}, {"lt", 2}, {"gt", 2}, {"le", 2}, {"ge", 2},
@@ -498,16 +499,37 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   };
   if (auto op = ops.find(name); op != ops.end())
     return binop(op->second, args[0], args[1]);
-  if (name == "size_of") {
+  if (name == "size_of" || name == "type_kind" || name == "element" ||
+      name == "field_types" || name == "type_args") {
     if (args[0]->kind != K::Type)
-      throw MetaError{site_, std::string("'size_of' needs a type, found ") +
+      throw MetaError{site_, "'" + name + "' needs a type, found " +
                                  kindName(args[0]->kind)};
-    if (!host_.sizeOf)
-      throw MetaError{site_, "'size_of' is only available in types and "
+    if (!host_.info)
+      throw MetaError{site_, "'" + name + "' is only available in types and "
                              "constraints"};
-    if (std::optional<int64_t> n = host_.sizeOf(args[0]->s))
-      return intValue(*n);
-    throw MetaError{site_, "the type " + args[0]->s + " has no fixed size"};
+    const std::string &t = args[0]->s;
+    TypeInfo info = host_.info(t);
+    auto types = [](const std::vector<std::string> &ts) {
+      std::vector<ValuePtr> out;
+      for (const std::string &x : ts) out.push_back(typeValue(x));
+      return listValue(std::move(out));
+    };
+    if (name == "type_kind") return strValue(info.kind);
+    if (name == "field_types") {
+      if (info.kind != "record" && info.kind != "variant")
+        throw MetaError{site_, "'field_types' needs a record or a variant, "
+                               "found " + t};
+      return types(info.fields);
+    }
+    if (name == "type_args") return types(info.args);
+    if (name == "element") {
+      if (!info.element)
+        throw MetaError{site_, "'element' needs an array or a slice, found " +
+                                   t};
+      return typeValue(*info.element);
+    }
+    if (info.size) return intValue(*info.size);
+    throw MetaError{site_, "the type " + t + " has no fixed size"};
   }
   if (name == "name") {
     const Value &v = *args[0];
