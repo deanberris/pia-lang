@@ -365,6 +365,8 @@ Any module may declare foreign functions, for its own C libraries as well as POS
 - **A foreign function without an explicit contract can only be called as `unsafe f x`.** Writing `unsafe` is the caller's statement that it has checked the call by hand. The verifier assumes nothing about the result beyond its type's range, and every buffer passed to it is treated as written with unknown contents. Each `unsafe` call site, by symbol and source location, is a trusted item in the certificate. Calling such a function without `unsafe` is a compile error that suggests writing the contract.
 - **`unsafe` is not a way around proof goals.** An `unsafe` call still has its arguments checked against their types, and every goal around it is proved as usual. It only marks that the callee's behaviour is taken on trust.
 
+Implemented (#55) for parameters of integer, bool and integer-buffer types and integer, bool or unit results: see [codegen.md](codegen.md#foreign-functions). `addr`, `view` and `addr_of` come next.
+
 `unsafe` is a core form, like `extern`, not a block: it marks one call, so the trusted surface stays as small as the call. Rust's `unsafe` blocks and Verus's `assume_specification` are the prior art. Pia's version is narrower than Rust's, since a contracted foreign call needs no `unsafe` at all.
 
 **Raw addresses.** `addr` is a raw machine address. It has no arithmetic and cannot be dereferenced. `view (a : addr) (n : usize) : [T]` turns an address into a slice, and `addr_of (xs : [T]) : addr` goes the other way. Both are trusted, so they and `assume` may only be used in a module marked `@trusted`. `Pia.Sys.Posix` and `Pia.Rt` are the only trusted modules in the library.

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -585,6 +586,42 @@ struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
   }
 };
 
+// `pia.foreign`: a call of the C function, which the pre-pass in
+// lowerToCore declared. A buffer is passed as a pointer to its first
+// element (#55).
+struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ForeignOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+    llvm::SmallVector<Value> args;
+    for (Value v : adaptor.getArgs()) {
+      if (auto m = mlir::dyn_cast<mlir::MemRefType>(v.getType())) {
+        auto meta = make<mlir::memref::ExtractStridedMetadataOp>(rw, loc, v);
+        Value base = make<mlir::memref::ExtractAlignedPointerAsIndexOp>(
+            rw, loc, v);
+        Value addr = make<mlir::arith::IndexCastOp>(rw, loc, rw.getI64Type(),
+                                                    base);
+        Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
+        Value off = make<mlir::arith::IndexCastOp>(rw, loc, rw.getI64Type(),
+                                                   meta.getOffset());
+        v = make<mlir::LLVM::GEPOp>(
+            rw, loc, ptr, m.getElementType(), p,
+            llvm::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(off)});
+      }
+      args.push_back(v);
+    }
+    llvm::SmallVector<Type> results;
+    for (Type t : op.getResultTypes())
+      results.push_back(getTypeConverter()->convertType(t));
+    rw.replaceOpWithNewOp<mlir::func::CallOp>(op, op.getSymbol(), results,
+                                              args);
+    return mlir::success();
+  }
+};
+
 struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -718,6 +755,63 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   });
 
   CoreTypes types;
+  // Foreign functions (#55): each C symbol a `pia.foreign` calls gets a
+  // private declaration with C types, marked `pia.c`. A Pia declaration
+  // with the same name as its symbol is renamed out of the way.
+  {
+    llvm::SmallVector<ForeignOp> foreign;
+    module.walk([&](ForeignOp op) { foreign.push_back(op); });
+    std::set<std::string> declared;
+    for (ForeignOp op : foreign) {
+      std::string sym = op.getSymbol().str();
+      if (auto own = module.lookupSymbol<mlir::func::FuncOp>(sym);
+          own && !own->hasAttr("pia.c")) {
+        if (!own->hasAttr("pia.extern"))
+          return own.emitError() << "the C symbol '" << sym
+                                 << "' is also the name of a Pia function";
+        std::string renamed = "pia$ffi$" + sym;
+        if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
+                own, mlir::StringAttr::get(ctx, renamed), module)))
+          return mlir::failure();
+        own.setSymName(renamed);
+      }
+      if (!declared.insert(sym).second) continue;
+      auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+      auto cType = [&](Type t) -> Type {
+        Type c = types.convertType(t);
+        if (c && mlir::isa<mlir::MemRefType>(c)) return ptr;
+        return c;
+      };
+      // C extends small integers at the call (Apple arm64).
+      auto ext = [&](Type t) -> std::optional<llvm::StringRef> {
+        auto i = mlir::dyn_cast<IntType>(t);
+        unsigned width = i ? reprOf(i).width : 0;
+        if (t.isInteger(1)) return mlir::LLVM::LLVMDialect::getZExtAttrName();
+        if (!i || width >= 32) return std::nullopt;
+        return i.isSigned() ? mlir::LLVM::LLVMDialect::getSExtAttrName()
+                            : mlir::LLVM::LLVMDialect::getZExtAttrName();
+      };
+      llvm::SmallVector<Type> args, results;
+      for (Value a : op.getArgs()) args.push_back(cType(a.getType()));
+      for (Type t : op.getResultTypes()) results.push_back(cType(t));
+      OpBuilder b(ctx);
+      b.setInsertionPointToEnd(module.getBody());
+      auto decl = make<mlir::func::FuncOp>(
+          b, op.getLoc(), sym, b.getFunctionType(args, results));
+      decl.setPrivate();
+      decl->setAttr("pia.c", b.getUnitAttr());
+      for (auto [i, a] : llvm::enumerate(op.getArgs()))
+        if (auto e = ext(a.getType()))
+          decl.setArgAttr(i, *e, b.getUnitAttr());
+      for (auto [i, t] : llvm::enumerate(op.getResultTypes()))
+        if (auto e = ext(t)) decl.setResultAttr(i, *e, b.getUnitAttr());
+    }
+    // The trust marks are for the verifier and --trust-report only.
+    module.walk([](mlir::Operation *op) {
+      op->removeAttr("pia.extern");
+      op->removeAttr("pia.unsafe");
+    });
+  }
   mlir::ConversionTarget target(*ctx);
   target.addLegalDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                          mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
@@ -742,7 +836,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, AbortLowering, ConstArrayLowering>(
+               StoreLowering, SliceLowering, AbortLowering, ConstArrayLowering,
+               ForeignLowering>(
       types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
@@ -963,9 +1058,14 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     }
     e.resultSigned =
         f.getNumResults() == 1 && static_cast<bool>(f.getResultAttr(0, kSigned));
-    // Pia's own attributes have no meaning in LLVM IR.
-    f.removeArgAttrsAttr();
-    f.removeResAttrsAttr();
+    // Pia's own attributes have no meaning in LLVM IR. A C declaration's
+    // are LLVM's: the extensions C expects (#55).
+    if (f->hasAttr("pia.c")) {
+      f->removeAttr("pia.c");
+    } else {
+      f.removeArgAttrsAttr();
+      f.removeResAttrsAttr();
+    }
     if (f.isExternal() || !f.isPublic()) continue;
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
             f, mlir::StringAttr::get(ctx, e.internal), module)))
