@@ -1,0 +1,29 @@
+(* Runs Pia.Core.Int's compiled code on examples, linked by pia_binary. It
+   exits 0 when every result is what C++ gives (or, where C++ is undefined,
+   what Pia's contract says), and otherwise with the number of the first
+   wrong one. *)
+import Pia.Core.Int.Ops
+
+let main () : i32 =
+  let a : u32 = 12 in
+  let b : u32 = 18 in
+  let c : i32 = -2147483648 in
+  let d : i32 = -1 in
+  let e : i64 = -7 in
+  let f : i64 = 2 in
+  let g : u64 = 18446744073709551615 in
+  let h : i16 = 300 in
+  let k : i64 = -129 in
+  if Pia.Core.Int.gcd a b <> 6 then 1
+  else if Pia.Core.Int.gcd c d <> 1 then 2
+  else if Pia.Core.Int.abs c <> 2147483648 then 3
+  else if Pia.Core.Int.midpoint a b <> 15 then 4
+  else if Pia.Core.Int.midpoint e f <> -3 then 5
+  else if Pia.Core.Int.midpoint f e <> -2 then 6
+  else if Pia.Core.Int.mul_sat g g <> g then 7
+  else if Pia.Core.Int.mul_sat h h <> 32767 then 8
+  else if Pia.Core.Int.div_sat c d <> 2147483647 then 9
+  else if Pia.Core.Int.div_sat e f <> -3 then 10
+  else if Pia.Core.Int.saturate_cast_i8 k <> -128 then 11
+  else if Pia.Core.Int.saturate_cast_u8 g <> 255 then 12
+  else 0

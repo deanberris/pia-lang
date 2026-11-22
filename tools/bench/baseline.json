@@ -28,6 +28,15 @@
       "wall_ms_1": 1073.3,
       "wall_ms_n": 843.9
     },
+    "lib/Pia/Core/Int.pia": {
+      "cost": 19419633,
+      "goals": 515,
+      "solve_ms_1": 2966,
+      "solve_ms_n": 1016,
+      "solved": 448,
+      "wall_ms_1": 5432.2,
+      "wall_ms_n": 3487.0
+    },
     "tests/verify/bits.pia": {
       "cost": 10549,
       "goals": 26,
@@ -148,10 +157,10 @@
   },
   "host": "BabyHouse-iMac",
   "total": {
-    "cost": 339375556,
-    "goals": 699,
-    "solved": 568,
-    "wall_ms_1": 44522.1,
-    "wall_ms_n": 15326.2
+    "cost": 358795189,
+    "goals": 1214,
+    "solved": 1016,
+    "wall_ms_1": 49954.3,
+    "wall_ms_n": 18813.2
   }
 }

@@ -1,6 +1,6 @@
 # The C++23 standard library in Pia
 
-Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and `lib/` has its first module, `Pia.Core.Bit` (`lib/Pia/Core/Bit.pia`, tested in `tests/std/`).
+Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and `lib/` has its first modules, `Pia.Core.Bit` and `Pia.Core.Int` (`lib/Pia/Core/`, tested in `tests/std/`).
 
 Pia gives what the C++ library lets a program do, in Pia's idioms: slices instead of iterator pairs, `result` and `?` instead of exceptions, explicit allocators instead of `std::allocator`, concepts instead of comparator objects, and metaprograms instead of type traits. Every function has a contract that the compiler proves, so what is undefined behaviour in C++ is a proof goal at the call in Pia.
 
@@ -15,7 +15,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<concepts>` | `Pia.Core.Order` (`Eq`, `Ord`), `Pia.Core.Int` (`Integral`); the rest are concepts written where needed | Idiom: concepts with laws (ADR 0034) | phase 1 |
 | `<coroutine>` | the core's `wait`, `yield` and `@suspends` | Core (ADR 0027) | deferred: M12 |
 | `<compare>` | `Pia.Core.Order`: `ordering`, `weak_ordering`, `partial_ordering`, `compare`, `@derive(ord)` | Direct | phase 1 |
-| `<utility>` | `swap`, `exchange` in `Pia.Core.Order`; `cmp_less`, `cmp_equal`, `in_range` in `Pia.Core.Int`; `pair` is a record; `move`, `forward` are the `moved` modifier; `to_underlying` is `widen`; `unreachable` is a proof goal (`assert false`) | Direct and Core | phase 1 |
+| `<utility>` | `swap`, `exchange` in `Pia.Core.Order`; `cmp_equal`, `cmp_less` and the other safe comparisons are Pia's own `=`, `<` and so on, which compare integers of any two types exactly (an `i32` below a `u32` is `a < b`), so `Pia.Core.Int` does not repeat them; `in_range` is a narrowing goal (`let y : u8 = x` proves `x` fits) until a type's bounds can be values in generic code; `pair` is a record; `move`, `forward` are the `moved` modifier; `to_underlying` is `widen`; `unreachable` is a proof goal (`assert false`) | Direct and Core | safe comparisons done (core); `swap`, `exchange` phase 1 |
 | `<optional>` | `Pia.Core.Option` over the core `option` | Direct; monadic `and_then`, `transform`, `or_else` deferred | phase 1, phase 6 |
 | `<expected>` | `Pia.Core.Result` over the core `result` and `?` | Direct; monadic operations deferred | phase 1, phase 6 |
 | `<variant>` | sum types and `match` | Core; `variant<Ts...>` and `visit` need variadic generics | n/a |
@@ -32,9 +32,9 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<exception>`, `<stdexcept>` | closed error variants in `result` (ADR 0028) | Out: no exceptions | n/a |
 | `<system_error>`, `<cerrno>` | each module's error variants; `Pia.Sys` decodes `errno` | Idiom | phase 3 |
 | `<cassert>` | `assert` (proved, never checked at run time) | Core | n/a |
-| `<limits>`, `<climits>`, `<cstdint>`, `<cstddef>`, `<cinttypes>` | the integer and range types, and `Pia.Core.Int`'s `min_value` / `max_value` / `bits` | Core and Direct | phase 1 |
+| `<limits>`, `<climits>`, `<cstdint>`, `<cstddef>`, `<cinttypes>` | the integer and range types, which state their bounds: `u8` is `int{0..255}`, and a range type is its own `numeric_limits`. Functions returning them per type wait for a type's bounds to be values in generic code | Core | core types done; generic limits wait |
 | `<cfloat>`, `<stdfloat>` | `Pia.Math` | Deferred: floats (M11) | phase 4 |
-| `<cstdlib>` | `abs`, `div` in `Pia.Core.Int`; `exit`, `getenv` in `Pia.Sys`; `malloc` is `Pia.Mem`; `qsort`, `bsearch` are `Pia.Core.Algo` | Direct | phase 1, phase 3 |
+| `<cstdlib>` | `abs` (its result is unsigned, so `abs` of the minimum is defined) and `div` (as `quot_rem`, since `div` is the core builtin, with a `quot_rem_i32` record per type) in `Pia.Core.Int`; `exit`, `getenv` in `Pia.Sys`; `malloc` is `Pia.Mem`; `qsort`, `bsearch` are `Pia.Core.Algo` | Direct | `abs`, `div` done; the rest phase 1, phase 3 |
 | `<csignal>` | `Pia.Rt` | Direct (#58) | phase 3 |
 | `<csetjmp>` | none | Out | n/a |
 | `<cstdarg>` | none | Out: no C variadics | n/a |
@@ -94,7 +94,8 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | `<algorithm>` set operations | `Pia.Core.Algo.Set`, into `out` slices | Direct | phase 1 |
 | `<algorithm>` permutations | `Pia.Core.Algo.Perm` | Direct | phase 1 |
 | `<algorithm>` `_if` forms, `transform`, comparator overloads | the same functions with a function parameter | Deferred: function values | phase 6 |
-| `<numeric>` | `Pia.Core.Int` (`gcd`, `lcm`, `midpoint`), `Pia.Core.Algo.Modify` (`iota`, `accumulate`, `reduce`, `partial_sum`, `adjacent_difference`, `inner_product`) | Direct | phase 1 |
+| `<numeric>` | `Pia.Core.Int` (`gcd`, `lcm`, `midpoint`), `Pia.Core.Algo.Modify` (`iota`, `accumulate`, `reduce`, `partial_sum`, `adjacent_difference`, `inner_product`) | Direct | `gcd` (of signed values, unsigned), `midpoint` done; `gcd`'s contract does not yet say it divides both, and `lcm` waits, both for nonlinear facts the verifier cannot prove yet; the algorithms phase 1 |
+| C++26 saturation (`add_sat`, `sub_sat`, `mul_sat`, `div_sat`, `saturate_cast`) | `add_sat`, `sub_sat` are the core builtins (`+|`, `-|`); `mul_sat`, `div_sat` and `saturate_cast_<t>` (from `i64` and `u64`, since the target cannot be a type argument yet) in `Pia.Core.Int` | Direct | done |
 | `<execution>` | `spread` and `Pia.Par` | Idiom (ADR 0014) | deferred: M12 |
 | `<generator>` | coroutines | Deferred (ADR 0027) | phase 5 |
 

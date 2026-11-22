@@ -1,0 +1,83 @@
+(* Importers of Pia.Core.Int see only its interface's contracts, and those
+   decide the edges C++ calls out: zero, one, and the extreme values of
+   each width, where C++ has undefined behaviour and Pia does not.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Int.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Int.Ops
+
+(* The edges of the unsigned type `t` of `w` bits. *)
+let meta unsigned_edges (t : string) (w : int) : item =
+  let n = concat "edges_" t in
+  `( let $n () : unit =
+       let zero : $t = 0 in
+       let one : $t = 1 in
+       let max : $t = ~zero in
+       assert Pia.Core.Int.gcd zero zero = 0;
+       assert Pia.Core.Int.gcd max zero = max;
+       assert Pia.Core.Int.gcd zero max = max;
+       assert Pia.Core.Int.midpoint zero max = (1 << $(w - 1)) - 1;
+       assert Pia.Core.Int.midpoint max zero = 1 << $(w - 1);
+       assert Pia.Core.Int.midpoint max max = max;
+       assert Pia.Core.Int.mul_sat max max = max;
+       assert Pia.Core.Int.mul_sat max one = max;
+       assert Pia.Core.Int.mul_sat zero max = 0;
+       assert Pia.Core.Int.div_sat max one = max;
+       () )
+
+(* The edges of the signed type `t` of `w` bits. *)
+let meta signed_edges (t : string) (u : string) (w : int) : item =
+  let n = concat "edges_" t in
+  `( let $n () : unit =
+       let zero : $t = 0 in
+       let one : $t = 1 in
+       let m : $u = (1 << $(w - 1)) - 1 in
+       let hi : $t = m in
+       let lo : $t = -1 - hi in
+       assert Pia.Core.Int.abs lo = 1 << $(w - 1);
+       assert Pia.Core.Int.abs hi = hi;
+       assert Pia.Core.Int.abs zero = 0;
+       assert Pia.Core.Int.gcd lo zero = 1 << $(w - 1);
+       assert Pia.Core.Int.gcd zero lo = 1 << $(w - 1);
+       assert Pia.Core.Int.gcd zero zero = 0;
+       assert Pia.Core.Int.midpoint lo hi = -1;
+       assert Pia.Core.Int.midpoint hi lo = 0;
+       assert Pia.Core.Int.mul_sat lo (zero - one) = hi;
+       assert Pia.Core.Int.mul_sat lo one = lo;
+       assert Pia.Core.Int.mul_sat hi hi = hi;
+       assert Pia.Core.Int.mul_sat lo hi = lo;
+       assert Pia.Core.Int.div_sat lo (zero - one) = hi;
+       assert Pia.Core.Int.div_sat lo one = lo;
+       () )
+
+unsigned_edges "u8" 8
+unsigned_edges "u16" 16
+unsigned_edges "u32" 32
+unsigned_edges "u64" 64
+signed_edges "i8" "u8" 8
+signed_edges "i16" "u16" 16
+signed_edges "i32" "u32" 32
+signed_edges "i64" "u64" 64
+
+(* saturate_cast clamps at both ends, from either signedness. *)
+let casts () : unit =
+  let minus : i64 = -1 in
+  let big : i64 = 300 in
+  let far : i64 = -300 in
+  let top : u64 = 18446744073709551615 in
+  assert Pia.Core.Int.saturate_cast_u8 minus = 0;
+  assert Pia.Core.Int.saturate_cast_u8 big = 255;
+  assert Pia.Core.Int.saturate_cast_u8 top = 255;
+  assert Pia.Core.Int.saturate_cast_i8 big = 127;
+  assert Pia.Core.Int.saturate_cast_i8 far = -128;
+  assert Pia.Core.Int.saturate_cast_i8 top = 127;
+  assert Pia.Core.Int.saturate_cast_u16 far = 0;
+  assert Pia.Core.Int.saturate_cast_i32 top = 2147483647;
+  assert Pia.Core.Int.saturate_cast_u64 minus = 0;
+  assert Pia.Core.Int.saturate_cast_i64 top = 9223372036854775807;
+  ()
+
+(* Every goal is proved, from the interface alone.
+// CHECK-NOT: failed
+// CHECK: 150 proved, 0 failed, 0 skipped
+*)
