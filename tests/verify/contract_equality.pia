@@ -1,0 +1,26 @@
+(* In a contract, `=` on records and variants without an `eq_` is equality
+   of the values themselves, so a generic contract that compares values of
+   a type parameter, which the definition check accepts, means the same in
+   every instance.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+let point = type { x : u8; y : u8 }
+
+let same (t : type) (v : t) : t
+  ensures result = v
+= v
+
+let maybe (o : option u16) : option u16
+  ensures result = o
+= same o
+
+let here (p : point) : point
+  ensures result = p
+  ensures (result <> p) = false
+= same p
+
+(* Expected report, in order.
+// CHECK: 0 failed, 0 skipped
+*)
