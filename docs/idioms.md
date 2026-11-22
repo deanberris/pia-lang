@@ -23,7 +23,7 @@ Each pair below says the same thing two ways. The costs are Z3's resource counts
 | --- | --- | --- |
 | a parameter below 100, with `x + 1` in the body and a caller passing `y / 3` | 2 goals to the solver | 1 goal to the solver, `x + 1` by intervals |
 | `inc` and `twice` above, with `x < 255` and `x < 200` | 5 goals, all to the solver, cost 1,261 | 4 goals, 3 to the solver, cost 711 |
-| every element of `xs` below 16, then `t.[get xs i]` into a 16-entry table | cost 10,022, and the table index still fails: `get`'s `u8` result does not keep the bound | cost 96, and the table index is proved by intervals |
+| every element of `xs` below 16, then `t.[nibble_at xs i]` into a 16-entry table | cost 10,022, and the table index still fails: `nibble_at`'s `u8` result does not keep the bound | cost 96, and the table index is proved by intervals |
 | `w * h` fits, for `w` and `h` up to 1000 | `requires w * h <= 1000000`: cost 1,075,117, 87 ms | `int{0..1000}` each: cost 0, proved by intervals |
 
 The third row is the point of this page in one line: a fact in a contract stops at the function, and a fact in a type does not.
@@ -81,7 +81,7 @@ With `ensures result < 16` instead, the index into `t` needs the solver. With th
 A quantified precondition that bounds every element by constants is an element type:
 
 ```ocaml
-let get (xs : [int{0..15}]) (i : usize) : int{0..15}
+let nibble_at (xs : [int{0..15}]) (i : usize) : int{0..15}
   requires i < len xs
 = xs.[i]
 ```
@@ -106,17 +106,17 @@ These have no lint yet, but the same opinion applies:
 A contract is for what no single type can say:
 
 ```ocaml
-let add (a : u8) (b : u8) : u8
+let plus (a : u8) (b : u8) : u8
   requires a + b <= 255
   ensures result = a + b
 = a + b
 
-let add3 (a : u8) (b : u8) (c : u8) : u8
+let plus3 (a : u8) (b : u8) (c : u8) : u8
   requires a + b + c <= 255
-= add (add a b) c
+= plus (plus a b) c
 ```
 
-`add3` is proved against `add`'s contract, not its body. Its two calls are two goals, each with the other's postcondition as a fact. This is the right shape for a relation, and the cost is one goal per call.
+`plus3` is proved against `plus`'s contract, not its body. Its two calls are two goals, and the outer one is proved from the inner call's postcondition. This is the right shape for a relation, and the cost is one goal per call.
 
 Where a contract and a type can both say it, the type wins. Range types work with contracts too:
 

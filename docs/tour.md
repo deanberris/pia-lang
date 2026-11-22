@@ -363,15 +363,15 @@ A contract is a claim the compiler must prove. Pia has these today:
 Calls are checked against contracts, not bodies. A caller proves the callee's precondition and then knows its postcondition, so proofs stay local to each function:
 
 ```ocaml
-let add (a : u8) (b : u8) : u8
+let plus (a : u8) (b : u8) : u8
   requires a + b <= 255
   ensures result = a + b
 = a + b
 
-let add3 (a : u8) (b : u8) (c : u8) : u8
+let plus3 (a : u8) (b : u8) (c : u8) : u8
   requires a + b + c <= 255
   ensures result = a + b + c
-= add (add a b) c
+= plus (plus a b) c
 ```
 
 Arithmetic inside a contract is exact mathematics, so a contract can say `a + b` without worrying that it overflows:

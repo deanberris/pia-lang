@@ -89,12 +89,12 @@ When one function calls another, the verifier does not look inside the callee. I
 <!-- example: calls.pia -->
 <!-- expect: fail -->
 ```ocaml
-let add (a : u8) (b : u8) : u8
+let plus (a : u8) (b : u8) : u8
   requires a + b <= 255
   ensures result = a + b
 = a + b
 
-let add3 (a : u8) (b : u8) (c : u8) : u8 = add (add a b) c
+let plus3 (a : u8) (b : u8) (c : u8) : u8 = plus (plus a b) c
 ```
 
 ```console
@@ -108,7 +108,7 @@ calls.pia:6:27: failed: the precondition of 'inc' holds
 2 proved, 2 failed, 0 skipped
 ```
 
-Both calls fail: the inner one when `a + b` is too big, and the outer one when the inner sum plus `c` is. Adding `requires a + b + c <= 255` to `add3` proves both, the inner call from it directly and the outer one from it and `add`'s postcondition. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.
+Both calls fail: the inner one when `a + b` is too big, and the outer one when the inner sum plus `c` is. Adding `requires a + b + c <= 255` to `plus3` proves both, the inner call from it directly and the outer one from it and `plus`'s postcondition. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.
 
 ## Spec functions say what code means
 
