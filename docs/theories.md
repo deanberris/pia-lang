@@ -3,7 +3,7 @@
 A *theory* teaches the verifier about a domain. It declares new sorts, functions on them that have no body, and axioms about them, and it lives in a library, not in the compiler ([ADR 0036](adr/0036-library-theories.md)). This page is a catalogue of worked theories. Each one shows the theory, a model that proves its axioms, a proof that uses the theory, and a mistake that the theory catches.
 
 !!! note "Status"
-    Theories, models and sealing are implemented (ADR 0036, steps 1 to 5), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. Theory-building metaprograms (step 5) are implemented too, so every example on this page is proved, and so are solver strategies and tactics (step 6).
+    Theories, models and sealing are implemented (ADR 0036, steps 1 to 5), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. Theory-building metaprograms (step 5) are implemented too, so every example on this page is proved, and so are solver strategies and tactics (step 6). `piac --verify --check-vacuity` (step 7) checks that no goal proved with a trusted axiom was proved from a contradiction ([verifier.md](verifier.md#theories)).
 
 ## How to read an entry
 
@@ -29,7 +29,7 @@ An entry also says whether anything in it is **trusted**. A trusted theory has n
 | [Units of measure](#units-of-measure) | quantities are combined with the right dimensions | nothing | step 3 |
 | [Network shapes and bounds](#network-shapes-and-bounds) | layer shapes match and Lipschitz bounds compose | nothing | step 3 |
 
-The steps are the implementation order of ADR 0036: (1) spec-only `real` and `int`, (2) theories in `@trusted` modules, (3) models and sealing, (4) certificates and `trusting`, (5) theory-building metaprograms, (6) solver strategies and tactics.
+The steps are the implementation order of ADR 0036: (1) spec-only `real` and `int`, (2) theories in `@trusted` modules, (3) models and sealing, (4) certificates and `trusting`, (5) theory-building metaprograms, (6) solver strategies and tactics, (7) `--check-vacuity`.
 
 ## Lock levels
 
