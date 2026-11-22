@@ -1,0 +1,17 @@
+(* A model's function has the theory's type, with the theory's sorts
+   replaced by the model's (ADR 0036).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let axiom small (x : s) ensures f x < 10
+end
+
+let model wrongtype : T = struct
+  let sort s = u8
+  (* CHECK: model_type_errors.pia:[[@LINE+2]]:3: error: the model 'wrongtype' defines 'T.f' with the wrong type: in this model it is u8 -> u8
+  *)
+  let spec f (x : u16) : u8 = 0
+end

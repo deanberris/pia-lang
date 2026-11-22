@@ -192,6 +192,8 @@ class Gen {
         types_(ctx, diags),
         interp_([](const std::string &) { return true; }) {}
 
+  void setTheoryInfo(TheoryInfo info) { theoryInfo_ = std::move(info); }
+
   mlir::OwningOpRef<mlir::ModuleOp> run(const Node &program) {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         mlir::ModuleOp::create(mlir::FileLineColLoc::get(file_, 1, 1));
@@ -253,6 +255,7 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     checkGhosts();
     checkAxioms();
+    checkModels();
     if (diags_.hasErrors()) return nullptr;
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
@@ -626,9 +629,27 @@ class Gen {
     bool isAxiom = hasFlag(item, "axiom");
     ghost_ = isSpec || isLemma || isAxiom;
     // A theory's members are named `T.x` (ADR 0036).
-    if (hasFlag(item, "theory"))
-      fn->setAttr("pia.theory",
-                  b_.getStringAttr(llvm::StringRef(sig.name).split('.').first));
+    if (hasFlag(item, "theory")) {
+      std::string theory = llvm::StringRef(sig.name).split('.').first.str();
+      fn->setAttr("pia.theory", b_.getStringAttr(theory));
+      if (auto m = theoryInfo_.modelled.find(theory);
+          m != theoryInfo_.modelled.end())
+        fn->setAttr("pia.modelled", b_.getStringAttr(m->second));
+    }
+    // A model's items, and the lemmas that check it, see its definitions;
+    // nothing else does (sealing).
+    if (auto m = theoryInfo_.modelOf.find(sig.name);
+        m != theoryInfo_.modelOf.end())
+      fn->setAttr("pia.model", b_.getStringAttr(m->second));
+    if (auto w = theoryInfo_.witnesses.find(sig.name);
+        w != theoryInfo_.witnesses.end())
+      fn->setAttr("pia.witness_of", b_.getStringAttr(w->second));
+    if (auto o = theoryInfo_.obligations.find(sig.name);
+        o != theoryInfo_.obligations.end())
+      fn->setAttr("pia.obligation",
+                  b_.getStringAttr("the model '" + o->second.first +
+                                   "' meets the axiom '" + o->second.second +
+                                   "'"));
     if (!triggers_.empty() && !isAxiom) {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
@@ -680,6 +701,11 @@ class Gen {
         fn->setAttr(PiaDialect::getFuelAttrName(),
                     b_.getI64IntegerAttr(fuel_));
     }
+
+    // A parameter whose record type refines its fields holds them: the
+    // caller proves them, and the body assumes them (ADR 0036).
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      if (!refine(entry->getArgument(i), sig.params[i].type, false)) return;
 
     if (isAxiom) {
       fn->setAttr(PiaDialect::getAxiomAttrName(), b_.getUnitAttr());
@@ -800,6 +826,8 @@ class Gen {
 
     pushScope();
     if (!rets.empty()) bind("result", rets[0], result, false);
+    // So does a result: the function proves its fields' refinements.
+    if (!rets.empty() && !refine(rets[0], result, true)) return;
     for (const syntax::NodePtr &c : contracts.kids) {
       if (c->kind != NodeKind::Ensures) continue;
       R p = genPredicate(*c->kids[0]);
@@ -808,6 +836,50 @@ class Gen {
     }
     popScope();
     create<mlir::func::ReturnOp>(l, rets);
+  }
+
+  // `{ p : real where 0.0 <= p }`: a `requires` (or, for a result, an
+  // `ensures`) per refined field of `v`'s record type, and of the records
+  // in its fields, with the field's name standing for the field.
+  bool refined(Type t) {
+    auto rec = mlir::dyn_cast<RecordType>(t);
+    if (!rec) return false;
+    if (types_.refinements(rec.getName().str())) return true;
+    for (Type ft : rec.getFieldTypes())
+      if (refined(ft)) return true;
+    return false;
+  }
+
+  bool refine(Value v, Type t, bool ensures) {
+    if (!refined(t)) return true;
+    auto rec = mlir::cast<RecordType>(t);
+    for (auto [name, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
+      if (mlir::isa<RecordType>(ft)) {
+        Value f = create<FieldOp>(b_.getUnknownLoc(), ft, v, name);
+        if (!refine(f, ft, ensures)) return false;
+      }
+    const auto *refs = types_.refinements(rec.getName().str());
+    if (!refs) return true;
+    for (const auto &[field, pred] : *refs) {
+      auto index = rec.fieldIndex(field);
+      if (!index) continue;
+      Type ft = rec.getFieldTypes()[*index];
+      Location l = loc(*pred);
+      Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(field));
+      scopes_.emplace_back();
+      scopes_.back()[field] = std::make_shared<Binding>();
+      scopes_.back()[field]->name = field;
+      scopes_.back()[field]->value = f;
+      scopes_.back()[field]->type = ft;
+      R p = genPredicate(*pred);
+      scopes_.pop_back();
+      if (!p) return false;
+      if (ensures)
+        create<contract::EnsuresOp>(l, p->value);
+      else
+        create<contract::RequiresOp>(l, p->value);
+    }
+    return true;
   }
 
   // An axiom (ADR 0036): its preconditions and postconditions, and its
@@ -930,6 +1002,50 @@ class Gen {
           break;
         }
         for (const std::string &d : calls[c]) work.push_back(d);
+      }
+    }
+  }
+
+  // A model defines each abstract function with the theory's type, its
+  // sorts replaced by the model's (ADR 0036).
+  void checkModels() {
+    for (const auto &[item, model] : theoryInfo_.modelOf) {
+      if (theoryInfo_.obligations.count(item) ||
+          theoryInfo_.witnesses.count(item))
+        continue;
+      auto f = module_.lookupSymbol<mlir::func::FuncOp>(item);
+      if (!f) continue;
+      std::string member = item.substr(model.size());  // ".x"
+      mlir::func::FuncOp abstract;
+      std::string theory;
+      for (const auto &[t, m] : theoryInfo_.modelled)
+        if (m == model) theory = t;
+      abstract = module_.lookupSymbol<mlir::func::FuncOp>(theory + member);
+      if (!abstract) continue;
+      auto as = [&](Type t) -> Type {
+        if (auto so = mlir::dyn_cast<SortType>(t)) {
+          std::string name = so.getName().str();
+          if (Type m = types_.named(model + name.substr(theory.size())))
+            return m;
+        }
+        return t;
+      };
+      mlir::FunctionType want = abstract.getFunctionType();
+      mlir::FunctionType have = f.getFunctionType();
+      bool same = want.getNumInputs() == have.getNumInputs() &&
+                  want.getNumResults() == have.getNumResults();
+      for (unsigned i = 0; same && i < want.getNumInputs(); ++i)
+        same = as(want.getInput(i)) == have.getInput(i);
+      for (unsigned i = 0; same && i < want.getNumResults(); ++i)
+        same = as(want.getResult(i)) == have.getResult(i);
+      if (!same) {
+        std::string w;
+        for (unsigned i = 0; i < want.getNumInputs(); ++i)
+          w += typeName(as(want.getInput(i))) + " -> ";
+        w += want.getNumResults() ? typeName(as(want.getResult(0))) : "unit";
+        diags_.error(sourceLoc(f.getLoc()),
+                     "the model '" + model + "' defines '" + theory + member +
+                         "' with the wrong type: in this model it is " + w);
       }
     }
   }
@@ -4418,6 +4534,10 @@ class Gen {
   // has no such equality (a buffer).
   Value sameValue(Location l, Value a, Value b, Type t) {
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
+    if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
+      return create<ExactCmpOp>(l, b_.getI1Type(),
+                                CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
+                                a, b);
     if (isBool(t))
       return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
                                          a, b);
@@ -5735,6 +5855,7 @@ class Gen {
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
+  TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
@@ -5798,9 +5919,12 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
   // Theories (ADR 0036) become ordinary items with qualified names.
   if (hasTheories(program)) {
     syntax::NodePtr flat = syntax::clone(program);
-    flattenTheories(*flat, diags);
+    TheoryInfo info;
+    flattenTheories(*flat, diags, &info);
     if (diags.hasErrors()) return nullptr;
-    return Gen(ctx, filename, diags, options).run(*flat);
+    Gen gen(ctx, filename, diags, options);
+    gen.setTheoryInfo(std::move(info));
+    return gen.run(*flat);
   }
   return Gen(ctx, filename, diags, options).run(program);
 }

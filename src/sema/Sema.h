@@ -104,6 +104,17 @@ class TypeResolver {
 
   // A named type from a `let name = type ...` item: a record or an alias.
   void define(const std::string &name, mlir::Type type) { named_[name] = type; }
+
+  // A record's field refinements, `{ p : real where 0 <= p }` (ADR 0036):
+  // each field's name and its predicate, in which the name is the field.
+  using Refinements = std::vector<std::pair<std::string, const syntax::Node *>>;
+  void refine(const std::string &record, Refinements r) {
+    refinements_[record] = std::move(r);
+  }
+  const Refinements *refinements(const std::string &record) const {
+    auto it = refinements_.find(record);
+    return it == refinements_.end() ? nullptr : &it->second;
+  }
   mlir::Type named(const std::string &name) const {
     auto it = named_.find(name);
     return it == named_.end() ? mlir::Type() : it->second;
@@ -218,6 +229,7 @@ class TypeResolver {
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
   std::map<std::string, mlir::Type> named_;
+  std::map<std::string, Refinements> refinements_;
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;
   std::map<std::string, GenericCtor> genericCtors_;

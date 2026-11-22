@@ -7,7 +7,7 @@
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
-%declare ADAPTER HANDLE DEFER QUESTION AS THEORY SORT AXIOM
+%declare ADAPTER HANDLE DEFER QUESTION AS THEORY SORT AXIOM MODEL
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
 %declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
 %declare ATTR ATTR_OPEN TARGS_OPEN TARGS_CLOSE LBRACE_ADJ HOLE
@@ -30,6 +30,7 @@ module_header: MODULE path attribute* (COLON path (COMMA path)*)?
      | interface_item
      | adapter_item
      | theory_item
+     | model_item
      | file_attr
      | module_item
      | import_item
@@ -323,6 +324,11 @@ theory_member: LET SORT IDENT (EQ type)?                      -> sort_decl
              | LET SPEC binder COLON annot attribute*         -> abstract_spec
              | LET AXIOM IDENT param* ret_annot? contract+    -> axiom
              | let_item
+// `let model m : T = struct ... end` (ADR 0036): a type for each sort and a
+// spec function for each abstract function.
+model_item: LET MODEL IDENT COLON IDENT EQ STRUCT model_member* END
+model_member: LET SORT IDENT EQ type                          -> model_sort
+            | let_item
 // `@trusted` on a line of its own marks the file (ADR 0036).
 file_attr: ATTR
 

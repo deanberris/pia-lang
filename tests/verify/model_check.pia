@@ -1,0 +1,58 @@
+(* The model check (ADR 0036): each axiom, with the model's definitions in
+   place of the theory's, is a lemma the model must prove. A model that
+   breaks an axiom fails, and a field refinement (`where`) is kept by
+   every function that builds the record.
+// RUN: not piac --verify --trust-report %s | FileCheck %s
+*)
+
+let theory Counter = sig
+  let sort counter
+  let spec count : (c : counter) -> int
+  let spec tick : (c : counter) -> counter
+  let axiom count_nonneg (c : counter) ensures count c >= 0
+  let axiom tick_up (c : counter) ensures count (tick c) = count c + 1
+end
+
+(* `tick` steps down, so the model does not meet tick_up. *)
+let model backwards : Counter = struct
+  let sort counter = int
+  let spec count (c : int) : int = if c >= 0 then c else 0
+  let spec tick (c : int) : int = c - 1
+end
+
+(* A probability, refined to [0, 1]. *)
+let chance = type { p : real where 0.0 <= p && p <= 1.0 }
+
+(* The refinement holds of a parameter... *)
+let lemma in_range (c : chance) : unit ensures c.p <= 1.0 = ()
+
+(* ...and must hold of a result. *)
+let spec half (c : chance) : chance = { p = c.p / 2.0 }
+let spec double (c : chance) : chance = { p = c.p * 2.0 }
+
+(* Records compare field by field in a contract, int and real fields too. *)
+let point = type { x : int; y : real }
+
+let lemma same_point (a : point) (b : point) : unit
+  requires a.x = b.x && a.y = b.y
+  ensures a = b
+= ()
+
+let lemma different_point (a : point) (b : point) : unit
+  requires a.x <> b.x
+  ensures a = b
+= ()
+
+(* Expected report, in order. A theory with a model is not trusted, even
+   when the model fails: then verification fails instead.
+// CHECK: 0 trusted items
+// CHECK: model_check.pia:27:40: proved: the postcondition holds [smt]
+// CHECK: model_check.pia:24:45: proved: the postcondition holds [smt]
+// CHECK: model_check.pia:24:45: failed: the postcondition holds
+// CHECK-NEXT: counterexample: c.p = {{[0-9/]+}}
+// CHECK: model_check.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: model_check.pia:43:3: failed: the postcondition holds
+// CHECK: model_check.pia:12:40: proved: the model 'backwards' meets the axiom 'Counter.count_nonneg' [smt]
+// CHECK: model_check.pia:13:35: failed: the model 'backwards' meets the axiom 'Counter.tick_up'
+// CHECK-NEXT: counterexample: c = {{-?[0-9]+}}
+*)

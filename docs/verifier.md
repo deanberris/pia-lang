@@ -209,7 +209,7 @@ So codegen never sees them: it erases spec functions, lemmas and contracts, and 
 
 ## Theories
 
-A theory teaches the verifier a domain: new sorts, functions on them with no body, and axioms about them ([ADR 0036](adr/0036-library-theories.md), and the worked examples in [theories.md](theories.md)). Step 2 of the ADR is implemented. Theories with axioms are trusted, because models, which prove a theory consistent, arrive in step 3.
+A theory teaches the verifier a domain: new sorts, functions on them with no body, and axioms about them ([ADR 0036](adr/0036-library-theories.md), and the worked examples in [theories.md](theories.md)). Steps 2 and 3 of the ADR are implemented: theories, and models that prove them consistent.
 
 ```ocaml
 @trusted
@@ -254,11 +254,45 @@ let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
 
 `theory`, `sort` and `axiom` are keywords only between `let` and a name, like `spec` and `lemma`.
 
-**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Pia has no modules yet, so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
+**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Modules cannot import one another yet ([ADR 0039](adr/0039-module-and-interface-syntax.md) step 1 has headers and interfaces, not imports), so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A module header's `@trusted` (`module M @trusted`) marks the file like a `@trusted` line. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
 
 **Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot take, return or compute them, and codegen erases the theory along with every contract that uses it. A sort has only `=` and `<>`.
 
-**Trust.** Without a model, nothing proves that a theory's axioms are consistent. So a theory with axioms needs its file marked `@trusted`, on a line of its own, and every axiom is a trusted item. `piac --verify --trust-report` lists them:
+**Models.** A model gives each sort of a theory a type and each abstract function a definition:
+
+```ocaml
+let summary = type { in_w : usize; out_w : usize; lip : real where lip >= 0.0 }
+
+let model shapes : Lip = struct
+  let sort layer = summary
+  let spec in_w (f : summary) : usize = f.in_w
+  let spec out_w (f : summary) : usize = f.out_w
+  let spec lip (f : summary) : real = f.lip
+  let spec seq (f : summary) (g : summary) : summary =
+    { in_w = f.in_w; out_w = g.out_w; lip = f.lip * g.lip }
+  let spec residual (f : summary) : summary =
+    { in_w = f.in_w; out_w = f.out_w; lip = 1.0 + f.lip }
+end
+```
+
+A model must define every sort and every abstract function of its theory, and nothing else, and each function must have the theory's type with the theory's sorts replaced by the model's. `model` is a keyword only in `let model m : T`. Inside the model its members are used unqualified, and they are `m.x` elsewhere.
+
+**The model check.** Each axiom of the theory, with the model's types and functions in place of the theory's, becomes a lemma `m.a`, which is proved like any lemma and reported as `the model 'shapes' meets the axiom 'Lip.seq_lip'`. If every one is proved, the theory is consistent: whatever its axioms prove is true in the model. A model that breaks an axiom fails verification, with a counterexample in the model's values.
+
+**Field refinements.** A record field may carry a refinement, `lip : real where lip >= 0.0`, in which the field's name stands for the field. It is an implicit `requires` on every parameter of that record type, and of records that contain it, and an implicit `ensures` on every result. So a function that builds the record proves the refinement, and one that takes it may assume it. Models need this: `lip_nonneg` holds in `shapes` because every `summary` has `lip >= 0.0`.
+
+**Sealing.** A client of the theory, such as the lemma `block_bound`, uses `Lip.lip` and the other abstract functions, never the model's. Its queries get the axioms and do not even declare the model's functions. So a fact true in the model but not stated as an axiom cannot be used, and changing a model's definitions does not change a client's proofs. A theory lemma is proved from the axioms in the same way.
+
+**Counterexamples in the model.** A goal over a modelled theory is first tried in a copy of its function, called its witness, in which the model's types and functions stand for the theory's. There everything is concrete, so the solver decides it quickly. If it is false there, the model is a counterexample to the axioms as well, since the model meets them, and the report says so:
+
+```
+levels.pia:45:3: failed: the postcondition holds
+  counterexample in the model 'bits': h = 0
+```
+
+A goal with no parameters reports `false in the model 'm'`. If the goal holds in the witness, it is decided over the axioms as above, with the fallback, so a goal that is true in the model but not proved by the axioms still fails. A witness is made for lemmas and spec functions that use a modelled theory, except those that use a theory member a model does not define, such as a theory lemma. This matters for speed: the queries over the axioms have quantifiers, and with them Z3 can search a long time for a counterexample that a concrete model gives at once.
+
+**Trust.** Without a model, nothing proves that a theory's axioms are consistent. So a theory with axioms and no model in the program needs its file marked `@trusted`, on a line of its own, and every axiom is a trusted item. A theory with a model needs neither, and none of its axioms is trusted. `piac --verify --trust-report` lists the trusted axioms:
 
 ```
 lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no model
@@ -288,12 +322,12 @@ These lines have their own prefixes, so `tools/bench` still reads the single `ve
 
 **Not yet.** These come in the ADR's later steps:
 
-- models and sealing, which lift the `@trusted` requirement (step 3);
+- models in another module, found by the ADL rule (modules come first);
 - certificates and `import ... trusting` (step 4);
 - theory-building metaprograms (step 5);
 - per-goal axiom use from unsat cores, for `--trust-report --why`.
 
-A counterexample shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
+A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
 
 ## Choosing overloads by precondition
 

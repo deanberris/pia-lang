@@ -1,0 +1,9 @@
+(* A model is of a theory in the same program (ADR 0036).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: model_theory_errors.pia:[[@LINE+2]]:21: error: 'U' is not a theory in this program
+*)
+let model nowhere : U = struct
+  let sort s = u8
+end

@@ -1,0 +1,75 @@
+(* Models (ADR 0036, step 3). A model gives each sort of a theory a type
+   and each abstract function a definition, and proves every axiom over
+   them, so the theory needs no @trusted and nothing in it is trusted.
+   Clients still see only the axioms: the model is sealed.
+// RUN: not piac --verify --trust-report %s | FileCheck %s
+// RUN: not piac --verify --dump-smt --verify-only=sealed %s 2>&1 | FileCheck %s --check-prefix=SEALED
+*)
+
+let theory Gauge = sig
+  let sort reading
+  let spec value : (r : reading) -> u8
+  let spec bump : (r : reading) -> reading
+  let axiom value_small (r : reading) ensures value r <= 100
+  let axiom bump_grows (r : reading)
+    requires value r < 100
+    ensures value (bump r) = value r + 1
+end
+
+(* A reading is a level that its refinement keeps in range. *)
+let level = type { v : u8 where v <= 100 }
+
+let model levels : Gauge = struct
+  let sort reading = level
+  let spec value (r : level) : u8 = r.v
+  let spec bump (r : level) : level = { v = if r.v < 100 then r.v + 1 else 100 }
+end
+
+(* Proved from the axioms. *)
+let lemma twice (r : Gauge.reading) : unit
+  requires Gauge.value r < 99
+  ensures Gauge.value (Gauge.bump (Gauge.bump r)) = Gauge.value r + 2
+= ()
+
+(* False in the model, so the counterexample comes from it, with values. *)
+let lemma too_far (r : Gauge.reading) : unit
+  ensures Gauge.value (Gauge.bump r) <= 99
+= ()
+
+(* Sealing. In the model a mark is always 3, but the axioms say only that
+   it is at most 10, so a client cannot prove it is 3: what only the model
+   says is not for clients. The counterexample comes from the axioms. *)
+let theory Mark = sig
+  let sort mark
+  let spec score : (m : mark) -> u8
+  let axiom score_small (m : mark) ensures score m <= 10
+end
+
+let model threes : Mark = struct
+  let sort mark = u8
+  let spec score (m : u8) : u8 = 3
+end
+
+let lemma sealed (m : Mark.mark) : unit ensures Mark.score m = 3 = ()
+
+(* Expected report, in order: no trusted axioms, then the goals.
+// CHECK: 0 trusted items
+// CHECK: models.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: models.pia:36:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample in the model 'levels': r.v = 100
+// CHECK: models.pia:53:41: failed: the postcondition holds
+// CHECK-NEXT: counterexample: m = Mark.mark!val!{{[0-9]+}}
+// CHECK: models.pia:20:35: proved: the postcondition holds [smt]
+// CHECK: models.pia:13:39: proved: the model 'levels' meets the axiom 'Gauge.value_small' [smt]
+// CHECK: models.pia:16:5: proved: the model 'levels' meets the axiom 'Gauge.bump_grows' [smt]
+// CHECK: models.pia:45:36: proved: the model 'threes' meets the axiom 'Mark.score_small' [smt]
+// CHECK: 11 proved, 2 failed, 0 skipped
+*)
+
+(* The client's query never declares the model's functions, let alone
+   their definitions; only the witness copy, which looks for a
+   counterexample in the model, does.
+// SEALED: models.pia:53:41: the postcondition holds
+// SEALED-NOT: threes.
+// SEALED: (in the model 'threes')
+*)
