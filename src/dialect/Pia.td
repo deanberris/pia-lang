@@ -450,6 +450,18 @@ def Pia_EmptyOp : Pia_Op<"empty", [Pure]> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def Pia_RegionOp : Pia_Op<"region"> {
+  let summary = "a fresh array of zeroed elements: a `with_arena`'s memory";
+  let description = [{
+    `with_arena 256 (let (a) => body)` (#70): storage of a fixed size that
+    lives until `body` ends, and that nothing allocated in it outlives.
+    Each time it is reached it is a new array, distinct from every other
+    buffer, with every element zero. It lowers to stack memory.
+  }];
+  let results = (outs Pia_ArrayType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{

@@ -1,0 +1,77 @@
+(* Scoped regions (#70, ADR 0026): `with_arena n (let (a) => body)` gives
+   `body` an arena of n bytes, every one zero, and frees it when `body`
+   ends. The arena is a mutable `arena`, `{ mem : [u8]; used : usize }`,
+   so a bump allocator over it is ordinary Pia, and what it allocates is
+   borrowed from the arena: only values that borrow nothing leave.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+
+let alloc (m : borrowed inout mutable arena) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n && m.used = old m.used + n
+           | Err _ -> m.used = old m.used)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+(* The arena's memory starts zeroed, and has the size asked for. *)
+let fresh (x : u8) : u8
+  ensures result = 0
+= with_arena 8 (let (a) =>
+    let v = a.mem.[7] in
+    a.mem.[7] <- x;
+    v)
+
+(* Two allocations, written and read back; only their sum leaves. *)
+let sum_two (x : u8) (y : u8) : result u8 oom
+  requires x <= 100 && y <= 100
+= with_arena 16 (let (a) =>
+    let p = alloc a 4? in
+    let q = alloc a 4? in
+    p.[0] <- x;
+    q.[0] <- y;
+    Ok (p.[0] + q.[0]))
+
+(* Each time a `with_arena` is reached its memory is new and zeroed, even
+   in a loop that wrote the last one. *)
+let fresh_each_time (n : usize) (x : u8) : u8
+  ensures result = 0
+= let s : mutable u8 = 0 in
+  for i in 0..n invariant s = 0 do
+    with_arena 4 (let (a) => s <- a.mem.[1]; a.mem.[1] <- x)
+  done;
+  s
+
+(* Expected report, in order.
+// CHECK: arena.pia:17:21: proved: '-' does not overflow usize [smt]
+// CHECK: arena.pia:19:22: proved: '+' does not overflow usize [smt]
+// CHECK: arena.pia:20:31: proved: '+' does not overflow usize [smt]
+// CHECK: arena.pia:20:9: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:26:3: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:27:13: proved: the index is within bounds [smt]
+// CHECK: arena.pia:28:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:34:3: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:35:13: proved: the precondition of 'alloc' holds [smt]
+// CHECK: arena.pia:36:13: proved: the precondition of 'alloc' holds [smt]
+// CHECK: arena.pia:37:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:38:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:9: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:17: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:15: proved: '+' does not overflow u8 [smt]
+// CHECK: arena.pia:46:17: proved: the loop invariant holds on entry [smt]
+// CHECK: arena.pia:47:5: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:47:35: proved: the index is within bounds [smt]
+// CHECK: arena.pia:47:46: proved: the index is within bounds [smt]
+// CHECK: arena.pia:46:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: arena.pia:44:3: proved: the postcondition holds [smt]
+// CHECK: 24 proved, 0 failed, 0 skipped
+*)

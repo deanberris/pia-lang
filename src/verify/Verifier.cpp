@@ -1282,6 +1282,18 @@ class Encoder {
       out.push_back(bv(0));  // a placeholder: buffers are not terms
       return true;
     }
+    // A `with_arena`'s memory: a new array, every element zero.
+    if (auto r = mlir::dyn_cast<RegionOp>(op)) {
+      auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(
+          sortOf(r.getType()));
+      if (!sort) return false;
+      arrays[r.getResult()] =
+          create<mlir::smt::ArrayBroadcastOp>(sort, bv(0));
+      lengths[r.getResult()] =
+          bv(static_cast<int64_t>(r.getType().getLength()));
+      out.push_back(bv(0));  // a placeholder: buffers are not terms
+      return true;
+    }
     // Constant data: an array of its values, all known.
     if (auto k = mlir::dyn_cast<ConstArrayOp>(op)) {
       auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(

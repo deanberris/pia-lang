@@ -85,6 +85,8 @@ struct Binding {
   // A buffer borrowed with a result type that lets it be written,
   // `borrowed(m) out mutable [u8]`.
   bool writable = false;
+  // A `with_arena`'s arena, which lends its own memory (#70).
+  bool arena = false;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -215,12 +217,18 @@ class Gen {
     collectTypeFunctions(program);
     // `result t e` comes with the language (ADR 0028), unless the program
     // brings its own `result`, `Ok` or `Err`.
-    if (!definesResult(program)) {
+    // So does `arena`, the type of a `with_arena`'s region (#70), for a
+    // program that makes one.
+    usesArenas_ = mentions(program, "with_arena");
+    std::string prelude;
+    if (!definesResult(program))
+      prelude += "let result = let (t : type) (e : type) => type | Ok of t | "
+                 "Err of e\n";
+    if (usesArenas_ && !definesItem(program, "arena"))
+      prelude += "let arena = type { mem : [u8]; used : usize }\n";
+    if (!prelude.empty()) {
       syntax::Diagnostics ignored;
-      prelude_ = syntax::parseProgram(
-          "let result = let (t : type) (e : type) => type | Ok of t | Err of "
-          "e\n",
-          ignored);
+      prelude_ = syntax::parseProgram(prelude, ignored);
       if (prelude_) sema::defineTypeItems(*prelude_, types_, diags_);
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
@@ -836,6 +844,13 @@ class Gen {
     // A `moved` parameter with a `drop` is dropped at the end of the body
     // unless it is consumed first.
     const Node *bodyPtr = &bodyNode;
+    // `with_arena n (let (a) => body)` is a `let` of a fresh arena (#70).
+    if (usesArenas_ && !isSpec && !ghost_ && !isExtern &&
+        mentions(bodyNode, "with_arena") && overloadSet("with_arena").empty()) {
+      syntax::NodePtr copy = syntax::clone(bodyNode);
+      desugarArenas(copy);
+      bodyPtr = keep(std::move(copy));
+    }
     if (!isSpec && !ghost_ && !isExtern)
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
@@ -2312,10 +2327,15 @@ class Gen {
 
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
+    if (n.flags == "region") return genRegion(n, expected);
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
       if (f.text == "unsafe") return genUnsafe(n);
+      if (f.text == "with_arena")
+        return fail(n, "'with_arena' takes the arena's size in bytes, an "
+                       "integer literal, and a function of the arena, as "
+                       "in 'with_arena 256 (let (a) => use a)'");
       if (f.text == "extern")
         return fail(n, "'extern \"symbol\"' is only a function's whole body, "
                        "as in 'let f (x : i32) : i32 ensures true = extern "
@@ -5107,6 +5127,28 @@ class Gen {
     }
     if (place.kind == NodeKind::Index) {
       const Node &obj = *place.kids[0];
+      // `r.f.[i] <- v` writes the buffer the field holds, as
+      // `let b = r.f in b.[i] <- v` does.
+      if (obj.kind == NodeKind::Field) {
+        R buf = genExpr(obj, Type());
+        if (!buf) return buf;
+        Type elem = elementType(buf->type);
+        if (!elem)
+          return fail(obj, "only arrays and slices can be indexed, found " +
+                               typeName(buf->type));
+        if (!writable(obj))
+          return fail(obj, "cannot write to this buffer: its record must be "
+                           "an 'out' or 'inout' parameter or a writable "
+                           "borrow");
+        auto idx = genIndexValue(*place.kids[1]);
+        if (!idx) return std::nullopt;
+        R v = genExpr(valueNode, elem);
+        if (!v) return v;
+        R c = coerce(*v, elem, valueNode);
+        if (!c) return c;
+        create<StoreOp>(loc(n), c->value, buf->value, *idx);
+        return unit();
+      }
       if (obj.kind != NodeKind::Name)
         return fail(obj, "only a named array or slice can be written");
       BindingPtr b = lookup(obj.text);
@@ -5319,6 +5361,29 @@ class Gen {
     return p;
   }
 
+  // `#region n`, the memory of a `with_arena`: n fresh, zeroed bytes. The
+  // arena's `mem` holds a view of them, which is what a value allocated
+  // in the arena borrows.
+  // Regions live on the stack, so they are kept small; larger ones wait
+  // for pages over mmap.
+  static constexpr uint64_t kMaxRegion = 1 << 20;
+  R genRegion(const Node &n, Type expected) {
+    auto sl = mlir::dyn_cast_or_null<SliceType>(expected);
+    if (!sl) return fail(n, "internal error: a region needs a slice type");
+    auto lit = sema::parseIntLiteral(n.kids[1]->text);
+    if (!lit || !lit->suffix.empty() || lit->value.getActiveBits() > 63)
+      return fail(*n.kids[1], "an arena's size must be an integer literal "
+                              "without a suffix, as in 'with_arena 256 ...'");
+    uint64_t size = lit->value.getZExtValue();
+    if (size > kMaxRegion)
+      return fail(*n.kids[1], "an arena lives on the stack, so it can hold "
+                              "at most " + std::to_string(kMaxRegion) +
+                              " bytes for now");
+    lentTypes_.insert(sl.getAsOpaquePointer());
+    auto t = ArrayType::get(&ctx_, size, sl.getElementType());
+    return TV{create<RegionOp>(loc(n), t), t};
+  }
+
   // `drop x`, marked so that it runs only where `x` is not consumed.
   const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
     auto call = syntax::makeNode(NodeKind::Apply, at);
@@ -5511,6 +5576,23 @@ class Gen {
   bool borrowsEnd(const BindingPtr &b, const Node &n, const Node &body) {
     if (contract_ || ghost_) return true;
     Lenders out = lendersOf(body);
+    if (b->arena) {
+      if (llvm::is_contained(out, b)) {
+        fail(*n.kids[4], "this value is in the arena '" + b->name + "', or "
+                         "borrowed from it, so it cannot leave the "
+                         "'with_arena', which frees the arena here");
+        return false;
+      }
+      if (auto m = moved_.find(b); m != moved_.end()) {
+        fail(m->second.node ? *m->second.node : n,
+             "the arena '" + b->name + "' cannot be " + m->second.what +
+                 ", since its memory is freed when its 'with_arena' ends");
+        return false;
+      }
+      lent_[&n] = std::move(out);
+      b->lenders.clear();  // it lent itself; break the cycle
+      return true;
+    }
     if (llvm::find(out, b) != out.end()) {
       fail(*n.kids[4], "this value is borrowed from '" + b->name +
                            "', so it cannot outlive '" + b->name +
@@ -5857,6 +5939,63 @@ class Gen {
     // reaches the handler or the caller.
     std::vector<const Node *> defers;
   };
+
+  // Each `with_arena n (let (a) => body)` in `n` becomes
+  // `let a : mutable arena = { mem = #region n; used = 0 } in body`, a `let`
+  // marked "arena": `#region n` is n fresh bytes, and the `let`'s end is
+  // where they are freed, so nothing borrowed from `a` may outlive it.
+  // A malformed one is left for genApply to report.
+  static void desugarArenas(syntax::NodePtr &n) {
+    for (syntax::NodePtr &k : n->kids) desugarArenas(k);
+    if (n->kind != NodeKind::Apply || n->kids.size() != 3) return;
+    const Node &f = *n->kids[0];
+    const Node &lam = *n->kids[2];
+    if (f.kind != NodeKind::Name || f.text != "with_arena" ||
+        !f.flags.empty() || n->kids[1]->kind != NodeKind::IntLit ||
+        lam.kind != NodeKind::Lambda || lam.kids.size() != 2 ||
+        lam.kids[0]->kind != NodeKind::LParam ||
+        lam.kids[0]->kids.empty() ||
+        lam.kids[0]->kids[0]->kind != NodeKind::PVar ||
+        (lam.kids[0]->kids.size() > 1 &&
+         lam.kids[0]->kids[1]->kind != NodeKind::None))
+      return;
+    using syntax::makeNode;
+    syntax::SourceLoc at = n->loc;
+    auto let = makeNode(NodeKind::LetIn, lam.kids[0]->loc,
+                        lam.kids[0]->kids[0]->text);
+    let->flags = "arena";
+    let->add(makeNode(NodeKind::Params, at));
+    Node *ret = let->add(makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(makeNode(NodeKind::Annot, at));
+    annot->add(makeNode(NodeKind::Modifiers, at, "mutable"));
+    annot->add(makeNode(NodeKind::TypeName, at, "arena"));
+    annot->add(makeNode(NodeKind::None, at));
+    ret->add(makeNode(NodeKind::Attrs, at));
+    let->add(makeNode(NodeKind::Contracts, at));
+    Node *rec = let->add(makeNode(NodeKind::RecordLit, at));
+    Node *mem = rec->add(makeNode(NodeKind::FieldInit, at, "mem"));
+    Node *region = mem->add(makeNode(NodeKind::Apply, at));
+    region->flags = "region";
+    region->add(makeNode(NodeKind::Name, at, "#region"));
+    region->add(std::move(n->kids[1]));
+    Node *used = rec->add(makeNode(NodeKind::FieldInit, at, "used"));
+    used->add(makeNode(NodeKind::IntLit, at, "0"));
+    let->add(std::move(n->kids[2]->kids[1]));
+    n = std::move(let);
+  }
+
+  static bool mentions(const Node &n, llvm::StringRef name) {
+    if (n.kind == NodeKind::Name && n.text == name) return true;
+    for (const syntax::NodePtr &k : n.kids)
+      if (mentions(*k, name)) return true;
+    return false;
+  }
+
+  static bool definesItem(const Node &program, llvm::StringRef name) {
+    for (const syntax::NodePtr &k : program.kids)
+      if (k->kind == NodeKind::LetItem && k->text == name) return true;
+    return false;
+  }
 
   static bool definesResult(const Node &n) {
     if ((n.kind == NodeKind::LetItem && n.text == "result") ||
@@ -6336,6 +6475,9 @@ class Gen {
     if (isUnit(v->type))
       return fail(valueNode, "'" + n.text + "' would have type unit");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
+    if (n.flags == "arena" && !mayBorrow(v->type))
+      return fail(n, "'arena' must be a record holding the region, as in "
+                     "'type { mem : [u8]; used : usize }'");
     if (const Node *l = sema::findLender(ret))
       return fail(*l, "'borrowed(" + l->text + ")' names the lender of a "
                       "function's result; a local's lenders come from its "
@@ -6345,6 +6487,14 @@ class Gen {
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     b->lenders = lendersOf(valueNode);
     b->writable = writable(valueNode);
+    // A `with_arena`'s arena lends its own memory: it is borrowed from
+    // itself, so neither it nor anything allocated in it outlives the
+    // `let` (#70).
+    if (n.flags == "arena") {
+      b->lenders = {b};
+      b->writable = true;
+      b->arena = true;
+    }
     // A value with a `drop` is dropped at every exit from its scope that
     // has not consumed it (#85), as if by a `defer` registered here.
     const Node *bodyNode = n.kids[4].get();
@@ -6448,8 +6598,10 @@ class Gen {
   Type dropping_;                  // the type a `drop` being generated takes
   const Node *unsafeAt_ = nullptr; // the call an `unsafe` marks
   unsigned tryCounter_ = 0;
-  // The prelude's types (`result`), when the program does not define them.
+  // The prelude's types (`result`, `arena`), when the program does not
+  // define them.
   syntax::NodePtr prelude_;
+  bool usesArenas_ = false;  // the program has a `with_arena`
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;

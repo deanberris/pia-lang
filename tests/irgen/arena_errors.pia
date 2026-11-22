@@ -1,0 +1,49 @@
+(* `with_arena n (let (a) => body)` (#70): nothing in the arena, and
+   nothing borrowed from it, leaves the `with_arena`, which frees it.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+
+let alloc (m : borrowed inout mutable arena) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let keep (m : moved arena) : u8 = 0
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this value is in the arena 'a', or borrowed from it, so it cannot leave the 'with_arena', which frees the arena here
+*)
+let leak_arena (x : u8) : arena = with_arena 16 (let (a) => a)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this value is in the arena 'a', or borrowed from it, so it cannot leave the 'with_arena', which frees the arena here
+*)
+let leak_memory (x : u8) : [u8] = with_arena 16 (let (a) => a.mem)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this value is in the arena 'a', or borrowed from it, so it cannot leave the 'with_arena', which frees the arena here
+*)
+let leak_alloc (x : u8) : result [u8] oom = with_arena 16 (let (a) => alloc a 4)
+
+(* CHECK: arena_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: this value is in the arena 'a', or borrowed from it, so it cannot leave the 'with_arena', which frees the arena here
+*)
+let leak_local (x : u8) : result [u8] oom =
+  with_arena 16 (let (a) => let p = alloc a 4? in Ok p)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the arena 'a' cannot be moved to 'keep', since its memory is freed when its 'with_arena' ends
+*)
+let moved_arena (x : u8) : u8 = with_arena 16 (let (a) => keep a)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an arena's size must be an integer literal without a suffix, as in 'with_arena 256 ...'
+*)
+let suffixed (x : u8) : u8 = with_arena 16u8 (let (a) => x)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an arena lives on the stack, so it can hold at most 1048576 bytes for now
+*)
+let too_big (y : u16) : u16 = with_arena 2000000 (let (a) => y)
+
+(* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'with_arena' takes the arena's size in bytes, an integer literal, and a function of the arena, as in 'with_arena 256 (let (a) => use a)'
+*)
+let malformed (x : u8) : u8 = with_arena x (let (a) => x)

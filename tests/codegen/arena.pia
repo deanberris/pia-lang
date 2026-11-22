@@ -1,0 +1,50 @@
+(* Scoped regions (#70), compiled for Apple Silicon and run by
+   arena_test.c. Every goal here must be proved.
+*)
+module Arena : ArenaOps
+
+interface ArenaOps @abi(c) = sig
+  let fresh : (x : u8) -> u8
+  let sum_two : (x : u8) -> (y : u8) -> u8
+    requires x <= 100 && y <= 100
+  let fresh_each_time : (n : usize) -> (x : u8) -> u8
+end
+
+let oom = type | OutOfMemory
+
+let alloc (m : borrowed inout mutable arena) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n && m.used = old m.used + n
+           | Err _ -> m.used = old m.used)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let fresh (x : u8) : u8
+= with_arena 8 (let (a) =>
+    let v = a.mem.[7] in
+    a.mem.[7] <- x;
+    v)
+
+(* 0 when the arena is too small, which it is not. *)
+let sum_two (x : u8) (y : u8) : u8
+  requires x <= 100 && y <= 100
+= with_arena 16 (let (a) =>
+    match alloc a 4 with
+    | Err _ -> 0
+    | Ok p ->
+      (match alloc a 4 with
+       | Err _ -> 0
+       | Ok q -> p.[0] <- x; q.[0] <- y; p.[0] + q.[0]))
+
+(* Reads the arena before writing it, n times: always 0. *)
+let fresh_each_time (n : usize) (x : u8) : u8
+= let s : mutable u8 = 0 in
+  for i in 0..n do
+    with_arena 4 (let (a) => s <- s | a.mem.[1]; a.mem.[1] <- x)
+  done;
+  s
