@@ -91,12 +91,12 @@ let narrow (xs : [box Shape]) : bool
    check at widen proved to meet Shape; twice, proved once over Shape, is
    instantiated at box Shape and discharged by that proof; and fits
    through a box with a width of 0 fails its precondition.
-// CHECK: box_concept.pia:59:3: proved: the postcondition holds [smt]
-// CHECK: box_concept.pia:68:13: proved: the precondition of 'widen(box<square>)' holds [smt]
-// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
-// CHECK: box_concept.pia:70:7: proved: the precondition of 'total' holds [smt]
-// CHECK: box_concept.pia:80:3: proved: the postcondition holds [smt]
-// CHECK: box_concept.pia:86:3: failed: the precondition of 'fits(box_Shape, u32)' holds
+// CHECK: box_concept.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen(box<square>)' holds [smt]
+// CHECK: box_concept.pia:70:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
+// CHECK: box_concept.pia:71:7: proved: the precondition of 'total' holds [smt]
+// CHECK: box_concept.pia:81:3: proved: the postcondition holds [smt]
+// CHECK: box_concept.pia:87:3: failed: the precondition of 'fits(box_Shape, u32)' holds
 // CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
 // CHECK: 59 proved, 1 failed, 0 skipped
 *)
