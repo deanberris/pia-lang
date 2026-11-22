@@ -20,7 +20,8 @@ namespace pia::meta {
 // itself, and every such call is on a strictly smaller argument in one
 // parameter position they share. An argument is smaller when it is a
 // component of the parameter: `element p`, an element of `field_types p`
-// or of `type_args p` as `map` or `fold` hands it to a lambda, or a
+// or of `type_args p` as `map` or `fold` hands it to a lambda, a name that
+// a `match` on `p` binds below its top (`e` in `[e]` or `option e`), or a
 // component of one of those.
 //
 // The other metaprograms it names go to `callees`, for the caller to check
