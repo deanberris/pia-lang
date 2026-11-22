@@ -1,0 +1,10 @@
+(* A slice held in a buffer element is written through only when the
+   element owns it (ADR 0048): a plain `[[u16]]` shares its slices, so
+   they are read-only.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: slice_buffer_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: cannot write to 'a'
+*)
+let shared (xs : inout [[u16]]) : unit
+= (let a = xs.[0] in a.[0] <- 5)

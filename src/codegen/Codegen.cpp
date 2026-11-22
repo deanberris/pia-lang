@@ -1043,6 +1043,31 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
 
+  // A buffer whose elements are slices is proved, but not compiled yet
+  // (ADR 0048, step 3).
+  auto nested = [](Type t) {
+    if (auto s = mlir::dyn_cast<SliceType>(t))
+      return mlir::isa<SliceType>(s.getElementType());
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return mlir::isa<SliceType>(a.getElementType());
+    return false;
+  };
+  bool unsupported = false;
+  module.walk([&](mlir::func::FuncOp f) {
+    if (unsupported) return;
+    bool found = llvm::any_of(f.getFunctionType().getInputs(), nested);
+    f.walk([&](mlir::Operation *op) {
+      found = found || llvm::any_of(op->getResultTypes(), nested);
+    });
+    if (found) {
+      f.emitError() << "'" << f.getSymName()
+                    << "' uses a buffer whose elements hold a slice, which "
+                       "is proved but not compiled yet (ADR 0048, step 3)";
+      unsupported = true;
+    }
+  });
+  if (unsupported) return mlir::failure();
+
   // Signedness is a property of pia types that iN loses, and the C entry
   // points need it, so record it on the signature first.
   module.walk([&](mlir::func::FuncOp f) {
