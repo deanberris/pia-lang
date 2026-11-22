@@ -255,8 +255,54 @@ class Gen {
           OverflowModeAttr::get(&ctx_, OverflowMode::proof));
       return TV{c, target};
     }
+    if (inErrorSet(v.type, target)) return widenError(v, target, at);
     return fail(at, "expected " + typeName(target) + ", found " +
                         typeName(v.type));
+  }
+
+  // Whether `member` is one of the variants of the error set `set`.
+  bool inErrorSet(Type member, Type set) const {
+    const std::vector<Type> *ms = types_.unionMembers(set);
+    return ms && std::find(ms->begin(), ms->end(), member) != ms->end();
+  }
+
+  // A value of a member variant as a value of the error set: its
+  // constructors are a block of the set's, so its tag moves up by where the
+  // block starts, and its payload fields carry over.
+  R widenError(const TV &v, Type set, const Node &at) {
+    Location l = loc(at);
+    auto from = mlir::cast<RecordType>(v.type);
+    auto to = mlir::cast<RecordType>(set);
+    std::vector<const sema::Ctor *> mine = types_.ctorsOf(v.type);
+    const sema::Ctor *first = types_.ctorIn(mine[0]->name, set);
+    if (!first) return fail(at, "internal error in an error set");
+    Type ft = from.getFieldTypes()[*from.fieldIndex("tag")];
+    Type tt = to.getFieldTypes()[*to.fieldIndex("tag")];
+    Value tag = create<FieldOp>(l, ft, v.value, b_.getStringAttr("tag"));
+    auto mode = OverflowModeAttr::get(&ctx_, OverflowMode::proof);
+    tag = create<ConvertOp>(l, tt, tag, mode);
+    if (first->tag) {
+      Value k = create<ConstantOp>(
+          l, tt,
+          b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                            llvm::APInt(kWidth, first->tag)));
+      tag = create<AddOp>(l, tt, tag, k, mode);
+    }
+    llvm::SmallVector<Value> fields;
+    for (auto [name, t] : llvm::zip(to.getFieldNames(), to.getFieldTypes())) {
+      if (name.getValue() == "tag") {
+        fields.push_back(tag);
+      } else if (from.fieldIndex(name.getValue())) {
+        fields.push_back(create<FieldOp>(l, t, v.value, name));
+      } else {
+        Value d = defaultValue(l, t);
+        if (!d)
+          return fail(at, "cannot build a value of " + typeName(t) +
+                              " for an unused payload");
+        fields.push_back(d);
+      }
+    }
+    return TV{create<RecordOp>(l, to, fields).getResult(), set};
   }
 
   Value boolConst(Location l, bool v) {
@@ -4407,11 +4453,14 @@ class Gen {
                            f.function + "' returns " + typeName(fr) +
                            "; return a result, or give the scope a 'handle'");
       Type ferr = types_.instanceOf(fr)->args[1];
-      if (ferr != err)
+      if (ferr != err && !inErrorSet(err, ferr))
         return fail(t, "this '?' passes on errors of type " +
                            typeName(err) + ", but '" + f.function +
                            "' returns errors of type " + typeName(ferr) +
-                           "; give the scope a 'handle' that converts them");
+                           "; add them to its error set, as in '" +
+                           typeName(ferr) + " | " + typeName(err) +
+                           "', or give the scope a 'handle' that converts "
+                           "them");
       onErr = syntax::makeNode(NodeKind::Apply, at);
       onErr->add(name("Err", ""));
       onErr->add(builtin("#payload", "Err"));

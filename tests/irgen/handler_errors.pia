@@ -47,7 +47,7 @@ let dropped (x : u8) : u16 = (open_file x; 0)
 let plain (x : u8) : u16 = open_file x?
 
 let mismatch (x : u16) : result u16 open_error =
-(* CHECK: handler_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this '?' passes on errors of type parse_error, but 'mismatch' returns errors of type open_error; give the scope a 'handle' that converts them
+(* CHECK: handler_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this '?' passes on errors of type parse_error, but 'mismatch' returns errors of type open_error; add them to its error set, as in 'open_error | parse_error', or give the scope a 'handle' that converts them
 *)
   let v = parse x? in
   Ok v
@@ -67,3 +67,7 @@ let branch (x : u8) : result u16 open_error =
 (* CHECK: handler_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a '?' inside a handler arm is not supported yet; 'match' the result there instead
 *)
 let nested (x : u8) : u16 = (open_file x? handle | NoEntry -> open_file 1? | e -> 0)
+
+(* CHECK: handler_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an error set is a union of variants, but u8 is not one
+*)
+let not_variant (x : u8) : result u8 (open_error | u8) = Ok x

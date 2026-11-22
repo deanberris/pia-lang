@@ -195,6 +195,15 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       }
       return instantiate(head.text, args, type.loc);
     }
+    case NodeKind::UnionType: {
+      llvm::SmallVector<mlir::Type> members;
+      for (const syntax::NodePtr &k : type.kids) {
+        mlir::Type m = resolve(*k);
+        if (!m) return {};
+        members.push_back(m);
+      }
+      return unionOf(members, type.loc);
+    }
     case NodeKind::UnitType:
       return unitType();
     case NodeKind::RangeType: {
@@ -239,6 +248,60 @@ mlir::Type TypeResolver::resolve(const Node &type) {
                                  "' is not supported yet");
       return {};
   }
+}
+
+mlir::Type TypeResolver::unionOf(llvm::ArrayRef<mlir::Type> in,
+                                 syntax::SourceLoc at) {
+  // Members are variants; a member that is a union adds its own members.
+  std::vector<mlir::Type> members;
+  for (mlir::Type m : in) {
+    if (const std::vector<mlir::Type> *inner = unionMembers(m)) {
+      members.insert(members.end(), inner->begin(), inner->end());
+      continue;
+    }
+    if (!isVariant(m)) {
+      diags_.error(at, "an error set is a union of variants, but " +
+                           typeName(m) + " is not one");
+      return {};
+    }
+    members.push_back(m);
+  }
+  std::sort(members.begin(), members.end(), [](mlir::Type a, mlir::Type b) {
+    return typeName(a) < typeName(b);
+  });
+  members.erase(std::unique(members.begin(), members.end()), members.end());
+  if (members.size() == 1) return members[0];
+  std::string name;
+  std::vector<std::pair<std::string, mlir::Type>> ctors;
+  std::map<std::string, mlir::Type> owner;
+  for (mlir::Type m : members) {
+    name += (name.empty() ? "" : " | ") + typeName(m);
+    for (const Ctor *c : ctorsOf(m)) {
+      if (auto o = owner.find(c->name); o != owner.end()) {
+        diags_.error(at, "'" + c->name + "' is a constructor of both " +
+                             typeName(o->second) + " and " + typeName(m) +
+                             ", so their union cannot tell them apart");
+        return {};
+      }
+      owner[c->name] = m;
+      ctors.emplace_back(c->name, c->payload);
+    }
+  }
+  mlir::MLIRContext *ctx = &ctx_;
+  llvm::SmallVector<mlir::StringAttr> names{mlir::StringAttr::get(ctx, "tag")};
+  llvm::SmallVector<mlir::Type> fieldTypes{IntType::get(
+      ctx, llvm::APInt(kWidth, 0), llvm::APInt(kWidth, ctors.size() - 1))};
+  for (auto &[n, t] : ctors)
+    if (t) {
+      names.push_back(mlir::StringAttr::get(ctx, n));
+      fieldTypes.push_back(t);
+    }
+  mlir::Type u = RecordType::get(ctx, name, names, fieldTypes);
+  if (isVariant(u)) return u;
+  for (unsigned i = 0; i < ctors.size(); ++i)
+    defineCtor(Ctor{ctors[i].first, u, i, ctors[i].second}, false);
+  unions_[u] = members;
+  return u;
 }
 
 mlir::Type TypeResolver::resolveAnnot(const Node &annot) {

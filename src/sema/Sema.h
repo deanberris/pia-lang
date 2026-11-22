@@ -153,6 +153,15 @@ class TypeResolver {
     return it == instanceOf_.end() ? nullptr : &it->second;
   }
 
+  // An error set `a | b` (ADR 0028): one variant holding the constructors
+  // of each member, in the members' order by name. Null after an error.
+  mlir::Type unionOf(llvm::ArrayRef<mlir::Type> members, syntax::SourceLoc at);
+  // The variants a union was made of, or null for any other type.
+  const std::vector<mlir::Type> *unionMembers(mlir::Type t) const {
+    auto it = unions_.find(t);
+    return it == unions_.end() ? nullptr : &it->second;
+  }
+
   // Type parameters in scope while a generic's body is resolved: a name
   // here resolves to its argument.
   void pushTypeScope(std::map<std::string, mlir::Type> s) {
@@ -206,6 +215,7 @@ class TypeResolver {
   std::map<std::string, Generic> generics_;
   std::map<std::string, mlir::Type> instances_;  // by `option<u8>`
   llvm::DenseMap<mlir::Type, Instance> instanceOf_;
+  llvm::DenseMap<mlir::Type, std::vector<mlir::Type>> unions_;
   std::set<std::string> instantiating_;
   std::vector<std::map<std::string, mlir::Type>> typeScopes_;
   std::function<bool(const std::string &)> isTypeFunction_;
