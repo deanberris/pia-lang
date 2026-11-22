@@ -29,7 +29,11 @@ let adapter always : Same u8 = struct
   = true
 end
 
-let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+(* Its instances call the function that met Same: u8's own, by_red's, or
+   the adapter a call names. *)
+let alike (t : type where Same t) (a : t) (b : t) : bool
+  ensures result <==> same a b
+= same a b
 
 let red_alike (p : pixel) (q : pixel) : bool
   ensures result <==> p.r = q.r
