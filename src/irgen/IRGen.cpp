@@ -5116,6 +5116,28 @@ class Gen {
     }
     if (place.kind == NodeKind::Index) {
       const Node &obj = *place.kids[0];
+      // `r.f.[i] <- v` writes the buffer the field holds, as
+      // `let b = r.f in b.[i] <- v` does.
+      if (obj.kind == NodeKind::Field) {
+        R buf = genExpr(obj, Type());
+        if (!buf) return buf;
+        Type elem = elementType(buf->type);
+        if (!elem)
+          return fail(obj, "only arrays and slices can be indexed, found " +
+                               typeName(buf->type));
+        if (!writable(obj))
+          return fail(obj, "cannot write to this buffer: its record must be "
+                           "an 'out' or 'inout' parameter or a writable "
+                           "borrow");
+        auto idx = genIndexValue(*place.kids[1]);
+        if (!idx) return std::nullopt;
+        R v = genExpr(valueNode, elem);
+        if (!v) return v;
+        R c = coerce(*v, elem, valueNode);
+        if (!c) return c;
+        create<StoreOp>(loc(n), c->value, buf->value, *idx);
+        return unit();
+      }
       if (obj.kind != NodeKind::Name)
         return fail(obj, "only a named array or slice can be written");
       BindingPtr b = lookup(obj.text);

@@ -42,7 +42,7 @@ let suffixed (x : u8) : u8 = with_arena 16u8 (let (a) => x)
 
 (* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an arena lives on the stack, so it can hold at most 1048576 bytes for now
 *)
-let too_big (x : u8) : u8 = with_arena 2000000 (let (a) => x)
+let too_big (y : u16) : u16 = with_arena 2000000 (let (a) => y)
 
 (* CHECK: arena_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'with_arena' takes the arena's size in bytes, an integer literal, and a function of the arena, as in 'with_arena 256 (let (a) => use a)'
 *)

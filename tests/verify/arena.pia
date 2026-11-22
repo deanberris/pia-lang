@@ -47,3 +47,31 @@ let fresh_each_time (n : usize) (x : u8) : u8
     with_arena 4 (let (a) => s <- a.mem.[1]; a.mem.[1] <- x)
   done;
   s
+
+(* Expected report, in order.
+// CHECK: arena.pia:17:21: proved: '-' does not overflow usize [smt]
+// CHECK: arena.pia:19:22: proved: '+' does not overflow usize [smt]
+// CHECK: arena.pia:20:31: proved: '+' does not overflow usize [smt]
+// CHECK: arena.pia:20:9: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:26:3: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:27:13: proved: the index is within bounds [smt]
+// CHECK: arena.pia:28:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: arena.pia:34:3: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:35:13: proved: the precondition of 'alloc' holds [smt]
+// CHECK: arena.pia:36:13: proved: the precondition of 'alloc' holds [smt]
+// CHECK: arena.pia:37:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:38:5: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:9: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:17: proved: the index is within bounds [smt]
+// CHECK: arena.pia:39:15: proved: '+' does not overflow u8 [smt]
+// CHECK: arena.pia:46:17: proved: the loop invariant holds on entry [smt]
+// CHECK: arena.pia:47:5: proved: the slice is within bounds [smt]
+// CHECK: arena.pia:47:35: proved: the index is within bounds [smt]
+// CHECK: arena.pia:47:46: proved: the index is within bounds [smt]
+// CHECK: arena.pia:46:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: arena.pia:44:3: proved: the postcondition holds [smt]
+// CHECK: 24 proved, 0 failed, 0 skipped
+*)
