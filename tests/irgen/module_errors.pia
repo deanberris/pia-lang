@@ -27,6 +27,9 @@ interface Ops = sig
 (* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no spec function 'weight' with exactly this signature; a spec function is exported with its definition, so its interface entry repeats its parameters and result
 *)
   let spec weight : (x : u8) -> int
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': 'limit' is defined differently; an interface that shows a value with '=' must show its definition exactly
+*)
+  let limit : u8 = 5
 end
 
 interface Types = sig
@@ -55,3 +58,4 @@ let area (side : u8) : u32 = side * side
 let grow (x : u8) : u8 = x
 let corner (s : u8) : point = { x = s; y = s }
 let weight (x : u8) : u8 = x
+let limit : u8 = 6

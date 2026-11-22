@@ -30,7 +30,7 @@ namespace pia::syntax {
   X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
   X(Import)        /* text=path; flags="trusting"; Name[as]?, Name* */      \
   X(ExprItem)      /* expr */                                                \
-  X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
+  X(SigVal)        /* text=name; Annot, Attrs, Contracts, shown value? */   \
   X(SigType)       /* text=name; TypeValue, or Lambda for a generic type */  \
   X(Sig)           /* a signature value: sig items */                        \
   X(SigInclude)    /* text=concept; type arguments */                        \

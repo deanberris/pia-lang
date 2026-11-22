@@ -4413,6 +4413,17 @@ class Gen {
         diags_.error(r.loc, unmet + *why);
         continue;
       }
+      // `let n : u32 = 4096`: importers get the value from the interface,
+      // so it must be the definition's.
+      if (r.kids.size() > 3) {
+        const Node &own = *sigs_.at(symbol).item;
+        if (!own.kids[0]->kids.empty() || own.kids.size() < 4 ||
+            !sameTree(*own.kids[3], *r.kids[3]))
+          diags_.error(r.loc, unmet + "'" + r.text + "' is defined "
+                                  "differently; an interface that shows a "
+                                  "value with '=' must show its definition "
+                                  "exactly");
+      }
       if (sigs_.at(symbol).isGeneric() || !sigs_.at(symbol).typeArgs.empty())
         continue;
       // A function in a C interface keeps its C name.

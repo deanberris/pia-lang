@@ -314,7 +314,7 @@ pfield       = IDENT [ "=" pattern ] ;
 
 ```ebnf
 interface = "interface" IDENT { attribute } "=" "sig" { sig_item } "end" ;   (* @abi(c), @within(...) *)
-sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
+sig_item  = "let" binder ":" annot { attribute } { contract } [ "=" seq ]   (* exported symbol; "= v" shows a value *)
           | "let" "meta" binder ":" annot                         (* exported concept, "let meta Ord : concept" *)
           | "let" "spec" binder ":" annot { attribute } { contract }   (* exported spec function, with its definition *)
           | "let" binder "=" type_value                           (* exported type *)

@@ -200,10 +200,12 @@ NodePtr importedFunction(const Node &val, const std::string &module,
     for (const NodePtr &k : dom.kids) annot->add(clone(*k));
     while (annot->kids.size() < 3) annot->add(makeNode(N::None, at));
   }
-  if (params->kids.empty()) {
+  // A value, `let n : u32`, is a function of no parameters to its
+  // importers. State, `let count : fixed u32`, comes with step 5.
+  if (params->kids.empty() && !val.kids[0]->kids[0]->text.empty()) {
     diags.error(at, "'" + val.text + "' in " + where +
-                        " is a value; importing values comes with module "
-                        "state (ADR 0039, step 5)");
+                        " is module state; importing state is not supported "
+                        "yet (ADR 0039, step 5)");
     return nullptr;
   }
   Node *ret = item->add(makeNode(N::RetAnnot, at));
@@ -217,7 +219,16 @@ NodePtr importedFunction(const Node &val, const std::string &module,
   NodePtr contracts = clone(*val.kids[2]);
   qualify(*contracts, module, members, names);
   item->add(std::move(contracts));
-  item->add(makeNode(N::Unit, at));
+  // A shown value, `let n : u32 = 4096`, comes with its definition, which
+  // importers' proofs and code use; there is nothing to link.
+  if (params->kids.empty() && val.kids.size() > 3) {
+    item->flags = "from:" + module;
+    NodePtr value = clone(*val.kids[3]);
+    qualify(*value, module, members, names);
+    item->add(std::move(value));
+  } else {
+    item->add(makeNode(N::Unit, at));
+  }
   relocate(*item, at);
   return item;
 }
