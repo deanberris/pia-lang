@@ -1,0 +1,108 @@
+(* Using a box that is empty, or filling one that is full, is a failed
+   goal (ADR 0046, step 1; tests/verify/box.pia).
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+(* A box: one slot from the region, and whether it holds a value, which
+   only the verifier sees. *)
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let spec ok (t : type) (b : box t) : bool = len b.slot = 1 && (b.state = 0 || b.state = 1)
+let spec full (t : type) (b : box t) : bool = b.state = 1
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> ok b && full b && b.slot.[0] = v
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let get (t : type) (r : region) (b : borrowed box t r) : t
+  requires ok b && full b
+  ensures result = b.slot.[0]
+= b.slot.[0]
+
+let set (t : type) (r : region) (b : inout mutable box t r) (v : t) : unit
+  requires ok b && full b
+  ensures ok b && full b && b.slot.[0] = v
+= (let s = b.slot in s.[0] <- v)
+
+let release (t : type) (r : region) (b : inout mutable box t r) : t
+  requires ok b && full b
+  ensures ok b && full b = false && result = old (b.slot.[0])
+= (let v = b.slot.[0] in b.state <- 0; v)
+
+let fill (t : type) (r : region) (b : inout mutable box t r) (v : t) : unit
+  requires ok b && full b = false
+  ensures ok b && full b && b.slot.[0] = v
+= (let s = b.slot in s.[0] <- v; b.state <- 1)
+
+(* Wrong: `b` is empty after the release. *)
+let after_release (storage : borrowed mutable [u16]) : result u16 oom =
+  let m : mutable bump u16 = { mem = storage; used = 0 } in
+  let b : mutable box u16 = make m 7? in
+  let x = release b in
+  Ok (get b + x)
+
+(* Wrong: `b` is still full. *)
+let twice (storage : borrowed mutable [u16]) : result u16 oom =
+  let m : mutable bump u16 = { mem = storage; used = 0 } in
+  let b : mutable box u16 = make m 7? in
+  fill b 8;
+  Ok (get b)
+
+(* Expected report, in order.
+// CHECK: box_errors.pia:61:29: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: box_errors.pia:62:11: proved: the precondition of 'release<u16>' holds [smt]
+// CHECK: box_errors.pia:63:7: failed: the precondition of 'get<u16>' holds
+// CHECK-NEXT: counterexample: len storage = {{-?[0-9]+}}
+// CHECK: box_errors.pia:63:13: proved: '+' does not overflow u16 [smt]
+// CHECK: box_errors.pia:68:29: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: box_errors.pia:69:3: failed: the precondition of 'fill<u16>' holds
+// CHECK-NEXT: counterexample: len storage = {{-?[0-9]+}}
+// CHECK: box_errors.pia:70:7: proved: the precondition of 'get<u16>' holds [smt]
+// CHECK: box_errors.pia:34:11: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: box_errors.pia:35:3: proved: the index is within bounds [smt]
+// CHECK: box_errors.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:32:40: proved: the index is within bounds [smt]
+// CHECK: box_errors.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:51:12: proved: the index is within bounds [smt]
+// CHECK: box_errors.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:41:3: proved: the index is within bounds [smt]
+// CHECK: box_errors.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:56:22: proved: the index is within bounds [smt]
+// CHECK: box_errors.pia:55:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:15:21: proved: '-' does not overflow usize [smt]
+// CHECK: box_errors.pia:17:22: proved: '+' does not overflow usize [smt]
+// CHECK: box_errors.pia:18:31: proved: '+' does not overflow usize [smt]
+// CHECK: box_errors.pia:18:9: proved: the slice is within bounds [smt]
+// CHECK: box_errors.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:12:3: proved: the postcondition holds [smt]
+// CHECK: box_errors.pia:9:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: box_errors.pia:25:1: not proved generically: 'ok' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: box_errors.pia:26:1: not proved generically: 'full' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: box_errors.pia:28:1: not proved generically: 'make' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: box_errors.pia:38:1: not proved generically: 'get' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: box_errors.pia:43:1: not proved generically: 'set' is proved at each instance, since it returns a value of box<t> [generic]
+// CHECK: box_errors.pia:48:1: not proved generically: 'release' is proved at each instance, since it returns a value of box<t> [generic]
+// CHECK: box_errors.pia:53:1: not proved generically: 'fill' is proved at each instance, since it returns a value of box<t> [generic]
+// CHECK: 22 proved, 2 failed, 0 skipped
+*)
