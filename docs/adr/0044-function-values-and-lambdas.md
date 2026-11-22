@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed.
+Status: Proposed. Dean chose question 1 (2026-11-22): a function object is any type whose module defines `apply`.
 
 ## Context
 
@@ -204,6 +204,6 @@ Steps 1 and 2 are what the standard library needs first, for `find`, `count`, `a
 
 ## Questions for Dean
 
-1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration?
+1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration? *Answered: any type with `apply`.*
 2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does?
 3. **Dynamic function values.** Is a library box in `Pia.Fn` that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type?
