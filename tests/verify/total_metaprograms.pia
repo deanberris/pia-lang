@@ -42,5 +42,13 @@ let first_of (m : [u16; 4]) : innermost [u16; 4]
 = m.[0]
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: total_metaprograms.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:42:3: proved: the index is within bounds [intervals]
+// CHECK: total_metaprograms.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: total_metaprograms.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: 8 proved, 0 failed, 0 skipped
 *)
