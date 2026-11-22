@@ -500,7 +500,26 @@ let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
 = find xs (let (x : u8) => lo <= x && x <= hi)
 ```
 
-For now a lambda's parameters must be typed. Untyped and generic lambdas, moving a value into a lambda, and functions stored in data or returned come in later steps of ADR 0044.
+A lambda's parameter types may be left out where it is passed: they come from the parameter's function type, once the other arguments have fixed its type parameters, so `find xs (let (x) => x > 3)` with `xs : [u8]` makes `x` a `u8`. A typed lambda fixes them itself. A `let` of a lambda with untyped parameters and no captures is **generic**, like a C++ `auto` lambda: each use is an instance, proved on its own. A lambda can also take type parameters with constraints, which is proved once over them. A lambda's result type, when not written, comes from its body:
+
+```ocaml
+let meta Ord (t : type) : concept = sig
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let less (a : u8) (b : u8) : bool = (a < b)
+
+let both_small (a : u8) (b : u16) : bool =
+  let small = let (v) => v < 100 in
+  small a && small b
+
+let smaller (a : u8) (b : u8) : u8 =
+  let min = let (t : type where Ord t) (x : t) (y : t) : t =>
+    if less y x then y else x in
+  min a b
+```
+
+Moving a value into a lambda, generic lambdas that capture, and functions stored in data or returned come in later steps of ADR 0044.
 
 ## Metaprograms
 
@@ -565,9 +584,9 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
 
-**More function values.** Lambdas work today when their parameters are typed ([Function values](#function-values)). Generic lambdas and function results are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
+**More function values.** Lambdas work today ([Function values](#function-values)). Returning them, partial application and moved captures are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
 
-<!-- untested: generic lambdas and function results are not implemented yet -->
+<!-- untested: function results and partial application are not implemented yet -->
 ```ocaml
 let between (lo : u8) (hi : u8) = let (x : u8) => lo <= x && x <= hi
 let compose f g = let (x) => f (g x)

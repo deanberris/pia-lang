@@ -1,0 +1,16 @@
+(* Errors in untyped and generic lambdas (ADR 0044, section 2).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let holds (t : type) (p : t -> bool) : bool = true
+
+(* Nothing fixes `t`, so nothing gives `x` a type.
+// CHECK-DAG: generic_lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: cannot tell the type of 'x' from 'p' of 'holds'; give it, as in '(x : u8)'
+*)
+let unknown (n : u8) : bool = holds (let (x) => true)
+
+(* A lambda that captures is not generic yet.
+// CHECK-DAG: generic_lambda_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: a lambda that captures needs its parameters' types for now
+*)
+let captured (n : u8) : bool =
+  let near = let (x) => x < n in near 3
