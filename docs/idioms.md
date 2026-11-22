@@ -175,7 +175,7 @@ A program that moves facts into types shows more type goals proved by intervals 
 
 ## Escape hatches
 
-`assume p` tells the verifier that `p` holds without proving it. If callers can promise it, it is a `requires`; if it follows from what is known, it is an `assert` or a lemma. The lint is `assume`. `@overflow(wrap)` and `@overflow(saturate)` are for arithmetic that is meant to wrap or clamp, such as hashes and pixels, not a way to make overflow goals go away. `--allow-unproved` is for a goal the verifier cannot prove yet, named one at a time.
+`assume p` tells the verifier that `p` holds without proving it, so it is allowed only in a file marked `@trusted`, and `--trust-report` lists each one. If callers can promise it, it is a `requires`; if it follows from what is known, it is an `assert` or a lemma. The lint is `assume`. `@overflow(wrap)` and `@overflow(saturate)` are for arithmetic that is meant to wrap or clamp, such as hashes and pixels, not a way to make overflow goals go away. `--allow-unproved` is for a goal the verifier cannot prove yet, named one at a time.
 
 ## The lints
 

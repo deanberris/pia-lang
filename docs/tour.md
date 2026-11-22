@@ -372,7 +372,7 @@ A contract is a claim the compiler must prove. Pia has these today:
 | `requires p` | precondition: proved at every call, assumed in the body |
 | `ensures p` | postcondition: proved at every return, assumed by callers; `result` is the returned value |
 | `assert p` | proved at that point |
-| `assume p` | assumed at that point, without proof |
+| `assume p` | assumed at that point, without proof; only in a file marked `@trusted` |
 | `invariant p`, `decreases m` | on a loop: holds at every iteration, and the measure decreases |
 | `old e` | in a postcondition, `e` as it was on entry |
 | `forall (i in lo..hi). p`, `exists (i in lo..hi). p` | quantifiers, in contracts and assertions |

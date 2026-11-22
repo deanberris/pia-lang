@@ -204,6 +204,9 @@ class Gen {
         interp_([](const std::string &) { return true; }) {}
 
   void setTheoryInfo(TheoryInfo info) { theoryInfo_ = std::move(info); }
+  // Whether the file is marked `@trusted` (ADR 0023): only then may it use
+  // `assume`.
+  void setTrusted(bool trusted) { trusted_ = trusted; }
 
   mlir::OwningOpRef<mlir::ModuleOp> run(const Node &program) {
     mlir::OwningOpRef<mlir::ModuleOp> module =
@@ -1378,6 +1381,14 @@ class Gen {
         return genLetIn(n, expected);
       case NodeKind::Assert:
       case NodeKind::Assume: {
+        // An assumption is never checked, so it is a trusted item, and
+        // only a file marked @trusted may make one (ADR 0023).
+        if (n.kind == NodeKind::Assume && !trusted_)
+          return fail(n, "'assume' is only allowed in a file marked "
+                         "'@trusted' (ADR 0023), since nothing checks it: "
+                         "prove the fact with 'assert' or a lemma, make it "
+                         "a 'requires' if callers can promise it, or mark "
+                         "the file '@trusted' on a line of its own");
         R p = genPredicate(*n.kids[0]);
         if (!p) return p;
         if (n.kind == NodeKind::Assert)
@@ -6446,6 +6457,7 @@ class Gen {
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
+  bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
@@ -6520,12 +6532,15 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                     std::to_string(at.line) + ":" + std::to_string(at.column)));
     Gen gen(ctx, filename, diags, options);
     gen.setTheoryInfo(std::move(info));
+    gen.setTrusted(isTrustedFile(program));
     auto module = gen.run(*flat);
     if (module && !grants.empty())
       (*module)->setAttr("pia.trusting", mlir::ArrayAttr::get(&ctx, grants));
     return module;
   }
-  return Gen(ctx, filename, diags, options).run(program);
+  Gen gen(ctx, filename, diags, options);
+  gen.setTrusted(isTrustedFile(program));
+  return gen.run(program);
 }
 
 }  // namespace pia::irgen

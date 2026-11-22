@@ -1,0 +1,31 @@
+(* `assume` is trusted (ADR 0023): only a file marked @trusted may use it,
+   each one is a trusted item in `--trust-report`, and `--why` lists the
+   goals whose proofs used it, from their unsat cores, with the callers of
+   a function whose proof did.
+// RUN: piac --verify --trust-report --why %s | FileCheck %s
+*)
+@trusted
+
+let next (x : u8) : u8
+  ensures result = x + 1
+= assume x < 255;
+  x + 1
+
+(* The assumption is about `y`, and the goal is not. *)
+let unused (x : u8) (y : u8) : u8 =
+  assume y < 3;
+  x / 2
+
+(* A caller rests on what its callee's proof did. *)
+let twice (x : u8) : u8
+  ensures result = x + 2
+= next (next x)
+
+(* Expected report, in order.
+// CHECK: assumes.pia:11:3: trusted: the 'assume' in 'next'
+// CHECK-NEXT: used by: {{.*}}assumes.pia:12:5, {{.*}}assumes.pia:21:3
+// CHECK: assumes.pia:16:3: trusted: the 'assume' in 'unused'
+// CHECK-NEXT: used by no proved goal
+// CHECK: 2 trusted items
+// CHECK: 2 of 5 proved goals rest on a trusted axiom or 'assume'; the other 3 are fully proved
+*)
