@@ -208,6 +208,10 @@ In steps, each a PR with tests, as for ADR 0034:
 6. **Certificates and trust.** Required interfaces and their hashes in the certificate, witness symbols, `trusting` and `@within`.
 7. **REPL and language server.** `import` in cells, `pia repl --module`, and the workspace interface index in `pia-lsp`.
 
+Step 3 is landing in the order the standard library ([ADR 0040](0040-cpp23-standard-library-in-pia.md)) needs it: shown types first, then concepts and generic functions, spec functions in signatures, postconditions of `out` and `inout` functions, and then `as`, `{ ... }` and cross-module ADL.
+
+- **Shown types.** An interface shows a type with `=`, including a generic one as it is defined: `let option = let (t : type) => type | None | Some of t`. An importer names it through its module, `Pia.Core.Option.option u8`, and gets the same definition, so the two modules agree on its layout. The constructors of an imported variant are in scope unqualified, as `Some`, and also as `Pia.Core.Option.Some`. Constructors are already one namespace in a program, so a clash between two imported variants, or with a local one, is an error at the type, as for any two constructors. Abstract types (`let t : type`) are not importable yet, since an importer needs their layout ([ADR 0030](0030-published-object-layouts.md)).
+
 ## Consequences
 
 - A function is private unless an interface lists it. Privacy costs nothing to write, and exporting is a deliberate change to one place.

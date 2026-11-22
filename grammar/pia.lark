@@ -311,6 +311,7 @@ pfield: IDENT (EQ pattern)?
 interface_item: INTERFACE IDENT attribute* EQ SIG sig_item* END
 sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
         | LET binder EQ type_value                     -> sig_type
+        | LET binder EQ LET lparam+ FATARROW type_value -> sig_generic_type
         | HOLE                                         -> sig_hole
 
 // A concept's body (ADR 0034): a signature that may also include another

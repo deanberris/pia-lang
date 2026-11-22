@@ -658,8 +658,14 @@ class Parser {
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);
-        if (!at(K::Type)) fail("expected 'type' in a signature type definition");
-        t->add(typeValue());
+        // A generic type is shown as it is defined, `let (t : type) =>
+        // type ...` (ADR 0039).
+        if (at(K::Let) && kind(1) == K::LParen)
+          t->add(lambda(/*elemBody=*/false));
+        else if (!at(K::Type))
+          fail("expected 'type' in a signature type definition");
+        else
+          t->add(typeValue());
         n.add(std::move(t));
       } else {
         fail("expected ':' or '=' after the name");

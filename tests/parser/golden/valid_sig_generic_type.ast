@@ -1,0 +1,101 @@
+(Program
+  (ModuleHeader "Opt"
+    (Attrs)
+    (Paths
+      (Path "Ops")
+    )
+  )
+  (Interface "Ops"
+    (Attrs)
+    (SigType "option"
+      (Lambda
+        (LParam
+          (PVar "t")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (TypeValue
+          (Variants
+            (Ctor "None"
+              (None)
+            )
+            (Ctor "Some"
+              (TypeName "t")
+            )
+          )
+          (Attrs)
+          (None)
+        )
+      )
+    )
+    (SigType "pair"
+      (Lambda
+        (LParam
+          (PVar "a")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (LParam
+          (PVar "b")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (TypeValue
+          (RecordType
+            (FieldDecl "fst"
+              (Annot
+                (Modifiers)
+                (TypeName "a")
+                (None)
+              )
+            )
+            (FieldDecl "snd"
+              (Annot
+                (Modifiers)
+                (TypeName "b")
+                (None)
+              )
+            )
+          )
+          (Attrs)
+          (None)
+        )
+      )
+    )
+    (SigVal "get"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "o"
+            (Modifiers)
+            (TypeApp
+              (TypeName "option")
+              (TypeName "u8")
+            )
+            (None)
+          )
+          (ArrowType
+            (Domain "d"
+              (Modifiers)
+              (TypeName "u8")
+              (None)
+            )
+            (TypeName "u8")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
+)

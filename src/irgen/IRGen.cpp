@@ -245,8 +245,9 @@ class Gen {
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids)
-      if (item->kind == NodeKind::LetItem && item->kids.size() > 3 &&
-          item->kids[3]->kind == NodeKind::TypeValue)
+      if ((item->kind == NodeKind::LetItem && item->kids.size() > 3 &&
+           item->kids[3]->kind == NodeKind::TypeValue) ||
+          sema::isGenericTypeItem(*item))
         typeItems_.emplace_back(item->text, item.get());
     checkModule(program);
     if (diags_.hasErrors()) return nullptr;

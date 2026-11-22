@@ -1,0 +1,8 @@
+(* An interface shows a generic type as it is defined (ADR 0039). *)
+module Opt : Ops
+
+interface Ops = sig
+  let option = let (t : type) => type | None | Some of t
+  let pair = let (a : type) (b : type) => type { fst : a; snd : b }
+  let get : (o : option u8) -> (d : u8) -> u8
+end

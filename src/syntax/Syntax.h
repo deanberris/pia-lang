@@ -31,7 +31,7 @@ namespace pia::syntax {
   X(Import)        /* text=path; flags="trusting" */                         \
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
-  X(SigType)       /* text=name; TypeValue */                                \
+  X(SigType)       /* text=name; TypeValue, or Lambda for a generic type */  \
   X(Sig)           /* a signature value: sig items */                        \
   X(SigInclude)    /* text=concept; type arguments */                        \
   X(SigLemma)      /* text=name; Params, Contracts */                        \

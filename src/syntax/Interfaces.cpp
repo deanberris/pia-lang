@@ -32,7 +32,9 @@ std::string canonical(const std::vector<Token> &tokens, size_t first) {
     if (prev) {
       if (closes)
         out += "\n";
-      else if (depth == 1 && t.kind == K::Let)
+      // A `let` that starts an item, not a generic type's `let (t : type)`.
+      else if (depth == 1 && t.kind == K::Let &&
+               !(i + 1 < tokens.size() && tokens[i + 1].kind == K::LParen))
         out += "\n  ";
       else if (prev->loc.offset + prev->text.size() != t.loc.offset)
         out += " ";
@@ -62,7 +64,15 @@ std::optional<std::string> dotted(const Node &n) {
 struct Imported {
   std::set<std::string> modules;   // `Image.Png`
   std::set<std::string> items;     // `Image.Png.decode`
+  std::set<std::string> types;     // `Image.Png.pixel`
+  std::set<std::string> ctors;     // `Image.Png.Truncated`
 };
+
+void collectCtors(const Node &n, const std::string &module,
+                  std::set<std::string> &out) {
+  if (n.kind == N::Ctor) out.insert(module + "." + n.text);
+  for (const NodePtr &k : n.kids) collectCtors(*k, module, out);
+}
 
 // `M.f` in the program becomes the Name `M.f` of the imported item.
 void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
@@ -71,6 +81,13 @@ void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
       if (imp.items.count(*d)) {
         n.kind = N::Name;
         n.text = *d;
+        n.kids.clear();
+        return;
+      }
+      // `M.C` is the constructor `C`, which is also in scope as `C`.
+      if (imp.ctors.count(*d)) {
+        n.kind = N::Name;
+        n.text = d->substr(d->rfind('.') + 1);
         n.kids.clear();
         return;
       }
@@ -89,13 +106,42 @@ void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
 
 // Names of the interface's own items, inside its contracts, are its
 // module's: `f` is `M.f`, unless a parameter of the item has that name.
+// The same for the types it shows, in types and contracts, except a
+// generic type's own parameters.
 void qualify(Node &n, const std::string &module,
              const std::set<std::string> &members,
-             const std::set<std::string> &params) {
+             const std::set<std::string> &params,
+             const std::set<std::string> &typeParams = {}) {
   if (n.kind == N::Name && n.flags.empty() && members.count(n.text) &&
       !params.count(n.text))
     n.text = module + "." + n.text;
-  for (NodePtr &k : n.kids) qualify(*k, module, members, params);
+  if ((n.kind == N::TypeName || n.kind == N::TypeInst) &&
+      members.count(n.text) && !typeParams.count(n.text))
+    n.text = module + "." + n.text;
+  for (NodePtr &k : n.kids) qualify(*k, module, members, params, typeParams);
+}
+
+// `let t = type ...` or `let t = let (a : type) => type ...` as the type
+// item `M.t`, whose constructors keep their names: they are reachable
+// unqualified, and a clash with another constructor is an error, as for
+// any two constructors (ADR 0039).
+NodePtr importedType(const Node &shown, const std::string &module,
+                     const std::set<std::string> &members, SourceLoc at) {
+  auto item = makeNode(N::LetItem, at, module + "." + shown.text);
+  item->add(makeNode(N::Params, at));
+  item->add(makeNode(N::None, at));
+  item->add(makeNode(N::Contracts, at));
+  NodePtr value = clone(*shown.kids[0]);
+  std::set<std::string> typeParams;
+  if (value->kind == N::Lambda)
+    for (const NodePtr &p : value->kids)
+      if (p->kind == N::LParam && !p->kids.empty() &&
+          p->kids[0]->kind == N::PVar)
+        typeParams.insert(p->kids[0]->text);
+  qualify(*value, module, members, {}, typeParams);
+  item->add(std::move(value));
+  relocate(*item, at);
+  return item;
 }
 
 // `let f : (a : t) -> (b : u) -> r requires ... ensures ...` as the
@@ -134,6 +180,8 @@ NodePtr importedFunction(const Node &val, const std::string &module,
   annot->add(clone(*type));
   annot->add(makeNode(N::None, at));
   ret->add(makeNode(N::Attrs, at));
+  qualify(*params, module, members, names);
+  qualify(*ret, module, members, names);
   NodePtr contracts = clone(*val.kids[2]);
   qualify(*contracts, module, members, names);
   item->add(std::move(contracts));
@@ -269,11 +317,23 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     std::set<std::string> listed;
     for (const NodePtr &k : iface->kids) {
       if (k->kind == N::Attrs || k->kind == N::Comment) continue;
+      if (k->kind == N::SigType) {
+        std::string qualified = module + "." + k->text;
+        // Two interfaces of one module may show the same type.
+        if (!imp.types.insert(qualified).second) continue;
+        collectCtors(*k, module, imp.ctors);
+        out.push_back(importedType(*k, module, members, at));
+        continue;
+      }
       if (k->kind != N::SigVal) {
-        diags.error(at, "importing the type '" + k->text + "' from " + where +
-                        " is not supported yet: imports bring in functions "
-                        "of builtin types, and types follow in ADR 0039 "
-                        "step 3");
+        diags.error(at, "importing '" + k->text + "' from " + where +
+                        " is not supported yet");
+        continue;
+      }
+      if (k->kids[0]->kids[1]->kind == N::TypeKind) {
+        diags.error(at, "importing the abstract type '" + k->text +
+                        "' from " + where + " is not supported yet: show "
+                        "its definition with '=' (ADR 0039, step 3)");
         continue;
       }
       // An overload set comes in whole: each overload is its own bodyless
