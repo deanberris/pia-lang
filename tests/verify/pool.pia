@@ -1,0 +1,127 @@
+(* Free-list reuse (#88), the second litmus test of ADR 0026, in its first
+   form: a pool of 16-byte slots over a caller's buffers. The free list is
+   side metadata, not pointers in freed blocks: `free.[0 .. top]` is a
+   stack of free slot numbers, and `pos.[s]` is where slot s sits in it,
+   or 65535 while s is live. The invariant `pos.[free.[j]] = j` makes the
+   stack's slots distinct and none of them live, so `take` never hands
+   out a live slot. A block is `@linear` and `give` takes it `moved`, so
+   no stale owner can give it back twice.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let pool = type { mem : [u8]; cap : usize; free : [u16]; pos : [u16]; top : usize }
+let block = type { i : u16 } @linear
+
+(* Pops a free slot, which becomes live; every live slot stays live. *)
+let take (p : borrowed inout mutable pool) : result block oom
+  requires p.cap <= 65535 && p.cap * 16 <= len p.mem && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  requires forall (j in 0 .. p.top). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j
+  ensures p.cap = old p.cap && len p.mem = old (len p.mem)
+  ensures p.cap <= 65535 && p.cap * 16 <= len p.mem && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  ensures forall (j in 0 .. p.top). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j
+  ensures forall (s in 0 .. p.cap). old (p.pos.[s]) = 65535 ==> p.pos.[s] = 65535
+  ensures (match result with
+           | Ok b -> b.i < p.cap && p.pos.[b.i] = 65535
+           | Err _ -> true)
+= if p.top = 0 then Err OutOfMemory
+  else
+    (let j = p.top - 1 in
+     let s = p.free.[j] in
+     p.pos.[s] <- 65535;
+     p.top <- j;
+     Ok { i = s })
+
+(* Pushes a live slot back on the stack; no other slot changes. *)
+let give (p : borrowed inout mutable pool) (b : moved block) : unit
+  requires p.cap <= 65535 && p.cap * 16 <= len p.mem && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  requires forall (j in 0 .. p.top). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j
+  requires b.i < p.cap && p.pos.[b.i] = 65535
+  ensures p.cap = old p.cap && len p.mem = old (len p.mem)
+  ensures p.cap <= 65535 && p.cap * 16 <= len p.mem && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  ensures forall (j in 0 .. p.top). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j
+  ensures forall (s in 0 .. p.cap). s <> b.i ==> p.pos.[s] = old (p.pos.[s])
+= match b with
+  | { i } ->
+    if p.top < p.cap then
+      (let t = p.top in
+       p.free.[t] <- i;
+       p.pos.[i] <- t;
+       p.top <- t + 1)
+    else ()
+
+(* Byte k of a live block's slot. *)
+let put (p : borrowed inout mutable pool) (b : borrowed block) (k : int{0..15}) (v : u8) : unit
+  requires b.i < p.cap && p.cap * 16 <= len p.mem
+  ensures p.cap = old p.cap && p.top = old p.top && len p.mem = old (len p.mem)
+  ensures len p.free = old (len p.free) && len p.pos = old (len p.pos)
+  ensures forall (j in 0 .. p.top). p.free.[j] = old (p.free.[j]) && p.pos.[p.free.[j]] = old (p.pos.[p.free.[j]])
+  ensures forall (s in 0 .. len p.pos). p.pos.[s] = old (p.pos.[s])
+  ensures p.mem.[b.i * 16 + k] = v
+= p.mem.[b.i * 16 + k] <- v
+
+let get (p : borrowed pool) (b : borrowed block) (k : int{0..15}) : u8
+  requires b.i < p.cap && p.cap * 16 <= len p.mem
+  ensures result = p.mem.[b.i * 16 + k]
+= p.mem.[b.i * 16 + k]
+
+(* docs/stdlib.md, "The second test": take, give, take again. The second
+   block may be the first one's slot; the copy `r` is unaffected. *)
+let reuse (p : borrowed inout mutable pool) : result unit oom
+  requires p.cap <= 65535 && p.cap * 16 <= len p.mem && len p.free = p.cap && len p.pos = p.cap && p.top <= p.cap
+  requires forall (j in 0 .. p.top). p.free.[j] < p.cap && p.pos.[p.free.[j]] = j
+= let a = take p? in
+  put p a 0 1;
+  let r = get p a 0 in
+  give p a;
+  let b = take p? in
+  put p b 0 2;
+  assert r = 1;
+  give p b;
+  Ok ()
+
+(* Expected report, in order.
+// CHECK: pool.pia:29:20: proved: '-' does not overflow usize [smt]
+// CHECK: pool.pia:30:14: proved: the index is within bounds [smt]
+// CHECK: pool.pia:31:6: proved: the index is within bounds [smt]
+// CHECK: pool.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:48:8: proved: the index is within bounds [smt]
+// CHECK: pool.pia:49:21: proved: the value fits in u16 [smt]
+// CHECK: pool.pia:49:8: proved: the index is within bounds [smt]
+// CHECK: pool.pia:50:19: proved: '+' does not overflow usize [smt]
+// CHECK: pool.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:61:14: proved: '*' does not overflow usize [intervals]
+// CHECK: pool.pia:61:19: proved: '+' does not overflow usize [intervals]
+// CHECK: pool.pia:61:3: proved: the index is within bounds [smt]
+// CHECK: pool.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:59:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:66:14: proved: '*' does not overflow usize [intervals]
+// CHECK: pool.pia:66:19: proved: '+' does not overflow usize [intervals]
+// CHECK: pool.pia:66:3: proved: the index is within bounds [smt]
+// CHECK: pool.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: pool.pia:73:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:73:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:74:3: proved: the precondition of 'put' holds [smt]
+// CHECK: pool.pia:75:11: proved: the precondition of 'get' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:76:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:77:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:77:11: proved: the precondition of 'take' holds [smt]
+// CHECK: pool.pia:78:3: proved: the precondition of 'put' holds [smt]
+// CHECK: pool.pia:79:3: proved: the assertion holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: pool.pia:80:3: proved: the precondition of 'give' holds [smt]
+// CHECK: 42 proved, 0 failed, 0 skipped
+*)
