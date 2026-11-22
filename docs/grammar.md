@@ -360,7 +360,7 @@ The grammar is ambiguous in a few places. Each one is settled by a rule, and eac
 
 These are in the design's direction but have no syntax yet. Each will get an ADR when it is needed.
 
-- Tuple types and tuple patterns
+- Tuple types, values and patterns (planned in ADR 0040 section 9; an ADR of their own)
 - Guards on match arms (`when`)
 - Placement and task-graph syntax beyond `spread` and `@place` (M12)
 - Doc comments
