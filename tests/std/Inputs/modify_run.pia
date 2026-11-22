@@ -29,7 +29,17 @@ let checks (xs : borrowed inout mutable [u8]) (ys : borrowed inout mutable [u8])
             else (
               M.copy_backward ys xs;
               if ys.[0] <> 1 || ys.[3] <> 4 then 7
-              else 0))))))
+              else (
+                ys.[0] <- 5; ys.[1] <- 6; ys.[2] <- 5; ys.[3] <- 7;
+                let n = M.remove ys 5 in
+                if n <> 2 || ys.[0] <> 6 || ys.[1] <> 7 then 8
+                else (
+                  let e = M.shift_left xs 1 in
+                  if e <> 3 || xs.[0] <> 2 || xs.[2] <> 4 then 9
+                  else (
+                    let b = M.shift_right xs 2 in
+                    if b <> 2 || xs.[2] <> 2 || xs.[3] <> 3 then 10
+                    else 0)))))))))
 
 let main () : i32 =
   with_arena 8 (let (m) =>

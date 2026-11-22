@@ -1,0 +1,17 @@
+(* Pia.Core.Algo.Permutation (ADR 0040, phase 1.6): its spec functions'
+   goals are proved, and its interface exports them.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Permutation.pia | FileCheck %s
+// RUN: mkdir -p %t/p && piac --emit=interface -o %t/p %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/p/Pia.Core.Algo.Permutation.Permutation.piai
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 26 proved, 0 failed, 0 skipped
+
+// IFACE:      {{^}}interface Permutation = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec occurrences : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (k : usize) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let spec permutation : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> bool{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

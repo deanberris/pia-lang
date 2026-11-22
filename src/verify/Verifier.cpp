@@ -1312,6 +1312,18 @@ class Encoder {
     }
 
     if (auto old = mlir::dyn_cast<contract::OldOp>(op)) {
+      // `old xs` of a whole slice, passed to a spec function: the slice's
+      // memory on entry, with its length, which a slice keeps.
+      if (mlir::isa<SliceType, ArrayType>(old.getType())) {
+        Value inner = old.getValue();
+        if (inner == rootBuffer(inner))
+          if (Value arr = entryArrays_.lookup(inner)) {
+            arrays_[old.getResult()] = arr;
+            if (Value len = lengths_.lookup(inner))
+              lengths_[old.getResult()] = len;
+          }
+        return true;
+      }
       Demand d;
       d.arrays = entryArrays_;
       d.lengths = lengths_;
@@ -1655,6 +1667,12 @@ class Encoder {
     }
     if (auto l = mlir::dyn_cast<LenOp>(op)) {
       Value len = lengths.lookup(l.getBuffer());
+      // `len (old xs)`: a slice keeps its length.
+      if (!len)
+        if (auto o = l.getBuffer().getDefiningOp<contract::OldOp>()) {
+          len = lengths.lookup(o.getValue());
+          if (!len) len = lengths_.lookup(o.getValue());
+        }
       if (!len) return false;
       out.push_back(len);
       return true;
@@ -2628,6 +2646,20 @@ class Encoder {
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value formal = entry.getArgument(i), actual = call.getOperand(i);
       if (mlir::isa<ArrayType, SliceType>(actual.getType())) {
+        // `old xs` passed to a spec function: xs as it was on entry, with
+        // its length, which a slice keeps (ADR 0044, `permutation xs (old
+        // xs)`).
+        if (auto o = actual.getDefiningOp<contract::OldOp>();
+            o && d.oldArrays && o.getValue() == rootBuffer(o.getValue())) {
+          Value inner = o.getValue();
+          Value arr = d.oldArrays->lookup(inner);
+          Value len = d.lengths.lookup(inner);
+          if (!len) len = lengths_.lookup(inner);
+          if (!arr || !len) return Value();
+          args.arrays[formal] = arr;
+          args.lengths[formal] = len;
+          continue;
+        }
         (void)demand(actual, d);  // a view records its offset and length
         Value root = rootBuffer(actual);
         Value arr = d.arrays.lookup(root);

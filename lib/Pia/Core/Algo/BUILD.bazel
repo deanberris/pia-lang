@@ -7,6 +7,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "Modify.pia",
+    "Permutation.pia",
     "Search.pia",
 ])
 
@@ -30,6 +31,15 @@ pia_library(
 pia_library(
     name = "modify",
     src = "Modify.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:order"],
+)
+
+# The multiset spec functions sorts are stated with: tests/std/permutation.pia
+# checks its goals, and tests/std/permutation_edges.pia uses them.
+pia_library(
+    name = "permutation",
+    src = "Permutation.pia",
     target_compatible_with = APPLE_SILICON,
     deps = ["//lib/Pia/Core:order"],
 )

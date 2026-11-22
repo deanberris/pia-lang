@@ -20,13 +20,22 @@
       "wall_ms_n": 4258.1
     },
     "lib/Pia/Core/Algo/Modify.pia": {
-      "cost": 21365244,
-      "goals": 130,
-      "solve_ms_1": 143,
-      "solve_ms_n": 63,
-      "solved": 122,
-      "wall_ms_1": 2691.1,
-      "wall_ms_n": 1696.9
+      "cost": 94907791,
+      "goals": 125,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 117,
+      "wall_ms_1": 11417.0,
+      "wall_ms_n": 8435.8
+    },
+    "lib/Pia/Core/Algo/Permutation.pia": {
+      "cost": 2371323,
+      "goals": 26,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 18,
+      "wall_ms_1": 917.1,
+      "wall_ms_n": 830.7
     },
     "lib/Pia/Core/Algo/Search.pia": {
       "cost": 54819015,

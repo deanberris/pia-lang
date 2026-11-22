@@ -1,0 +1,34 @@
+(* Importers of Pia.Core.Algo.Permutation state results with its spec
+   functions: every slice is a permutation of itself, the empty slices
+   are permutations of each other, and slices of different lengths are not.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+
+let itself (xs : [u16]) : unit
+  ensures P.permutation xs xs
+= ()
+
+let empties (xs : [u8]) (ys : [u8]) : unit
+  requires len xs = 0 && len ys = 0
+  ensures P.permutation xs ys
+= ()
+
+let lengths (xs : [u8]) (ys : [u8]) : unit
+  requires len xs <> len ys
+  ensures P.permutation xs ys = false
+= ()
+
+(* One element: counted once. *)
+let single (xs : [u8]) : unit
+  requires len xs = 1
+  ensures P.occurrences xs xs.[0] 1 = 1
+= ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 17 proved, 0 failed, 0 skipped
+*)

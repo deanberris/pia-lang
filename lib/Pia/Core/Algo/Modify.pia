@@ -1,8 +1,8 @@
 (* Pia.Core.Algo.Modify: <algorithm>'s modifying sequence operations and
    <numeric>'s algorithms (ADR 0040, phase 1.6, docs/cpp-std.md). This is
-   its first part: fill, copy, copy_backward, swap_ranges, reverse and
-   replace. The rest of the phase (rotate, shift_left, shift_right,
-   remove, unique, and <numeric>) follows in later pull requests.
+   fill, copy, copy_backward, swap_ranges, reverse, replace, shift_left,
+   shift_right and remove. rotate and unique, which cost 280M and 120M to
+   prove as written so far, and <numeric>, follow in later pull requests.
 
    Each is generic over the element type and proved once (ADR 0043). C++
    writes through an output iterator; here the destination is an `out`
@@ -12,7 +12,10 @@
    end, as C++'s does. Each contract states every element of the result,
    and which are unchanged. replace takes a value, over Pia.Core.Order's
    Eq, or a predicate, as C++'s replace_if (no _if names, ADR 0040,
-   section 6). *)
+   section 6). remove's contract says where each element it keeps goes:
+   to its rank among the kept ones, the spec function `kept` of the slice
+   as it was (`old xs`). shift_left and shift_right return the end and
+   start of what they keep, as C++ does, and leave the rest unspecified. *)
 module Pia.Core.Algo.Modify : Modify
 
 import Pia.Core.Order.Ops
@@ -25,6 +28,10 @@ interface Modify = sig
   let copy_backward : (t : type) -> (dst : out mutable [t]) -> (src : [t]) -> unit
   let swap_ranges : (t : type) -> (xs : borrowed inout mutable [t]) -> (ys : borrowed inout mutable [t]) -> unit
   let replace : (t : type) -> (f : type where Function f t bool) -> (xs : borrowed inout mutable [t]) -> (p : f) -> (new_v : t) -> unit
+  let shift_left : (t : type) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> usize
+  let shift_right : (t : type) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> usize
+  let spec kept : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (k : usize) -> usize
+  let remove : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (v : t) -> usize
 end
 
 (** C++: std::fill. Every element becomes v. *)
@@ -106,3 +113,69 @@ let replace (t : type) (f : type where Function f t bool) (xs : borrowed inout m
     invariant forall (k in 0..i). (if p (old (xs.[k])) then xs.[k] = new_v else xs.[k] = old (xs.[k]))
     invariant forall (k in i..len xs). xs.[k] = old (xs.[k])
   do if p xs.[i] then xs.[i] <- new_v else () done
+
+(** C++20: std::shift_left: the elements from n move to the front, and
+    the result is where they end; past it, the elements are unspecified. *)
+let shift_left (t : type) (xs : borrowed inout mutable [t]) (n : usize) : usize
+  ensures n >= len xs ==> result = 0
+  ensures n < len xs ==> result = len xs - n
+  ensures n < len xs ==> (forall (k in 0..len xs - n). xs.[k] = old (xs.[k + n]))
+= if n = 0 then len xs
+  else if n >= len xs then 0
+  else (
+    let m = len xs - n in
+    for i in 0..m
+      invariant forall (k in 0..i). xs.[k] = old (xs.[k + n])
+      invariant forall (k in i..len xs). xs.[k] = old (xs.[k])
+    do xs.[i] <- xs.[i + n] done;
+    m)
+
+(** C++20: std::shift_right: the elements move n places towards the end,
+    and the result is where they start; before it, the elements are
+    unspecified. *)
+let shift_right (t : type) (xs : borrowed inout mutable [t]) (n : usize) : usize
+  ensures n >= len xs ==> result = len xs
+  ensures n < len xs ==> result = n
+  ensures n < len xs ==> (forall (k in n..len xs). xs.[k] = old (xs.[k - n]))
+= if n = 0 then 0
+  else if n >= len xs then len xs
+  else (
+    let i : mutable usize = len xs in
+    while i > n
+      invariant n <= i && i <= len xs
+      invariant forall (k in i..len xs). xs.[k] = old (xs.[k - n])
+      invariant forall (k in 0..i). xs.[k] = old (xs.[k])
+      decreases i
+    do
+      i <- i - 1;
+      xs.[i] <- xs.[i - n]
+    done;
+    n)
+
+(* How many of xs.[0 .. k] are not the same as v: the rank of each kept
+   element after remove. *)
+let spec kept (t : type where Pia.Core.Order.Eq t) (xs : [t]) (v : t) (k : usize) : usize
+  requires k <= len xs
+  decreases k
+  ensures result <= k
+= if k = 0 then 0
+  else if same xs.[k - 1] v then kept xs v (k - 1)
+  else kept xs v (k - 1) + 1
+
+(** C++: std::remove: the elements not the same as v move to the front,
+    in order, and the result is how many there are; past it, the elements
+    are unspecified. *)
+let remove (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (v : t) : usize
+  ensures result = kept (old xs) v (len xs)
+  ensures forall (k in 0..len xs). same (old (xs.[k])) v = false ==> xs.[kept (old xs) v k] = old (xs.[k])
+= let w : mutable usize = 0 in
+  for i in 0..len xs
+    invariant w = kept (old xs) v i
+    invariant forall (k in 0..i). same (old (xs.[k])) v = false ==> kept (old xs) v k < w
+    invariant forall (k in 0..i). same (old (xs.[k])) v = false ==> xs.[kept (old xs) v k] = old (xs.[k])
+    invariant forall (k in i..len xs). xs.[k] = old (xs.[k])
+  do
+    if same xs.[i] v then ()
+    else (xs.[w] <- xs.[i]; w <- w + 1)
+  done;
+  w
