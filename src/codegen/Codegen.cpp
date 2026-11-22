@@ -272,12 +272,23 @@ Value finish(OpBuilder &b, Location loc, Value r, Repr repr, IntType result,
 // Type conversion
 //===----------------------------------------------------------------------===//
 
+// int, real and a theory's sort: values only the verifier computes with.
+bool isSpecOnly(Type t) {
+  return mlir::isa<UnboundedIntType, RealType, SortType>(t);
+}
+
 class CoreTypes : public mlir::TypeConverter {
  public:
   CoreTypes() {
     addConversion([](Type t) { return t; });
     addConversion([](IntType t) -> Type {
       return mlir::IntegerType::get(t.getContext(), reprOf(t).width);
+    });
+    // Spec-only state is erased (ADR 0041): what is left of it is a bit
+    // that nothing reads, and LLVM drops it.
+    addConversion([](Type t) -> std::optional<Type> {
+      if (!isSpecOnly(t)) return std::nullopt;
+      return mlir::IntegerType::get(t.getContext(), 1);
     });
     addConversion([this](ArrayType t) -> std::optional<Type> {
       Type elem = element(t.getElementType());
@@ -642,6 +653,18 @@ struct EmptyLowering : mlir::OpConversionPattern<EmptyOp> {
 // A `with_arena`'s memory (#70): stack storage made once on entry to the
 // function, so a `with_arena` in a loop does not grow the stack, and
 // zeroed each time the `with_arena` is entered.
+struct ErasedLowering : mlir::OpConversionPattern<ErasedOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      ErasedOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Type t = getTypeConverter()->convertType(op.getType());
+    if (!t) return mlir::failure();
+    rw.replaceOpWithNewOp<mlir::arith::ConstantOp>(op, t, rw.getZeroAttr(t));
+    return mlir::success();
+  }
+};
+
 struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -786,6 +809,7 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
 };
 
 constexpr llvm::StringLiteral kSigned = "pia.signed";
+constexpr llvm::StringLiteral kErased = "pia.erased";
 constexpr llvm::StringLiteral kInternalPrefix = "__pia_";
 
 bool isContractStatement(mlir::Operation *op) {
@@ -862,6 +886,44 @@ void eraseContracts(mlir::ModuleOp module) {
       if (isLemma(call)) statements.push_back(op);
   });
   for (mlir::Operation *op : statements) op->erase();
+  // Spec-only state (ADR 0041): code may store a spec value in a
+  // parameter, local or field of a spec-only type, but never computes with
+  // one, so each spec computation still in code only feeds such places.
+  // It becomes `pia.erased`, and the parameters and results that carry it
+  // are marked for the C entry points, which leave them out.
+  auto specCallee = [&](mlir::func::FuncOp f) {
+    return f && (f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+                 f->hasAttr(PiaDialect::getSpecAttrName()) ||
+                 f->hasAttr(PiaDialect::getAxiomAttrName()));
+  };
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (specCallee(f)) continue;
+    mlir::FunctionType ft = f.getFunctionType();
+    for (unsigned i = 0; i < ft.getNumInputs(); ++i)
+      if (isSpecOnly(ft.getInput(i)))
+        f.setArgAttr(i, kErased, mlir::UnitAttr::get(module.getContext()));
+    for (unsigned i = 0; i < ft.getNumResults(); ++i)
+      if (isSpecOnly(ft.getResult(i)))
+        f.setResultAttr(i, kErased, mlir::UnitAttr::get(module.getContext()));
+    llvm::SmallVector<mlir::Operation *> spec;
+    f.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+      if (op->getNumResults() == 0 || op->getNumRegions() > 0) return;
+      if (mlir::isa<ErasedOp>(op)) return;
+      if (!llvm::all_of(op->getResultTypes(), isSpecOnly)) return;
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (!specCallee(
+                module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())))
+          return;
+      spec.push_back(op);
+    });
+    // Uses come after definitions, so the last is replaced first.
+    for (mlir::Operation *op : llvm::reverse(spec)) {
+      OpBuilder b(op);
+      for (Value r : op->getResults())
+        r.replaceAllUsesWith(make<ErasedOp>(b, op->getLoc(), r.getType()));
+      op->erase();
+    }
+  }
   // Whatever only fed a contract is now unused. Erase it, innermost and
   // last first, until nothing changes.
   for (bool changed = true; changed;) {
@@ -993,7 +1055,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                BitLowering<BSwapOp>, RotateLowering<RotlOp>,
                RotateLowering<RotrOp>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, EmptyLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
+               StoreLowering, SliceLowering, EmptyLowering, ErasedLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(
       types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
@@ -1029,6 +1091,8 @@ struct Entry {
   std::string internal = {};
   // Whether `internal` stays external, for other modules to call.
   bool linked = false;
+  // The spec-only arguments and results, which C does not see (ADR 0041).
+  std::vector<bool> argErased = {}, resultErased = {};
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -1095,6 +1159,7 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   // A field buffer that shares another's length takes only its pointer.
   llvm::SmallVector<Type> argTypes;
   for (auto [i, t] : llvm::enumerate(e.type.getInputs())) {
+    if (e.argErased[i]) continue;
     if (e.lengthOf[i] >= 0) {
       argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
       continue;
@@ -1103,12 +1168,16 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   }
   // A record result comes back through a pointer to a C struct of its
   // fields, which is the last argument.
-  bool outStruct = e.type.getNumResults() > 1;
+  // Spec-only results are not returned.
+  llvm::SmallVector<unsigned> kept;
+  for (unsigned i = 0; i < e.type.getNumResults(); ++i)
+    if (!e.resultErased[i]) kept.push_back(i);
+  bool outStruct = kept.size() > 1;
   if (outStruct) argTypes.push_back(mlir::LLVM::LLVMPointerType::get(ctx));
   Type resultType = mlir::LLVM::LLVMVoidType::get(ctx);
-  if (e.type.getNumResults() == 1) {
+  if (kept.size() == 1) {
     llvm::SmallVector<Type, 1> r;
-    cArgTypes(e.type.getResult(0), ctx, r);
+    cArgTypes(e.type.getResult(kept[0]), ctx, r);
     resultType = r[0];
   }
 
@@ -1129,6 +1198,11 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   unsigned arg = 0;
   for (unsigned i = 0; i < e.type.getNumInputs(); ++i) {
     Type t = e.type.getInput(i);
+    if (e.argErased[i]) {
+      operands.push_back(make<mlir::LLVM::ConstantOp>(
+          b, e.loc, t, b.getIntegerAttr(t, 0)));
+      continue;
+    }
     if (auto m = mlir::dyn_cast<mlir::MemRefType>(t)) {
       // The memref descriptor: allocated and aligned pointers, offset,
       // size and stride.
@@ -1149,7 +1223,8 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
     // Each field at its C offset: aligned to its own size.
     Value out = block->getArgument(arg);
     unsigned offset = 0;
-    for (auto [i, t] : llvm::enumerate(e.type.getResults())) {
+    for (unsigned i : kept) {
+      Type t = e.type.getResult(i);
       llvm::SmallVector<Type, 1> c;
       cArgTypes(t, ctx, c);
       unsigned width = c[0].getIntOrFloatBitWidth();
@@ -1166,10 +1241,14 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
       offset += size;
     }
     make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
-  } else if (e.type.getNumResults() == 1) {
-    if (auto ext = extAttr(e.type.getResult(0), e.resultSigned))
+  } else if (kept.size() == 1) {
+    if (auto ext = extAttr(e.type.getResult(kept[0]), e.resultSigned))
       entry.setResultAttr(0, *ext, b.getUnitAttr());
-    make<mlir::LLVM::ReturnOp>(b, e.loc, call.getResult());
+    Value result = call.getResult();
+    if (e.type.getNumResults() > 1)
+      result = make<mlir::LLVM::ExtractValueOp>(
+          b, e.loc, result, llvm::ArrayRef<int64_t>{int64_t(kept[0])});
+    make<mlir::LLVM::ReturnOp>(b, e.loc, result);
   } else {
     make<mlir::LLVM::ReturnOp>(b, e.loc, mlir::ValueRange{});
   }
@@ -1212,9 +1291,16 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
       auto shared = f.getArgAttrOfType<mlir::IntegerAttr>(
           i, PiaDialect::getLengthOfAttrName());
       e.lengthOf.push_back(shared ? int(shared.getInt()) : -1);
+      e.argErased.push_back(static_cast<bool>(f.getArgAttr(i, kErased)));
     }
-    e.resultSigned =
-        f.getNumResults() == 1 && static_cast<bool>(f.getResultAttr(0, kSigned));
+    for (unsigned i = 0; i < f.getNumResults(); ++i)
+      e.resultErased.push_back(static_cast<bool>(f.getResultAttr(i, kErased)));
+    // The one result C sees, if there is one.
+    llvm::SmallVector<unsigned> seen;
+    for (unsigned i = 0; i < f.getNumResults(); ++i)
+      if (!e.resultErased[i]) seen.push_back(i);
+    e.resultSigned = seen.size() == 1 &&
+                     static_cast<bool>(f.getResultAttr(seen[0], kSigned));
     // Pia's own attributes have no meaning in LLVM IR. A C declaration's
     // are LLVM's: the extensions C expects (#55).
     if (f->hasAttr("pia.c")) {

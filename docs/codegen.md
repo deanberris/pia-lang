@@ -100,6 +100,10 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
               uint8_t *dst, uint64_t ndst);
 ```
 
+## Spec-only state
+
+A parameter, local or record field whose type is spec-only (`int`, `real` or a theory's sort) is state the verifier sees and the program does not have ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). Code can only store spec values in such places, so nothing the program computes reads them. `eraseContracts` replaces every computation of a spec-only value left in code, such as `Alloc.take t.heap b` stored into a field, with `pia.erased`, and marks the spec-only parameters and results `{pia.erased}`. `lowerToCore` lowers each spec-only value to an `i1` that nothing reads, and LLVM removes it. The C entry points leave spec-only parameters and fields out: `skip (n : int) (x : u8) : u8` is `uint8_t skip(uint8_t x)`, and a result `{ v : u8; steps : int }` is returned as its one remaining field, a `uint8_t`. tests/codegen/spec_state.pia is run from C by spec_state_test.c.
+
 ## Foreign functions
 
 `let f (x : i32) : i32 ensures ... = extern "sym"` declares a C function (#55). IRGen makes `f` a private function whose whole body is `pia.foreign "sym"(...)`, marked `pia.extern`, so callers see its contract like any other function's: preconditions are proved at each call and postconditions are assumed. The verifier never proves the stub itself; the contract is trusted, and `piac --verify --trust-report` lists it.

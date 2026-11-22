@@ -1,32 +1,26 @@
 (* `int` and `real` are spec-only (ADR 0036): spec functions, lemmas,
-   contracts and quantifiers may use them, and code may not, so codegen
-   never sees them.
+   contracts and quantifiers compute with them, and code may not. Code may
+   hold them as spec-only state, in a parameter, local or record field,
+   which codegen erases (ADR 0041), but not in a buffer.
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:12: error: the parameter 'x' has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
-*)
-let takes (x : real) : u8 = 0
-
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:20: error: 'gives' returns a value of the spec-only type int; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
-*)
-let gives (x : u8) : int = x
-
 let summary = type { width : usize; lip : real }
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:12: error: the parameter 'f' has type summary, which holds the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:11: error: the parameter 'xs' has type [summary], whose buffer elements hold the spec-only type real; spec-only state can be a parameter, a local or a record field, but not an element of a buffer (ADR 0041)
 *)
-let width (f : summary) : usize = f.width
+let many (xs : [summary]) : usize = len xs
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
+*)
+let branch (f : summary) : bool = f.lip > 0.5
+
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
 *)
 let positive (x : u8) : bool = real x > 0.5
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:39: error: 'y' has the spec-only type int; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
-*)
-let annotated (x : u8) : u8 = let y : int = x in x
-
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:37: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:37: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
 *)
 let literal (x : u8) : u8 = let y = 1.5 in x
 

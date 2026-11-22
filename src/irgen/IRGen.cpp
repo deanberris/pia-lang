@@ -315,6 +315,31 @@ class Gen {
 
   std::string typeName(Type t) { return sema::typeName(t); }
 
+  // Spec-only state in code (ADR 0041): a value whose type is spec-only
+  // (`int`, `real` or a theory's sort), or a record holding one. The
+  // verifier sees it and codegen erases it. A buffer cannot hold it, since
+  // its elements are laid out in memory.
+  static bool isSpecScalar(Type t) {
+    return mlir::isa_and_nonnull<UnboundedIntType, RealType, SortType>(t);
+  }
+  static Type specInBuffer(Type t) {
+    if (!t) return {};
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return sema::specOnlyPart(a.getElementType());
+    if (auto sl = mlir::dyn_cast<SliceType>(t))
+      return sema::specOnlyPart(sl.getElementType());
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      for (Type f : r.getFieldTypes())
+        if (Type x = specInBuffer(f)) return x;
+    return {};
+  }
+  std::string specInBufferMessage(Type t) {
+    return "type " + typeName(t) + ", whose buffer elements hold the "
+           "spec-only type " + typeName(specInBuffer(t)) + "; spec-only state "
+           "can be a parameter, a local or a record field, but not an "
+           "element of a buffer (ADR 0041)";
+  }
+
   // The spec-only `int` and `real` (ADR 0036).
   static bool isExact(Type t) {
     return mlir::isa_and_nonnull<UnboundedIntType, RealType>(t);
@@ -738,18 +763,18 @@ class Gen {
       genImport(item, sig, fn);
       return;
     }
-    // `int` and `real` exist only for the verifier, so code can neither
-    // take nor return them, even inside a record (ADR 0036).
+    // Code may take and return spec-only state, which codegen erases, but
+    // not in a buffer (ADR 0041).
     if (!ghost_) {
       for (const sema::Param &p : sig.params)
-        if (sema::specOnlyPart(p.type)) {
+        if (specInBuffer(p.type)) {
           diags_.error(p.loc, "the parameter '" + p.name + "' has " +
-                                  specOnlyMessage(p.type));
+                                  specInBufferMessage(p.type));
           return;
         }
-      if (sema::specOnlyPart(sig.result)) {
+      if (specInBuffer(sig.result)) {
         fail(ret, "'" + name + "' returns a value of " +
-                      specOnlyMessage(sig.result));
+                      specInBufferMessage(sig.result));
         return;
       }
     }
@@ -1331,10 +1356,20 @@ class Gen {
   R genExpr(const Node &n, Type expected) {
     lent_.erase(&n);
     writable_.erase(&n);
+    // A spec-only place in code, such as `p.heap <- Alloc.take p.heap s`
+    // or a spec-only argument: its value is specification, as in a
+    // contract, and codegen erases it (ADR 0041).
+    if (!contract_ && !ghost_ && isSpecScalar(expected)) {
+      contract_ = true;
+      R r = genExprOf(n, expected);
+      contract_ = false;
+      return r;
+    }
     R r = genExprOf(n, expected);
-    if (r && !contract_ && !ghost_)
-      if (sema::specOnlyPart(r->type))
-        return fail(n, "this expression has " + specOnlyMessage(r->type));
+    if (r && !contract_ && !ghost_ && isSpecScalar(r->type))
+      return fail(n, "this expression has " + specOnlyMessage(r->type) +
+                     "; code can only store it in a spec-only place, such as "
+                     "a field, local or parameter of that type (ADR 0041)");
     if (r) noteLenders(n, *r);
     return r;
   }
@@ -6589,9 +6624,9 @@ class Gen {
       declared = types_.resolveAnnot(*ret.kids[0]);
       if (!declared) return std::nullopt;
       if (!contract_ && !ghost_)
-        if (sema::specOnlyPart(declared))
+        if (specInBuffer(declared))
           return fail(*ret.kids[0], "'" + n.text + "' has " +
-                                        specOnlyMessage(declared));
+                                        specInBufferMessage(declared));
       if (ret.kids.size() > 1 && !ret.kids[1]->kids.empty())
         return fail(*ret.kids[1]->kids[0],
                     "attributes on a local 'let' are not supported yet");

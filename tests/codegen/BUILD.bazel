@@ -4,7 +4,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -205,6 +205,26 @@ cc_test(
     srcs = [
         "pages_test.c",
         ":pages_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# spec_state.pia, spec-only parameters and fields (ADR 0041): the verifier
+# sees them, and the C entry points leave them out.
+genrule(
+    name = "spec_state_obj",
+    srcs = ["spec_state.pia"],
+    outs = ["spec_state.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "spec_state_test",
+    srcs = [
+        "spec_state_test.c",
+        ":spec_state_obj",
     ],
     target_compatible_with = APPLE_SILICON,
 )

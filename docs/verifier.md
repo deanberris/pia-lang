@@ -197,13 +197,13 @@ let halve (x : u8) : u8
 
 `product` is nonlinear, and Z3 decides it with its nonlinear real arithmetic; with `x * y < 3.0` it fails with the counterexample `x = 3/2, y = 2`. A counterexample shows a real as a fraction, and an irrational value from a nonlinear model as a decimal approximation marked `~`.
 
-**Spec-only.** `int` and `real` may appear in spec functions, lemmas, contracts, quantifiers (`forall (y : real). y * y >= 0.0`), the arguments of a lemma call, and record fields that only spec code reads. Code may not compute with them. A parameter or result of an ordinary function whose type is or holds one, such as a record with a `real` field, is an error, and so is any expression of such a type in code. `let positive (x : u8) : bool = real x > 0.5` gives:
+**Spec-only.** `int` and `real` may appear in spec functions, lemmas, contracts and quantifiers (`forall (y : real). y * y >= 0.0`), and in the arguments of a lemma call. Code may not compute with them. It may only store one in a spec-only place: a parameter, local or record field of a spec-only type, as in `let steps : int = 10` or `t.heap <- Alloc.take t.heap b` ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). The expression stored is checked as spec code, so it may call spec functions. A buffer cannot hold spec-only elements. Any other expression of such a type in code is an error. `let positive (x : u8) : bool = real x > 0.5` gives:
 
 ```
-positive.pia:1:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+positive.pia:1:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
 ```
 
-So codegen never sees them: it erases spec functions, lemmas and contracts, and with them every value of these types.
+So nothing the program computes depends on a spec-only value. The verifier sees spec-only state like any other, and codegen erases it, along with spec functions, lemmas and contracts (see [codegen.md](codegen.md), "Spec-only state").
 
 **Encoding.** `int` uses the upstream `smt` dialect's `Int` sort and its operations. The dialect has no `Real` sort at our LLVM pin, so the verifier extends it in the smallest way that keeps it the one encoding: `real` is written as a sort named `Real`, and the operations the dialect lacks (Real `+ - * /` and comparisons, `to_real`, and `bv2int` for converting a bit-vector) are declared as functions under their SMT-LIB names and applied with `smt.apply_func`. When the query is exported to SMT-LIB, those declarations and the sort's `declare-sort` are dropped, so Z3 reads each use as SMT-LIB's own interpreted symbol. A machine integer becomes an `Int` as `bv2int` of its bit-vector, less `2^w` when it is negative, since `bv2int` reads a bit-vector as unsigned. A real literal `n/d` is `(/ (to_real n) (to_real d))`.
 
@@ -256,7 +256,7 @@ let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
 
 **Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. An interface lists functions and types, not theories, so a module cannot import another's theory yet ([ADR 0039](adr/0039-module-and-interface-syntax.md)): a theory is used in the file that declares it, and `import T` of such a theory does nothing. A module header's `@trusted` (`module M @trusted`) marks the file like a `@trusted` line. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
 
-**Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot take, return or compute them, and codegen erases the theory along with every contract that uses it. A sort has only `=` and `<>`.
+**Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot compute with them, but it can hold a sort's value in a spec-only parameter, local or field, which is how an allocator tracks `Alloc.heap` (ADR 0041). Codegen erases the theory along with every contract and spec-only value that uses it. A sort has only `=` and `<>`.
 
 **Models.** A model gives each sort of a theory a type and each abstract function a definition:
 

@@ -1,0 +1,78 @@
+(* Spec-only state (ADR 0041), compiled for Apple Silicon and run by
+   spec_state_test.c. A parameter, local or record field whose type is
+   spec-only (int, real or a theory's sort) is seen by the verifier and
+   erased by codegen, so the C entry points leave it out. Every goal here
+   must be proved.
+*)
+module SpecState : Tracked
+
+(* What spec_state_test.c calls, by its C names (ADR 0039). `skip`'s n and
+   the steps field of `tally` are spec-only, so C sees `skip(x)` and a
+   tally that is only its v.
+*)
+interface Tracked @abi(c) = sig
+  let tally = type { v : u8; steps : int }
+  let take_two : (a : u8) -> (b : u8) -> u64
+    requires a < 64 && b < 64 && a <> b
+  let skip : (n : int) -> (x : u8) -> u8
+    requires x < 255
+  let count_up : (x : u8) -> tally
+    requires x < 200
+end
+
+let blk = type int{0..63}
+
+let theory Alloc = sig
+  let sort heap
+  let spec none : heap
+  let spec live : (h : heap) -> (b : blk) -> bool
+  let spec take : (h : heap) -> (b : blk) -> heap
+
+  let axiom none_live (b : blk) ensures live none b = false
+  let axiom take_live (h : heap) (b : blk) (c : blk)
+    ensures live (take h b) c = (c = b || live h c)
+end
+
+let model bits : Alloc = struct
+  let sort heap = u64
+  let spec none : u64 = 0
+  let spec live (h : u64) (b : blk) : bool = ((h >> b) & 1) = 1
+  let spec take (h : u64) (b : blk) : u64 = (h | (1 << b))
+end
+
+(* The live set as bits, and the heap that says which blocks are live:
+   the verifier sees both, and the program only bits.
+*)
+let tracker = type { bits : u64; heap : Alloc.heap }
+
+\ Code stores a spec value in a spec-only field.
+let take (t : inout mutable tracker) (b : blk) : unit
+  requires Alloc.live t.heap b = false
+  ensures t.heap = Alloc.take (old t.heap) b
+  ensures t.bits = (old t.bits | (1 << b))
+= t.bits <- t.bits | (1 << b);
+  t.heap <- Alloc.take t.heap b
+
+\ Two blocks taken in turn are both live, from the axioms alone.
+let take_two (a : u8) (b : u8) : u64
+  requires a < 64 && b < 64 && a <> b
+= let t : mutable tracker = { bits = 0; heap = Alloc.none } in
+  take t a;
+  take t b;
+  assert Alloc.live t.heap a && Alloc.live t.heap b;
+  t.bits
+
+\ A spec-only parameter: a count that only the contract reads.
+let skip (n : int) (x : u8) : u8
+  requires x < 255
+  ensures result = x + 1
+= x + 1
+
+let tally = type { v : u8; steps : int }
+
+\ A spec-only local and a spec-only result field.
+let count_up (x : u8) : tally
+  requires x < 200
+  ensures result.v = x + 10 && result.steps = 10
+= let steps : int = 10 in
+  { v = x + 10; steps = steps }
