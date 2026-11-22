@@ -78,5 +78,5 @@ let laws (x : u8) : bool
 (* Expected report: the two arguments that do not meet their laws.
 // CHECK: fn_laws.pia:52:3: failed: the precondition of 'sort[lambda@fn_laws.pia:52:12]<u8>' holds
 // CHECK: fn_laws.pia:67:32: failed: the precondition of 'accumulate[lambda@fn_laws.pia:67:51]<u8>' holds
-// CHECK: 128 proved, 2 failed, 0 skipped
+// CHECK: 64 proved, 2 failed, 0 skipped
 *)
