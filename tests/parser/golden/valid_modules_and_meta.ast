@@ -2,6 +2,7 @@
   (Import "Pia.Prelude")
   (Import "Image.Png.Codec")
   (Interface "Counter"
+    (Attrs)
     (SigVal "count"
       (Annot
         (Modifiers)

@@ -57,6 +57,13 @@ The proofs cost nothing at run time: a proved index has no bounds check and a pr
 
 <!-- example: add_rows.pia -->
 ```ocaml
+module Rows : RowOps
+
+interface RowOps @abi(c) = sig
+  let add_rows : (a : [u8]) -> (b : [u8]) -> (dst : out mutable [u8]) -> unit
+    requires len a = len dst && len b = len dst
+end
+
 let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
   requires len a = len dst && len b = len dst
 = for i in 0..len dst do dst.[i] <- a.[i] +| b.[i] done

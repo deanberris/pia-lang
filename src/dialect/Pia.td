@@ -53,6 +53,15 @@ def Pia_Dialect : Dialect {
       return ::llvm::StringLiteral("pia.record_buffers");
     }
 
+    /// The string attribute on a function that a module exports through
+    /// an interface (ADR 0039). Only exported functions get C entry points
+    /// when a program is compiled as modules. The value is the module's
+    /// path, `"Pixels"`, whose entry point is mangled `pia$Pixels$blend`,
+    /// or empty for a plain C name (`@abi(c)`, and `main`).
+    static constexpr ::llvm::StringLiteral getExportAttrName() {
+      return ::llvm::StringLiteral("pia.export");
+    }
+
     /// The unit attribute on a spec function (`let spec`): pure and total,
     /// usable in contracts, and given to the solver as its definition
     /// (docs/verifier.md, "Spec functions and lemmas").

@@ -2,6 +2,17 @@
    variants_test.c. A variant crosses the C boundary as its fields: the
    tag, then one field per payload. Every goal here must be proved.
 *)
+module Variants : Shapes
+
+(* What variants_test.c calls, by its C names (ADR 0039). *)
+interface Shapes @abi(c) = sig
+  let shape = type | Circle of u16 | Square of u16 | Empty
+  let opt = type | None | Some of u32
+  let area : (s : shape) -> u64
+  let first_some : (a : opt) -> (b : opt) -> opt
+  let square_of : (n : u16) -> shape
+end
+
 
 let shape = type | Circle of u16 | Square of u16 | Empty
 

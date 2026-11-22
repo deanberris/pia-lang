@@ -80,11 +80,32 @@ The counterexample is an input that breaks the claim. Here `x` is below `lo`, so
 
 `piac --emit=obj` proves the program, then compiles it to an object file for Apple Silicon. Code is generated only when no goal fails.
 
-```sh
-piac --emit=obj -o clamp.o clamp.pia
+A file is a module, and everything in it is private unless an interface the module claims lists it ([ADR 0039](adr/0039-module-and-interface-syntax.md)). A file with no `module` header exports nothing. To call `clamp` from C, give the file a header and list `clamp` in an interface marked `@abi(c)`, which keeps C names:
+
+<!-- example: clamp_c.pia -->
+```ocaml
+module Clamp : Clamping
+
+interface Clamping @abi(c) = sig
+  let clamp : (lo : i32) -> (hi : i32) -> (x : i32) -> i32
+    requires lo <= hi
+    ensures lo <= result && result <= hi
+end
+
+let clamp (lo : i32) (hi : i32) (x : i32) : i32
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+  ensures lo <= x && x <= hi ==> result = x
+= if x < lo then lo else if x > hi then hi else x
 ```
 
-Each Pia function becomes a C function with the same name, so you can call it from C. A C declaration for `clamp` is:
+The interface can promise less than the function proves: here it leaves out the last postcondition, and the compiler proves that what the function ensures implies what the interface says.
+
+```sh
+piac --emit=obj -o clamp.o clamp_c.pia
+```
+
+Each exported function becomes a C function. A C declaration for `clamp` is:
 
 ```c
 #include <stdint.h>

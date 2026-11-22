@@ -1,0 +1,232 @@
+(Program
+  (ModuleHeader "Pixels"
+    (Attrs
+      (Attribute "trusted")
+    )
+    (Paths
+      (Path "PixelOps")
+      (Path "PixelCodec")
+    )
+  )
+  (Interface "PixelOps"
+    (Attrs
+      (Attribute "abi"
+        (Name "c")
+      )
+    )
+    (SigVal "pixel"
+      (Annot
+        (Modifiers)
+        (TypeKind)
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "opaque"
+      (Annot
+        (Modifiers)
+        (TypeName "pixel")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "blend"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "a"
+            (Modifiers)
+            (TypeName "pixel")
+            (None)
+          )
+          (ArrowType
+            (Domain "b"
+              (Modifiers)
+              (TypeName "pixel")
+              (None)
+            )
+            (ArrowType
+              (Domain "t"
+                (Modifiers)
+                (TypeName "u8")
+                (None)
+              )
+              (TypeName "pixel")
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Ensures
+          (Binary "="
+            (Field "a"
+              (Name "result")
+            )
+            (Apply
+              (Name "max")
+              (Field "a"
+                (Name "a")
+              )
+              (Field "a"
+                (Name "b")
+              )
+            )
+          )
+        )
+      )
+    )
+  )
+  (Interface "PixelCodec"
+    (Attrs
+      (Attribute "within"
+        (Name "Image")
+      )
+    )
+    (SigType "decode_error"
+      (TypeValue
+        (Variants
+          (Ctor "Truncated"
+            (None)
+          )
+          (Ctor "BadHeader"
+            (None)
+          )
+        )
+        (Attrs)
+        (None)
+      )
+    )
+  )
+  (LetItem "pixel"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "r"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "g"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "b"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "a"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (LetItem "opaque"
+    (Params)
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "pixel")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (RecordLit
+      (FieldInit "r"
+        (IntLit "0")
+      )
+      (FieldInit "g"
+        (IntLit "0")
+      )
+      (FieldInit "b"
+        (IntLit "0")
+      )
+      (FieldInit "a"
+        (IntLit "255")
+      )
+    )
+  )
+  (LetItem "mix"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (Param "y"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Name "x")
+  )
+  (LetItem "blend"
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "pixel")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "pixel")
+          (None)
+        )
+      )
+      (Param "t"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "pixel")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Name "a")
+  )
+)

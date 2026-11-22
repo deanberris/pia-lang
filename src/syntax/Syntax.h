@@ -25,8 +25,9 @@ namespace pia::syntax {
   X(LetItem)       /* text=name, flags; Params, RetAnnot?, Contracts, body */ \
   X(MetaOperator)  /* text=op; Fixity?, for-type?, body */                   \
   X(Fixity)        /* text="prec level assoc" */                             \
-  X(Interface)     /* text=name; sig items */                                \
+  X(Interface)     /* text=name; Attrs, sig items */                         \
   X(Module)        /* text=name; Paths, item* */                             \
+  X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
   X(Import)        /* text=path */                                           \
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
