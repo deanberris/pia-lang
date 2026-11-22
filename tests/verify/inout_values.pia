@@ -1,0 +1,40 @@
+(* `inout` scalars and records: the callee hands back the parameter's
+   final value after its result, and the caller's variable is rebound to
+   it, so the caller sees the write and the callee's postcondition about
+   it. `old` reads a parameter's value on entry.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let r = type { v : u8 }
+
+let inc (m : borrowed inout mutable r) : unit
+  requires m.v < 9
+  ensures m.v = old m.v + 1
+= m.v <- m.v + 1
+
+let after (y : u8) : u8
+  requires y < 5
+  ensures result = y + 1
+= let m : mutable r = { v = y } in inc m; m.v
+
+let step (x : inout mutable u8) : unit
+  requires x < 200
+  ensures x = old x + 1
+= x <- x + 1
+
+let twice (y : u8) : u8
+  requires y < 100
+  ensures result = y + 2
+= let x : mutable u8 = y in step x; step x; x
+
+(* On one branch only. *)
+let maybe (y : u8) (c : bool) : u8
+  requires y < 100
+  ensures (c ==> result = y + 1) && (c = false ==> result = y)
+= let x : mutable u8 = y in (if c then step x else ()); x
+
+(* `old x` is 0 here, so this postcondition is false. *)
+let wrong (x : inout mutable u8) : unit
+  requires x = 0
+  ensures old x = 1
+= x <- 1
