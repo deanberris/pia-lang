@@ -2,6 +2,7 @@
    i32, on examples, linked by pia_binary. It exits 0 when every result is
    what C++'s <algorithm> gives, for the predicate overloads with lambdas
    too, and otherwise with the number of the first wrong one. *)
+import Pia.Fn.Laws
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Search.Search as S
 
@@ -44,4 +45,17 @@ let main () : i32 =
     else if none9 then 22
     else if lead <> 2 then 23
     else if atmost = false then 24
-    else 0)
+    else (
+      let lo = S.min_element ys (let (a : i32) (b : i32) : bool => a < b) in
+      let hi = S.max_element ys (let (a : i32) (b : i32) : bool => a < b) in
+      let mm = S.minmax_element ys (let (a : i32) (b : i32) : bool => a < b) in
+      let down = S.is_sorted_until ys (let (a : i32) (b : i32) : bool => a > b) in
+      let asc = S.is_sorted sorted (let (a : i32) (b : i32) : bool => a < b) in
+      let pair = S.adjacent_find same5 (let (a : u8) (b : u8) : bool => a = b) in
+      if lo <> 1 then 25
+      else if hi <> 2 then 26
+      else if mm.lowest <> 1 || mm.highest <> 4 then 27
+      else if down <> 2 then 28
+      else if asc = false then 29
+      else if pair <> 0 then 30
+      else 0))

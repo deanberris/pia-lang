@@ -24,7 +24,10 @@ pia_library(
     name = "search",
     src = "Search.pia",
     target_compatible_with = APPLE_SILICON,
-    deps = ["//lib/Pia/Core:order"],
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
 )
 
 # The modifying sequence algorithms: tests/std/modify.pia checks its goals;

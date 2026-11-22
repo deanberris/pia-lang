@@ -5,10 +5,12 @@
    is an arrow, so mismatch and equal are proved here, at each lambda.
    The calls are in code, since a higher-order function cannot be called
    in a contract yet.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
+import Pia.Fn.Laws
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Search.Search as S
 

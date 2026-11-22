@@ -98,6 +98,7 @@ pia_binary(
     src = "Inputs/search_run.pia",
     target_compatible_with = APPLE_SILICON,
     deps = [
+        "//lib/Pia:fn",
         "//lib/Pia/Core:order",
         "//lib/Pia/Core/Algo:search",
     ],
