@@ -4,7 +4,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -127,6 +127,25 @@ cc_test(
     srcs = [
         "record_buffers_test.c",
         ":record_buffers_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# ffi_run.pia, foreign functions (#55), linked with the C functions it calls.
+genrule(
+    name = "ffi_obj",
+    srcs = ["ffi_run.pia"],
+    outs = ["ffi_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "ffi_run_test",
+    srcs = [
+        "ffi_test.c",
+        ":ffi_obj",
     ],
     target_compatible_with = APPLE_SILICON,
 )

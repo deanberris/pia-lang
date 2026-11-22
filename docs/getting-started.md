@@ -118,6 +118,36 @@ cc main.c clamp.o -o main
 
 The [C ABI](codegen.md#c-abi) section of the codegen notes says how slices, arrays and records are passed. Other outputs stop earlier in the pipeline: `--emit=mlir` prints the Pia dialects, `--emit=core` the core MLIR dialects, `--emit=llvm` the LLVM IR and `--emit=asm` the assembly.
 
+## Use another module
+
+Another file reaches `clamp` by importing the interface that lists it. The importer is built against the interface alone, as an *interface artifact*, which `piac --emit=interface` writes, one file per interface (here `Clamp.Clamping.piai`):
+
+```console
+$ piac --emit=interface -o . clamp_c.pia
+```
+
+`import Clamp.Clamping` finds that file on the interface path, which `--iface-path` gives, and the module's items are then `Clamp.clamp`:
+
+<!-- example: fit.pia -->
+<!-- flags: --iface-path=. -->
+```ocaml
+import Clamp.Clamping
+
+let fit (lo : i32) (hi : i32) (x : i32) : i32
+  requires lo <= hi
+  ensures lo <= result
+= Clamp.clamp lo hi x
+```
+
+```console
+$ piac --verify --iface-path=. fit.pia
+fit.pia:6:3: proved: the precondition of 'Clamp.clamp' holds [smt]
+fit.pia:5:3: proved: the postcondition holds [smt]
+2 proved, 0 failed, 0 skipped
+```
+
+The call is checked against the interface's contract, never against the body of `clamp`: `fit` proves the precondition `lo <= hi` from its own, and its postcondition follows from what the interface ensures. The artifact holds only the interface, without comments, private items or bodies, so changing any of those leaves it byte-for-byte the same, and nothing that imports it is rebuilt. To link, compile both files to objects and pass both to the linker. In Bazel, the `pia_library` rule in `//tools/piac:pia.bzl` does all of this, and each module sees only the interfaces of the modules it lists in `deps` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
+
 ## piac at a glance
 
 | Command | What it does |
@@ -125,6 +155,8 @@ The [C ABI](codegen.md#c-abi) section of the codegen notes says how slices, arra
 | `piac --verify f.pia` | prove every goal and print a report |
 | `piac --emit=obj -o f.o f.pia` | prove, then compile to an arm64 object file |
 | `piac --emit=asm f.pia` | prove, then print arm64 assembly (also `llvm`, `core`) |
+| `piac --emit=interface -o dir f.pia` | write the module's interface artifacts to `dir` |
+| `piac --verify --iface-path=dir f.pia` | prove a program that imports interfaces found in `dir` |
 | `piac --emit=mlir f.pia` | print the program in Pia's MLIR dialects |
 | `piac --verify --emit=mlir f.pia` | both, with each proved op marked `pia.proved` |
 | `piac --dump-smt f.pia` | print each SMT query sent to Z3 |

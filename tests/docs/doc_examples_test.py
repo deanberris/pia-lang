@@ -16,6 +16,8 @@ proved. Comments just before a block change that:
                                  program cannot drift from it
     <!-- repl: name.pia -->      a REPL session, written to that file but
                                  not checked with piac --verify
+    <!-- flags: --iface-path=. --> more arguments for its piac --verify,
+                                 such as where its imports are
 
 A ```console block whose first line is `$ piac ...` runs that command in the
 directory holding the examples written so far, and its output (stdout and
@@ -52,7 +54,7 @@ def with_limits(args):
 
 
 FENCE = re.compile(r"^(\s*)```(\w*)\s*$")
-DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|source|repl)\s*:\s*(.*?)\s*-->$")
+DIRECTIVE = re.compile(r"^<!--\s*(example|expect|untested|source|repl|flags)\s*:\s*(.*?)\s*-->$")
 
 
 def blocks(path):
@@ -126,7 +128,8 @@ def main():
                     with open(os.path.join(tmp, name), "w", encoding="utf-8") as f:
                         f.write("\n".join(body) + "\n")
                     want = 1 if directives.get("expect") == "fail" else 0
-                    run = subprocess.run([piac] + with_limits(["--verify", name]), cwd=tmp,
+                    flags = shlex.split(directives.get("flags", ""))
+                    run = subprocess.run([piac] + with_limits(flags + ["--verify", name]), cwd=tmp,
                                          capture_output=True, text=True)
                     checked += 1
                     if run.returncode != want:

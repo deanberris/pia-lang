@@ -1,0 +1,54 @@
+(* Borrowed results (#70): a borrow cannot outlive its lender, and the
+   lender cannot be moved or changed while the borrow is in scope.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let pool = type { cap : u8 }
+let ticket = type { n : u8 }
+let err = type | Empty
+
+let mk (x : u8) : pool = { cap = x }
+let close (p : moved pool) : unit = match p with | { cap } -> ()
+let refill (p : inout pool) : unit = ()
+let lend (p : borrowed pool) : borrowed(p) ticket = { n = p.cap }
+let try_lend (p : borrowed pool) : result (borrowed(p) ticket) err =
+  if p.cap = 0 then Err Empty else Ok (lend p)
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is lent to 't', so it cannot be moved to 'close' while 't' is in scope; a borrow lasts to the end of its scope
+*)
+let moved_while_lent (x : u8) : u8 = let p = mk x in let t = lend p in close p; t.n
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is lent to 't', so it cannot be passed to 'p', which may change it, while 't' is in scope; a borrow lasts to the end of its scope
+*)
+let changed_while_lent (x : u8) : u8 = let p : mutable pool = mk x in let t = lend p in refill p; t.n
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is lent to 't', so it cannot be assigned while 't' is in scope; a borrow lasts to the end of its scope
+*)
+let assigned_while_lent (x : u8) : u8 = let p : mutable pool = mk x in let t = lend p in p <- mk 0; t.n
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this value is borrowed from 'p', so it cannot outlive 'p', whose scope ends here
+*)
+let leak (x : u8) : ticket = let p = mk x in lend p
+
+(* CHECK: borrow_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: this value is borrowed from 'p', so it cannot outlive 'p', whose scope ends here
+*)
+let leak_try (x : u8) : result ticket err =
+  let p = mk x in
+  let t = try_lend p? in
+  Ok t
+
+(* CHECK: borrow_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: this value is borrowed from 'p', so it cannot outlive 'p', whose scope ends here
+*)
+let leak_match (x : u8) : ticket =
+  let p = mk x in
+  match try_lend p with
+  | Ok t -> t
+  | Err _ -> { n = 0 }
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'pass' returns a value borrowed from 'p'; say so in its result type, as in ': borrowed(p) ticket'
+*)
+let pass (p : borrowed pool) : ticket = lend p
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the result of 'lend' is borrowed from 'p', so this argument must be a named value, whose scope the borrow can end in; bind it with 'let' first
+*)
+let unnamed (x : u8) : u8 = (lend (mk x)).n

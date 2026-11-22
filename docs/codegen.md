@@ -66,7 +66,7 @@ LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@ove
 
 ## C ABI
 
-Each Pia function `f` becomes an internal function. Only the functions a module exports through an interface also get a C entry point ([ADR 0039](adr/0039-module-and-interface-syntax.md)): one in an interface marked `@abi(c)` is named `f`, and one in any other interface is named after its module's path, so `luma` in `module Image.Pixels` is `pia$Image$Pixels$luma`. A file with no `module` header exports nothing but its `main`. Private functions keep internal linkage, so LLVM can inline them and remove the ones nothing calls. Calls between Pia functions use the internal one, which takes MLIR memref descriptors. The entry point maps C arguments onto it:
+Each Pia function `f` becomes an internal function. Only the functions a module exports through an interface also get a C entry point ([ADR 0039](adr/0039-module-and-interface-syntax.md)): one in an interface marked `@abi(c)` is named `f`, and one in any other interface is named after its module's path, so `luma` in `module Image.Pixels` is `pia$Image$Pixels$luma`. A file with no `module` header exports nothing but its `main`. Private functions keep internal linkage, so LLVM can inline them and remove the ones nothing calls. An exported function also keeps its Pia calling convention under its module's link symbol, `__pia$Image$Pixels$luma`, which is what another module calls when it imports the function: the importer's object file declares that symbol and has no body for it, so the two object files must be linked together (the `pia_library` rule does this). Calls between Pia functions use the internal one, which takes MLIR memref descriptors. The entry point maps C arguments onto it:
 
 | Pia parameter | C parameters |
 | --- | --- |
@@ -99,6 +99,14 @@ For example, `add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit` is
 void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
               uint8_t *dst, uint64_t ndst);
 ```
+
+## Foreign functions
+
+`let f (x : i32) : i32 ensures ... = extern "sym"` declares a C function (#55). IRGen makes `f` a private function whose whole body is `pia.foreign "sym"(...)`, marked `pia.extern`, so callers see its contract like any other function's: preconditions are proved at each call and postconditions are assumed. The verifier never proves the stub itself; the contract is trusted, and `piac --verify --trust-report` lists it.
+
+A foreign function without a `requires` or `ensures` can be called only as `unsafe f x`. The call is marked `pia.unsafe`: the verifier assumes nothing about its result beyond its type, and treats every buffer passed to it as written. `--trust-report` lists each such call site.
+
+Codegen declares `sym` once, as a private function with C types, and calls it. An integer keeps its width, extended to 32 bits as Apple's arm64 ABI expects (`llvm.zeroext` or `llvm.signext`), and a bool is a zero-extended `i1`. A buffer is passed as a pointer to its first element, which for a view (`xs.[a .. b]`) is part way into its storage; pass its length as a separate `usize` argument. If the Pia declaration has the same name as the symbol, it is renamed `pia$ffi$sym`. For now a foreign function takes integers, bools and buffers of integers, and returns an integer, a bool or unit. tests/codegen/ffi_run.pia runs against C in ffi_test.c.
 
 ## Tests
 

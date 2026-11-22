@@ -1,0 +1,33 @@
+(* Foreign functions (#55), compiled for Apple Silicon and linked with
+   ffi_test.c, which defines the C functions and calls these.
+*)
+module Ffi : Calls
+
+interface Calls @abi(c) = sig
+  let total : (xs : [u8]) -> u32
+  let tail_total : (xs : [u8]) -> u32
+    requires len xs >= 1
+  let pct : (x : i32) -> i32
+  let twice_raw : (x : i32) -> i32
+end
+
+let sum_bytes (xs : [u8]) (n : usize) : u32
+  requires n <= len xs
+  ensures true
+= extern "sum_bytes"
+
+let clamp (x : i32) : i32
+  ensures result >= 0 && result <= 100
+= extern "clamp_c"
+
+let raw (x : i32) : i32 = extern "raw_c"
+
+let total (xs : [u8]) : u32 = sum_bytes xs (len xs)
+
+(* A view starts part way in: C gets a pointer to its first element. *)
+let tail_total (xs : [u8]) : u32
+  requires len xs >= 1
+= let t = xs.[1 .. len xs] in sum_bytes t (len t)
+
+let pct (x : i32) : i32 = clamp x
+let twice_raw (x : i32) : i32 = unsafe raw x

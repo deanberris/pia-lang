@@ -1,0 +1,30 @@
+(* A module that other test files import (ADR 0039). `helper` is private,
+   and `mix` promises less than its body does. *)
+module Image.Pixels : Ops, C
+
+interface Ops = sig
+  (* A comment the artifact does not keep. *)
+  let mix : (a : u8) -> (b : u8) -> u8
+    ensures result <= a || result <= b
+  let luma : (r : u8)
+          -> (g : u8) -> (b : u8) -> u8     \ laid out differently
+    requires r <= 250
+end
+
+interface C @abi(c) = sig
+  let luma : (r : u8) -> (g : u8) -> (b : u8) -> u8
+    requires r <= 250
+end
+
+let helper (x : u8) : u8
+  ensures result = x / 2
+= x >> 1
+let unused (x : u8) : u8 = x
+
+let mix (a : u8) (b : u8) : u8
+  ensures result <= a || result <= b
+= helper a + helper b
+
+let luma (r : u8) (g : u8) (b : u8) : u8
+  requires r <= 250
+= mix r (mix g b)

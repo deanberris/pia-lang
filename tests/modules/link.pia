@@ -1,0 +1,30 @@
+(* A module keeps each exported function's Pia calling convention under
+   its link symbol, `__pia$<module>$<name>`, and an importer calls that
+   symbol, declared, with no body of its own (ADR 0039).
+// RUN: piac --emit=llvm %S/Inputs/pixels.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
+// RUN: piac --emit=llvm --iface-path=%t %s | FileCheck %s
+*)
+module Blend : C
+
+import Image.Pixels.Ops
+
+interface C @abi(c) = sig
+  let grey : (v : u8) -> u8
+    requires v <= 200
+end
+
+let grey (v : u8) : u8
+  requires v <= 200
+= Image.Pixels.luma v v v
+
+(*
+// LIB-DAG: define {{(range\([^)]*\) )?}}i8 @"__pia$Image$Pixels$mix"(
+// LIB-DAG: define {{(range\([^)]*\) )?}}i8 @"__pia$Image$Pixels$luma"(
+// LIB-DAG: define {{.*}} @luma(
+// LIB-DAG: define {{.*}} @"pia$Image$Pixels$mix"(
+
+// CHECK-DAG: declare {{.*}}i8 @"__pia$Image$Pixels$luma"(i8, i8, i8)
+// CHECK-DAG: define {{.*}} @grey(
+// CHECK-NOT: Image.Pixels.luma
+*)

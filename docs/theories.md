@@ -14,7 +14,7 @@ Every theory has the same four parts.
 3. **A proof that uses it.** A lemma or a function contract that the axioms prove.
 4. **A mistake it catches.** A version that is wrong and fails with a counterexample.
 
-Modules cannot import one another yet, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
+A module cannot import another's theory yet, since interfaces do not carry theories, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
 
 An entry also says whether anything in it is **trusted**. A trusted theory has no model that the program can find, so it is declared in a `@trusted` module and imported with `trusting`. Trust covers the whole theory, and the compiler lists every axiom it brings in `piac --trust-report`.
 
@@ -218,7 +218,7 @@ A request fails if any of three stages fails. Each stage's failure rate is at mo
 
 **Independence is a trusted axiom.** A tighter bound, such as "two replicas both lose a write with probability at most p²", needs independence, and no deterministic random number generator is truly independent. That is the idealisation every analysis of a randomised algorithm makes, so Pia makes it visible: the axiom lives in a theory with no model, which only a `@trusted` module may declare, and its users import it with `trusting`. Trust covers the whole theory, so `Ideal` holds only the axiom that needs it.
 
-Modules cannot import one another yet, so this program repeats `Prob` and its model, and declares `Ideal` in the same `@trusted` file. In a library, `Ideal` would be its own module, `Pia.Rand.Ideal`, and the client would write `import Pia.Rand.Ideal trusting`.
+A module cannot import another's theory yet, so this program repeats `Prob` and its model, and declares `Ideal` in the same `@trusted` file. In a library, `Ideal` would be its own module, `Pia.Rand.Ideal`, and the client would write `import Pia.Rand.Ideal trusting`.
 
 <!-- example: ideal.pia -->
 ```ocaml

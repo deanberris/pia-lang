@@ -138,6 +138,20 @@ bool hasModifier(std::string_view modifiers, std::string_view word) {
   return false;
 }
 
+const syntax::Node *findLentAnnot(const syntax::Node &annot) {
+  if (annot.kind == NodeKind::Annot && !annot.kids.empty() &&
+      annot.kids[0]->kind == NodeKind::Modifiers && !annot.kids[0]->kids.empty())
+    return &annot;
+  for (const syntax::NodePtr &k : annot.kids)
+    if (const syntax::Node *a = findLentAnnot(*k)) return a;
+  return nullptr;
+}
+
+const syntax::Node *findLender(const syntax::Node &annot) {
+  const syntax::Node *a = findLentAnnot(annot);
+  return a ? a->kids[0]->kids[0].get() : nullptr;
+}
+
 mlir::Type TypeResolver::builtin(std::string_view name) {
   auto make = [&](llvm::APInt lo, llvm::APInt hi) -> mlir::Type {
     return IntType::get(&ctx_, lo, hi);
@@ -176,8 +190,27 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
   return std::nullopt;
 }
 
+// A buffer's elements are stored struct of arrays, one buffer per field,
+// so an element cannot hold a buffer itself yet.
+static bool holdsBuffer(mlir::Type t) {
+  if (mlir::isa<ArrayType, SliceType>(t)) return true;
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    for (mlir::Type f : r.getFieldTypes())
+      if (holdsBuffer(f)) return true;
+  return false;
+}
+
+bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
+  if (!holdsBuffer(elem) || mlir::isa<ArrayType>(elem)) return true;
+  diags_.error(at, "a buffer of " + typeName(elem) + " is not supported "
+                   "yet: its elements hold a slice");
+  return false;
+}
+
 mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
+    case NodeKind::Annot:  // `(borrowed(m) [u8])` in a result type (#70)
+      return resolveAnnot(type);
     case NodeKind::TypeName: {
       for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
         if (auto p = it->find(type.text); p != it->end()) return p->second;
@@ -255,6 +288,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     case NodeKind::ArrayType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
+      if (!plainElement(elem, type.kids[0]->loc)) return {};
       const Node &len = *type.kids[1];
       auto lit = len.kind == NodeKind::IntLit ? parseIntLiteral(len.text)
                                               : std::nullopt;
@@ -268,6 +302,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     case NodeKind::SliceType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
+      if (!plainElement(elem, type.kids[0]->loc)) return {};
       return SliceType::get(&ctx_, elem);
     }
     default:
@@ -445,7 +480,7 @@ mlir::Type buildVariant(const std::string &name, const Node &body,
       if (!payload) return {};
       // `Ok of unit`, as in `result unit e`, carries nothing.
       if (types.isUnit(payload)) payload = {};
-      if (payload && mlir::isa<ArrayType, SliceType>(payload)) {
+      if (payload && mlir::isa<ArrayType>(payload)) {
         diags.error(c->kids[0]->loc,
                     "a constructor's payload of type " + typeName(payload) +
                         " is not supported yet");
@@ -516,8 +551,9 @@ static mlir::Type buildType(const std::string &name, const Node &value,
       diags.error(f->loc, "a field cannot have type unit");
       return {};
     }
-    if (mlir::isa<ArrayType, SliceType>(t)) {
-      diags.error(f->loc, "a record field cannot be an array or slice yet");
+    if (mlir::isa<ArrayType>(t)) {
+      diags.error(f->loc, "a record field cannot be an array yet; a slice "
+                          "field can hold one");
       return {};
     }
     for (mlir::StringAttr n : names)
@@ -713,6 +749,12 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       continue;
     }
     const Node &annot = *p->kids[0];
+    if (const Node *l = findLender(annot)) {
+      diags.error(l->loc, "'borrowed(" + l->text + ")' names the lender of a "
+                          "function's result; a parameter is just 'borrowed'");
+      ok = false;
+      continue;
+    }
     Param param;
     param.name = p->text;
     param.modifiers = annot.kids[0]->text;
@@ -734,6 +776,25 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       ret.kids[0]->kind == NodeKind::Annot) {
     sig.result = types.resolveAnnot(*ret.kids[0]);
     if (!sig.result) ok = false;
+    sig.resultLender.clear();
+    if (const Node *l = findLender(*ret.kids[0])) {
+      auto p = std::find_if(sig.params.begin(), sig.params.end(),
+                            [&](const Param &q) { return q.name == l->text; });
+      if (p == sig.params.end()) {
+        diags.error(l->loc, "'borrowed(" + l->text + ")': the result is "
+                            "borrowed from a parameter, and '" + item.text +
+                            "' has no parameter '" + l->text + "'");
+        ok = false;
+      } else if (hasModifier(p->modifiers, "moved")) {
+        diags.error(l->loc, "'" + l->text + "' is moved into '" + item.text +
+                            "', so it ends there and the result cannot "
+                            "borrow from it; take it 'borrowed'");
+        ok = false;
+      } else {
+        sig.resultLender = l->text;
+        sig.lentType = types.resolveAnnot(*findLentAnnot(*ret.kids[0]));
+      }
+    }
   }
   if (!sig.typeArgs.empty()) types.replaceTypeScopes(std::move(saved));
   return ok;

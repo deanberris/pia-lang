@@ -1,0 +1,20 @@
+(* Foreign functions (#55): each C symbol gets a private declaration with
+   C types, and a buffer goes to C as a pointer to its first element.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+let sum_bytes (xs : [u8]) (n : usize) : u32
+  requires n <= len xs
+  ensures true
+= extern "sum_bytes"
+
+let small (x : u8) : u8 ensures true = extern "small"
+
+let total (xs : [u8]) : u32 = sum_bytes xs (len xs)
+let tiny (x : u8) : u8 = small x
+
+(* CHECK-DAG: func.func private @sum_bytes(!llvm.ptr, i64) -> i32
+// CHECK-DAG: func.func private @small(i8 {llvm.zeroext}) -> (i8 {llvm.zeroext})
+// CHECK-DAG: llvm.getelementptr
+// CHECK-DAG: call @sum_bytes(
+*)

@@ -56,10 +56,26 @@ def Pia_Dialect : Dialect {
     /// The string attribute on a function that a module exports through
     /// an interface (ADR 0039). Only exported functions get C entry points
     /// when a program is compiled as modules. The value is the module's
-    /// path, `"Pixels"`, whose entry point is mangled `pia$Pixels$blend`,
-    /// or empty for a plain C name (`@abi(c)`, and `main`).
+    /// path, `"Pixels"`, or empty for a file with no module header. Its C
+    /// entry point is mangled `pia$Pixels$blend` unless it has `pia.abi_c`,
+    /// and a module's function also keeps its Pia calling convention under
+    /// the link symbol `__pia$Pixels$blend`, which importers call.
     static constexpr ::llvm::StringLiteral getExportAttrName() {
       return ::llvm::StringLiteral("pia.export");
+    }
+
+    /// The unit attribute on an exported function whose C entry point keeps
+    /// its plain name: it is in an `@abi(c)` interface, or it is `main`.
+    static constexpr ::llvm::StringLiteral getAbiCAttrName() {
+      return ::llvm::StringLiteral("pia.abi_c");
+    }
+
+    /// The module path on a function imported from another module's
+    /// interface (ADR 0039). Its body is the interface's contract around a
+    /// `pia.arbitrary` result, for the verifier; codegen replaces it with
+    /// a declaration of the module's link symbol, `__pia$Pixels$blend`.
+    static constexpr ::llvm::StringLiteral getImportAttrName() {
+      return ::llvm::StringLiteral("pia.import");
     }
 
     /// The unit attribute on a spec function (`let spec`): pure and total,
@@ -423,6 +439,17 @@ def Pia_SliceOp : Pia_Op<"slice", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Pia_EmptyOp : Pia_Op<"empty", [Pure]> {
+  let summary = "a slice with no elements";
+  let description = [{
+    The value of a slice that nothing reads: an unused payload of a variant,
+    such as the `Ok` field of `Err e` in `result [u8] e`. It has length 0,
+    so every load or store through it is out of bounds.
+  }];
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{
@@ -432,6 +459,34 @@ def Pia_AbortOp : Pia_Op<"abort"> {
   }];
   let results = (outs Variadic<AnyType>:$results);
   let assemblyFormat = "attr-dict (`:` type($results)^)?";
+}
+
+def Pia_ArbitraryOp : Pia_Op<"arbitrary"> {
+  let summary = "a value the verifier knows nothing about";
+  let description = [{
+    The result of an imported function (ADR 0039), whose body lives in
+    another module: between the interface's `requires` and `ensures`, it
+    stands for whatever that body returns. Only the verifier sees it, since
+    codegen replaces an imported function's body with a declaration.
+  }];
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
+def Pia_ForeignOp : Pia_Op<"foreign"> {
+  let summary = "call a C function: the body of an `extern` declaration";
+  let description = [{
+    `%r = pia.foreign "crc32_z"(%crc, %buf, %n) : (...) -> ...` is the whole
+    body of `let crc32_z ... = extern "crc32_z"` (#55). The verifier never
+    looks inside: callers rely on the declaration's contract, which is
+    trusted. Codegen calls the C symbol, passing a buffer as its data
+    pointer.
+  }];
+  let arguments = (ins StrAttr:$symbol, Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $symbol `(` $args `)` attr-dict `:` functional-type($args, $results)
+  }];
 }
 
 def Pia_RecordOp : Pia_Op<"record", [Pure]> {

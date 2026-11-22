@@ -382,6 +382,11 @@ class Linter {
     assumes(body);
 
     if (!proofMode || erased) return;
+    // A foreign function's types are its C signature (#55).
+    if (body.kind == N::Apply && body.kids.size() == 2 &&
+        body.kids[0]->kind == N::Name && body.kids[0]->text == "extern" &&
+        body.kids[1]->kind == N::StringLit)
+      return;
 
     // The targets a constant bound can move into a type.
     std::vector<Target> targets;

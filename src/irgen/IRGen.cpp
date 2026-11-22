@@ -74,6 +74,10 @@ struct Binding {
   std::string modifiers;  // a parameter's modifiers, empty for locals
   bool isParam = false;
   unsigned loopDepth = 0;  // the loops open where it was bound
+  // The locals and parameters its value is borrowed from (#70): it holds
+  // the result of a call whose result type is `borrowed(m) ...`, or a part
+  // of one.
+  std::vector<std::shared_ptr<Binding>> lenders;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -592,9 +596,12 @@ class Gen {
     // An instance is internal: C calls the generic's instances only through
     // Pia functions, which name concrete types.
     if (!sig.typeArgs.empty()) fn.setPrivate();
-    if (auto e = exports_.find(sig.name); e != exports_.end())
+    if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
+      if (abiC_.count(sig.name))
+        fn->setAttr(PiaDialect::getAbiCAttrName(), b_.getUnitAttr());
+    }
     for (size_t i = 0; i < sig.params.size(); ++i)
       if (!sig.params[i].modifiers.empty())
         fn.setArgAttr(i, PiaDialect::getModifiersAttrName(),
@@ -661,6 +668,11 @@ class Gen {
       fn.setPrivate();
       fn->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
       fn->setAttr(PiaDialect::getAbstractAttrName(), b_.getUnitAttr());
+      return;
+    }
+    // An imported function's body is in another module (ADR 0039).
+    if (hasFlag(item, "import")) {
+      genImport(item, sig, fn);
       return;
     }
     // `int` and `real` exist only for the verifier, so code can neither
@@ -763,10 +775,17 @@ class Gen {
     dropping_ = sig.name == "drop" && sig.params.size() == 1
                     ? sig.params[0].type
                     : Type();
+    // `= extern "symbol"`: a C function (#55).
+    std::string foreign;
+    bool isExtern = externSymbol(bodyNode, foreign);
+    if (isExtern) {
+      fn.setPrivate();
+      fn->setAttr("pia.extern", b_.getStringAttr(foreign));
+    }
     // A `moved` parameter with a `drop` is dropped at the end of the body
     // unless it is consumed first.
     const Node *bodyPtr = &bodyNode;
-    if (!isSpec && !ghost_)
+    if (!isSpec && !ghost_ && !isExtern)
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
           if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
@@ -775,9 +794,19 @@ class Gen {
             frames_.back().defers.push_back(&d);
           }
     if (!isSpec) addTails(*bodyPtr);
-    R body = isSpec ? genContractExpr(bodyNode, sig.result)
-                    : genExpr(*bodyPtr, sig.result);
+    R body = isExtern ? genForeign(bodyNode, foreign, sig, entry)
+             : isSpec ? genContractExpr(bodyNode, sig.result)
+                      : genExpr(*bodyPtr, sig.result);
     if (!body) return;
+    if (!isSpec && !ghost_)
+      for (const BindingPtr &l : lendersOf(*bodyPtr))
+        if (l->name != sig.resultLender) {
+          fail(bodyNode, "'" + name + "' returns a value borrowed from '" +
+                             l->name + "'; say so in its result type, as in "
+                             "': borrowed(" + l->name + ") " +
+                             typeName(body->type) + "'");
+          return;
+        }
     if (!isSpec && !ghost_) {
       bool owned = true;
       for (const sema::Param &p : sig.params) {
@@ -836,6 +865,44 @@ class Gen {
     }
     popScope();
     create<mlir::func::ReturnOp>(l, rets);
+  }
+
+  // A function imported from another module's interface (ADR 0039): the
+  // interface's `requires`, a result the verifier knows nothing more about,
+  // and the interface's `ensures` about it. Callers are checked against
+  // that contract, as against any callee's; the function itself is not
+  // verified here, since its module proves it meets the interface.
+  void genImport(const Node &item, const sema::FuncSig &sig,
+                 mlir::func::FuncOp fn) {
+    std::string from;
+    llvm::SmallVector<llvm::StringRef> words;
+    llvm::StringRef(item.flags).split(words, ' ', -1, false);
+    for (llvm::StringRef w : words)
+      if (w.consume_front("from:")) from = w.str();
+    fn->setAttr(PiaDialect::getImportAttrName(), b_.getStringAttr(from));
+    fn.setPrivate();
+    const Node &contracts = *item.kids[2];
+    for (const syntax::NodePtr &c : contracts.kids) {
+      if (c->kind != NodeKind::Requires) continue;
+      R p = genPredicate(*c->kids[0]);
+      if (!p) return;
+      create<contract::RequiresOp>(loc(*c), p->value);
+    }
+    llvm::SmallVector<Value> rets;
+    pushScope();
+    if (sig.result && !isUnit(sig.result)) {
+      Value r = create<ArbitraryOp>(loc(item), sig.result).getResult();
+      rets.push_back(r);
+      bind("result", r, sig.result, false);
+    }
+    for (const syntax::NodePtr &c : contracts.kids) {
+      if (c->kind != NodeKind::Ensures) continue;
+      R p = genPredicate(*c->kids[0]);
+      if (!p) return;
+      create<contract::EnsuresOp>(loc(*c), p->value);
+    }
+    popScope();
+    create<mlir::func::ReturnOp>(loc(item), rets);
   }
 
   // `{ p : real where 0.0 <= p }`: a `requires` (or, for a result, an
@@ -1138,10 +1205,12 @@ class Gen {
   // Every expression in code is checked for a spec-only type, so neither
   // `int` nor `real` reaches code generation (ADR 0036).
   R genExpr(const Node &n, Type expected) {
+    lent_.erase(&n);
     R r = genExprOf(n, expected);
     if (r && !contract_ && !ghost_)
       if (sema::specOnlyPart(r->type))
         return fail(n, "this expression has " + specOnlyMessage(r->type));
+    if (r) noteLenders(n, *r);
     return r;
   }
 
@@ -1649,7 +1718,8 @@ class Gen {
     return TV{create<RecordOp>(l, rt, fields).getResult(), rt};
   }
 
-  // Some value of `t`: its lowest integer, false, or a record of those.
+  // Some value of `t`: its lowest integer, false, an empty slice, or a
+  // record of those.
   Value defaultValue(Location l, Type t) {
     if (auto it = mlir::dyn_cast<IntType>(t)) {
       llvm::APInt v = it.contains(llvm::APInt(kWidth, 0))
@@ -1659,6 +1729,8 @@ class Gen {
           l, it, b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
     }
     if (isBool(t)) return boolConst(l, false);
+    if (auto st = mlir::dyn_cast<SliceType>(t))
+      return create<EmptyOp>(l, st).getResult();
     if (auto rt = mlir::dyn_cast<RecordType>(t)) {
       llvm::SmallVector<Value> fields;
       for (Type ft : rt.getFieldTypes()) {
@@ -1844,9 +1916,10 @@ class Gen {
       chain = std::move(ifNode);
     }
     pushScope();
-    bind(hidden, s->value, s->type, false);
+    bind(hidden, s->value, s->type, false)->lenders = lendersOf(*n.kids[0]);
     R r = genExpr(*chain, expected);
     popScope();
+    passLenders(n, *chain);
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
     return r;
   }
@@ -1927,9 +2000,10 @@ class Gen {
     const Node &chain = *body;
     matchTrees_.push_back(std::move(body));  // diagnostics may point into it
     pushScope();
-    bind(hidden, s.value, s.type, false);
+    bind(hidden, s.value, s.type, false)->lenders = lendersOf(*n.kids[0]);
     R r = genExpr(chain, expected);
     popScope();
+    passLenders(n, chain);
     return r;
   }
 
@@ -2147,6 +2221,15 @@ class Gen {
 
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
+    if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
+                                     f.flags.empty() && !lookup(f.text) &&
+                                     overloadSet(f.text).empty()) {
+      if (f.text == "unsafe") return genUnsafe(n);
+      if (f.text == "extern")
+        return fail(n, "'extern \"symbol\"' is only a function's whole body, "
+                       "as in 'let f (x : i32) : i32 ensures true = extern "
+                       "\"f\"'");
+    }
     // `f<u8> x` names the type arguments; the rest are deduced.
     const Node *targs = nullptr;
     const Node *callee = n.kids[0].get();
@@ -2278,6 +2361,26 @@ class Gen {
     if (sig.item && hasFlag(*sig.item, "lemma") && contract_)
       return fail(n, "'" + sig.name + "' is a lemma: call it as a statement, "
                      "and its postcondition holds after the call");
+    {
+      std::string symbol;
+      bool foreign = sig.item && sig.item->kids.size() > 3 &&
+                     externSymbol(*sig.item->kids[3], symbol);
+      bool contracted = false;
+      if (foreign)
+        for (const syntax::NodePtr &c : sig.item->kids[2]->kids)
+          contracted |= c->kind == NodeKind::Requires ||
+                        c->kind == NodeKind::Ensures;
+      bool isUnsafe = unsafeAt_ == &n;
+      if (foreign && !contracted && !isUnsafe)
+        return fail(n, "'" + sig.name + "' is a foreign function without a "
+                       "contract, so only 'unsafe " + sig.name + " ...' can "
+                       "call it; or give its declaration a 'requires' or "
+                       "'ensures', even 'ensures true'");
+      if (isUnsafe && !(foreign && !contracted))
+        return fail(n, "'unsafe' marks a call of a foreign function without "
+                       "a contract, and '" + sig.name + "' is not one; "
+                       "call it without 'unsafe'");
+    }
     // A lemma's call is erased from code, so its arguments are
     // specification, which may use spec functions, `int` and `real`.
     bool savedGhost = ghost_;
@@ -2301,9 +2404,38 @@ class Gen {
         unconsume(*args[i]);
       else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
         return std::nullopt;
+      if ((writes(sig.params[i]) ||
+           sema::hasModifier(sig.params[i].modifiers, "mutable")) &&
+          args[i]->kind == NodeKind::Name && args[i]->flags.empty())
+        if (BindingPtr b = lookup(args[i]->text))
+          if (!notLent(b, *args[i], "passed to '" + sig.params[i].name +
+                                        "', which may change it,"))
+            return std::nullopt;
       operands.push_back(c->value);
     }
-    return emitCall(n, sig, operands);
+    Lenders lenders;
+    if (!sig.resultLender.empty() && !contract_ && !ghost_) {
+      if (sig.lentType) lentTypes_.insert(sig.lentType.getAsOpaquePointer());
+      size_t i = 0;
+      while (sig.params[i].name != sig.resultLender) ++i;
+      const Node &a = *args[i];
+      lenders = lendersOf(a);
+      BindingPtr b = a.kind == NodeKind::Name && a.flags.empty()
+                         ? lookup(a.text)
+                         : nullptr;
+      if (b)
+        addLenders(lenders, {b});
+      else if (lenders.empty())
+        return fail(a, "the result of '" + sig.name + "' is borrowed from '" +
+                           sig.params[i].name + "', so this argument must "
+                           "be a named value, whose scope the borrow can "
+                           "end in; bind it with 'let' first");
+    }
+    R out = emitCall(n, sig, operands);
+    // Recorded even when empty: a call's result borrows only what its
+    // result type says.
+    if (out) lent_[&n] = std::move(lenders);
+    return out;
   }
 
   // A call of a generic function: the type arguments come from `targs`
@@ -3613,7 +3745,10 @@ class Gen {
     }
     // `main` is the program's entry point, and is never in an interface.
     for (const std::string &symbol : overloads_["main"])
-      if (!sigs_.at(symbol).overloaded) exports_[symbol] = "";
+      if (!sigs_.at(symbol).overloaded) {
+        exports_[symbol] = header ? header->text : "";
+        abiC_.insert(symbol);
+      }
     if (!header) return;
     for (const syntax::NodePtr &a : header->kids[0]->kids)
       if (a->text != "trusted" || !a->kids.empty())
@@ -3746,8 +3881,8 @@ class Gen {
       if (sigs_.at(symbol).isGeneric() || !sigs_.at(symbol).typeArgs.empty())
         continue;
       // A function in a C interface keeps its C name.
-      auto [e, fresh] = exports_.emplace(symbol, hasAbiC(iface) ? "" : header.text);
-      if (!fresh && hasAbiC(iface)) e->second = "";
+      exports_.emplace(symbol, header.text);
+      if (hasAbiC(iface)) abiC_.insert(symbol);
     }
   }
 
@@ -4417,6 +4552,7 @@ class Gen {
     if (!isUnit(sig.result)) results.push_back(sig.result);
     auto call = create<mlir::func::CallOp>(loc(n), sig.name, results,
                                               operands);
+    if (unsafeAt_ == &n) call->setAttr("pia.unsafe", b_.getUnitAttr());
     // A call left open between overloads told apart by their
     // preconditions: the verifier chooses (verify::resolveOverloads).
     if (openCandidates_ && sig.name == openFor_) {
@@ -4750,6 +4886,7 @@ class Gen {
       if (!b->isMutable)
         return fail(obj, "'" + obj.text + "' is not mutable; declare it "
                          "as 'let " + obj.text + " : mutable T = ...'");
+      if (!notLent(b, obj, "assigned")) return std::nullopt;
       std::optional<unsigned> i = rt.fieldIndex(place.text);
       if (!i)
         return fail(place, typeName(rt) + " has no field '" + place.text + "'");
@@ -4776,11 +4913,13 @@ class Gen {
                            "as 'let " + place.text + " : mutable T = ...'");
       if (mlir::isa<ArrayType, SliceType>(b->type))
         return fail(place, "assigning a whole array is not supported yet");
+      if (!notLent(b, place, "assigned")) return std::nullopt;
       R v = genExpr(valueNode, b->type);
       if (!v) return v;
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
       b->value = c->value;
+      addLenders(b->lenders, lendersOf(valueNode));
       moved_.erase(b);  // a moved local holds a value again
       return unit();
     }
@@ -4901,6 +5040,78 @@ class Gen {
     return false;
   }
 
+  // --- FFI (#55) -------------------------------------------------------
+
+  // Whether `body` is `extern "symbol"`, and the symbol.
+  static bool externSymbol(const Node &body, std::string &symbol) {
+    if (body.kind != NodeKind::Apply || body.kids.size() != 2) return false;
+    const Node &f = *body.kids[0], &s = *body.kids[1];
+    if (f.kind != NodeKind::Name || f.text != "extern" || !f.flags.empty() ||
+        s.kind != NodeKind::StringLit)
+      return false;
+    symbol = s.text;
+    if (symbol.size() >= 2 && symbol.front() == '"' && symbol.back() == '"')
+      symbol = symbol.substr(1, symbol.size() - 2);
+    return true;
+  }
+
+  bool foreignType(Type t) {
+    if (mlir::isa<IntType>(t) || isBool(t)) return true;
+    if (mlir::isa<ArrayType, SliceType>(t))
+      return mlir::isa<IntType>(elementType(t));
+    return false;
+  }
+
+  // An extern's body: the C call, with the parameters as its arguments.
+  R genForeign(const Node &body, const std::string &symbol,
+               const sema::FuncSig &sig, Block *entry) {
+    if (symbol.empty() ||
+        !llvm::all_of(symbol, [](char c) {
+          return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        }))
+      return fail(*body.kids[1], "a C symbol is letters, digits and '_'");
+    for (const sema::Param &p : sig.params)
+      if (!foreignType(p.type)) {
+        diags_.error(p.loc, "a foreign function takes integers, bools and "
+                            "buffers of integers for now, but '" + p.name +
+                            "' has type " + typeName(p.type));
+        return std::nullopt;
+      }
+    if (!sig.result || !(isUnit(sig.result) || mlir::isa<IntType>(sig.result) ||
+                         isBool(sig.result)))
+      return fail(body, "a foreign function returns unit, an integer or a "
+                        "bool for now");
+    llvm::SmallVector<Type> results;
+    if (!isUnit(sig.result)) results.push_back(sig.result);
+    llvm::SmallVector<Value> args(entry->getArguments().begin(),
+                                  entry->getArguments().end());
+    auto op = create<ForeignOp>(loc(body), results,
+                                b_.getStringAttr(symbol), args);
+    if (results.empty()) return unit();
+    return TV{op.getResult(0), sig.result};
+  }
+
+  // `unsafe f x`: a call of a foreign function that has no contract. The
+  // caller vouches for it; the verifier assumes nothing it does.
+  R genUnsafe(const Node &n) {
+    if (n.kids.size() < 2 || n.kids[1]->kind != NodeKind::Name)
+      return fail(n, "'unsafe' marks one call, as in 'unsafe f x'");
+    syntax::NodePtr call;
+    if (n.kids.size() == 2) {
+      call = syntax::clone(*n.kids[1]);
+    } else {
+      call = syntax::makeNode(NodeKind::Apply, n.kids[1]->loc);
+      for (size_t i = 1; i < n.kids.size(); ++i)
+        call->add(syntax::clone(*n.kids[i]));
+    }
+    const Node *c = keep(std::move(call));
+    const Node *saved = unsafeAt_;
+    unsafeAt_ = c;
+    R r = genExpr(*c, Type());
+    unsafeAt_ = saved;
+    return r;
+  }
+
   // --- `drop` (#85) -----------------------------------------------------
 
   // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
@@ -4953,6 +5164,137 @@ class Gen {
     call->flags.clear();
     const Node &c = *keep(std::move(call));
     return genApply(c, Type());
+  }
+
+  // --- Borrows (#70) ----------------------------------------------------
+
+  using Lenders = std::vector<BindingPtr>;
+
+  static void addLenders(Lenders &to, const Lenders &from) {
+    for (const BindingPtr &b : from)
+      if (llvm::find(to, b) == to.end()) to.push_back(b);
+  }
+
+  Lenders lendersOf(const Node &n) {
+    auto it = lent_.find(&n);
+    if (it != lent_.end()) return it->second;
+    // A name read without `genExpr`, such as the hidden scrutinee of
+    // `#payload #match0 Ok`.
+    if (n.kind == NodeKind::Name && !contract_ && !ghost_)
+      if (BindingPtr b = lookup(n.text)) return b->lenders;
+    return {};
+  }
+
+  // `n` was generated as `other`, a tree made from it.
+  void passLenders(const Node &n, const Node &other) {
+    Lenders l = lendersOf(other);
+    if (l.empty()) lent_.erase(&n);
+    else lent_[&n] = std::move(l);
+  }
+
+  // What `n`'s value, just generated, is borrowed from: a local that holds
+  // a borrow, a part of one, or either branch's. A call records its own.
+  // A copied value, such as an integer read from a borrowed slice, borrows
+  // nothing.
+  void noteLenders(const Node &n, const TV &r) {
+    if (contract_ || ghost_ || lent_.count(&n) || !mayBorrow(r.type)) return;
+    Lenders l;
+    switch (n.kind) {
+      case NodeKind::Name:
+        if (n.flags.empty())
+          if (BindingPtr b = lookup(n.text)) l = b->lenders;
+        break;
+      case NodeKind::Apply:
+        // Not a call, which records its own: a constructor, `Ok (lend p)`,
+        // or `#payload x Ok` from a match or a `?`. Either holds what its
+        // arguments borrow.
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          addLenders(l, lendersOf(*n.kids[i]));
+        break;
+      case NodeKind::Field:
+        l = lendersOf(*n.kids[0]);
+        break;
+      case NodeKind::Index:
+        if (n.kids[1]->kind == NodeKind::Range) l = lendersOf(*n.kids[0]);
+        break;
+      case NodeKind::Sequence:
+        l = lendersOf(*n.kids.back());
+        break;
+      case NodeKind::Cleanup:
+        l = lendersOf(*n.kids[0]);
+        break;
+      case NodeKind::If:
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          addLenders(l, lendersOf(*n.kids[i]));
+        break;
+      case NodeKind::RecordLit:
+        for (const syntax::NodePtr &f : n.kids)
+          if (!f->kids.empty()) addLenders(l, lendersOf(*f->kids[0]));
+        break;
+      default:
+        break;
+    }
+    if (!l.empty()) lent_[&n] = std::move(l);
+  }
+
+  // Whether a value of type `t` can hold a borrow: it is, or holds, a type
+  // that some call's result borrows, such as the `[u8]` of `result
+  // (borrowed(m) [u8]) e`. So the error of that result, a copy of a
+  // field, or a length borrows nothing.
+  bool mayBorrow(Type t, unsigned depth = 0) {
+    if (!t || copied(t) || depth > 8) return false;
+    if (lentTypes_.count(t.getAsOpaquePointer())) return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t))
+      for (Type f : rt.getFieldTypes())
+        if (mayBorrow(f, depth + 1)) return true;
+    if (Type e = elementType(t)) return mayBorrow(e, depth + 1);
+    return false;
+  }
+
+  // A named local that borrows from `b` and is still in scope, if any.
+  BindingPtr borrowerOf(const BindingPtr &b) {
+    for (const auto &scope : scopes_)
+      for (const auto &[name, x] : scope)
+        if (x != b && name.find('#') == std::string::npos &&
+            llvm::find(x->lenders, b) != x->lenders.end())
+          return x;
+    return nullptr;
+  }
+
+  // `b` is about to change: not while something borrows from it.
+  bool notLent(const BindingPtr &b, const Node &at, const std::string &how) {
+    if (contract_ || ghost_) return true;
+    BindingPtr x = borrowerOf(b);
+    if (!x) return true;
+    fail(at, "'" + b->name + "' is lent to '" + x->name + "', so it cannot "
+             "be " + how + " while '" + x->name + "' is in scope; a borrow "
+             "lasts to the end of its scope");
+    return false;
+  }
+
+  // At the end of `b`'s scope, the 'let' `n` with body `body`: its value
+  // cannot outlive `b` by being borrowed from it, and none of `b`'s own
+  // lenders may have been moved while `b` was in scope.
+  bool borrowsEnd(const BindingPtr &b, const Node &n, const Node &body) {
+    if (contract_ || ghost_) return true;
+    Lenders out = lendersOf(body);
+    if (llvm::find(out, b) != out.end()) {
+      fail(*n.kids[4], "this value is borrowed from '" + b->name +
+                           "', so it cannot outlive '" + b->name +
+                           "', whose scope ends here");
+      return false;
+    }
+    for (const BindingPtr &l : b->lenders) {
+      auto m = moved_.find(l);
+      if (m == moved_.end()) continue;
+      fail(m->second.node ? *m->second.node : n,
+           "'" + l->name + "' is lent to '" + b->name + "', so it cannot be " +
+               m->second.what + " while '" + b->name + "' is in scope; a "
+               "borrow lasts to the end of its scope");
+      return false;
+    }
+    lent_[&n] = std::move(out);
+    return true;
   }
 
   // A use of a linear local, or of one with a drop, as a value consumes
@@ -5581,9 +5923,10 @@ class Gen {
     // What follows the `?` is still a tail: it may raise again.
     addTails(*chain.kids[1]);
     pushScope();
-    bind(hidden, r->value, r->type, false);
+    bind(hidden, r->value, r->type, false)->lenders = lendersOf(*t.kids[0]);
     R out = genExpr(chain, expected);
     popScope();
+    passLenders(n, chain);
     return out;
   }
 
@@ -5600,11 +5943,16 @@ class Gen {
     syntax::NodePtr rest = withCleanup(*n.kids[1], d);
     const Node &r = *rest;
     matchTrees_.push_back(std::move(rest));  // diagnostics may point into it
-    if (frames_.empty()) return genExpr(r, expected);
+    if (frames_.empty()) {
+      R out = genExpr(r, expected);
+      passLenders(n, r);
+      return out;
+    }
     if (frames_.back().tails.count(&n)) addTails(r);
     frames_.back().defers.push_back(&d);
     R out = genExpr(r, expected);
     frames_.back().defers.pop_back();
+    passLenders(n, r);
     return out;
   }
 
@@ -5750,9 +6098,14 @@ class Gen {
     if (isUnit(v->type))
       return fail(valueNode, "'" + n.text + "' would have type unit");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
+    if (const Node *l = sema::findLender(ret))
+      return fail(*l, "'borrowed(" + l->text + ")' names the lender of a "
+                      "function's result; a local's lenders come from its "
+                      "value");
     pushScope();
     BindingPtr b =
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
+    b->lenders = lendersOf(valueNode);
     // A value with a `drop` is dropped at every exit from its scope that
     // has not consumed it (#85), as if by a `defer` registered here.
     const Node *bodyNode = n.kids[4].get();
@@ -5768,6 +6121,7 @@ class Gen {
     R body = genExpr(*bodyNode, expected);
     if (drop && !frames_.empty()) frames_.back().defers.pop_back();
     if (body && !consumed(b, n.loc)) body = std::nullopt;
+    if (body && !borrowsEnd(b, n, *bodyNode)) body = std::nullopt;
     popScope();
     return body;
   }
@@ -5835,6 +6189,8 @@ class Gen {
   // Exported function symbols (ADR 0039), each with its module's path, or
   // empty for a plain C name.
   std::map<std::string, std::string> exports_;
+  // The exported functions whose C entry points keep their plain names.
+  std::set<std::string> abiC_;
   // The program's top-level type items, by name.
   std::vector<std::pair<std::string, const Node *>> typeItems_;
   unsigned matchCounter_ = 0;
@@ -5844,8 +6200,12 @@ class Gen {
   // loops open there.
   std::map<BindingPtr, Move> moved_;
   unsigned loopDepth_ = 0;
+  // What each expression generated so far is borrowed from (#70).
+  std::map<const Node *, std::vector<BindingPtr>> lent_;
+  std::set<const void *> lentTypes_;  // the types borrowed results borrow
   std::set<const void *> linear_;  // the `@linear` types
   Type dropping_;                  // the type a `drop` being generated takes
+  const Node *unsafeAt_ = nullptr; // the call an `unsafe` marks
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;

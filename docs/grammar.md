@@ -193,14 +193,16 @@ meta_operator = "let" "meta" "operator" "(" operator ")"
 ```ebnf
 annot      = modifiers union_type [ "where" stmt ]
            | arrow_type [ "where" stmt ] ;
-modifiers  = [ "borrowed" | "moved" ] [ "in" | "out" | "inout" ] [ "fixed" | "mutable" ] ;
+modifiers  = [ "borrowed" [ lender ] | "moved" ] [ "in" | "out" | "inout" ] [ "fixed" | "mutable" ] ;
+lender     = "(" IDENT ")" ;                      (* borrowed(m), with no space before "(" *)
 
 type       = arrow_type | union_type ;
 arrow_type = arrow_dom "->" type ;
 arrow_dom  = modifiers union_type | "(" IDENT ":" annot ")" ;
 union_type = app_type { "|" app_type } ;
 app_type   = type_atom { type_arg } ;             (* pair u8 f32, adapter Eq f32 *)
-type_arg   = type_atom | INT | "(" expr ")" ;
+type_arg   = type_atom | INT | "(" expr ")"
+           | "(" "borrowed" lender [ "in" | "out" | "inout" ] [ "fixed" | "mutable" ] union_type ")" ;
 
 type_atom  = IDENT
            | "type"                               (* the type of types *)
@@ -218,6 +220,8 @@ field_decl = IDENT ":" annot ;
 ```
 
 Modifiers come in a fixed order: ownership, then access, then mutability. Each one is optional. Before a function type they belong to its first parameter: `borrowed in [pixel] -> [u8]` takes a borrowed input slice.
+
+`borrowed(m)` in a function's result type names the parameter `m` that the result is borrowed from, as in `let alloc (m : borrowed arena) (n : usize) : result (borrowed(m) out mutable [u8]) OutOfMemory` (#70). It is written with no space before the parenthesis: `borrowed (t)` is `borrowed` before a parenthesised type. Inside a type argument, such as `result`'s, the parenthesised argument carries the modifiers.
 
 A type value is an expression:
 

@@ -87,7 +87,10 @@ annot: modifiers union_type (WHERE stmt)?
      | arrow (WHERE stmt)?
 
 modifiers: ownership? access? mutability?
-ownership: BORROWED | MOVED
+ownership: BORROWED lender? | MOVED
+// `borrowed(m)`, with no space before the parenthesis, in a result type:
+// borrowed from the parameter `m` (#70).
+lender: LPAREN IDENT RPAREN
 access: IN | OUT | INOUT
 mutability: FIXED | MUTABLE
 
@@ -108,6 +111,7 @@ arrow_dom: modifiers union_type
 
 ?type_arg: type_atom
          | INT
+         | LPAREN BORROWED lender access? mutability? union_type RPAREN -> lent_type
          | LPAREN expr RPAREN
 
 type_atom: IDENT (DOT IDENT)*                         -> type_name

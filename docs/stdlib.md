@@ -207,7 +207,7 @@ Containers (`vec`, `string`, `hash_map`, the binary heap that priority-flood nee
 
 *Lifetimes are proved, not collected.* Two rules in Sema, with no lifetime syntax in ordinary code:
 
-1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them.
+1. **A borrow cannot outlive its lender.** `borrowed(m) [t]` says the slice is borrowed from `m`. While it is live, `m` cannot be moved, so it cannot be reset, freed or sent to another task. Borrows are lexical: they end at the end of the scope that holds them. Implemented: see [irgen.md](irgen.md#bindings-and-mutation).
 2. **Regions can be scoped.** `with_arena n (let (a) => body)` makes an arena, runs `body`, and frees the arena. The arena's type is fresh to `body`, and `body`'s result type cannot mention it, so nothing allocated in the arena can escape. This is Haskell's `runST` trick, and the region idea from Cyclone and the ML Kit, without region inference.
 
 Leaks are ruled out by cleanup at scope end. Allocators and the buffers they hand out have a `Drop` instance ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): a buffer from `general` or a `pool` that is not freed explicitly is freed when its scope ends, on every exit including `?`, and so is an arena. A buffer from an arena needs nothing, because freeing the arena frees it. So proved code cannot leak, double free, or use after free, and none of that costs anything at run time beyond the frees themselves.
@@ -364,6 +364,8 @@ Any module may declare foreign functions, for its own C libraries as well as POS
 - **The contract is trusted, not proved.** At each call, its `requires` is a proof goal like any other, and its `ensures` is assumed. Each contracted foreign function is a trusted item in its module's certificate.
 - **A foreign function without an explicit contract can only be called as `unsafe f x`.** Writing `unsafe` is the caller's statement that it has checked the call by hand. The verifier assumes nothing about the result beyond its type's range, and every buffer passed to it is treated as written with unknown contents. Each `unsafe` call site, by symbol and source location, is a trusted item in the certificate. Calling such a function without `unsafe` is a compile error that suggests writing the contract.
 - **`unsafe` is not a way around proof goals.** An `unsafe` call still has its arguments checked against their types, and every goal around it is proved as usual. It only marks that the callee's behaviour is taken on trust.
+
+Implemented (#55) for parameters of integer, bool and integer-buffer types and integer, bool or unit results: see [codegen.md](codegen.md#foreign-functions). `addr`, `view` and `addr_of` come next.
 
 `unsafe` is a core form, like `extern`, not a block: it marks one call, so the trusted surface stays as small as the call. Rust's `unsafe` blocks and Verus's `assume_specification` are the prior art. Pia's version is narrower than Rust's, since a contracted foreign call needs no `unsafe` at all.
 
