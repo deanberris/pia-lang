@@ -91,7 +91,7 @@ The bounds goals inside the loop are proved first: `i < len dst` from the loop's
 - **Proved, not checked.** Overflow, bounds, division by zero, preconditions, postconditions, assertions and quantified properties (`forall`, `exists`) are all proved at compile time. The strongest guarantee is the default, and weaker behaviour such as wrapping arithmetic is opt-in and explicit.
 - **An ML-style language.** One `let` for every definition, including types, which are values. Curried functions, records as values, and range types such as `int{0..255}`.
 - **Metaprogramming from day one.** Operators are not built in: `+` is a metaprogram in the prelude that expands to `add`. Derives such as `@derive(eq)` generate code that is then type checked and proved like code you wrote.
-- **Built on MLIR.** `piac` lowers Pia to its own MLIR dialects, proves the goals there, then compiles through LLVM to arm64 for Apple Silicon, with NEON vectorisation.
+- **Built on MLIR.** `piac` lowers Pia to its own MLIR dialects, proves the goals there, then compiles through LLVM to arm64 for Apple silicon, with NEON vectorisation, or to x86_64 Linux with AVX2.
 - **Editor support.** A language server shows failed proofs and their counterexamples as you type, and a VS Code extension uses it.
 - **A verified REPL.** `pia repl` builds up an environment one definition at a time, like a Lisp REPL, proving each one before it joins and running expressions with a JIT. `pia repl --json` and the MCP server `pia mcp` let scripts and agents use it ([The REPL](docs/repl.md)).
 
@@ -110,7 +110,7 @@ bazel test //...
 
 See [Getting started](docs/getting-started.md) for the details, and [`editors/vscode`](editors/vscode/README.md) for the VS Code extension.
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //...` and `bazel test //...` on a GitHub-hosted Apple Silicon macOS runner for every pull request and every push to `main`. A run saves the Bazel disk cache once per set of dependencies, so only the first run builds LLVM, MLIR and Z3. A run that fails or times out saves what it built under its own key, and a failed run uploads its test logs.
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //...` and `bazel test //...` on GitHub-hosted Apple silicon macOS and Linux x86_64 runners for every pull request and every push to `main`. A run saves the Bazel disk cache once per set of dependencies, so only the first run builds LLVM, MLIR and Z3. A run that fails or times out saves what it built under its own key, and a failed run uploads its test logs.
 
 ## Learn more
 
