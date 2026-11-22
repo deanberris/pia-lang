@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (2026-11-22, with Dean's answers to its questions below)
 
 ## Context
 
@@ -102,10 +102,54 @@ Error goals are new goals, so they go through ADR 0032's pool and proof cache li
 - The compiler's encoding of float operations as `round` of the real operation becomes part of the trusted base. It is the IEEE 754 standard's own promise, and it is tested against the bit-precise encoding with `@solver(fp_exact)` on single operations.
 - Bounds are worst-case and can be pessimistic for long reductions. Tighter, probabilistic bounds would be a later theory, not a change to this one.
 - Devices that flush subnormals or do not round correctly need float models before kernels with tolerance contracts can run on them.
-- Implementation order, each step a PR with tests: (1) `to_real`, `finite`, `eps`, `tiny`, and float intervals in the interval stage; (2) the `round` encoding of operations in error goals, with per-operation `δ` and `nlsat`; (3) `Pia.Float.Error` with γₙ and the summation, dot product and matrix-vector lemmas; (4) order-free bounds under `@fp(reassoc)`; (5) device float models in placement; (6) `lip` and `err` in the network theory, as an entry in the catalogue. Steps (1) to (3) need ADR 0036's steps 1 to 3 first.
+- Implementation order, each step a PR with tests: (1) `to_real`, `finite`, `eps`, `tiny`, the `Float` concept with adapters for the builtin types, and float intervals in the interval stage; (2) the `round` encoding of operations in error goals, with per-operation `δ` and `nlsat`; (3) `Pia.Float.Error` with γₙ and the summation, dot product and matrix-vector lemmas; (4) order-free bounds under `@fp(reassoc)`; (5) device float models in placement; (6) the `~=` ... `within` form and derived bounds published in interfaces; (7) the `approximate` theory builder for `Composable` theories, with the network theory as a catalogue entry; (8) a block format (such as an MX format) as a `Float` type, as a worked example. Steps (1) to (3) need ADR 0036's steps 1 to 3 first.
 
-## Questions for review
+## Answers to the review questions
 
-- Should a tolerance be written with explicit helpers, as above, or with a dedicated form such as `ensures result ≈ dot_r xs ys within gamma f32 n * ...`?
-- Is `err` alongside `lip` the right way for network theories to carry rounding, or should every real-valued theory used by float code get an error term automatically?
-- Should a placement that excludes a device because its float model cannot prove a tolerance be a warning, or an error when the kernel asked for `@place(gpu)` explicitly?
+Dean accepted this ADR on 2026-11-22 and answered its three questions. These answers are part of the decision.
+
+### 1. A dedicated tolerance form, for any float format that meets a concept
+
+A tolerance is written with its own form, not with helpers:
+
+```ocaml
+ensures result ~= dot_r xs ys (len xs) within gamma f32 (len xs) * dot_abs xs ys (len xs)
+```
+
+- **Meaning.** `a ~= e within b` means `finite a && abs (to_real a - e) <= b`, where `a` is a float-format value, `e` is a `real` and `b` is a `real`. `≈` is accepted as another spelling of `~=`. `~` is otherwise only prefix bitwise not, and no expression starts with `=`, so lexing `~=` as one token is unambiguous ([grammar.md](../grammar.md)).
+- **The bound is optional.** Without `within`, `result ~= e` asks for the bound the verifier derives. The report shows the derived bound, and the contract that is published states it. That is the automatic error term of question 2.
+
+The form is not tied to the builtin float types. It works for any type that meets the `Float` concept of `Pia.Float.Error` ([ADR 0034](0034-concepts-and-overload-resolution.md)):
+
+```ocaml
+let meta Float (t : type) : concept = sig
+  let spec to_real : (x : t) -> real
+  let spec finite : (x : t) -> bool
+  let spec rel : real                       \ relative error of one rounding
+  let spec abs_err : (scale : real) -> real \ absolute error at a given scale
+  let spec round : (x : real) -> (scale : real) -> real
+  let lemma standard (x : real) (scale : real)
+    requires abs x <= scale
+    ensures abs (round x scale - x) <= rel * abs x + abs_err scale
+end
+```
+
+- **`f32`, `f16`, `bf16` and `f64`** meet `Float` through adapters in the library. `scale` doesn't affect their error (`abs_err` is the subnormal term `tiny t`).
+- **Block formats** fit the same concept. Examples are device-specific formats with a shared exponent per block, such as microscaling (MX) formats, block floating point on a Neural Engine, or a vendor's packed GPU type. Each one is a Pia type: a record of the shared exponent and the element mantissas, with an adapter for `Float` on its element view. For a block format the error is absolute, relative to the block's largest magnitude, so `abs_err scale` carries it and `scale` is the block's maximum. The `≈ within` form, the per-operation encoding and the γ lemmas are all written over the concept, so a kernel over a block type is proved the same way as one over `f32`.
+- **Proving `standard`.** An adapter proves it like any law, from a model of the format's encoding. When the format belongs to hardware whose rounding isn't documented, the adapter's `standard` comes from a trusted theory ([ADR 0036](0036-library-theories.md)). It is then imported with `trusting` and listed in `--trust-report`, as the device float models below are.
+
+### 2. An automatic error term
+
+- **Kernels.** A kernel whose contract says `result ~= e` without `within` gets its error bound derived by the verifier. The derivation uses the per-operation model, the interval bounds and the γ lemmas, and the derived bound is published in the kernel's interface. A caller's goals use that published bound, so error propagates through calls without being written at each one.
+- **Theories.** A theory used by float code through an abstraction function gets an error term without the author writing one. When a theory meets the prelude concept `Composable` (a sort, `seq`, and a Lipschitz bound `lip` with the usual composition axioms), the prelude theory builder `approximate` (ADR 0036, step 5) generates:
+  - an `err` function;
+  - the axioms `err (seq f g) <= lip g * err f + err g` and `err (residual f) <= err f + err_add`, plus one for each other combinator the theory declares in `Composable` form;
+  - the extended model, in which every model gets an `err` field, so the new axioms are proved and nothing is trusted.
+
+  It is applied automatically wherever an abstraction function maps a `Float` type into the theory's sort. A theory that is not `Composable` gets no automatic term. Its author writes the error axioms, as the `lip`/`err` example above does by hand.
+
+### 3. A placement that cannot prove a tolerance is a hard error
+
+- **Explicit placement.** If a kernel with a tolerance contract is placed explicitly, with `@place(gpu)`, `@place(ane)` or `@place(auto, prefer = ...)` naming a device, on a device whose float model cannot prove the contract, compilation fails. The error names the device, the contract and the goal that failed under that device's model.
+- **`@place(auto)`.** The cost model never considers a device that cannot prove the contract. Since nothing was asked of that device, this is not an error, but the placement report lists the device as excluded and gives the reason.
+- **No warning-only mode.** A tolerance contract that holds on one device and not on another is never downgraded to a warning.
