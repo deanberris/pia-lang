@@ -19,12 +19,12 @@ let grey (v : u8) : u8
 = Image.Pixels.luma v v v
 
 (*
-// LIB-DAG: define i8 @"__pia$Image$Pixels$mix"(
-// LIB-DAG: define i8 @"__pia$Image$Pixels$luma"(
+// LIB-DAG: define {{(range\([^)]*\) )?}}i8 @"__pia$Image$Pixels$mix"(
+// LIB-DAG: define {{(range\([^)]*\) )?}}i8 @"__pia$Image$Pixels$luma"(
 // LIB-DAG: define {{.*}} @luma(
 // LIB-DAG: define {{.*}} @"pia$Image$Pixels$mix"(
 
-// CHECK-DAG: declare i8 @"__pia$Image$Pixels$luma"(i8, i8, i8)
+// CHECK-DAG: declare {{.*}}i8 @"__pia$Image$Pixels$luma"(i8, i8, i8)
 // CHECK-DAG: define {{.*}} @grey(
 // CHECK-NOT: Image.Pixels.luma
 *)

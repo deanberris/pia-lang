@@ -128,23 +128,25 @@ $ piac --emit=interface -o . clamp_c.pia
 
 `import Clamp.Clamping` finds that file on the interface path, which `--iface-path` gives, and the module's items are then `Clamp.clamp`:
 
-<!-- example: percent.pia -->
+<!-- example: fit.pia -->
 <!-- flags: --iface-path=. -->
 ```ocaml
 import Clamp.Clamping
 
-let percent (x : i32) : i32
-  ensures 0 <= result && result <= 100
-= Clamp.clamp 0 100 x
+let fit (lo : i32) (hi : i32) (x : i32) : i32
+  requires lo <= hi
+  ensures lo <= result
+= Clamp.clamp lo hi x
 ```
 
 ```console
-$ piac --verify --iface-path=. percent.pia
-...
+$ piac --verify --iface-path=. fit.pia
+fit.pia:6:3: proved: the precondition of 'Clamp.clamp' holds [smt]
+fit.pia:5:3: proved: the postcondition holds [smt]
 2 proved, 0 failed, 0 skipped
 ```
 
-The call is checked against the interface's contract, never against the body of `clamp`: `percent` proves the precondition `0 <= 100`, and its postcondition follows from what the interface ensures. The artifact holds only the interface, without comments, private items or bodies, so changing any of those leaves it byte-for-byte the same, and nothing that imports it is rebuilt. To link, compile both files to objects and pass both to the linker. In Bazel, the `pia_library` rule in `//tools/piac:pia.bzl` does all of this, and each module sees only the interfaces of the modules it lists in `deps` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
+The call is checked against the interface's contract, never against the body of `clamp`: `fit` proves the precondition `lo <= hi` from its own, and its postcondition follows from what the interface ensures. The artifact holds only the interface, without comments, private items or bodies, so changing any of those leaves it byte-for-byte the same, and nothing that imports it is rebuilt. To link, compile both files to objects and pass both to the linker. In Bazel, the `pia_library` rule in `//tools/piac:pia.bzl` does all of this, and each module sees only the interfaces of the modules it lists in `deps` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
 
 ## piac at a glance
 

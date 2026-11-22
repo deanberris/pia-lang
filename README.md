@@ -72,7 +72,7 @@ let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
 ```console
 $ piac --emit=asm add_rows.pia
 ...
-LBB0_10:
+LBB1_10:
 	ldp	q0, q1, [x10, #-32]
 	ldp	q2, q3, [x10], #64
 	ldp	q4, q5, [x12, #-32]
