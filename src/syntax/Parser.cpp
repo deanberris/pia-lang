@@ -233,6 +233,27 @@ class Parser {
         auto n = makeNode(N::Import, loc());
         take();
         n->text = path();
+        // `import M.I as X` names the module X here, and `{ a, b }` also
+        // brings a and b in unqualified (ADR 0039).
+        if (at(K::As)) {
+          SourceLoc l = loc();
+          take();
+          n->add(makeNode(N::Name, l,
+                          std::string(expect(K::Ident, "a local module name")
+                                          .text)))
+              ->flags = "as";
+        }
+        if (at(K::LBrace) || at(K::LBraceAdj)) {
+          take();
+          while (!at(K::RBrace)) {
+            SourceLoc l = loc();
+            n->add(makeNode(N::Name, l,
+                            std::string(expect(K::Ident, "a name to import")
+                                            .text)));
+            if (!accept(K::Comma)) break;
+          }
+          expect(K::RBrace, "'}'");
+        }
         // `import M trusting` accepts every trusted axiom of the theories M
         // exports (ADR 0036); `trusting` is a keyword only here.
         if (at(K::Ident) && text() == "trusting") {

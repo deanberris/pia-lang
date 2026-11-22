@@ -1,0 +1,29 @@
+(* `import M.I as X` names the module X in this file, and `{ a, b }` also
+   brings a and b in unqualified (ADR 0039, step 3). The full path still
+   works.
+// RUN: piac --emit=interface -o %t %S/Inputs/order.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Algo.Order.Ord as O { smaller, ordering }
+
+let least (a : u8) (b : u8) : u8
+  ensures result <= a && result <= b
+= smaller<u8> a b
+
+let order (a : u8) (b : u8) : ordering
+  ensures a < b ==> result = O.Lt
+= O.compare a b
+
+let same_order (a : u8) (b : u8) : Algo.Order.ordering
+  ensures b < a ==> result = Gt
+= Algo.Order.compare a b
+
+let both_smaller (t : type where O.Before t) (a : t) (b : t) (c : t) : t
+= smaller a (O.smaller b c)
+
+let three (a : u8) (b : u8) (c : u8) : u8 = both_smaller a b c
+
+(*
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

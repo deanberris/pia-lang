@@ -1,5 +1,8 @@
 import Pia.Prelude
 import Image.Png.Codec
+import Image.Png.Codec as Png
+import Pia.Task.Tasks { scope, spawn, join }
+import Pia.Nn.Bounds as B { bound } trusting
 
 interface Counter = sig
   let count : u64

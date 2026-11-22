@@ -66,7 +66,26 @@ struct Imported {
   std::set<std::string> items;     // `Image.Png.decode`
   std::set<std::string> types;     // `Image.Png.pixel`
   std::set<std::string> ctors;     // `Image.Png.Truncated`
+  std::map<std::string, std::string> aliases;      // `Png` -> `Image.Png`
+  std::map<std::string, std::string> unqualified;  // `decode` -> `Image.Png.decode`
 };
+
+// `Png.decode` as `Image.Png.decode`, under `import Image.Png.Codec as Png`.
+std::string unalias(const std::string &d, const Imported &imp) {
+  for (const auto &[alias, module] : imp.aliases)
+    if (d.size() > alias.size() && d.compare(0, alias.size(), alias) == 0 &&
+        d[alias.size()] == '.')
+      return module + d.substr(alias.size());
+  return d;
+}
+
+// The names a program binds anywhere: its items, parameters and pattern
+// variables, which an unqualified import must not shadow (ADR 0022).
+void bindersIn(const Node &n, std::set<std::string> &out) {
+  if (n.kind == N::Param || n.kind == N::PVar || n.kind == N::LetItem)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids) bindersIn(*k, out);
+}
 
 void collectCtors(const Node &n, const std::string &module,
                   std::set<std::string> &out) {
@@ -76,8 +95,20 @@ void collectCtors(const Node &n, const std::string &module,
 
 // `M.f` in the program becomes the Name `M.f` of the imported item.
 void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
+  if (n.kind == N::TypeName || n.kind == N::TypeInst ||
+      n.kind == N::SigInclude) {
+    n.text = unalias(n.text, imp);
+    if (auto u = imp.unqualified.find(n.text); u != imp.unqualified.end())
+      n.text = u->second;
+  }
+  if (n.kind == N::Name && n.flags.empty())
+    if (auto u = imp.unqualified.find(n.text); u != imp.unqualified.end()) {
+      n.text = u->second;
+      return;
+    }
   if (n.kind == N::Field) {
     if (auto d = dotted(n)) {
+      *d = unalias(*d, imp);
       if (imp.items.count(*d)) {
         n.kind = N::Name;
         n.text = *d;
@@ -360,8 +391,14 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
   std::set<std::string> imported;  // `M.f : <shape of its type>`
   std::vector<NodePtr> out;
   bool any = false;
+  // The program's own items, which `as` and `{ }` apply to; imported
+  // items name things as their own module does.
+  std::set<const Node *> own;
+  std::set<std::string> binders;
+  bindersIn(program, binders);
   for (NodePtr &item : program.kids) {
     if (item->kind != N::Import || theories.count(item->text)) {
+      own.insert(item.get());
       out.push_back(std::move(item));
       continue;
     }
@@ -499,9 +536,42 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       out.push_back(std::move(copy));
     }
     imp.modules.insert(module);
+    for (const NodePtr &k : item->kids) {
+      if (k->kind != N::Name) continue;
+      if (k->flags == "as") {
+        if (binders.count(k->text) || imp.aliases.count(k->text) ||
+            imp.unqualified.count(k->text))
+          diags.error(k->loc, "'" + k->text + "' is already a name in this "
+                              "file, so it cannot also name the module '" +
+                              module + "'");
+        else
+          imp.aliases[k->text] = module;
+        continue;
+      }
+      if (!members.count(k->text)) {
+        diags.error(k->loc, "the interface " + where + " has no '" +
+                            k->text + "'");
+        continue;
+      }
+      std::string qualified = module + "." + k->text;
+      auto prior = imp.unqualified.find(k->text);
+      if (prior != imp.unqualified.end() && prior->second == qualified)
+        continue;  // two interfaces of one module may list it
+      if (binders.count(k->text) || prior != imp.unqualified.end() ||
+          imp.aliases.count(k->text))
+        diags.error(k->loc, "importing '" + k->text + "' unqualified would "
+                            "shadow " + (prior != imp.unqualified.end()
+                                             ? "'" + prior->second + "'"
+                                             : "a name this file binds") +
+                            "; use '" + qualified + "' instead (ADR 0022)");
+      else
+        imp.unqualified[k->text] = qualified;
+    }
   }
   program.kids = std::move(out);
-  if (any) rewrite(program, imp, diags);
+  if (any)
+    for (NodePtr &item : program.kids)
+      if (own.count(item.get())) rewrite(*item, imp, diags);
 }
 
 }  // namespace pia::syntax

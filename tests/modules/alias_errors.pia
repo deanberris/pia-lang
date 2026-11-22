@@ -1,0 +1,12 @@
+(* `as` and `{ }` must name what the interface lists, and must not shadow
+   (ADR 0039, step 3; ADR 0022).
+// RUN: piac --emit=interface -o %t %S/Inputs/order.pia
+// RUN: not piac --emit=mlir --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+(* CHECK-DAG: alias_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 'least' is already a name in this file, so it cannot also name the module 'Algo.Order'
+   CHECK-DAG: alias_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: the interface 'Algo.Order.Ord' has no 'largest'
+   CHECK-DAG: alias_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: importing 'compare' unqualified would shadow a name this file binds; use 'Algo.Order.compare' instead (ADR 0022)
+*)
+import Algo.Order.Ord as least { largest, compare }
+
+let least (a : u8) (compare : u8) : u8 = a

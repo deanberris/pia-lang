@@ -1,6 +1,18 @@
 (Program
   (Import "Pia.Prelude")
   (Import "Image.Png.Codec")
+  (Import "Image.Png.Codec"
+    (Name "Png" [as])
+  )
+  (Import "Pia.Task.Tasks"
+    (Name "scope")
+    (Name "spawn")
+    (Name "join")
+  )
+  (Import "Pia.Nn.Bounds" [trusting]
+    (Name "B" [as])
+    (Name "bound")
+  )
   (Interface "Counter"
     (Attrs)
     (SigVal "count"
