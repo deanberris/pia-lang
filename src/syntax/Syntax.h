@@ -28,7 +28,7 @@ namespace pia::syntax {
   X(Interface)     /* text=name; Attrs, sig items */                         \
   X(Module)        /* text=name; Paths, item* */                             \
   X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
-  X(Import)        /* text=path */                                           \
+  X(Import)        /* text=path; flags="trusting" */                         \
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
   X(SigType)       /* text=name; TypeValue */                                \

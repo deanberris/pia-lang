@@ -254,6 +254,23 @@ class Encoder {
   }
 
   bool reachedTarget() const { return done_; }
+
+  // The consistency check of a trusted theory (ADR 0036): every axiom of
+  // `theory`, and, by the relevance closure, the axioms of the theories
+  // they use, with nothing to prove. Satisfiable means consistent.
+  void assertTheory(const std::string &theory) {
+    declareSpecFunctions();
+    goalAssert_ = create<mlir::smt::AssertOp>(boolConst(true));
+    for (auto f : module_.getOps<mlir::func::FuncOp>())
+      if (f->hasAttr(PiaDialect::getAxiomAttrName()) && theoryOf(f) == theory) {
+        // Its functions count as used, so the closure sees them.
+        f.walk([&](mlir::func::CallOp c) {
+          if (auto callee = calleeOf(c)) noteTheoryUse(callee);
+        });
+        assertAxiom(f, axiomTriggers(module_, f));
+      }
+    addAxioms(false);
+  }
   const std::vector<std::string> &sentAxioms() const { return sentAxioms_; }
   const std::set<std::string> &sorts() const { return sorts_; }
   bool usesTheories() const { return !theoryFuns_.empty(); }
@@ -272,6 +289,8 @@ class Encoder {
     std::vector<AxiomTriggers> triggers;
     for (auto f : axioms) triggers.push_back(axiomTriggers(module_, f));
     std::vector<bool> sent(axioms.size(), false);
+    for (size_t i = 0; i < axioms.size(); ++i)
+      sent[i] = llvm::is_contained(sentAxioms_, axioms[i].getSymName().str());
     for (bool changed = true; changed;) {
       changed = false;
       std::set<std::string> theories;
@@ -2355,7 +2374,64 @@ struct Query {
   bool reached = false;
   bool theories = false;            // it applies a theory function
   std::vector<std::string> axioms;  // the axioms it was given
+  // The axiom assertions, by their index among the query's assertions,
+  // and how many assertions there are: for tracking unsat cores.
+  std::map<unsigned, std::string> axiomAsserts;
+  unsigned asserts = 0;
+  // The query without assertion names, whose assertions Z3 lists in the
+  // order they are written (named ones it may not), for tracking.
+  std::string plain;
 };
+
+// The theory axioms an assertion stands for: `Lip.residual_lip#2` is
+// Lip.residual_lip with its second trigger.
+std::string axiomOf(llvm::StringRef label) {
+  return label.split('#').first.str();
+}
+
+// The solver for a query with axioms: its assertions again, each axiom
+// tracked by a literal named after it, so that an unsat core names the
+// axioms the proof used. Null when the parsed assertions do not line up
+// with the query's (then the query is solved untracked).
+std::string scriptOf(const std::string &smtlib);
+
+std::unique_ptr<z3::solver> tracked(z3::context &ctx, z3::solver &parsed,
+                                    const Query &q, const z3::params &p) {
+  (void)parsed;
+  if (q.axiomAsserts.empty() || q.plain.empty()) return nullptr;
+  z3::solver reread(ctx);
+  try {
+    reread.from_string(scriptOf(q.plain).c_str());
+  } catch (const z3::exception &) {
+    return nullptr;
+  }
+  z3::expr_vector as = reread.assertions();
+  if (as.size() != q.asserts) return nullptr;
+  auto s = std::make_unique<z3::solver>(ctx);
+  s->set(p);
+  for (unsigned i = 0; i < as.size(); ++i) {
+    auto it = q.axiomAsserts.find(i);
+    if (it == q.axiomAsserts.end())
+      s->add(as[i]);
+    else
+      s->add(as[i], ctx.bool_const(("axiom!" + it->second).c_str()));
+  }
+  return s;
+}
+
+// The distinct axioms an unsat core names, in a stable order.
+std::vector<std::string> coreAxioms(z3::solver &s) {
+  std::set<std::string> names;
+  z3::expr_vector core = s.unsat_core();
+  for (unsigned i = 0; i < core.size(); ++i) {
+    std::string text = core[i].to_string();
+    llvm::StringRef n(text);
+    n.consume_front("|");
+    n.consume_back("|");
+    if (n.consume_front("axiom!")) names.insert(axiomOf(n));
+  }
+  return {names.begin(), names.end()};
+}
 
 // The export declares a sort only where an op produces a value of it, so
 // a sort that appears only in a function's signature, such as `tag` in
@@ -2448,14 +2524,71 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
         axiomNames[k] = n.getValue().str();
       ++k;
     }
+  q.axiomAsserts = axiomNames;
+  q.asserts = k;
   llvm::raw_string_ostream os(q.smtlib);
   mlir::smt::SMTEmissionOptions options;
   options.emitReset = false;
   if (mlir::failed(mlir::smt::exportSMTLIB(*scratch, os, options)))
     q.smtlib.clear();
-  else
-    q.smtlib = declareSorts(
-        nameAxioms(interpretedSMTLIB(q.smtlib), axiomNames), enc.sorts());
+  else {
+    std::string text = interpretedSMTLIB(q.smtlib);
+    if (!axiomNames.empty()) q.plain = declareSorts(text, enc.sorts());
+    q.smtlib = declareSorts(nameAxioms(text, axiomNames), enc.sorts());
+  }
+  return q;
+}
+
+// The consistency check's query for a trusted theory: its axioms and those
+// they bring, encoded as a goal's axioms are.
+Query buildTheoryQuery(mlir::ModuleOp module, mlir::func::FuncOp axiom,
+                       const std::string &theory) {
+  mlir::MLIRContext *ctx = module.getContext();
+  OpBuilder b(ctx);
+  mlir::OwningOpRef<mlir::ModuleOp> scratch =
+      mlir::ModuleOp::create(b.getUnknownLoc());
+  b.setInsertionPointToEnd(scratch->getBody());
+#if LLVM_VERSION_MAJOR >= 21
+  auto solver = mlir::smt::SolverOp::create(b, b.getUnknownLoc(),
+                                            mlir::TypeRange{}, mlir::ValueRange{});
+#else
+  auto solver = b.create<mlir::smt::SolverOp>(b.getUnknownLoc(),
+                                              mlir::TypeRange{}, mlir::ValueRange{});
+#endif
+  mlir::Block *block = b.createBlock(&solver.getBodyRegion());
+  b.setInsertionPointToEnd(block);
+  std::vector<Goal> goals;
+  Encoder enc(module, axiom, encodingWidth(module, axiom), -1, b, goals);
+  enc.assertTheory(theory);
+  b.setInsertionPointToEnd(block);
+#if LLVM_VERSION_MAJOR >= 21
+  mlir::smt::YieldOp::create(b, b.getUnknownLoc());
+#else
+  b.create<mlir::smt::YieldOp>(b.getUnknownLoc());
+#endif
+  Query q;
+  q.reached = true;
+  q.axioms = enc.sentAxioms();
+  std::map<unsigned, std::string> axiomNames;
+  unsigned k = 0;
+  for (Operation &op : *block)
+    if (auto a = mlir::dyn_cast<mlir::smt::AssertOp>(op)) {
+      if (auto n = a->getAttrOfType<mlir::StringAttr>("pia.axiom"))
+        axiomNames[k] = n.getValue().str();
+      ++k;
+    }
+  q.axiomAsserts = axiomNames;
+  q.asserts = k;
+  llvm::raw_string_ostream os(q.smtlib);
+  mlir::smt::SMTEmissionOptions options;
+  options.emitReset = false;
+  if (mlir::failed(mlir::smt::exportSMTLIB(*scratch, os, options)))
+    q.smtlib.clear();
+  else {
+    std::string text = interpretedSMTLIB(q.smtlib);
+    if (!axiomNames.empty()) q.plain = declareSorts(text, enc.sorts());
+    q.smtlib = declareSorts(nameAxioms(text, axiomNames), enc.sorts());
+  }
   return q;
 }
 
@@ -2587,19 +2720,30 @@ std::string cachePath(const Options &options, const std::string &key) {
   return std::string(path);
 }
 
+// An entry is `proved <cost>`, and for a goal proved with theory axioms a
+// second line `axioms <name>,...`: the unsat core (ADR 0036).
 bool cacheLookup(const Options &options, const std::string &key,
-                 unsigned long long &cost) {
+                 unsigned long long &cost,
+                 std::vector<std::string> *core = nullptr) {
   auto buf = llvm::MemoryBuffer::getFile(cachePath(options, key));
   if (!buf) return false;
   llvm::StringRef text = (*buf)->getBuffer().trim();
   if (!text.consume_front("proved ")) return false;
-  return !text.getAsInteger(10, cost);
+  auto [first, rest] = text.split('\n');
+  if (first.trim().getAsInteger(10, cost)) return false;
+  if (core && rest.consume_front("axioms ")) {
+    llvm::SmallVector<llvm::StringRef> names;
+    rest.trim().split(names, ',', -1, false);
+    for (llvm::StringRef n : names) core->push_back(n.str());
+  }
+  return true;
 }
 
 // Written to a unique file and renamed into place, so concurrent builds
 // sharing a cache never see a partial entry.
 void cacheStore(const Options &options, const std::string &key,
-                unsigned long long cost) {
+                unsigned long long cost,
+                const std::vector<std::string> *core = nullptr) {
   std::string path = cachePath(options, key);
   if (llvm::sys::fs::create_directories(llvm::sys::path::parent_path(path)))
     return;
@@ -2610,6 +2754,12 @@ void cacheStore(const Options &options, const std::string &key,
   {
     llvm::raw_fd_ostream os(fd, /*shouldClose=*/true);
     os << "proved " << cost << "\n";
+    if (core && !core->empty()) {
+      os << "axioms ";
+      for (size_t i = 0; i < core->size(); ++i)
+        os << (i ? "," : "") << (*core)[i];
+      os << "\n";
+    }
   }
   if (llvm::sys::fs::rename(tmp, path)) llvm::sys::fs::remove(tmp);
 }
@@ -2651,8 +2801,24 @@ void solve(const Job &job, const Options &options, Outcome &out,
   z3::solver sliced(ctx);
   sliced.set(p);
   z3::solver *first = &full;
-  if (options.slice == Options::Slice::On ||
-      (options.slice == Options::Slice::Auto && job.autoSlice)) {
+  // A query with theory axioms is solved with each axiom tracked, so the
+  // proof's unsat core says which axioms it used (ADR 0036). Only those
+  // queries: every other one is solved exactly as before.
+  // The query is solved as it is first, since tracking slows the search
+  // for a counterexample; only a proof is solved again, tracked, for its
+  // core. That second run is the cost of knowing which axioms a goal used.
+  auto used = [&](z3::solver &solved, const Query &query) {
+    if (std::unique_ptr<z3::solver> t = tracked(ctx, solved, query, p)) {
+      unsigned long long before = rlimitCount(*t);
+      z3::check_result r = t->check();
+      js.cost += rlimitCount(*t) - before;
+      if (r == z3::unsat) return coreAxioms(*t);
+    }
+    std::set<std::string> all(query.axioms.begin(), query.axioms.end());
+    return std::vector<std::string>(all.begin(), all.end());
+  };
+  if (q.axioms.empty() && (options.slice == Options::Slice::On ||
+      (options.slice == Options::Slice::Auto && job.autoSlice))) {
     z3::expr_vector as = full.assertions();
     bool dropsDecl = false;
     std::vector<unsigned> keep = sliceOf(as, &dropsDecl);
@@ -2669,11 +2835,13 @@ void solve(const Job &job, const Options &options, Outcome &out,
   if (!options.cacheDir.empty()) {
     key = goalHash(job.script, options);
     unsigned long long cost = 0;
-    if (cacheLookup(options, key, cost)) {
+    std::vector<std::string> core;
+    if (cacheLookup(options, key, cost, &core)) {
       js.cached = true;
       out.status = Status::Proved;
       out.method = "smt";
       if (options.reportCost) out.cost = cost;
+      out.axiomsUsed = core;
       return;
     }
   }
@@ -2715,7 +2883,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
       out.status = Status::Proved;
       out.method = "smt";
       if (options.reportCost) out.cost = now - before;
-      if (!key.empty()) cacheStore(options, key, now - before);
+      if (!q.axioms.empty()) out.axiomsUsed = used(full, q);
+      if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
       return;
     }
     if (first != &full) {
@@ -2751,11 +2920,13 @@ void solve(const Job &job, const Options &options, Outcome &out,
     if (!options.cacheDir.empty()) {
       fkey = goalHash(job.fallbackScript, options);
       unsigned long long cost = 0;
-      if (cacheLookup(options, fkey, cost)) {
+      std::vector<std::string> core;
+      if (cacheLookup(options, fkey, cost, &core)) {
         js.cached = true;
         out.status = Status::Proved;
         out.method = "smt";
         if (options.reportCost) out.cost = cost;
+        out.axiomsUsed = core;
         return;
       }
     }
@@ -2770,7 +2941,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.status = Status::Proved;
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
-        if (!fkey.empty()) cacheStore(options, fkey, now - before);
+        out.axiomsUsed = used(fallback, *job.fallback);
+        if (!fkey.empty()) cacheStore(options, fkey, now - before, &out.axiomsUsed);
         return;
       }
     } catch (const z3::exception &e) {
@@ -2987,6 +3159,64 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     if (auto w = fn->getAttrOfType<mlir::StringAttr>("pia.witness_of"))
       witnessOf[w.getValue().str()] = fn;
   std::map<Operation *, std::vector<Goal>> witnessGoals;
+  // A trusted theory, one with axioms and no model, is checked for
+  // consistency once (ADR 0036): are its axioms satisfiable?
+  if (options.only.empty()) {
+    std::map<std::string, mlir::func::FuncOp> trusted;
+    for (auto fn : module.getOps<mlir::func::FuncOp>())
+      if (fn->hasAttr(PiaDialect::getAxiomAttrName()) &&
+          !fn->hasAttr("pia.modelled") && !theoryOf(fn).empty())
+        trusted.emplace(theoryOf(fn), fn);
+    for (auto &[theory, first] : trusted) {
+      TheoryCheck c;
+      c.theory = theory;
+      c.where = formatLoc(first.getLoc());
+      Query q = buildTheoryQuery(module, first, theory);
+      std::string script = scriptOf(q.smtlib);
+      z3::context ctx;
+      z3::params p(ctx);
+      p.set("timeout", options.timeoutMs);
+      if (options.rlimit) p.set("rlimit", options.rlimit);
+      z3::solver solver(ctx);
+      solver.set(p);
+      try {
+        solver.from_string(script.c_str());
+        unsigned long long before = rlimitCount(solver);
+        z3::check_result r = solver.check();
+        st.cost += rlimitCount(solver) - before;
+        if (r == z3::sat) {
+          c.status = "consistent";
+        } else if (r == z3::unknown) {
+          c.status = "unchecked";
+          c.reason = solver.reason_unknown();
+        } else {
+          c.status = "inconsistent";
+          if (auto t = tracked(ctx, solver, q, p); t && t->check() == z3::unsat)
+            c.core = coreAxioms(*t);
+          else
+            c.core.assign(q.axioms.begin(), q.axioms.end());
+        }
+      } catch (const z3::exception &e) {
+        c.status = "unchecked";
+        c.reason = e.msg();
+      }
+      if (c.status == "inconsistent") {
+        Outcome out;
+        out.kind = ObligationKind::assert_;
+        out.where = c.where;
+        out.function = first.getSymName().str();
+        out.claim = "the axioms of the theory '" + theory + "' are consistent";
+        out.status = Status::Failed;
+        out.method = "they contradict each other:";
+        for (size_t i = 0; i < c.core.size(); ++i)
+          out.method += (i ? ", " : " ") + c.core[i];
+        ++st.goals;
+        opOf.push_back(first.getOperation());
+        outcomes.push_back(std::move(out));
+      }
+      st.theories.push_back(std::move(c));
+    }
+  }
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     // An imported function is proved by its own module (ADR 0039).
     if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))

@@ -54,8 +54,8 @@ let plain (x : u8) : u8 ensures result = x = x
 (* The triggers, and the axioms each goal was given.
 // STATS: verify-stats-axiom: Counter.value_small triggers=(Counter.value c)
 // STATS: verify-stats-axiom: Counter.label_one triggers=(Counter.same t t)
-// STATS: verify-stats-goal: {{.*}}theory_closure.pia:28:3 axioms=Counter.value_small{{$}}
-// STATS: verify-stats-goal: {{.*}}theory_closure.pia:33:45 axioms=Counter.value_small,Counter.label_one fallback=all
+// STATS: verify-stats-goal: {{.*}}theory_closure.pia:28:3 axioms=Counter.value_small used=Counter.value_small{{$}}
+// STATS: verify-stats-goal: {{.*}}theory_closure.pia:33:45 axioms=Counter.value_small,Counter.label_one fallback=all used=Counter.label_one
 // STATS: verify-stats-goal: {{.*}}theory_closure.pia:38:3 axioms=Counter.value_small,Counter.label_one fallback=all
 // STATS-NOT: verify-stats-goal: theory_closure.pia:42
 *)

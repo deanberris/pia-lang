@@ -254,7 +254,7 @@ let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
 
 `theory`, `sort` and `axiom` are keywords only between `let` and a name, like `spec` and `lemma`.
 
-**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Modules cannot import one another yet ([ADR 0039](adr/0039-module-and-interface-syntax.md) step 1 has headers and interfaces, not imports), so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A module header's `@trusted` (`module M @trusted`) marks the file like a `@trusted` line. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
+**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. An interface lists functions and types, not theories, so a module cannot import another's theory yet ([ADR 0039](adr/0039-module-and-interface-syntax.md)): a theory is used in the file that declares it, and `import T` of such a theory does nothing. A module header's `@trusted` (`module M @trusted`) marks the file like a `@trusted` line. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
 
 **Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot take, return or compute them, and codegen erases the theory along with every contract that uses it. A sort has only `=` and `<>`.
 
@@ -295,12 +295,34 @@ A goal with no parameters reports `false in the model 'm'`. If the goal holds in
 **Trust.** Without a model, nothing proves that a theory's axioms are consistent. So a theory with axioms and no model in the program needs its file marked `@trusted`, on a line of its own, and every axiom is a trusted item. A theory with a model needs neither, and none of its axioms is trusted. `piac --verify --trust-report` lists the trusted axioms:
 
 ```
+lip.pia:16:3: the theory 'Lip' is consistent: the solver found a witness, a model of its axioms
 lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no model
 ...
 5 trusted items
 ```
 
 This is the only use of `@trusted` so far. The rule that `assume` and `addr` need it ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)) is not enforced yet.
+
+**Consistency of a trusted theory.** A trusted theory is checked once, when its file is verified: are its axioms, with the axioms of other theories they use (by the relevance closure), satisfiable, under the usual rlimit? The answer is in the trust report. `sat` means Z3 found a witness, a model of the axioms, so they cannot contradict each other. `unknown` leaves the theory unchecked, and the report says so with the solver's reason. `unsat` is an error that names the axioms that contradict each other, from the unsat core:
+
+```
+bad.pia:6:3: failed: the axioms of the theory 'Bad' are consistent [they contradict each other: Bad.one, Bad.zero]
+```
+
+A theory with a model needs no check: the model is the witness, and its check proves it.
+
+**Which axioms a goal used.** A goal proved with theory axioms is solved a second time with each axiom tracked, and the unsat core of that run names the axioms the proof used. The first run is untracked, because tracking slows the search for a counterexample. Only queries with axioms are solved twice, so every other query is solved exactly as before. The core is kept in the goal's proof cache entry, as a line `axioms <name>,...` after `proved <cost>`. `--verify-stats` adds `used=...` to each such goal's line. `piac --verify --trust-report --why` lists, under each trusted axiom, the goals that used it. A call to a lemma assumes what the lemma proved, so a goal also rests on the axioms of every lemma its function calls, transitively. The report ends with how many proved goals rest on a trusted axiom. The others are fully proved, even in a file that trusts a theory:
+
+```
+trust_checks.pia:16:3: trusted: the axiom 'Good.f_small', since the theory 'Good' has no model
+  used by: trust_checks.pia:32:38, trust_checks.pia:38:39
+trust_checks.pia:17:3: trusted: the axiom 'Good.g_small', since the theory 'Good' has no model
+  used by no proved goal
+...
+2 of 3 proved goals rest on a trusted axiom; the other 1 are fully proved
+```
+
+**`import M trusting`.** An importer accepts a trusted theory as a whole with `import M trusting`. There is no list of axioms to grant, and it is written only in the source, so it works the same in a file and in the REPL. `trusting` is a keyword only at the end of an import. Interfaces do not carry theories yet, so today the only theory a module can name in an import is its own, where `import T trusting` changes nothing: T is trusted there already. The grant is recorded, and the trust report lists it (`trusting the theory 'Ideal'`). The check that an import of another module's trusted theory needs `trusting` comes when interfaces can export theories.
 
 **Encoding.** A sort is an uninterpreted SMT sort named after it (`(declare-sort Lip.layer 0)`), and an abstract function is a `declare-fun` under its qualified name (`Lip.lip`). The function's result is assumed to lie in its type's range. An axiom is an `smt.forall` over its parameters, `requires ==> ensures`, with each trigger as a pattern. The export cannot name an assertion, so the verifier adds the name afterwards as `(assert (! ... :named |Lip.seq_lip|))`. An axiom with several triggers is asserted once per trigger, under `|Lip.residual_lip#2|` and so on, since the export writes the terms of one quantifier as a single pattern.
 
@@ -322,10 +344,10 @@ These lines have their own prefixes, so `tools/bench` still reads the single `ve
 
 **Not yet.** These come in the ADR's later steps:
 
-- models in another module, found by the ADL rule (modules come first);
-- certificates and `import ... trusting` (step 4);
+- models in another module, found by the ADL rule, and the `trusting` check on imports between modules, once modules can import one another;
+- trust recorded in proof certificates ([ADR 0024](adr/0024-published-proof-certificates.md)), which are not built yet;
 - theory-building metaprograms (step 5);
-- per-goal axiom use from unsat cores, for `--trust-report --why`.
+- `--check-vacuity` (step 7).
 
 A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
 

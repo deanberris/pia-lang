@@ -54,7 +54,9 @@ let lemma twice_then (f : Lip.layer) : unit
   ensures Lip.lip (Lip.residual (Lip.residual f)) <= 3.0
 = Lip.residual_twice f
 
-(* Expected report, in order: the trusted axioms, then the goals.
+(* Expected report, in order: the consistency check, the trusted axioms,
+   then the goals.
+// CHECK: theory_lip.pia:16:3: the theory 'Lip' is consistent: the solver found a witness, a model of its axioms
 // CHECK: theory_lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no model
 // CHECK: theory_lip.pia:17:3: trusted: the axiom 'Lip.seq_shape', since the theory 'Lip' has no model
 // CHECK: theory_lip.pia:20:3: trusted: the axiom 'Lip.seq_lip', since the theory 'Lip' has no model

@@ -161,7 +161,7 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
 item      = let_item | meta_operator | interface | module | import | theory | model | file_attr | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
-import    = "import" path ;
+import    = "import" path [ "trusting" ] ;                (* trusting: ADR 0036 *)
 path      = IDENT { "." IDENT } ;
 ```
 

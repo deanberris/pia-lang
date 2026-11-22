@@ -6282,9 +6282,18 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
     TheoryInfo info;
     flattenTheories(*flat, diags, &info);
     if (diags.hasErrors()) return nullptr;
+    // Trust grants, `import T trusting`, for --trust-report.
+    llvm::SmallVector<mlir::Attribute> grants;
+    for (const auto &[theory, at] : info.trusting)
+      grants.push_back(mlir::StringAttr::get(
+          &ctx, theory + " " + std::string(filename) + ":" +
+                    std::to_string(at.line) + ":" + std::to_string(at.column)));
     Gen gen(ctx, filename, diags, options);
     gen.setTheoryInfo(std::move(info));
-    return gen.run(*flat);
+    auto module = gen.run(*flat);
+    if (module && !grants.empty())
+      (*module)->setAttr("pia.trusting", mlir::ArrayAttr::get(&ctx, grants));
+    return module;
   }
   return Gen(ctx, filename, diags, options).run(program);
 }

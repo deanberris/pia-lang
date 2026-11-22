@@ -40,7 +40,7 @@ module_header: MODULE path attribute* (COLON path (COMMA path)*)?
 // e.g. `tiled_matmul `sgemm_4x16 f32 4 16 64 4`.
 expr_item: app
 
-import_item: IMPORT path
+import_item: IMPORT path IDENT?               // `import M trusting` (ADR 0036)
 path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
