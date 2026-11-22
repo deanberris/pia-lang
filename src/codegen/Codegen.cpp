@@ -910,6 +910,9 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                          mlir::index::IndexDialect, mlir::LLVM::LLVMDialect,
                          mlir::memref::MemRefDialect>();
   target.addIllegalDialect<PiaDialect, contract::ContractDialect>();
+  // ViewLowering's descriptor-to-memref cast, which the LLVM lowering's
+  // reconcile-unrealized-casts removes.
+  target.addLegalOp<mlir::UnrealizedConversionCastOp>();
   target.addDynamicallyLegalOp<mlir::func::FuncOp>([&](mlir::func::FuncOp f) {
     return types.isSignatureLegal(f.getFunctionType()) &&
            types.isLegal(&f.getBody());

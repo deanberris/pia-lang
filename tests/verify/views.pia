@@ -33,3 +33,18 @@ let unwritten (addr : usize) : u8
   ensures result = 0
 = let mem : [u8] = unsafe view addr 4 in
   mem.[0]
+
+(* Expected report, in order.
+// CHECK: views.pia:18:23: proved: the index is within bounds [smt]
+// CHECK: views.pia:20:20: proved: the loop invariant holds on entry [smt]
+// CHECK: views.pia:20:55: proved: the index is within bounds [smt]
+// CHECK: views.pia:20:53: proved: '+' does not overflow usize [smt]
+// CHECK: views.pia:20:20: proved: the loop invariant holds after each iteration [smt]
+// CHECK: views.pia:28:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:29:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: views.pia:35:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:33:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: addr = {{-?[0-9]+}}
+// CHECK: 9 proved, 1 failed, 0 skipped
+*)
