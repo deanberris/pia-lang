@@ -7,10 +7,12 @@ cc_library(
     srcs = [
         "Expand.cpp",
         "Interpreter.cpp",
+        "Totality.cpp",
     ],
     hdrs = [
         "Expand.h",
         "Interpreter.h",
+        "Totality.h",
     ],
     copts = ["-Wall", "-Wextra", "-Werror"],
     strip_include_prefix = "/src",

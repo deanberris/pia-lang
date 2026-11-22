@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -24,6 +25,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Verifier.h"
 #include "meta/Interpreter.h"
+#include "meta/Totality.h"
 #include "sema/Sema.h"
 
 namespace pia::irgen {
@@ -1871,6 +1873,7 @@ class Gen {
       table[item->text] = item.get();
       interp_.define(*item);
     }
+    checkTotality();
     meta::TypeHost host;
     host.named = [this](const std::string &name) -> std::optional<std::string> {
       Type t = types_.builtin(name);
@@ -1878,8 +1881,8 @@ class Gen {
       if (!t) return std::nullopt;
       return typeValue(t)->s;
     };
-    host.sizeOf = [this](const std::string &spelling) {
-      return byteSize(typeValues_.at(spelling));
+    host.info = [this](const std::string &spelling) {
+      return typeInfo(typeValues_.at(spelling));
     };
     interp_.setTypeHost(std::move(host));
     types_.setTypeFunctions(
@@ -1888,6 +1891,121 @@ class Gen {
                syntax::SourceLoc at) {
           return callTypeFunction(name, args, at);
         });
+  }
+
+  // Decides which type-level metaprograms terminate (ADR 0035, "Constraints
+  // are total"): each one on its own, then through what it calls. One that
+  // does not is only an error where a type or a constraint uses it.
+  void checkTotality() {
+    auto isMeta = [this](const std::string &n) {
+      return typeFns_.count(n) || typePredicates_.count(n);
+    };
+    std::map<std::string, std::set<std::string>> callees;
+    for (auto *table : {&typeFns_, &typePredicates_})
+      for (auto &[name, item] : *table) {
+        // A name a type-level metaprogram cannot call is caught when it
+        // runs; only the metaprograms it can call matter here.
+        if (std::optional<std::string> why =
+                meta::checkOwnTotality(*item, isMeta, callees[name]))
+          notTotal_[name] = *why;
+      }
+    // Through its callees: a cycle between metaprograms would need one
+    // measure that all of them decrease, which is not supported yet.
+    std::map<std::string, int> state;  // 1 visiting, 2 done
+    std::function<void(const std::string &, std::vector<std::string> &)>
+        visit = [&](const std::string &name, std::vector<std::string> &path) {
+          state[name] = 1;
+          path.push_back(name);
+          for (const std::string &c : callees[name]) {
+            if (state[c] == 1) {
+              std::string cycle;
+              auto from = std::find(path.begin(), path.end(), c);
+              for (auto it = from; it != path.end(); ++it)
+                cycle += "'" + *it + "' calls ";
+              cycle += "'" + c + "'";
+              for (auto it = from; it != path.end(); ++it)
+                if (!notTotal_.count(*it))
+                  notTotal_[*it] = "it is mutually recursive (" + cycle +
+                                   "), which is not supported yet";
+              continue;
+            }
+            if (state[c] == 0) visit(c, path);
+            if (notTotal_.count(c) && !notTotal_.count(name))
+              notTotal_[name] = "it calls '" + c + "', which may not "
+                                "terminate: " + notTotal_.at(c);
+          }
+          path.pop_back();
+          state[name] = 2;
+        };
+    for (auto &[name, cs] : callees) {
+      std::vector<std::string> path;
+      if (state[name] == 0) visit(name, path);
+    }
+  }
+
+  // The error for a use of a metaprogram that may not terminate, or
+  // nothing. `use` says where it is used: "a type" or "a constraint".
+  bool reportNotTotal(const std::string &name, syntax::SourceLoc at,
+                      const char *use) {
+    auto it = notTotal_.find(name);
+    if (it == notTotal_.end()) return false;
+    std::string key = name + "@" + std::to_string(at.line) + ":" +
+                      std::to_string(at.column);
+    if (!reportedNotTotal_.insert(key).second) return true;
+    diags_.error(at, "'" + name + "' is used in " + use +
+                         ", so it must terminate, but " + it->second);
+    return true;
+  }
+
+  // The type-level metaprograms that `n` names.
+  void metaNamesIn(const Node &n, std::vector<const Node *> &out) const {
+    if (n.kind == NodeKind::Name &&
+        (typeFns_.count(n.text) || typePredicates_.count(n.text)))
+      out.push_back(&n);
+    for (const syntax::NodePtr &k : n.kids) metaNamesIn(*k, out);
+  }
+
+  // A metaprogram error, unless it ran out of steps, which no
+  // metaprogram that is proved to terminate should, so that is the
+  // compiler's fault (ADR 0035).
+  std::string metaFailure(const meta::MetaError &e) {
+    if (e.message.rfind("the metaprogram ran out of fuel", 0) == 0)
+      return "internal compiler error: a metaprogram that terminates ran "
+             "out of steps (" + e.message + ")";
+    return e.message;
+  }
+
+  // What a type is made of, for `type_kind`, `element`, `field_types`,
+  // `type_args` and `size_of`.
+  meta::TypeInfo typeInfo(Type t) {
+    meta::TypeInfo info;
+    info.size = byteSize(t);
+    if (mlir::isa<IntType>(t)) {
+      info.kind = "int";
+    } else if (t == types_.boolType()) {
+      info.kind = "bool";
+    } else if (types_.isUnit(t)) {
+      info.kind = "unit";
+    } else if (auto a = mlir::dyn_cast<ArrayType>(t)) {
+      info.kind = "array";
+      info.element = typeValue(a.getElementType())->s;
+    } else if (auto sl = mlir::dyn_cast<SliceType>(t)) {
+      info.kind = "slice";
+      info.element = typeValue(sl.getElementType())->s;
+    } else if (types_.isVariant(t)) {
+      info.kind = "variant";
+      for (const sema::Ctor *c : types_.ctorsOf(t))
+        if (c->payload) info.fields.push_back(typeValue(c->payload)->s);
+    } else if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      info.kind = standIns_.contains(t) ? "unknown" : "record";
+      for (Type f : r.getFieldTypes())
+        info.fields.push_back(typeValue(f)->s);
+    } else {
+      info.kind = "unknown";
+    }
+    if (const sema::Instance *inst = types_.instanceOf(t))
+      for (Type a : inst->args) info.args.push_back(typeValue(a)->s);
+    return info;
   }
 
   // A type as a metaprogram's value.
@@ -1942,6 +2060,7 @@ class Gen {
       std::string t = sema::typeName(a);
       spelled += t.find(' ') == std::string::npos ? " " + t : " (" + t + ")";
     }
+    if (reportNotTotal(name, at, "a type")) return {};
     size_t arity = interp_.arity(name);
     if (args.size() != arity) {
       diags_.error(at, "'" + name + "' takes " + std::to_string(arity) +
@@ -1971,7 +2090,7 @@ class Gen {
       return typeValues_.at(v->s);
     } catch (const meta::MetaError &e) {
       diags_.error(at, "the type '" + spelled + "' cannot be formed: " +
-                           e.message);
+                           metaFailure(e));
     } catch (const meta::Deferred &d) {
       diags_.error(at, "the type '" + spelled + "' cannot be formed: it "
                        "needs the type '" + d.type + "'");
@@ -2018,6 +2137,11 @@ class Gen {
   std::optional<std::string> predicateUnmet(
       const Node &q, const std::map<std::string, Type> &bound) {
     std::string text = predicateText(q);
+    std::vector<const Node *> metas;
+    metaNamesIn(q, metas);
+    for (const Node *m : metas)
+      if (reportNotTotal(m->text, m->loc, "a constraint"))
+        return "its constraint '" + text + "' may not terminate";
     bool abstract = false;
     std::map<std::string, std::string> rename;
     for (auto &[name, t] : bound)
@@ -2061,7 +2185,7 @@ class Gen {
     } catch (const meta::MetaError &e) {
       // A soft failure waits for the totality check (ADR 0035, step 3).
       diags_.error(q.loc, "the constraint '" + text + "' cannot be checked "
-                          "for " + forTypes + ": " + e.message);
+                          "for " + forTypes + ": " + metaFailure(e));
     } catch (const meta::Deferred &d) {
       diags_.error(q.loc, "the constraint '" + text + "' needs the type '" +
                               d.type + "'");
@@ -2193,6 +2317,13 @@ class Gen {
                                   "'where Eq t && Hash t', or states a "
                                   "predicate, as in 'where size_of t <= 8'");
           continue;
+        }
+        // A metaprogram a constraint uses must terminate (ADR 0035).
+        for (const Node *q : preds) {
+          std::vector<const Node *> metas;
+          metaNamesIn(*q, metas);
+          for (const Node *m : metas)
+            reportNotTotal(m->text, m->loc, "a constraint");
         }
         // A concept is met or not, and only '&&' joins it to the rest.
         for (const Node *q : preds)
@@ -3832,6 +3963,9 @@ class Gen {
   // parameters while its definition is checked or it is ranked, and what
   // a type-level metaprogram makes of them.
   llvm::DenseSet<Type> standIns_;
+  // Why a type-level metaprogram may not terminate, by name.
+  std::map<std::string, std::string> notTotal_;
+  std::set<std::string> reportedNotTotal_;
   // Set when a type-level metaprogram is applied to a stand-in while a
   // definition is checked.
   bool opaqueStandIn_ = false;
