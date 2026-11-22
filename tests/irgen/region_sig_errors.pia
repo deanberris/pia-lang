@@ -1,0 +1,29 @@
+(* Region parameters (ADR 0042, step 2) that name nothing, or the wrong
+   thing. These are found before any function is generated.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let span = let (r : region) => type { mem : borrowed(r) mutable [u8]; used : usize }
+
+(* No parameter's type mentions `r`, so nothing can lend from it.
+// CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(r)': no parameter of 'nowhere' has a type that mentions the region 'r', so nothing can lend from it
+*)
+let nowhere (r : region) (n : usize) : borrowed(r) [u8] = nowhere n
+
+(* A field borrows only from a region of its own type.
+// CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(s)' on a field names a region parameter of its type, and 'stray' has no region 's'
+*)
+let stray = let (r : region) => type { mem : borrowed(s) [u8] }
+
+(* A region argument names a region in scope.
+// CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'span' takes a region here, and this is not one: name a region parameter, as in '(r : region)', or leave the regions out
+*)
+let notregion (r : region) (s : span u8) : unit = ()
+
+(* CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the region 'r' is declared twice
+*)
+let twice (r : region) (r : region) (x : u8) : u8 = x
+
+(* CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a field that borrows from a region may be 'borrowed(r)' or 'borrowed(r) mutable', and nothing else
+*)
+let moving = let (r : region) => type { mem : borrowed(r) inout [u8] }
