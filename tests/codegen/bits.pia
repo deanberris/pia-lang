@@ -2,6 +2,26 @@
    against C over every input (or a sweep, for the wider types). Every goal
    here must be proved.
 *)
+module Bits : BitOps
+
+(* What bits_test.c calls, by its C names (ADR 0039). *)
+interface BitOps @abi(c) = sig
+  let band8 : (a : u8) -> (b : u8) -> u8
+  let bor8 : (a : u8) -> (b : u8) -> u8
+  let bxor8 : (a : u8) -> (b : u8) -> u8
+  let bnot8 : (x : u8) -> u8
+  let bnot32 : (x : i32) -> i32
+  let band_i16 : (a : i16) -> (b : i16) -> i16
+  let shl16 : (x : u8) -> (n : u8) -> u16
+    requires n < 8
+  let shr_i32 : (x : i32) -> (n : u8) -> i32
+    requires n < 32
+  let shr_u32 : (x : u32) -> (n : u8) -> u32
+    requires n < 32
+  let rotl8 : (x : u8) -> (n : u8) -> u8
+    requires n < 8
+end
+
 
 let band8 (a : u8) (b : u8) : u8 = a & b
 

@@ -7,7 +7,7 @@
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
-%declare ADAPTER HANDLE DEFER QUESTION AS
+%declare ADAPTER HANDLE DEFER QUESTION AS THEORY SORT AXIOM
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
 %declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
 %declare ATTR ATTR_OPEN TARGS_OPEN TARGS_CLOSE LBRACE_ADJ HOLE
@@ -20,12 +20,17 @@
 
 start: program
 
-program: SEP? (item (SEP item)*)? SEP?
+program: SEP? ((module_header | item) (SEP item)*)? SEP?
+
+// The first item of a file may be its module header (ADR 0039).
+module_header: MODULE path attribute* (COLON path (COMMA path)*)?
 
 ?item: let_item
      | meta_operator
      | interface_item
      | adapter_item
+     | theory_item
+     | file_attr
      | module_item
      | import_item
      | expr_item
@@ -104,7 +109,7 @@ arrow_dom: modifiers union_type
          | INT
          | LPAREN expr RPAREN
 
-type_atom: IDENT                                     -> type_name
+type_atom: IDENT (DOT IDENT)*                         -> type_name
          | TYPE                                      -> type_kind
          | IDENT TARGS_OPEN targs TARGS_CLOSE        -> type_inst
          | IDENT LBRACE_ADJ add_e DOTDOT add_e RBRACE -> range_type
@@ -298,7 +303,7 @@ pfield: IDENT (EQ pattern)?
 
 // ---------------------------------------------------------------- modules
 
-interface_item: INTERFACE IDENT EQ SIG sig_item* END
+interface_item: INTERFACE IDENT attribute* EQ SIG sig_item* END
 sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
         | LET binder EQ type_value                     -> sig_type
         | HOLE                                         -> sig_hole
@@ -310,6 +315,16 @@ concept_item: sig_item
             | IDENT type                                 -> sig_include  // `include`
             | LET LEMMA IDENT param* contract*         -> sig_lemma
 ret_attrs: attribute*
+
+// `let theory T = sig ... end` (ADR 0036): sorts, abstract spec functions
+// (no body), spec functions, axioms (no body) and lemmas.
+theory_item: LET THEORY IDENT EQ SIG theory_member* END
+theory_member: LET SORT IDENT (EQ type)?                      -> sort_decl
+             | LET SPEC binder COLON annot attribute*         -> abstract_spec
+             | LET AXIOM IDENT param* ret_annot? contract+    -> axiom
+             | let_item
+// `@trusted` on a line of its own marks the file (ADR 0036).
+file_attr: ATTR
 
 // `let adapter name : C t = struct ... end` (ADR 0034).
 adapter_item: LET ADAPTER IDENT COLON type EQ STRUCT struct_body END

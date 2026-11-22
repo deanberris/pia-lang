@@ -43,8 +43,12 @@ mlir::LogicalResult lowerToCore(mlir::ModuleOp module);
 
 // Lowers to the llvm dialect. Each public function becomes an internal
 // function and a C-callable entry point with the source name (codegen.md,
-// "C ABI").
-mlir::LogicalResult lowerToLLVM(mlir::ModuleOp module);
+// "C ABI"). With `exportsOnly`, as when piac compiles a module, only the
+// functions a module exports get entry points (ADR 0039): with their C
+// name from an `@abi(c)` interface, or mangled with the module's path,
+// `pia$Pixels$blend`. Every other function stays internal.
+mlir::LogicalResult lowerToLLVM(mlir::ModuleOp module,
+                                bool exportsOnly = false);
 
 // Translates to LLVM IR for the target and optimises it. Returns null and
 // sets `error` on failure.

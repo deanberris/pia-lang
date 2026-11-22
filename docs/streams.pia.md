@@ -87,6 +87,42 @@ wider bit-vectors, and loop proofs then time out
 ([issue #45](https://github.com/deanberris/pia-lang/issues/45)), so it adds
 instead: row offsets grow by `w`, and `3 * i` is `i + i + i`.
 
+The file is one module, `Streams` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
+Its interface lists the five functions the C program calls, with the
+preconditions a caller must keep; everything else on this page is private
+to the module:
+
+```pia
+module Streams : Delineation
+
+interface Delineation @abi(c) = sig
+  let fill_sinks : (dem : [u16]) -> (w : usize) -> (limit : u32)
+      -> (fill : out mutable [u16]) -> u32
+    requires len fill = len dem && w >= 3 && w + w + w <= len dem
+  let directions : (fill : [u16]) -> (w : usize)
+      -> (down : out mutable [usize]) -> unit
+    requires len down = len fill && w >= 3 && w + w + w <= len fill
+  let accumulate : (fill : [u16]) -> (down : [usize])
+      -> (acc : out mutable [u32]) -> (basin : out mutable [usize]) -> unit
+    requires len down = len fill && len acc = len fill && len basin = len fill
+    requires len fill < 4294967295
+    requires forall (k in 0..len down).
+               down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  let render : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
+      -> (basin : [usize]) -> (threshold : u32) -> (rgb : out mutable [u8])
+      -> usize
+    requires len fill = len dem && len acc = len dem && len basin = len dem
+    requires len rgb = len dem + len dem + len dem
+  let delineate : (dem : [u16]) -> (w : usize) -> (limit : u32)
+      -> (threshold : u32) -> (fill : out mutable [u16])
+      -> (down : out mutable [usize]) -> (acc : out mutable [u32])
+      -> (basin : out mutable [usize]) -> (rgb : out mutable [u8]) -> usize
+    requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
+    requires len fill = len dem && len down = len dem && len acc = len dem
+    requires len basin = len dem && len rgb = len dem + len dem + len dem
+end
+```
+
 Heights are compared through two small helpers whose postconditions say
 exactly what they return, so callers can reason about the result:
 

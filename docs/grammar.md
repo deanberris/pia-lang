@@ -64,7 +64,7 @@ borrowed moved out inout fixed mutable mod handle defer as
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
 
-`spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
+`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -158,8 +158,8 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 ### Programs and items
 
 ```ebnf
-program   = [ item { SEP item } ] ;
-item      = let_item | meta_operator | interface | module | import | expr_item ;
+program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
+item      = let_item | meta_operator | interface | module | import | theory | file_attr | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
 import    = "import" path ;
 path      = IDENT { "." IDENT } ;
@@ -204,6 +204,7 @@ type_arg   = type_atom | INT | "(" expr ")" ;
 
 type_atom  = IDENT
            | "type"                               (* the type of types *)
+           | IDENT "." IDENT { "." IDENT }        (* a theory's sort: Lip.layer *)
            | IDENT "<" targ { "," targ } ">"      (* vec<u8, 16>, tiled<cell, 256, 256, halo = 1> *)
            | IDENT "{" expr ".." expr "}"         (* int{0..255} *)
            | "[" type "]"                         (* slice, length carried at run time *)
@@ -308,7 +309,7 @@ pfield       = IDENT [ "=" pattern ] ;
 ### Modules and interfaces
 
 ```ebnf
-interface = "interface" IDENT "=" "sig" { sig_item } "end" ;
+interface = "interface" IDENT { attribute } "=" "sig" { sig_item } "end" ;   (* @abi(c), @within(...) *)
 sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
           | "let" binder "=" type_value                           (* exported type *)
           | "..." ;
@@ -317,7 +318,16 @@ concept_item = "include" type                                  (* "include" is c
              | "let" "lemma" IDENT { param } { contract } ;   (* a law *)
 adapter   = "let" "adapter" IDENT ":" type "=" "struct" { item } "end" ;  (* "adapter" is contextual *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
+module_header = "module" path { attribute } [ ":" path { "," path } ] ;  (* a file's first item only *)
+theory    = "let" "theory" IDENT "=" "sig" { theory_member } "end" ;  (* ADR 0036 *)
+theory_member = "let" "sort" IDENT [ "=" type ]
+              | "let" "spec" binder ":" annot { attribute }           (* abstract: no body *)
+              | "let" "axiom" IDENT { param } [ ret_annot ] contract { contract }
+              | let_item ;
+file_attr = ATTR ;                                             (* `@trusted`, on its own line *)
 ```
+
+A file is one module. Its first item may be a module header, `module Pixels : PixelOps, PixelCodec`, which names the module and the interfaces it claims; the rest of the file is the module's body. A `let` is private unless one of those interfaces lists it, and each item an interface lists is checked against the module, with contracts proved ([ADR 0039](adr/0039-module-and-interface-syntax.md)). A header anywhere but first is an error. `module M : I = struct ... end` is a module nested in a file.
 
 ## Disambiguation
 

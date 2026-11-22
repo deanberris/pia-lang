@@ -3,6 +3,19 @@
    the C entry point takes one pointer per field and one length.
    Every goal here must be proved.
 *)
+module RecordBuffers : PixelBuffers
+
+(* What record_buffers_test.c calls, by its C names (ADR 0039). *)
+interface PixelBuffers @abi(c) = sig
+  let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+  let opaque_all : (xs : out mutable [pixel]) -> (v : u8) -> unit
+  let set_alpha : (xs : inout mutable [pixel; 4]) -> (i : usize) -> (v : u8) -> unit
+    requires i < 4
+  let luma : (xs : [pixel]) -> (i : usize) -> u16
+    requires i < len xs
+  let middle : (xs : out mutable [pixel; 8]) -> (v : u8) -> unit
+end
+
 
 let pixel = type { r : u8; g : u8; b : u8; a : u8 }
 

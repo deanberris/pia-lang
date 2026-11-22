@@ -667,7 +667,8 @@ void eraseContracts(mlir::ModuleOp module) {
   }
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
     if (f->hasAttr(PiaDialect::getLemmaAttrName()) ||
-        f->hasAttr(PiaDialect::getSpecAttrName()))
+        f->hasAttr(PiaDialect::getSpecAttrName()) ||
+        f->hasAttr(PiaDialect::getAxiomAttrName()))
       f.erase();
 }
 
@@ -735,6 +736,7 @@ namespace {
 // A public function's C entry point, recorded before lowering.
 struct Entry {
   std::string name;
+  std::string cname;  // the entry point's symbol
   mlir::FunctionType type;  // core types
   std::vector<bool> argSigned;
   bool resultSigned = false;
@@ -829,7 +831,7 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   OpBuilder b(ctx);
   b.setInsertionPointAfter(internal);
   auto entry = make<mlir::LLVM::LLVMFuncOp>(
-      b, e.loc, cName(e.name),
+      b, e.loc, e.cname,
       mlir::LLVM::LLVMFunctionType::get(resultType, argTypes));
   mlir::Block *block = entry.addEntryBlock(b);
   b.setInsertionPointToStart(block);
@@ -892,13 +894,25 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
 
 }  // namespace
 
-LogicalResult lowerToLLVM(mlir::ModuleOp module) {
+LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
 
   std::vector<Entry> entries;
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
-    Entry e{f.getSymName().str(), f.getFunctionType(), {}, false, f.getLoc()};
+    Entry e{f.getSymName().str(), cName(f.getSymName()), f.getFunctionType(),
+            {}, false, f.getLoc()};
+    // An exported function's entry point is named by its module (ADR 0039).
+    auto exported =
+        f->getAttrOfType<mlir::StringAttr>(PiaDialect::getExportAttrName());
+    if (exported && !exported.getValue().empty()) {
+      std::string path = exported.getValue().str();
+      std::replace(path.begin(), path.end(), '.', '$');
+      e.cname = "pia$" + path + "$" + e.cname;
+    }
+    if (exported) f->removeAttr(PiaDialect::getExportAttrName());
+    if (exportsOnly && !exported && f.isPublic() && !f.isExternal())
+      f.setPrivate();
     for (unsigned i = 0; i < f.getNumArguments(); ++i) {
       e.argSigned.push_back(static_cast<bool>(f.getArgAttr(i, kSigned)));
       auto shared = f.getArgAttrOfType<mlir::IntegerAttr>(
@@ -932,13 +946,21 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module) {
 
   std::map<std::string, std::string> cNames;
   for (const Entry &e : entries) {
-    auto [it, fresh] = cNames.emplace(cName(e.name), e.name);
-    if (!fresh || (cName(e.name) != e.name &&
-                   module.lookupSymbol((kInternalPrefix + cName(e.name)).str())))
+    auto [it, fresh] = cNames.emplace(e.cname, e.name);
+    if (!fresh || (e.cname != e.name &&
+                   module.lookupSymbol((kInternalPrefix + e.cname).str())))
       return mlir::emitError(e.loc)
              << "the C entry point of '" << e.name << "' would be named '"
-             << cName(e.name) << "', which another function already uses";
+             << e.cname << "', which another function already uses";
   }
+  // A module's private functions are internal to its object file
+  // (ADR 0039), so LLVM may inline them and drop the ones nothing calls.
+  if (exportsOnly)
+    for (auto f : module.getOps<mlir::LLVM::LLVMFuncOp>())
+      if (!f.isExternal() && f.isPrivate()) {
+        f.setLinkage(mlir::LLVM::Linkage::Internal);
+        f.setSymVisibility(std::nullopt);
+      }
   for (const Entry &e : entries) {
     if (mlir::failed(buildEntry(module, e))) return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(

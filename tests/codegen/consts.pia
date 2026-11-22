@@ -1,6 +1,15 @@
 (* Constant arrays (#50), compiled for Apple Silicon and run by
    consts_test.c. Every goal here must be proved.
 *)
+module Consts : Tables
+
+(* What consts_test.c calls, by its C names (ADR 0039). *)
+interface Tables @abi(c) = sig
+  let lookup : (i : int{0..15}) -> u8
+  let sign_at : (i : int{0..3}) -> i8
+  let middle_sum : u16
+end
+
 
 let crc4 : [u8; 16] = [0; 3; 6; 5; 12; 15; 10; 9; 11; 8; 13; 14; 7; 4; 1; 2]
 

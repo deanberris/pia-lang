@@ -1,6 +1,22 @@
 (* Slices (#50), compiled for Apple Silicon and run by slices_test.c.
    Every goal here must be proved.
 *)
+module Slices : SliceOps
+
+(* What slices_test.c calls, by its C names (ADR 0039). *)
+interface SliceOps @abi(c) = sig
+  let fill : (dst : out mutable [u8]) -> (v : u8) -> unit
+  let fill_middle : (xs : out mutable [u8; 8]) -> (v : u8) -> unit
+  let fill_inner : (xs : out mutable [u8]) -> (a : usize) -> (b : usize) -> (v : u8) -> unit
+    requires a + 2 <= b && b <= len xs
+  let first_of : (xs : [u16]) -> (a : usize) -> (b : usize) -> u16
+    requires a < b && b <= len xs
+  let count : (xs : [u16]) -> (a : usize) -> (b : usize) -> usize
+    requires a <= b && b <= len xs
+  let safe_div : (a : u32) -> (b : u32) -> u32
+    requires b > 0
+end
+
 
 let fill (dst : out mutable [u8]) (v : u8) : unit =
   for i in 0..len dst do dst.[i] <- v done

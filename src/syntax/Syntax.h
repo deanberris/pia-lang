@@ -25,8 +25,9 @@ namespace pia::syntax {
   X(LetItem)       /* text=name, flags; Params, RetAnnot?, Contracts, body */ \
   X(MetaOperator)  /* text=op; Fixity?, for-type?, body */                   \
   X(Fixity)        /* text="prec level assoc" */                             \
-  X(Interface)     /* text=name; sig items */                                \
+  X(Interface)     /* text=name; Attrs, sig items */                         \
   X(Module)        /* text=name; Paths, item* */                             \
+  X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
   X(Import)        /* text=path */                                           \
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
@@ -35,6 +36,9 @@ namespace pia::syntax {
   X(SigInclude)    /* text=concept; type arguments */                        \
   X(SigLemma)      /* text=name; Params, Contracts */                        \
   X(Adapter)       /* text=name; concept type, item* */                      \
+  X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
+  X(SortItem)      /* text=name; abbreviated type? */                        \
+  X(FileAttr)      /* text=name: `@trusted` on its own line, for the file */ \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
   /* bindings */                                                             \

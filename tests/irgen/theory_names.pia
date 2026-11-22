@@ -1,0 +1,15 @@
+(* Inside a theory its members are visible unqualified, so a parameter
+   cannot take a member's name (ADR 0022).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let spec g : (s : s) -> u8
+end
+
+(* Each error, in order.
+// CHECK: theory_names.pia:10:16: error: 's' shadows 'T.s' in the theory 'T'; Pia does not allow shadowing (ADR 0022), so rename it to s'
+*)

@@ -1,0 +1,25 @@
+(* Only what a module exports gets a C entry point (ADR 0039). A function
+   in an @abi(c) interface keeps its C name, one in any other interface is
+   mangled with the module's path, and the rest are internal.
+// RUN: piac --emit=llvm %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: define {{.*}} @mix(
+// CHECK-DAG: define {{.*}} @blend(
+// CHECK-DAG: define {{.*}} @"pia$Image$Pixels$luma"(
+// CHECK-NOT: define {{.*}} @mix(
+*)
+module Image.Pixels : C, Pia
+
+interface C @abi(c) = sig
+  let blend : (a : u8) -> (b : u8) -> u8
+end
+
+interface Pia = sig
+  let luma : (r : u8) -> (g : u8) -> u16
+end
+
+let mix (x : u8) (y : u8) : u8 = x / 2 + y / 2
+let blend (a : u8) (b : u8) : u8 = mix a b
+let luma (r : u8) (g : u8) : u16 = r + g

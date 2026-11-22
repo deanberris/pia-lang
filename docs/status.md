@@ -10,11 +10,12 @@ Pia is an experimental language under active development. The compiler works end
 | Types | Bounded integers, range types `int{lo..hi}`, `bool`, fixed arrays `[T; n]`, slices `[T]`, records, variants, type aliases |
 | Code | Functions, `let rec`, `let ... in`, mutable locals and buffers, `if`, `for`, `while`, parameter modifiers |
 | Overflow | `@overflow(proof)` by default, plus `wrap`, `saturate` and `trap`, and saturating operators |
-| Contracts | `requires`, `ensures`, `assert`, `assume`, `old`, `forall` and `exists`, loop `invariant` and `decreases`, spec functions and lemmas, and the spec-only types `int` (unbounded) and `real` |
+| Contracts | `requires`, `ensures`, `assert`, `assume`, `old`, `forall` and `exists`, loop `invariant` and `decreases`, spec functions and lemmas, the spec-only types `int` (unbounded) and `real`, and theories: sorts, abstract functions and axioms with triggers, trusted until models land ([verifier.md](verifier.md#theories)) |
 | Verification | Overflow, nonzero divisors, bounds, preconditions at calls, postconditions and assertions, by intervals and Z3, with counterexamples |
 | Metaprograms | `let meta` functions, quotes and splices, hygiene, operators defined in the prelude and by programs, `@derive(eq)`, expansion to a fixed point |
 | Comments | `(* *)`, `\` line and `(** *)` doc comments, kept in the syntax tree for metaprograms and hover; literate `.pia.md` files |
-| Codegen | arm64 for Apple Silicon through MLIR and LLVM: object files, assembly and LLVM IR, a C ABI, saturating NEON instructions and vectorised loops |
+| Modules | one module per file with a `module` header; everything is private unless an interface the module claims lists it; each listed item is checked against the module, with contracts proved; `@abi(c)` interfaces keep C names ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 1 of 7) |
+| Codegen | arm64 for Apple Silicon through MLIR and LLVM: object files, assembly and LLVM IR, a C ABI for exported functions, saturating NEON instructions and vectorised loops |
 | Demo | [Edge detection](demo.md): a Pia image pipeline, proved and compiled into a program you can run with `bazel run //examples/edges`; [stream delineation](streams.pia.md), a literate program with sink filling, D8 directions, flow accumulation and watersheds, run with `bazel run //examples/streams` |
 | Tools | `piac`, `pia-opt`, the `pia-lsp` language server and a VS Code extension, and [`pia repl`](repl.md), a verified REPL with a JIT, a JSON mode, an MCP server (`pia mcp`), proved live redefinition of code that background tasks are running, and state with invariants and verified migration |
 
@@ -24,7 +25,7 @@ Pia is an experimental language under active development. The compiler works end
 - **Termination is checked for loops and direct recursion only.** A `while` loop or a recursive call without `decreases` is a skipped goal, which `piac` refuses unless `--allow-unproved` accepts it. Mutual recursion is not checked.
 - **Calls inside contracts** are unknown values, so a contract cannot rely on what another function computes.
 - **Counterexamples do not show array contents** yet, only lengths and scalar values.
-- **Not compiled yet:** function values and lambdas outside metaprograms, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
+- **Not compiled yet:** function values and lambdas outside metaprograms, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, imports, separate compilation and nested modules, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
 - **One target.** Code generation targets arm64 macOS. The compiler itself builds on Linux and cross-compiles.
 
 ## Roadmap

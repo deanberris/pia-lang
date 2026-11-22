@@ -5,4 +5,10 @@
 
 (* CHECK: define {{.*}} @step_prime(
 *)
+module Primes : Steps
+
+interface Steps @abi(c) = sig
+  let step' : (x : u8) -> u16
+end
+
 let step' (x : u8) : u16 = let x' : u16 = x in x' + 1
