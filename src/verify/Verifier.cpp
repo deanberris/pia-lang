@@ -2931,13 +2931,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   std::map<Operation *, std::vector<Goal>> witnessGoals;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
-<<<<<<< HEAD
     // A foreign function's contract is trusted, not proved (#55).
     if (fn->hasAttr("pia.extern")) continue;
-=======
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
->>>>>>> origin/main
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;
