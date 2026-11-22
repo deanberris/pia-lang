@@ -332,6 +332,53 @@ def Pia_ShrOp : Pia_ArithOp<"shr"> {
   }];
 }
 
+// Bit counting, byte swapping and rotation (docs/stdlib.md, group 2). Each
+// works on the storage bits of an unsigned operand, whose width w is that
+// of its type's machine integer (8, 16, 32 or 64), and its result type is
+// exact, so none can overflow.
+class Pia_BitOp<string mnemonic> : Pia_Op<mnemonic, [Pure]> {
+  let arguments = (ins Pia_AnyInt:$input);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+}
+
+def Pia_ClzOp : Pia_BitOp<"clz"> {
+  let summary = "count leading zero bits: w for zero; result in [0, w]";
+}
+def Pia_CtzOp : Pia_BitOp<"ctz"> {
+  let summary = "count trailing zero bits: w for zero; result in [0, w]";
+}
+def Pia_PopcountOp : Pia_BitOp<"popcount"> {
+  let summary = "count set bits; result in [0, w]";
+}
+def Pia_BSwapOp : Pia_BitOp<"bswap"> {
+  let summary = "reverse the order of the w / 8 bytes; result in [0, 2^w)";
+}
+
+class Pia_RotateOp<string mnemonic> : Pia_Op<mnemonic, [Pure]> {
+  let arguments = (ins Pia_AnyInt:$value, Pia_AnyInt:$amount);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = [{
+    $value `,` $amount attr-dict `:` type($value) `,` type($amount) `->` type($result)
+  }];
+}
+
+def Pia_RotlOp : Pia_RotateOp<"rotl"> {
+  let summary = "rotate the w storage bits left";
+  let description = [{
+    The amount must be proved to lie in [0, w), as for `shl`. The result is
+    in [0, 2^w).
+  }];
+}
+def Pia_RotrOp : Pia_RotateOp<"rotr"> {
+  let summary = "rotate the w storage bits right";
+  let description = [{
+    The amount must be proved to lie in [0, w), as for `shr`.
+  }];
+}
+
 def Pia_ToIndexOp : Pia_Op<"to_index", [Pure]> {
   let summary = "use a range-typed integer as an index";
   let description = [{

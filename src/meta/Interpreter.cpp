@@ -161,6 +161,7 @@ bool Interpreter::isCoreBuiltin(const std::string &name) {
       "eq",  "ne",  "lt",      "gt",      "le",  "ge",
       "and", "or",  "implies", "iff",     "len", "old",
       "band", "bor", "bxor", "bnot", "shl", "shr", "abort",
+      "clz", "ctz", "popcount", "bswap", "rotl", "rotr",
   };
   return names.count(name);
 }

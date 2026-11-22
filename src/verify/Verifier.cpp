@@ -709,6 +709,8 @@ class Encoder {
                        opSpelling(op) + " does not overflow " +
                            sema::typeName(op->getResult(0).getType())});
     }
+    if (mlir::isa<RotlOp, RotrOp>(op))
+      out.push_back({ObligationKind::shift, shiftClaim(op)});
     if (auto c = mlir::dyn_cast<ConvertOp>(op))
       if (c.getOverflow() == OverflowMode::proof && !c.isWidening())
         out.push_back({ObligationKind::nooverflow,
@@ -999,6 +1001,18 @@ class Encoder {
           }
         }
       }
+      // A rotation's amount is in width, as a shift's is.
+      if (mlir::isa<RotlOp, RotrOp>(op)) {
+        if (Value c = term(op->getOperand(1))) {
+          Interval d = valueRange(op->getOperand(1));
+          APInt w(192, shiftWidth(op));
+          bool inWidth = !d.first.isNegative() && d.second.slt(w);
+          goal(ObligationKind::shift, op, shiftClaim(op),
+               andOf(cmp(P::sge, c, bv(0)),
+                     cmp(P::slt, c, bv(static_cast<int64_t>(shiftWidth(op))))),
+               inWidth, {{"amount", c}});
+        }
+      }
       if (auto d = mlir::dyn_cast<ExactDivOp>(op)) {
         if (Value c = term(d.getRhs())) {
           auto k = d.getRhs().getDefiningOp<ExactConstantOp>();
@@ -1099,6 +1113,58 @@ class Encoder {
     if (mlir::isa<ShlOp>(op)) return bvBin("shl", a, c);
     if (mlir::isa<ShrOp>(op)) return bvBin("ashr", a, c);
     return bvBin("srem", a, c);
+  }
+
+  // `clz`, `ctz`, `popcount`, `bswap`, `rotl` and `rotr` on the w storage
+  // bits of an unsigned operand, which the encoding holds exactly as a
+  // non-negative value below 2^w. Each is written with constant shifts and
+  // masks, so no intermediate value needs more than w + 1 bits, and the
+  // encoding width is unchanged. A rotation's amount is below w, its goal.
+  Value bitSemantics(Operation *op, llvm::ArrayRef<Value> in) {
+    if (!mlir::isa<ClzOp, CtzOp, PopcountOp, BSwapOp, RotlOp, RotrOp>(op))
+      return {};
+    auto t = mlir::cast<IntType>(op->getOperand(0).getType());
+    int64_t w = t.getStorageWidth();
+    Value x = in[0];
+    auto bit = [&](int64_t i) {
+      return eq(bvBin("and", bvBin("ashr", x, bv(i)), bv(1)), bv(1));
+    };
+    if (mlir::isa<PopcountOp>(op)) {
+      Value sum = bv(0);
+      for (int64_t i = 0; i < w; ++i)
+        sum = bvBin("add", sum, bvBin("and", bvBin("ashr", x, bv(i)), bv(1)));
+      return sum;
+    }
+    if (mlir::isa<ClzOp>(op)) {
+      Value r = bv(w);
+      for (int64_t i = 0; i < w; ++i) r = ite(bit(i), bv(w - 1 - i), r);
+      return r;
+    }
+    if (mlir::isa<CtzOp>(op)) {
+      Value r = bv(w);
+      for (int64_t i = w - 1; i >= 0; --i) r = ite(bit(i), bv(i), r);
+      return r;
+    }
+    if (mlir::isa<BSwapOp>(op)) {
+      int64_t k = w / 8;
+      Value r = bv(0);
+      for (int64_t i = 0; i < k; ++i) {
+        Value byte = bvBin("and", bvBin("ashr", x, bv(8 * i)), bv(255));
+        r = bvBin("or", r, bvBin("shl", byte, bv(8 * (k - 1 - i))));
+      }
+      return r;
+    }
+    // rotl x n = (x mod 2^(w-n)) * 2^n + x / 2^(w-n), and rotr x n is the
+    // same with w - n for n, which also holds for n = 0. With the amount in
+    // [0, w], every term stays below 2^w.
+    Value n = in[1];
+    Value ww = bv(w);
+    Value left = mlir::isa<RotlOp>(op) ? n : bvBin("sub", ww, n);
+    Value right = bvBin("sub", ww, left);  // w - left
+    Value mask = bvBin("sub", bvBin("shl", bv(1), right), bv(1));
+    Value r = bvBin("or", bvBin("shl", bvBin("and", x, mask), left),
+                    bvBin("ashr", x, right));
+    return r;
   }
 
   // Bit-blasting a division is slow: Z3 cannot show `a mod b < b` for
@@ -1230,6 +1296,10 @@ class Encoder {
       out.push_back(applyMode(exact,
                               mlir::cast<IntType>(op->getResult(0).getType()),
                               *m));
+      return true;
+    }
+    if (Value r = bitSemantics(op, in)) {
+      out.push_back(r);
       return true;
     }
     if (auto c = mlir::dyn_cast<CmpOp>(op)) {

@@ -6,6 +6,7 @@
 #include <cctype>
 #include <optional>
 #include <set>
+#include <type_traits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -387,6 +388,63 @@ struct ArithLowering : mlir::OpConversionPattern<OpTy> {
         break;
     }
     rw.replaceOp(op, finish(rw, loc, r, c, res, mode));
+    return mlir::success();
+  }
+};
+
+// `clz`, `ctz`, `popcount` and `bswap` on the w-bit machine integer of an
+// unsigned operand, through LLVM's intrinsics, which arm64 has instructions
+// for (clz, rbit + clz, cnt, rev). A zero operand counts w (no poison).
+template <typename OpTy>
+struct BitLowering : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+  using OpAdaptor = typename OpTy::Adaptor;
+  LogicalResult matchAndRewrite(
+      OpTy op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto in = mlir::cast<IntType>(op.getInput().getType());
+    auto res = mlir::cast<IntType>(op.getResult().getType());
+    unsigned w = in.getStorageWidth();
+    Value x = resize(rw, loc, adaptor.getInput(), false, w);
+    Type t = rw.getIntegerType(w);
+    Value r;
+    if constexpr (std::is_same_v<OpTy, ClzOp>)
+      r = make<mlir::LLVM::CountLeadingZerosOp>(rw, loc, t, x, false);
+    else if constexpr (std::is_same_v<OpTy, CtzOp>)
+      r = make<mlir::LLVM::CountTrailingZerosOp>(rw, loc, t, x, false);
+    else if constexpr (std::is_same_v<OpTy, PopcountOp>)
+      r = make<mlir::LLVM::CtPopOp>(rw, loc, t, x);
+    else
+      r = w == 8 ? x : Value(make<mlir::LLVM::ByteSwapOp>(rw, loc, t, x));
+    rw.replaceOp(op, resize(rw, loc, r, false, reprOf(res).width));
+    return mlir::success();
+  }
+};
+
+// `rotl x n` and `rotr x n` are funnel shifts of x with itself, at w bits.
+// The amount is proved to be below w.
+template <typename OpTy>
+struct RotateLowering : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+  using OpAdaptor = typename OpTy::Adaptor;
+  LogicalResult matchAndRewrite(
+      OpTy op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto in = mlir::cast<IntType>(op.getValue().getType());
+    auto at = mlir::cast<IntType>(op.getAmount().getType());
+    auto res = mlir::cast<IntType>(op.getResult().getType());
+    unsigned w = in.getStorageWidth();
+    Value x = resize(rw, loc, adaptor.getValue(), false, w);
+    Value n = resize(rw, loc, adaptor.getAmount(), reprOf(at).isSigned, w);
+    Type t = rw.getIntegerType(w);
+    Value r;
+    if constexpr (std::is_same_v<OpTy, RotlOp>)
+      r = make<mlir::LLVM::FshlOp>(rw, loc, t, x, x, n);
+    else
+      r = make<mlir::LLVM::FshrOp>(rw, loc, t, x, x, n);
+    rw.replaceOp(op, resize(rw, loc, r, false, reprOf(res).width));
     return mlir::success();
   }
 };
@@ -930,7 +988,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<BOrOp, Arith::BOr>,
                ArithLowering<BXorOp, Arith::BXor>,
                ArithLowering<ShlOp, Arith::Shl>,
-               ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
+               ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
+               BitLowering<CtzOp>, BitLowering<PopcountOp>,
+               BitLowering<BSwapOp>, RotateLowering<RotlOp>,
+               RotateLowering<RotrOp>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
                StoreLowering, SliceLowering, EmptyLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(

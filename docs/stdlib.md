@@ -66,7 +66,7 @@ New builtins, each one or two MLIR ops, with exact SMT semantics (`bvand`, `bvsh
 | --- | --- | --- |
 | `band` `bor` `bxor` `bnot` | bitwise logic, exact on the two's-complement form of the integers (`bnot` on an unsigned type flips the bits of its storage width) | the result fits, in proof mode |
 | `shl` `shr` | shifts: `a * 2^b` and `floor(a / 2^b)` | `0 <= b < bits t` (the `shift` goal), in every mode. `shl` in proof mode also proves no bits are lost |
-| `rotl` `rotr`, `clz` `ctz` `popcount` `bswap` | bit counting, rotation and byte swap, through LLVM intrinsics | none |
+| `rotl` `rotr`, `clz` `ctz` `popcount` `bswap` | bit counting, rotation and byte swap on the storage bits of an unsigned operand, through LLVM intrinsics; the counts are `int{0..w}`, and zero counts `w`. Implemented (ADR 0040) | `rotl` and `rotr`: the `shift` goal, `0 <= b < w` |
 | `widen e` | to a wider type of the same signedness | none |
 | `narrow e` | narrowing conversion, the explicit form of what assignment does now | the value fits |
 | `wrap_to t e`, `sat_to t e` | conversion with a stated overflow mode | none |
