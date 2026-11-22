@@ -46,5 +46,21 @@ build:lto --host_copt=-flto=thin --host_linkopt=-flto=thin
 # .dSYM made by dsymutil), so macOS needs no flag.
 build:linux --fission=dbg,fastbuild
 
+# BuildBuddy remote cache and build results UI (app.buildbuddy.io). The API
+# key never goes in the repo: CI writes it to user.bazelrc from the
+# BUILDBUDDY_API_KEY secret together with --config=buildbuddy, and a local
+# user.bazelrc can do the same. Cache entries are per platform, so macOS and
+# Linux jobs each fill their own.
+common:buildbuddy --bes_results_url=https://app.buildbuddy.io/invocation/
+common:buildbuddy --bes_backend=grpcs://remote.buildbuddy.io
+common:buildbuddy --remote_cache=grpcs://remote.buildbuddy.io
+common:buildbuddy --remote_timeout=10m
+common:buildbuddy --remote_cache_compression
+# Upload only what a later build can use, and keep CI from downloading every
+# LLVM object file: the free plan's 100 GB of monthly transfer is the limit
+# to watch.
+common:buildbuddy --remote_build_event_upload=minimal
+common:buildbuddy --remote_download_toplevel
+
 # Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
 try-import %workspace%/user.bazelrc
