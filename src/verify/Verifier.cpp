@@ -175,12 +175,73 @@ bool insideQuantifier(Operation *op) {
          op->getParentOfType<contract::ExistsOp>();
 }
 
+// An ordinary function whose body is a definition: one scalar result,
+// scalar parameters, and a body of arithmetic, comparisons, pure `if`s and
+// calls of such functions, with no loop, buffer or abort and no recursion.
+// It always returns, with exactly the value its body computes. A lambda
+// passed to a higher-order function is usually one (ADR 0044), and so is
+// the wrapper that gives a named function an arrow's contract.
+bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
+  if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getAbstractAttrName()) ||
+      f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
+      f.getNumResults() != 1)
+    return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  if (auto it = memo.find(f.getOperation()); it != memo.end())
+    return it->second;
+  memo[f.getOperation()] = false;  // a cycle is recursion
+  auto module = f->getParentOfType<mlir::ModuleOp>();
+  bool ok = true;
+  f.walk([&](Operation *op) {
+    if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+      if (!module ||
+          !pureScalar(module.lookupSymbol<mlir::func::FuncOp>(c.getCallee()),
+                      memo))
+        ok = false;
+    } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp, LoadOp,
+                         StoreOp>(op)) {
+      ok = false;
+    }
+    for (Type t : op->getResultTypes())
+      if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+  });
+  memo[f.getOperation()] = ok;
+  return ok;
+}
+
+// A call in a contract of a pure function without a precondition raises
+// no goal, so it is specification like the arithmetic around it, and its
+// arguments may be guarded: `result < len xs ==> p xs.[result]`.
+bool specCall(mlir::func::CallOp call, mlir::func::FuncOp caller,
+              llvm::DenseMap<Operation *, bool> &memo) {
+  auto module = call->getParentOfType<mlir::ModuleOp>();
+  auto callee =
+      module ? module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())
+             : mlir::func::FuncOp();
+  if (!callee || callee == caller || !pureScalar(callee, memo)) return false;
+  if (!callee.getBody().front().getOps<contract::RequiresOp>().empty())
+    return false;
+  // Arithmetic in an argument stays code, with its goals: exact, it could
+  // pass a value outside the parameter's type.
+  for (Value a : call.getOperands())
+    if (Operation *d = a.getDefiningOp())
+      if (!mlir::isa<LoadOp, mlir::func::CallOp>(d) &&
+          !d->hasTrait<mlir::OpTrait::ConstantLike>())
+        return false;
+  return true;
+}
+
 // Specification ops compute only what contracts read. They have exact
 // semantics and no obligations of their own: `ensures result <= a + b`
 // means the mathematical sum, and a guarded `xs.[i]` in a contract may
 // read past the end without failing.
 llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
   llvm::DenseSet<Operation *> spec;
+  llvm::DenseMap<Operation *, bool> pure;
   bool changed = true;
   while (changed) {
     changed = false;
@@ -193,8 +254,9 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
         isSpec = mlir::isa<mlir::scf::IfOp>(y->getParentOp()) &&
                  spec.contains(y->getParentOp());
       } else if (op->getNumResults() > 0 &&
-                 !mlir::isa<mlir::func::CallOp, mlir::scf::ForOp,
-                            mlir::scf::WhileOp>(op)) {
+                 !mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op) &&
+                 (!mlir::isa<mlir::func::CallOp>(op) ||
+                  specCall(mlir::cast<mlir::func::CallOp>(op), fn, pure))) {
         isSpec = true;
         bool anyUser = false;
         for (Value r : op->getResults())
@@ -2101,18 +2163,7 @@ class Encoder {
     if (!scalar(f.getFunctionType().getResult(0))) return false;
     for (Type t : f.getFunctionType().getInputs())
       if (!scalar(t)) return false;
-    auto it = definesValue_.find(f.getOperation());
-    if (it != definesValue_.end()) return it->second;
-    bool ok = true;
-    f.walk([&](Operation *op) {
-      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                    AbortOp, LoadOp, StoreOp>(op))
-        ok = false;
-      for (Type t : op->getResultTypes())
-        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
-    });
-    definesValue_[f.getOperation()] = ok;
-    return ok;
+    return pureScalar(f, definesValue_);
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
 
@@ -2210,6 +2261,32 @@ class Encoder {
     Value app = flat.empty() ? fun
                              : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
                                                               mlir::ValueRange(flat));
+    // A pure function's call is its body, where its precondition holds:
+    // it has no recursion, so the body is a term, and a fact inside a
+    // quantifier about it needs no definition, which an assumed `forall`
+    // could not use (ADR 0044: a lambda's body at its caller).
+    if (!isSpecFunction(callee) && definesValue(callee)) {
+      unsigned before = unknowns_;
+      Demand body;
+      body.values = args.values;
+      Value def;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
+      });
+      Value pre = boolConst(true);
+      bool guarded = false;
+      for (auto r : entry.getOps<contract::RequiresOp>()) {
+        Value p = demand(r.getPredicate(), body);
+        if (!p) def = Value();
+        else pre = andOf(pre, p);
+        guarded = true;
+      }
+      if (def && unknowns_ == before) {
+        if (!guarded) return def;
+        if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
+        return ite(pre, def, app);
+      }
+    }
     // The body was proved to return a value of the result type, and to
     // meet the postconditions where the precondition holds.
     if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));

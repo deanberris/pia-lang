@@ -1,0 +1,9 @@
+(* Function values (ADR 0044): lambdas with result types and contracts,
+   and contracts on a parameter's function type. *)
+let apply_twice (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result > y) : u8
+  requires x < 100
+= f (f x)
+
+let next = let (x : u8) : u8 requires x < 255 ensures result = x + 1 => x + 1
+
+let good (x : u8) : u8 = apply_twice x (let (y : u8) : u8 requires y < 250 => y + 1)

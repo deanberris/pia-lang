@@ -283,6 +283,13 @@ struct FuncSig {
   std::vector<std::string> typeParams;
   std::map<std::string, mlir::Type> typeArgs;
   bool isGeneric() const { return !typeParams.empty() && typeArgs.empty(); }
+  // A higher-order function, `let find (xs : [u8]) (p : u8 -> bool)`, has
+  // parameters of function type (ADR 0044). It is not lowered itself:
+  // each call with a lambda or a named function for them is a
+  // specialisation, in which those parameters are gone. These are their
+  // names, in order.
+  std::vector<std::string> fnParams;
+  bool isHigherOrder() const { return !fnParams.empty(); }
   // One of several functions that share the written name `item->text`
   // (ADR 0034). `name`, the symbol, then carries the parameter types.
   bool overloaded = false;
@@ -311,6 +318,9 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
 
 // Whether a parameter is a type parameter: `(t : type)`.
 bool isTypeParam(const syntax::Node &param);
+
+// Whether a parameter has a function type: `(p : u8 -> bool)` (ADR 0044).
+bool isFunctionParam(const syntax::Node &param);
 
 // Defines the type items of `program` alone, as for the prelude's types.
 void defineTypeItems(const syntax::Node &program, TypeResolver &types,

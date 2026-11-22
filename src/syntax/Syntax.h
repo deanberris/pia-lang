@@ -70,7 +70,7 @@ namespace pia::syntax {
   X(RefinementType) /* text=name; type, predicate */                         \
   X(UnitType)                                                                \
   X(UnionType)     /* type* */                                               \
-  X(ArrowType)     /* Domain, result */                                      \
+  X(ArrowType)     /* Domain, result, Contracts? (innermost, ADR 0044) */    \
   X(Domain)        /* text=parameter name or empty; Modifiers, type, where? */ \
   X(TypeApp)       /* head, argument* */                                     \
   X(TypeValue)     /* body, Attrs, where-predicate? */                       \
@@ -113,7 +113,7 @@ namespace pia::syntax {
   X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
   X(Sequence)      /* stmt, stmt (right-nested) */                           \
   X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
-  X(Lambda)        /* LParam+, body */                                       \
+  X(Lambda)        /* LParam+, RetAnnot?, Contracts?, body (ADR 0044) */     \
   X(LParam)        /* pattern, Annot? */                                     \
   X(Match)         /* scrutinee, Arm+ */                                     \
   X(Arm)           /* pattern, body, Contracts? */                            \
