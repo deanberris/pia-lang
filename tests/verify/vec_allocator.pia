@@ -1,0 +1,115 @@
+(* Vec stores its allocator through the `Allocator` concept (ADR 0041,
+   step 5). The concept takes the region its allocator lends from (ADR
+   0042), so a requirement's result says `borrowed(r)`, and states what
+   it promises with the `Alloc` theory: here, that a failed allocation
+   leaves the heap unchanged. `push` is generic over the allocator.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+
+let theory Alloc = sig
+  let sort heap
+  let spec none : heap
+end
+let model bits : Alloc = struct
+  let sort heap = u64
+  let spec none : u64 = 0
+end
+
+(* An allocator of `t` buffers from the region `r`, stated with the
+   theory: `held m` is its heap, and a failed `alloc` leaves it alone. *)
+let meta Allocator (a : type) (t : type) (r : region) : concept = sig
+  let held : (m : a) -> Alloc.heap
+  let alloc : (m : inout mutable a) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures (match result with
+             | Ok b -> len b = n
+             | Err _ -> held m = old (held m))
+end
+
+(* A bump allocator meets it; its heap never changes, since it never gives
+   memory back. *)
+let bump = let (r : region) => type { mem : borrowed(r) mutable [u16]; used : usize; h : Alloc.heap }
+let held (m : bump) : Alloc.heap ensures result = m.h = m.h
+let alloc (r : region) (m : inout mutable bump r) (n : usize) : result (borrowed(r) out mutable [u16]) oom
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> held m = old (held m))
+= if m.used <= len m.mem && n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+(* The vector holds its allocator, of any type that meets the concept, and
+   a buffer from the same region. *)
+let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+
+(* A push that fails leaves the allocator's heap as it was, proved from the
+   concept alone. *)
+let push (t : type) (r : region) (a : type where Allocator a t r) (v : inout mutable vec t a r) (x : t) : result unit oom
+  requires v.len <= len v.buf
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len && held v.alloc = old (held v.alloc))
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then
+    (let cap = len v.buf in
+     if cap > 1000000 then Err OutOfMemory
+     else
+       (let nb = alloc v.alloc (2 * cap + 1)? in
+        let old_buf = v.buf in
+        for i in 0 .. v.len
+          invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+        do nb.[i] <- old_buf.[i] done;
+        nb.[v.len] <- x;
+        v.buf <- nb;
+        v.len <- v.len + 1;
+        Ok ()))
+  else
+    (let b = v.buf in
+     b.[v.len] <- x;
+     v.len <- v.len + 1;
+     Ok ())
+
+let demo (storage : borrowed mutable [u16]) : result u16 oom =
+  let m : bump = { mem = storage; used = 0; h = Alloc.none } in
+  let v : mutable vec u16 bump = { alloc = m; buf = storage.[0 .. 0]; len = 0 } in
+  push v 700?;
+  push v 900?;
+  let b = v.buf in
+  Ok (b.[0] + b.[1])
+
+(* Expected report, in order.
+// CHECK: vec_allocator.pia:33:34: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:38:44: proved: '-' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:40:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:41:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:41:9: proved: the slice is within bounds [smt]
+// CHECK: vec_allocator.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:78:53: proved: the slice is within bounds [smt]
+// CHECK: vec_allocator.pia:79:3: proved: the precondition of 'push<u16, bump>' holds [smt]
+// CHECK: vec_allocator.pia:80:3: proved: the precondition of 'push<u16, bump>' holds [smt]
+// CHECK: vec_allocator.pia:82:7: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:82:15: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:82:13: proved: '+' does not overflow u16 [smt]
+// CHECK: vec_allocator.pia:25:5: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:61:35: proved: '*' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:61:41: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:64:11: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_allocator.pia:65:22: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:65:12: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:64:11: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_allocator.pia:66:9: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:68:24: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:72:6: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:73:21: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:54:41: proved: '+' does not overflow usize [smt]
+// CHECK: vec_allocator.pia:54:48: proved: the index is within bounds [smt]
+// CHECK: vec_allocator.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: vec_allocator.pia:50:1: not proved generically: 'push' is proved at each instance, since the requirement 'Allocator<a, t>.alloc' returns a record [generic]
+// CHECK: 28 proved, 0 failed, 0 skipped
+*)

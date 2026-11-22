@@ -27,3 +27,11 @@ let twice (r : region) (r : region) (x : u8) : u8 = x
 (* CHECK: region_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a field that borrows from a region may be 'borrowed(r)' or 'borrowed(r) mutable', and nothing else
 *)
 let moving = let (r : region) => type { mem : borrowed(r) inout [u8] }
+
+(* A concept's requirement borrows from its region through a parameter of
+   the concept's types.
+// CHECK: region_sig_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'borrowed(r)': no parameter of 'make' has a type of 'Maker', so nothing can lend from the region 'r'
+*)
+let meta Maker (a : type) (r : region) : concept = sig
+  let make : (n : usize) -> borrowed(r) [u8]
+end

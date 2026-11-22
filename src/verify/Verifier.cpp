@@ -1783,6 +1783,9 @@ class Encoder {
     llvm::DenseMap<Value, Value> memo;
     bool envForBlockArgs = false;
     Operation *envOutside = nullptr;  // values defined outside it use env_
+    // A spec call's parameters whose arguments are computed, so may be
+    // outside the parameter's type (argsInRange).
+    llvm::DenseSet<Value> computed;
   };
 
   // --- loops -------------------------------------------------------------
@@ -2238,6 +2241,30 @@ class Encoder {
   // precondition guards the definition because termination is proved only
   // where it holds (docs/verifier.md, "Spec functions and lemmas").
 
+  // Whether a postcondition of `f` reads a buffer's elements, or calls
+  // something that might: only then does the memory a call to it sees
+  // matter to what the walk assumed of its result.
+  bool ensuresReadMemory(mlir::func::FuncOp f) {
+    if (!f || f.isExternal()) return true;
+    auto [it, fresh] = ensuresReadMemory_.try_emplace(f.getOperation(), false);
+    if (!fresh) return it->second;
+    bool reads = false;
+    llvm::SmallPtrSet<Operation *, 16> seen;
+    std::function<void(Value)> visit = [&](Value v) {
+      Operation *def = v.getDefiningOp();
+      if (!def || reads || !seen.insert(def).second) return;
+      if (mlir::isa<LoadOp, mlir::func::CallOp>(def) || def->getNumRegions()) {
+        reads = true;
+        return;
+      }
+      for (Value o : def->getOperands()) visit(o);
+    };
+    f.walk([&](contract::EnsuresOp e) { visit(e.getPredicate()); });
+    ensuresReadMemory_[f.getOperation()] = reads;
+    return reads;
+  }
+  llvm::DenseMap<Operation *, bool> ensuresReadMemory_;
+
   mlir::func::FuncOp calleeOf(mlir::func::CallOp call) {
     return module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
   }
@@ -2271,10 +2298,37 @@ class Encoder {
     auto scalar = [](Type t) {
       return mlir::isa<IntType>(t) || t.isInteger(1);
     };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
+    if (!scalar(f.getFunctionType().getResult(0))) {
+      // A spec-only result, such as an allocator's `held m : Alloc.heap`
+      // (ADR 0041), read from a record whose other fields may be buffers.
+      if (!mlir::isa<UnboundedIntType, RealType, SortType>(
+              f.getFunctionType().getResult(0)))
+        return false;
+      return projectsValue(f);
+    }
     for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
       if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
     return pureScalar(f, definesValue_);
+  }
+
+  // A function with a spec-only result whose body only computes on its
+  // parameters, without a call, a loop, an abort or a memory access, as
+  // `held (m : bump) : Alloc.heap = m.h` does.
+  static bool projectsValue(mlir::func::FuncOp f) {
+    for (Type t : f.getFunctionType().getInputs())
+      if (!mlir::isa<IntType, UnboundedIntType, RealType, SortType, ArrayType,
+                     SliceType>(t) &&
+          !t.isInteger(1))
+        return false;
+    bool ok = true;
+    f.walk([&](Operation *op) {
+      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                    AbortOp, LoadOp, StoreOp>(op))
+        ok = false;
+      for (Type t : op->getResultTypes())
+        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+    });
+    return ok;
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
   // The one value of each record type with no fields, by name.
@@ -2353,6 +2407,20 @@ class Encoder {
     else assertTerm(fact);
   }
 
+  // Each integer argument of a call is in its parameter's type. A spec
+  // body's terms are exact, so in a branch the body does not take an
+  // argument can be outside it, as `cnt xs (k - 1)` is at k = 0; facts
+  // about the function there, which its proof never covered, must not be
+  // claimed (a precondition `k <= len xs` alone holds of k = -1).
+  Value argsInRange(mlir::Block &entry, Demand &args) {
+    Value ok = boolConst(true);
+    for (mlir::BlockArgument a : entry.getArguments())
+      if (auto it = mlir::dyn_cast<IntType>(a.getType()))
+        if (args.computed.contains(a))
+          if (Value v = args.values.lookup(a)) ok = andOf(ok, inRange(v, it));
+    return ok;
+  }
+
   // `f a`, result `k`, where `args` maps f's parameters to the arguments.
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
@@ -2415,7 +2483,7 @@ class Encoder {
       callee.walk([&](mlir::func::ReturnOp ret) {
         if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
       });
-      Value pre = boolConst(true), facts = boolConst(true);
+      Value pre = argsInRange(entry, args), facts = boolConst(true);
       bool ok = callee.getNumResults() == 1;
       for (auto r : entry.getOps<contract::RequiresOp>()) {
         Value p = demand(r.getPredicate(), post);
@@ -2451,7 +2519,7 @@ class Encoder {
     callee.walk([&](mlir::func::ReturnOp ret) {
       if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
     });
-    Value pre = boolConst(true);
+    Value pre = argsInRange(entry, args);
     for (auto r : entry.getOps<contract::RequiresOp>()) {
       Value p = demand(r.getPredicate(), body);
       if (!p) def = Value();
@@ -2492,6 +2560,12 @@ class Encoder {
         Value t = demand(actual, d);
         if (!t) return Value();
         args.values[formal] = t;
+        // An argument the spec body computed, `k - 1`, is exact, and may
+        // be outside the parameter's type; a parameter, a load or a
+        // constant is not.
+        if (Operation *def = actual.getDefiningOp())
+          if (!mlir::isa<LoadOp>(def) && !def->hasTrait<mlir::OpTrait::ConstantLike>())
+            args.computed.insert(formal);
       }
     }
     return specCall(callee, k, args);
@@ -2562,6 +2636,17 @@ class Encoder {
       if (semantics(op, operands, d.arrays, d.lengths, d.views, results))
         result = results[mlir::cast<mlir::OpResult>(v).getResultNumber()];
     }
+    // Under `old`, a call the walk has already stepped, with its contract
+    // assumed, is that value: its operands are the entry values there too,
+    // unless it reads a buffer, whose memory `old` reads from entry.
+    if (!result && d.envForBlockArgs)
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (llvm::none_of(call.getOperandTypes(),
+                          [](Type t) {
+                            return mlir::isa<ArrayType, SliceType>(t);
+                          }) ||
+            !ensuresReadMemory(calleeOf(call)))
+          result = env_.lookup(v);
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
       ++unknowns_;

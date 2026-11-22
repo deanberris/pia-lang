@@ -75,7 +75,7 @@ Allocators are a concept (Dean, 2026-11-22), and the `Allocator` concept of [ADR
 2. Spec-only parameters and fields in code: Sema, IRGen, the verifier, and codegen erasure, with errors when code computes with them.
 3. pool.pia refines `Alloc` through a spec-only heap, and `reuse` proves using only the theory.
 4. Owners, then size classes and `general` (the rest of #88).
-5. `Allocator` refers to `Alloc`, and Vec stores its allocator (Dean's choice of 2026-11-22).
+5. `Allocator` refers to `Alloc`, and Vec stores its allocator (Dean's choice of 2026-11-22). (Implemented: tests/verify/vec_allocator.pia, with the allocator's region a concept parameter, ADR 0042. A generic function cannot meet a requirement yet, so the example's bump is for `u16`.)
 
 ## Consequences
 
