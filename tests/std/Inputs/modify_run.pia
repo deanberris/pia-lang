@@ -4,6 +4,7 @@
    first wrong one. *)
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Modify.Modify as M
+import Pia.Core.Algo.Remove.Remove as R
 
 (* xs and ys are 4 bytes each. *)
 let checks (xs : borrowed inout mutable [u8]) (ys : borrowed inout mutable [u8]) : i32
@@ -31,7 +32,7 @@ let checks (xs : borrowed inout mutable [u8]) (ys : borrowed inout mutable [u8])
               if ys.[0] <> 1 || ys.[3] <> 4 then 7
               else (
                 ys.[0] <- 5; ys.[1] <- 6; ys.[2] <- 5; ys.[3] <- 7;
-                let n = M.remove ys 5 in
+                let n = R.remove ys 5 in
                 if n <> 2 || ys.[0] <> 6 || ys.[1] <> 7 then 8
                 else (
                   let e = M.shift_left xs 1 in

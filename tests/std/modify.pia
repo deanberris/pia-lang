@@ -10,13 +10,13 @@
 (*
 // CHECK-NOT: failed
 // CHECK-DAG: Modify.pia:{{[0-9]+}}:{{[0-9]+}}: proved: the loop invariant holds after each iteration [generic]
-// CHECK: 125 proved, 0 failed, 0 skipped
+// CHECK: 91 proved, 0 failed, 0 skipped
 
 // IFACE:      {{^}}module Pia.Core.Algo.Modify{{$}}
 // IFACE-NEXT: {{^}}interface Modify = sig{{$}}
 // IFACE-NEXT: {{^}}  let fill : (t : type) -> (xs : out mutable [t]) -> (v : t) -> unit{{$}}
 // IFACE:      {{^}}  let replace : (t : type) -> (f : type where Function f t bool) -> (xs : borrowed inout mutable [t]) -> (p : f) -> (new_v : t) -> unit{{$}}
 // IFACE-NEXT: {{^}}  let shift_left : (t : type) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> usize{{$}}
-// IFACE:      {{^}}  let remove : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (v : t) -> usize{{$}}
+// IFACE:      {{^}}  let shift_right : (t : type) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> usize{{$}}
 // IFACE-NEXT: {{^}}end{{$}}
 *)
