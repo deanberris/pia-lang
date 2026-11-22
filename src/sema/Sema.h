@@ -267,6 +267,9 @@ struct Param {
   mlir::Type type;
   std::string modifiers;  // as written, e.g. "borrowed in mutable"
   syntax::SourceLoc loc;
+  // `(v : borrowed(m) inout mutable vec)`: the parameter's new value may
+  // borrow from the parameter `m` (#70). Empty when it borrows nothing.
+  std::string lender;
 };
 
 struct FuncSig {

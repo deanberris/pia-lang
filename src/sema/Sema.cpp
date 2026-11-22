@@ -749,13 +749,19 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       continue;
     }
     const Node &annot = *p->kids[0];
-    if (const Node *l = findLender(annot)) {
-      diags.error(l->loc, "'borrowed(" + l->text + ")' names the lender of a "
-                          "function's result; a parameter is just 'borrowed'");
-      ok = false;
-      continue;
-    }
     Param param;
+    if (const Node *l = findLender(annot)) {
+      const std::string &mods = annot.kids[0]->text;
+      if (findLentAnnot(annot) != &annot ||
+          !(hasModifier(mods, "inout") || hasModifier(mods, "out"))) {
+        diags.error(l->loc, "'borrowed(" + l->text + ")' on a parameter says "
+                            "what the new value of an 'inout' or 'out' "
+                            "parameter borrows; this one is just 'borrowed'");
+        ok = false;
+        continue;
+      }
+      param.lender = l->text;
+    }
     param.name = p->text;
     param.modifiers = annot.kids[0]->text;
     param.loc = p->loc;
@@ -770,6 +776,21 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       continue;
     }
     sig.params.push_back(std::move(param));
+  }
+  for (const Param &q : sig.params) {
+    if (q.lender.empty()) continue;
+    auto p = std::find_if(sig.params.begin(), sig.params.end(),
+                          [&](const Param &r) { return r.name == q.lender; });
+    if (p == sig.params.end() || p->name == q.name) {
+      diags.error(q.loc, "'borrowed(" + q.lender + ")' on '" + q.name +
+                             "': '" + item.text + "' has no other parameter '" +
+                             q.lender + "'");
+      ok = false;
+    } else if (hasModifier(p->modifiers, "moved")) {
+      diags.error(q.loc, "'" + q.lender + "' is moved into '" + item.text +
+                             "', so '" + q.name + "' cannot borrow from it");
+      ok = false;
+    }
   }
   const Node &ret = *item.kids[1];
   if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&

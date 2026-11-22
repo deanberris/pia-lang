@@ -2,7 +2,8 @@
    test of ADR 0026 in its first form. The allocator is passed to each call
    that may grow the vector. `push` proves the new element is stored and
    the earlier ones kept, and `grow` copies into a larger loan from the
-   allocator.
+   allocator. `(v : borrowed(m) inout mutable vec)` says that `v`'s new
+   value may hold a loan from `m`, so `v` cannot outlive `m`.
 // RUN: piac --verify %s | FileCheck %s
 *)
 
@@ -33,7 +34,7 @@ let with_capacity (m : borrowed inout mutable bump) (n : usize) : result (borrow
   Ok { buf = b; len = 0 }
 
 (* Moves the elements into a loan twice as large, plus one. *)
-let grow (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) : result unit oom
+let grow (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) : result unit oom
   requires m.used <= len m.mem && v.len <= len v.buf
   ensures m.used <= len m.mem && len m.mem = old (len m.mem)
   ensures v.len = old v.len && v.len <= len v.buf
@@ -52,7 +53,18 @@ let grow (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) : re
      v.buf <- nb;
      Ok ())
 
-let push (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) (x : u8) : result unit oom
+(* Makes room for one more element, growing the vector if it is full. *)
+let reserve (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then grow m v else Ok ()
+
+let push (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) (x : u8) : result unit oom
   requires m.used <= len m.mem && v.len <= len v.buf
   ensures m.used <= len m.mem && len m.mem = old (len m.mem)
   ensures v.len <= len v.buf
@@ -60,7 +72,7 @@ let push (m : borrowed inout mutable bump) (v : borrowed inout mutable vec) (x :
            | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
            | Err _ -> v.len = old v.len)
   ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
-= (if v.len = len v.buf then grow m v else Ok ())?;
+= reserve m v?;
   let b = v.buf in
   b.[v.len] <- x;
   v.len <- v.len + 1;

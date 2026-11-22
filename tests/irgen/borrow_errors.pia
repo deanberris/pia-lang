@@ -52,3 +52,16 @@ let pass (p : borrowed pool) : ticket = lend p
 (* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the result of 'lend' is borrowed from 'p', so this argument must be a named value, whose scope the borrow can end in; bind it with 'let' first
 *)
 let unnamed (x : u8) : u8 = (lend (mk x)).n
+
+let vec = type { buf : [u8]; len : usize }
+let take (p : borrowed [u8]) : borrowed(p) [u8] = p
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'keep' stores a value borrowed from 'p' in 'v'; say so in its parameter, as in '(v : borrowed(p) inout mutable vec)'
+*)
+let keep (p : borrowed [u8]) (v : borrowed inout mutable vec) : unit = v.buf <- take p
+
+let stash (p : borrowed [u8]) (v : borrowed(p) inout mutable vec) : unit = v.buf <- take p
+
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this value is borrowed from 'b', so it cannot outlive 'b', whose scope ends here
+*)
+let outlive (a : borrowed [u8]) : vec = let v : mutable vec = { buf = a; len = 0 } in (let b = a in stash b v; v)
