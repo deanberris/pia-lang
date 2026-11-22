@@ -135,7 +135,7 @@ A `while` loop or a recursive call with no measure gets a `skipped` goal ("the l
 
 ## Spec functions and lemmas
 
-`let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions and pure functions of scalars. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call.
+`let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions and pure functions of scalars. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call. A spec function imported from another module's interface comes with its definition, which importers unfold, but its goals are proved once, in its own module, not again in each importer (ADR 0039).
 
 To the solver, `f` is an uninterpreted function `F` with one argument per scalar parameter and two, the array and its length, per buffer. A call `f a`, wherever it is, is `F a`, with these facts:
 

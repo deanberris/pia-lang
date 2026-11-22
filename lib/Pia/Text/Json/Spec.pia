@@ -1,0 +1,277 @@
+(* Pia.Text.Json.Spec: the token grammar of RFC 8259 as spec functions over
+   bytes (ADR 0045, section 1). The lexer (Pia.Text.Json.Lex) is proved
+   against it, and so will be the writer, the derived codecs and the DOM.
+
+   A position is a byte index into the input `s`, and a token is the
+   half-open range from i to j. Bytes are written as numbers, since Pia
+   has no character literals; each is named in a comment.
+
+   - Whitespace: space, tab, line feed and carriage return (RFC 8259,
+     section 2).
+   - The six structural characters `{ } [ ] : ,` and the three literal
+     names `true`, `false` and `null` (sections 2 and 3).
+   - Numbers (section 6): an optional minus; then 0, or a digit 1 to 9
+     and any further digits; then optionally a point and one or more
+     digits; then optionally e or E, an optional sign and one or more
+     digits. The grammar is regular, and is stated as the deterministic
+     automaton `num_step`, whose accepting states are exactly the places
+     where a number may end. A number token is also the longest one: the
+     byte after it cannot continue it, so `01` is the token `0` followed
+     by another token, never a number.
+   - Strings (section 7): a quote, a sequence of characters, and a quote.
+     A character is one of the escapes `\" \\ \/ \b \f \n \r \t \uXXXX`, or
+     a UTF-8 encoded scalar value (RFC 3629) other than the quote, the
+     backslash and the control characters below 0x20. A `\uXXXX` escape of
+     a high surrogate (D800 to DBFF) must be followed at once by one of a
+     low surrogate (DC00 to DFFF), and a low surrogate alone is an error,
+     as I-JSON (RFC 7493) requires.
+
+   UTF-8 validity is stated here, locally, by `utf8_len`, since
+   Pia.Core.Utf8 does not exist yet; it moves there when that module
+   lands.
+
+   Spec bodies are logic, so `&&` does not guard what follows it: reads
+   of the input sit under an `if` that proves them in bounds. *)
+module Pia.Text.Json.Spec : Grammar
+
+interface Grammar = sig
+  (** The kinds of token. `End` is the end of the input. *)
+  let kind = type
+    | LBrace | RBrace | LBracket | RBracket | Colon | Comma
+    | True | False | Null | Number | String | End
+  (** JSON whitespace. *)
+  let spec is_ws : (b : u8) -> bool
+  (** lo <= b <= hi. *)
+  let spec byte_in : (b : u8) -> (lo : u8) -> (hi : u8) -> bool
+  (** An ASCII decimal digit. *)
+  let spec is_digit : (b : u8) -> bool
+  (** An ASCII hexadecimal digit, either case. *)
+  let spec is_hex : (b : u8) -> bool
+  (** Every byte from i to j is whitespace. *)
+  let spec ws_run : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+  (** The number automaton: one byte from state q; 9 is the dead state. *)
+  let spec num_step : (q : int{0..9}) -> (b : u8) -> int{0..9}
+  (** The states where a number may end. *)
+  let spec num_accepting : (q : int{0..9}) -> bool
+  (** The automaton's state after the bytes from i to j. *)
+  let spec num_run : (s : [u8]) -> (i : usize) -> (j : usize) -> int{0..9}
+  (** The automaton dies on the byte at j, from state q, or the input ends. *)
+  let spec num_stops : (s : [u8]) -> (j : usize) -> (q : int{0..9}) -> bool
+  (** The bytes from i to j are a number, and the longest one at i. *)
+  let spec number_at : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+  (** A UTF-8 continuation byte. *)
+  let spec is_cont : (b : u8) -> bool
+  (** The length of the UTF-8 encoded scalar value at i, or 0. *)
+  let spec utf8_len : (s : [u8]) -> (i : usize) -> int{0..4}
+  (** A `\uXXXX` escape at k, and whether it is a high or low surrogate. *)
+  let spec u_escape : (s : [u8]) -> (k : usize) -> bool
+  let spec high_surrogate : (s : [u8]) -> (k : usize) -> bool
+  let spec low_surrogate : (s : [u8]) -> (k : usize) -> bool
+  (** The length of the escape at i (a backslash), or 0. *)
+  let spec escape_len : (s : [u8]) -> (i : usize) -> int{0..12}
+  (** The length of the string character at i, or 0 if none starts there. *)
+  let spec char_len : (s : [u8]) -> (i : usize) -> int{0..12}
+  (** The bytes from i to j are a sequence of string characters. *)
+  let spec chars : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+  (** The bytes from i to j are a string literal, quotes included. *)
+  let spec string_at : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+  (** The bytes from i to j are a, b, c and d (`true` and `null`). *)
+  let spec bytes4_at : (s : [u8]) -> (i : usize) -> (j : usize) -> (a : u8) -> (b : u8) -> (c : u8) -> (d : u8) -> bool
+  (** The bytes from i to j are `false`. *)
+  let spec false_at : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
+  (** The bytes from i to j are the one byte b. *)
+  let spec byte_at : (s : [u8]) -> (i : usize) -> (j : usize) -> (b : u8) -> bool
+  (** No whitespace at i. *)
+  let spec ws_end : (s : [u8]) -> (i : usize) -> bool
+  (** One of `true`, `null` and `false` starts at i. *)
+  let spec literal_at : (s : [u8]) -> (i : usize) -> bool
+  (** The bytes from i to j are a token of kind k. *)
+  let spec token_at : (s : [u8]) -> (k : kind) -> (i : usize) -> (j : usize) -> bool
+end
+
+let kind = type
+  | LBrace | RBrace | LBracket | RBracket | Colon | Comma
+  | True | False | Null | Number | String | End
+
+(* Space, tab, line feed, carriage return. *)
+let spec is_ws (b : u8) : bool = b = 0x20 || b = 0x09 || b = 0x0A || b = 0x0D
+
+(* lo <= b <= hi. *)
+let spec byte_in (b : u8) (lo : u8) (hi : u8) : bool = lo <= b && b <= hi
+
+(* 0 to 9. *)
+let spec is_digit (b : u8) : bool = byte_in b 0x30 0x39
+
+(* 0 to 9, A to F, a to f. *)
+let spec is_hex (b : u8) : bool =
+  (0x30 <= b && b <= 0x39) || (0x41 <= b && b <= 0x46) || (0x61 <= b && b <= 0x66)
+
+let spec ws_run (s : [u8]) (i : usize) (j : usize) : bool =
+  if i <= j && j <= len s then (forall (k in i..j). is_ws s.[k]) else false
+
+(* The number grammar as an automaton. States:
+     0 start           1 after '-'         2 after the integer 0
+     3 in [1-9][0-9]+  4 after '.'         5 in the fraction's digits
+     6 after 'e'/'E'   7 after the exponent's sign
+     8 in the exponent's digits            9 dead
+   Bytes: '-' 0x2D, '+' 0x2B, '.' 0x2E, 'E' 0x45, 'e' 0x65, '0' 0x30. *)
+let spec num_step (q : int{0..9}) (b : u8) : int{0..9} =
+  let d = 0x30 <= b && b <= 0x39 in
+  let e = b = 0x45 || b = 0x65 in
+  if q = 0 then (if b = 0x2D then 1 else if b = 0x30 then 2 else if d then 3 else 9)
+  else if q = 1 then (if b = 0x30 then 2 else if d then 3 else 9)
+  else if q = 2 then (if b = 0x2E then 4 else if e then 6 else 9)
+  else if q = 3 then (if d then 3 else if b = 0x2E then 4 else if e then 6 else 9)
+  else if q = 4 then (if d then 5 else 9)
+  else if q = 5 then (if d then 5 else if e then 6 else 9)
+  else if q = 6 then (if b = 0x2B || b = 0x2D then 7 else if d then 8 else 9)
+  else if q = 7 || q = 8 then (if d then 8 else 9)
+  else 9
+
+let spec num_accepting (q : int{0..9}) : bool = q = 2 || q = 3 || q = 5 || q = 8
+
+let spec num_run (s : [u8]) (i : usize) (j : usize) : int{0..9}
+  decreases j - i
+= if i <= j && j <= len s then
+    (if j = i then 0 else num_step (num_run s i (j - 1)) s.[j - 1])
+  else 9
+
+(* The automaton dies on the byte at j, from state q, or the input ends. *)
+let spec num_stops (s : [u8]) (j : usize) (q : int{0..9}) : bool =
+  if j < len s then num_step q s.[j] = 9 else true
+
+let spec number_at (s : [u8]) (i : usize) (j : usize) : bool =
+  if i < j && j <= len s then num_accepting (num_run s i j) && num_stops s j (num_run s i j)
+  else false
+
+(* 10xxxxxx. *)
+let spec is_cont (b : u8) : bool = byte_in b 0x80 0xBF
+
+(* RFC 3629, section 4: the well-formed byte sequences. Overlong forms,
+   surrogates (ED A0 to ED BF) and values above 10FFFF are excluded by the
+   ranges of the second byte. *)
+let spec utf8_len (s : [u8]) (i : usize) : int{0..4}
+  requires i < len s
+= let b = s.[i] in
+  if b <= 0x7F then 1
+  else if len s - i < 2 then 0
+  else if 0xC2 <= b && b <= 0xDF then (if is_cont s.[i + 1] then 2 else 0)
+  else if 0xE0 <= b && b <= 0xEF then
+    (if len s - i < 3 then 0
+     else if is_cont s.[i + 2]
+        && (if b = 0xE0 then 0xA0 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xED then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x9F
+            else is_cont s.[i + 1])
+     then 3 else 0)
+  else if 0xF0 <= b && b <= 0xF4 then
+    (if len s - i < 4 then 0
+     else if is_cont s.[i + 2] && is_cont s.[i + 3]
+        && (if b = 0xF0 then 0x90 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xF4 then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x8F
+            else is_cont s.[i + 1])
+     then 4 else 0)
+  else 0
+
+(* A backslash, 'u' (0x75) and four hex digits at k. *)
+let spec u_escape (s : [u8]) (k : usize) : bool
+  requires k + 6 <= len s
+= s.[k] = 0x5C && s.[k + 1] = 0x75
+  && is_hex s.[k + 2] && is_hex s.[k + 3] && is_hex s.[k + 4] && is_hex s.[k + 5]
+
+(* A surrogate's first digit is D or d (0x44, 0x64), and its second is
+   8 to B (high) or C to F (low), in either case. *)
+let spec high_surrogate (s : [u8]) (k : usize) : bool
+  requires k + 6 <= len s
+= u_escape s k && (s.[k + 2] = 0x44 || s.[k + 2] = 0x64)
+  && ((0x38 <= s.[k + 3] && s.[k + 3] <= 0x39)
+      || s.[k + 3] = 0x41 || s.[k + 3] = 0x42 || s.[k + 3] = 0x61 || s.[k + 3] = 0x62)
+
+let spec low_surrogate (s : [u8]) (k : usize) : bool
+  requires k + 6 <= len s
+= u_escape s k && (s.[k + 2] = 0x44 || s.[k + 2] = 0x64)
+  && ((0x43 <= s.[k + 3] && s.[k + 3] <= 0x46) || (0x63 <= s.[k + 3] && s.[k + 3] <= 0x66))
+
+(* Bytes after the backslash: '"' 0x22, '\' 0x5C, '/' 0x2F, 'b' 0x62,
+   'f' 0x66, 'n' 0x6E, 'r' 0x72, 't' 0x74, 'u' 0x75. *)
+let spec escape_len (s : [u8]) (i : usize) : int{0..12}
+  requires i < len s
+= if len s - i < 2 then 0
+  else
+    (let c = s.[i + 1] in
+     if c = 0x22 || c = 0x5C || c = 0x2F || c = 0x62 || c = 0x66
+        || c = 0x6E || c = 0x72 || c = 0x74 then 2
+     else if c = 0x75 && len s - i >= 6 then
+       (if u_escape s i = false then 0
+        else if high_surrogate s i then
+          (if len s - i < 12 then 0 else if low_surrogate s (i + 6) then 12 else 0)
+        else if low_surrogate s i then 0
+        else 6)
+     else 0)
+
+(* An escape, or a scalar value other than '"' (0x22), '\' (0x5C) and the
+   control characters below 0x20. *)
+let spec char_len (s : [u8]) (i : usize) : int{0..12}
+  ensures i <= len s ==> result <= len s - i
+= if i >= len s then 0
+  else
+    (let b = s.[i] in
+     if b < 0x20 || b = 0x22 then 0
+     else if b = 0x5C then escape_len s i
+     else utf8_len s i)
+
+let spec chars (s : [u8]) (i : usize) (j : usize) : bool
+  ensures i = j && j <= len s ==> result
+  ensures result ==> i <= j && j <= len s
+  decreases j - i
+= if i <= j && j <= len s then
+    (if i = j then true
+     else (let n = char_len s i in if n > 0 && n <= j - i then chars s (i + n) j else false))
+  else false
+
+let spec string_at (s : [u8]) (i : usize) (j : usize) : bool =
+  if i < j && j <= len s then
+    (if j - i >= 2 then s.[i] = 0x22 && s.[j - 1] = 0x22 && chars s (i + 1) (j - 1)
+     else false)
+  else false
+
+let spec bytes4_at (s : [u8]) (i : usize) (j : usize) (a : u8) (b : u8) (c : u8) (d : u8) : bool =
+  if i <= j && j <= len s then
+    (if j - i = 4 then s.[i] = a && s.[i + 1] = b && s.[i + 2] = c && s.[i + 3] = d else false)
+  else false
+
+(* f a l s e; true and null are bytes4_at in token_at. *)
+let spec false_at (s : [u8]) (i : usize) (j : usize) : bool =
+  if i < j && j <= len s then s.[i] = 0x66 && bytes4_at s (i + 1) j 0x61 0x6C 0x73 0x65
+  else false
+
+let spec byte_at (s : [u8]) (i : usize) (j : usize) (b : u8) : bool =
+  if i < j && j <= len s then j - i = 1 && s.[i] = b else false
+
+(* No whitespace at i: the end of a run of it. *)
+let spec ws_end (s : [u8]) (i : usize) : bool =
+  if i < len s then is_ws s.[i] = false else true
+
+(* One of `true`, `null` and `false` starts at i. *)
+let spec literal_at (s : [u8]) (i : usize) : bool =
+  if i <= len s then
+    (if len s - i >= 4 then
+       bytes4_at s i (i + 4) 0x74 0x72 0x75 0x65 || bytes4_at s i (i + 4) 0x6E 0x75 0x6C 0x6C
+       || (if len s - i >= 5 then false_at s i (i + 5) else false)
+     else false)
+  else false
+
+(* '{' 0x7B, '}' 0x7D, '[' 0x5B, ']' 0x5D, ':' 0x3A, ',' 0x2C. *)
+let spec token_at (s : [u8]) (k : kind) (i : usize) (j : usize) : bool =
+  match k with
+  | LBrace -> byte_at s i j 0x7B
+  | RBrace -> byte_at s i j 0x7D
+  | LBracket -> byte_at s i j 0x5B
+  | RBracket -> byte_at s i j 0x5D
+  | Colon -> byte_at s i j 0x3A
+  | Comma -> byte_at s i j 0x2C
+  | True -> bytes4_at s i j 0x74 0x72 0x75 0x65
+  | False -> false_at s i j
+  | Null -> bytes4_at s i j 0x6E 0x75 0x6C 0x6C
+  | Number -> number_at s i j
+  | String -> string_at s i j
+  | End -> i = len s && j = len s

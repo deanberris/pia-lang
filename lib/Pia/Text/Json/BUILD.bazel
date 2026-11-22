@@ -1,0 +1,37 @@
+load("//tools/piac:pia.bzl", "pia_library")
+
+# Pia.Text.Json (ADR 0045): JSON, proved against one grammar. Step 1 is the
+# grammar of RFC 8259's tokens (Spec) and a tokenizer proved sound against
+# it (Lex). Each module is proved and compiled on its own, and importers
+# build against its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files([
+    "Lex.pia",
+    "Spec.pia",
+])
+
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+# The token grammar as spec functions: tests/std/json_lex.pia checks its
+# goals and its interface.
+pia_library(
+    name = "spec",
+    src = "Spec.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+# The tokenizer: tests/std/json_lex.pia checks its goals;
+# tests/std/json_lex_edges.pia and :json_lex_run test it through its
+# interface.
+pia_library(
+    name = "lex",
+    src = "Lex.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [":spec"],
+)

@@ -4057,6 +4057,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       continue;
     // A foreign function's contract is trusted, not proved (#55).
     if (fn->hasAttr("pia.extern")) continue;
+    // A spec function from another module's interface is proved there.
+    if (fn->hasAttr("pia.spec_from")) continue;
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
     // An imported generic's proof was made by its module (ADR 0043).
