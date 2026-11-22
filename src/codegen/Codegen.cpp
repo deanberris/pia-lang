@@ -667,7 +667,8 @@ void eraseContracts(mlir::ModuleOp module) {
   }
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
     if (f->hasAttr(PiaDialect::getLemmaAttrName()) ||
-        f->hasAttr(PiaDialect::getSpecAttrName()))
+        f->hasAttr(PiaDialect::getSpecAttrName()) ||
+        f->hasAttr(PiaDialect::getAxiomAttrName()))
       f.erase();
 }
 

@@ -73,9 +73,18 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   return lit;
 }
 
+bool isBuiltinTypeName(std::string_view name) {
+  static const char *names[] = {"u8",  "u16",  "u32",   "u64",  "i8",
+                                "i16", "i32",  "i64",   "usize", "isize",
+                                "bool", "unit", "int",  "real"};
+  for (const char *n : names)
+    if (name == n) return true;
+  return false;
+}
+
 mlir::Type specOnlyPart(mlir::Type t) {
   if (!t) return {};
-  if (mlir::isa<UnboundedIntType, RealType>(t)) return t;
+  if (mlir::isa<UnboundedIntType, RealType, SortType>(t)) return t;
   if (auto a = mlir::dyn_cast<ArrayType>(t))
     return specOnlyPart(a.getElementType());
   if (auto s = mlir::dyn_cast<SliceType>(t))
@@ -111,6 +120,7 @@ std::string typeName(mlir::Type t) {
   if (auto r = mlir::dyn_cast<RecordType>(t)) return r.getName().str();
   if (mlir::isa<UnboundedIntType>(t)) return "int";
   if (mlir::isa<RealType>(t)) return "real";
+  if (auto so = mlir::dyn_cast<SortType>(t)) return so.getName().str();
   std::string out;
   llvm::raw_string_ostream os(out);
   t.print(os);
@@ -566,6 +576,13 @@ void defineType(const Node &item, TypeResolver &types,
   if (types.named(item.text) || types.builtin(item.text) ||
       types.generic(item.text)) {
     diags.error(item.loc, "the type '" + item.text + "' is already defined");
+    return;
+  }
+  // A theory's `let sort s` (ADR 0036): an uninterpreted sort, which the
+  // theory pass writes as a type item whose body is `#sort`.
+  const Node &body = *item.kids[3]->kids[0];
+  if (body.kind == NodeKind::TypeName && body.text == "#sort") {
+    types.define(item.text, SortType::get(types.context(), item.text));
     return;
   }
   mlir::Type t = buildType(item.text, *item.kids[3], types, diags, false);

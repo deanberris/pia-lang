@@ -1,0 +1,70 @@
+(* How a query gets a theory's axioms (ADR 0036, "Build time"): only the
+   axioms whose triggers' functions are all in it, to a fixed point, and,
+   when that does not prove the goal, every axiom of the theories it
+   mentions, with the counterexample from that run.
+// RUN: not piac --verify %s | FileCheck %s
+// RUN: not piac --verify --verify-stats %s 2>&1 | FileCheck %s --check-prefix=STATS
+// RUN: piac --verify --dump-smt --verify-only=bounded %s 2>&1 | FileCheck %s --check-prefix=SMT
+*)
+@trusted
+
+import Counter
+
+let theory Counter = sig
+  let sort counter = u8
+  let sort tag
+  let spec value : (c : counter) -> u8
+  let spec label : (t : tag) -> u8
+  let spec same : (t : tag) -> (u : tag) -> bool
+  let spec twice (c : counter) : u16 = value c + value c
+
+  let axiom value_small (c : counter) ensures value c <= 100
+  let axiom label_one (t : tag) @trigger(same t t) ensures label t = 1
+end
+
+(* Only value_small is sent (the stats list it alone): label_one's trigger needs `same`, which this
+   query never applies, so its assertion is not in the query. *)
+let lemma bounded (c : Counter.counter) : unit
+  ensures Counter.twice c <= 200
+= ()
+
+(* No trigger of label_one is in the query, so the closure leaves it out
+   and the goal is not proved. The fallback adds it, and Z3 proves it. *)
+let lemma fallback (t : Counter.tag) : unit ensures Counter.label t = 1 = ()
+
+(* With every axiom the goal still fails, and the counterexample comes
+   from that run. *)
+let lemma still_wrong (c : Counter.counter) : unit
+  ensures Counter.value c < 100
+= ()
+
+(* A goal that mentions no theory function gets no axiom at all. *)
+let plain (x : u8) : u8 ensures result = x = x
+
+(* Expected report, in order.
+// CHECK: theory_closure.pia:19:48: proved: '+' does not overflow u16 [intervals]
+// CHECK: theory_closure.pia:28:3: proved: the postcondition holds [smt]
+// CHECK: theory_closure.pia:33:45: proved: the postcondition holds [smt]
+// CHECK: theory_closure.pia:38:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: c = {{[0-9]+}}
+// CHECK: theory_closure.pia:42:25: proved: the postcondition holds [smt]
+// CHECK: 4 proved, 1 failed, 0 skipped
+*)
+
+(* The triggers, and the axioms each goal was given.
+// STATS: verify-stats-axiom: Counter.value_small triggers=(Counter.value c)
+// STATS: verify-stats-axiom: Counter.label_one triggers=(Counter.same t t)
+// STATS: verify-stats-goal: {{.*}}theory_closure.pia:28:3 axioms=Counter.value_small{{$}}
+// STATS: verify-stats-goal: {{.*}}theory_closure.pia:33:45 axioms=Counter.value_small,Counter.label_one fallback=all
+// STATS: verify-stats-goal: {{.*}}theory_closure.pia:38:3 axioms=Counter.value_small,Counter.label_one fallback=all
+// STATS-NOT: verify-stats-goal: theory_closure.pia:42
+*)
+
+(* The query for `bounded` names value_small and leaves out label_one;
+   only the fallback, shown after it, has every axiom.
+// SMT: (declare-sort Counter.tag 0)
+// SMT: :named |Counter.value_small|
+// SMT-NOT: Counter.label_one
+// SMT: (fallback, every axiom)
+// SMT: 1 proved, 0 failed, 0 skipped
+*)

@@ -1,0 +1,736 @@
+(Program
+  (FileAttr "trusted")
+  (Theory "Lip"
+    (SortItem "layer")
+    (LetItem "in_w" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "f"
+              (Modifiers)
+              (TypeName "layer")
+              (None)
+            )
+            (TypeName "usize")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "out_w" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "f"
+              (Modifiers)
+              (TypeName "layer")
+              (None)
+            )
+            (TypeName "usize")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "lip" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "f"
+              (Modifiers)
+              (TypeName "layer")
+              (None)
+            )
+            (TypeName "real")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "seq" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "f"
+              (Modifiers)
+              (TypeName "layer")
+              (None)
+            )
+            (ArrowType
+              (Domain "g"
+                (Modifiers)
+                (TypeName "layer")
+                (None)
+              )
+              (TypeName "layer")
+            )
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "residual" [spec abstract]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (ArrowType
+            (Domain "f"
+              (Modifiers)
+              (TypeName "layer")
+              (None)
+            )
+            (TypeName "layer")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (None)
+    )
+    (LetItem "lip_nonneg" [axiom]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Ensures
+          (Binary ">="
+            (Apply
+              (Name "lip")
+              (Name "f")
+            )
+            (FloatLit "0.0")
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "seq_shape" [axiom]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+        (Param "g"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Requires
+          (Binary "="
+            (Apply
+              (Name "out_w")
+              (Name "f")
+            )
+            (Apply
+              (Name "in_w")
+              (Name "g")
+            )
+          )
+        )
+        (Ensures
+          (Binary "&&"
+            (Binary "="
+              (Apply
+                (Name "in_w")
+                (Apply
+                  (Name "seq")
+                  (Name "f")
+                  (Name "g")
+                )
+              )
+              (Apply
+                (Name "in_w")
+                (Name "f")
+              )
+            )
+            (Binary "="
+              (Apply
+                (Name "out_w")
+                (Apply
+                  (Name "seq")
+                  (Name "f")
+                  (Name "g")
+                )
+              )
+              (Apply
+                (Name "out_w")
+                (Name "g")
+              )
+            )
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "seq_lip" [axiom]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+        (Param "g"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Requires
+          (Binary "="
+            (Apply
+              (Name "out_w")
+              (Name "f")
+            )
+            (Apply
+              (Name "in_w")
+              (Name "g")
+            )
+          )
+        )
+        (Ensures
+          (Binary "<="
+            (Apply
+              (Name "lip")
+              (Apply
+                (Name "seq")
+                (Name "f")
+                (Name "g")
+              )
+            )
+            (Binary "*"
+              (Apply
+                (Name "lip")
+                (Name "f")
+              )
+              (Apply
+                (Name "lip")
+                (Name "g")
+              )
+            )
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "residual_shape" [axiom]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (None)
+      (Contracts
+        (Requires
+          (Binary "="
+            (Apply
+              (Name "in_w")
+              (Name "f")
+            )
+            (Apply
+              (Name "out_w")
+              (Name "f")
+            )
+          )
+        )
+        (Ensures
+          (Binary "&&"
+            (Binary "="
+              (Apply
+                (Name "in_w")
+                (Apply
+                  (Name "residual")
+                  (Name "f")
+                )
+              )
+              (Apply
+                (Name "in_w")
+                (Name "f")
+              )
+            )
+            (Binary "="
+              (Apply
+                (Name "out_w")
+                (Apply
+                  (Name "residual")
+                  (Name "f")
+                )
+              )
+              (Apply
+                (Name "out_w")
+                (Name "f")
+              )
+            )
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "residual_lip" [axiom]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (RetAnnot
+        (None)
+        (Attrs
+          (Attribute "trigger"
+            (Apply
+              (Name "residual")
+              (Name "f")
+            )
+          )
+        )
+      )
+      (Contracts
+        (Requires
+          (Binary "="
+            (Apply
+              (Name "in_w")
+              (Name "f")
+            )
+            (Apply
+              (Name "out_w")
+              (Name "f")
+            )
+          )
+        )
+        (Ensures
+          (Binary "<="
+            (Apply
+              (Name "lip")
+              (Apply
+                (Name "residual")
+                (Name "f")
+              )
+            )
+            (Binary "+"
+              (FloatLit "1.0")
+              (Apply
+                (Name "lip")
+                (Name "f")
+              )
+            )
+          )
+        )
+      )
+      (None)
+    )
+    (LetItem "residual_twice" [lemma]
+      (Params
+        (Param "f"
+          (Annot
+            (Modifiers)
+            (TypeName "layer")
+            (None)
+          )
+        )
+      )
+      (RetAnnot
+        (Annot
+          (Modifiers)
+          (TypeName "unit")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts
+        (Requires
+          (Binary "="
+            (Apply
+              (Name "in_w")
+              (Name "f")
+            )
+            (Apply
+              (Name "out_w")
+              (Name "f")
+            )
+          )
+        )
+        (Ensures
+          (Binary "<="
+            (Apply
+              (Name "lip")
+              (Apply
+                (Name "residual")
+                (Apply
+                  (Name "residual")
+                  (Name "f")
+                )
+              )
+            )
+            (Binary "+"
+              (FloatLit "2.0")
+              (Apply
+                (Name "lip")
+                (Name "f")
+              )
+            )
+          )
+        )
+      )
+      (Unit)
+    )
+  )
+  (LetItem "block_bound" [lemma]
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "Lip.layer")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "Lip.layer")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "&&"
+          (Binary "="
+            (Apply
+              (Field "in_w"
+                (Name "Lip")
+              )
+              (Name "a")
+            )
+            (IntLit "512")
+          )
+          (Binary "&&"
+            (Binary "="
+              (Apply
+                (Field "out_w"
+                  (Name "Lip")
+                )
+                (Name "a")
+              )
+              (IntLit "512")
+            )
+            (Binary "<="
+              (Apply
+                (Field "lip"
+                  (Name "Lip")
+                )
+                (Name "a")
+              )
+              (FloatLit "0.5")
+            )
+          )
+        )
+      )
+      (Requires
+        (Binary "&&"
+          (Binary "="
+            (Apply
+              (Field "in_w"
+                (Name "Lip")
+              )
+              (Name "b")
+            )
+            (IntLit "512")
+          )
+          (Binary "&&"
+            (Binary "="
+              (Apply
+                (Field "out_w"
+                  (Name "Lip")
+                )
+                (Name "b")
+              )
+              (IntLit "10")
+            )
+            (Binary "<="
+              (Apply
+                (Field "lip"
+                  (Name "Lip")
+                )
+                (Name "b")
+              )
+              (FloatLit "2.0")
+            )
+          )
+        )
+      )
+      (Ensures
+        (Binary "="
+          (Apply
+            (Field "in_w"
+              (Name "Lip")
+            )
+            (Apply
+              (Field "seq"
+                (Name "Lip")
+              )
+              (Apply
+                (Field "residual"
+                  (Name "Lip")
+                )
+                (Name "a")
+              )
+              (Name "b")
+            )
+          )
+          (IntLit "512")
+        )
+      )
+      (Ensures
+        (Binary "="
+          (Apply
+            (Field "out_w"
+              (Name "Lip")
+            )
+            (Apply
+              (Field "seq"
+                (Name "Lip")
+              )
+              (Apply
+                (Field "residual"
+                  (Name "Lip")
+                )
+                (Name "a")
+              )
+              (Name "b")
+            )
+          )
+          (IntLit "10")
+        )
+      )
+      (Ensures
+        (Binary "<="
+          (Apply
+            (Field "lip"
+              (Name "Lip")
+            )
+            (Apply
+              (Field "seq"
+                (Name "Lip")
+              )
+              (Apply
+                (Field "residual"
+                  (Name "Lip")
+                )
+                (Name "a")
+              )
+              (Name "b")
+            )
+          )
+          (FloatLit "3.0")
+        )
+      )
+    )
+    (Unit)
+  )
+  (LetItem "wrong" [lemma]
+    (Params
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "Lip.layer")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "&&"
+          (Binary "="
+            (Apply
+              (Field "in_w"
+                (Name "Lip")
+              )
+              (Name "b")
+            )
+            (IntLit "512")
+          )
+          (Binary "="
+            (Apply
+              (Field "out_w"
+                (Name "Lip")
+              )
+              (Name "b")
+            )
+            (IntLit "10")
+          )
+        )
+      )
+      (Ensures
+        (Binary "<="
+          (Apply
+            (Field "lip"
+              (Name "Lip")
+            )
+            (Apply
+              (Field "residual"
+                (Name "Lip")
+              )
+              (Name "b")
+            )
+          )
+          (Binary "+"
+            (FloatLit "1.0")
+            (Apply
+              (Field "lip"
+                (Name "Lip")
+              )
+              (Name "b")
+            )
+          )
+        )
+      )
+    )
+    (Unit)
+  )
+  (LetItem "twice_then" [lemma]
+    (Params
+      (Param "f"
+        (Annot
+          (Modifiers)
+          (TypeName "Lip.layer")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Binary "&&"
+          (Binary "="
+            (Apply
+              (Field "in_w"
+                (Name "Lip")
+              )
+              (Name "f")
+            )
+            (IntLit "64")
+          )
+          (Binary "&&"
+            (Binary "="
+              (Apply
+                (Field "out_w"
+                  (Name "Lip")
+                )
+                (Name "f")
+              )
+              (IntLit "64")
+            )
+            (Binary "<="
+              (Apply
+                (Field "lip"
+                  (Name "Lip")
+                )
+                (Name "f")
+              )
+              (FloatLit "1.0")
+            )
+          )
+        )
+      )
+      (Ensures
+        (Binary "<="
+          (Apply
+            (Field "lip"
+              (Name "Lip")
+            )
+            (Apply
+              (Field "residual"
+                (Name "Lip")
+              )
+              (Apply
+                (Field "residual"
+                  (Name "Lip")
+                )
+                (Name "f")
+              )
+            )
+          )
+          (FloatLit "3.0")
+        )
+      )
+    )
+    (Apply
+      (Field "residual_twice"
+        (Name "Lip")
+      )
+      (Name "f")
+    )
+  )
+)

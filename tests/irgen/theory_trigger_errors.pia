@@ -1,0 +1,19 @@
+(* Every axiom needs a trigger (ADR 0036): a term that mentions all its
+   parameters, which the solver instantiates it at.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let spec next : (x : s) -> s
+
+  (* CHECK: theory_trigger_errors.pia:[[@LINE+2]]:3: error: the axiom 'T.apart' has no trigger: no term of the axiom mentions all its parameters, so the solver could never instantiate it; mention them together in one call of a theory function, or give a trigger with @trigger(...)
+  *)
+  let axiom apart (x : s) (y : s) ensures f x = f y
+
+  (* CHECK: theory_trigger_errors.pia:[[@LINE+2]]:3: error: the axiom 'T.half' has no trigger: the trigger 'T.f x' does not mention every parameter of the axiom
+  *)
+  let axiom half (x : s) (y : s) @trigger(f x) ensures f x <= f y || f y <= f x
+end

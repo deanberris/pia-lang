@@ -10,7 +10,7 @@ Pia is an experimental language under active development. The compiler works end
 | Types | Bounded integers, range types `int{lo..hi}`, `bool`, fixed arrays `[T; n]`, slices `[T]`, records, variants, type aliases |
 | Code | Functions, `let rec`, `let ... in`, mutable locals and buffers, `if`, `for`, `while`, parameter modifiers |
 | Overflow | `@overflow(proof)` by default, plus `wrap`, `saturate` and `trap`, and saturating operators |
-| Contracts | `requires`, `ensures`, `assert`, `assume`, `old`, `forall` and `exists`, loop `invariant` and `decreases`, spec functions and lemmas, and the spec-only types `int` (unbounded) and `real` |
+| Contracts | `requires`, `ensures`, `assert`, `assume`, `old`, `forall` and `exists`, loop `invariant` and `decreases`, spec functions and lemmas, the spec-only types `int` (unbounded) and `real`, and theories: sorts, abstract functions and axioms with triggers, trusted until models land ([verifier.md](verifier.md#theories)) |
 | Verification | Overflow, nonzero divisors, bounds, preconditions at calls, postconditions and assertions, by intervals and Z3, with counterexamples |
 | Metaprograms | `let meta` functions, quotes and splices, hygiene, operators defined in the prelude and by programs, `@derive(eq)`, expansion to a fixed point |
 | Comments | `(* *)`, `\` line and `(** *)` doc comments, kept in the syntax tree for metaprograms and hover; literate `.pia.md` files |

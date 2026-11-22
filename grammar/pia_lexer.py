@@ -262,6 +262,11 @@ class Lexer:
                         self.out[-1].type in ("LET", "REC") and \
                         self.name_follows():
                     kind = word.upper()
+                # `theory`, `sort` and `axiom` are keywords only between
+                # `let` and a name (ADR 0036).
+                if word in ("theory", "sort", "axiom") and self.out and \
+                        self.out[-1].type == "LET" and self.name_follows():
+                    kind = word.upper()
                 if kind in ("FOR", "SPREAD"):
                     self.for_headers.append(self.depth)
                 elif kind == "DO" and self.for_headers and \

@@ -42,6 +42,9 @@ std::string typeName(mlir::Type type);
 // through arrays, slices and record fields; null when there is none.
 mlir::Type specOnlyPart(mlir::Type type);
 
+// Whether `name` is a builtin type: u8 ... usize, bool, unit, int, real.
+bool isBuiltinTypeName(std::string_view name);
+
 // Whether a modifier list such as "borrowed in mutable" has `word`.
 bool hasModifier(std::string_view modifiers, std::string_view word);
 
@@ -86,6 +89,8 @@ class TypeResolver {
  public:
   TypeResolver(mlir::MLIRContext &ctx, syntax::Diagnostics &diags)
       : ctx_(ctx), diags_(diags) {}
+
+  mlir::MLIRContext *context() { return &ctx_; }
 
   // A type expression from the syntax tree. Reports an error and returns a
   // null type for anything outside the subset.

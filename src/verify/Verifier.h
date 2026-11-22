@@ -29,6 +29,11 @@ struct Outcome {
   std::string method;  // "intervals" or "smt" when proved, else the reason
   std::vector<ModelValue> counterexample;
   unsigned long long cost = 0;  // Z3's resource count, with reportCost
+  // Theories (ADR 0036): the axioms the goal's query was given, and
+  // whether it was solved again with every axiom of its theories, in which
+  // case `axioms` lists those.
+  std::vector<std::string> axioms;
+  bool fallback = false;
 };
 
 struct Options {
@@ -90,6 +95,8 @@ struct Stats {
   unsigned typeGoals = 0, typeSmt = 0;
   unsigned contractGoals = 0, contractSmt = 0;
   unsigned long long typeCost = 0, contractCost = 0;
+  // Each axiom's triggers, as written: `Lip.seq_lip` -> {"Lip.seq f g"}.
+  std::vector<std::pair<std::string, std::vector<std::string>>> triggers;
 };
 
 // Whether a goal of this kind is written in a contract, rather than raised
