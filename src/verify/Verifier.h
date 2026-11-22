@@ -86,6 +86,12 @@ struct Options {
   // trusted axiom or an `assume` again, without its negation, and fail it
   // if its hypotheses alone are unsatisfiable.
   bool checkVacuity = false;
+  // Solve each proof over theory axioms again, tracked, to report which
+  // axioms it used (ADR 0036): for --verify-stats, --trust-report,
+  // --check-vacuity and the proof cache, which keeps each core. That
+  // second solve can cost far more than the proof, so without it a proof
+  // reports every axiom it was given, a superset.
+  bool trackAxioms = true;
 };
 
 // What one verifyModule call did, for --verify-stats and the build-time
