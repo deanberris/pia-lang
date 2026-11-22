@@ -3,7 +3,7 @@
 A *theory* teaches the verifier about a domain. It declares new sorts, functions on them that have no body, and axioms about them, and it lives in a library, not in the compiler ([ADR 0036](adr/0036-library-theories.md)). This page is a catalogue of worked theories. Each one shows the theory, a model that proves its axioms, a proof that uses the theory, and a mistake that the theory catches.
 
 !!! note "Status"
-    Theories, models and sealing are implemented (ADR 0036, steps 1 to 4), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. The examples that need theory-building metaprograms (step 5) are still marked `untested` and skipped.
+    Theories, models and sealing are implemented (ADR 0036, steps 1 to 5), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. Theory-building metaprograms (step 5) are implemented too, so every example on this page is proved.
 
 ## How to read an entry
 
@@ -357,22 +357,44 @@ The counterexample, found in the model, has `sensor_ok = false` and `want = Fill
 
 ## State machines
 
-A protocol is a table of states and transitions, and a metaprogram can turn the table into a theory and its model, so a library describes the protocol once as data and nothing about it is trusted. This uses theory-building metaprograms (step 5):
+A protocol is a table of states and transitions, and a metaprogram can turn the table into a theory and its model, so a library describes the protocol once as data and nothing about it is trusted. The prelude's `machine` does this (step 5). Its first argument names the theory's sort, then come the type of states, the initial state and the table, one `edge` per transition. A full session proves, and sending after `shutdown` does not:
 
-<!-- untested: theory-building metaprograms land in ADR 0036 step 5 -->
+<!-- example: conn.pia -->
+<!-- expect: fail -->
 ```ocaml
 let conn_state = type | Closed | Open | Draining
 
-let theory Conn = machine conn_state Closed
+let theory Conn = machine "conn" conn_state Closed
   [ edge Closed "connect" Open
   ; edge Open "send" Open
   ; edge Open "shutdown" Draining
   ; edge Draining "close" Closed ]
+
+let lemma session (c : Conn.conn) : unit
+  requires Conn.at c = Closed
+  ensures Conn.at (Conn.close (Conn.shutdown (Conn.send (Conn.connect c)))) = Closed
+= ()
+
+let lemma send_after_shutdown (c : Conn.conn) : unit
+  requires Conn.at c = Closed
+  ensures Conn.allowed_send (Conn.shutdown (Conn.connect c))
+= ()
 ```
 
-`machine` generates, for each event, an abstract function on an abstract sort `conn`, a predicate saying where the event is allowed, and an axiom saying where it leads. For `shutdown`, it generates:
+```console
+$ piac --verify conn.pia
+...
+conn.pia:11:3: proved: the postcondition holds [smt]
+conn.pia:16:3: failed: the postcondition holds
+  counterexample in the model 'conn_states': c.tag = 0
+...
+conn.pia:3:1: proved: the model 'conn_states' meets the axiom 'Conn.close_from_Draining' [smt]
+10 proved, 1 failed, 0 skipped
+```
 
-<!-- example: conn.pia -->
+`machine` is an ordinary metaprogram, written in Pia with `map` and `fold`, so it is total, as a metaprogram that builds a theory must be ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)): what it returns becomes hypotheses of proofs. It builds an abstract sort `conn`, the state `at c` of each `c`, and a `start` in the initial state. For each event it builds an abstract function, a predicate saying where the event is allowed, and one axiom per edge saying where it leads. It also builds a model, `conn_states`, in which a `conn` is just its state, and the model proves every axiom, so nothing is trusted. The counterexample comes from that model: from `Closed` (tag 0), `connect` then `shutdown` leads to `Draining`, where `send` is not allowed. For `shutdown`, what it builds amounts to this:
+
+<!-- example: conn_shutdown.pia -->
 ```ocaml
 let conn_state = type | Closed | Open | Draining
 
@@ -382,10 +404,10 @@ let theory Conn = sig
   let spec shutdown : (c : conn) -> conn
   let spec allowed_shutdown : (c : conn) -> bool
   let axiom shutdown_allowed (c : conn) ensures allowed_shutdown c = (at c = Open)
-  let axiom shutdown_at (c : conn) requires at c = Open ensures at (shutdown c) = Draining
+  let axiom shutdown_from_Open (c : conn) requires at c = Open ensures at (shutdown c) = Draining
 end
 
-let model states : Conn = struct
+let model conn_states : Conn = struct
   let sort conn = conn_state
   let spec at (c : conn_state) : conn_state = c
   let spec shutdown (c : conn_state) : conn_state = if c = Open then Draining else c
@@ -393,28 +415,7 @@ let model states : Conn = struct
 end
 ```
 
-It writes the other events the same way. The library's socket API requires the event to be allowed, as in `let send (s : socket) ... requires Conn.allowed_send (abs s)`, so a program that sends after shutting down fails at the call. As lemmas, a full session proves, and sending after `shutdown` does not:
-
-<!-- untested: theory-building metaprograms land in ADR 0036 step 5 -->
-```ocaml
-import Conn
-
-let lemma session (c : Conn.conn) : unit
-  requires Conn.at c = Closed
-  ensures Conn.at (Conn.close (Conn.shutdown (Conn.send (Conn.connect c)))) = Closed
-= ()
-```
-
-<!-- untested: theory-building metaprograms land in ADR 0036 step 5 -->
-<!-- expect: fail -->
-```ocaml
-import Conn
-
-let lemma send_after_shutdown (c : Conn.conn) : unit
-  requires Conn.at c = Closed
-  ensures Conn.allowed_send (Conn.shutdown (Conn.connect c))
-= ()
-```
+The generated binders are named `c#machine`, a name no source can write, and the member names (`shutdown`, `allowed_shutdown`, `shutdown_from_Open`) are kept, so clients can name them ([ADR 0022](adr/0022-metaprogram-hygiene.md)). One table builds one theory: a second `let theory` with the same call names the same theory, rather than building a second one. The library's socket API requires the event to be allowed, as in `let send (s : socket) ... requires Conn.allowed_send (abs s)`, so a program that sends after shutting down fails at the call.
 
 A variant type and spec functions could say the same thing without a theory. The theory adds three things: the sort `conn` is abstract, so users cannot depend on how a connection is represented; the axioms are small facts rather than definitions to unfold; and one table generates the theory, its model and its proofs, for every protocol a library has. This is how [ADR 0006](adr/0006-contracts-and-module-state.md)'s module state-machine properties can be written by libraries.
 

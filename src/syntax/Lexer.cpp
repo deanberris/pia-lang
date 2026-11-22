@@ -433,7 +433,8 @@ class Lexer {
     while (i < src_.size() &&
            (src_[i] == ' ' || src_[i] == '\t' || src_[i] == '\n' || src_[i] == '\r'))
       ++i;
-    return i < src_.size() && isIdentStart(src_[i]);
+    // `let spec $f` in a quote: a spliced name is a name too.
+    return i < src_.size() && (isIdentStart(src_[i]) || src_[i] == '$');
   }
 
   void lexToken() {

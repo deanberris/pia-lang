@@ -128,6 +128,7 @@ bool isTypePosition(NodeKind parent, size_t index) {
     case NodeKind::ArrowType: return index == 1;
     case NodeKind::PTyped: return index == 1;
     case NodeKind::RefinementType: return index == 0;
+    case NodeKind::SortItem: return index == 0;  // `let sort s = $t`
     case NodeKind::TypeApp: case NodeKind::UnionType: case NodeKind::TypeInst:
       return true;
     default: return false;
@@ -141,6 +142,8 @@ bool hasBinderText(NodeKind k) {
     case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
     case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
     case NodeKind::QuotedDecl:
+    // A theory's, a model's and a sort's names (ADR 0036): `let sort $s`.
+    case NodeKind::Theory: case NodeKind::Model: case NodeKind::SortItem:
       return true;
     default:
       return false;
@@ -261,6 +264,23 @@ ValuePtr Interpreter::lookup(const Node &n, const EnvPtr &env) {
   if (host_.named)
     if (std::optional<std::string> t = host_.named(n.text))
       return typeValue(*t);
+  // In a top-level call, the name of one of the program's items is that
+  // item, and a variant's constructor is its name, so a call can take a
+  // type and its constructors as arguments: `machine conn_state Closed`
+  // (ADR 0036, theory-building metaprograms).
+  for (const Node *item : listing_) {
+    if (item->kind != NodeKind::LetItem) continue;
+    if (item->text == n.text && item->flags.find("meta") == std::string::npos)
+      return syntaxValue(clone(*item));
+    if (item->kids.size() > 3 && item->kids[3]->kind == NodeKind::TypeValue &&
+        !item->kids[3]->kids.empty() &&
+        item->kids[3]->kids[0]->kind == NodeKind::Variants)
+      for (const syntax::NodePtr &c : item->kids[3]->kids[0]->kids)
+        if (c->text == n.text) {
+          auto name = makeNode(NodeKind::Name, site_, n.text);
+          return syntaxValue(std::move(name));
+        }
+  }
   throw MetaError{site_, "unknown name '" + n.text + "' in a metaprogram"};
 }
 
@@ -808,7 +828,10 @@ class QuoteBuilder {
     if (binds && !n.text.empty() && n.text[0] != '$' &&
         !renamed_.count(n.text))
       renamed_[n.text] = n.text + "#" + std::to_string(++in_.fresh_);
-    for (const NodePtr &k : n.kids) collectBinders(*k, false);
+    // A theory's or model's members are items, meant to be seen, so their
+    // names stay; their parameters and binders are renamed (ADR 0036).
+    bool members = n.kind == NodeKind::Theory || n.kind == NodeKind::Model;
+    for (const NodePtr &k : n.kids) collectBinders(*k, members);
   }
 
   ValuePtr var(const std::string &spliced) {
@@ -918,8 +941,33 @@ class QuoteBuilder {
         out->flags = Interpreter::isCoreBuiltin(n.text) ? "prelude" : "toplevel";
       }
     }
-    for (size_t i = 0; i < n.kids.size(); ++i)
+    bool members = n.kind == NodeKind::Theory || n.kind == NodeKind::Model;
+    for (size_t i = 0; i < n.kids.size(); ++i) {
+      // `$xs` among a theory's or model's members splices a list of them.
+      if (members && n.kids[i]->kind == NodeKind::Splice) {
+        const Node &sp = *n.kids[i];
+        ValuePtr v = sp.text.empty() ? in_.eval(*sp.kids[0], env_)
+                                     : var(sp.text);
+        std::vector<ValuePtr> parts;
+        if (v->kind == K::List)
+          parts = v->list;
+        else
+          parts.push_back(v);
+        for (const ValuePtr &part : parts) {
+          if (part->kind != K::Syntax || !part->syntax)
+            throw MetaError{site, std::string("a theory's or model's members "
+                                              "are items, not ") +
+                                      kindName(part->kind)};
+          const Node &p = *part->syntax;
+          if (p.kind == NodeKind::Program)
+            for (const NodePtr &k : p.kids) out->add(clone(*k));
+          else
+            out->add(clone(p));
+        }
+        continue;
+      }
       out->add(copy(*n.kids[i], isTypePosition(n.kind, i)));
+    }
     return out;
   }
 

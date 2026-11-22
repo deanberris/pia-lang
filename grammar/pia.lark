@@ -324,6 +324,7 @@ ret_attrs: attribute*
 // `let theory T = sig ... end` (ADR 0036): sorts, abstract spec functions
 // (no body), spec functions, axioms (no body) and lemmas.
 theory_item: LET THEORY IDENT EQ SIG theory_member* END
+           | LET THEORY IDENT EQ app                          -> theory_call
 theory_member: LET SORT IDENT (EQ type)?                      -> sort_decl
              | LET SPEC binder COLON annot attribute*         -> abstract_spec
              | LET AXIOM IDENT param* ret_annot? contract+    -> axiom

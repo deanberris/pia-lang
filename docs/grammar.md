@@ -323,7 +323,8 @@ concept_item = "include" type                                  (* "include" is c
 adapter   = "let" "adapter" IDENT ":" type "=" "struct" { item } "end" ;  (* "adapter" is contextual *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
 module_header = "module" path { attribute } [ ":" path { "," path } ] ;  (* a file's first item only *)
-theory    = "let" "theory" IDENT "=" "sig" { theory_member } "end" ;  (* ADR 0036 *)
+theory    = "let" "theory" IDENT "=" ( "sig" { theory_member } "end"   (* ADR 0036 *)
+                                      | application ) ;               (* a metaprogram builds it *)
 theory_member = "let" "sort" IDENT [ "=" type ]
               | "let" "spec" binder ":" annot { attribute }           (* abstract: no body *)
               | "let" "axiom" IDENT { param } [ ret_annot ] contract { contract }

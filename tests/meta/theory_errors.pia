@@ -1,0 +1,29 @@
+(* A metaprogram that builds a theory must be total and pure (ADR 0035,
+   ADR 0036): what it returns becomes hypotheses of proofs.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta forever (n : int) : list = forever n
+let meta reads () : list = listing ()
+let meta nothing () : list = []
+let meta calls_forever (n : int) : list = forever n
+
+(* CHECK: theory_errors.pia:[[@LINE+2]]:19: error: 'forever' builds a theory, so it must terminate and be pure, but the recursive call at 6:37 has no argument that is a component of its parameter, such as 'element n'
+*)
+let theory Loop = forever 3
+
+(* CHECK: theory_errors.pia:[[@LINE+2]]:20: error: 'reads' builds a theory, so it must terminate and be pure, but it calls 'listing' at 7:28, which reads or changes the program
+*)
+let theory Reads = reads ()
+
+(* CHECK: theory_errors.pia:[[@LINE+2]]:20: error: 'calls_forever' builds a theory, so it must terminate and be pure, but it calls 'forever', which may not terminate: the recursive call at 6:37 has no argument that is a component of its parameter, such as 'element n'
+*)
+let theory Calls = calls_forever 3
+
+(* CHECK: theory_errors.pia:[[@LINE+2]]:1: error: the metaprogram 'nothing' must build a theory, a 'let theory ... = sig ... end'
+*)
+let theory Empty = nothing ()
+
+(* CHECK: theory_errors.pia:[[@LINE+2]]:20: error: a theory is a 'sig ... end', or a call of a metaprogram that builds one
+*)
+let theory Plain = 3

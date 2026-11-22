@@ -346,7 +346,6 @@ These lines have their own prefixes, so `tools/bench` still reads the single `ve
 
 - models in another module, found by the ADL rule, and the `trusting` check on imports between modules, once modules can import one another;
 - trust recorded in proof certificates ([ADR 0024](adr/0024-published-proof-certificates.md)), which are not built yet;
-- theory-building metaprograms (step 5);
 - `--check-vacuity` (step 7).
 
 A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.

@@ -151,6 +151,28 @@ let meta derive_eq (t : type_decl) : item =
   `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
 ```
 
+## Theory-building metaprograms
+
+`let theory T = gen args` runs the metaprogram `gen` ([ADR 0036](adr/0036-library-theories.md), step 5). It returns a list of items: exactly one `let theory ... = sig ... end`, under any name, and any number of models of it (`let model m : ... = struct ... end`) and other items. The theory is named `T`, and the models are models of `T`.
+
+```ocaml
+let conn_state = type | Closed | Open | Draining
+
+let theory Conn = machine "conn" conn_state Closed
+  [ edge Closed "connect" Open
+  ; edge Open "send" Open
+  ; edge Open "shutdown" Draining
+  ; edge Draining "close" Closed ]
+```
+
+- **Total and pure.** What the metaprogram returns becomes hypotheses of proofs, so it must terminate and read nothing of the program, by the rules for type-level metaprograms ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md), `src/meta/Totality.cpp`). It may not recurse except on a component of a parameter, may not call `listing` or `redefine`, and the same holds for the metaprograms it calls. A violation is an error at the `let theory` that says why.
+- **Arguments.** In a top-level call, the name of one of the program's items stands for that item, and a variant's constructor stands for its name. So `conn_state` above is the type item and `Closed` is the name `Closed`.
+- **Quotes of theories.** A quote can hold `let theory`, `let model` and theory members (`let sort`, an abstract `let spec f : ...`, `let axiom`). In a theory's or a model's body, `$xs` splices a list of members. `let sort $s`, `let spec $f` and `let axiom $n` splice names.
+- **Hygiene.** The members' names are kept, since they are meant to be used. Their parameters and binders are renamed as in any quote ([Hygiene](#hygiene)).
+- **One theory per argument tuple.** A second `let theory U = gen args` with the same call, written the same way, does not build again: `U` is another name for the first theory, so `U.x` is `T.x`.
+
+The prelude's `machine` builds a state machine's theory and its model from a table of `edge`s ([theories.md](theories.md#state-machines)). It is written in Pia with `map` and `fold`, so it is total.
+
 ## Comments and literate programs
 
 Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md), [grammar.md](grammar.md#comments-in-the-syntax-tree)), and metaprograms can read them:

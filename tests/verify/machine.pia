@@ -1,0 +1,62 @@
+(* Theory-building metaprograms (ADR 0036, step 5). The prelude's `machine`
+   builds a theory and its model from a table of transitions. The model
+   proves every axiom, so nothing is trusted; a client proves a session
+   from the axioms, and a wrong use fails with a counterexample in the
+   model. A second `let theory` with the same call names the same theory.
+// RUN: not piac --verify --trust-report %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=HYGIENE
+*)
+
+let conn_state = type | Closed | Open | Draining
+
+let theory Conn = machine "conn" conn_state Closed
+  [ edge Closed "connect" Open
+  ; edge Open "send" Open
+  ; edge Open "shutdown" Draining
+  ; edge Draining "close" Closed ]
+
+let lemma session (c : Conn.conn) : unit
+  requires Conn.at c = Closed
+  ensures Conn.at (Conn.close (Conn.shutdown (Conn.send (Conn.connect c)))) = Closed
+= ()
+
+let lemma send_after_shutdown (c : Conn.conn) : unit
+  requires Conn.at c = Closed
+  ensures Conn.allowed_send (Conn.shutdown (Conn.connect c))
+= ()
+
+(* The same table again: the same theory, under a second name. *)
+let theory Socket = machine "conn" conn_state Closed
+  [ edge Closed "connect" Open
+  ; edge Open "send" Open
+  ; edge Open "shutdown" Draining
+  ; edge Draining "close" Closed ]
+
+let lemma same_theory (c : Conn.conn) : unit
+  requires Socket.at c = Closed
+  ensures Conn.at (Socket.connect c) = Open
+= ()
+
+(* Expected report, in order.
+// CHECK: 0 trusted items
+// CHECK: machine.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: machine.pia:25:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample in the model 'conn_states': c.tag = 0
+// CHECK: machine.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: proved: the model 'conn_states' meets the axiom 'Conn.start_at' [smt]
+// CHECK: proved: the model 'conn_states' meets the axiom 'Conn.shutdown_from_Open' [smt]
+// CHECK: proved: the model 'conn_states' meets the axiom 'Conn.close_from_Draining' [smt]
+*)
+
+(* The generated theory keeps its members' names and renames its binders.
+// HYGIENE: (Theory "Conn"
+// HYGIENE: (SortItem "conn")
+// HYGIENE: (LetItem "allowed_shutdown" [spec abstract]
+// HYGIENE: (LetItem "shutdown_from_Open" [axiom]
+// HYGIENE-NEXT: (Params
+// HYGIENE-NEXT: (Param "c#machine"
+// HYGIENE: (Model "conn_states"
+// HYGIENE-NEXT: (TypeName "Conn")
+// HYGIENE: (Theory "Socket" [alias]
+// HYGIENE-NEXT: (TypeName "Conn")
+*)
