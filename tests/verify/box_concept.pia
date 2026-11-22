@@ -1,9 +1,10 @@
 (* A box over a concept (ADR 0046, steps 2 to 4): `box Shape` holds a
    value of any type that meets Shape, and a call through it is proved from
    Shape alone. `box`'s parameter is `@unsized`, so it may be a concept;
-   `box Shape` is then a fat pointer, { slot; table }, and the verifier
-   knows its object only through Shape's requirement contracts and its
-   laws over one value. `widen` boxes a full `box t` and runs the use
+   `box Shape` is then, in code, the tagged union of the types this module
+   widens (ADR 0046, step 5; tests/codegen/box_concept.pia runs it), and
+   the verifier knows its object only through Shape's requirement
+   contracts and its laws over one value. `widen` boxes a full `box t` and runs the use
    check there: t must meet Shape, contracts and laws included, so those
    facts hold of whatever a `box Shape` holds. Here a slice holds a square
    and a rectangle, and their areas' sum is bounded through the boxes.
@@ -91,11 +92,11 @@ let narrow (xs : [box Shape]) : bool
    instantiated at box Shape and discharged by that proof; and fits
    through a box with a width of 0 fails its precondition.
 // CHECK: box_concept.pia:59:3: proved: the postcondition holds [smt]
-// CHECK: box_concept.pia:68:13: proved: the precondition of 'widen<square>' holds [smt]
-// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen<rect>' holds [smt]
+// CHECK: box_concept.pia:68:13: proved: the precondition of 'widen(box<square>)' holds [smt]
+// CHECK: box_concept.pia:69:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
 // CHECK: box_concept.pia:70:7: proved: the precondition of 'total' holds [smt]
 // CHECK: box_concept.pia:80:3: proved: the postcondition holds [smt]
 // CHECK: box_concept.pia:86:3: failed: the precondition of 'fits(box_Shape, u32)' holds
 // CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
-// CHECK: 53 proved, 1 failed, 0 skipped
+// CHECK: 59 proved, 1 failed, 0 skipped
 *)

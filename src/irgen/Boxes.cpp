@@ -151,6 +151,7 @@ std::vector<uint32_t> contractEnds(const std::vector<const Node *> &cs,
 std::string erasedSource(const std::string &cname, const Node &concept,
                          const std::string &box, Text &text,
                          std::map<std::string, std::string> &whyNot,
+                         const std::vector<std::string> *closed,
                          syntax::Diagnostics &diags) {
   const std::string m = mangle(cname);
   const std::string theory = "erased_" + m;
@@ -240,14 +241,25 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       out += "\n  " + text.contract(*cs[i], ends[i], rename);
     return out;
   };
+  // The receiver is the box itself, `b`, a value of box_C: in the
+  // theory, the uninterpreted functions take it whole, so one box is one
+  // object to them.
+  const std::string self = "self_";
+  auto params = [&](const Requirement &q, const std::string &recvType) {
+    std::string ps;
+    for (const Param &p : q.params)
+      ps += " (" + (p.receiver ? self : p.name) + " : " +
+            (p.receiver ? recvType : p.type) + ")";
+    return ps;
+  };
   std::string src = "@trusted\n";
   src += "let theory " + theory + " = sig\n";
   for (const Requirement &q : reqs) {
     if (!q.why.empty()) continue;
     std::string sig;
     for (const Param &p : q.params)
-      sig += "(" + (p.receiver ? std::string("slot") : p.name) + " : " +
-             (p.receiver ? std::string("usize") : p.type) + ") -> ";
+      sig += "(" + (p.receiver ? self : p.name) + " : " +
+             (p.receiver ? boxType : p.type) + ") -> ";
     src += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
   }
   for (const Requirement &q : reqs) {
@@ -258,26 +270,28 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     std::string recv;
     for (const Param &p : q.params)
       if (p.receiver) recv = p.name;
-    rename[recv] = "slot";
-    rename["result"] = "(" + q.name + "_of" + args(q, "slot") + ")";
-    std::string ps;
-    for (const Param &p : q.params)
-      ps += " (" + (p.receiver ? std::string("slot") : p.name) + " : " +
-            (p.receiver ? std::string("usize") : p.type) + ")";
-    src += "  let axiom " + q.name + "_contract" + ps +
+    rename[recv] = self;
+    rename["result"] = "(" + q.name + "_of" + args(q, self) + ")";
+    src += "  let axiom " + q.name + "_contract" + params(q, boxType) +
            rewritten(q.contracts, rename) + "\n";
   }
   for (const Law &l : laws) {
     std::map<std::string, std::string> rename = inTheory;
-    src += "  let axiom " + l.name + "_law (" + l.param + " : usize)" +
-           rewritten(l.contracts, rename) + "\n";
+    src += "  let axiom " + l.name + "_law (" + l.param + " : " + boxType +
+           ")" + rewritten(l.contracts, rename) + "\n";
   }
   src += "end\n\n";
-  src += "let " + boxType + " = type { slot : usize; table : usize }\n\n";
-  // A fresh object's address and its table's, until code generation makes
-  // them (ADR 0046, step 5).
-  src += "let " + theory + "_slot (which : u8) : usize ensures true = "
-         "extern \"pia_" + m + "_slot\"\n\n";
+  // The box: before the module's widened types are known, a stand-in; then
+  // a tagged union of them (ADR 0046, step 5), so a call through a box is
+  // a switch on the tag, and a direct call where the tag is known.
+  auto ctor = [&](const std::string &t) { return "Box_" + m + "_" + t; };
+  if (!closed || closed->empty()) {
+    src += "let " + boxType + " = type { tag : u8 }\n\n";
+  } else {
+    src += "let " + boxType + " = type";
+    for (const std::string &t : *closed) src += " | " + ctor(t) + " of " + t;
+    src += "\n\n";
+  }
   for (const Requirement &q : reqs) {
     std::string recv;
     for (const Param &p : q.params)
@@ -295,15 +309,6 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       }
       continue;
     }
-    std::map<std::string, std::string> inCall = outside;
-    inCall[recv] = "slot";
-    std::string callPs = " (slot : usize) (table : usize)";
-    for (const Param &p : q.params)
-      if (!p.receiver) callPs += " (" + p.name + " : " + p.type + ")";
-    std::vector<const Node *> pre;
-    for (const Node *c : q.contracts)
-      if (c->kind == NodeKind::Requires) pre.push_back(c);
-    // The ends of the preconditions among all the contracts.
     std::vector<uint32_t> ends = contractEnds(q.contracts, text);
     auto requires = [&](std::map<std::string, std::string> rename) {
       std::string out;
@@ -312,27 +317,45 @@ std::string erasedSource(const std::string &cname, const Node &concept,
           out += "\n  " + text.contract(*q.contracts[i], ends[i], rename);
       return out;
     };
-    src += "let " + theory + "_call_" + q.name + callPs + " : " + q.result +
-           requires(inCall) + "\n  ensures result = " + theory + "." +
-           q.name + "_of" + args(q, "slot") + "\n= extern \"pia_" + m + "_" +
-           q.name + "\"\n\n";
+    std::map<std::string, std::string> onSelf = outside;
+    onSelf[recv] = self;
+    // The call through the box: a switch on what it holds, whose result
+    // the verifier takes to be the erased requirement's, so a caller is
+    // told the contract and no more. The assumption is the use check's at
+    // widen (box_trusted). Before the widened types are known, a stand-in.
+    src += "let " + theory + "_call_" + q.name + params(q, boxType) + " : " +
+           q.result + requires(onSelf) + "\n  ensures result = " + theory +
+           "." + q.name + "_of" + args(q, self) + "\n= ";
+    if (closed && !closed->empty()) {
+      src += "let r : " + q.result + " = match " + self + " with";
+      for (const std::string &t : *closed)
+        src += "\n    | " + ctor(t) + " v -> " + q.name + args(q, "v");
+      src += " in\n  assume r = " + theory + "." + q.name + "_of" +
+             args(q, self) + ";\n  r\n\n";
+    } else {
+      src += "abort ()\n\n";
+    }
     std::map<std::string, std::string> onBox = outside;
-    onBox[recv] = recv + ".slot";
     std::string ps;
     for (const Param &p : q.params)
       ps += " (" + p.name + " : " + (p.receiver ? boxType : p.type) + ")";
-    std::string callArgs = " " + recv + ".slot " + recv + ".table";
-    for (const Param &p : q.params)
-      if (!p.receiver) callArgs += " " + p.name;
     src += "let " + q.name + ps + " : " + q.result + requires(onBox) +
            "\n  ensures result = " + theory + "." + q.name + "_of" +
-           args(q, recv + ".slot") + "\n= " + theory + "_call_" + q.name +
-           callArgs + "\n\n";
+           args(q, recv) + "\n= " + theory + "_call_" + q.name + args(q, recv) +
+           "\n\n";
   }
-  // widen: the use check is the constraint `C t`, at each instance.
-  src += "let widen (t : type where " + cname + " t) (b : " + box +
-         " t) : " + boxType + "\n  requires b.state = 1\n= { slot = " + theory +
-         "_slot 0; table = " + theory + "_slot 1 }\n";
+  // The use check, the constraint `C t`, at each instance of widen.
+  std::string full = "\n  requires len b.slot = 1 && b.state = 1";
+  if (!closed || closed->empty()) {
+    src += "let widen (t : type where " + cname + " t) (b : " + box + " t) : " +
+           boxType + full + "\n= { tag = 0 }\n";
+  } else {
+    src += "let " + theory + "_check (t : type where " + cname + " t) (b : " +
+           box + " t) : unit = ()\n\n";
+    for (const std::string &t : *closed)
+      src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
+             "\n= " + theory + "_check b;\n  " + ctor(t) + " b.slot.[0]\n\n";
+  }
   return src;
 }
 
@@ -388,8 +411,9 @@ std::string boxUncallable(const Node &item) {
   return it == uncallable().end() ? "" : it->second;
 }
 
-void expandErasedBoxes(Node &program, std::string_view source,
-                       syntax::Diagnostics &diags) {
+void expandErasedBoxes(
+    Node &program, std::string_view source, syntax::Diagnostics &diags,
+    const std::map<std::string, std::vector<std::string>> *widened) {
   std::set<std::string> unsized = unsizedTypes(program);
   std::map<std::string, const Node *> cs = concepts(program);
   std::set<std::string> used;
@@ -398,6 +422,48 @@ void expandErasedBoxes(Node &program, std::string_view source,
     rewriteTypes(*item, false, unsized, cs, used, diags);
   }
   if (diags.hasErrors() || used.empty()) return;
+  // A box's layout is this module's union of the types it widens (step
+  // 5), so another Pia module cannot share it until the table layout of
+  // step 6: an interface may not show it, except to C (@abi(c)), whose
+  // callers take the documented layout.
+  for (NodePtr &item : program.kids) {
+    if (item->kind != NodeKind::Interface) continue;
+    bool c = false;
+    for (const NodePtr &k : item->kids)
+      if (k->kind == NodeKind::Attrs)
+        for (const NodePtr &a : k->kids) c |= a->text == "abi";
+    std::set<std::string> shown;
+    for (const NodePtr &k : item->kids)
+      if (k->kind == NodeKind::SigVal || k->kind == NodeKind::SigType)
+        for (const std::string &u : used)
+          if (mentionsName(*k, "box_" + mangle(u))) {
+            if (!c) {
+              diags.error(k->loc, "'" + k->text + "' shows a box over '" + u +
+                                  "' to other modules, whose layout is this "
+                                  "module's for now: a box crosses modules "
+                                  "with the table layout of ADR 0046, step 6");
+              continue;
+            }
+            shown.insert("box_" + mangle(u));
+          }
+    for (const std::string &b : shown) {
+      syntax::Diagnostics local;
+      NodePtr sig = syntax::parseProgram(
+          "interface I = sig\n  let " + b + " : type\nend\n", local);
+      if (!sig || sig->kids.empty()) continue;
+      for (NodePtr &k : sig->kids[0]->kids)
+        if (k->kind == NodeKind::SigVal || k->kind == NodeKind::SigType)
+          item->kids.push_back(std::move(k));
+    }
+  }
+  // Nor may this module box an imported concept's values for another.
+  for (const NodePtr &item : program.kids)
+    if (item->kind == NodeKind::Import)
+      for (const std::string &u : used)
+        if (cs.count(u) && item->text.find(u) != std::string::npos)
+          diags.error(item->loc, "a box over '" + u + "' from another module "
+                                 "needs the table layout of ADR 0046, step 6");
+  if (diags.hasErrors()) return;
   if (source.empty()) {
     diags.error(program.loc, "a box over a concept needs the program's "
                              "source, which this tool does not give yet");
@@ -409,7 +475,11 @@ void expandErasedBoxes(Node &program, std::string_view source,
   std::string box = *unsized.begin();
   for (const std::string &c : used) {
     std::map<std::string, std::string> whyNot;
-    std::string src = erasedSource(c, *cs.at(c), box, text, whyNot, diags);
+    const std::vector<std::string> *closed = nullptr;
+    if (widened)
+      if (auto w = widened->find(c); w != widened->end()) closed = &w->second;
+    std::string src =
+        erasedSource(c, *cs.at(c), box, text, whyNot, closed, diags);
     if (diags.hasErrors()) return;
     syntax::Diagnostics local;
     NodePtr extra = syntax::parseProgram(src, local);
@@ -423,7 +493,11 @@ void expandErasedBoxes(Node &program, std::string_view source,
       if (k->kind == NodeKind::FileAttr) continue;
       // Its axioms hold of every type `widen` boxes, by the use check.
       if (k->kind == NodeKind::Theory) k->flags = "box";
-      if (k->kind == NodeKind::LetItem && k->text == "widen")
+      if (k->kind == NodeKind::LetItem &&
+          k->text.rfind("erased_" + mangle(c) + "_call_", 0) == 0)
+        k->flags += k->flags.empty() ? "box_trusted" : " box_trusted";
+      if (k->kind == NodeKind::LetItem &&
+          (k->text == "widen" || k->text == "erased_" + mangle(c) + "_check"))
         k->flags += k->flags.empty() ? "box_widen" : " box_widen";
       // The stubs for requirements a box cannot forward.
       if (k->kind == NodeKind::LetItem)
