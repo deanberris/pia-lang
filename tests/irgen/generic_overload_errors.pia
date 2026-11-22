@@ -1,0 +1,18 @@
+(* Errors in generic overloads (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+(* Says what Same says, under another name. *)
+let meta Alike (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let pick (t : type where Same t) (x : t) : u8 = 0
+
+(* CHECK: generic_overload_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'pick' already has a generic overload with these parameter types and constraints that say the same, at line 14, so no call could choose between them
+*)
+let pick (s : type where Alike s) (x : s) : u8 = 1

@@ -24,7 +24,7 @@ Pia is an experimental language under active development. The compiler works end
 - **Termination is checked for loops and direct recursion only.** A `while` loop or a recursive call without `decreases` is a skipped goal, which `piac` refuses unless `--allow-unproved` accepts it. Mutual recursion is not checked.
 - **Calls inside contracts** are unknown values, so a contract cannot rely on what another function computes.
 - **Counterexamples do not show array contents** yet, only lengths and scalar values.
-- **Not compiled yet:** function values and lambdas outside metaprograms, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, adapters, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
+- **Not compiled yet:** function values and lambdas outside metaprograms, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, modules and interfaces, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
 - **One target.** Code generation targets arm64 macOS. The compiler itself builds on Linux and cross-compiles.
 
 ## Roadmap
@@ -35,7 +35,7 @@ The plan is a sequence of milestones, each a GitHub issue, building towards the 
 | --- | --- | --- |
 | M0 to M7 | Bazel build, grammar, parser, MLIR dialects, IRGen, verifier, arm64 codegen, records and the metaprogram engine | done |
 | [M8](https://github.com/deanberris/pia-lang/issues/9) | Modules, explicit interface imports, proof certificates and a link check | next |
-| [M9](https://github.com/deanberris/pia-lang/issues/10) | Generic types, concepts with laws, adapters and call-site deduction | generic types and functions, overloading, concepts and the definition check done; adapters next |
+| [M9](https://github.com/deanberris/pia-lang/issues/10) | Generic types, concepts with laws, adapters and call-site deduction | generic types and functions, overloading, concepts, the definition check, adapters, ranking by constraints and choosing by preconditions done (ADR 0034 complete); ADR 0035 next |
 | [M10](https://github.com/deanberris/pia-lang/issues/11) | Vectorisation driven by proved facts, and `vec<T, k>` | |
 | [M11](https://github.com/deanberris/pia-lang/issues/12) | Floats: strict IEEE, and three ways to allow reassociation | |
 | [M12](https://github.com/deanberris/pia-lang/issues/13) | Concurrency: `spread`, collectives, and compile-time checks that collectives match | |

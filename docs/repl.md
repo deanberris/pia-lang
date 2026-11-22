@@ -260,7 +260,7 @@ Each event has a `kind`:
 
 With `json: true`, a result also carries the job, its state and the JSON result above as structured content. It is off by default because some clients, Claude Code among them, show the agent the structured content in place of the text, and the events are several times longer than the text.
 
-A tool result is an error when the cell failed, so the agent sees failed proofs and counterexamples as errors to fix. To use it from Claude Code:
+A tool result is an error when the cell failed, so the agent sees failed proofs and counterexamples as errors to fix. The [agent skills](agents.md) teach an agent how to work with it. To use it from Claude Code:
 
 ```sh
 claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp

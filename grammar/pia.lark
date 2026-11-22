@@ -7,6 +7,7 @@
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
+%declare ADAPTER
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
 %declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
 %declare ATTR ATTR_OPEN TARGS_OPEN TARGS_CLOSE LBRACE_ADJ HOLE
@@ -24,6 +25,7 @@ program: SEP? (item (SEP item)*)? SEP?
 ?item: let_item
      | meta_operator
      | interface_item
+     | adapter_item
      | module_item
      | import_item
      | expr_item
@@ -294,6 +296,9 @@ concept_item: sig_item
             | IDENT type                                 -> sig_include  // `include`
             | LET LEMMA IDENT param* contract*         -> sig_lemma
 ret_attrs: attribute*
+
+// `let adapter name : C t = struct ... end` (ADR 0034).
+adapter_item: LET ADAPTER IDENT COLON type EQ STRUCT struct_body END
 
 module_item: MODULE IDENT (COLON path (COMMA path)*)? EQ STRUCT struct_body END
 struct_body: item*

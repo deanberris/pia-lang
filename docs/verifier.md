@@ -167,6 +167,10 @@ One unfolding proves each step: the lemma's call for `n - 1`, plus `count`'s def
 
 Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `spec` and `lemma` are keywords only between `let` (or `let rec`) and the name ([grammar.md](grammar.md#identifiers-and-keywords)).
 
+## Choosing overloads by precondition
+
+Overloads with the same parameter types are told apart by their preconditions (ADR 0034). IRGen leaves a call between them open: a `func.call` of the least specific one, with every candidate, most specific first, in `pia.overload_candidates`. Before verification and code generation, `resolveOverloads` decides each open call. For each candidate but the last, it encodes the calling function with the call retargeted to that candidate and asks whether each of its preconditions holds at the call, from everything known there: the caller's `requires`, the branches the call is under, loop invariants and earlier calls' `ensures`. The first candidate whose preconditions are all proved is called. If none is, the call keeps the least specific candidate, whose precondition is then an ordinary goal. This runs in every build, with or without `--verify`, and `--verify-only` does not limit it. Each query uses the proof cache like any goal.
+
 ## Limits of v0
 
 - **Loops whose bounds or loop-carried values cannot be encoded** have every goal inside reported as `skipped`, and what they compute or write is unknown afterwards.

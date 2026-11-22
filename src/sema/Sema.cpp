@@ -618,22 +618,39 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  syntax::Diagnostics &diags) {
   defineTypes(program, types, diags);
   std::vector<FuncSig> all;
+  // An adapter's functions are named after it, `by_red.same`.
+  std::vector<std::pair<const Node *, std::string>> items;
   for (const syntax::NodePtr &item : program.kids) {
-    if (isTypeItem(*item) || isGenericTypeItem(*item)) continue;
+    if (item->kind != NodeKind::Adapter) {
+      items.emplace_back(item.get(), "");
+      continue;
+    }
+    for (size_t i = 1; i < item->kids.size(); ++i)
+      items.emplace_back(item->kids[i].get(), item->text);
+  }
+  for (auto &[itemPtr, adapter] : items) {
+    const Node *item = itemPtr;
+    if (isTypeItem(*item) || isGenericTypeItem(*item)) {
+      if (!adapter.empty())
+        diags.error(item->loc, "an adapter holds functions; define types "
+                               "outside it");
+      continue;
+    }
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");
       continue;
     }
     // Concepts are checked by IRGen, at each use (ADR 0034).
-    if (syntax::isConceptItem(*item)) continue;
+    if (syntax::isConceptItem(*item) && adapter.empty()) continue;
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;
     }
     FuncSig sig;
-    sig.name = item->text;
-    sig.item = item.get();
+    sig.name = adapter.empty() ? item->text : adapter + "." + item->text;
+    sig.item = item;
+    sig.adapter = adapter;
     for (const syntax::NodePtr &p : item->kids[0]->kids)
       if (isTypeParam(*p)) {
         if (std::find(sig.typeParams.begin(), sig.typeParams.end(), p->text) !=
@@ -672,7 +689,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
   };
   for (auto &[name, group] : byName) {
     if (group.size() == 1) continue;
-    const FuncSig *generic = nullptr;
+    unsigned generics = 0;
     for (size_t k = 0; k < group.size(); ++k) {
       FuncSig &sig = all[group[k]];
       const Node &item = *sig.item;
@@ -686,17 +703,17 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         drop[group[k]] = true;
         continue;
       }
+      // Generic overloads are told apart by their parameter patterns and
+      // constraints (ADR 0034); the first keeps the name, the others are
+      // numbered, `sort#2`, and their instances are named after that.
       if (sig.isGeneric()) {
-        if (generic) {
-          error(item.loc, "'" + name + "' already has a generic "
-                                "overload; choosing between two needs "
-                                "concept-based ranking, which is not "
-                                "supported yet");
-          drop[group[k]] = true;
-        }
-        generic = &sig;
+        if (++generics > 1) sig.name = name + "#" + std::to_string(generics);
         continue;
       }
+      // Overloads with the same parameter types are told apart by their
+      // preconditions (ADR 0034); IRGen checks that they can be. The
+      // second and later are numbered, `copy(out [u8], [u8])#2`.
+      unsigned twins = 0;
       for (size_t j = 0; j < k; ++j) {
         const FuncSig &other = all[group[j]];
         if (drop[group[j]] || other.isGeneric() ||
@@ -705,11 +722,17 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         bool same = true;
         for (size_t i = 0; i < sig.params.size(); ++i)
           same = same && sig.params[i].type == other.params[i].type;
-        if (same) {
-          error(item.loc, "'" + name + "' is already defined with "
-                                "these parameter types; overloads told "
-                                "apart by their preconditions are not "
-                                "supported yet");
+        twins += same;
+        // With no precondition on either, nothing could tell them apart.
+        auto hasRequires = [](const Node &it) {
+          for (const syntax::NodePtr &c : it.kids[2]->kids)
+            if (c->kind == NodeKind::Requires) return true;
+          return false;
+        };
+        if (same && !hasRequires(item) && !hasRequires(*other.item)) {
+          error(item.loc, "'" + name + "' is already defined with these "
+                                "parameter types, and neither has a "
+                                "precondition to tell them apart");
           drop[group[k]] = true;
           break;
         }
@@ -719,6 +742,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       for (size_t i = 0; i < sig.params.size(); ++i)
         symbol += (i ? ", " : "") + typeName(sig.params[i].type);
       sig.name = symbol + ")";
+      if (twins) sig.name += "#" + std::to_string(twins + 1);
     }
     for (size_t k : group) all[k].overloaded = true;
   }

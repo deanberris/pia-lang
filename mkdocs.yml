@@ -71,6 +71,7 @@ nav:
   - How verification works: verification.md
   - The REPL: repl.md
   - Debugging C++ with the REPL: repl-debugging.md
+  - Agent skills: agents.md
   - Case studies:
       - Famous bugs, proved away: cases/index.md
       - Heartbleed: cases/heartbleed.pia.md

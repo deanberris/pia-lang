@@ -34,6 +34,7 @@ namespace pia::syntax {
   X(Sig)           /* a signature value: sig items */                        \
   X(SigInclude)    /* text=concept; type arguments */                        \
   X(SigLemma)      /* text=name; Params, Contracts */                        \
+  X(Adapter)       /* text=name; concept type, item* */                      \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
   /* bindings */                                                             \

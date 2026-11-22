@@ -6,6 +6,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -141,9 +142,12 @@ class Gen {
     std::map<const Node *, std::string> symbolOf;
     for (auto &[symbol, sig] : sigs_) {
       symbolOf[sig.item] = symbol;
-      overloads_[sig.source()].push_back(symbol);
+      if (sig.adapter.empty()) overloads_[sig.source()].push_back(symbol);
     }
     collectConcepts(program);
+    if (diags_.hasErrors()) return nullptr;
+    checkGenericOverloads();
+    checkPreconditionOverloads();
     if (diags_.hasErrors()) return nullptr;
     // Each generic body is checked once, at its definition, against what
     // its constraints promise (ADR 0034, "Definition check").
@@ -151,9 +155,15 @@ class Gen {
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         if (sigs_.at(it->second).isGeneric()) checkDefinition(it->second);
     if (diags_.hasErrors()) return nullptr;
-    for (const syntax::NodePtr &item : program.kids)
+    for (const syntax::NodePtr &item : program.kids) {
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         genFunction(it->second);
+      if (item->kind == NodeKind::Adapter)
+        for (size_t i = 1; i < item->kids.size(); ++i)
+          if (auto it = symbolOf.find(item->kids[i].get());
+              it != symbolOf.end())
+            genFunction(it->second);
+    }
     // Each instance of a generic function is generated once, after the
     // function that first used it; an instance may use further instances.
     while (!diags_.hasErrors() && !pendingInstances_.empty()) {
@@ -408,6 +418,8 @@ class Gen {
       ~TypeScope() { types.replaceTypeScopes(std::move(saved)); }
     } typeScope{types_, types_.replaceTypeScopes({})};
     if (!sig.typeArgs.empty()) types_.pushTypeScope(sig.typeArgs);
+    adapted_ = sig.adapted;
+    adapterFor_ = sig.adapterFor;
 
     llvm::SmallVector<Type> argTypes;
     for (const sema::Param &p : sig.params) argTypes.push_back(p.type);
@@ -1511,7 +1523,8 @@ class Gen {
                    Type expected) {
     const std::vector<std::string> &params = generic.typeParams;
     std::map<std::string, Type> bound;
-    if (!bindTypeArgs(generic, targs, bound)) return std::nullopt;
+    std::map<std::string, std::string> named;
+    if (!bindTypeArgs(generic, targs, bound, &named)) return std::nullopt;
 
     std::vector<const Node *> valueParams = valueParamsOf(generic);
     if (args.size() != valueParams.size())
@@ -1545,9 +1558,11 @@ class Gen {
         return fail(n, "cannot tell what '" + t + "' is in this call of '" +
                            generic.name + "'; give it, as in '" +
                            generic.name + "<" + t + " = u8>'");
-    if (std::optional<std::string> why = constraintsUnmet(generic, bound))
+    Choice choice;
+    if (std::optional<std::string> why =
+            constraintsUnmet(generic, bound, named, &choice))
       return fail(n, *why);
-    sema::FuncSig *inst = genericInstance(generic, bound);
+    sema::FuncSig *inst = genericInstance(generic, bound, choice);
     if (!inst) return std::nullopt;
     return genCall(n, *inst, args, &early);
   }
@@ -1555,11 +1570,28 @@ class Gen {
   // The functions a written name may call: one, or an overload set.
   std::vector<sema::FuncSig *> overloadSet(const std::string &name) {
     std::vector<sema::FuncSig *> out;
+    // An instance made through an adapter calls the adapter's functions,
+    // in place of any with the same parameter types.
+    if (auto a = adapted_.find(name); a != adapted_.end())
+      for (const std::string &symbol : a->second)
+        if (auto s = sigs_.find(symbol); s != sigs_.end())
+          out.push_back(&s->second);
+    auto replaced = [&](const sema::FuncSig &f) {
+      for (const sema::FuncSig *o : out) {
+        if (o->params.size() != f.params.size() || f.isGeneric()) continue;
+        bool same = true;
+        for (size_t i = 0; same && i < f.params.size(); ++i)
+          same = o->params[i].type == f.params[i].type;
+        if (same) return true;
+      }
+      return false;
+    };
+    size_t adapters = out.size();
     auto it = overloads_.find(name);
     if (it != overloads_.end())
       for (const std::string &symbol : it->second)
         if (auto s = sigs_.find(symbol); s != sigs_.end())
-          out.push_back(&s->second);
+          if (!adapters || !replaced(s->second)) out.push_back(&s->second);
     // In a generic body, the requirements its constraints promise.
     if (auto r = promisedFns_.find(name); r != promisedFns_.end())
       for (sema::FuncSig *sig : r->second) out.push_back(sig);
@@ -1589,10 +1621,15 @@ class Gen {
       bool generic = false;
       std::map<std::string, Type> bound;
       std::vector<int> score;  // per argument: 2 exact, 1 conversion
+      const sema::FuncSig *origin = nullptr;  // the overload itself
+      Choice choice;                          // its adapters
+      std::string label;
     };
     // The signatures of generic instances that are only being considered:
     // an instance is made, and so generated and proved, only if it wins.
     std::deque<sema::FuncSig> trial;
+    size_t generics = 0;
+    for (sema::FuncSig *cand : set) generics += cand->isGeneric();
     std::vector<Candidate> viable;
     std::vector<std::string> rejected;
     auto argTypes = [&] {
@@ -1603,11 +1640,16 @@ class Gen {
       return out + ")";
     };
     for (sema::FuncSig *cand : set) {
-      std::string label = cand->isGeneric()
-                              ? "the generic '" + name + "'"
-                              : "'" + cand->name + "'";
+      std::string label =
+          !cand->isGeneric() ? "'" + cand->name + "'"
+          : generics == 1    ? "the generic '" + name + "'"
+                             : "the generic '" + name + "' at line " +
+                                std::to_string(cand->item->loc.line);
       sema::FuncSig *sig = cand;
       std::map<std::string, Type> bound;
+      // The adapters the call names, and those this candidate uses.
+      std::map<std::string, std::string> named;
+      Choice choice;
       if (cand->isGeneric()) {
         std::vector<const Node *> vps = valueParamsOf(*cand);
         if (vps.size() != args.size()) {
@@ -1615,7 +1657,7 @@ class Gen {
                              plural(vps.size(), "argument"));
           continue;
         }
-        if (!bindTypeArgs(*cand, targs, bound)) return std::nullopt;
+        if (!bindTypeArgs(*cand, targs, bound, &named)) return std::nullopt;
         bool clash = false;
         for (size_t i = 0; i < args.size() && !clash; ++i) {
           const Node &p = *vps[i];
@@ -1638,7 +1680,8 @@ class Gen {
           continue;
         }
         // A type that does not meet a constraint removes the candidate.
-        if (std::optional<std::string> why = constraintsUnmet(*cand, bound)) {
+        if (std::optional<std::string> why =
+                constraintsUnmet(*cand, bound, named, &choice)) {
           rejected.push_back(label + ": " + *why);
           continue;
         }
@@ -1655,7 +1698,7 @@ class Gen {
                            plural(sig->params.size(), "argument"));
         continue;
       }
-      Candidate c{sig, cand->isGeneric(), bound, {}};
+      Candidate c{sig, cand->isGeneric(), bound, {}, cand, choice, label};
       bool fits = true;
       for (size_t i = 0; i < args.size() && fits; ++i) {
         Type want = sig->params[i].type;
@@ -1686,13 +1729,17 @@ class Gen {
       for (const std::string &r : rejected) why += "; " + r;
       return fail(n, why);
     }
-    auto beats = [](const Candidate &a, const Candidate &b) {
+    auto beats = [&](const Candidate &a, const Candidate &b) {
       bool better = false;
       for (size_t i = 0; i < a.score.size(); ++i) {
         if (a.score[i] < b.score[i]) return false;
         better = better || a.score[i] > b.score[i];
       }
-      return better || (!a.generic && b.generic);
+      if (better || (!a.generic && b.generic)) return true;
+      // Between generics, the more specific parameter patterns, then the
+      // stronger constraints.
+      return a.generic && b.generic &&
+             moreSpecific(*a.origin, *b.origin) > 0;
     };
     const Candidate *best = nullptr;
     for (const Candidate &c : viable) {
@@ -1702,20 +1749,58 @@ class Gen {
       if (all) best = &c;
     }
     if (!best) {
+      // Candidates no other beats, all with the same parameter types:
+      // overloads told apart by their preconditions (ADR 0034). The call
+      // goes to the least specific; the verifier may choose a more
+      // specific one whose precondition it proves at the call.
+      std::vector<const Candidate *> top;
+      for (const Candidate &c : viable) {
+        bool beaten = false;
+        for (const Candidate &o : viable)
+          if (&o != &c && beats(o, c)) beaten = true;
+        if (!beaten) top.push_back(&c);
+      }
+      auto twins = top.empty() ? preconditionOrder_.end()
+                               : preconditionOrder_.find(top[0]->sig->name);
+      bool tied = top.size() > 1 && twins != preconditionOrder_.end();
+      for (const Candidate *c : top)
+        tied = tied && !c->generic &&
+               llvm::is_contained(twins->second, c->sig->name);
+      if (tied) {
+        std::vector<std::string> order;
+        for (const std::string &sym : twins->second)
+          for (const Candidate *c : top)
+            if (c->sig->name == sym) order.push_back(sym);
+        sema::FuncSig &general = sigs_.at(order.back());
+        // A contract means the same in every build: it uses the general
+        // overload.
+        if (!contract_) {
+          llvm::SmallVector<mlir::Attribute> refs;
+          for (const std::string &sym : order)
+            refs.push_back(mlir::FlatSymbolRefAttr::get(&ctx_, sym));
+          openCandidates_ = b_.getArrayAttr(refs);
+          openFor_ = order.back();
+        }
+        return genCall(n, general, args, &early);
+      }
       std::string why = "the call of '" + name + "' with " + argTypes() +
                         " is ambiguous between";
-      for (size_t i = 0; i < viable.size(); ++i)
-        why += (i ? (i + 1 == viable.size() ? " and '" : ", '") : " '") +
-               viable[i].sig->name + "'";
-      return fail(n, why + "; give the arguments' types, as in "
-                           "'let x : u8 = ...'");
+      bool generic = false;
+      for (size_t i = 0; i < viable.size(); ++i) {
+        const std::string &l = viable[i].label;
+        bool quoted = !l.empty() && l[0] == '\'';
+        why += (i ? (i + 1 == viable.size() ? " and " : ", ") : " ") +
+               (quoted ? l : l.substr(4));
+        generic = generic || viable[i].generic;
+      }
+      return fail(n, why + (generic ? "; neither is more specific than the "
+                                      "other"
+                                    : "; give the arguments' types, as in "
+                                      "'let x : u8 = ...'"));
     }
     sema::FuncSig *callee = best->sig;
     if (best->generic) {
-      const sema::FuncSig *g = nullptr;
-      for (sema::FuncSig *cand : set)
-        if (cand->isGeneric()) g = cand;
-      callee = genericInstance(*g, best->bound);
+      callee = genericInstance(*best->origin, best->bound, best->choice);
       if (!callee) return std::nullopt;
     }
     return genCall(n, *callee, args, &early);
@@ -1749,6 +1834,22 @@ class Gen {
   }
 
   // --- concepts (ADR 0034) -------------------------------------------
+
+  // Adapters by name: the concept and arguments each adapts, `Same<u8>`,
+  // and its functions by name.
+  struct AdapterInfo {
+    std::string name;
+    std::string key;      // `Same<u8>`
+    std::string spelled;  // `Same u8`
+    std::map<std::string, std::vector<std::string>> fns;
+  };
+  std::map<std::string, AdapterInfo> adapters_;
+  // What a call's use check chose: the adapter for each concept and
+  // arguments, and the names that call the adapters' functions.
+  struct Choice {
+    std::map<std::string, std::vector<std::string>> adapted;
+    std::map<std::string, std::string> adapterFor;
+  };
 
   // Records every concept and checks its form, then checks that each
   // generic function's constraints name concepts with the right number of
@@ -1816,6 +1917,52 @@ class Gen {
       for (const syntax::NodePtr &r : item->kids[3]->kids)
         if (r->kind == NodeKind::SigInclude)
           checkConceptUse(r->text, r->kids.size(), r->loc, errors);
+    // Adapters: `let adapter name : C u8 = struct ... end`.
+    for (const syntax::NodePtr &item : program.kids) {
+      if (item->kind != NodeKind::Adapter) continue;
+      const std::string &name = item->text;
+      const Node &target = *item->kids[0];
+      std::string cname;
+      std::vector<const Node *> argNodes;
+      if (target.kind == NodeKind::TypeApp) {
+        cname = target.kids[0]->text;
+        for (size_t i = 1; i < target.kids.size(); ++i)
+          argNodes.push_back(target.kids[i].get());
+      } else if (target.kind == NodeKind::TypeName) {
+        cname = target.text;
+      }
+      if (overloads_.count(name) || concepts_.count(name) ||
+          adapters_.count(name) || types_.named(name)) {
+        error(item->loc, "'" + name + "' is already defined");
+        continue;
+      }
+      size_t before = errors.size();
+      checkConceptUse(cname, argNodes.size(), target.loc, errors);
+      if (errors.size() != before) continue;
+      AdapterInfo a;
+      a.name = name;
+      std::vector<Type> args;
+      bool ok = true;
+      for (const Node *n : argNodes) {
+        Type t = types_.resolve(*n);
+        ok = ok && t;
+        args.push_back(t);
+      }
+      if (!ok) continue;
+      a.key = cname + "<" + spellTypes(args) + ">";
+      a.spelled = cname;
+      for (Type t : args) a.spelled += " " + typeName(t);
+      for (auto &[symbol, sig] : sigs_) {
+        if (sig.adapter != name) continue;
+        if (sig.isGeneric()) {
+          error(sig.item->loc, "an adapter's functions are not generic for "
+                               "now");
+          ok = false;
+        }
+        a.fns[sig.source()].push_back(symbol);
+      }
+      if (ok) adapters_[name] = std::move(a);
+    }
     for (auto &[symbol, sig] : sigs_) {
       if (!sig.isGeneric()) continue;
       for (const syntax::NodePtr &p : sig.item->kids[0]->kids) {
@@ -1897,7 +2044,21 @@ class Gen {
   // Why the type arguments `bound` do not meet the constraints of
   // `generic`, or nothing when they do (the use check).
   std::optional<std::string> constraintsUnmet(
-      const sema::FuncSig &generic, const std::map<std::string, Type> &bound) {
+      const sema::FuncSig &generic, const std::map<std::string, Type> &bound,
+      const std::map<std::string, std::string> &named = {},
+      Choice *choice = nullptr) {
+    for (auto &[cname, adapter] : named) {
+      bool constrains = false;
+      for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
+        if (const Node *pred = wherePredicate(*p)) {
+          std::vector<const Node *> cs;
+          constraintsOf(*pred, cs);
+          for (const Node *c : cs) constrains |= c->kids[0]->text == cname;
+        }
+      if (!constrains)
+        return "'" + generic.name + "' has no constraint '" + cname +
+               "' for '" + adapter + "' to adapt";
+    }
     for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
       const Node *pred = wherePredicate(*p);
       if (!pred) continue;
@@ -1921,10 +2082,58 @@ class Gen {
           args.push_back(ty);
         }
         const std::string &cname = c->kids[0]->text;
-        if (std::optional<std::string> why = unmet(cname, args))
-          return spellTypes(args) + (args.size() > 1 ? " do" : " does") +
-                 " not meet " + cname + ": " + *why;
+        if (std::optional<std::string> why =
+                meetOrAdapt(generic, cname, args, named, choice))
+          return why;
       }
+    }
+    return std::nullopt;
+  }
+
+  // Meets `cname` for `args` directly, or through an adapter: the one the
+  // call names, the one the function being generated chose, or else the
+  // only adapter for them in scope (ADR 0034, "Adapters"). Records the
+  // adapter in `choice`. The reason when neither works.
+  std::optional<std::string> meetOrAdapt(
+      const sema::FuncSig &generic, const std::string &cname,
+      const std::vector<Type> &args,
+      const std::map<std::string, std::string> &named, Choice *choice) {
+    std::string key = cname + "<" + spellTypes(args) + ">";
+    std::string types = spellTypes(args);
+    std::string meet = types + (args.size() > 1 ? " do" : " does") +
+                       " not meet " + cname;
+    std::string chosen;
+    if (auto n = named.find(cname); n != named.end()) {
+      auto a = adapters_.find(n->second);
+      if (a == adapters_.end()) return "'" + n->second + "' is not an adapter";
+      if (a->second.key != key)
+        return "'" + n->second + "' adapts " + a->second.spelled + ", not " +
+               cname + " " + types;
+      chosen = n->second;
+    } else if (auto f = adapterFor_.find(key); f != adapterFor_.end()) {
+      chosen = f->second;
+    } else {
+      std::optional<std::string> why = unmet(cname, args);
+      if (!why) return std::nullopt;
+      std::vector<std::string> found;
+      for (auto &[name, a] : adapters_)
+        if (a.key == key) found.push_back(name);
+      if (found.empty()) return meet + ": " + *why;
+      if (found.size() > 1)
+        return types + " meets " + cname + " through both '" + found[0] +
+               "' and '" + found[1] + "'; name one, as in '" + generic.name +
+               "<" + cname + " = " + found[0] + ">'";
+      chosen = found[0];
+    }
+    const AdapterInfo &a = adapters_.at(chosen);
+    if (std::optional<std::string> why = unmet(cname, args, &a))
+      return meet + " through '" + chosen + "': " + *why;
+    if (choice) {
+      choice->adapterFor[key] = chosen;
+      for (auto &[name, symbols] : a.fns)
+        for (const std::string &sym : symbols)
+          if (!llvm::is_contained(choice->adapted[name], sym))
+            choice->adapted[name].push_back(sym);
     }
     return std::nullopt;
   }
@@ -1933,8 +2142,10 @@ class Gen {
   // once per concept and arguments; laws and requirement contracts become
   // lemmas, proved for those arguments.
   std::optional<std::string> unmet(const std::string &cname,
-                                   const std::vector<Type> &args) {
+                                   const std::vector<Type> &args,
+                                   const AdapterInfo *via = nullptr) {
     std::string key = cname + "<" + spellTypes(args) + ">";
+    if (via) key += " by " + via->name;
     for (Type t : args)
       if (archetypes_.count(t)) {
         if (promised_.count(key)) return std::nullopt;
@@ -1950,7 +2161,7 @@ class Gen {
       if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
     std::vector<std::map<std::string, Type>> saved =
         types_.replaceTypeScopes({scope});
-    std::optional<std::string> why = requirementsUnmet(item, key, scope);
+    std::optional<std::string> why = requirementsUnmet(item, key, scope, via);
     types_.replaceTypeScopes(std::move(saved));
     met_[key] = why;
     return why;
@@ -1958,7 +2169,7 @@ class Gen {
 
   std::optional<std::string> requirementsUnmet(
       const Node &item, const std::string &key,
-      const std::map<std::string, Type> &scope) {
+      const std::map<std::string, Type> &scope, const AdapterInfo *via) {
     for (const syntax::NodePtr &r : item.kids[3]->kids) {
       if (r->kind == NodeKind::SigInclude) {
         std::vector<Type> args;
@@ -1967,7 +2178,7 @@ class Gen {
           if (!t) return "a type it includes cannot be formed";
           args.push_back(t);
         }
-        if (std::optional<std::string> why = unmet(r->text, args))
+        if (std::optional<std::string> why = unmet(r->text, args, via))
           return *why + " (from 'include " + r->text + "')";
       } else if (r->kind == NodeKind::SigVal) {
         std::vector<std::string> names, mods;
@@ -1987,7 +2198,16 @@ class Gen {
         for (Type t : ptypes) spelled += typeName(t) + " -> ";
         spelled += typeName(result);
         const sema::FuncSig *found = nullptr;
-        for (sema::FuncSig *cand : overloadSet(r->text)) {
+        // An adapter's own functions come first.
+        std::vector<sema::FuncSig *> cands;
+        if (via)
+          if (auto f = via->fns.find(r->text); f != via->fns.end())
+            for (const std::string &sym : f->second)
+              cands.push_back(&sigs_.at(sym));
+        for (sema::FuncSig *cand : overloadSet(r->text))
+          cands.push_back(cand);
+        for (sema::FuncSig *cand : cands) {
+          if (found) break;
           if (cand->isGeneric() || cand->params.size() != ptypes.size() ||
               cand->result != result)
             continue;
@@ -1999,11 +2219,12 @@ class Gen {
         }
         if (!found) return "no function '" + spelled + "'";
         if (!r->kids[2]->kids.empty())
-          queueContractLemma(*r, key, names, *found, scope);
+          queueContractLemma(*r, key, names, *found, scope, via);
       } else if (r->kind == NodeKind::SigLemma) {
         queueLemma(key + "." + r->text, syntax::clone(*r->kids[0]),
                    syntax::clone(*r->kids[1]),
-                   syntax::makeNode(NodeKind::Unit, r->loc), scope, r->loc);
+                   syntax::makeNode(NodeKind::Unit, r->loc), scope, r->loc,
+                   via);
       }
     }
     return std::nullopt;
@@ -2018,7 +2239,8 @@ class Gen {
   void queueContractLemma(const Node &req, const std::string &key,
                           const std::vector<std::string> &names,
                           const sema::FuncSig &found,
-                          const std::map<std::string, Type> &scope) {
+                          const std::map<std::string, Type> &scope,
+                          const AdapterInfo *via) {
     syntax::SourceLoc at = req.loc;
     std::map<std::string, std::string> rename;
     auto params = syntax::makeNode(NodeKind::Params, at);
@@ -2054,7 +2276,7 @@ class Gen {
       body = std::move(seq);
     }
     queueLemma(key + "." + req.text + ".contract", std::move(params),
-               std::move(contracts), std::move(body), scope, at);
+               std::move(contracts), std::move(body), scope, at, via);
   }
 
   // Renames free names in a contract; `result` becomes `call` when given.
@@ -2075,7 +2297,7 @@ class Gen {
   // and proved like any other function.
   void queueLemma(const std::string &symbol, NodePtr params, NodePtr contracts,
                   NodePtr body, const std::map<std::string, Type> &scope,
-                  syntax::SourceLoc at) {
+                  syntax::SourceLoc at, const AdapterInfo *via) {
     if (sigs_.count(symbol)) return;
     auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
     item->flags = "lemma";
@@ -2093,6 +2315,8 @@ class Gen {
     sig.item = item.get();
     sig.typeArgs = scope;
     for (auto &[name, type] : scope) sig.typeParams.push_back(name);
+    // A law of a concept met through an adapter is about its functions.
+    if (via) sig.adapted = via->fns;
     synthesized_.push_back(std::move(item));
     if (!sema::resolveSignature(sig, types_, diags_)) return;
     sigs_.emplace(symbol, std::move(sig));
@@ -2115,36 +2339,12 @@ class Gen {
       bound[t] = a;
       archetypes_[a] = {t, {}};
     }
-    for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
-      if (const Node *pred = wherePredicate(*p)) {
-        std::vector<const Node *> cs;
-        constraintsOf(*pred, cs);
-        archetypes_[bound[p->text]].constraints = cs;
-        for (const Node *c : cs) {
-          std::vector<Type> args;
-          for (size_t i = 1; i < c->kids.size(); ++i) {
-            auto b = bound.find(c->kids[i]->text);
-            Type ty;
-            if (b != bound.end()) {
-              ty = b->second;
-            } else {
-              Node asType;
-              asType.kind = NodeKind::TypeName;
-              asType.text = c->kids[i]->text;
-              asType.loc = c->kids[i]->loc;
-              ty = types_.resolve(asType);
-            }
-            if (!ty) {
-              archetypes_.clear();
-              promised_.clear();
-              promisedFns_.clear();
-              return;
-            }
-            args.push_back(ty);
-          }
-          promise(c->kids[0]->text, args);
-        }
-      }
+    if (!promiseConstraints(generic, bound)) {
+      archetypes_.clear();
+      promised_.clear();
+      promisedFns_.clear();
+      return;
+    }
     std::string key = "definition of " + generic.name;
     sema::FuncSig check = generic;
     check.name = key;
@@ -2169,6 +2369,327 @@ class Gen {
     promised_.clear();
     promisedFns_.clear();
     archetypes_.clear();
+  }
+
+  // Records what the constraints of `generic` promise when its type
+  // parameters are the stand-in types `bound`. False when a type in them
+  // cannot be formed.
+  bool promiseConstraints(const sema::FuncSig &generic,
+                          const std::map<std::string, Type> &bound) {
+    for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
+      const Node *pred = wherePredicate(*p);
+      if (!pred) continue;
+      std::vector<const Node *> cs;
+      constraintsOf(*pred, cs);
+      archetypes_[bound.at(p->text)].constraints = cs;
+      for (const Node *c : cs) {
+        std::vector<Type> args;
+        if (!constraintArgs(*c, bound, args)) return false;
+        promise(c->kids[0]->text, args);
+      }
+    }
+    return true;
+  }
+
+  // The types a constraint `C t u8` names, with `bound` for the type
+  // parameters. False when one cannot be formed.
+  bool constraintArgs(const Node &c, const std::map<std::string, Type> &bound,
+                      std::vector<Type> &args) {
+    for (size_t i = 1; i < c.kids.size(); ++i) {
+      auto b = bound.find(c.kids[i]->text);
+      Type ty;
+      if (b != bound.end()) {
+        ty = b->second;
+      } else {
+        Node asType;
+        asType.kind = NodeKind::TypeName;
+        asType.text = c.kids[i]->text;
+        asType.loc = c.kids[i]->loc;
+        ty = types_.resolve(asType);
+      }
+      if (!ty) return false;
+      args.push_back(ty);
+    }
+    return true;
+  }
+
+  // --- ranking generic overloads (ADR 0034, step 5) --------------------
+
+  // Stand-in types for the type parameters of `sig`.
+  std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
+    std::map<std::string, Type> bound;
+    for (const std::string &t : sig.typeParams)
+      bound[t] = RecordType::get(&ctx_, t, {}, {});
+    return bound;
+  }
+
+  // Whether the parameter types of the generic `a` are an instance of
+  // those of `b`: `[u8]` of `[t]`, `pair t t` of `pair a b`. `mapB` binds
+  // b's type parameters to a's stand-ins.
+  bool instanceOf(const sema::FuncSig &a, const sema::FuncSig &b,
+                  std::map<std::string, Type> &mapB) {
+    sema::FuncSig ai = a;
+    ai.typeArgs = standIns(a);
+    ai.result = Type();
+    if (!sema::resolveSignature(ai, types_, diags_)) return false;
+    std::vector<const Node *> vb = valueParamsOf(b);
+    if (vb.size() != ai.params.size()) return false;
+    for (size_t i = 0; i < vb.size(); ++i)
+      if (vb[i]->kids.empty() || vb[i]->kids[0]->kind != NodeKind::Annot ||
+          !types_.unify(*vb[i]->kids[0], ai.params[i].type, b.typeParams,
+                        mapB))
+        return false;
+    // Deduction only binds b's type parameters; the types must also be
+    // the same once they are bound.
+    for (const std::string &t : b.typeParams)
+      if (!mapB.count(t)) return false;
+    sema::FuncSig bi = b;
+    bi.typeArgs = mapB;
+    bi.result = Type();
+    if (!sema::resolveSignature(bi, types_, diags_)) return false;
+    for (size_t i = 0; i < bi.params.size(); ++i)
+      if (bi.params[i].type != ai.params[i].type) return false;
+    return true;
+  }
+
+  // Whether the constraints of `a` entail those of `b`, with `mapB`
+  // binding b's type parameters to a's stand-ins: each concept b names is
+  // promised by a's constraints, through `include`, or else a's promised
+  // requirements have every one of its requirements, and it states no law
+  // or contract, which would need a proof.
+  bool entails(const sema::FuncSig &a, const sema::FuncSig &b,
+               const std::map<std::string, Type> &mapB) {
+    auto savedArch = std::move(archetypes_);
+    auto savedPromised = std::move(promised_);
+    auto savedFns = std::move(promisedFns_);
+    archetypes_.clear();
+    promised_.clear();
+    promisedFns_.clear();
+    std::map<std::string, Type> boundA = standIns(a);
+    for (auto &[t, ty] : boundA) archetypes_[ty] = {t, {}};
+    bool ok = promiseConstraints(a, boundA);
+    for (const syntax::NodePtr &p : b.item->kids[0]->kids) {
+      const Node *pred = wherePredicate(*p);
+      if (!pred || !ok) continue;
+      std::vector<const Node *> cs;
+      constraintsOf(*pred, cs);
+      for (const Node *c : cs) {
+        std::vector<Type> args;
+        ok = ok && constraintArgs(*c, mapB, args) &&
+             entailed(c->kids[0]->text, args, 0);
+      }
+    }
+    archetypes_ = std::move(savedArch);
+    promised_ = std::move(savedPromised);
+    promisedFns_ = std::move(savedFns);
+    return ok;
+  }
+
+  bool entailed(const std::string &cname, const std::vector<Type> &args,
+                int depth) {
+    std::string key = cname + "<" + spellTypes(args) + ">";
+    if (promised_.count(key)) return true;
+    auto c = concepts_.find(cname);
+    if (c == concepts_.end() || depth > 16) return false;
+    const Node &item = *c->second;
+    std::map<std::string, Type> scope;
+    size_t i = 0;
+    for (const syntax::NodePtr &p : item.kids[0]->kids)
+      if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
+    std::vector<std::map<std::string, Type>> saved =
+        types_.replaceTypeScopes({scope});
+    bool ok = true;
+    for (const syntax::NodePtr &r : item.kids[3]->kids) {
+      if (!ok) break;
+      if (r->kind == NodeKind::SigLemma) {
+        ok = false;
+      } else if (r->kind == NodeKind::SigInclude) {
+        std::vector<Type> inner;
+        for (const syntax::NodePtr &a : r->kids)
+          if (Type t = types_.resolve(*a)) inner.push_back(t);
+        types_.replaceTypeScopes(std::move(saved));
+        ok = inner.size() == r->kids.size() &&
+             entailed(r->text, inner, depth + 1);
+        saved = types_.replaceTypeScopes({scope});
+      } else if (r->kind == NodeKind::SigVal) {
+        if (!r->kids[2]->kids.empty()) {
+          ok = false;
+          continue;
+        }
+        std::vector<Type> ptypes;
+        const Node *cur = r->kids[0]->kids[1].get();
+        for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get())
+          ptypes.push_back(types_.resolve(*cur->kids[0]->kids[1]));
+        Type result = types_.resolve(*cur);
+        bool found = false;
+        for (const sema::FuncSig *f : promisedFns_[r->text]) {
+          bool same = f->params.size() == ptypes.size() && f->result == result;
+          for (size_t k = 0; same && k < ptypes.size(); ++k)
+            same = f->params[k].type == ptypes[k];
+          found = found || same;
+        }
+        ok = found;
+      }
+    }
+    types_.replaceTypeScopes(std::move(saved));
+    return ok;
+  }
+
+  // 1 when the generic `a` is more specific than `b`, -1 when `b` is, and
+  // 0 when neither is: first by parameter patterns, then by constraints.
+  int moreSpecific(const sema::FuncSig &a, const sema::FuncSig &b) {
+    std::string key = a.name + "|" + b.name;
+    if (auto it = specificity_.find(key); it != specificity_.end())
+      return it->second;
+    std::map<std::string, Type> mapB, mapA;
+    bool aInB = instanceOf(a, b, mapB), bInA = instanceOf(b, a, mapA);
+    int result = 0;
+    if (aInB && !bInA) {
+      result = 1;
+    } else if (bInA && !aInB) {
+      result = -1;
+    } else if (aInB && bInA) {
+      bool ab = entails(a, b, mapB), ba = entails(b, a, mapA);
+      result = ab && !ba ? 1 : ba && !ab ? -1 : 0;
+    }
+    specificity_[key] = result;
+    specificity_[b.name + "|" + a.name] = -result;
+    return result;
+  }
+
+  // Two generic overloads with the same parameter patterns and constraints
+  // that entail each other could never be told apart: an error at the
+  // second.
+  void checkGenericOverloads() {
+    for (auto &[name, symbols] : overloads_) {
+      std::vector<const sema::FuncSig *> gs;
+      for (const std::string &sym : symbols)
+        if (const sema::FuncSig &f = sigs_.at(sym); f.isGeneric())
+          gs.push_back(&f);
+      std::sort(gs.begin(), gs.end(), [](auto *x, auto *y) {
+        return std::make_pair(x->item->loc.line, x->item->loc.column) <
+               std::make_pair(y->item->loc.line, y->item->loc.column);
+      });
+      for (size_t i = 0; i < gs.size(); ++i)
+        for (size_t j = 0; j < i; ++j) {
+          std::map<std::string, Type> m1, m2;
+          if (instanceOf(*gs[i], *gs[j], m1) &&
+              instanceOf(*gs[j], *gs[i], m2) && entails(*gs[i], *gs[j], m1) &&
+              entails(*gs[j], *gs[i], m2)) {
+            diags_.error(gs[i]->item->loc,
+                         "'" + name + "' already has a generic overload "
+                         "with these parameter types and constraints that "
+                         "say the same, at line " +
+                             std::to_string(gs[j]->item->loc.line) +
+                             ", so no call could choose between them");
+            break;
+          }
+        }
+    }
+  }
+
+  // --- overloads told apart by preconditions (ADR 0034, step 6) --------
+
+  // The `requires` clauses of `sig`, with its parameters renamed by
+  // position, as text: two overloads' clauses compare equal when they say
+  // the same of the same arguments.
+  std::set<std::string> requiresOf(const sema::FuncSig &sig) {
+    std::map<std::string, std::string> rename;
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      rename[sig.params[i].name] = "#" + std::to_string(i);
+    std::set<std::string> out;
+    for (const syntax::NodePtr &c : sig.item->kids[2]->kids) {
+      if (c->kind != NodeKind::Requires) continue;
+      NodePtr copy = syntax::clone(*c->kids[0]);
+      renameNames(*copy, rename, nullptr);
+      if (copy->kind == NodeKind::Name)
+        if (auto it = rename.find(copy->text); it != rename.end())
+          copy->text = it->second;
+      std::ostringstream os;
+      syntax::dump(os, *copy);
+      out.insert(os.str());
+    }
+    return out;
+  }
+
+  // Overloads with the same parameter types must be ordered by their
+  // preconditions: each one's `requires` clauses include every clause of
+  // the next. That is a proof that each precondition implies the next,
+  // so the most specific proved at a call is well defined. They must also
+  // return the same type.
+  void checkPreconditionOverloads() {
+    for (auto &[name, symbols] : overloads_) {
+      // Grouped in the order the overloads are visited: mlir::Type has no
+      // ordering, and pointer order would make the diagnostics' order vary.
+      std::vector<std::pair<std::vector<Type>,
+                            std::vector<const sema::FuncSig *>>>
+          byTypes;
+      for (const std::string &sym : symbols) {
+        const sema::FuncSig &f = sigs_.at(sym);
+        if (f.isGeneric()) continue;
+        std::vector<Type> ts;
+        for (const sema::Param &p : f.params) ts.push_back(p.type);
+        auto it = std::find_if(byTypes.begin(), byTypes.end(),
+                               [&](const auto &e) { return e.first == ts; });
+        if (it == byTypes.end()) {
+          byTypes.emplace_back(ts, std::vector<const sema::FuncSig *>{});
+          it = std::prev(byTypes.end());
+        }
+        it->second.push_back(&f);
+      }
+      for (auto &[ts, group] : byTypes) {
+        if (group.size() < 2) continue;
+        std::sort(group.begin(), group.end(), [](auto *x, auto *y) {
+          return std::make_pair(x->item->loc.line, x->item->loc.column) <
+                 std::make_pair(y->item->loc.line, y->item->loc.column);
+        });
+        std::vector<std::pair<std::set<std::string>, const sema::FuncSig *>>
+            ranked;
+        bool ok = true;
+        for (const sema::FuncSig *f : group) {
+          std::set<std::string> req = requiresOf(*f);
+          for (auto &[other, g] : ranked) {
+            std::string at = " at line " + std::to_string(g->item->loc.line);
+            if (f->result != g->result) {
+              diags_.error(f->item->loc,
+                           "'" + name + "' has an overload with these "
+                           "parameter types" + at + " that returns " +
+                           typeName(g->result) + "; overloads told apart by "
+                           "their preconditions return the same type");
+              ok = false;
+            } else if (req == other) {
+              diags_.error(f->item->loc,
+                           "'" + name + "' already has an overload with "
+                           "these parameter types and the same "
+                           "preconditions" + at + ", so no call could "
+                           "choose between them");
+              ok = false;
+            } else if (!std::includes(req.begin(), req.end(), other.begin(),
+                                      other.end()) &&
+                       !std::includes(other.begin(), other.end(),
+                                      req.begin(), req.end())) {
+              diags_.error(f->item->loc,
+                           "the preconditions of this overload of '" + name +
+                           "' and the one" + at + " are not ordered: the "
+                           "'requires' of one must include each 'requires' "
+                           "of the other");
+              ok = false;
+            }
+            if (!ok) break;
+          }
+          if (!ok) break;
+          ranked.emplace_back(std::move(req), f);
+        }
+        if (!ok) continue;
+        // Most specific first: the most clauses.
+        std::stable_sort(ranked.begin(), ranked.end(), [](auto &x, auto &y) {
+          return x.first.size() > y.first.size();
+        });
+        std::vector<std::string> order;
+        for (auto &[req, f] : ranked) order.push_back(f->name);
+        for (const std::string &sym : order) preconditionOrder_[sym] = order;
+      }
+    }
   }
 
   // Records that the constraints promise `cname` for `args`, with what it
@@ -2275,11 +2796,16 @@ class Gen {
   // The instance of a generic function for `bound`, made and queued on
   // first use. Null after an error.
   sema::FuncSig *genericInstance(const sema::FuncSig &generic,
-                                 std::map<std::string, Type> bound) {
+                                 std::map<std::string, Type> bound,
+                                 const Choice &choice = {}) {
     const std::vector<std::string> &params = generic.typeParams;
     std::string key = generic.name + "<";
     for (size_t i = 0; i < params.size(); ++i)
       key += (i ? ", " : "") + typeName(bound[params[i]]);
+    // An instance made through adapters is its own instance.
+    for (auto &[concept_key, adapter] : choice.adapterFor)
+      key += ", " + concept_key.substr(0, concept_key.find('<')) + " = " +
+             adapter;
     key += ">";
     auto it = sigs_.find(key);
     if (it == sigs_.end()) {
@@ -2287,6 +2813,8 @@ class Gen {
       inst.name = key;
       inst.typeArgs = bound;
       inst.result = Type();
+      inst.adapted = choice.adapted;
+      inst.adapterFor = choice.adapterFor;
       if (!sema::resolveSignature(inst, types_, diags_)) return nullptr;
       if (!inst.result && !retAnnotOf(generic)) {
         fail(*generic.item, "a generic function needs its return type for "
@@ -2302,7 +2830,8 @@ class Gen {
 
   // Binds the type arguments `f<u8, t = u16>` gives. False after an error.
   bool bindTypeArgs(const sema::FuncSig &generic, const Node *targs,
-                    std::map<std::string, Type> &bound) {
+                    std::map<std::string, Type> &bound,
+                    std::map<std::string, std::string> *named = nullptr) {
     const std::vector<std::string> &params = generic.typeParams;
     if (targs) {
       size_t next = 0;
@@ -2313,6 +2842,12 @@ class Gen {
         if (t.kind == NodeKind::NamedArg) {
           name = t.text;
           typeNode = t.kids[0].get();
+          // `f<Eq = bitwise_eq>` names the adapter for a constraint.
+          if (named && concepts_.count(name) &&
+              typeNode->kind == NodeKind::Name) {
+            (*named)[name] = typeNode->text;
+            continue;
+          }
           if (!llvm::is_contained(params, name)) {
             fail(t, "'" + generic.name + "' has no type parameter '" + name +
                         "'");
@@ -2389,6 +2924,12 @@ class Gen {
     if (!isUnit(sig.result)) results.push_back(sig.result);
     auto call = create<mlir::func::CallOp>(loc(n), sig.name, results,
                                               operands);
+    // A call left open between overloads told apart by their
+    // preconditions: the verifier chooses (verify::resolveOverloads).
+    if (openCandidates_ && sig.name == openFor_) {
+      call->setAttr("pia.overload_candidates", openCandidates_);
+      openCandidates_ = {};
+    }
     if (results.empty()) return unit();
     return TV{call.getResult(0), sig.result};
   }
@@ -2990,6 +3531,9 @@ class Gen {
   std::map<std::string, std::optional<std::string>> met_;
   // Lemmas made for concepts' laws and requirement contracts.
   std::deque<syntax::NodePtr> synthesized_;
+  // Those of the function being generated.
+  std::map<std::string, std::vector<std::string>> adapted_;
+  std::map<std::string, std::string> adapterFor_;
   // While a generic's definition is checked: its type parameters' stand-in
   // types, the concepts its constraints promise, and their requirements.
   struct Archetype {
@@ -2997,6 +3541,12 @@ class Gen {
     std::vector<const Node *> constraints;
   };
   bool checking_ = false;
+  // Overloads with the same parameter types, most specific precondition
+  // first, by each one's symbol; and the call being made open between them.
+  std::map<std::string, std::vector<std::string>> preconditionOrder_;
+  mlir::ArrayAttr openCandidates_;
+  std::string openFor_;
+  std::map<std::string, int> specificity_;  // "a|b": moreSpecific(a, b)
   llvm::DenseMap<Type, Archetype> archetypes_;
   std::set<std::string> promised_;
   std::map<std::string, std::vector<sema::FuncSig *>> promisedFns_;

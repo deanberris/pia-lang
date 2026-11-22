@@ -96,6 +96,16 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options = {},
                                   Stats *stats = nullptr);
 
+// Decides each call IRGen left open between overloads told apart by their
+// preconditions, a `func.call` with `pia.overload_candidates` listing them
+// most specific first (ADR 0034). The call goes to the first whose
+// precondition is proved at the call, from everything known there, or else
+// to the last, the least specific. This is part of compiling, not of
+// optional verification: it runs with or without --verify, and
+// `options.only` does not limit it.
+mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
+                                     const Options &options = {});
+
 // "file:line:col" for the innermost file location in `loc`.
 std::string formatLoc(mlir::Location loc);
 

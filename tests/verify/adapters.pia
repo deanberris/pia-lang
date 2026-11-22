@@ -1,0 +1,57 @@
+(* Adapters (ADR 0034): an adapter supplies a concept's requirements for a
+   type. It is used when a call names it, or when it is the only way the
+   type meets the concept. Its laws are proved about its own functions.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+end
+
+let pixel = type { r : u8; g : u8 }
+
+(* pixel has no 'same' of its own, so this adapter is the only way. *)
+let adapter by_red : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool
+    ensures result <==> p.r = q.r
+  = (p.r = q.r)
+end
+
+let same (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+(* u8 meets Same directly, so this one is used only when it is named. *)
+let adapter always : Same u8 = struct
+  let same (a : u8) (b : u8) : bool
+    ensures result
+  = true
+end
+
+(* Its instances call the function that met Same: u8's own, by_red's, or
+   the adapter a call names. *)
+let alike (t : type where Same t) (a : t) (b : t) : bool
+  ensures result <==> same a b
+= same a b
+
+(* Each call makes its own instance, and each proves Same's law about the
+   functions it uses. tests/irgen/adapters.pia checks which they call. *)
+let red_alike (p : pixel) (q : pixel) : bool = alike p q
+
+let direct (a : u8) (b : u8) : bool = alike a b
+
+let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
+
+(* Expected report, in order.
+// CHECK: adapters.pia:17:5: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:28:5: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: 9 proved, 0 failed, 0 skipped
+*)

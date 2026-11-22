@@ -1,0 +1,42 @@
+(* Errors in adapters and in choosing them (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let pixel = type { r : u8; g : u8 }
+let rgb = type { r : u8; g : u8; b : u8 }
+
+let adapter by_red : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool = (p.r = q.r)
+end
+
+let adapter by_green : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool = (p.g = q.g)
+end
+
+let adapter empty : Same rgb = struct
+  let other (p : rgb) : bool = true
+end
+
+let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+(* CHECK: adapter_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: pixel meets Same through both 'by_green' and 'by_red'; name one, as in 'alike<Same = by_green>'
+*)
+let both (p : pixel) (q : pixel) : bool = alike p q
+
+let named (p : pixel) (q : pixel) : bool = alike<Same = by_red> p q
+
+(* CHECK: adapter_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'by_red' adapts Same pixel, not Same u8
+*)
+let wrong (a : u8) (b : u8) : bool = alike<Same = by_red> a b
+
+(* CHECK: adapter_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: rgb does not meet Same through 'empty': no function 'same : rgb -> rgb -> bool'
+*)
+let missing (p : rgb) (q : rgb) : bool = alike p q
+
+(* CHECK: adapter_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'nobody' is not an adapter
+*)
+let unknown (p : pixel) (q : pixel) : bool = alike<Same = nobody> p q

@@ -197,6 +197,11 @@ class Parser {
       case K::Let:
         if (kind(1) == K::Meta && kind(2) == K::Operator) return metaOperator();
         if (kind(1) == K::LParen) break;  // a function literal: an expression
+        // `let adapter name : C t = struct ... end` (ADR 0034); `adapter`
+        // is not a keyword.
+        if (kind(1) == K::Ident && tok(1).text == "adapter" &&
+            kind(2) == K::Ident && kind(3) == K::Colon)
+          return adapterItem();
         return let(/*allowItem=*/true, /*allowIn=*/false);
       case K::Interface:
         return interfaceItem();
@@ -464,6 +469,24 @@ class Parser {
       }
     }
     take();
+  }
+
+  NodePtr adapterItem() {
+    auto n = makeNode(N::Adapter, loc());
+    take();
+    take();
+    n->text = std::string(expect(K::Ident, "an adapter's name").text);
+    expect(K::Colon, "':'");
+    n->add(type());
+    expect(K::Eq, "'='");
+    expect(K::Struct, "'struct'");
+    skipSeps();
+    while (!at(K::End)) {
+      n->add(item());
+      skipSeps();
+    }
+    take();
+    return n;
   }
 
   NodePtr moduleItem() {
