@@ -17,7 +17,7 @@
 // CHECK-DAG: proved: 'lex_compare<i64>' is an instance of the generic proof of 'lex_compare' [generic]
 // CHECK-DAG: proved: the measure of 'lex_from<t>' decreases [generic]
 // CHECK-DAG: not proved generically: 'compare' is proved at each instance, since it returns a value of ordering [generic]
-// CHECK: 513 proved, 0 failed, 0 skipped
+// CHECK: 525 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -29,7 +29,13 @@
 // OPS-NEXT:  {{^}}  let less : (a : u8) -> (b : u8) -> bool ensures result <==> a < b{{$}}
 // OPS:       {{^}}  let swap : (xs : borrowed inout mutable [i64]) -> (i : usize) -> (j : usize) -> unit requires i < len xs && j < len xs{{$}}
 // OPS:       {{^}}  let less : (a : bool) -> (b : bool) -> bool ensures result <==> a = false && b{{$}}
+// OPS-NEXT:  {{^}}  let ordering = type | Less | Equal | Greater{{$}}
+// OPS-NEXT:  {{^}}  let compare : (t : type where Ord t) -> (a : t) -> (b : t) -> ordering{{$}}
+// OPS:       {{^}}  let spec lex_from : (t : type where Ord t) -> (xs : [t]) -> (ys : [t]) -> (i : usize) -> bool{{$}}
+// OPS:       {{^}}  let lexicographical_compare_three_way : (xs : [u8]) -> (ys : [u8]) -> ordering ensures result = Less <==> lex_from<u8> xs ys 0
 // OPS-NEXT:  {{^}}end{{$}}
+// OPS-NEXT:  {{^}}let meta Eq (t : type) : concept = sig
+// OPS:       {{^}}let spec lex_from (t : type where Ord t)
 
 // CMP:       {{^}}interface Compare = sig{{$}}
 // CMP-NEXT:  {{^}}  let ordering = type | Less | Equal | Greater{{$}}

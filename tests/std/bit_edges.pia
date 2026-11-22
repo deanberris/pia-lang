@@ -5,6 +5,7 @@
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
 import Pia.Core.Bit.Bits
+import Pia.Core.Bit.Endian
 
 (* The same edges at each width `w` of the unsigned type `t`. *)
 let meta bit_edges (t : string) (w : int) : item =
@@ -42,7 +43,14 @@ bit_edges "u16" 16
 bit_edges "u32" 32
 bit_edges "u64" 64
 
+(* The interface shows native's value, so importers know it: little on
+   arm64, as C++23's std::endian::native is there. *)
+let native_is_little () : unit =
+  assert Pia.Core.Bit.native = Pia.Core.Bit.Little;
+  assert Pia.Core.Bit.native <> Pia.Core.Bit.Big;
+  ()
+
 (* Every goal is proved, from the interface alone.
 // CHECK-NOT: failed
-// CHECK: 96 proved, 0 failed, 0 skipped
+// CHECK: 98 proved, 0 failed, 0 skipped
 *)

@@ -1,6 +1,9 @@
 (* Runs Pia.Core.Result's compiled code on examples, linked by
    pia_binary. It exits 0 when every result is what C++'s std::expected
-   gives, and otherwise with the number of the first wrong one. *)
+   gives, and otherwise with the number of the first wrong one. Result's
+   generic same is over Pia.Core.Order's Eq, so an importer imports Order
+   too (an interface does not yet bring the concepts it names). *)
+import Pia.Core.Order.Ops
 import Pia.Core.Result.Expected
 
 let main () : i32 =

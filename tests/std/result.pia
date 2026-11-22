@@ -1,7 +1,8 @@
 (* Pia.Core.Result (ADR 0040): every goal of the module is proved,
    including each instance's interface contract, and its interface is what
    importers see.
-// RUN: piac --verify %S/../../lib/Pia/Core/Result.pia | FileCheck %s
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Result.pia | FileCheck %s
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Result.pia
 // RUN: FileCheck --check-prefix=EXP %s < %t/Pia.Core.Result.Expected.piai
 *)
@@ -9,7 +10,7 @@
 (* value of an error and error of a value are ruled out by preconditions.
 // CHECK-NOT: failed
 // CHECK-DAG: proved: 'abort' is never reached
-// CHECK: 105 proved, 0 failed, 0 skipped
+// CHECK: 182 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -18,5 +19,7 @@
 // EXP-NEXT: {{^}}  let has_value : (r : result u8 u32) -> bool ensures
 // EXP:      {{^}}  let value : (r : result i64 u32) -> i64 requires (match r with | Ok _ -> true | Err _ -> false) ensures
 // EXP:      {{^}}  let same : (a : result i64 u32) -> (b : result i64 u32) -> bool ensures
+// EXP-NEXT: {{^}}  let has_value : (t : type) -> (e : type) -> (r : result t e) -> bool{{$}}
+// EXP:      {{^}}  let same : (t : type where Pia.Core.Order.Eq t) -> (e : type where Pia.Core.Order.Eq e) -> (a : result t e) -> (b : result t e) -> bool{{$}}
 // EXP-NEXT: {{^}}end{{$}}
 *)

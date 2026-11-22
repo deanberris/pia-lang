@@ -3,16 +3,17 @@
    clamp and lexicographical_compare (ADR 0040, docs/cpp-std.md).
 
    The concepts Eq and Ord, with their laws, and the generic functions
-   over them are defined and proved here. Interfaces cannot list concepts
-   or generic functions yet (ADR 0039, step 3), so what other modules can
-   import is the instances for each integer type, stamped out by the
-   metaprograms below from the generic functions, and each proved:
+   over them are defined here, proved once over their type parameter (ADR
+   0043), and exported in Ops (ADR 0039, step 3), with the spec function
+   lex_from that states lexicographical order, so importers instantiate
+   them at their own types. Ops and Compare also list the instances for
+   each integer type, stamped out by the metaprograms below:
 
    - Eq: `same`, reflexive, symmetric and transitive.
    - Ord: Eq and `less`, a strict weak order: irreflexive, transitive,
      with incomparability transitive, and `less a b` never `same a b`.
-     `less` is asymmetric by contract, which is what generic code can use
-     (laws are proved for each type but are not facts in generic bodies).
+     `less` is asymmetric by contract, and the laws are axioms in
+     generic bodies (ADR 0043, step 3).
    - compare, the three-way comparison, giving an `ordering`.
    - min, max and clamp, with C++'s ties: min and max return the first
      argument when the two are equivalent, and clamp requires lo not after
@@ -57,10 +58,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [u8]) -> (i : usize) -> (v : u8) -> u8
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [u8]) -> (ys : [u8]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<u8> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : u16) -> (b : u16) -> bool
     ensures result <==> a = b
@@ -90,10 +90,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [u16]) -> (i : usize) -> (v : u16) -> u16
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [u16]) -> (ys : [u16]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<u16> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : u32) -> (b : u32) -> bool
     ensures result <==> a = b
@@ -123,10 +122,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [u32]) -> (i : usize) -> (v : u32) -> u32
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [u32]) -> (ys : [u32]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<u32> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : u64) -> (b : u64) -> bool
     ensures result <==> a = b
@@ -156,10 +154,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [u64]) -> (i : usize) -> (v : u64) -> u64
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [u64]) -> (ys : [u64]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<u64> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : i8) -> (b : i8) -> bool
     ensures result <==> a = b
@@ -189,10 +186,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [i8]) -> (i : usize) -> (v : i8) -> i8
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [i8]) -> (ys : [i8]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<i8> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : i16) -> (b : i16) -> bool
     ensures result <==> a = b
@@ -222,10 +218,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [i16]) -> (i : usize) -> (v : i16) -> i16
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [i16]) -> (ys : [i16]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<i16> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : i32) -> (b : i32) -> bool
     ensures result <==> a = b
@@ -255,10 +250,9 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [i32]) -> (i : usize) -> (v : i32) -> i32
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [i32]) -> (ys : [i32]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<i32> xs ys 0
   (** Eq: equality of integers. *)
   let same : (a : i64) -> (b : i64) -> bool
     ensures result <==> a = b
@@ -288,16 +282,37 @@ interface Ops = sig
       The postcondition is the definition's, as for swap. *)
   let exchange : (xs : borrowed inout mutable [i64]) -> (i : usize) -> (v : i64) -> i64
     requires i < len xs
-  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  (** C++: std::lexicographical_compare: exactly lex_from from index 0. *)
   let lexicographical_compare : (xs : [i64]) -> (ys : [i64]) -> bool
-    ensures len xs = 0 ==> (result <==> len ys > 0)
-    ensures len ys = 0 ==> result = false
+    ensures result = lex_from<i64> xs ys 0
   (** Eq: equality of booleans. *)
   let same : (a : bool) -> (b : bool) -> bool
     ensures result <==> a = b
   (** Ord: false before true. *)
   let less : (a : bool) -> (b : bool) -> bool
     ensures result <==> a = false && b
+  (** C++: std::strong_ordering, also in Compare, for compare's
+      generic form. *)
+  let ordering = type | Less | Equal | Greater
+  (** The generic functions, over any Ord t, for importers to
+      instantiate at their own types (ADR 0039, step 3). Each is proved
+      once over its type parameter (ADR 0043). *)
+  let compare : (t : type where Ord t) -> (a : t) -> (b : t) -> ordering
+  let min : (t : type where Ord t) -> (a : t) -> (b : t) -> t
+  let max : (t : type where Ord t) -> (a : t) -> (b : t) -> t
+  let clamp : (t : type where Ord t) -> (v : t) -> (lo : t) -> (hi : t) -> t
+  let swap : (t : type) -> (xs : borrowed inout mutable [t]) -> (i : usize) -> (j : usize) -> unit
+  let exchange : (t : type) -> (xs : borrowed inout mutable [t]) -> (i : usize) -> (v : t) -> t
+  (** C++'s lexicographical order, from index i: the spec function that
+      lex_compare's contract states. *)
+  let spec lex_from : (t : type where Ord t) -> (xs : [t]) -> (ys : [t]) -> (i : usize) -> bool
+  let lex_compare : (t : type where Ord t) -> (xs : [t]) -> (ys : [t]) -> bool
+  let lex_compare_three_way : (t : type where Ord t) -> (xs : [t]) -> (ys : [t]) -> ordering
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [u8]) -> (ys : [u8]) -> ordering
+    ensures result = Less <==> lex_from<u8> xs ys 0
+    ensures result = Greater ==> lex_from<u8> ys xs 0
+    ensures result = Equal ==> lex_from<u8> xs ys 0 = false && lex_from<u8> ys xs 0 = false
 end
 
 interface Compare = sig
@@ -308,9 +323,6 @@ interface Compare = sig
     ensures result = Less <==> a < b
     ensures result = Equal <==> a = b
     ensures result = Greater <==> b < a
-  (** C++: std::lexicographical_compare_three_way. *)
-  let lexicographical_compare_three_way : (xs : [u8]) -> (ys : [u8]) -> ordering
-    ensures len xs = 0 && len ys = 0 ==> result = Equal
   (** C++: operator<=>, the three-way comparison. *)
   let compare : (a : u16) -> (b : u16) -> ordering
     ensures result = Less <==> a < b
@@ -487,8 +499,7 @@ let meta order_family (t : string) : item =
      = exchange<$t> $!xs $!i $!v
 
      let lexicographical_compare ($!xs : [$t]) ($!ys : [$t]) : bool
-       ensures len $!xs = 0 ==> ($!result <==> len $!ys > 0)
-       ensures len $!ys = 0 ==> $!result = false
+       ensures $!result = lex_from<$t> $!xs $!ys 0
      = lex_compare<$t> $!xs $!ys )
 
 order_family "u8"
@@ -504,7 +515,9 @@ order_family "i64"
    an ordering, ADR 0043), so it is exported for u8 only, memcmp's role. *)
 (** C++: std::lexicographical_compare_three_way. *)
 let lexicographical_compare_three_way (xs : [u8]) (ys : [u8]) : ordering
-  ensures len xs = 0 && len ys = 0 ==> result = Equal
+  ensures result = Less <==> lex_from<u8> xs ys 0
+  ensures result = Greater ==> lex_from<u8> ys xs 0
+  ensures result = Equal ==> lex_from<u8> xs ys 0 = false && lex_from<u8> ys xs 0 = false
 = lex_compare_three_way<u8> xs ys
 
 (** Eq: equality of booleans. *)
