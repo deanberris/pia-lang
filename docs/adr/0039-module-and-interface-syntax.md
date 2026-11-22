@@ -225,4 +225,4 @@ Dean accepted this ADR on 2026-11-22 and answered its questions:
 1. **A headerless file exports nothing** (section 10). Accepted.
 2. **Access is qualified unless an import lists names in `{ ... }`, with no wildcard** (section 5). Accepted.
 3. **Importers can never write module state** (section 7). Accepted: state changes go through interface functions, which is safer. Exporting `mutable` state needs a demonstrated case before it is considered again.
-4. **Spellings `@abi(c)` and `@within(...)`** (sections 9 and 11). Not answered, so the proposed spellings stand until Dean says otherwise.
+4. **Spellings `@abi(c)` and `@within(...)`** (sections 9 and 11). Accepted.
