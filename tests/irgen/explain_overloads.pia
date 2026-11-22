@@ -1,0 +1,24 @@
+(* `piac --explain-overloads=file:line` lists each candidate of the calls on
+   that line, why each removed one was, and which one was chosen (ADR 0035).
+// RUN: piac --emit=mlir --explain-overloads=explain_overloads.pia:24 %s 2>&1 | FileCheck %s
+*)
+
+let meta widen (t : type) : type =
+  if t = u8 then u16 else if t = u16 then u32 else if t = u32 then u64
+  else fail (concat "no integer type is wider than " (name t))
+
+let pick (t : type) (x : t) : u8 = 0
+let pick (t : type where size_of t <= 8) (x : t) : widen t = x
+let pick (x : bool) : u8 = 2
+
+(* Only the call on line 24 is explained.
+// CHECK-NOT: note: the call of 'pick' with (u8)
+// CHECK: explain_overloads.pia:24:{{[0-9]+}}: note: the call of 'pick' with (u64) has 3 candidates
+// CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   the generic 'pick' at line 10: viable, and chosen
+// CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   removed: the generic 'pick' at line 11: the type 'widen u64' cannot be formed: no integer type is wider than u64
+// CHECK-NEXT: explain_overloads.pia:24:{{[0-9]+}}: note:   removed: 'pick(bool)' does not take these types
+// CHECK-NOT: note:
+*)
+let small (x : u8) : u16 = pick x
+
+let big (x : u64) : u8 = pick x

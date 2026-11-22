@@ -1,0 +1,29 @@
+(* Substitution failure removes a candidate (ADR 0035, step 3). The more
+   specific `pick` returns a wider type, which `widen` cannot form for u64,
+   so a call with a u64 falls back to the general one instead of failing.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta widen (t : type) : type =
+  if t = u8 then u16 else if t = u16 then u32 else if t = u32 then u64
+  else fail (concat "no integer type is wider than " (name t))
+
+let pick (t : type) (x : t) : u8
+  ensures result = 0
+= 0
+
+let pick (t : type where size_of t <= 8) (x : t) : widen t
+  ensures result = x
+= x
+
+let wider (x : u8) : u16
+  ensures result = x
+= pick x
+
+let general (x : u64) : u8
+  ensures result = 0
+= pick x
+
+(* Expected report, in order.
+// CHECK: 0 failed, 0 skipped
+*)
