@@ -1,0 +1,18 @@
+(* Runs Pia.Core.Result's compiled code on examples, linked by
+   pia_binary. It exits 0 when every result is what C++'s std::expected
+   gives, and otherwise with the number of the first wrong one. *)
+import Pia.Core.Result.Expected
+
+let main () : i32 =
+  let good : result u64 u32 = Ok 18446744073709551615 in
+  let bad : result u64 u32 = Err 2 in
+  let neg : result i32 u32 = Ok (-7) in
+  if Pia.Core.Result.has_value good = false then 1
+  else if Pia.Core.Result.has_value bad then 2
+  else if Pia.Core.Result.value good <> 18446744073709551615 then 3
+  else if Pia.Core.Result.error bad <> 2 then 4
+  else if Pia.Core.Result.value_or bad 5 <> 5 then 5
+  else if Pia.Core.Result.error_or good 6 <> 6 then 6
+  else if Pia.Core.Result.same good bad then 7
+  else if Pia.Core.Result.value neg <> -7 then 8
+  else 0

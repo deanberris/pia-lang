@@ -1,0 +1,192 @@
+(* Pia.Core.Result: C++23's <expected> without the monadic operations,
+   which wait for function values (ADR 0040, docs/cpp-std.md). Pia's
+   `result t e`, with `Ok` and `Err`, comes with the language (ADR 0028);
+   this module adds what C++'s std::expected has on it.
+
+   What C++ leaves undefined, or throws, is a precondition: `value` of an
+   error and `error` of a value are goals at the call.
+
+   has_value, value_or and error_or are generic over t and e, and proved
+   at each instance. value, error and same are written for each instance:
+   a generic body cannot yet `abort` where a value of a type parameter is
+   expected, nor compare two values of one without a concept, and
+   Pia.Core.Order's Eq cannot be imported yet.
+   Interfaces cannot list generic functions yet (ADR 0039, step 3), so
+   what other modules can import is the instances for `result t u32`, an
+   error code, with t one of u8, u32, u64, i32 and i64, stamped out by the
+   metaprogram `result_family`. Each instance of a generic is proved
+   again (#203), so the set is kept small. *)
+module Pia.Core.Result : Expected
+
+interface Expected = sig
+  (** C++: std::expected::has_value. *)
+  let has_value : (r : result u8 u32) -> bool
+    ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+  (** C++: std::expected::value, without the exception: it requires a value. *)
+  let value : (r : result u8 u32) -> u8
+    requires (match r with | Ok _ -> true | Err _ -> false)
+    ensures (match r with | Ok v -> result = v | Err _ -> false)
+  (** C++: std::expected::error: requires an error. *)
+  let error : (r : result u8 u32) -> u32
+    requires (match r with | Ok _ -> false | Err _ -> true)
+    ensures (match r with | Ok _ -> false | Err x -> result = x)
+  (** C++: std::expected::value_or. *)
+  let value_or : (r : result u8 u32) -> (d : u8) -> u8
+    ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+  (** C++: std::expected::error_or. *)
+  let error_or : (r : result u8 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+  (** C++: operator== on std::expected: both values and equal, or both errors and equal. *)
+  let same : (a : result u8 u32) -> (b : result u8 u32) -> bool
+    ensures result <==> (match a with
+      | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
+      | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+  (** C++: std::expected::has_value. *)
+  let has_value : (r : result u32 u32) -> bool
+    ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+  (** C++: std::expected::value, without the exception: it requires a value. *)
+  let value : (r : result u32 u32) -> u32
+    requires (match r with | Ok _ -> true | Err _ -> false)
+    ensures (match r with | Ok v -> result = v | Err _ -> false)
+  (** C++: std::expected::error: requires an error. *)
+  let error : (r : result u32 u32) -> u32
+    requires (match r with | Ok _ -> false | Err _ -> true)
+    ensures (match r with | Ok _ -> false | Err x -> result = x)
+  (** C++: std::expected::value_or. *)
+  let value_or : (r : result u32 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+  (** C++: std::expected::error_or. *)
+  let error_or : (r : result u32 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+  (** C++: operator== on std::expected: both values and equal, or both errors and equal. *)
+  let same : (a : result u32 u32) -> (b : result u32 u32) -> bool
+    ensures result <==> (match a with
+      | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
+      | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+  (** C++: std::expected::has_value. *)
+  let has_value : (r : result u64 u32) -> bool
+    ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+  (** C++: std::expected::value, without the exception: it requires a value. *)
+  let value : (r : result u64 u32) -> u64
+    requires (match r with | Ok _ -> true | Err _ -> false)
+    ensures (match r with | Ok v -> result = v | Err _ -> false)
+  (** C++: std::expected::error: requires an error. *)
+  let error : (r : result u64 u32) -> u32
+    requires (match r with | Ok _ -> false | Err _ -> true)
+    ensures (match r with | Ok _ -> false | Err x -> result = x)
+  (** C++: std::expected::value_or. *)
+  let value_or : (r : result u64 u32) -> (d : u64) -> u64
+    ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+  (** C++: std::expected::error_or. *)
+  let error_or : (r : result u64 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+  (** C++: operator== on std::expected: both values and equal, or both errors and equal. *)
+  let same : (a : result u64 u32) -> (b : result u64 u32) -> bool
+    ensures result <==> (match a with
+      | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
+      | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+  (** C++: std::expected::has_value. *)
+  let has_value : (r : result i32 u32) -> bool
+    ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+  (** C++: std::expected::value, without the exception: it requires a value. *)
+  let value : (r : result i32 u32) -> i32
+    requires (match r with | Ok _ -> true | Err _ -> false)
+    ensures (match r with | Ok v -> result = v | Err _ -> false)
+  (** C++: std::expected::error: requires an error. *)
+  let error : (r : result i32 u32) -> u32
+    requires (match r with | Ok _ -> false | Err _ -> true)
+    ensures (match r with | Ok _ -> false | Err x -> result = x)
+  (** C++: std::expected::value_or. *)
+  let value_or : (r : result i32 u32) -> (d : i32) -> i32
+    ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+  (** C++: std::expected::error_or. *)
+  let error_or : (r : result i32 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+  (** C++: operator== on std::expected: both values and equal, or both errors and equal. *)
+  let same : (a : result i32 u32) -> (b : result i32 u32) -> bool
+    ensures result <==> (match a with
+      | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
+      | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+  (** C++: std::expected::has_value. *)
+  let has_value : (r : result i64 u32) -> bool
+    ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+  (** C++: std::expected::value, without the exception: it requires a value. *)
+  let value : (r : result i64 u32) -> i64
+    requires (match r with | Ok _ -> true | Err _ -> false)
+    ensures (match r with | Ok v -> result = v | Err _ -> false)
+  (** C++: std::expected::error: requires an error. *)
+  let error : (r : result i64 u32) -> u32
+    requires (match r with | Ok _ -> false | Err _ -> true)
+    ensures (match r with | Ok _ -> false | Err x -> result = x)
+  (** C++: std::expected::value_or. *)
+  let value_or : (r : result i64 u32) -> (d : i64) -> i64
+    ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+  (** C++: std::expected::error_or. *)
+  let error_or : (r : result i64 u32) -> (d : u32) -> u32
+    ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+  (** C++: operator== on std::expected: both values and equal, or both errors and equal. *)
+  let same : (a : result i64 u32) -> (b : result i64 u32) -> bool
+    ensures result <==> (match a with
+      | Ok x -> (match b with | Ok y -> x = y | Err _ -> false)
+      | Err x -> (match b with | Ok _ -> false | Err y -> x = y))
+end
+
+let has_value (t : type) (e : type) (r : result t e) : bool
+  ensures result <==> (match r with | Ok _ -> true | Err _ -> false)
+= match r with
+  | Ok _ -> true
+  | Err _ -> false
+
+let value_or (t : type) (e : type) (r : result t e) (d : t) : t
+  ensures (match r with | Ok v -> result = v | Err _ -> result = d)
+= match r with
+  | Ok v -> v
+  | Err _ -> d
+
+let error_or (t : type) (e : type) (r : result t e) (d : e) : e
+  ensures (match r with | Ok _ -> result = d | Err x -> result = x)
+= match r with
+  | Ok _ -> d
+  | Err x -> x
+
+(* The instances for `result t u32`. *)
+let meta result_family (t : string) : item =
+  `( let has_value ($!r : result $t u32) : bool
+       ensures $!result <==> (match $!r with | Ok _ -> true | Err _ -> false)
+     = has_value<$t, u32> $!r
+
+     let value ($!r : result $t u32) : $t
+       requires (match $!r with | Ok _ -> true | Err _ -> false)
+       ensures (match $!r with | Ok $!v -> $!result = $!v | Err _ -> false)
+     = match $!r with
+       | Ok $!w -> $!w
+       | Err _ -> abort ()
+
+     let error ($!r : result $t u32) : u32
+       requires (match $!r with | Ok _ -> false | Err _ -> true)
+       ensures (match $!r with | Ok _ -> false | Err $!x -> $!result = $!x)
+     = match $!r with
+       | Ok _ -> abort ()
+       | Err $!z -> $!z
+
+     let value_or ($!r : result $t u32) ($!d : $t) : $t
+       ensures (match $!r with | Ok $!v -> $!result = $!v | Err _ -> $!result = $!d)
+     = value_or<$t, u32> $!r $!d
+
+     let error_or ($!r : result $t u32) ($!d : u32) : u32
+       ensures (match $!r with | Ok _ -> $!result = $!d | Err $!x -> $!result = $!x)
+     = error_or<$t, u32> $!r $!d
+
+     let same ($!a : result $t u32) ($!b : result $t u32) : bool
+       ensures $!result <==> (match $!a with
+         | Ok $!x -> (match $!b with | Ok $!y -> $!x = $!y | Err _ -> false)
+         | Err $!x -> (match $!b with | Ok _ -> false | Err $!y -> $!x = $!y))
+     = match $!a with
+       | Ok $!p -> (match $!b with | Ok $!q -> $!p = $!q | Err _ -> false)
+       | Err $!p -> (match $!b with | Ok _ -> false | Err $!q -> $!p = $!q) )
+
+result_family "u8"
+result_family "u32"
+result_family "u64"
+result_family "i32"
+result_family "i64"

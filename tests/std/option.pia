@@ -1,0 +1,13 @@
+(* Pia.Core.Option (ADR 0040): its generic functions are proved at the u8
+   instance the module makes. It claims no interface, since an interface
+   cannot list a generic type yet, so it publishes no artifact.
+// RUN: piac --verify %S/../../lib/Pia/Core/Option.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: ls %t | FileCheck --check-prefix=NONE --allow-empty %s
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 4 proved, 0 failed, 0 skipped
+// NONE-NOT: piai
+*)
