@@ -142,6 +142,14 @@ NodePtr importedFunction(const Node &val, const std::string &module,
   return item;
 }
 
+// A node's kinds and texts, as a key: two signatures with the same shape
+// have the same type.
+std::string shape(const Node &n) {
+  std::string s = std::to_string(static_cast<int>(n.kind)) + ":" + n.text + "(";
+  for (const NodePtr &k : n.kids) s += shape(*k) + ",";
+  return s + ")";
+}
+
 std::optional<std::string> readFile(const std::string &path) {
   std::ifstream in(path, std::ios::binary);
   if (!in) return std::nullopt;
@@ -198,6 +206,7 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     if (item->kind == N::Theory) theories.insert(item->text);
   Imported imp;
   std::set<std::string> seen;
+  std::set<std::string> imported;  // `M.f : <shape of its type>`
   std::vector<NodePtr> out;
   bool any = false;
   for (NodePtr &item : program.kids) {
@@ -267,14 +276,18 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
                         "step 3");
         continue;
       }
-      if (!listed.insert(k->text).second) {
-        diags.error(at, "'" + k->text + "' is overloaded in " + where +
-                        "; importing overloads follows in ADR 0039 step 3");
+      // An overload set comes in whole: each overload is its own bodyless
+      // item, told apart by its parameter types (ADR 0034), so the calls
+      // resolve and link as they do in the defining module.
+      std::string sig = shape(*k->kids[0]);
+      if (!listed.insert(k->text + " : " + sig).second) {
+        diags.error(at, "'" + k->text + "' is listed twice in " + where +
+                        " with the same type");
         continue;
       }
       std::string qualified = module + "." + k->text;
       // Two interfaces of one module may list the same function.
-      if (imp.items.count(qualified)) continue;
+      if (!imported.insert(qualified + " : " + sig).second) continue;
       NodePtr fn = importedFunction(*k, module, members, at, where, diags);
       if (!fn) continue;
       imp.items.insert(qualified);

@@ -1,0 +1,18 @@
+(* A module with an overloaded function in its interface (ADR 0034, 0039):
+   one name, one overload per width, each with its own contract. *)
+module Num.Halves : Ops
+
+interface Ops = sig
+  let half : (x : u8) -> u8
+    ensures 2 * result <= x
+  let half : (x : u16) -> u16
+    ensures 2 * result <= x && x <= 2 * result + 1
+end
+
+let half (x : u8) : u8
+  ensures 2 * result <= x
+= x / 2
+
+let half (x : u16) : u16
+  ensures 2 * result <= x && x <= 2 * result + 1
+= x / 2
