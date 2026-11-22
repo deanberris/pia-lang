@@ -560,9 +560,14 @@ class Gen {
         } else {
           through = threaded(*sig);
         }
-        for (size_t i : through)
-          if (i + 1 < n.kids.size() && n.kids[i + 1]->kind == NodeKind::Name)
-            out.insert(n.kids[i + 1]->text);
+        for (size_t i : through) {
+          if (i + 1 >= n.kids.size()) continue;
+          // `f g.small` rebinds `g`.
+          const Node *a = n.kids[i + 1].get();
+          while (a->kind == NodeKind::Field && !a->kids.empty())
+            a = a->kids[0].get();
+          if (a->kind == NodeKind::Name) out.insert(a->text);
+        }
       }
     for (const syntax::NodePtr &k : n.kids) collectThreaded(*k, out);
   }
@@ -2711,16 +2716,32 @@ class Gen {
                            "be a named value, whose scope the borrow can "
                            "end in; bind it with 'let' first");
     }
-    std::vector<BindingPtr> rebind;
+    // Each `out` or `inout` argument gets the callee's new value: a mutable
+    // variable, or a field of one, as in `take g.small`, which rebuilds `g`
+    // with that field replaced.
+    struct Rebind {
+      BindingPtr b;
+      std::vector<std::string> path;  // fields from `b`, outermost first
+    };
+    std::vector<Rebind> rebind;
     for (size_t i : threaded(sig)) {
       const Node &a = *args[i];
-      BindingPtr b = a.kind == NodeKind::Name && a.flags.empty()
-                         ? lookup(a.text)
+      std::vector<std::string> path;
+      const Node *root = &a;
+      while (root->kind == NodeKind::Field && !root->kids.empty()) {
+        path.insert(path.begin(), root->text);
+        root = root->kids[0].get();
+      }
+      BindingPtr b = root->kind == NodeKind::Name && root->flags.empty()
+                         ? lookup(root->text)
                          : nullptr;
       if (contract_ || ghost_) {
-        rebind.push_back(nullptr);
+        rebind.push_back({nullptr, {}});
         continue;
       }
+      if (b && b->isMutable && !path.empty() &&
+          !notLent(b, *root, "given a new field"))
+        return std::nullopt;
       if (!b || !b->isMutable)
         return fail(a, "'" + sig.params[i].name + "' of '" + sig.name +
                            "' is '" + (sema::hasModifier(sig.params[i].modifiers,
@@ -2728,14 +2749,15 @@ class Gen {
                            "', so the call gives it a new value: pass a "
                            "mutable variable, as in 'let x : mutable " +
                            typeName(sig.params[i].type) + " = ...'");
-      rebind.push_back(b);
+      rebind.push_back({b, std::move(path)});
     }
     R out = emitCall(n, sig, operands);
     if (out)
       for (size_t k = 0; k < rebind.size(); ++k) {
-        BindingPtr b = rebind[k];
+        BindingPtr b = rebind[k].b;
         if (!b) continue;
-        b->value = threadedResults_[k];
+        b->value = withField(loc(n), b->value, rebind[k].path, 0,
+                             threadedResults_[k]);
       }
     // `(v : borrowed(m) inout mutable vec)`: the new value may hold a loan
     // from the argument passed as `m`, as `push m v x` stores a buffer from
@@ -2744,7 +2766,7 @@ class Gen {
       std::vector<size_t> through = threaded(sig);
       for (size_t k = 0; k < through.size(); ++k) {
         const sema::Param &p = sig.params[through[k]];
-        if (p.lender.empty() || !rebind[k]) continue;
+        if (p.lender.empty() || !rebind[k].b) continue;
         size_t i = 0;
         while (sig.params[i].name != p.lender) ++i;
         Lenders from = lendersOf(*args[i]);
@@ -2755,7 +2777,7 @@ class Gen {
                                     "' may borrow from '" + p.lender +
                                     "', so this argument must be a named "
                                     "value; bind it with 'let' first");
-        addLenders(rebind[k]->lenders, from);
+        addLenders(rebind[k].b->lenders, from);
       }
     }
     // Recorded even when empty: a call's result borrows only what its
@@ -5161,6 +5183,21 @@ class Gen {
       fields.push_back(c->value);
     }
     return TV{create<RecordOp>(loc(n), rt, fields), rt};
+  }
+
+  // `rec` with the field at `path[at..]` replaced by `v`.
+  Value withField(Location l, Value rec, const std::vector<std::string> &path,
+                  size_t at, Value v) {
+    if (at == path.size()) return v;
+    auto rt = mlir::cast<RecordType>(rec.getType());
+    llvm::SmallVector<Value> fields;
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
+      Value f = create<FieldOp>(l, ft, rec, name);
+      fields.push_back(name.getValue() == path[at]
+                           ? withField(l, f, path, at + 1, v)
+                           : f);
+    }
+    return create<RecordOp>(l, rt, fields);
   }
 
   R genField(const Node &n) {
