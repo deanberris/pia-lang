@@ -1,0 +1,19 @@
+(* A callee's contract is exact mathematics at its callers too, whatever
+   the callee's overflow mode: in mul_sat's `ensures a * b <= (1 << 8) - 1`,
+   `1 << 8` is 256, not 255 saturated, so callers learn result = a * b for
+   every product that fits.
+// RUN: piac --verify %s | FileCheck %s
+*)
+let mul_sat (a : u8) (b : u8) : u8 @overflow(saturate)
+  ensures a * b <= (1 << 8) - 1 ==> result = a * b
+= a * b
+
+let caller (a : u8) (b : u8) : u8
+  ensures a * b <= 255 ==> result = a * b
+= mul_sat a b
+
+(*
+// CHECK: callee_exact.pia:8:3: proved: the postcondition holds
+// CHECK: callee_exact.pia:12:3: proved: the postcondition holds
+// CHECK: 2 proved, 0 failed, 0 skipped
+*)

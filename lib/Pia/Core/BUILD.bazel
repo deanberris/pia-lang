@@ -7,7 +7,10 @@ load("//tools/piac:pia.bzl", "pia_library")
 package(default_visibility = ["//visibility:public"])
 
 # Its tests read the source, to prove it and to write its interfaces.
-exports_files(["Bit.pia"])
+exports_files([
+    "Bit.pia",
+    "Int.pia",
+])
 
 APPLE_SILICON = [
     "@platforms//os:macos",
@@ -19,5 +22,14 @@ APPLE_SILICON = [
 pia_library(
     name = "bit",
     src = "Bit.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+# <numeric>'s gcd and midpoint, <cstdlib>'s abs and div, and C++26's
+# saturating arithmetic: tests/std/int.pia checks its goals;
+# tests/std/int_edges.pia and :int_run test it through its interface.
+pia_library(
+    name = "int",
+    src = "Int.pia",
     target_compatible_with = APPLE_SILICON,
 )

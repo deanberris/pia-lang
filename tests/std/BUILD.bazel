@@ -8,7 +8,10 @@ load("//tools/piac:pia.bzl", "pia_binary")
 lit_tests(
     name = "std_tests",
     srcs = glob(["*.pia"]),
-    data = ["//lib/Pia/Core:Bit.pia"],
+    data = [
+        "//lib/Pia/Core:Bit.pia",
+        "//lib/Pia/Core:Int.pia",
+    ],
     tools = ["//tools/piac"],
 )
 
@@ -29,5 +32,20 @@ sh_test(
     srcs = ["bit_run_test.sh"],
     args = ["$(rootpath :bit_run)"],
     data = [":bit_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "int_run",
+    src = "Inputs/int_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:int"],
+)
+
+sh_test(
+    name = "int_run_test",
+    srcs = ["int_run_test.sh"],
+    args = ["$(rootpath :int_run)"],
+    data = [":int_run"],
     target_compatible_with = APPLE_SILICON,
 )

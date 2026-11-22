@@ -1183,20 +1183,67 @@ class Encoder {
   }
 
   // Bit-blasting a division is slow: Z3 cannot show `a mod b < b` for
-  // 68-bit values within its timeout. So for non-negative operands the
-  // bounds of the quotient and remainder are stated as facts beside it.
-  // Inside a quantifier the operands may be bound variables, which a
-  // top-level fact cannot mention, so none is stated there.
+  // 68-bit values within its timeout, nor `(a / b) * b + a mod b = a` for
+  // 32-bit ones. So the facts of truncating division are stated beside the
+  // term, when the divisor is not zero: the quotient and the remainder
+  // rebuild the dividend, the remainder has the dividend's sign and is
+  // smaller than the divisor in magnitude, and, for non-negative operands,
+  // the quotient and remainder lie in [0, a]. Each holds of the encoding,
+  // which is wide enough that none of these terms overflows. Inside a
+  // quantifier the operands may be bound variables, which a top-level fact
+  // cannot mention, so none is stated there.
   void divisionLemma(Operation *op, Value a, Value c, Value r) {
     using P = mlir::smt::BVCmpPredicate;
     if (quantifierDepth_ > 0 || !mlir::isa<DivOp, RemOp>(op)) return;
+    bool nonNegative = true;
     for (Value operand : op->getOperands()) {
       auto t = mlir::dyn_cast<IntType>(operand.getType());
-      if (!t || t.getLo().isNegative()) return;
+      if (!t) return;
+      nonNegative = nonNegative && !t.getLo().isNegative();
     }
-    Value bounds = andOf(cmp(P::sge, r, bv(0)), cmp(P::sle, r, a));
-    if (mlir::isa<RemOp>(op)) bounds = andOf(bounds, cmp(P::slt, r, c));
-    assertTerm(implies(notOf(eq(c, bv(0))), bounds));
+    Value zero = bv(0);
+    Value q = mlir::isa<DivOp>(op) ? r : bvBin("sdiv", a, c);
+    Value m = mlir::isa<RemOp>(op) ? r : bvBin("srem", a, c);
+    Value facts = eq(bvBin("add", bvBin("mul", q, c), m), a);
+    if (nonNegative) {
+      facts = andOf(facts, andOf(cmp(P::sge, r, zero), cmp(P::sle, r, a)));
+      if (mlir::isa<RemOp>(op)) facts = andOf(facts, cmp(P::slt, r, c));
+    } else if (mlir::isa<DivOp>(op)) {
+      // The quotient rounds towards zero, so it lies between zero and the
+      // dividend, or its negation: equal to it when the divisor is 1 or
+      // -1, and strictly inside when it is larger. That decides whether
+      // a quotient fits its type without bit-blasting the divider.
+      Value negA = bvBin("sub", zero, a);
+      Value one = bv(1), minusOne = bv(-1);
+      auto between = [&](Value lo, Value hi) {
+        return andOf(cmp(P::sle, lo, q), cmp(P::sle, q, hi));
+      };
+      auto inside = [&](Value lo, Value hi) {
+        return andOf(cmp(P::slt, lo, q), cmp(P::slt, q, hi));
+      };
+      Value posA = cmp(P::sge, a, zero), negAq = cmp(P::sle, a, zero);
+      Value posC = cmp(P::sgt, c, zero), negC = cmp(P::slt, c, zero);
+      facts = andOf(facts, implies(andOf(posA, posC), between(zero, a)));
+      facts = andOf(facts, implies(andOf(negAq, posC), between(a, zero)));
+      facts = andOf(facts, implies(andOf(posA, negC), between(negA, zero)));
+      facts = andOf(facts, implies(andOf(negAq, negC), between(zero, negA)));
+      facts = andOf(facts, implies(eq(c, one), eq(q, a)));
+      facts = andOf(facts, implies(eq(c, minusOne), eq(q, negA)));
+      Value wide = andOf(notOf(eq(c, one)), notOf(eq(c, minusOne)));
+      facts = andOf(facts, implies(andOf(wide, cmp(P::sgt, a, zero)), inside(negA, a)));
+      facts = andOf(facts, implies(andOf(wide, cmp(P::slt, a, zero)), inside(a, negA)));
+    } else if (mlir::isa<RemOp>(op)) {
+      // |m| < |c|, as two linear cases rather than with ite, which is
+      // the shape contracts state it in.
+      Value negC = bvBin("sub", zero, c);
+      facts = andOf(facts, implies(cmp(P::sgt, c, zero),
+                                   andOf(cmp(P::slt, negC, m), cmp(P::slt, m, c))));
+      facts = andOf(facts, implies(cmp(P::slt, c, zero),
+                                   andOf(cmp(P::slt, c, m), cmp(P::slt, m, negC))));
+      facts = andOf(facts, implies(cmp(P::sge, a, zero), cmp(P::sge, m, zero)));
+      facts = andOf(facts, implies(cmp(P::sle, a, zero), cmp(P::sle, m, zero)));
+    }
+    assertTerm(implies(notOf(eq(c, zero)), facts));
   }
 
   // `x` reduced into `t` by the overflow mode.
@@ -1304,7 +1351,7 @@ class Encoder {
       // Specification arithmetic is exact whatever the function's overflow
       // mode: in an @overflow(wrap) function, `ensures result = a * b`
       // means the mathematical product, so a wrapped result fails it.
-      if (spec_.contains(op) || insideQuantifier(op)) {
+      if (isSpecOp(op) || insideQuantifier(op)) {
         out.push_back(exact);
         return true;
       }
@@ -2438,6 +2485,21 @@ class Encoder {
   mlir::MLIRContext *ctx_;
   Location loc_;
   llvm::DenseSet<Operation *> spec_;
+  // The spec ops of other functions, whose contracts are encoded at calls.
+  llvm::DenseMap<Operation *, llvm::DenseSet<Operation *>> calleeSpec_;
+
+  // Whether `op` only feeds a contract, in this function or in the callee
+  // whose contract a call encodes. A callee's `ensures a * b <= 255` means
+  // the mathematical product at its callers too, whatever the callee's own
+  // overflow mode.
+  bool isSpecOp(Operation *op) {
+    auto f = op->getParentOfType<mlir::func::FuncOp>();
+    if (!f || f == fn_) return spec_.contains(op);
+    auto it = calleeSpec_.find(f);
+    if (it == calleeSpec_.end())
+      it = calleeSpec_.try_emplace(f, specOps(f)).first;
+    return it->second.contains(op);
+  }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
 
@@ -2978,6 +3040,74 @@ unsigned long long rlimitCount(z3::solver &solver) {
   return 0;
 }
 
+// The budget of the abstract attempt in `solve`: enough for the linear
+// reasoning it is for, and small beside the exact query it may save.
+constexpr unsigned long long kAbstractRlimit = 500000;
+
+// The end of the s-expression that starts at `at` in `s`.
+size_t sexprEnd(const std::string &s, size_t at) {
+  while (at < s.size() && s[at] == ' ') ++at;
+  if (at >= s.size()) return at;
+  if (s[at] != '(') {
+    while (at < s.size() && s[at] != ' ' && s[at] != ')') ++at;
+    return at;
+  }
+  int depth = 0;
+  for (; at < s.size(); ++at) {
+    if (s[at] == '(') ++depth;
+    if (s[at] == ')' && --depth == 0) return at + 1;
+  }
+  return at;
+}
+
+// Whether `script` has a `bvsdiv` or `bvsrem` whose divisor is not a
+// literal (`#x...`, `#b...` or `(_ bvN w)`).
+bool dividesByVariable(const std::string &script) {
+  for (const char *op : {"(bvsdiv ", "(bvsrem "}) {
+    std::string f(op);
+    for (size_t at = script.find(f); at != std::string::npos;
+         at = script.find(f, at + 1)) {
+      size_t second = sexprEnd(script, at + f.size());
+      while (second < script.size() && script[second] == ' ') ++second;
+      if (second >= script.size()) continue;
+      bool literal = script[second] == '#' ||
+                     script.compare(second, 4, "(_ b") == 0;
+      if (!literal) return true;
+    }
+  }
+  return false;
+}
+
+// `script` with signed division, remainder and multiplication as the
+// uninterpreted functions `pia.sdiv`, `pia.srem` and `pia.mul` over its
+// `width`-bit integers, or empty when it does not divide.
+std::string abstractArithmetic(const std::string &script, unsigned width) {
+  static const std::pair<const char *, const char *> ops[] = {
+      {"(bvsdiv ", "(pia.sdiv "}, {"(bvsrem ", "(pia.srem "},
+      {"(bvmul ", "(pia.mul "}};
+  // Only a query that divides by a value that is not a constant: there the
+  // divider dominates, while Z3 simplifies a division by a constant, and a
+  // query that only multiplies is usually decided as fast exactly.
+  if (!dividesByVariable(script)) return "";
+  std::string out = script;
+  bool any = false;
+  for (auto [from, to] : ops) {
+    std::string f(from), t(to);
+    for (size_t at = out.find(f); at != std::string::npos;
+         at = out.find(f, at + t.size())) {
+      out.replace(at, f.size(), t);
+      any = true;
+    }
+  }
+  if (!any) return "";
+  std::string bv = "(_ BitVec " + std::to_string(width) + ")";
+  std::string decls;
+  for (const char *name : {"pia.sdiv", "pia.srem", "pia.mul"})
+    decls += std::string("(declare-fun ") + name + " (" + bv + " " + bv +
+             ") " + bv + ")\n";
+  return decls + out;
+}
+
 // Decides one goal in a Z3 context of its own, so jobs can run on any
 // thread. The rlimit makes the result independent of which thread, and of
 // how busy the machine is.
@@ -3086,6 +3216,45 @@ void solve(const Job &job, const Options &options, Outcome &out,
         result = z3::sat;
         width = job.witnessWidth;
         out.model = job.witnessModel;
+      }
+    } catch (const z3::exception &) {
+    }
+  }
+  // Division and multiplication are first replaced by uninterpreted
+  // functions, which bit-blast to nothing: a goal that follows from the
+  // division facts and the rest of the query alone (a quotient fits its
+  // type, a remainder is below the divisor) is proved without encoding a
+  // divider or a multiplier, which is costly, and whose cost Z3 does not
+  // reproduce exactly from one run to the next. Any function is a model of
+  // an uninterpreted one, the real ones included, so unsat here is a
+  // proof. Anything else is decided by the exact query below, which also
+  // gives every counterexample. The attempt has a small budget of its own.
+  if (last != &witness && q.axioms.empty() && q.assumes.empty() &&
+      first == &full) {
+    std::string abstracted = abstractArithmetic(job.script, width);
+    // In a context of its own, so the exact query's terms, and with them
+    // its search, are the same whether or not this ran first.
+    if (!abstracted.empty()) try {
+      z3::context actx;
+      z3::solver abs = solverFor(actx, job.strategy);
+      z3::params ap(actx);
+      ap.set("timeout", options.timeoutMs);
+      ap.set("rlimit", static_cast<unsigned>(
+                           options.rlimit ? std::min<unsigned long long>(
+                                                options.rlimit, kAbstractRlimit)
+                                          : kAbstractRlimit));
+      abs.set(ap);
+      abs.from_string(abstracted.c_str());
+      unsigned long long before = rlimitCount(abs);
+      z3::check_result r = abs.check();
+      unsigned long long now = rlimitCount(abs);
+      js.cost += now - before;
+      if (r == z3::unsat) {
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost) out.cost = now - before;
+        if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
+        return;
       }
     } catch (const z3::exception &) {
     }
