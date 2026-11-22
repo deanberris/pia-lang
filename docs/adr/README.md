@@ -45,3 +45,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0039](0039-module-and-interface-syntax.md) | Modules are private by default: one module per file, interfaces list every export, imports name interfaces | Accepted |
 | [0040](0040-cpp23-standard-library-in-pia.md) | The C++23 standard library is mapped onto Pia by capability, with every component proved | Proposed |
 | [0041](0041-allocator-semantics-as-a-theory.md) | Allocator semantics are a theory, and allocators prove they refine it through spec-only state | Accepted |
+| [0042](0042-lifetimes-liveness-and-escape-analysis.md) | Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory | Proposed |
