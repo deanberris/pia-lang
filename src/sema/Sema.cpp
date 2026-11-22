@@ -190,6 +190,23 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
   return std::nullopt;
 }
 
+// A buffer's elements are stored struct of arrays, one buffer per field,
+// so an element cannot hold a buffer itself yet.
+static bool holdsBuffer(mlir::Type t) {
+  if (mlir::isa<ArrayType, SliceType>(t)) return true;
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    for (mlir::Type f : r.getFieldTypes())
+      if (holdsBuffer(f)) return true;
+  return false;
+}
+
+bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
+  if (!holdsBuffer(elem) || mlir::isa<ArrayType>(elem)) return true;
+  diags_.error(at, "a buffer of " + typeName(elem) + " is not supported "
+                   "yet: its elements hold a slice");
+  return false;
+}
+
 mlir::Type TypeResolver::resolve(const Node &type) {
   switch (type.kind) {
     case NodeKind::Annot:  // `(borrowed(m) [u8])` in a result type (#70)
@@ -271,6 +288,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     case NodeKind::ArrayType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
+      if (!plainElement(elem, type.kids[0]->loc)) return {};
       const Node &len = *type.kids[1];
       auto lit = len.kind == NodeKind::IntLit ? parseIntLiteral(len.text)
                                               : std::nullopt;
@@ -284,6 +302,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     case NodeKind::SliceType: {
       mlir::Type elem = resolve(*type.kids[0]);
       if (!elem) return {};
+      if (!plainElement(elem, type.kids[0]->loc)) return {};
       return SliceType::get(&ctx_, elem);
     }
     default:
@@ -461,7 +480,7 @@ mlir::Type buildVariant(const std::string &name, const Node &body,
       if (!payload) return {};
       // `Ok of unit`, as in `result unit e`, carries nothing.
       if (types.isUnit(payload)) payload = {};
-      if (payload && mlir::isa<ArrayType, SliceType>(payload)) {
+      if (payload && mlir::isa<ArrayType>(payload)) {
         diags.error(c->kids[0]->loc,
                     "a constructor's payload of type " + typeName(payload) +
                         " is not supported yet");
@@ -532,8 +551,9 @@ static mlir::Type buildType(const std::string &name, const Node &value,
       diags.error(f->loc, "a field cannot have type unit");
       return {};
     }
-    if (mlir::isa<ArrayType, SliceType>(t)) {
-      diags.error(f->loc, "a record field cannot be an array or slice yet");
+    if (mlir::isa<ArrayType>(t)) {
+      diags.error(f->loc, "a record field cannot be an array yet; a slice "
+                          "field can hold one");
       return {};
     }
     for (mlir::StringAttr n : names)

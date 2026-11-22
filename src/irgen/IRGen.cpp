@@ -1718,7 +1718,8 @@ class Gen {
     return TV{create<RecordOp>(l, rt, fields).getResult(), rt};
   }
 
-  // Some value of `t`: its lowest integer, false, or a record of those.
+  // Some value of `t`: its lowest integer, false, an empty slice, or a
+  // record of those.
   Value defaultValue(Location l, Type t) {
     if (auto it = mlir::dyn_cast<IntType>(t)) {
       llvm::APInt v = it.contains(llvm::APInt(kWidth, 0))
@@ -1728,6 +1729,8 @@ class Gen {
           l, it, b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
     }
     if (isBool(t)) return boolConst(l, false);
+    if (auto st = mlir::dyn_cast<SliceType>(t))
+      return create<EmptyOp>(l, st).getResult();
     if (auto rt = mlir::dyn_cast<RecordType>(t)) {
       llvm::SmallVector<Value> fields;
       for (Type ft : rt.getFieldTypes()) {
