@@ -145,6 +145,8 @@ class Gen {
     }
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
+    checkGenericOverloads();
+    if (diags_.hasErrors()) return nullptr;
     // Each generic body is checked once, at its definition, against what
     // its constraints promise (ADR 0034, "Definition check").
     for (const syntax::NodePtr &item : program.kids)
@@ -1617,13 +1619,15 @@ class Gen {
       bool generic = false;
       std::map<std::string, Type> bound;
       std::vector<int> score;  // per argument: 2 exact, 1 conversion
+      const sema::FuncSig *origin = nullptr;  // the overload itself
+      Choice choice;                          // its adapters
+      std::string label;
     };
     // The signatures of generic instances that are only being considered:
     // an instance is made, and so generated and proved, only if it wins.
     std::deque<sema::FuncSig> trial;
-    // The adapters the call names, and those the generic candidate uses.
-    std::map<std::string, std::string> named;
-    Choice choice;
+    size_t generics = 0;
+    for (sema::FuncSig *cand : set) generics += cand->isGeneric();
     std::vector<Candidate> viable;
     std::vector<std::string> rejected;
     auto argTypes = [&] {
@@ -1634,11 +1638,16 @@ class Gen {
       return out + ")";
     };
     for (sema::FuncSig *cand : set) {
-      std::string label = cand->isGeneric()
-                              ? "the generic '" + name + "'"
-                              : "'" + cand->name + "'";
+      std::string label =
+          !cand->isGeneric() ? "'" + cand->name + "'"
+          : generics == 1    ? "the generic '" + name + "'"
+                             : "the generic '" + name + "' at line " +
+                                std::to_string(cand->item->loc.line);
       sema::FuncSig *sig = cand;
       std::map<std::string, Type> bound;
+      // The adapters the call names, and those this candidate uses.
+      std::map<std::string, std::string> named;
+      Choice choice;
       if (cand->isGeneric()) {
         std::vector<const Node *> vps = valueParamsOf(*cand);
         if (vps.size() != args.size()) {
@@ -1687,7 +1696,7 @@ class Gen {
                            plural(sig->params.size(), "argument"));
         continue;
       }
-      Candidate c{sig, cand->isGeneric(), bound, {}};
+      Candidate c{sig, cand->isGeneric(), bound, {}, cand, choice, label};
       bool fits = true;
       for (size_t i = 0; i < args.size() && fits; ++i) {
         Type want = sig->params[i].type;
@@ -1718,13 +1727,17 @@ class Gen {
       for (const std::string &r : rejected) why += "; " + r;
       return fail(n, why);
     }
-    auto beats = [](const Candidate &a, const Candidate &b) {
+    auto beats = [&](const Candidate &a, const Candidate &b) {
       bool better = false;
       for (size_t i = 0; i < a.score.size(); ++i) {
         if (a.score[i] < b.score[i]) return false;
         better = better || a.score[i] > b.score[i];
       }
-      return better || (!a.generic && b.generic);
+      if (better || (!a.generic && b.generic)) return true;
+      // Between generics, the more specific parameter patterns, then the
+      // stronger constraints.
+      return a.generic && b.generic &&
+             moreSpecific(*a.origin, *b.origin) > 0;
     };
     const Candidate *best = nullptr;
     for (const Candidate &c : viable) {
@@ -1736,18 +1749,22 @@ class Gen {
     if (!best) {
       std::string why = "the call of '" + name + "' with " + argTypes() +
                         " is ambiguous between";
-      for (size_t i = 0; i < viable.size(); ++i)
-        why += (i ? (i + 1 == viable.size() ? " and '" : ", '") : " '") +
-               viable[i].sig->name + "'";
-      return fail(n, why + "; give the arguments' types, as in "
-                           "'let x : u8 = ...'");
+      bool generic = false;
+      for (size_t i = 0; i < viable.size(); ++i) {
+        const std::string &l = viable[i].label;
+        bool quoted = !l.empty() && l[0] == '\'';
+        why += (i ? (i + 1 == viable.size() ? " and " : ", ") : " ") +
+               (quoted ? l : l.substr(4));
+        generic = generic || viable[i].generic;
+      }
+      return fail(n, why + (generic ? "; neither is more specific than the "
+                                      "other"
+                                    : "; give the arguments' types, as in "
+                                      "'let x : u8 = ...'"));
     }
     sema::FuncSig *callee = best->sig;
     if (best->generic) {
-      const sema::FuncSig *g = nullptr;
-      for (sema::FuncSig *cand : set)
-        if (cand->isGeneric()) g = cand;
-      callee = genericInstance(*g, best->bound, choice);
+      callee = genericInstance(*best->origin, best->bound, best->choice);
       if (!callee) return std::nullopt;
     }
     return genCall(n, *callee, args, &early);
@@ -2286,36 +2303,12 @@ class Gen {
       bound[t] = a;
       archetypes_[a] = {t, {}};
     }
-    for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
-      if (const Node *pred = wherePredicate(*p)) {
-        std::vector<const Node *> cs;
-        constraintsOf(*pred, cs);
-        archetypes_[bound[p->text]].constraints = cs;
-        for (const Node *c : cs) {
-          std::vector<Type> args;
-          for (size_t i = 1; i < c->kids.size(); ++i) {
-            auto b = bound.find(c->kids[i]->text);
-            Type ty;
-            if (b != bound.end()) {
-              ty = b->second;
-            } else {
-              Node asType;
-              asType.kind = NodeKind::TypeName;
-              asType.text = c->kids[i]->text;
-              asType.loc = c->kids[i]->loc;
-              ty = types_.resolve(asType);
-            }
-            if (!ty) {
-              archetypes_.clear();
-              promised_.clear();
-              promisedFns_.clear();
-              return;
-            }
-            args.push_back(ty);
-          }
-          promise(c->kids[0]->text, args);
-        }
-      }
+    if (!promiseConstraints(generic, bound)) {
+      archetypes_.clear();
+      promised_.clear();
+      promisedFns_.clear();
+      return;
+    }
     std::string key = "definition of " + generic.name;
     sema::FuncSig check = generic;
     check.name = key;
@@ -2340,6 +2333,213 @@ class Gen {
     promised_.clear();
     promisedFns_.clear();
     archetypes_.clear();
+  }
+
+  // Records what the constraints of `generic` promise when its type
+  // parameters are the stand-in types `bound`. False when a type in them
+  // cannot be formed.
+  bool promiseConstraints(const sema::FuncSig &generic,
+                          const std::map<std::string, Type> &bound) {
+    for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
+      const Node *pred = wherePredicate(*p);
+      if (!pred) continue;
+      std::vector<const Node *> cs;
+      constraintsOf(*pred, cs);
+      archetypes_[bound.at(p->text)].constraints = cs;
+      for (const Node *c : cs) {
+        std::vector<Type> args;
+        if (!constraintArgs(*c, bound, args)) return false;
+        promise(c->kids[0]->text, args);
+      }
+    }
+    return true;
+  }
+
+  // The types a constraint `C t u8` names, with `bound` for the type
+  // parameters. False when one cannot be formed.
+  bool constraintArgs(const Node &c, const std::map<std::string, Type> &bound,
+                      std::vector<Type> &args) {
+    for (size_t i = 1; i < c.kids.size(); ++i) {
+      auto b = bound.find(c.kids[i]->text);
+      Type ty;
+      if (b != bound.end()) {
+        ty = b->second;
+      } else {
+        Node asType;
+        asType.kind = NodeKind::TypeName;
+        asType.text = c.kids[i]->text;
+        asType.loc = c.kids[i]->loc;
+        ty = types_.resolve(asType);
+      }
+      if (!ty) return false;
+      args.push_back(ty);
+    }
+    return true;
+  }
+
+  // --- ranking generic overloads (ADR 0034, step 5) --------------------
+
+  // Stand-in types for the type parameters of `sig`.
+  std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
+    std::map<std::string, Type> bound;
+    for (const std::string &t : sig.typeParams)
+      bound[t] = RecordType::get(&ctx_, t, {}, {});
+    return bound;
+  }
+
+  // Whether the parameter types of the generic `a` are an instance of
+  // those of `b`: `[u8]` of `[t]`, `pair t t` of `pair a b`. `mapB` binds
+  // b's type parameters to a's stand-ins.
+  bool instanceOf(const sema::FuncSig &a, const sema::FuncSig &b,
+                  std::map<std::string, Type> &mapB) {
+    sema::FuncSig ai = a;
+    ai.typeArgs = standIns(a);
+    ai.result = Type();
+    if (!sema::resolveSignature(ai, types_, diags_)) return false;
+    std::vector<const Node *> vb = valueParamsOf(b);
+    if (vb.size() != ai.params.size()) return false;
+    for (size_t i = 0; i < vb.size(); ++i)
+      if (vb[i]->kids.empty() || vb[i]->kids[0]->kind != NodeKind::Annot ||
+          !types_.unify(*vb[i]->kids[0], ai.params[i].type, b.typeParams,
+                        mapB))
+        return false;
+    return true;
+  }
+
+  // Whether the constraints of `a` entail those of `b`, with `mapB`
+  // binding b's type parameters to a's stand-ins: each concept b names is
+  // promised by a's constraints, through `include`, or else a's promised
+  // requirements have every one of its requirements, and it states no law
+  // or contract, which would need a proof.
+  bool entails(const sema::FuncSig &a, const sema::FuncSig &b,
+               const std::map<std::string, Type> &mapB) {
+    auto savedArch = std::move(archetypes_);
+    auto savedPromised = std::move(promised_);
+    auto savedFns = std::move(promisedFns_);
+    archetypes_.clear();
+    promised_.clear();
+    promisedFns_.clear();
+    std::map<std::string, Type> boundA = standIns(a);
+    for (auto &[t, ty] : boundA) archetypes_[ty] = {t, {}};
+    bool ok = promiseConstraints(a, boundA);
+    for (const syntax::NodePtr &p : b.item->kids[0]->kids) {
+      const Node *pred = wherePredicate(*p);
+      if (!pred || !ok) continue;
+      std::vector<const Node *> cs;
+      constraintsOf(*pred, cs);
+      for (const Node *c : cs) {
+        std::vector<Type> args;
+        ok = ok && constraintArgs(*c, mapB, args) &&
+             entailed(c->kids[0]->text, args, 0);
+      }
+    }
+    archetypes_ = std::move(savedArch);
+    promised_ = std::move(savedPromised);
+    promisedFns_ = std::move(savedFns);
+    return ok;
+  }
+
+  bool entailed(const std::string &cname, const std::vector<Type> &args,
+                int depth) {
+    std::string key = cname + "<" + spellTypes(args) + ">";
+    if (promised_.count(key)) return true;
+    auto c = concepts_.find(cname);
+    if (c == concepts_.end() || depth > 16) return false;
+    const Node &item = *c->second;
+    std::map<std::string, Type> scope;
+    size_t i = 0;
+    for (const syntax::NodePtr &p : item.kids[0]->kids)
+      if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
+    std::vector<std::map<std::string, Type>> saved =
+        types_.replaceTypeScopes({scope});
+    bool ok = true;
+    for (const syntax::NodePtr &r : item.kids[3]->kids) {
+      if (!ok) break;
+      if (r->kind == NodeKind::SigLemma) {
+        ok = false;
+      } else if (r->kind == NodeKind::SigInclude) {
+        std::vector<Type> inner;
+        for (const syntax::NodePtr &a : r->kids)
+          if (Type t = types_.resolve(*a)) inner.push_back(t);
+        types_.replaceTypeScopes(std::move(saved));
+        ok = inner.size() == r->kids.size() &&
+             entailed(r->text, inner, depth + 1);
+        saved = types_.replaceTypeScopes({scope});
+      } else if (r->kind == NodeKind::SigVal) {
+        if (!r->kids[2]->kids.empty()) {
+          ok = false;
+          continue;
+        }
+        std::vector<Type> ptypes;
+        const Node *cur = r->kids[0]->kids[1].get();
+        for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get())
+          ptypes.push_back(types_.resolve(*cur->kids[0]->kids[1]));
+        Type result = types_.resolve(*cur);
+        bool found = false;
+        for (const sema::FuncSig *f : promisedFns_[r->text]) {
+          bool same = f->params.size() == ptypes.size() && f->result == result;
+          for (size_t k = 0; same && k < ptypes.size(); ++k)
+            same = f->params[k].type == ptypes[k];
+          found = found || same;
+        }
+        ok = found;
+      }
+    }
+    types_.replaceTypeScopes(std::move(saved));
+    return ok;
+  }
+
+  // 1 when the generic `a` is more specific than `b`, -1 when `b` is, and
+  // 0 when neither is: first by parameter patterns, then by constraints.
+  int moreSpecific(const sema::FuncSig &a, const sema::FuncSig &b) {
+    std::string key = a.name + "|" + b.name;
+    if (auto it = specificity_.find(key); it != specificity_.end())
+      return it->second;
+    std::map<std::string, Type> mapB, mapA;
+    bool aInB = instanceOf(a, b, mapB), bInA = instanceOf(b, a, mapA);
+    int result = 0;
+    if (aInB && !bInA) {
+      result = 1;
+    } else if (bInA && !aInB) {
+      result = -1;
+    } else if (aInB && bInA) {
+      bool ab = entails(a, b, mapB), ba = entails(b, a, mapA);
+      result = ab && !ba ? 1 : ba && !ab ? -1 : 0;
+    }
+    specificity_[key] = result;
+    specificity_[b.name + "|" + a.name] = -result;
+    return result;
+  }
+
+  // Two generic overloads with the same parameter patterns and constraints
+  // that entail each other could never be told apart: an error at the
+  // second.
+  void checkGenericOverloads() {
+    for (auto &[name, symbols] : overloads_) {
+      std::vector<const sema::FuncSig *> gs;
+      for (const std::string &sym : symbols)
+        if (const sema::FuncSig &f = sigs_.at(sym); f.isGeneric())
+          gs.push_back(&f);
+      std::sort(gs.begin(), gs.end(), [](auto *x, auto *y) {
+        return std::make_pair(x->item->loc.line, x->item->loc.column) <
+               std::make_pair(y->item->loc.line, y->item->loc.column);
+      });
+      for (size_t i = 0; i < gs.size(); ++i)
+        for (size_t j = 0; j < i; ++j) {
+          std::map<std::string, Type> m1, m2;
+          if (instanceOf(*gs[i], *gs[j], m1) &&
+              instanceOf(*gs[j], *gs[i], m2) && entails(*gs[i], *gs[j], m1) &&
+              entails(*gs[j], *gs[i], m2)) {
+            diags_.error(gs[i]->item->loc,
+                         "'" + name + "' already has a generic overload "
+                         "with these parameter types and constraints that "
+                         "say the same, at line " +
+                             std::to_string(gs[j]->item->loc.line) +
+                             ", so no call could choose between them");
+            break;
+          }
+        }
+    }
   }
 
   // Records that the constraints promise `cname` for `args`, with what it
@@ -3185,6 +3385,7 @@ class Gen {
     std::vector<const Node *> constraints;
   };
   bool checking_ = false;
+  std::map<std::string, int> specificity_;  // "a|b": moreSpecific(a, b)
   llvm::DenseMap<Type, Archetype> archetypes_;
   std::set<std::string> promised_;
   std::map<std::string, std::vector<sema::FuncSig *>> promisedFns_;

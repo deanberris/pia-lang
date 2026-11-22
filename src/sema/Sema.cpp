@@ -689,7 +689,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
   };
   for (auto &[name, group] : byName) {
     if (group.size() == 1) continue;
-    const FuncSig *generic = nullptr;
+    unsigned generics = 0;
     for (size_t k = 0; k < group.size(); ++k) {
       FuncSig &sig = all[group[k]];
       const Node &item = *sig.item;
@@ -703,15 +703,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         drop[group[k]] = true;
         continue;
       }
+      // Generic overloads are told apart by their parameter patterns and
+      // constraints (ADR 0034); the first keeps the name, the others are
+      // numbered, `sort#2`, and their instances are named after that.
       if (sig.isGeneric()) {
-        if (generic) {
-          error(item.loc, "'" + name + "' already has a generic "
-                                "overload; choosing between two needs "
-                                "concept-based ranking, which is not "
-                                "supported yet");
-          drop[group[k]] = true;
-        }
-        generic = &sig;
+        if (++generics > 1) sig.name = name + "#" + std::to_string(generics);
         continue;
       }
       for (size_t j = 0; j < k; ++j) {

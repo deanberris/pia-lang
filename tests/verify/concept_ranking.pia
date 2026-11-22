@@ -1,0 +1,59 @@
+(* Ranking generic overloads (ADR 0034): when several generics fit a call,
+   the one whose parameter types are an instance of the other's wins, and
+   then the one whose constraints entail the other's. A type that does not
+   meet a candidate's constraints removes it (ADR 0035).
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let meta Ord (t : type) : concept = sig
+  include Same t
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+let less (a : u8) (b : u8) : bool = (a < b)
+let same (a : u16) (b : u16) : bool = (a = b)
+
+let rank (t : type where Same t) (x : t) : u8
+  ensures result = 1
+= 1
+
+let rank (t : type where Ord t) (x : t) : u8
+  ensures result = 2
+= 2
+
+(* u8 meets Ord, which includes Same, so the Ord overload is chosen. *)
+let ord_wins (x : u8) : u8
+  ensures result = 2
+= rank x
+
+(* u16 has no 'less', so only the Same overload is left. *)
+let same_only (x : u16) : u8
+  ensures result = 1
+= rank x
+
+let pair = let (a : type) (b : type) => type { fst : a; snd : b }
+
+let shape (a : type) (b : type) (p : pair a b) : u8
+  ensures result = 1
+= 1
+
+let shape (t : type) (p : pair t t) : u8
+  ensures result = 2
+= 2
+
+let diagonal (p : pair u8 u8) : u8
+  ensures result = 2
+= shape p
+
+let off_diagonal (p : pair u8 u16) : u8
+  ensures result = 1
+= shape p
+
+(* Expected report, in order.
+// CHECK: 0 proved, 0 failed, 0 skipped
+*)
