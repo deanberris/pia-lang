@@ -32,4 +32,4 @@ claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp
 
 ## What a session looks like
 
-[The REPL](repl.md#claude-driving-a-session) page shows Claude driving a session over MCP, and [Debugging C++ with the REPL](https://github.com/deanberris/pia-lang/blob/main/docs/repl-debugging.md) follows the proof-debugging loop from a literal port of a parser to a verdict and a fix.
+[The REPL](repl.md#claude-driving-a-session) page shows Claude driving a session over MCP, and [Debugging C++ with the REPL](repl-debugging.md) follows the proof-debugging loop from a literal port of a parser to a verdict and a fix.
