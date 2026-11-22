@@ -83,7 +83,7 @@ A generational arena is a `Pia.Mem` allocator for memory whose lifetime is one g
 
 ## Implementation order
 
-1. Liveness-based loan ends in place of the lexical borrow check, with moves and `@linear` in the same pass, and the new error notes.
+1. Liveness-based loan ends in place of the lexical borrow check, with moves and `@linear` in the same pass, and the new error notes. (Loan ends: implemented, tests/irgen/borrow_liveness.pia.)
 2. `region` parameters on records and variants, with `borrowed(r)` fields. With this, Vec can store its allocator (ADR 0041, step 5).
 3. Markers at task, channel and coroutine boundaries.
 4. Stack slot lifetimes in codegen, with a stack-size test of `with_arena`s in sequence.
