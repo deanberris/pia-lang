@@ -146,3 +146,4 @@ nav:
       - adr/0043-generic-definitions-proved-once.md
       - adr/0044-function-values-and-lambdas.md
       - adr/0045-json-derived-codecs-and-conforming-dom.md
+      - adr/0046-box-over-a-type-or-a-concept.md
