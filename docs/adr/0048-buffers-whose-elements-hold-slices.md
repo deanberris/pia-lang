@@ -34,11 +34,19 @@ An element's slices borrow from what its type says: `[box u16 r]` borrows from t
 
 Each element slice is a pointer and a length. The buffer of slices becomes two buffers, one of pointers and one of lengths, so it stays struct-of-arrays like every buffer of records. A C entry point takes both, as it takes one pointer per field today.
 
+### 5. Inline boxes: `vec (box t)` is a specialisation of `vec`
+
+A buffer of owning boxes need not point anywhere: each element's slot can be the element itself (Dean, 2026-11-23). A buffer whose element type is a `box t` of a sized `t` is compiled as one aligned buffer of `t`, with each box's slot the one-element slice at its own index, and its spec-only state erased. There is then no pointer, length or allocation per box, and moving boxes between buffers, as growing a vector does, copies their contents.
+
+The proofs do not change. The verifier still sees each element as owning a slice of length one, and a box taken out of the buffer borrows its slot in place, lent from the buffer as in section 2. Inline storage changes only where the slot lives.
+
+A box over a concept, `box c`, holds values of different sizes. Stored inline, each slot must fit the largest value it will hold. The compiler knows which those are: every `widen` into a `box c` names its type, so the types that reach a given buffer of `box c` are known statically from the specialisations the program makes (Dean, 2026-11-23). The slot size and alignment are the largest of that set, and the user writes no bound. The set is part of the buffer's layout, which the ABI advertises (ADR 0030): a module that widens a new type into it changes the layout, and dynamic loading against the old one fails and requires a relink. A `box c` outside a buffer of inline boxes is the fat pointer of ADR 0046.
+
 ## Implementation order
 
 1. Sema accepts buffers whose elements hold slices; IRGen stores them as buffers of slices, with the ownership rule for writes and the loan rule for slices taken out.
 2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Element lengths in callee and spec-function contracts are encoded too.)
-3. Codegen: pointer and length buffers, and C entry points.
+3. Codegen: pointer and length buffers, and C entry points; buffers of `box t` inline as buffers of `t` (section 5).
 4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Not yet: growing, which moves linear elements between buffers, and checking that an element written over is empty.)
 
 ## Consequences
@@ -49,5 +57,7 @@ Each element slice is a pointer and a length. The buffer of slices becomes two b
 
 ## Questions for Dean
 
+
 1. **Writes only through owned slices?** The alternative, a region heap with explicit `apart` invariants, would allow writes through shared slices but needs quantified invariants that make proofs slower.
 2. **Is `Drop` enough to count as owning**, or must the type be `@linear`? `box` has a `Drop`; a `@linear` record cannot be dropped implicitly. Both stop copies, which is what the proof needs.
+3. **Inline `box c` slots**: should a buffer of boxes over a concept carry a slot size, `vec (box c) n`, or should such boxes always stay out of line? Answered (Dean, 2026-11-23): neither. The slot fits the set of types the program statically widens into it, found from its specialisations (section 5).
