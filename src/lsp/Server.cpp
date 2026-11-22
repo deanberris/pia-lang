@@ -581,6 +581,30 @@ class Server {
     if (!doc) return Json();
     const Analysis &a = *doc->analysis;
     Json::Array actions;
+    // A lint's fix (ADR 0036), for each lint the requested range touches.
+    uint32_t from = offsetOf(a.index(), params["range"]["start"]);
+    uint32_t to = offsetOf(a.index(), params["range"]["end"]);
+    for (const pia::syntax::Lint &l : a.lints()) {
+      uint32_t end = std::max(l.end, l.loc.offset + 1);
+      if (l.edits.empty() || l.fixTitle.empty() || end < from || l.loc.offset > to)
+        continue;
+      Json::Array edits;
+      for (const pia::syntax::TextEdit &e : l.edits)
+        edits.push_back(Json::Object{{"range", range(a.index(), Range{e.begin, e.end})},
+                                     {"newText", e.text}});
+      Json diag = Json::Object{{"range", range(a.index(), Range{l.loc.offset, end})},
+                               {"severity", static_cast<int>(Severity::Warning)},
+                               {"source", "pia-lint"},
+                               {"code", l.name},
+                               {"message", l.message}};
+      actions.push_back(Json::Object{
+          {"title", l.fixTitle},
+          {"kind", "quickfix"},
+          {"isPreferred", l.preferred},
+          {"diagnostics", Json::Array{diag}},
+          {"edit", Json::Object{{"changes",
+                                 Json::Object{{doc->uri, std::move(edits)}}}}}});
+    }
     for (const Json &d : params["context"]["diagnostics"].asArray()) {
       const std::string &msg = d["message"].asString();
       const std::string marker = "rename it to ";

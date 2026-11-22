@@ -1,0 +1,18 @@
+let f (x : u8) : u8 @allow(range_requires)
+  requires x < 100
+= x + 1
+
+let g (y : u8) : u8 = f (y / 3)
+
+(* The verifier-based lint (ADR 0036): a goal that costs the solver at
+   least --costly-goal resource units. With a limit of 1, every goal the
+   solver proves is costly. --verify-stats splits the goals into those the
+   types raise and those the contracts state.
+// RUN: piac --verify --costly-goal=1 --verify-stats %s 2>&1 >/dev/null | FileCheck %s
+// RUN: piac --verify %s 2>&1 | FileCheck --check-prefix=DEFAULT %s
+// CHECK: verify-stats: goals=4 {{.*}} type=3 type_smt=1 type_cost={{[0-9]+}} contract=1 contract_smt=1 contract_cost={{[0-9]+}}
+// CHECK: costly.pia:3:5: warning: proving that '+' does not overflow u8 in 'f' cost {{[0-9]+}} (0% of the solver's limit); bound the values it depends on with range types so intervals decide it, or move the step into a function whose contract states only what it needs. Re-run it alone with --verify-only={{.*}}costly.pia:3:5 [costly_goal]
+// CHECK: costly.pia:5:23: warning: proving that the precondition of 'f' holds in 'g' cost {{[0-9]+}} (0% of the solver's limit); give the callee's parameters range types so the argument's type carries the fact, or state the bound where the argument is made. Re-run it alone with --verify-only={{.*}}costly.pia:5:23 [costly_goal]
+// DEFAULT: 4 proved, 0 failed, 0 skipped
+// DEFAULT-NOT: warning
+*)

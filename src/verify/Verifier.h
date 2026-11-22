@@ -80,7 +80,21 @@ struct Stats {
   unsigned threads = 0;
   unsigned long long cost = 0;  // Z3 resource count over every query
   double encodeMs = 0, solveMs = 0;
+  // Where the selected goals came from (ADR 0036). Type goals are raised by
+  // operations on typed values: overflow and narrowing into a range type,
+  // bounds, divisors, shifts, match exhaustiveness and out parameters.
+  // Contract goals are written ones: requires at calls, ensures, loop
+  // invariants, decreases, assertions and concept laws. `*Smt` counts the
+  // ones that needed the solver, and `*Cost` their resource count, when
+  // Options::reportCost is set.
+  unsigned typeGoals = 0, typeSmt = 0;
+  unsigned contractGoals = 0, contractSmt = 0;
+  unsigned long long typeCost = 0, contractCost = 0;
 };
+
+// Whether a goal of this kind is written in a contract, rather than raised
+// by the types of the values an operation uses.
+bool isContractGoal(contract::ObligationKind kind);
 
 // Whether `--verify-only=spec` selects a goal at `where` in `function`.
 bool selects(const std::string &spec, const std::string &where,

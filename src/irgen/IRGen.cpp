@@ -661,6 +661,16 @@ class Gen {
         fuel_ = static_cast<unsigned>(lit->value.getZExtValue());
         continue;
       }
+      // `@allow(range_requires)` silences a lint (ADR 0036); lints run on
+      // the syntax tree, so there is nothing to generate.
+      if (a->text == "allow" && !a->kids.empty()) {
+        bool names = true;
+        for (const syntax::NodePtr &k : a->kids)
+          names &= k->kind == NodeKind::Name;
+        if (names) continue;
+        fail(*a, "@allow takes lint names, such as @allow(range_requires)");
+        return false;
+      }
       fail(*a, "the attribute @" + a->text + " is not supported yet");
       return false;
     }

@@ -1,0 +1,39 @@
+(* Proofs the solver finds hard (ADR 0036): nonlinear contracts, deep
+   unfolding, unchecked assumptions, and goals that cost much of the
+   solver's limit.
+// RUN: piac --check %s 2>&1 | FileCheck %s
+*)
+
+let area (w : u16) (h : u16) : u16
+  requires w * h <= 65535
+= w * h
+
+(* A definition of the result is left alone. *)
+let area32 (w : u16) (h : u16) : u32
+  ensures result = w * h
+= w * h
+
+let per (n : u32) (d : u32) : u32
+  requires d > 0 && n / d < 10
+= n / d
+
+(* A constant factor is linear. *)
+let triple (x : u8) : u16
+  ensures result = 3 * x
+= 3 * x
+
+let rec spec sum_to (n : u8) : u32 @fuel(8)
+  decreases n
+= if n = 0 then 0 else n + sum_to (n - 1)
+
+let trusting (x : u8) : u8 =
+  assume x < 10;
+  x + 1
+
+(* Expected lints, in order.
+// CHECK: decomposition.pia:8:12: warning: 'w * h' in a contract of 'area' is nonlinear, and the solver has no decision procedure for it, so every query that assumes or proves this clause may be slow; bound the factors with range types so intervals decide it, compute the product in a helper with @overflow(saturate) and a linear contract, or prove the fact once as a 'let lemma' [nonlinear_contract]
+// CHECK: decomposition.pia:17:21: warning: 'n / d' in a contract of 'per'
+// CHECK: decomposition.pia:25:36: warning: @fuel(8) unfolds 'sum_to' 8 times in every query that mentions it; prove the fact you need once, as a 'let lemma' by induction, and keep the fuel low [deep_fuel]
+// CHECK: decomposition.pia:30:3: warning: 'assume' is never checked: if callers can promise it, make it a 'requires'; if it follows from what is known, prove it with 'assert' or a lemma [assume]
+// CHECK-NOT: warning
+*)
