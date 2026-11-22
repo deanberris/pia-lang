@@ -302,6 +302,10 @@ class Gen {
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         if (sigs_.at(it->second).isGeneric()) checkDefinition(it->second);
     if (diags_.hasErrors()) return nullptr;
+    // Each higher-order function is proved once too, with its function
+    // parameters abstract (ADR 0044, step 6).
+    for (auto &[name, list] : hofs_)
+      for (sema::FuncSig &h : list) proveOnce(h);
     for (const syntax::NodePtr &item : program.kids) {
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         genFunction(it->second);
@@ -765,6 +769,15 @@ class Gen {
         fn->setAttr("pia.instance_of",
                     b_.getStringAttr(llvm::StringRef(sig.name).split('<').first));
     }
+    // A specialisation of a higher-order function proved once is an
+    // instance of that proof (ADR 0044, step 6).
+    if (!checking_)
+      if (auto p = provedBy_.find(llvm::StringRef(sig.name).split('<').first.str());
+          p != provedBy_.end()) {
+        bool concrete = true;
+        for (auto &[n, t] : sig.typeArgs) concrete &= !standIns_.contains(t);
+        if (concrete) fn->setAttr("pia.instance_of", b_.getStringAttr(p->second));
+      }
     // A spec function copied from another module's interface is proved by
     // that module; here it is only unfolded (ADR 0039).
     if (sig.typeArgs.empty() && hasFlag(item, "spec"))
@@ -3742,6 +3755,116 @@ class Gen {
                     syntax::makeNode(NodeKind::Name, n.kids[0]->loc, via));
   }
 
+  // Proves a higher-order function once (ADR 0044, step 6, with ADR
+  // 0043): each pure function parameter `p` becomes a parameter of a type
+  // `p#type` that meets a concept made for it, whose one requirement is
+  // `apply` with the arrow's types and `ensures`. The copy is checked and
+  // proved like any generic, with `apply` uninterpreted, and each
+  // specialisation is then an instance of that proof: its argument was
+  // checked against the arrow's contract where it was passed. An
+  // effectful arrow, or one with a `requires`, is left to the
+  // specialisations, since the generic proof cannot assume it yet.
+  void proveOnce(const sema::FuncSig &hof) {
+    // A spec function has no goals of its own to share.
+    if (hasFlag(*hof.item, "spec") || hasFlag(*hof.item, "import")) return;
+    syntax::SourceLoc at = hof.item->loc;
+    std::vector<NodePtr> concepts;
+    NodePtr proof = syntax::clone(*hof.item);
+    std::string symbol = hof.name + "#proof";
+    proof->text = symbol;
+    std::vector<NodePtr> params;
+    for (NodePtr &q : proof->kids[0]->kids) {
+      if (!sema::isFunctionParam(*q)) {
+        params.push_back(std::move(q));
+        continue;
+      }
+      Arrow arrow = arrowOf(*q->kids[0]->kids[1]);
+      if (effectfulArrow(arrow)) return;
+      if (arrow.contracts)
+        for (const NodePtr &c : arrow.contracts->kids)
+          if (c->kind != NodeKind::Ensures) return;
+      std::string tp = q->text + "#type";
+      std::string cname = hof.name + "#" + q->text;
+      // `let meta find#p (f : type) (t : type) : concept = sig
+      //    let apply : (g : f) -> (x : t) -> bool ensures ... end`
+      auto concept = syntax::makeNode(NodeKind::LetItem, at, cname);
+      concept->flags = "meta";
+      Node *cps = concept->add(syntax::makeNode(NodeKind::Params, at));
+      auto typeParam = [&](Node &into, const std::string &name) {
+        Node *p = into.add(syntax::makeNode(NodeKind::Param, at, name));
+        Node *a = p->add(syntax::makeNode(NodeKind::Annot, at));
+        a->add(syntax::makeNode(NodeKind::Modifiers, at));
+        a->add(syntax::makeNode(NodeKind::TypeKind, at));
+        a->add(syntax::makeNode(NodeKind::None, at));
+        return a;
+      };
+      typeParam(*cps, "f");
+      for (const std::string &t : hof.typeParams) typeParam(*cps, t);
+      concept->add(retAnnotNode(
+          annotOf(*syntax::makeNode(NodeKind::TypeName, at, "concept"), at), at));
+      concept->add(syntax::makeNode(NodeKind::Contracts, at));
+      Node *sig = concept->add(syntax::makeNode(NodeKind::Sig, at));
+      Node *req = sig->add(syntax::makeNode(NodeKind::SigVal, at, "apply"));
+      NodePtr type = syntax::clone(*q->kids[0]->kids[1]);
+      Node *inner = type.get();
+      while (inner->kids[1]->kind == NodeKind::ArrowType) inner = inner->kids[1].get();
+      NodePtr contracts = inner->kids.size() > 2
+                              ? std::move(inner->kids[2])
+                              : syntax::makeNode(NodeKind::Contracts, at);
+      if (inner->kids.size() > 2) inner->kids.pop_back();
+      unsigned k = 0;
+      for (Node *d = type.get(); d->kind == NodeKind::ArrowType;
+           d = d->kids[1].get())
+        if (d->kids[0]->text.empty())
+          d->kids[0]->text = "x#" + std::to_string(++k);
+      auto self = syntax::makeNode(NodeKind::ArrowType, at);
+      Node *dom = self->add(syntax::makeNode(NodeKind::Domain, at, "g"));
+      dom->add(syntax::makeNode(NodeKind::Modifiers, at));
+      dom->add(syntax::makeNode(NodeKind::TypeName, at, "f"));
+      dom->add(syntax::makeNode(NodeKind::None, at));
+      self->add(std::move(type));
+      req->add(annotOf(*self, at));
+      req->add(syntax::makeNode(NodeKind::Attrs, at));
+      req->add(std::move(contracts));
+      // `(p#type : type where find#p p#type t)` and `(p : p#type)`.
+      auto tparam = syntax::makeNode(NodeKind::Param, q->loc, tp);
+      Node *ta = tparam->add(syntax::makeNode(NodeKind::Annot, q->loc));
+      ta->add(syntax::makeNode(NodeKind::Modifiers, q->loc));
+      ta->add(syntax::makeNode(NodeKind::TypeKind, q->loc));
+      auto where = syntax::makeNode(NodeKind::Apply, q->loc);
+      where->add(syntax::makeNode(NodeKind::Name, q->loc, cname));
+      where->add(syntax::makeNode(NodeKind::Name, q->loc, tp));
+      for (const std::string &t : hof.typeParams)
+        where->add(syntax::makeNode(NodeKind::Name, q->loc, t));
+      ta->add(std::move(where));
+      params.push_back(std::move(tparam));
+      q->kids[0] = annotOf(*syntax::makeNode(NodeKind::TypeName, q->loc, tp), q->loc);
+      params.push_back(std::move(q));
+      concepts.push_back(std::move(concept));
+    }
+    proof->kids[0]->kids = std::move(params);
+    for (NodePtr &c : concepts) {
+      if (concepts_.count(c->text)) return;
+      concepts_[c->text] = c.get();
+      synthesized_.push_back(std::move(c));
+    }
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = proof.get();
+    for (const NodePtr &q : proof->kids[0]->kids)
+      if (sema::isTypeParam(*q)) sig.typeParams.push_back(q->text);
+    synthesized_.push_back(std::move(proof));
+    sigs_.emplace(symbol, std::move(sig));
+    // A check that fails only means the specialisations are proved each.
+    size_t errors = diags_.count(), notes = notParametric_.size();
+    checkDefinition(symbol);
+    bool kept = diags_.count() == errors && notParametric_.size() == notes &&
+                module_.lookupSymbol<mlir::func::FuncOp>("definition of " + symbol);
+    diags_.truncate(errors);
+    notParametric_.resize(notes);
+    if (kept) hofProof_[hof.name] = symbol;
+  }
+
   // A call of a name with higher-order overloads (ADR 0044, section 4): a
   // parameter of function type takes only a lambda, a named function or a
   // function object, and a value parameter never takes a lambda or a named
@@ -4107,6 +4230,10 @@ class Gen {
       }
       it = sigs_.emplace(key, std::move(sig)).first;
       overloads_[key].push_back(key);
+      // Discharged by the higher-order function's proof, unless a closure
+      // writes through it, which the proof does not cover.
+      if (auto p = hofProof_.find(hof.name); p != hofProof_.end() && writing.empty())
+        provedBy_[key] = p->second;
     }
     sema::FuncSig &spec = it->second;
     if (spec.isGeneric())
@@ -5875,6 +6002,7 @@ class Gen {
     promised_.clear();
       promisedArgs_.clear();
     promisedFns_.clear();
+    promisedSigs_.clear();
     archetypes_.clear();
   }
 
@@ -8961,6 +9089,9 @@ class Gen {
   std::map<std::string, std::vector<sema::FuncSig>> hofs_;
   // The `apply`s of lambdas with referenced captures (ADR 0044).
   std::set<std::string> effectful_;
+  // Higher-order functions proved once, by name, and the specialisations
+  // each proof discharges (ADR 0044, step 6).
+  std::map<std::string, std::string> hofProof_, provedBy_;
   std::map<const Node *, std::vector<std::pair<std::string, BindingPtr>>>
       closureRefs_;
   // Type-level metaprograms (ADR 0035): those that return a type, and

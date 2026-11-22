@@ -182,7 +182,8 @@ std::string smtSymbol(llvm::StringRef name) {
   std::string out;
   for (char c : name) {
     if (c == ' ') continue;
-    out += c == ',' ? '.' : c;
+    // A function parameter's stand-in type, `p#type` (ADR 0044, step 6).
+    out += c == ',' ? '.' : c == '#' ? '!' : c;
   }
   return out;
 }
@@ -532,7 +533,7 @@ class Encoder {
     // fields, which ScalarizeRecords leaves there: an uninterpreted sort.
     if (auto r = mlir::dyn_cast<RecordType>(t))
       if (r.getFieldTypes().empty() && fn_ && fn_->hasAttr("pia.generic_proof")) {
-        std::string name = "generic." + r.getName().str();
+        std::string name = "generic." + smtSymbol(r.getName());
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
