@@ -62,5 +62,19 @@ let byte (x : i8) : i8
 = same_bytes x
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: type_functions.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:47:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:61:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:23:5: proved: '+' does not overflow u16 [intervals]
+// CHECK: type_functions.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:23:5: proved: '+' does not overflow u32 [intervals]
+// CHECK: type_functions.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: 14 proved, 0 failed, 0 skipped
 *)
