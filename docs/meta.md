@@ -196,7 +196,7 @@ let eq_pixel (a : pixel) (b : pixel) : bool
   = (true && a.r = b.r) && a.g = b.g
 ```
 
-`=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records is an error that suggests `@derive(eq)`. Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
+`=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records in code is an error that suggests `@derive(eq)`; in a contract they compare as values ([irgen.md](irgen.md#records)). Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
 
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
 
