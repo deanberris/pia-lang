@@ -482,11 +482,11 @@ static mlir::Type buildType(const std::string &name, const Node &value,
                      TypeResolver &types, syntax::Diagnostics &diags,
                      bool instance) {
   const Node &body = *value.kids[0];
-  if (!value.kids[1]->kids.empty()) {
-    const Node &attr = *value.kids[1]->kids[0];
-    diags.error(attr.loc, "the attribute @" + attr.text +
-                              " on a type is not supported yet");
-  }
+  // `@linear` (#56) is read by IRGen; `@derive` is expanded before this.
+  for (const syntax::NodePtr &attr : value.kids[1]->kids)
+    if (attr->text != "linear")
+      diags.error(attr->loc, "the attribute @" + attr->text +
+                                 " on a type is not supported yet");
   if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
     diags.error(value.kids[2]->loc,
                 "refinements ('where') are not supported yet");

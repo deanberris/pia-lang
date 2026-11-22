@@ -209,6 +209,7 @@ class Gen {
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
+    collectLinear(program);
     collectConstants();
     if (diags_.hasErrors()) return nullptr;
     std::map<const Node *, std::string> symbolOf;
@@ -731,6 +732,22 @@ class Gen {
     R body = isSpec ? genContractExpr(bodyNode, sig.result)
                     : genExpr(bodyNode, sig.result);
     if (!body) return;
+    if (!isSpec && !ghost_) {
+      bool owned = true;
+      for (const sema::Param &p : sig.params) {
+        BindingPtr b = lookup(p.name);
+        if (!b) continue;
+        if (sema::hasModifier(p.modifiers, "moved")) {
+          owned &= consumed(b, p.loc);
+        } else if (auto m = moved_.find(b); m != moved_.end()) {
+          diags_.error(m->second.at,
+                       "'" + p.name + "' is borrowed by this function, so it "
+                       "cannot be consumed here; take it as 'moved'");
+          owned = false;
+        }
+      }
+      if (!owned) return;
+    }
     Type result = sig.result;
     if (!result) {
       result = body->type;
@@ -1153,6 +1170,7 @@ class Gen {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) {
         if (!usable(b, n)) return std::nullopt;
+        consumeValue(b, n);
         return TV{b->value, b->type};
       }
     if (types_.isCtorName(n.text)) {
@@ -1524,6 +1542,9 @@ class Gen {
   R genMatch(const Node &n, Type expected) {
     R s = genExpr(*n.kids[0], Type());
     if (!s) return s;
+    if (auto rt = mlir::dyn_cast<RecordType>(s->type);
+        rt && !types_.isVariant(rt))
+      return genRecordMatch(n, *s, rt, expected);
     if (!types_.isVariant(s->type))
       return fail(*n.kids[0], "'match' on " + typeName(s->type) +
                                   " is not supported yet; it works on "
@@ -1562,6 +1583,12 @@ class Gen {
       if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
         catchAll = true;
         if (pat.text != "_") a.bind = pat.text;
+        else if (a.as.empty())
+          for (const sema::Ctor *c : ctors)
+            if (!covered.count(c->name) && c->payload && isLinear(c->payload))
+              return fail(pat, "this arm drops the @linear payload of '" +
+                                   c->name + "'; match '" + c->name +
+                                   "' with a name and consume it");
       } else if (pat.kind == NodeKind::PVar ||
                  (pat.kind == NodeKind::PCtor)) {
         const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
@@ -1598,6 +1625,9 @@ class Gen {
             return fail(sub, "only a name, '_' or a variant's only "
                              "constructor can match a payload for now");
           if (!only && sub.text != "_") a.bind = sub.text;
+          if (!only && sub.text == "_" && a.as.empty() && isLinear(c->payload))
+            return fail(sub, "'_' drops this @linear payload; bind it with a "
+                             "name and consume it");
         }
         covered.insert(c->name);
         a.ctor = c;
@@ -1682,6 +1712,88 @@ class Gen {
     R r = genExpr(*chain, expected);
     popScope();
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
+    return r;
+  }
+
+  // `match r with | { a; b = x } -> e` on a record: binds its fields, as
+  // `let a = r.a in let x = r.b in e`. Matching consumes `r`, so this is
+  // how a @linear record is finally taken apart (#56).
+  R genRecordMatch(const Node &n, const TV &s, RecordType rt, Type expected) {
+    if (n.kids.size() != 2)
+      return fail(*n.kids[2]->kids[0], "a record has one shape, so a 'match' "
+                                       "on it has one arm");
+    const Node &arm = *n.kids[1];
+    if (arm.kids.size() > 2 && !arm.kids[2]->kids.empty())
+      return fail(*arm.kids[2], "arm contracts on a record 'match' are not "
+                                "supported yet");
+    const Node &pat = *arm.kids[0];
+    std::string hidden = "#match" + std::to_string(matchCounter_++);
+    syntax::SourceLoc at = n.loc;
+    std::vector<std::pair<std::string, std::string>> binds;  // name, field
+    if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
+      if (pat.text == "_" && isLinear(rt))
+        return fail(pat, "'_' drops this @linear value; bind its fields "
+                         "and consume the @linear ones");
+    } else if (pat.kind == NodeKind::PRecord) {
+      std::set<std::string> seen;
+      for (const syntax::NodePtr &f : pat.kids) {
+        std::optional<unsigned> i = rt.fieldIndex(f->text);
+        if (!i)
+          return fail(*f, typeName(rt) + " has no field '" + f->text + "'");
+        if (!seen.insert(f->text).second)
+          return fail(*f, "'" + f->text + "' is already matched");
+        std::string name = f->text;
+        if (!f->kids.empty() && f->kids[0]->kind != NodeKind::None) {
+          const Node &sub = *f->kids[0];
+          if (sub.kind != NodeKind::PVar || types_.isCtorName(sub.text))
+            return fail(sub, "only a name or '_' can match a field for now");
+          name = sub.text;
+        }
+        if (name == "_") {
+          if (isLinear(rt.getFieldTypes()[*i]))
+            return fail(*f, "'_' drops the @linear field '" + f->text +
+                            "'; bind it and consume it");
+          continue;
+        }
+        binds.emplace_back(name, f->text);
+      }
+      for (auto [j, field] : llvm::enumerate(rt.getFieldNames()))
+        if (!seen.count(field.getValue().str()) &&
+            isLinear(rt.getFieldTypes()[j]))
+          return fail(pat, "this pattern drops the @linear field '" +
+                               field.getValue().str() +
+                               "'; bind it and consume it");
+    } else {
+      return fail(pat, "a record is matched by '{ a; b = x }', a name or '_'");
+    }
+    syntax::NodePtr body = syntax::clone(*arm.kids[1]);
+    if (pat.kind == NodeKind::PVar && pat.text != "_") {
+      auto let = syntax::makeNode(NodeKind::LetIn, pat.loc, pat.text);
+      let->add(syntax::makeNode(NodeKind::Params, pat.loc));
+      let->add(syntax::makeNode(NodeKind::None, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Contracts, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Name, pat.loc, hidden));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
+      auto field = syntax::makeNode(NodeKind::Field, at, it->second);
+      field->add(syntax::makeNode(NodeKind::Name, at, hidden));
+      auto let = syntax::makeNode(NodeKind::LetIn, at, it->first);
+      let->add(syntax::makeNode(NodeKind::Params, at));
+      let->add(syntax::makeNode(NodeKind::None, at));
+      let->add(syntax::makeNode(NodeKind::Contracts, at));
+      let->add(std::move(field));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    if (!frames_.empty() && frames_.back().tails.count(&n)) addTails(*body);
+    const Node &chain = *body;
+    matchTrees_.push_back(std::move(body));  // diagnostics may point into it
+    pushScope();
+    bind(hidden, s.value, s.type, false);
+    R r = genExpr(chain, expected);
+    popScope();
     return r;
   }
 
@@ -1992,6 +2104,7 @@ class Gen {
         if (argc != 1) return fail(n, "'len' takes one argument");
         R buf = genExpr(*n.kids[1], Type());
         if (!buf) return buf;
+        unconsume(*n.kids[1]);
         if (!mlir::isa<ArrayType, SliceType>(buf->type))
           return fail(*n.kids[1], "'len' needs an array or slice, found " +
                                       typeName(buf->type));
@@ -2047,8 +2160,9 @@ class Gen {
         return fail(*args[i], "constant data cannot be passed to '" +
                                   sig.params[i].name + "', which is 'out' or "
                                   "'inout'");
-      if (sema::hasModifier(sig.params[i].modifiers, "moved") &&
-          !moveArgument(*args[i], c->type, sig, sig.params[i]))
+      if (!sema::hasModifier(sig.params[i].modifiers, "moved"))
+        unconsume(*args[i]);
+      else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
         return std::nullopt;
       operands.push_back(c->value);
     }
@@ -4344,6 +4458,7 @@ class Gen {
   R genIndex(const Node &n) {
     R buf = genExpr(*n.kids[0], Type());
     if (!buf) return buf;
+    unconsume(*n.kids[0]);
     Type elem = elementType(buf->type);
     if (!elem)
       return fail(*n.kids[0], "only arrays and slices can be indexed, found " +
@@ -4417,6 +4532,7 @@ class Gen {
   R genField(const Node &n) {
     R obj = genExpr(*n.kids[0], Type());
     if (!obj) return obj;
+    unconsume(*n.kids[0]);
     auto rt = mlir::dyn_cast<RecordType>(obj->type);
     if (!rt || types_.isVariant(rt))
       return fail(n, "'." + n.text + "' needs a record, found " +
@@ -4559,8 +4675,9 @@ class Gen {
   // here move it.
   struct Move {
     syntax::SourceLoc at;
-    std::string callee;
+    std::string what;              // "moved to 'take'"
     bool maybe = false;
+    const Node *node = nullptr;    // the use that moved it
   };
 
   struct Deeper {
@@ -4583,7 +4700,7 @@ class Gen {
     auto m = moved_.find(b);
     if (m == moved_.end()) return true;
     fail(n, "'" + n.text + "' " + (m->second.maybe ? "may have been" : "was") +
-                " moved to '" + m->second.callee + "' at " +
+                " " + m->second.what + " at " +
                 std::to_string(m->second.at.line) + ":" +
                 std::to_string(m->second.at.column) +
                 ", so it can no longer be used here" +
@@ -4613,7 +4730,82 @@ class Gen {
                 "loop, or move it after the loop");
       return false;
     }
-    moved_[b] = Move{arg.loc, sig.name, false};
+    moved_[b] = Move{arg.loc, "moved to '" + sig.name + "'", false, &arg};
+    return true;
+  }
+
+  // --- `@linear` (#56) --------------------------------------------------
+
+  // The types marked `@linear`: a value of one must be consumed, passed as
+  // `moved` or used as a value, on every path out of its scope.
+  void collectLinear(const Node &program) {
+    for (const syntax::NodePtr &item : program.kids) {
+      if (!sema::isTypeItem(*item)) continue;
+      const Node &tv = *item->kids[3];
+      if (tv.kids.size() < 2) continue;
+      for (const syntax::NodePtr &a : tv.kids[1]->kids)
+        if (a->text == "linear")
+          if (Type t = types_.named(item->text))
+            linear_.insert(t.getAsOpaquePointer());
+    }
+  }
+
+  // A `@linear` type, or a record, variant or instance holding one.
+  bool isLinear(Type t) {
+    if (!t || linear_.empty()) return false;
+    if (linear_.count(t.getAsOpaquePointer())) return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t))
+      for (Type f : rt.getFieldTypes())
+        if (isLinear(f)) return true;
+    return false;
+  }
+
+  // A use of a linear local as a value consumes it, unless the use turns
+  // out to be a borrow (`unconsume`).
+  void consumeValue(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_ || n.text.find('#') != std::string::npos ||
+        !isLinear(b->type))
+      return;
+    moved_[b] = Move{n.loc, "consumed by its use as a value", false, &n};
+  }
+
+  // `n` was only borrowed: a field read, `len`, or an argument of a
+  // borrowed parameter.
+  void unconsume(const Node &n) {
+    if (n.kind != NodeKind::Name || !n.flags.empty()) return;
+    BindingPtr b = lookup(n.text);
+    if (!b) return;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && m->second.node == &n) moved_.erase(m);
+  }
+
+  // At the end of `b`'s scope: a linear value must have been consumed on
+  // every path.
+  bool consumed(const BindingPtr &b, syntax::SourceLoc at) {
+    if (b->name.find('#') != std::string::npos || !isLinear(b->type))
+      return true;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && !m->second.maybe) return true;
+    diags_.error(at, "'" + b->name + "' has the @linear type " +
+                         typeName(b->type) + ", so it must be consumed on "
+                         "every path out of its scope, by passing it as "
+                         "'moved' or returning it" +
+                         (m != moved_.end()
+                              ? "; it is consumed on only some paths"
+                              : "; nothing consumes it"));
+    return false;
+  }
+
+  // After a loop body: nothing bound outside the loop was moved in it.
+  bool checkLoopMoves() {
+    for (auto &[b, m] : moved_)
+      if (b->loopDepth < loopDepth_) {
+        diags_.error(m.at, "'" + b->name + "' is moved inside a loop, so the "
+                           "next iteration would use it after the move; "
+                           "bind it inside the loop, or move it after the "
+                           "loop");
+        return false;
+      }
     return true;
   }
 
@@ -4812,6 +5004,7 @@ class Gen {
       LoopScope inLoop(frames_);
       Deeper deeper(loopDepth_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
+      if (r && !checkLoopMoves()) r = std::nullopt;
       if (r && !mustUse(*r, body)) r = std::nullopt;
       if (r) create<mlir::scf::YieldOp>(l, values(vars));
       popScope();
@@ -4859,6 +5052,7 @@ class Gen {
           LoopScope inLoop(frames_);
           Deeper deeper(loopDepth_);
           R r = genExpr(body, Type());
+          if (r && !checkLoopMoves()) r = std::nullopt;
           if (r && !mustUse(*r, body)) r = std::nullopt;
           if (r)
             create<mlir::scf::YieldOp>(l, values(vars));
@@ -5362,8 +5556,10 @@ class Gen {
       return fail(valueNode, "'" + n.text + "' would have type unit");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
     pushScope();
-    bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
+    BindingPtr b =
+        bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     R body = genExpr(*n.kids[4], expected);
+    if (body && !consumed(b, n.loc)) body = std::nullopt;
     popScope();
     return body;
   }
@@ -5440,6 +5636,7 @@ class Gen {
   // loops open there.
   std::map<BindingPtr, Move> moved_;
   unsigned loopDepth_ = 0;
+  std::set<const void *> linear_;  // the `@linear` types
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;
