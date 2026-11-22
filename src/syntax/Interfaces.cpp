@@ -32,7 +32,9 @@ std::string canonical(const std::vector<Token> &tokens, size_t first) {
     if (prev) {
       if (closes)
         out += "\n";
-      else if (depth == 1 && t.kind == K::Let)
+      // A `let` that starts an item, not a generic type's `let (t : type)`.
+      else if (depth == 1 && t.kind == K::Let &&
+               !(i + 1 < tokens.size() && tokens[i + 1].kind == K::LParen))
         out += "\n  ";
       else if (prev->loc.offset + prev->text.size() != t.loc.offset)
         out += " ";
@@ -62,15 +64,61 @@ std::optional<std::string> dotted(const Node &n) {
 struct Imported {
   std::set<std::string> modules;   // `Image.Png`
   std::set<std::string> items;     // `Image.Png.decode`
+  std::set<std::string> types;     // `Image.Png.pixel`
+  std::set<std::string> ctors;     // `Image.Png.Truncated`
+  std::map<std::string, std::string> aliases;      // `Png` -> `Image.Png`
+  std::map<std::string, std::string> unqualified;  // `decode` -> `Image.Png.decode`
 };
+
+// `Png.decode` as `Image.Png.decode`, under `import Image.Png.Codec as Png`.
+std::string unalias(const std::string &d, const Imported &imp) {
+  for (const auto &[alias, module] : imp.aliases)
+    if (d.size() > alias.size() && d.compare(0, alias.size(), alias) == 0 &&
+        d[alias.size()] == '.')
+      return module + d.substr(alias.size());
+  return d;
+}
+
+// The names a program binds anywhere: its items, parameters and pattern
+// variables, which an unqualified import must not shadow (ADR 0022).
+void bindersIn(const Node &n, std::set<std::string> &out) {
+  if (n.kind == N::Param || n.kind == N::PVar || n.kind == N::LetItem)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids) bindersIn(*k, out);
+}
+
+void collectCtors(const Node &n, const std::string &module,
+                  std::set<std::string> &out) {
+  if (n.kind == N::Ctor) out.insert(module + "." + n.text);
+  for (const NodePtr &k : n.kids) collectCtors(*k, module, out);
+}
 
 // `M.f` in the program becomes the Name `M.f` of the imported item.
 void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
+  if (n.kind == N::TypeName || n.kind == N::TypeInst ||
+      n.kind == N::SigInclude) {
+    n.text = unalias(n.text, imp);
+    if (auto u = imp.unqualified.find(n.text); u != imp.unqualified.end())
+      n.text = u->second;
+  }
+  if (n.kind == N::Name && n.flags.empty())
+    if (auto u = imp.unqualified.find(n.text); u != imp.unqualified.end()) {
+      n.text = u->second;
+      return;
+    }
   if (n.kind == N::Field) {
     if (auto d = dotted(n)) {
+      *d = unalias(*d, imp);
       if (imp.items.count(*d)) {
         n.kind = N::Name;
         n.text = *d;
+        n.kids.clear();
+        return;
+      }
+      // `M.C` is the constructor `C`, which is also in scope as `C`.
+      if (imp.ctors.count(*d)) {
+        n.kind = N::Name;
+        n.text = d->substr(d->rfind('.') + 1);
         n.kids.clear();
         return;
       }
@@ -89,13 +137,43 @@ void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
 
 // Names of the interface's own items, inside its contracts, are its
 // module's: `f` is `M.f`, unless a parameter of the item has that name.
+// The same for the types it shows, in types and contracts, except a
+// generic type's own parameters.
 void qualify(Node &n, const std::string &module,
              const std::set<std::string> &members,
-             const std::set<std::string> &params) {
+             const std::set<std::string> &params,
+             const std::set<std::string> &typeParams = {}) {
   if (n.kind == N::Name && n.flags.empty() && members.count(n.text) &&
       !params.count(n.text))
     n.text = module + "." + n.text;
-  for (NodePtr &k : n.kids) qualify(*k, module, members, params);
+  if ((n.kind == N::TypeName || n.kind == N::TypeInst ||
+       n.kind == N::SigInclude) &&
+      members.count(n.text) && !typeParams.count(n.text))
+    n.text = module + "." + n.text;
+  for (NodePtr &k : n.kids) qualify(*k, module, members, params, typeParams);
+}
+
+// `let t = type ...` or `let t = let (a : type) => type ...` as the type
+// item `M.t`, whose constructors keep their names: they are reachable
+// unqualified, and a clash with another constructor is an error, as for
+// any two constructors (ADR 0039).
+NodePtr importedType(const Node &shown, const std::string &module,
+                     const std::set<std::string> &members, SourceLoc at) {
+  auto item = makeNode(N::LetItem, at, module + "." + shown.text);
+  item->add(makeNode(N::Params, at));
+  item->add(makeNode(N::None, at));
+  item->add(makeNode(N::Contracts, at));
+  NodePtr value = clone(*shown.kids[0]);
+  std::set<std::string> typeParams;
+  if (value->kind == N::Lambda)
+    for (const NodePtr &p : value->kids)
+      if (p->kind == N::LParam && !p->kids.empty() &&
+          p->kids[0]->kind == N::PVar)
+        typeParams.insert(p->kids[0]->text);
+  qualify(*value, module, members, {}, typeParams);
+  item->add(std::move(value));
+  relocate(*item, at);
+  return item;
 }
 
 // `let f : (a : t) -> (b : u) -> r requires ... ensures ...` as the
@@ -134,6 +212,8 @@ NodePtr importedFunction(const Node &val, const std::string &module,
   annot->add(clone(*type));
   annot->add(makeNode(N::None, at));
   ret->add(makeNode(N::Attrs, at));
+  qualify(*params, module, members, names);
+  qualify(*ret, module, members, names);
   NodePtr contracts = clone(*val.kids[2]);
   qualify(*contracts, module, members, names);
   item->add(std::move(contracts));
@@ -156,6 +236,81 @@ std::optional<std::string> readFile(const std::string &path) {
   std::stringstream buf;
   buf << in.rdbuf();
   return buf.str();
+}
+
+// Whether a sig entry's type takes a type parameter, `(t : type) -> ...`.
+bool genericSig(const Node &val) {
+  for (const Node *cur = val.kids[0]->kids[1].get(); cur->kind == N::ArrowType;
+       cur = cur->kids[1].get())
+    if (cur->kids[0]->kids.size() > 1 &&
+        cur->kids[0]->kids[1]->kind == N::TypeKind)
+      return true;
+  return false;
+}
+
+// Whether an item is a generic function, `let f (t : type) ...`.
+bool genericItem(const Node &item) {
+  if (item.kind != N::LetItem || item.kids.empty()) return false;
+  for (const NodePtr &p : item.kids[0]->kids)
+    if (p->kind == N::Param && !p->kids.empty() &&
+        p->kids[0]->kids.size() > 1 && p->kids[0]->kids[1]->kind == N::TypeKind)
+      return true;
+  return false;
+}
+
+bool hasWord(const std::string &flags, const std::string &word) {
+  std::istringstream in(flags);
+  std::string w;
+  while (in >> w)
+    if (w == word) return true;
+  return false;
+}
+
+// Whether an item is a concept, `let meta C (t : type) : concept = sig`.
+bool conceptItem(const Node &item) {
+  return item.kind == N::LetItem && hasWord(item.flags, "meta") &&
+         item.kids.size() > 3 && item.kids[3]->kind == N::Sig;
+}
+
+// Whether an item is a spec function, `let spec f ...`.
+bool specItem(const Node &item) {
+  return item.kind == N::LetItem && hasWord(item.flags, "spec");
+}
+
+// Whether a sig entry is exported with its definition: a concept, a spec
+// function or a generic function (ADR 0039).
+bool inlinedSig(const Node &k) {
+  return k.kind == N::SigVal &&
+         (k.flags == "meta" || k.flags == "spec" || genericSig(k));
+}
+
+bool inlinedItem(const Node &item) {
+  return genericItem(item) || conceptItem(item) || specItem(item);
+}
+
+// The names an item uses, as names and as types.
+void namesIn(const Node &n, std::set<std::string> &out) {
+  if ((n.kind == N::Name && n.flags.empty()) || n.kind == N::TypeName ||
+      n.kind == N::TypeInst || n.kind == N::SigInclude)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids) namesIn(*k, out);
+}
+
+// The canonical text of a top-level item: its tokens from `start` up to
+// `end`, on one line.
+std::string canonicalItem(const std::vector<Token> &tokens, uint32_t start,
+                          uint32_t end) {
+  std::string out;
+  const Token *prev = nullptr;
+  for (const Token &t : tokens) {
+    if (t.kind == K::Eof || t.loc.offset >= end) break;
+    if (t.loc.offset < start || t.kind == K::Sep) continue;
+    if (prev && prev->loc.offset + prev->text.size() != t.loc.offset)
+      out += " ";
+    out += t.text;
+    prev = &t;
+  }
+  return out + "\n";
 }
 
 }  // namespace
@@ -194,6 +349,33 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
     a.module = header->text;
     a.name = item->text;
     a.text = "module " + header->text + "\n" + canonical(tokens, first);
+    // Generic functions and concepts are exported with their definitions,
+    // which importers instantiate and run (ADR 0039): the inline surface.
+    std::set<std::string> listed, inlined;
+    for (const NodePtr &k : item->kids)
+      if (k->kind == N::SigVal || k->kind == N::SigType) {
+        listed.insert(k->text);
+        if (inlinedSig(*k)) inlined.insert(k->text);
+      }
+    std::set<std::string> topLevel;
+    for (const NodePtr &other : program.kids)
+      if (other->kind == N::LetItem) topLevel.insert(other->text);
+    for (size_t i = 0; i < program.kids.size(); ++i) {
+      const Node &def = *program.kids[i];
+      if (!inlined.count(def.text) || !inlinedItem(def)) continue;
+      std::set<std::string> uses;
+      namesIn(def, uses);
+      for (const std::string &u : uses)
+        if (u != def.text && topLevel.count(u) && !listed.count(u))
+          diags.error(def.loc, "'" + def.text + "' is exported with its "
+                               "definition, which uses '" + u + "', which "
+                               "the interface '" + item->text +
+                               "' does not list");
+      uint32_t end = i + 1 < program.kids.size()
+                         ? program.kids[i + 1]->loc.offset
+                         : static_cast<uint32_t>(source.size());
+      a.text += canonicalItem(tokens, def.loc.offset, end);
+    }
     out.push_back(std::move(a));
   }
   return out;
@@ -209,8 +391,14 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
   std::set<std::string> imported;  // `M.f : <shape of its type>`
   std::vector<NodePtr> out;
   bool any = false;
+  // The program's own items, which `as` and `{ }` apply to; imported
+  // items name things as their own module does.
+  std::set<const Node *> own;
+  std::set<std::string> binders;
+  bindersIn(program, binders);
   for (NodePtr &item : program.kids) {
     if (item->kind != N::Import || theories.count(item->text)) {
+      own.insert(item.get());
       out.push_back(std::move(item));
       continue;
     }
@@ -245,7 +433,7 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     Diagnostics parsed;
     NodePtr artifact = parseProgram(*text, parsed);
     const Node *iface = nullptr, *header = nullptr;
-    if (!parsed.hasErrors() && artifact->kids.size() == 2) {
+    if (!parsed.hasErrors() && artifact->kids.size() >= 2) {
       header = artifact->kids[0].get();
       iface = artifact->kids[1].get();
     }
@@ -266,14 +454,44 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     for (const NodePtr &k : iface->kids)
       if (k->kind == N::SigVal || k->kind == N::SigType)
         members.insert(k->text);
+    // Shown types and concepts, which an inlined definition names through
+    // the module; its calls find the module's functions by their own
+    // names, as in the module (ADR 0039, section 6).
+    std::set<std::string> typesAndConcepts, inlined;
+    for (const NodePtr &k : iface->kids) {
+      // Spec functions are named through the module too: they are not
+      // overloaded, so the name finds the one definition.
+      if (k->kind == N::SigType ||
+          (k->kind == N::SigVal && (k->flags == "meta" || k->flags == "spec")))
+        typesAndConcepts.insert(k->text);
+      if (inlinedSig(*k)) inlined.insert(k->text);
+    }
     std::set<std::string> listed;
     for (const NodePtr &k : iface->kids) {
       if (k->kind == N::Attrs || k->kind == N::Comment) continue;
+      // A generic function or a concept comes in with its definition,
+      // below.
+      if (k->kind == N::SigVal && inlined.count(k->text)) {
+        imp.items.insert(module + "." + k->text);
+        continue;
+      }
+      if (k->kind == N::SigType) {
+        std::string qualified = module + "." + k->text;
+        // Two interfaces of one module may show the same type.
+        if (!imp.types.insert(qualified).second) continue;
+        collectCtors(*k, module, imp.ctors);
+        out.push_back(importedType(*k, module, members, at));
+        continue;
+      }
       if (k->kind != N::SigVal) {
-        diags.error(at, "importing the type '" + k->text + "' from " + where +
-                        " is not supported yet: imports bring in functions "
-                        "of builtin types, and types follow in ADR 0039 "
-                        "step 3");
+        diags.error(at, "importing '" + k->text + "' from " + where +
+                        " is not supported yet");
+        continue;
+      }
+      if (k->kids[0]->kids[1]->kind == N::TypeKind) {
+        diags.error(at, "importing the abstract type '" + k->text +
+                        "' from " + where + " is not supported yet: show "
+                        "its definition with '=' (ADR 0039, step 3)");
         continue;
       }
       // An overload set comes in whole: each overload is its own bodyless
@@ -293,10 +511,67 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       imp.items.insert(qualified);
       out.push_back(std::move(fn));
     }
+    for (size_t i = 2; i < artifact->kids.size(); ++i) {
+      const Node &def = *artifact->kids[i];
+      if (def.kind == N::Comment) continue;
+      if (def.kind != N::LetItem || !inlined.count(def.text) ||
+          !inlinedItem(def)) {
+        diags.error(at, "'" + found + "' is not an interface artifact: it "
+                        "defines '" + def.text + "', which is not a generic "
+                        "function, spec function or concept the interface "
+                        "lists");
+        continue;
+      }
+      NodePtr copy = clone(def);
+      copy->text = module + "." + def.text;
+      copy->flags += copy->flags.empty() ? "from:" + module : " from:" + module;
+      if (!imported.insert(copy->text + " = " + shape(*copy)).second) continue;
+      // Parameters keep their names; no binding shadows a member, since
+      // Pia has no shadowing.
+      std::set<std::string> params;
+      for (const NodePtr &p : copy->kids[0]->kids)
+        if (p->kind == N::Param) params.insert(p->text);
+      qualify(*copy, module, typesAndConcepts, params, params);
+      relocate(*copy, at);
+      out.push_back(std::move(copy));
+    }
     imp.modules.insert(module);
+    for (const NodePtr &k : item->kids) {
+      if (k->kind != N::Name) continue;
+      if (k->flags == "as") {
+        if (binders.count(k->text) || imp.aliases.count(k->text) ||
+            imp.unqualified.count(k->text))
+          diags.error(k->loc, "'" + k->text + "' is already a name in this "
+                              "file, so it cannot also name the module '" +
+                              module + "'");
+        else
+          imp.aliases[k->text] = module;
+        continue;
+      }
+      if (!members.count(k->text)) {
+        diags.error(k->loc, "the interface " + where + " has no '" +
+                            k->text + "'");
+        continue;
+      }
+      std::string qualified = module + "." + k->text;
+      auto prior = imp.unqualified.find(k->text);
+      if (prior != imp.unqualified.end() && prior->second == qualified)
+        continue;  // two interfaces of one module may list it
+      if (binders.count(k->text) || prior != imp.unqualified.end() ||
+          imp.aliases.count(k->text))
+        diags.error(k->loc, "importing '" + k->text + "' unqualified would "
+                            "shadow " + (prior != imp.unqualified.end()
+                                             ? "'" + prior->second + "'"
+                                             : "a name this file binds") +
+                            "; use '" + qualified + "' instead (ADR 0022)");
+      else
+        imp.unqualified[k->text] = qualified;
+    }
   }
   program.kids = std::move(out);
-  if (any) rewrite(program, imp, diags);
+  if (any)
+    for (NodePtr &item : program.kids)
+      if (own.count(item.get())) rewrite(*item, imp, diags);
 }
 
 }  // namespace pia::syntax

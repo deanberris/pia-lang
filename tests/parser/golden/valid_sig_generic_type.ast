@@ -1,0 +1,169 @@
+(Program
+  (ModuleHeader "Opt"
+    (Attrs)
+    (Paths
+      (Path "Ops")
+    )
+  )
+  (Interface "Ops"
+    (Attrs)
+    (SigType "option"
+      (Lambda
+        (LParam
+          (PVar "t")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (TypeValue
+          (Variants
+            (Ctor "None"
+              (None)
+            )
+            (Ctor "Some"
+              (TypeName "t")
+            )
+          )
+          (Attrs)
+          (None)
+        )
+      )
+    )
+    (SigType "pair"
+      (Lambda
+        (LParam
+          (PVar "a")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (LParam
+          (PVar "b")
+          (Annot
+            (Modifiers)
+            (TypeKind)
+            (None)
+          )
+        )
+        (TypeValue
+          (RecordType
+            (FieldDecl "fst"
+              (Annot
+                (Modifiers)
+                (TypeName "a")
+                (None)
+              )
+            )
+            (FieldDecl "snd"
+              (Annot
+                (Modifiers)
+                (TypeName "b")
+                (None)
+              )
+            )
+          )
+          (Attrs)
+          (None)
+        )
+      )
+    )
+    (SigVal "get"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "o"
+            (Modifiers)
+            (TypeApp
+              (TypeName "option")
+              (TypeName "u8")
+            )
+            (None)
+          )
+          (ArrowType
+            (Domain "d"
+              (Modifiers)
+              (TypeName "u8")
+              (None)
+            )
+            (TypeName "u8")
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
+  (Interface "Generic"
+    (Attrs)
+    (SigVal "Before" [meta]
+      (Annot
+        (Modifiers)
+        (TypeName "concept")
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+    (SigVal "weight" [spec]
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "a"
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+          (TypeName "int")
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts
+        (Ensures
+          (Binary ">="
+            (Name "result")
+            (IntLit "0")
+          )
+        )
+      )
+    )
+    (SigVal "smaller"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "t"
+            (Modifiers)
+            (TypeKind)
+            (Apply
+              (Name "Before")
+              (Name "t")
+            )
+          )
+          (ArrowType
+            (Domain "a"
+              (Modifiers)
+              (TypeName "t")
+              (None)
+            )
+            (ArrowType
+              (Domain "b"
+                (Modifiers)
+                (TypeName "t")
+                (None)
+              )
+              (TypeName "t")
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
+)

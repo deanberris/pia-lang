@@ -1,0 +1,23 @@
+(* An importer reasons with a spec function from another module's
+   interface (ADR 0039, step 3): it names it as `Calc.Range.within`, in its
+   own contracts and in its own spec code, and the verifier unfolds the
+   imported definition.
+// RUN: piac --emit=interface -o %t %S/Inputs/range.pia
+// RUN: piac --verify %S/Inputs/range.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Calc.Range.Range
+
+let spec teen (x : u8) : bool = Calc.Range.within x 13 19
+
+let teen_of (v : u8) : u8
+  ensures teen result
+  ensures result >= 13 && result <= 19
+= Calc.Range.clamp v 13 19
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

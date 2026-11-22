@@ -1,0 +1,11 @@
+(* Passes records and variants across modules (ADR 0039, step 3): exits 0
+   when Geo.Shapes's compiled code gives what its contracts promise. *)
+import Geo.Shapes.Shapes
+
+let main () : i32 =
+  let p = Geo.Shapes.swap { first = 3; second = 7 } in
+  let got = Geo.Shapes.first_or (Just 5) 0 in
+  match Geo.Shapes.side_of { x = -2; y = 1 } with
+  | Left -> if p.first = 7 && p.second = 3 && got = 5 then 0 else 1
+  | Right -> 2
+  | On -> 3

@@ -248,8 +248,9 @@ class Gen {
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
     for (const syntax::NodePtr &item : program.kids)
-      if (item->kind == NodeKind::LetItem && item->kids.size() > 3 &&
-          item->kids[3]->kind == NodeKind::TypeValue)
+      if ((item->kind == NodeKind::LetItem && item->kids.size() > 3 &&
+           item->kids[3]->kind == NodeKind::TypeValue) ||
+          sema::isGenericTypeItem(*item))
         typeItems_.emplace_back(item->text, item.get());
     checkModule(program);
     if (diags_.hasErrors()) return nullptr;
@@ -668,6 +669,9 @@ class Gen {
     if (it == sigs_.end() || it->second.isGeneric()) return;
     sema::FuncSig &sig = it->second;
     const Node &item = *sig.item;
+    // A generic function from another module's interface sees that
+    // module's functions, as its own body did there (ADR 0039).
+    AdlScope adl(adlModule_, fromModule(item));
     Location l = loc(item);
     // An instance's body sees its type parameters as their arguments.
     struct TypeScope {
@@ -709,6 +713,8 @@ class Gen {
                   b_.getStringAttr(e->second));
       if (abiC_.count(sig.name))
         fn->setAttr(PiaDialect::getAbiCAttrName(), b_.getUnitAttr());
+      if (auto n = linkNames_.find(sig.name); n != linkNames_.end())
+        fn->setAttr("pia.link_name", b_.getStringAttr(n->second));
     }
     for (size_t i = 0; i < sig.params.size(); ++i)
       if (!sig.params[i].modifiers.empty())
@@ -2913,8 +2919,37 @@ class Gen {
     // In a generic body, the requirements its constraints promise.
     if (auto r = promisedFns_.find(name); r != promisedFns_.end())
       for (sema::FuncSig *sig : r->second) out.push_back(sig);
+    // In code from another module, that module's functions by their own
+    // names (ADR 0039, section 6).
+    if (!adlModule_.empty() && name.find('.') == std::string::npos)
+      if (auto m = overloads_.find(adlModule_ + "." + name);
+          m != overloads_.end())
+        for (const std::string &symbol : m->second)
+          if (auto s = sigs_.find(symbol); s != sigs_.end())
+            if (!llvm::is_contained(out, &s->second)) out.push_back(&s->second);
     return out;
   }
+
+  // The module an imported item came from: its `from:M` flag.
+  static std::string fromModule(const Node &item) {
+    llvm::SmallVector<llvm::StringRef> words;
+    llvm::StringRef(item.flags).split(words, ' ', -1, false);
+    for (llvm::StringRef w : words)
+      if (w.consume_front("from:")) return w.str();
+    return "";
+  }
+
+  // Sets the module whose functions code may call by their own names,
+  // while it is generated, and restores the one before. An empty module
+  // keeps the one already set.
+  struct AdlScope {
+    std::string &slot;
+    std::string saved;
+    AdlScope(std::string &s, std::string module) : slot(s), saved(s) {
+      if (!module.empty()) slot = std::move(module);
+    }
+    ~AdlScope() { slot = std::move(saved); }
+  };
 
   // A call of an overloaded name (ADR 0034). Each argument that is not an
   // integer literal is generated once, at its own type. A candidate is
@@ -3914,6 +3949,9 @@ class Gen {
     // An `include` that comes back to this concept adds nothing new.
     met_[key] = std::nullopt;
     const Node &item = *concepts_.at(cname);
+    // An imported concept's requirements are met by functions of its
+    // module too, as `Pia.Core.Order.less` meets Ord's `less` (ADR 0039).
+    AdlScope adl(adlModule_, fromModule(item));
     std::map<std::string, Type> scope;
     size_t i = 0;
     for (const syntax::NodePtr &p : item.kids[0]->kids)
@@ -4022,6 +4060,10 @@ class Gen {
                           const sema::FuncSig &found,
                           const std::map<std::string, Type> &scope,
                           const AdapterInfo *via) {
+    if (writesParam(*req.kids[0]->kids[1])) {
+      queueContractCall(req, key, names, found, scope, via);
+      return;
+    }
     syntax::SourceLoc at = req.loc;
     std::map<std::string, std::string> rename;
     auto params = syntax::makeNode(NodeKind::Params, at);
@@ -4064,6 +4106,65 @@ class Gen {
                std::move(contracts), std::move(body), scope, at, via);
   }
 
+  // A function that writes its parameters honours a requirement's contract
+  // when a call of it, under the requirement's precondition, meets the
+  // requirement's postcondition, which may name the parameters after the
+  // call and, with `old`, before it. A lemma cannot say that, so the proof
+  // is a function with the requirement's contract and the parameters'
+  // modifiers, whose body is the call. Nothing calls it.
+  void queueContractCall(const Node &req, const std::string &key,
+                         const std::vector<std::string> &names,
+                         const sema::FuncSig &found,
+                         const std::map<std::string, Type> &scope,
+                         const AdapterInfo *via) {
+    syntax::SourceLoc at = req.loc;
+    std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
+    std::string symbol = key + "." + what + ".contract";
+    if (sigs_.count(symbol)) return;
+    std::map<std::string, std::string> rename;
+    auto params = syntax::makeNode(NodeKind::Params, at);
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, req.text));
+    const Node *cur = req.kids[0]->kids[1].get();
+    for (size_t i = 0; i < names.size(); ++i, cur = cur->kids[1].get()) {
+      const std::string &mine = found.params[i].name;
+      rename[names[i]] = mine;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, mine));
+      Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
+      annot->add(syntax::clone(*cur->kids[0]->kids[0]));
+      annot->add(syntax::clone(*cur->kids[0]->kids[1]));
+      annot->add(syntax::makeNode(NodeKind::None, at));
+      call->add(syntax::makeNode(NodeKind::Name, at, mine));
+    }
+    auto contracts = syntax::makeNode(NodeKind::Contracts, at);
+    for (const syntax::NodePtr &c : req.kids[2]->kids) {
+      NodePtr copy = syntax::clone(*c);
+      renameNames(*copy, rename, nullptr);
+      contracts->add(std::move(copy));
+    }
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    if (!adlModule_.empty()) item->flags = "from:" + adlModule_;
+    item->add(std::move(params));
+    Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::clone(*cur));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    item->add(std::move(contracts));
+    item->add(std::move(call));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    sig.typeArgs = scope;
+    for (auto &[name, type] : scope) sig.typeParams.push_back(name);
+    if (via) sig.adapted = via->fns;
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return;
+    sigs_.emplace(symbol, std::move(sig));
+    pendingInstances_.push_back(symbol);
+  }
+
   // Renames free names in a contract; `result` becomes `call` when given.
   static void renameNames(Node &n, const std::map<std::string, std::string> &to,
                           const Node *call) {
@@ -4086,6 +4187,7 @@ class Gen {
     if (sigs_.count(symbol)) return;
     auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
     item->flags = "lemma";
+    if (!adlModule_.empty()) item->flags += " from:" + adlModule_;
     item->add(std::move(params));
     Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
     Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
@@ -4169,6 +4271,16 @@ class Gen {
       }
       checkInterface(*header, *it->second, shown);
     }
+    // An exported function's symbols come from what the interfaces list,
+    // never from private overloads (#204): a name exported once is linked
+    // and entered by that name, and only a name exported with several
+    // overloads carries the parameter types, as `f(u8)`.
+    std::map<std::string, unsigned> listed;
+    for (const auto &[symbol, path] : exports_) ++listed[sigs_.at(symbol).source()];
+    for (const auto &[symbol, path] : exports_) {
+      const std::string &name = sigs_.at(symbol).source();
+      linkNames_[symbol] = listed[name] == 1 ? name : symbol;
+    }
   }
 
   // `@abi(c)` and `@within(Prefix)` are an interface's attributes.
@@ -4232,7 +4344,54 @@ class Gen {
         continue;
       }
       if (r.kind != NodeKind::SigVal) continue;
+      // `let meta C : concept`: the concept, exported with its definition.
+      if (r.flags == "meta") {
+        if (!concepts_.count(r.text))
+          diags_.error(r.loc, unmet + "no concept '" + r.text + "'");
+        continue;
+      }
       const Node &type = *r.kids[0]->kids[1];
+      // `let spec f : ...`: a spec function, exported with its definition
+      // so importers reason with its body; codegen erases it, so it has
+      // no link symbol.
+      if (r.flags == "spec") {
+        if (std::optional<std::string> name = privateType(type, shown))
+          diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
+                                  "names '" + *name + "', which no "
+                                  "interface of '" + header.text + "' lists");
+        bool found = false;
+        for (const std::string &symbol : overloads_[r.text])
+          found = found || (sigs_.at(symbol).item &&
+                            hasFlag(*sigs_.at(symbol).item, "spec") &&
+                            sameSignature(r, *sigs_.at(symbol).item));
+        if (!found)
+          diags_.error(r.loc, unmet + "no spec function '" + r.text +
+                                  "' with exactly this signature; a spec "
+                                  "function is exported with its definition, "
+                                  "so its interface entry repeats its "
+                                  "parameters and result");
+        continue;
+      }
+      // A generic function is exported with its definition, which
+      // importers instantiate, so the interface repeats its signature and
+      // contract exactly.
+      if (isGenericSig(type)) {
+        if (std::optional<std::string> name = privateType(type, shown))
+          diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
+                                  "names '" + *name + "', which no "
+                                  "interface of '" + header.text + "' lists");
+        bool found = false;
+        for (const std::string &symbol : overloads_[r.text])
+          found = found || (sigs_.at(symbol).isGeneric() &&
+                            sameSignature(r, *sigs_.at(symbol).item));
+        if (!found)
+          diags_.error(r.loc, unmet + "no generic function '" + r.text +
+                                  "' with exactly this signature; a generic "
+                                  "function is exported with its definition, "
+                                  "so its interface entry repeats its "
+                                  "parameters and result");
+        continue;
+      }
       if (type.kind == NodeKind::TypeKind) {
         if (!types_.named(r.text) && !typeItem(r.text))
           diags_.error(r.loc, unmet + "no type '" + r.text + "'");
@@ -4242,12 +4401,6 @@ class Gen {
         if (types_.resolve(type) != Type(c->second.type))
           diags_.error(r.loc, unmet + "'" + r.text + "' has type " +
                                   typeName(c->second.type));
-        continue;
-      }
-      if (hasEnsures(r) && writesParam(type)) {
-        diags_.error(r.loc, "an interface cannot yet state a postcondition "
-                            "of '" + r.text + "', which has out or inout "
-                            "parameters");
         continue;
       }
       if (std::optional<std::string> name = privateType(type, shown))
@@ -4266,6 +4419,48 @@ class Gen {
       exports_.emplace(symbol, header.text);
       if (hasAbiC(iface)) abiC_.insert(symbol);
     }
+  }
+
+  // Whether a signature's type takes a type parameter, `(t : type) -> ...`.
+  static bool isGenericSig(const Node &type) {
+    for (const Node *cur = &type; cur->kind == NodeKind::ArrowType;
+         cur = cur->kids[1].get())
+      if (cur->kids[0]->kids.size() > 1 &&
+          cur->kids[0]->kids[1]->kind == NodeKind::TypeKind)
+        return true;
+    return false;
+  }
+
+  // Whether `let f : (a : t) -> r` in a sig has exactly the parameters
+  // and result of the definition `let f (a : t) : r = ...`.
+  static bool sameSignature(const Node &sigVal, const Node &def) {
+    const Node *cur = sigVal.kids[0]->kids[1].get();
+    const Node &params = *def.kids[0];
+    auto none = [](const Node *n) { return !n || n->kind == NodeKind::None; };
+    for (const syntax::NodePtr &p : params.kids) {
+      if (p->kind != NodeKind::Param || cur->kind != NodeKind::ArrowType ||
+          p->kids.empty())
+        return false;
+      const Node &dom = *cur->kids[0];
+      const Node &annot = *p->kids[0];
+      if (dom.text != p->text || dom.kids.size() < 2 || annot.kids.size() < 2 ||
+          !sameTree(*dom.kids[0], *annot.kids[0]) ||
+          !sameTree(*dom.kids[1], *annot.kids[1]))
+        return false;
+      const Node *w1 = dom.kids.size() > 2 ? dom.kids[2].get() : nullptr;
+      const Node *w2 = annot.kids.size() > 2 ? annot.kids[2].get() : nullptr;
+      if (none(w1) != none(w2) || (!none(w1) && !sameTree(*w1, *w2)))
+        return false;
+      cur = cur->kids[1].get();
+    }
+    if (cur->kind == NodeKind::ArrowType) return false;
+    const Node &ret = *def.kids[1];
+    if (ret.kind != NodeKind::RetAnnot || ret.kids.empty() ||
+        ret.kids[0]->kids.size() < 2 || !sameTree(*ret.kids[0]->kids[1], *cur))
+      return false;
+    // Importers get the definition's contract with its body, so the
+    // interface's copy is documentation; the artifact holds the real one.
+    return true;
   }
 
   static bool hasEnsures(const Node &sigVal) {
@@ -4332,6 +4527,7 @@ class Gen {
   // function, and every instance it made, is thrown away.
   void checkDefinition(const std::string &symbol) {
     const sema::FuncSig &generic = sigs_.at(symbol);
+    AdlScope adl(adlModule_, fromModule(*generic.item));
     std::map<std::string, Type> bound;
     for (const std::string &t : generic.typeParams) {
       Type a = RecordType::get(&ctx_, t, {}, {});
@@ -7177,6 +7373,11 @@ class Gen {
   // Exported function symbols (ADR 0039), each with its module's path, or
   // empty for a plain C name.
   std::map<std::string, std::string> exports_;
+  // The module whose functions the code being generated may call by their
+  // own names: the module of an imported generic function or concept.
+  std::string adlModule_;
+  // Each exported function's name for linking and its C entry point.
+  std::map<std::string, std::string> linkNames_;
   // The exported functions whose C entry points keep their plain names.
   std::set<std::string> abiC_;
   // The program's top-level type items, by name.

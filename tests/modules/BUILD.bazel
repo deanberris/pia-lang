@@ -57,3 +57,25 @@ sh_test(
     data = [":grey"],
     target_compatible_with = APPLE_SILICON,
 )
+
+# Records and variants passed between separately compiled modules.
+pia_library(
+    name = "shapes",
+    src = "Inputs/shapes.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "shapes_run",
+    src = "Inputs/shapes_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [":shapes"],
+)
+
+sh_test(
+    name = "shapes_run_test",
+    srcs = ["shapes_run_test.sh"],
+    args = ["$(rootpath :shapes_run)"],
+    data = [":shapes_run"],
+    target_compatible_with = APPLE_SILICON,
+)

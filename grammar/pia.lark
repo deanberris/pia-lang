@@ -40,7 +40,8 @@ module_header: MODULE path attribute* (COLON path (COMMA path)*)?
 // e.g. `tiled_matmul `sgemm_4x16 f32 4 16 64 4`.
 expr_item: app
 
-import_item: IMPORT path IDENT?               // `import M trusting` (ADR 0036)
+import_item: IMPORT path (AS IDENT)? import_names? IDENT?   // `import M.I as X { a, b } trusting` (ADR 0036, 0039)
+import_names: (LBRACE | LBRACE_ADJ) IDENT (COMMA IDENT)* RBRACE
 path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
@@ -310,7 +311,10 @@ pfield: IDENT (EQ pattern)?
 
 interface_item: INTERFACE IDENT attribute* EQ SIG sig_item* END
 sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
+        | LET META binder COLON annot                  -> sig_meta
+        | LET SPEC binder COLON annot ret_attrs contract* -> sig_spec
         | LET binder EQ type_value                     -> sig_type
+        | LET binder EQ LET lparam+ FATARROW type_value -> sig_generic_type
         | HOLE                                         -> sig_hole
 
 // A concept's body (ADR 0034): a signature that may also include another

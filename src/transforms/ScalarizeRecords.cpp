@@ -149,6 +149,25 @@ struct FieldLowering : mlir::OpConversionPattern<FieldOp> {
   }
 };
 
+// An arbitrary record, the result of an imported function (ADR 0039), is
+// an arbitrary value per field.
+struct ArbitraryLowering : mlir::OpConversionPattern<ArbitraryOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      ArbitraryOp op, OneToNOpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    llvm::SmallVector<Type> types;
+    leaves(op.getResult().getType(), types);
+    llvm::SmallVector<Value> fields;
+    for (Type t : types)
+      fields.push_back(make<ArbitraryOp>(rw, op.getLoc(), t).getResult());
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(fields));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
 // `old p` on a record is `old` of each field.
 struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -434,7 +453,8 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<RecordLowering, FieldLowering, OldLowering, LoadLowering,
+  patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, OldLowering,
+               LoadLowering,
                StoreLowering, SliceLowering, LenLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);

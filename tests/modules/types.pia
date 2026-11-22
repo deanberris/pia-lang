@@ -1,0 +1,41 @@
+(* An importer uses the types an interface shows (ADR 0039, step 3): it
+   names them through the module, `Geo.Shapes.side`, builds and matches
+   their values, and its constructors are in scope as they are, or through
+   the module, `Geo.Shapes.Just`. Calls are checked against the contracts
+   alone.
+// RUN: piac --emit=interface -o %t %S/Inputs/shapes.pia
+// RUN: piac --verify %S/Inputs/shapes.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Geo.Shapes.Shapes
+
+let classify (x : i32) : Geo.Shapes.side
+  ensures x < 0 ==> result = Left
+  ensures x = 0 ==> result = Geo.Shapes.On
+= Geo.Shapes.side_of { x = x; y = 0 }
+
+let code (s : Geo.Shapes.side) : u8
+  ensures s = Left ==> result = 0
+= match s with
+  | Left -> 0
+  | Right -> 1
+  | On -> 2
+
+let get (v : u8) : u8
+  ensures result = v
+= Geo.Shapes.first_or (Just v) 0
+
+let fallback (d : u8) : u8
+  ensures result = d
+= Geo.Shapes.first_or Geo.Shapes.Nothing d
+
+let flip (a : u8) (b : u8) : u8
+  ensures result = b
+= let p = Geo.Shapes.swap { first = a; second = b } in p.first
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

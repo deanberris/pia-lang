@@ -233,6 +233,27 @@ class Parser {
         auto n = makeNode(N::Import, loc());
         take();
         n->text = path();
+        // `import M.I as X` names the module X here, and `{ a, b }` also
+        // brings a and b in unqualified (ADR 0039).
+        if (at(K::As)) {
+          SourceLoc l = loc();
+          take();
+          n->add(makeNode(N::Name, l,
+                          std::string(expect(K::Ident, "a local module name")
+                                          .text)))
+              ->flags = "as";
+        }
+        if (at(K::LBrace) || at(K::LBraceAdj)) {
+          take();
+          while (!at(K::RBrace)) {
+            SourceLoc l = loc();
+            n->add(makeNode(N::Name, l,
+                            std::string(expect(K::Ident, "a name to import")
+                                            .text)));
+            if (!accept(K::Comma)) break;
+          }
+          expect(K::RBrace, "'}'");
+        }
         // `import M trusting` accepts every trusted axiom of the theories M
         // exports (ADR 0036); `trusting` is a keyword only here.
         if (at(K::Ident) && text() == "trusting") {
@@ -646,11 +667,22 @@ class Parser {
         n.add(std::move(law));
         continue;
       }
+      // `let meta C : concept` lists a concept, which an interface exports
+      // with its definition (ADR 0039).
+      bool meta = !isConcept && accept(K::Meta);
+      // `let spec f : ...` lists a spec function, which is exported with
+      // its definition, since importers reason with its body (ADR 0039).
+      bool spec = !isConcept && !meta && accept(K::Spec);
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
+      if (meta && !at(K::Colon)) fail("expected ':' after a concept's name");
+      if (spec && !at(K::Colon))
+        fail("expected ':' after a spec function's name");
       if (accept(K::Colon)) {
         auto v = makeNode(N::SigVal, start, name);
+        if (meta) v->flags = "meta";
+        if (spec) v->flags = "spec";
         v->add(annot());
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
@@ -658,8 +690,14 @@ class Parser {
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);
-        if (!at(K::Type)) fail("expected 'type' in a signature type definition");
-        t->add(typeValue());
+        // A generic type is shown as it is defined, `let (t : type) =>
+        // type ...` (ADR 0039).
+        if (at(K::Let) && kind(1) == K::LParen)
+          t->add(lambda(/*elemBody=*/false));
+        else if (!at(K::Type))
+          fail("expected 'type' in a signature type definition");
+        else
+          t->add(typeValue());
         n.add(std::move(t));
       } else {
         fail("expected ':' or '=' after the name");

@@ -161,7 +161,7 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
 item      = let_item | meta_operator | interface | module | import | theory | model | file_attr | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
-import    = "import" path [ "trusting" ] ;                (* trusting: ADR 0036 *)
+import    = "import" path [ "as" IDENT ] [ "{" IDENT { "," IDENT } "}" ] [ "trusting" ] ;   (* as, { }: ADR 0039; trusting: ADR 0036 *)
 path      = IDENT { "." IDENT } ;
 ```
 
@@ -315,7 +315,10 @@ pfield       = IDENT [ "=" pattern ] ;
 ```ebnf
 interface = "interface" IDENT { attribute } "=" "sig" { sig_item } "end" ;   (* @abi(c), @within(...) *)
 sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
+          | "let" "meta" binder ":" annot                         (* exported concept, "let meta Ord : concept" *)
+          | "let" "spec" binder ":" annot { attribute } { contract }   (* exported spec function, with its definition *)
           | "let" binder "=" type_value                           (* exported type *)
+          | "let" binder "=" "let" lparam { lparam } "=>" type_value   (* exported generic type *)
           | "..." ;
 sig_value = "sig" { sig_item | concept_item } "end" ;          (* a concept's body *)
 concept_item = "include" type                                  (* "include" is contextual *)
