@@ -11,6 +11,7 @@ DOCS = [
     "//docs:tour.md",
     "//docs:verification.md",
     "//docs:repl.md",
+    "//docs:repl-debugging.md",
     "//docs:status.md",
     "//docs:streams.pia.md",
 ]
