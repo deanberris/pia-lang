@@ -51,5 +51,6 @@ let seven () : u8
 // CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
 // CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
 // CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
-// CHECK: 11 proved, 0 failed, 0 skipped
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [generic]
+// CHECK: 12 proved, 0 failed, 0 skipped
 *)

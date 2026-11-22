@@ -379,6 +379,14 @@ class Encoder {
       sorts_.insert(so.getName().str());
       return mlir::smt::SortType::get(ctx_, so.getName());
     }
+    // A type parameter in a generic's proof (ADR 0043) is a record with no
+    // fields, which ScalarizeRecords leaves there: an uninterpreted sort.
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      if (r.getFieldTypes().empty() && fn_ && fn_->hasAttr("pia.generic_proof")) {
+        std::string name = "generic." + r.getName().str();
+        sorts_.insert(name);
+        return mlir::smt::SortType::get(ctx_, name);
+      }
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
@@ -2130,8 +2138,11 @@ class Encoder {
 
   void declareSpecFunctions() {
     auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
+    bool inGenericProof = fn_ && fn_->hasAttr("pia.generic_proof");
     for (auto f : module_.getOps<mlir::func::FuncOp>()) {
       if (!hasSpecDecl(f)) continue;
+      // A generic's proof's functions are over its sorts (ADR 0043).
+      if (f->hasAttr("pia.generic_proof") && !inGenericProof) continue;
       // A model is sealed: outside it, a query never sees its functions.
       if (auto m = f->getAttrOfType<mlir::StringAttr>("pia.model"))
         if (!here || here != m) continue;
@@ -2639,6 +2650,10 @@ struct Query {
   bool truncated = false;           // an unfolding stopped at the fuel
   std::vector<std::string> axioms;  // the axioms it was given
   std::vector<std::string> assumes;  // the `assume`s it asserts
+  // A generic's proof over sorts (ADR 0043): its axioms are requirement
+  // contracts, proved at each type, so which ones a proof used is not
+  // reported, and the query is solved once.
+  bool genericProof = false;
   // The axiom assertions, by their index among the query's assertions,
   // and how many assertions there are: for tracking unsat cores.
   std::map<unsigned, std::string> axiomAsserts;
@@ -2783,6 +2798,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.theories = enc.usesTheories();
   q.truncated = enc.truncated();
   q.axioms = enc.sentAxioms();
+  q.genericProof = fn->hasAttr("pia.generic_proof");
   q.assumes = enc.sentAssumes();
   if (target < 0) return q;
   std::map<unsigned, std::string> axiomNames;
@@ -2838,6 +2854,7 @@ Query buildTheoryQuery(mlir::ModuleOp module, mlir::func::FuncOp axiom,
   Query q;
   q.reached = true;
   q.axioms = enc.sentAxioms();
+  q.genericProof = axiom->hasAttr("pia.generic_proof");
   std::map<unsigned, std::string> axiomNames;
   unsigned k = 0;
   for (Operation &op : *block)
@@ -3304,7 +3321,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
       out.status = Status::Proved;
       out.method = "smt";
       if (options.reportCost) out.cost = now - before;
-      if (!q.axioms.empty() || !q.assumes.empty())
+      if ((!q.axioms.empty() && !q.genericProof) || !q.assumes.empty())
         out.axiomsUsed = used(full, q);
       if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
       return;
@@ -3697,7 +3714,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     std::map<std::string, mlir::func::FuncOp> trusted;
     for (auto fn : module.getOps<mlir::func::FuncOp>())
       if (fn->hasAttr(PiaDialect::getAxiomAttrName()) &&
-          !fn->hasAttr("pia.modelled") && !theoryOf(fn).empty())
+          !fn->hasAttr("pia.modelled") && !theoryOf(fn).empty() &&
+          // A requirement's contract in a generic's proof is proved at
+          // every type that meets the concept, not trusted (ADR 0043).
+          !fn->hasAttr("pia.generic_proof"))
         trusted.emplace(theoryOf(fn), fn);
     for (auto &[theory, first] : trusted) {
       TheoryCheck c;
@@ -3781,6 +3801,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       out.where = formatLoc(g.op->getLoc());
       out.function = fn.getSymName().str();
       out.claim = g.claim;
+      out.generic = fn->hasAttr("pia.generic_proof");
       if (!options.only.empty() &&
           std::none_of(options.only.begin(), options.only.end(),
                        [&](const std::string &spec) {
@@ -3892,6 +3913,26 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                   mlir::StringAttr::get(module.getContext(),
                                         state.second ? "smt" : "intervals"));
   }
+  // ADR 0043: what was proved over sorts, the instances of those generics,
+  // and the generics proved only at their instances.
+  std::set<std::string> provedGenerically;
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (auto g = fn->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+      if (!fn.isExternal() && !fn->hasAttr(PiaDialect::getAxiomAttrName()))
+        provedGenerically.insert(g.getValue().str());
+  for (const Outcome &o : outcomes)
+    if (o.generic) ++st.genericGoals;
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (auto i = fn->getAttrOfType<mlir::StringAttr>("pia.instance_of"))
+      if (provedGenerically.count(i.getValue().str())) ++st.instances;
+  if (auto notes = module->getAttrOfType<mlir::ArrayAttr>("pia.not_parametric"))
+    for (mlir::Attribute a : notes) {
+      llvm::SmallVector<llvm::StringRef, 3> parts;
+      mlir::cast<mlir::StringAttr>(a).getValue().split(parts, '\t', 2);
+      if (parts.size() == 3)
+        st.notParametric.push_back(
+            {parts[0].str(), parts[1].str(), parts[2].str()});
+    }
   if (stats) *stats = st;
   return outcomes;
 }

@@ -5,6 +5,7 @@
 #define PIA_VERIFY_VERIFIER_H
 
 #include <optional>
+#include <array>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,9 @@ struct Outcome {
   std::vector<std::string> axiomsUsed;
   // For a failed goal: advice on what may be missing, such as fuel.
   std::string hint;
+  // A goal of a generic's proof over sorts, which holds at every type that
+  // meets its concepts (ADR 0043).
+  bool generic = false;
 };
 
 struct Options {
@@ -120,6 +124,11 @@ struct Stats {
   unsigned typeGoals = 0, typeSmt = 0;
   unsigned contractGoals = 0, contractSmt = 0;
   unsigned long long typeCost = 0, contractCost = 0;
+  // ADR 0043: goals of generics' proofs over sorts, and instances of the
+  // generics proved that way (still proved too, in step 1).
+  unsigned genericGoals = 0, instances = 0;
+  // The generics proved only at their instances: "where", "generic", "why".
+  std::vector<std::array<std::string, 3>> notParametric;
   // Each axiom's triggers, as written: `Lip.seq_lip` -> {"Lip.seq f g"}.
   std::vector<std::pair<std::string, std::vector<std::string>>> triggers;
   // The consistency check of each trusted theory (ADR 0036).

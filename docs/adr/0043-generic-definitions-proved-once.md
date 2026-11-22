@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Proposed. Step 1 is implemented ([verifier.md](../verifier.md#generic-functions)).
 
 ## Context
 
@@ -112,6 +112,26 @@ Each step is a PR with its own tests and bench numbers.
 - Failed generic goals show models over sorts, which are less familiar than integer counterexamples. The report names the uninterpreted functions after the concept (`Ord.less`) to keep them readable.
 - The per-instance path stays, for non-parametric bodies, so the verifier keeps both encodings.
 - Laws in every query of a generic body cost what theory axioms do, and get the same relevance filtering.
+
+## Step 1 as built
+
+Step 1 follows section 1 with these differences:
+
+- **Stand-ins stay records.** IRGen keeps the definition check's stand-in records rather than making the type parameters `!pia.sort`, which code cannot use. ScalarizeRecords sets the generic's proof aside, and the verifier reads a record with no fields in it as the sort `generic.t`. A sort is named after its type parameter, so every generic's `t` is the same sort, which is harmless because each proof is a query of its own.
+- **Requirements are a theory.** Each concept at the stand-ins is a theory, `Ord<t>`, whose functions are the requirements and whose axioms are their contracts. ADR 0036's relevance closure and fallback come with it. Its consistency check, which trusted theories get, is skipped, since every type that meets the concept proves the axioms. So is the second, tracked solve that reports which axioms a proof used.
+- **More falls back.** Generic types over a type parameter (`option t`, `pair a b`) and requirements with a precondition or a record result fall back to per-instance proof, rather than being encoded as datatypes over sorts. So `Pia.Core.Order`'s `compare`, which returns an `ordering`, is proved only at its instances.
+- **The report** marks every proof goal `[generic]`, and lists each fallback with its reason, outside the goal counts.
+
+Measured on `Pia.Core.Order`, the generic proofs cost about what one instance does or less:
+
+| Generic | Generic proof | One instance |
+| --- | ---: | ---: |
+| `lex_compare` | 5.69M | 6.33M (`u8`) |
+| `lex_from` | 1.17M | 1.17M (`u8`) |
+| `min`, `max` | 52 | about 230 |
+| `swap` | 744 | about 83,000 |
+
+The module costs 16.6M, up from 9.75M: the 6.86M of its generic proofs, while its instances are still proved, as step 1 intends. `tests/verify/generic_proofs.pia` proves the lexicographic compare once and again at `u8`, `i32` and `u64`.
 
 ## Feasibility
 

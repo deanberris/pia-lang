@@ -56,5 +56,10 @@ let use_pick (x : u8) : u8 = pick x x
 // CHECK: generic_functions.pia:22:3: proved: the postcondition holds [smt]
 // CHECK: generic_functions.pia:46:3: failed: the postcondition holds
 // CHECK-NEXT: counterexample: a = {{-?[0-9]+}}, b = {{-?[0-9]+}}
-// CHECK: 4 proved, 1 failed, 0 skipped
+// CHECK: generic_functions.pia:13:3: proved: the postcondition holds [generic]
+// CHECK: generic_functions.pia:46:3: proved: the postcondition holds [generic]
+// CHECK: generic_functions.pia:21:1: not proved generically: 'flip' is proved at each instance, since it returns a value of pair<b, a> [generic]
+// CHECK: generic_functions.pia:31:1: not proved generically: 'unwrap_or' is proved at each instance, since it takes a value of option<t> [generic]
+// CHECK: generic_functions.pia:40:1: not proved generically: 'none' is proved at each instance, since it returns a value of option<t> [generic]
+// CHECK: 6 proved, 1 failed, 0 skipped
 *)

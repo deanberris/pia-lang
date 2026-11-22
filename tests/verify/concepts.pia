@@ -53,5 +53,6 @@ let pixels_alike (p : pixel) (q : pixel) : bool = alike p q
 // CHECK: concepts.pia:17:33: proved: the postcondition holds [smt]
 // CHECK: concepts.pia:35:3: proved: the postcondition holds [smt]
 // CHECK: concepts.pia:10:31: proved: the postcondition holds [smt]
-// CHECK: 9 proved, 0 failed, 0 skipped
+// CHECK: concepts.pia:35:3: proved: the postcondition holds [generic]
+// CHECK: 10 proved, 0 failed, 0 skipped
 *)

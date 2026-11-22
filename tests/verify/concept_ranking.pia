@@ -63,5 +63,9 @@ let off_diagonal (p : pair u8 u16) : u8
 // CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:46:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:42:3: proved: the postcondition holds [smt]
-// CHECK: 8 proved, 0 failed, 0 skipped
+// CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [generic]
+// CHECK: concept_ranking.pia:26:3: proved: the postcondition holds [generic]
+// CHECK: concept_ranking.pia:41:1: not proved generically: 'shape' is proved at each instance, since it takes a value of pair<a, b> [generic]
+// CHECK: concept_ranking.pia:45:1: not proved generically: 'shape#2' is proved at each instance, since it takes a value of pair<t, t> [generic]
+// CHECK: 10 proved, 0 failed, 0 skipped
 *)

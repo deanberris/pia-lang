@@ -856,6 +856,9 @@ std::string linkSymbol(llvm::StringRef path, llvm::StringRef name) {
 }  // namespace
 
 void eraseContracts(mlir::ModuleOp module) {
+  // A generic's proof over sorts (ADR 0043) is for the verifier only.
+  for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
+    if (f->hasAttr("pia.generic_proof")) f.erase();
   // An imported function's body is its interface's contract, for the
   // verifier. The code is in its module's object file, so what remains is
   // a declaration of the module's link symbol (ADR 0039).

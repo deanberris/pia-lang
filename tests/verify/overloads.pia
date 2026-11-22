@@ -58,5 +58,6 @@ let general (b : bool) : u8
 // CHECK: overloads.pia:42:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:46:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:34:3: proved: the postcondition holds [smt]
-// CHECK: 11 proved, 0 failed, 0 skipped
+// CHECK: overloads.pia:34:3: proved: the postcondition holds [generic]
+// CHECK: 12 proved, 0 failed, 0 skipped
 *)

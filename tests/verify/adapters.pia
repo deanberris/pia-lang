@@ -53,5 +53,6 @@ let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
 // CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
 // CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
 // CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
-// CHECK: 9 proved, 0 failed, 0 skipped
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [generic]
+// CHECK: 10 proved, 0 failed, 0 skipped
 *)

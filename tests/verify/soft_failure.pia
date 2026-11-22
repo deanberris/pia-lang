@@ -29,5 +29,7 @@ let general (x : u64) : u8
 // CHECK: soft_failure.pia:24:3: proved: the postcondition holds [smt]
 // CHECK: soft_failure.pia:16:3: proved: the postcondition holds [smt]
 // CHECK: soft_failure.pia:12:3: proved: the postcondition holds [smt]
-// CHECK: 4 proved, 0 failed, 0 skipped
+// CHECK: soft_failure.pia:12:3: proved: the postcondition holds [generic]
+// CHECK: soft_failure.pia:15:1: not proved generically: 'pick#2' is proved at each instance, since its signature applies a type-level metaprogram to a type parameter [generic]
+// CHECK: 5 proved, 0 failed, 0 skipped
 *)

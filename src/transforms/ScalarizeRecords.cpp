@@ -332,7 +332,32 @@ static void pruneFieldCopies(mlir::ModuleOp module) {
   }
 }
 
+mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module);
+
+// A generic's proof over sorts keeps its stand-in types, which the
+// verifier encodes as uninterpreted sorts (ADR 0043), so it is set aside
+// while the rest of the module is converted.
 mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
+  std::vector<mlir::func::FuncOp> proofs;
+  for (auto f : module.getOps<mlir::func::FuncOp>())
+    if (f->hasAttr("pia.generic_proof")) proofs.push_back(f);
+  if (proofs.empty()) return scalarizeRecordsIn(module);
+  mlir::OpBuilder b(module.getContext());
+  auto aside = mlir::ModuleOp::create(module.getLoc());
+  for (auto f : proofs) {
+    f->remove();
+    aside.getBody()->push_back(f);
+  }
+  mlir::LogicalResult r = scalarizeRecordsIn(module);
+  for (auto f : proofs) {
+    f->remove();
+    module.getBody()->push_back(f);
+  }
+  aside.erase();
+  return r;
+}
+
+mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   if (!hasRecords(module)) return mlir::success();
   mlir::MLIRContext *ctx = module.getContext();
 
@@ -345,7 +370,8 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   };
   std::vector<std::pair<mlir::func::FuncOp, std::vector<Named>>> params;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
-    if (f.isExternal()) continue;
+    // A generic's proof keeps its parameters (ADR 0043).
+    if (f.isExternal() || f->hasAttr("pia.generic_proof")) continue;
     std::vector<Named> ps;
     for (mlir::BlockArgument a : f.getArguments()) {
       mlir::Location inner = a.getLoc();
@@ -388,10 +414,21 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   mlir::ConversionTarget target(*ctx);
   target.addIllegalOp<RecordOp, FieldOp>();
   target.addDynamicallyLegalOp<LoadOp, StoreOp, SliceOp, LenOp>(
-      [&](mlir::Operation *op) { return types.isLegal(op); });
-  target.markUnknownOpDynamicallyLegal(
-      [&](mlir::Operation *op) { return types.isLegal(op); });
+      [&](mlir::Operation *op) {
+        auto f = op->getParentOfType<mlir::func::FuncOp>();
+        return (f && f->hasAttr("pia.generic_proof")) || types.isLegal(op);
+      });
+  auto inGenericProof = [](mlir::Operation *op) {
+    auto f = op->getParentOfType<mlir::func::FuncOp>();
+    return f && f->hasAttr("pia.generic_proof");
+  };
+  target.markUnknownOpDynamicallyLegal([&](mlir::Operation *op) {
+    return inGenericProof(op) || types.isLegal(op);
+  });
   target.addDynamicallyLegalOp<mlir::func::FuncOp>([&](mlir::func::FuncOp f) {
+    // A generic's proof over sorts keeps its stand-in types, which the
+    // verifier encodes as uninterpreted sorts (ADR 0043).
+    if (f->hasAttr("pia.generic_proof")) return true;
     return types.isSignatureLegal(f.getFunctionType()) &&
            types.isLegal(&f.getBody());
   });
@@ -405,6 +442,7 @@ mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module) {
   mlir::populateReturnOpTypeConversionPattern(patterns, types);
   mlir::scf::populateSCFStructuralTypeConversionsAndLegality(types, patterns,
                                                              target);
+
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
     return mlir::failure();

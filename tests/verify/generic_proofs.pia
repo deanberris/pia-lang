@@ -1,0 +1,122 @@
+(* A generic's body is proved once, over its type parameters as
+   uninterpreted sorts, with its concepts' functions uninterpreted and
+   their requirement contracts as axioms (ADR 0043, step 1). Its goals are
+   reported [generic]. Its instances are still proved too, in this step.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+  let lemma symmetric (a : t) (b : t) requires same a b ensures same b a
+  let lemma transitive (a : t) (b : t) (c : t)
+    requires same a b && same b c
+    ensures same a c
+end
+
+let meta Ord (t : type) : concept = sig
+  include Eq t
+  let less : (a : t) -> (b : t) -> bool
+    ensures result ==> less b a = false
+  let lemma irreflexive (a : t) ensures less a a = false
+  let lemma less_transitive (a : t) (b : t) (c : t)
+    requires less a b && less b c
+    ensures less a c
+  let lemma incomparable_transitive (a : t) (b : t) (c : t)
+    requires less a b = false && less b a = false && less b c = false && less c b = false
+    ensures less a c = false && less c a = false
+  let lemma distinct (a : t) (b : t) requires less a b ensures same a b = false
+end
+
+let same (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let less (a : u8) (b : u8) : bool
+  ensures result <==> a < b
+= (a < b)
+
+let same (a : i32) (b : i32) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let less (a : i32) (b : i32) : bool
+  ensures result <==> a < b
+= (a < b)
+
+let same (a : u64) (b : u64) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let less (a : u64) (b : u64) : bool
+  ensures result <==> a < b
+= (a < b)
+
+(* False for every Ord t, and nothing instantiates it: it fails at its
+   definition.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:3: failed: the postcondition holds [generic]
+*)
+let wrong (t : type where Ord t) (a : t) (b : t) : bool
+  ensures result = less b a
+= less a b
+
+(* True by less's contract, which is an axiom of the proof.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:3: proved: the postcondition holds [generic]
+*)
+let asymmetric (t : type where Ord t) (a : t) (b : t) : bool
+  ensures result ==> less b a = false
+= less a b
+
+(* No constraint: a value of t can only be moved.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+4]]:3: proved: the postcondition holds [generic]
+*)
+let swap (t : type) (xs : borrowed inout mutable [t]) (i : usize) (j : usize) : unit
+  requires i < len xs && j < len xs
+  ensures xs.[i] = old (xs.[j]) && xs.[j] = old (xs.[i])
+  ensures forall (k in 0..len xs). k <> i && k <> j ==> xs.[k] = old (xs.[k])
+= let a = xs.[i] in
+  let b = xs.[j] in
+  xs.[i] <- b;
+  xs.[j] <- a
+
+(* Pia.Core.Order's lexicographic compare, proved once over Ord t and,
+   in this step, again at each of u8, i32 and u64.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+9]]:8: proved: the measure of 'lex_from<t>' decreases [generic]
+*)
+let spec lex_from (t : type where Ord t) (xs : [t]) (ys : [t]) (i : usize) : bool
+  requires i <= len xs && i <= len ys
+  decreases len xs - i
+= if i = len xs then i < len ys
+  else if i = len ys then false
+  else if less xs.[i] ys.[i] then true
+  else if less ys.[i] xs.[i] then false
+  else lex_from xs ys (i + 1)
+
+(*
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:3: proved: the postcondition holds [generic]
+*)
+let lex_compare (t : type where Ord t) (xs : [t]) (ys : [t]) : bool
+  ensures result = lex_from xs ys 0
+= let n : usize = if len xs < len ys then len xs else len ys in
+  let i : mutable usize = 0 in
+  while i < n && less xs.[i] ys.[i] = false && less ys.[i] xs.[i] = false
+    invariant i <= n
+    invariant lex_from xs ys 0 = lex_from xs ys i
+    decreases n - i
+  do i <- i + 1 done;
+  if i < n then less xs.[i] ys.[i] else len xs < len ys
+
+let lex_u8 (xs : [u8]) (ys : [u8]) : bool = lex_compare<u8> xs ys
+let lex_i32 (xs : [i32]) (ys : [i32]) : bool = lex_compare<i32> xs ys
+let lex_u64 (xs : [u64]) (ys : [u64]) : bool = lex_compare<u64> xs ys
+
+(* A generic that makes a value of a generic type over t is proved at each
+   instance, and the report says why.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:1: not proved generically: 'first' is proved at each instance, since it returns a value of pick<t> [generic]
+*)
+let pick = let (t : type) => type | One of t | Neither
+let first (t : type) (a : t) : pick t
+= One a
+
+(*
+// CHECK: proved, 1 failed, 0 skipped
+*)
