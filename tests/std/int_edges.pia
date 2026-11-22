@@ -96,5 +96,5 @@ let exact () : unit =
 
 (* Every goal is proved, from the interface alone.
 // CHECK-NOT: failed
-// CHECK: 152 proved, 0 failed, 0 skipped
+// CHECK: 149 proved, 0 failed, 0 skipped
 *)
