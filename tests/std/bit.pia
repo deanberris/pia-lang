@@ -31,6 +31,6 @@
 
 // ENDIAN:      {{^}}interface Endian = sig{{$}}
 // ENDIAN-NEXT: {{^}}  let endian = type | Little | Big{{$}}
-// ENDIAN-NEXT: {{^}}  let native : endian{{$}}
+// ENDIAN-NEXT: {{^}}  let native : endian = Little{{$}}
 // ENDIAN-NEXT: {{^}}end{{$}}
 *)

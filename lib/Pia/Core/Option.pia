@@ -2,20 +2,35 @@
    wait for function values (ADR 0040, docs/cpp-std.md).
 
    `option t` is a generic variant, None or Some of a t, and the functions
-   over it are generic. None of it can be imported yet: an interface
-   cannot list a generic type (ADR 0039, step 3), so this module claims no
-   interface, and its functions are proved at the instance `checks` uses
-   (each instance of a generic is proved where it is made, #203).
+   over it are generic. The interface Optional exports the type and the
+   functions (ADR 0039, step 3), so importers instantiate them at their
+   own types. A generic over a variant is proved at each instance (ADR
+   0043), so `checks` makes the u8 instances here, and an importer proves
+   the instances it makes.
+
+   - has_value and is_none, value_or.
+   - same and less: C++'s == and <, with nullopt before every value, over
+     Pia.Core.Order's Eq and Ord.
 
    Not here yet, and why (docs/cpp-std.md):
    - value, C++'s operator* with its undefined case as a precondition: a
      generic body cannot yet `abort` where a value of a type parameter is
      expected, so it waits; value_or is the total form.
-   - comparisons (C++'s ==, and < with nullopt first): they need Eq and
-     Ord from Pia.Core.Order, which cannot be imported yet.
    - reset, emplace and swap: an option is an immutable value; None and
      Some build one. *)
-module Pia.Core.Option
+module Pia.Core.Option : Optional
+
+import Pia.Core.Order.Ops
+
+interface Optional = sig
+  (** C++: std::optional. *)
+  let option = let (t : type) => type | None | Some of t
+  let has_value : (t : type) -> (o : option t) -> bool
+  let is_none : (t : type) -> (o : option t) -> bool
+  let value_or : (t : type) -> (o : option t) -> (d : t) -> t
+  let same : (t : type where Pia.Core.Order.Eq t) -> (a : option t) -> (b : option t) -> bool
+  let less : (t : type where Pia.Core.Order.Ord t) -> (a : option t) -> (b : option t) -> bool
+end
 
 (** C++: std::optional. *)
 let option = let (t : type) => type | None | Some of t
@@ -41,7 +56,27 @@ let value_or (t : type) (o : option t) (d : t) : t
   | Some v -> v
   | None -> d
 
+(** C++: a == b. Two Nones are equal, and two Somes when their values are. *)
+let same (t : type where Pia.Core.Order.Eq t) (a : option t) (b : option t) : bool
+  ensures result <==> (match a with
+    | None -> (match b with | None -> true | Some _ -> false)
+    | Some x -> (match b with | None -> false | Some y -> same x y))
+= match a with
+  | None -> (match b with | None -> true | Some _ -> false)
+  | Some x -> (match b with | None -> false | Some y -> same x y)
+
+(** C++: a < b. nullopt is before every value. *)
+let less (t : type where Pia.Core.Order.Ord t) (a : option t) (b : option t) : bool
+  ensures result <==> (match b with
+    | None -> false
+    | Some y -> (match a with | None -> true | Some x -> less x y))
+= match b with
+  | None -> false
+  | Some y -> (match a with | None -> true | Some x -> less x y)
+
 (* Makes the u8 instances, so that the generic functions are proved. *)
 let checks (o : option u8) (d : u8) : u8
   ensures (match o with | Some v -> result = v | None -> result = d)
-= if has_value<u8> o && is_none<u8> o = false then value_or<u8> o d else d
+= if has_value<u8> o && is_none<u8> o = false && same<u8> o o &&
+     less<u8> o o = false
+  then value_or<u8> o d else d

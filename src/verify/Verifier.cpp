@@ -2243,8 +2243,10 @@ class Encoder {
   // `ensures result = (if less b a then b else a)`, mean something at its
   // callers once `less` is a concrete function.
   bool definesValue(mlir::func::FuncOp f) {
+    // An imported function's body is only its contract (contractOnly).
     if (!f || f.isExternal() || isSpecFunction(f) || isAbstract(f) ||
-        f->hasAttr("pia.lemma") || f.getNumResults() != 1)
+        f->hasAttr("pia.lemma") || f.getNumResults() != 1 ||
+        f->hasAttr(PiaDialect::getImportAttrName()))
       return false;
     auto scalar = [](Type t) {
       return mlir::isa<IntType>(t) || t.isInteger(1);

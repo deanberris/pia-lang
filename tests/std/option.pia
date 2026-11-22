@@ -1,13 +1,21 @@
 (* Pia.Core.Option (ADR 0040): its generic functions are proved at the u8
-   instance the module makes. It claims no interface, since an interface
-   cannot list a generic type yet, so it publishes no artifact.
-// RUN: piac --verify %S/../../lib/Pia/Core/Option.pia | FileCheck %s
-// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
-// RUN: ls %t | FileCheck --check-prefix=NONE --allow-empty %s
+   instance the module makes, since a generic over a variant is proved at
+   each instance (ADR 0043). Its interface, Optional, exports the generic
+   type and functions (ADR 0039, step 3).
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Option.pia | FileCheck %s
+// RUN: mkdir -p %t/option && piac --emit=interface -o %t/option %S/../../lib/Pia/Core/Option.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/option/Pia.Core.Option.Optional.piai
 *)
 
 (*
 // CHECK-NOT: failed
-// CHECK: 4 proved, 0 failed, 0 skipped
-// NONE-NOT: piai
+// CHECK-DAG: not proved generically: 'same' is proved at each instance, since it takes a value of option<t> [generic]
+// CHECK: 78 proved, 0 failed, 0 skipped
+
+// IFACE:      {{^}}module Pia.Core.Option{{$}}
+// IFACE-NEXT: {{^}}interface Optional = sig{{$}}
+// IFACE-NEXT: {{^}}  let option = let (t : type) => type | None | Some of t{{$}}
+// IFACE:      {{^}}  let less : (t : type where Pia.Core.Order.Ord t) -> (a : option t) -> (b : option t) -> bool{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
 *)
