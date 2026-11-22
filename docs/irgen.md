@@ -76,7 +76,8 @@ An arm may carry contracts between its pattern and `->` ([ADR 0035](adr/0035-sub
 - The arms are generated at each `?` that reaches them, so each is checked and proved once per `?`, knowing only what holds there: what was bound before it and what earlier calls promised. An arm that uses a name bound after some `?` that reaches it is an error that names that `?`.
 - At each `?` the arms taken are those for the error type's constructors, in order, up to the first catch-all. A constructor no arm takes is an error at the `?`, and an arm no `?` reaches is an error at the arm, as is a `handle` with no `?` in its scope.
 - `| C p ->` binds the payload, `| e ->` the whole error, and `| C as e ->` both tests `C` and binds the whole error.
-- An expression is evaluated from its first `?` on: in `g a + f x?`, `f x` runs before `g a`. A `?` inside a handler arm, unions of error sets, and `defer` are not supported yet.
+- An error set `a | b` is one variant holding the constructors of each member, ordered by the members' names, so `b | a` is the same type. A value of a member converts to the set: its tag moves to its block of the set's constructors. So a `?` whose errors are a member of the function's error set passes them on, `Err NoEntry` builds the set directly, and a handler matches the set's constructors. Two members may not share a constructor name. A set does not yet convert to a larger set.
+- An expression is evaluated from its first `?` on: in `g a + f x?`, `f x` runs before `g a`. A `?` inside a handler arm and `defer` are not supported yet.
 
 ## Contracts
 

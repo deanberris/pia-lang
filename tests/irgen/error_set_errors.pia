@@ -1,0 +1,9 @@
+(* Error sets (#84, ADR 0028) are unions of variants.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let open_error = type | NoEntry | Denied
+
+(* CHECK: error_set_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an error set is a union of variants, but u8 is not one
+*)
+let not_variant (x : u8) : result u8 (open_error | u8) = Ok x

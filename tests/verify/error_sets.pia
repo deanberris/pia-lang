@@ -1,0 +1,49 @@
+(* Error sets (#84, ADR 0028): `a | b` is one variant with the constructors
+   of both, so `?` passes the errors of each call on to a function whose
+   error set includes them, and a handler takes them by constructor.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let open_error = type | NoEntry | Denied
+let parse_error = type | Empty | TooLong of u8
+
+let open_file (x : u8) : result u16 open_error
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= if x = 0 then Err NoEntry else Ok x
+
+let parse (v : u16) : result u16 parse_error
+  ensures (match result with | Ok w -> w > v | Err _ -> true)
+= if v > 1000 then Err (TooLong 1) else Ok (v + 1)
+
+(* Each `?` passes its own errors on into the set. *)
+let load (x : u8) : result u16 (open_error | parse_error)
+  ensures (match result with | Ok w -> w > x | Err _ -> true)
+=
+  let v = open_file x? in
+  let w = parse v? in
+  Ok w
+
+(* The order of the members does not matter, and a constructor of a
+   member builds the set directly. *)
+let refuse (x : u8) : result u16 (parse_error | open_error)
+= if x = 0 then Err Denied else load x
+
+(* A handler takes the set's errors by constructor. *)
+let code (x : u8) : u8
+  ensures result <= 3
+= (let w = refuse x? in 0
+   handle
+   | NoEntry -> 1
+   | Denied -> 2
+   | TooLong n -> 3
+   | Empty -> 3)
+
+(* Expected report, in order.
+// CHECK: error_sets.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:16:47: proved: '+' does not overflow u16 [smt]
+// CHECK: error_sets.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:23:18: proved: '+' does not overflow int{0..3} [intervals]
+// CHECK: error_sets.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: 6 proved, 0 failed, 0 skipped
+*)
