@@ -290,7 +290,7 @@ let max (t : type where Ord t) (a : t) (b : t) : t =
 let biggest (a : u8) (b : u8) : u8 = max a b
 ```
 
-A type meets a concept when a function with each requirement's name and exact type is in scope, so `u8` meets `Ord` through the two functions above. Each law is then proved for `u8`, from those functions' contracts. A call with a type that does not meet a constraint is an error that says what is missing: `bool does not meet Ord: no function 'same : bool -> bool -> bool' (from 'include Same')`.
+A type meets a concept when a function with each requirement's name and exact type is in scope, so `u8` meets `Ord` through the two functions above. Each law is then proved for `u8`, from those functions' contracts. A call with a type that does not meet a constraint is an error that says what is missing: `bool does not meet Ord: no function 'same : bool -> bool -> bool' (from 'include Same')`. A generic body may use only what its constraints promise, and that is checked where the generic is written: with `(t : type where Same t)`, a call `less a b` is an error that suggests constraining `t` by `Ord t`, even if no caller has used the generic yet.
 
 Functions may share a name when their parameter types differ. They form an overload set, and each call picks the one that fits its arguments best: an exact type beats a conversion, and a function that is not generic beats a generic one. A generic overload whose type arguments do not meet its constraints drops out of the call, so it is only chosen for the types it can serve.
 

@@ -1,0 +1,40 @@
+(* The definition check (ADR 0034): a generic body may use only what its
+   constraints promise, and the error is reported where the generic is
+   written, not at a use.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let meta Ord (t : type) : concept = sig
+  include Same t
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let less (a : u8) (b : u8) : bool = (a < b)
+
+(* CHECK: definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'less' is not promised by 'Same t'; constrain 't' by a concept that requires it, such as 'Ord t'
+*)
+let max (t : type where Same t) (a : t) (b : t) : t = if less a b then b else a
+
+(* CHECK: definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'less' is not promised by 't', which has no constraints; constrain 't' by a concept that requires it, such as 'Ord t'
+*)
+let bigger (t : type) (a : t) (b : t) : bool = less a b
+
+(* CHECK: definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '<' is not defined for every 't'; a generic body can use only what its constraints promise
+*)
+let smaller (t : type where Ord t) (a : t) (b : t) : bool = a < b
+
+let top (t : type where Ord t) (a : t) (b : t) : t = if less a b then b else a
+
+(* CHECK: definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: t does not meet Ord: it is not promised by 'Same t'
+*)
+let via (t : type where Same t) (a : t) (b : t) : t = top a b
+
+(* What an included concept requires is promised too. *)
+let alike (t : type where Ord t) (a : t) (b : t) : bool = same a b
+
+(* CHECK-NOT: error
+*)
