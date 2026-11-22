@@ -142,7 +142,7 @@ genrule(
 )
 
 cc_test(
-    name = "ffi_test",
+    name = "ffi_run_test",
     srcs = [
         "ffi_test.c",
         ":ffi_obj",

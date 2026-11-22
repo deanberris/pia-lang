@@ -1,7 +1,7 @@
 (* Foreign functions (#55): a contracted one is called normally, with its
    preconditions proved and its postconditions trusted; one without a
    contract only through `unsafe`. --trust-report lists both.
-// RUN: piac --verify --trust-report %s | FileCheck %s
+// RUN: not piac --verify --trust-report %s | FileCheck %s
 *)
 
 let sum_bytes (xs : [u8]) (n : usize) : u32
@@ -31,6 +31,17 @@ let risky (x : i32) : i32
   ensures result = 2 * x
 = unsafe raw x
 
-(* Expected report, in order.
-// CHECK: 0 skipped
+(* Expected report, in order: the trusted base, then the goals.
+// CHECK: ffi.pia:7:1: trusted: the contract of the foreign function 'sum_bytes' (C symbol 'sum_bytes')
+// CHECK: ffi.pia:12:1: trusted: the contract of the foreign function 'clamp' (C symbol 'clamp_c')
+// CHECK: ffi.pia:16:1: trusted: the contract of the foreign function 'raw' (C symbol 'raw_c')
+// CHECK: ffi.pia:32:10: trusted: the unsafe call of 'raw'
+// CHECK: 4 trusted items
+// CHECK: ffi.pia:19:31: proved: the precondition of 'sum_bytes' holds [smt]
+// CHECK: ffi.pia:22:42: failed: the precondition of 'sum_bytes' holds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, n = {{-?[0-9]+}}
+// CHECK: ffi.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: ffi.pia:31:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: 2 proved, 2 failed, 0 skipped
 *)

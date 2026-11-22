@@ -4829,6 +4829,8 @@ class Gen {
         s.kind != NodeKind::StringLit)
       return false;
     symbol = s.text;
+    if (symbol.size() >= 2 && symbol.front() == '"' && symbol.back() == '"')
+      symbol = symbol.substr(1, symbol.size() - 2);
     return true;
   }
 
