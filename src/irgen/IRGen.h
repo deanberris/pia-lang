@@ -5,6 +5,7 @@
 #define PIA_IRGEN_IRGEN_H
 
 #include <string_view>
+#include <vector>
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
@@ -20,10 +21,19 @@ void loadDialects(mlir::MLIRContext &ctx);
 // Lowers a parsed program. Returns null and reports to `diags` if the
 // program is outside the subset or ill-typed. `filename` goes into the
 // ops' locations.
+struct Options {
+  // `piac --explain-overloads=file:line`: each call of an overloaded or
+  // generic function on this line (0 for none) explains which candidates
+  // it had, which it removed and why, and which it chose (ADR 0035).
+  unsigned explainLine = 0;
+  std::vector<syntax::Diagnostic> *explanations = nullptr;
+};
+
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                                            std::string_view filename,
                                            mlir::MLIRContext &ctx,
-                                           syntax::Diagnostics &diags);
+                                           syntax::Diagnostics &diags,
+                                           const Options &options = {});
 
 }  // namespace pia::irgen
 

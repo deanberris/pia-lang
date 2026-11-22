@@ -33,6 +33,10 @@
 //   piac --no-slice ...             always solve each goal's full query
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr
+//   piac --explain-overloads=F:L .. for each overloaded or generic call on
+//                                   line L of F, print its candidates,
+//                                   why each removed one was, and which
+//                                   one it chose, as notes on stderr
 //   piac --no-lint[=NAME] ...       turn off every lint, or the one named
 //                                   (ADR 0037, docs/idioms.md); repeatable
 //   piac --costly-goal=N ...        warn about a goal whose Z3 resource
@@ -91,6 +95,7 @@ int usage() {
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
                "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats]\n"
+               "             [--explain-overloads=<file:line>]\n"
                "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
@@ -340,6 +345,8 @@ int main(int argc, char **argv) {
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
   bool verifyStats = false;
+  std::string explainFile;
+  unsigned explainLine = 0;
   LintSwitch lints;
   long long costlyGoal = -1;  // -1: 10% of the rlimit
 #ifndef PIA_NO_MLIR
@@ -403,6 +410,17 @@ int main(int argc, char **argv) {
       slice = -1;
     else if (arg == "--verify-stats")
       verifyStats = true;
+    else if (arg.rfind("--explain-overloads=", 0) == 0) {
+      std::string spec = arg.substr(20);
+      size_t colon = spec.rfind(':');
+      if (colon == std::string::npos || colon == 0) return usage();
+      char *end = nullptr;
+      unsigned long line = std::strtoul(spec.c_str() + colon + 1, &end, 10);
+      if (*end != '\0' || line == 0 || colon + 1 == spec.size())
+        return usage();
+      explainFile = spec.substr(0, colon);
+      explainLine = static_cast<unsigned>(line);
+    }
     else if (arg == "--no-lint")
       lints.all = false;
     else if (arg.rfind("--no-lint=", 0) == 0) {
@@ -467,6 +485,7 @@ int main(int argc, char **argv) {
   (void)jobs;
   (void)slice;
   (void)verifyStats;
+  (void)explainLine;
   (void)costlyGoal;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
@@ -519,7 +538,23 @@ int main(int argc, char **argv) {
     if (!diags.hasErrors() &&
         (mode == "--emit=mlir" || mode == "--verify" || codegen)) {
       mlir::MLIRContext ctx;
-      auto module = pia::irgen::generate(*tree, file, ctx, diags);
+      pia::irgen::Options irgenOptions;
+      std::vector<pia::syntax::Diagnostic> explanations;
+      auto sameFile = [&](const std::string &a, const std::string &b) {
+        auto base = [](const std::string &p) {
+          size_t slash = p.find_last_of('/');
+          return slash == std::string::npos ? p : p.substr(slash + 1);
+        };
+        return a == b || base(a) == base(b);
+      };
+      if (explainLine && sameFile(explainFile, file)) {
+        irgenOptions.explainLine = explainLine;
+        irgenOptions.explanations = &explanations;
+      }
+      auto module = pia::irgen::generate(*tree, file, ctx, diags, irgenOptions);
+      for (const pia::syntax::Diagnostic &d : explanations)
+        std::cerr << file << ":" << d.loc.line << ":" << d.loc.column
+                  << ": note: " << d.message << "\n";
       if (!module && !diags.hasErrors()) {
         std::cerr << "piac: internal error: the generated IR does not verify\n";
         return 1;

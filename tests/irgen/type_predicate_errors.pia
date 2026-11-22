@@ -13,7 +13,8 @@ let a (x : u32) : u32 = first x
 
 let any (t : type where size_of t <= 8) (x : t) : u8 = 0
 
-(* CHECK: type_predicate_errors.pia:[[@LINE-2]]:{{[0-9]+}}: error: the constraint 'size_of t <= 8' cannot be checked for t = [u8]: the type [u8] has no fixed size
-// CHECK: type_predicate_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: its constraint 'size_of t <= 8' cannot be checked
+(* A metaprogram's failure in a constraint removes the candidate, with
+   the reason (ADR 0035).
+// CHECK: type_predicate_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the constraint 'size_of t <= 8' cannot be checked for t = [u8]: the type [u8] has no fixed size
 *)
 let b (xs : [u8]) : u8 = any xs

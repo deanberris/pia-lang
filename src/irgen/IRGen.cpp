@@ -128,8 +128,9 @@ void collectAssigned(const Node &n, std::set<std::string> &out) {
 class Gen {
  public:
   Gen(mlir::MLIRContext &ctx, std::string_view filename,
-      syntax::Diagnostics &diags)
-      : ctx_(ctx),
+      syntax::Diagnostics &diags, const Options &options)
+      : options_(options),
+        ctx_(ctx),
         b_(&ctx),
         file_(mlir::StringAttr::get(&ctx, filename)),
         diags_(diags),
@@ -1575,9 +1576,24 @@ class Gen {
                            generic.name + "'; give it, as in '" +
                            generic.name + "<" + t + " = u8>'");
     Choice choice;
-    if (std::optional<std::string> why =
-            constraintsUnmet(generic, bound, named, &choice))
-      return fail(n, *why);
+    std::optional<std::string> why =
+        constraintsUnmet(generic, bound, named, &choice);
+    if (!why) {
+      sema::FuncSig trialSig = generic;
+      trialSig.typeArgs = bound;
+      trialSig.result = Type();
+      if (!substitute(trialSig, why) && !why) return std::nullopt;
+    }
+    if (options_.explanations && !checking_ &&
+        n.loc.line == options_.explainLine) {
+      options_.explanations->push_back(
+          {n.loc, "the call of the generic '" + generic.name + "' has 1 "
+                  "candidate"});
+      options_.explanations->push_back(
+          {n.loc, "  the generic '" + generic.name + "': " +
+                      (why ? "removed: " + *why : "viable, and chosen")});
+    }
+    if (why) return fail(n, *why);
     sema::FuncSig *inst = genericInstance(generic, bound, choice);
     if (!inst) return std::nullopt;
     return genCall(n, *inst, args, &early);
@@ -1705,7 +1721,15 @@ class Gen {
         sig = &trial.back();
         sig->typeArgs = bound;
         sig->result = Type();
-        if (!sema::resolveSignature(*sig, types_, diags_)) return std::nullopt;
+        // A signature that cannot be formed for these types removes the
+        // candidate (ADR 0035, "What may fail softly").
+        std::optional<std::string> soft;
+        bool formed = substitute(*sig, soft);
+        if (!formed && soft) {
+          rejected.push_back(label + ": " + *soft);
+          continue;
+        }
+        if (!formed) return std::nullopt;
       } else if (targs) {
         rejected.push_back(label + " is not generic");
         continue;
@@ -1734,6 +1758,25 @@ class Gen {
       }
       viable.push_back(std::move(c));
     }
+    // `--explain-overloads`: every candidate, why each one that was
+    // removed was, and which one the call chose (ADR 0035).
+    auto explain = [&](const Candidate *chosen, const std::string &outcome) {
+      if (!options_.explanations || checking_ ||
+          n.loc.line != options_.explainLine)
+        return;
+      auto note = [&](std::string m) {
+        options_.explanations->push_back({n.loc, std::move(m)});
+      };
+      note("the call of '" + name + "' with " + argTypes() + " has " +
+           plural(viable.size() + rejected.size(), "candidate"));
+      for (const Candidate &c : viable)
+        note("  " + c.label + ": " +
+             (&c == chosen ? std::string("viable, and chosen")
+                           : std::string("viable")));
+      for (const std::string &r : rejected) note("  removed: " + r);
+      if (!outcome.empty()) note("  " + outcome);
+    };
+    if (viable.empty()) explain(nullptr, "no candidate is left");
     if (viable.empty() && checking_) {
       std::vector<Type> abstract;
       for (const std::optional<TV> &e : early)
@@ -1797,6 +1840,8 @@ class Gen {
           openCandidates_ = b_.getArrayAttr(refs);
           openFor_ = order.back();
         }
+        explain(nullptr, "the verifier chooses among them by precondition, "
+                         "most specific first");
         return genCall(n, general, args, &early);
       }
       std::string why = "the call of '" + name + "' with " + argTypes() +
@@ -1809,11 +1854,13 @@ class Gen {
                (quoted ? l : l.substr(4));
         generic = generic || viable[i].generic;
       }
+      explain(nullptr, "none of them is the most specific");
       return fail(n, why + (generic ? "; neither is more specific than the "
                                       "other"
                                     : "; give the arguments' types, as in "
                                       "'let x : u8 = ...'"));
     }
+    explain(best, "");
     sema::FuncSig *callee = best->sig;
     if (best->generic) {
       callee = genericInstance(*best->origin, best->bound, best->choice);
@@ -1868,6 +1915,17 @@ class Gen {
   };
 
   // --- type-level metaprograms (ADR 0035, step 1) ---------------------
+
+  // Resolves a candidate's signature for its type arguments. A type that a
+  // metaprogram cannot form leaves its reason in `soft` instead of an
+  // error, so the caller can remove the candidate (ADR 0035).
+  bool substitute(sema::FuncSig &sig, std::optional<std::string> &soft) {
+    std::optional<std::string> *saved = softFailure_;
+    softFailure_ = &soft;
+    bool ok = sema::resolveSignature(sig, types_, diags_);
+    softFailure_ = saved;
+    return ok;
+  }
 
   // Makes every type-level metaprogram callable from types and `where`
   // predicates.
@@ -1978,8 +2036,12 @@ class Gen {
   // A metaprogram error, unless it ran out of steps, which no
   // metaprogram that is proved to terminate should, so that is the
   // compiler's fault (ADR 0035).
+  static bool isInternal(const meta::MetaError &e) {
+    return e.message.rfind("the metaprogram ran out of fuel", 0) == 0;
+  }
+
   std::string metaFailure(const meta::MetaError &e) {
-    if (e.message.rfind("the metaprogram ran out of fuel", 0) == 0)
+    if (isInternal(e))
       return "internal compiler error: a metaprogram that terminates ran "
              "out of steps (" + e.message + ")";
     return e.message;
@@ -2099,8 +2161,15 @@ class Gen {
       }
       return typeValues_.at(v->s);
     } catch (const meta::MetaError &e) {
-      diags_.error(at, "the type '" + spelled + "' cannot be formed: " +
-                           metaFailure(e));
+      std::string why = "the type '" + spelled + "' cannot be formed: " +
+                        metaFailure(e);
+      // A failure removes the candidate being substituted; running out of
+      // steps never does.
+      if (softFailure_ && !isInternal(e)) {
+        if (!*softFailure_) *softFailure_ = why;
+      } else {
+        diags_.error(at, why);
+      }
     } catch (const meta::Deferred &d) {
       diags_.error(at, "the type '" + spelled + "' cannot be formed: it "
                        "needs the type '" + d.type + "'");
@@ -2193,9 +2262,13 @@ class Gen {
       if (v->b) return std::nullopt;
       return "the constraint '" + text + "' is false for " + forTypes;
     } catch (const meta::MetaError &e) {
-      // A soft failure waits for the totality check (ADR 0035, step 3).
-      diags_.error(q.loc, "the constraint '" + text + "' cannot be checked "
-                          "for " + forTypes + ": " + metaFailure(e));
+      // The metaprograms a constraint uses terminate, so a failure removes
+      // the candidate, with the reason (ADR 0035). Running out of steps
+      // anyway is the compiler's fault.
+      std::string why = "the constraint '" + text + "' cannot be checked "
+                        "for " + forTypes + ": " + metaFailure(e);
+      if (isInternal(e)) diags_.error(q.loc, why);
+      return why;
     } catch (const meta::Deferred &d) {
       diags_.error(q.loc, "the constraint '" + text + "' needs the type '" +
                               d.type + "'");
@@ -3917,6 +3990,7 @@ class Gen {
     return TV{q->getResult(0), boolType()};
   }
 
+  Options options_;
   mlir::MLIRContext &ctx_;
   OpBuilder b_;
   mlir::StringAttr file_;
@@ -3976,6 +4050,9 @@ class Gen {
   // Why a type-level metaprogram may not terminate, by name.
   std::map<std::string, std::string> notTotal_;
   std::set<std::string> reportedNotTotal_;
+  // While a candidate's signature is substituted (ADR 0035), a type that
+  // cannot be formed is recorded here as its reason, not reported.
+  std::optional<std::string> *softFailure_ = nullptr;
   // Set when a type-level metaprogram is applied to a stand-in while a
   // definition is checked.
   bool opaqueStandIn_ = false;
@@ -3986,9 +4063,10 @@ class Gen {
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                                            std::string_view filename,
                                            mlir::MLIRContext &ctx,
-                                           syntax::Diagnostics &diags) {
+                                           syntax::Diagnostics &diags,
+                                           const Options &options) {
   loadDialects(ctx);
-  return Gen(ctx, filename, diags).run(program);
+  return Gen(ctx, filename, diags, options).run(program);
 }
 
 }  // namespace pia::irgen
