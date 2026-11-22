@@ -98,7 +98,7 @@ let model shapes : Lip = struct
 end
 ```
 
-The model is checked exactly like an adapter meeting a concept ([ADR 0034](0034-concepts-and-overload-resolution.md), "Meeting a concept"). Each sort and function has the stated type, and each axiom, with the model's definitions substituted, is proved for all values of the model's types. Here `seq_lip` becomes `f.lip * g.lip <= f.lip * g.lip`, and `lip_nonneg` follows from the refinement on `summary.lip`. A theory with a proved model is consistent: anything provable from its axioms is true in the model, so `false` cannot be. That is consistency by interpretation, the standard argument, and the solver checks it.
+The model is checked like an adapter meeting a concept ([ADR 0034](0034-concepts-and-overload-resolution.md), "Meeting a concept"). Each sort and function has the stated type, and each axiom, with the model's definitions substituted, is proved for all values of the model's types. Here `seq_lip` becomes `f.lip * g.lip <= f.lip * g.lip`, and `lip_nonneg` follows from the refinement on `summary.lip`. A theory with a proved model is consistent: anything provable from its axioms is true in the model, so `false` cannot be. That is consistency by interpretation, the standard argument, and the solver checks it. (As implemented in step 3, each axiom becomes a lemma `shapes.seq_lip` with the model's sorts and functions in place of the theory's, proved like any lemma and reported as "the model 'shapes' meets the axiom 'Lip.seq_lip'"; the adapter check itself is not reused. A model's record types may refine their fields with `where`, which the model's functions must keep.)
 
 Then the model is **sealed**, as an ML structure is sealed by its signature. Outside the model's own body, `layer` is abstract, and a query that uses the theory gets only the sorts, the abstract functions and the axioms, never the model's definitions. That keeps clients' queries small, and it keeps them independent of the model, so the model can change without re-proving clients as long as the theory does not change.
 
@@ -200,7 +200,7 @@ let lemma wrong (b : Lip.layer) : unit
 = ()
 ```
 
-fails: the precondition of `residual_lip`, `in_w b = out_w b`, does not hold, so the axiom gives nothing, and the counterexample is a `layer` with `in_w = 512` and `out_w = 10`, whose `residual` has some unconstrained `lip`. The report names the axiom whose precondition did not hold.
+fails: the precondition of `residual_lip`, `in_w b = out_w b`, does not hold, so the axiom gives nothing, and the counterexample is a `layer` with `in_w = 512` and `out_w = 10`, whose `residual` has some unconstrained `lip`. In `shapes` the goal happens to be true, so the counterexample comes from the axioms, and today it shows only that `b` is some layer (`b = Lip.layer!val!0`), not the functions' values at it or the axiom whose precondition did not hold; both are later work. A goal that is false in the model gets its counterexample from the model instead, with concrete values.
 
 The weights enter through the kernel library's abstraction function (`abs` above): a dense kernel's contract says `Lip.lip (abs w) = frobenius w`, proved in the model's module. For activations, `relu` is a layer whose `lip` is 1. In the summary model that is a definition, so it costs nothing to trust. Claiming that `lip` bounds the true Lipschitz constant of the code's function is a trusted axiom in `Pia.Nn.Spectral`, and a network proof that uses it says so in `--trust-report --why`.
 

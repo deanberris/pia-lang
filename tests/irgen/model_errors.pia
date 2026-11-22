@@ -1,0 +1,20 @@
+(* A model defines every sort and abstract function of its theory, each
+   with the theory's type (ADR 0036).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let spec g : (x : s) -> bool
+  let axiom small (x : s) ensures f x < 10
+end
+
+(* CHECK: model_errors.pia:[[@LINE+6]]:3: error: the theory 'T' has no abstract function 'h' for the model to define
+   CHECK: model_errors.pia:[[@LINE+2]]:1: error: the model 'incomplete' does not define 'T.g'
+*)
+let model incomplete : T = struct
+  let sort s = u8
+  let spec f (x : u8) : u8 = 0
+  let spec h (x : u8) : u8 = 0
+end

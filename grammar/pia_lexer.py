@@ -267,6 +267,10 @@ class Lexer:
                 if word in ("theory", "sort", "axiom") and self.out and \
                         self.out[-1].type == "LET" and self.name_follows():
                     kind = word.upper()
+                if word == "model" and self.out and \
+                        self.out[-1].type == "LET" and \
+                        self.name_then_colon_follows():
+                    kind = "MODEL"
                 if kind in ("FOR", "SPREAD"):
                     self.for_headers.append(self.depth)
                 elif kind == "DO" and self.for_headers and \

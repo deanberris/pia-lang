@@ -148,8 +148,13 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
         os << o.where << ": failed: " << o.claim;
         if (o.method != "counterexample") os << " [" << o.method << "]";
         os << "\n";
+        // A goal with no values to show, false in a model (ADR 0036).
+        if (o.counterexample.empty() && !o.model.empty())
+          os << "  false in the model '" << o.model << "'\n";
         if (!o.counterexample.empty()) {
-          os << "  counterexample:";
+          os << "  counterexample";
+          if (!o.model.empty()) os << " in the model '" << o.model << "'";
+          os << ":";
           const char *sep = " ";
           for (const pia::verify::ModelValue &v : o.counterexample) {
             os << sep << v.name << " = " << v.value;
@@ -274,7 +279,7 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 }
 
 // `--trust-report`: what the program's proofs rest on without proof: the
-// axioms of theories with no model (ADR 0036, step 2), foreign functions'
+// axioms of theories with no model (ADR 0036), foreign functions'
 // contracts, and `unsafe` calls (#55).
 void printTrustReport(mlir::ModuleOp module, std::ostream &os) {
   unsigned n = 0;
@@ -293,6 +298,8 @@ void printTrustReport(mlir::ModuleOp module, std::ostream &os) {
       ++n;
     });
     if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
+    // A theory with a model is proved consistent by it: nothing trusted.
+    if (f->hasAttr("pia.modelled")) continue;
     std::string theory;
     if (auto t = f->getAttrOfType<mlir::StringAttr>("pia.theory"))
       theory = t.getValue().str();
