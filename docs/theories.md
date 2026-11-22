@@ -3,7 +3,7 @@
 A *theory* teaches the verifier about a domain. It declares new sorts, functions on them that have no body, and axioms about them, and it lives in a library, not in the compiler ([ADR 0036](adr/0036-library-theories.md)). This page is a catalogue of worked theories. Each one shows the theory, a model that proves its axioms, a proof that uses the theory, and a mistake that the theory catches.
 
 !!! note "Status"
-    Theories, models and sealing are implemented (ADR 0036, steps 1 to 5), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. Theory-building metaprograms (step 5) are implemented too, so every example on this page is proved.
+    Theories, models and sealing are implemented (ADR 0036, steps 1 to 5), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. Theory-building metaprograms (step 5) are implemented too, so every example on this page is proved, and so are solver strategies and tactics (step 6).
 
 ## How to read an entry
 
@@ -25,10 +25,11 @@ An entry also says whether anything in it is **trusted**. A trusted theory has n
 | [Probability](#probability) | union bounds on failure; independence as an explicit trust | `independent` only | steps 3 and 4 |
 | [Fail-safe control](#fail-safe-control) | a controller falls back to a safe command on a sensor fault | nothing | step 3 |
 | [State machines](#state-machines) | a protocol is followed, from a table of transitions | nothing | step 5 |
+| [Clocks](#clocks-a-proof-written-by-a-tactic) | elapsed time over many ticks, by induction that a tactic writes | nothing | step 6 |
 | [Units of measure](#units-of-measure) | quantities are combined with the right dimensions | nothing | step 3 |
 | [Network shapes and bounds](#network-shapes-and-bounds) | layer shapes match and Lipschitz bounds compose | nothing | step 3 |
 
-The steps are the implementation order of ADR 0036: (1) spec-only `real` and `int`, (2) theories in `@trusted` modules, (3) models and sealing, (4) certificates and `trusting`, (5) theory-building metaprograms.
+The steps are the implementation order of ADR 0036: (1) spec-only `real` and `int`, (2) theories in `@trusted` modules, (3) models and sealing, (4) certificates and `trusting`, (5) theory-building metaprograms, (6) solver strategies and tactics.
 
 ## Lock levels
 
@@ -418,6 +419,60 @@ end
 The generated binders are named `c#machine`, a name no source can write, and the member names (`shutdown`, `allowed_shutdown`, `shutdown_from_Open`) are kept, so clients can name them ([ADR 0022](adr/0022-metaprogram-hygiene.md)). One table builds one theory: a second `let theory` with the same call names the same theory, rather than building a second one. The library's socket API requires the event to be allowed, as in `let send (s : socket) ... requires Conn.allowed_send (abs s)`, so a program that sends after shutting down fails at the call.
 
 A variant type and spec functions could say the same thing without a theory. The theory adds three things: the sort `conn` is abstract, so users cannot depend on how a connection is represented; the axioms are small facts rather than definitions to unfold; and one table generates the theory, its model and its proofs, for every protocol a library has. This is how [ADR 0006](adr/0006-contracts-and-module-state.md)'s module state-machine properties can be written by libraries.
+
+## Clocks: a proof written by a tactic
+
+Some facts about a theory need induction: one axiom says what a single step does, and a lemma says what many steps do. The proof is the same every time, the lemma calling itself one step smaller, so a tactic can write it ([ADR 0036](adr/0036-library-theories.md), step 6). A tactic is a metaprogram that `@by(...)` on a lemma runs on the lemma's goal. It returns proof steps, and the verifier proves them like steps written by hand. So a tactic can make a proof possible, but it cannot make a wrong one ([meta.md](meta.md#tactics)).
+
+Here the theory is a clock, with one axiom: a tick adds one to the time. `ticks c n` is `n` ticks from `c`. `induction` writes the step `if n > 0 then elapsed c (n - 1)`, and with it the lemma is proved. Without the step, the same goal fails:
+
+<!-- example: clock.pia -->
+<!-- expect: fail -->
+```ocaml
+let theory Clock = sig
+  let sort clock
+  let spec time : (c : clock) -> int
+  let spec tick : (c : clock) -> clock
+  let axiom tick_time (c : clock) ensures time (tick c) = time c + 1
+end
+
+let model counter : Clock = struct
+  let sort clock = int
+  let spec time (c : int) : int = c
+  let spec tick (c : int) : int = c + 1
+end
+
+let rec spec ticks (c : Clock.clock) (n : u8) : Clock.clock
+  decreases n
+= if n = 0 then c else Clock.tick (ticks c (n - 1))
+
+let meta induction (g : syntax) (on : syntax) : list =
+  let args = map (let (p) => if p = name on then `( $on - 1 ) else p) (params g) in
+  [ `( if $on > 0 then $(make_call (name g) args) ) ]
+
+let lemma elapsed (c : Clock.clock) (n : u8) : unit @by(induction n)
+  ensures Clock.time (ticks c n) = Clock.time c + n
+  decreases n
+= ()
+
+let lemma unaided (c : Clock.clock) (n : u8) : unit
+  ensures Clock.time (ticks c n) = Clock.time c + n
+= ()
+```
+
+```console
+$ piac --verify clock.pia
+...
+clock.pia:23:3: proved: the postcondition holds [smt]
+clock.pia:28:3: failed: the postcondition holds
+...
+clock.pia:5:35: proved: the model 'counter' meets the axiom 'Clock.tick_time' [smt]
+6 proved, 1 failed, 0 skipped
+```
+
+`induction` reads the goal's parameters with `params g`, replaces `n` with `n - 1`, and builds the call with `make_call`. It recurses on nothing, so it is total, as a tactic must be: like a theory-building metaprogram, it may not read the program, and it must terminate ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)). The lemma still needs its `decreases n`, and the recursive call is checked against it, so a tactic that wrote a call that is not smaller would fail to prove it rather than prove the lemma wrongly. Nothing here is trusted: the model `counter`, where a clock is an integer, proves the axiom.
+
+A theory can also choose how Z3 solves its members' goals, as in `let theory Geometry @solver(nlsat) = sig ... end` for nonlinear real arithmetic. Each member without its own `@solver` uses it. A strategy affects only how fast a goal is proved, never whether it is ([verifier.md](verifier.md#solver-strategies-and-tactics)).
 
 ## Units of measure
 

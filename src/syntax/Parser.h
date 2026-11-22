@@ -59,6 +59,10 @@ NodePtr parseProgram(std::string_view source, Diagnostics &diags,
 // their own, as in a design-doc fragment. Returns a Contracts node.
 NodePtr parseContractFragment(std::string_view source, Diagnostics &diags);
 
+// `@solver(...)` on a theory (ADR 0036) applies to each of its members
+// that has no `@solver` of its own: it is copied into their attributes.
+void applyTheoryAttrs(Node &theory, const Node &attrs);
+
 }  // namespace pia::syntax
 
 #endif  // PIA_SYNTAX_PARSER_H

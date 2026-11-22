@@ -1,0 +1,38 @@
+(* The rules for tactics (ADR 0036, step 6): `@by` is for lemmas, its
+   tactic is a total and pure metaprogram, and it returns expressions.
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s
+*)
+
+let meta trivial (g : syntax) : list = [ `( assert true ) ]
+
+let meta loops (g : syntax) : list = loops g
+
+let meta reads (g : syntax) : list = listing ()
+
+let meta items (g : syntax) : list = [ `( let helper (x : u8) : u8 = x ) ]
+
+let meta bad_steps (g : syntax) : list = [ 3 ]
+
+let not_a_lemma (x : u8) : u8 @by(trivial) = x
+
+let lemma unknown (x : u8) : unit @by(nosuch) ensures x = x = ()
+
+let lemma two (x : u8) : unit @by(trivial, trivial) ensures x = x = ()
+
+let lemma looping (x : u8) : unit @by(loops) ensures x = x = ()
+
+let lemma reading (x : u8) : unit @by(reads) ensures x = x = ()
+
+let lemma making (x : u8) : unit @by(items) ensures x = x = ()
+
+let lemma numbers (x : u8) : unit @by(bad_steps) ensures x = x = ()
+
+(* Each error, in order.
+// CHECK: tactic_errors.pia:16:31: error: @by applies only to a lemma: a tactic writes the steps of a proof
+// CHECK: tactic_errors.pia:18:35: error: a tactic is a 'let meta' that takes a goal and returns proof steps, and 'nosuch' is not one
+// CHECK: tactic_errors.pia:20:31: error: @by takes one tactic, applied to its arguments, as in @by(induction n)
+// CHECK: tactic_errors.pia:22:35: error: 'loops' is a tactic, so it must terminate and be pure, but the recursive call at 8:38 has no argument that is a component of its parameter, such as 'element g'
+// CHECK: tactic_errors.pia:24:35: error: 'reads' is a tactic, so it must terminate and be pure, but it calls 'listing' at 10:38, which reads or changes the program
+// CHECK: tactic_errors.pia:26:34: error: the tactic 'items' must return proof steps, which are expressions, not LetItem
+// CHECK: tactic_errors.pia:28:35: error: the tactic 'bad_steps' must return proof steps, which are expressions, not an integer
+*)

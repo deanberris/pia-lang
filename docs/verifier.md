@@ -359,6 +359,33 @@ These lines have their own prefixes, so `tools/bench` still reads the single `ve
 
 A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
 
+## Solver strategies and tactics
+
+Two ways to help a proof the solver cannot find, or finds slowly ([ADR 0036](adr/0036-library-theories.md), step 6). Neither can make a wrong proof.
+
+**`@solver(...)`** on a lemma, a function or a theory chooses the Z3 strategy for its goals. `@solver(nlsat)` uses Z3's strategy for nonlinear real arithmetic (`qfnra-nlsat`), and any other name is one of Z3's tactics, such as `@solver(smt)`. `@solver(tactic = "...")` takes a combination in SMT-LIB's syntax for `check-sat-using`: `(then t1 t2 ...)`, `(or-else ...)`, `(par-or ...)`, `(par-then ...)`, `(repeat t n)`, `(try-for t ms)` and `(using-params t :key value ...)`. An unknown tactic is a compile error. On a theory, `let theory T @solver(nlsat) = sig ... end`, it applies to each member without its own `@solver`, and to the checks of its model and of its consistency. `--dump-smt` shows the strategy as `(check-sat-using ...)`.
+
+```ocaml
+let lemma product (x : real) (y : real) : unit @solver(nlsat)
+  requires x > 1.0 && y > 1.0
+  ensures x * y > 1.0
+= ()
+```
+
+A strategy changes only how a query is solved. Any tactic Z3 runs is sound, so `unsat` is still a proof, and a strategy that gives up leaves the goal failed, never proved. The strategy is part of the proof cache's key, so a goal proved one way is not taken as proved another way. The unsat core that says which axioms or `assume`s a goal used ([Trust](#theories)) is still found with Z3's default solver.
+
+**Tactics.** `@by(t args)` on a lemma runs the metaprogram `t` on the lemma's goal and returns proof steps, which go before the lemma's body and are proved like steps written by hand ([meta.md](meta.md#tactics)):
+
+- a lemma call, `l x`, whose precondition is a goal and whose postcondition is known afterwards;
+- an `assert p`, a goal that is known afterwards;
+- a case split, `if c then assert p else assert p`;
+- an instance of a quantified fact, as a lemma call or an `assert` at particular arguments;
+- `fuel n`, a hint rather than code: it puts `@fuel(n)` on the lemma, which unfolds every spec function at least `n` levels in the lemma's goals. `@fuel(n)` can also be written on a lemma by hand.
+
+A tactic must terminate and be pure, by the rules for type-level metaprograms ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)), so what a proof means never depends on a step budget or on the rest of the program. This is the LCF approach: the tactic is outside the trusted base, since everything it writes is checked. [theories.md](theories.md#clocks-a-proof-written-by-a-tactic) shows a tactic that writes a proof by induction.
+
+**Proof by reflection** is not implemented yet. It needs a datatype of formulas, and recursive types are not supported yet ([status.md](status.md)). The plan is in ADR 0036: a total spec function `decide : formula -> bool` with a soundness lemma `decide f ==> eval f` proved once, and a tactic that reifies the goal into a `formula` and proves it from `decide f = true`.
+
 ## Choosing overloads by precondition
 
 Overloads with the same parameter types are told apart by their preconditions (ADR 0034). IRGen leaves a call between them open: a `func.call` of the least specific one, with every candidate, most specific first, in `pia.overload_candidates`. Before verification and code generation, `resolveOverloads` decides each open call. For each candidate but the last, it encodes the calling function with the call retargeted to that candidate and asks whether each of its preconditions holds at the call, from everything known there: the caller's `requires`, the branches the call is under, loop invariants and earlier calls' `ensures`. The first candidate whose preconditions are all proved is called. If none is, the call keeps the least specific candidate, whose precondition is then an ordinary goal. This runs in every build, with or without `--verify`, and `--verify-only` does not limit it. Each query uses the proof cache like any goal.

@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 #include "irgen/Theories.h"
+#include "verify/Strategy.h"
 #include "verify/Triggers.h"
 
 #include <algorithm>
@@ -685,12 +686,15 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    solver_.clear();
     ghost_ = false;
     triggers_.clear();
     const Node &ret = *item.kids[1];
     if (ret.kind == NodeKind::RetAnnot && ret.kids.size() > 1 &&
         !genAttributes(*ret.kids[1]))
       return;
+    // `@solver(...)`: how Z3 solves this function's goals (ADR 0036).
+    if (!solver_.empty()) fn->setAttr("pia.solver", b_.getStringAttr(solver_));
     bool isSpec = hasFlag(item, "spec"), isLemma = hasFlag(item, "lemma");
     bool isAxiom = hasFlag(item, "axiom");
     ghost_ = isSpec || isLemma || isAxiom;
@@ -749,8 +753,8 @@ class Gen {
         return;
       }
     }
-    if (fuel_ && !isSpec) {
-      fail(item, "@fuel applies only to a spec function");
+    if (fuel_ && !isSpec && !isLemma) {
+      fail(item, "@fuel applies only to a spec function or a lemma");
       return;
     }
     if (isSpec || isLemma) {
@@ -1250,6 +1254,37 @@ class Gen {
           return false;
         }
         fuel_ = static_cast<unsigned>(lit->value.getZExtValue());
+        continue;
+      }
+      // `@solver(nlsat)` or `@solver(tactic = "(then simplify smt)")`
+      // chooses the Z3 strategy for the function's goals (ADR 0036).
+      if (a->text == "solver") {
+        std::string strategy;
+        // `nlsat` names Z3's nonlinear real arithmetic strategy,
+        // `qfnra-nlsat`, which prepares the goal for the nlsat tactic.
+        if (a->kids.size() == 1 && a->kids[0]->kind == NodeKind::Name)
+          strategy = a->kids[0]->text == "nlsat" ? "qfnra-nlsat"
+                                                  : a->kids[0]->text;
+        else if (a->kids.size() == 1 && a->kids[0]->kind == NodeKind::NamedArg &&
+                 a->kids[0]->text == "tactic" &&
+                 a->kids[0]->kids[0]->kind == NodeKind::StringLit)
+        {
+          strategy = a->kids[0]->kids[0]->text;
+          if (strategy.size() >= 2 && strategy.front() == '"' &&
+              strategy.back() == '"')
+            strategy = strategy.substr(1, strategy.size() - 2);
+        }
+        if (strategy.empty()) {
+          fail(*a, "@solver takes a Z3 tactic's name, as in @solver(nlsat), "
+                   "or a strategy, as in @solver(tactic = \"(then simplify "
+                   "smt)\")");
+          return false;
+        }
+        if (std::optional<std::string> why = verify::checkStrategy(strategy)) {
+          fail(*a, "@solver: " + *why);
+          return false;
+        }
+        solver_ = strategy;
         continue;
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
@@ -6606,6 +6641,7 @@ class Gen {
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)

@@ -1,0 +1,83 @@
+(* Tactics (ADR 0036, step 6): `@by(t args)` on a lemma runs the
+   metaprogram `t` on the lemma's goal, and the proof steps it returns are
+   proved like hand-written ones.
+// RUN: not piac --verify %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=STEPS
+*)
+
+(* Induction on a parameter: the lemma calls itself one smaller. *)
+let meta induction (g : syntax) (on : syntax) : list =
+  let args = map (let (p) => if p = name on then `( $on - 1 ) else p) (params g) in
+  [ `( if $on > 0 then $(make_call (name g) args) ) ]
+
+(* Each conjunct of the conclusion, asserted on its own. The recursion is
+   on the children of its argument, so it terminates. *)
+let meta conjuncts (e : syntax) : list =
+  if op e = "&&" then fold (let (acc) (c) => concat acc (conjuncts c)) [] (children e)
+  else [e]
+
+let meta split (g : syntax) : list =
+  map (let (c) => `( assert $c )) (conjuncts (conclusion g))
+
+(* A case split on a bool. *)
+let meta cases (g : syntax) (c : syntax) : list =
+  let p = conclusion g in [ `( if $c then assert $p else assert $p ) ]
+
+(* A fuel hint: `@fuel(n)` on the lemma. *)
+let meta unfold (g : syntax) (n : syntax) : list = [ `( fuel $n ) ]
+
+let spec count (xs : [u8]) (n : usize) (v : u8) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0 else count xs (n - 1) v + (if xs.[n - 1] = v then 1 else 0)
+
+let lemma by_induction (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit @by(induction n)
+  requires n <= len xs && v <> w
+  ensures count xs n v + count xs n w <= n
+  decreases n
+= ()
+
+(* The same goal with no steps is not proved. *)
+let lemma unaided (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit
+  requires n <= len xs && v <> w
+  ensures count xs n v + count xs n w <= n
+= ()
+
+let lemma each (x : u8) : unit @by(split)
+  requires x < 10
+  ensures x < 11 && x + 1 < 12 && x * 2 < 20
+= ()
+
+let lemma either (x : u8) (b : bool) : unit @by(cases b)
+  ensures (if b then x else x) = x
+= ()
+
+let rec spec sum_to (n : u8) : int
+  decreases n
+= if n = 0 then 0 else n + sum_to (n - 1)
+
+let lemma unfolded () : unit @by(unfold 4) ensures sum_to 3 = 6 = ()
+let lemma one_level () : unit ensures sum_to 3 = 6 = ()
+
+(* The steps each tactic wrote, before the lemma's body.
+// STEPS-LABEL: (LetItem "by_induction" [lemma]
+// STEPS: (If
+// STEPS: (Name "by_induction")
+// STEPS-LABEL: (LetItem "each" [lemma]
+// STEPS-COUNT-3: (Assert
+// STEPS-LABEL: (LetItem "unfolded" [lemma]
+// STEPS: (Attribute "fuel"
+// STEPS-NEXT: (IntLit "4")
+*)
+
+(* Expected report, in order.
+// CHECK: tactics.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: tactics.pia:44:3: failed: the postcondition holds
+// CHECK-COUNT-3: tactics.pia:47:32: proved: the assertion holds [smt]
+// CHECK: tactics.pia:49:3: proved: the postcondition holds [smt]
+// CHECK-COUNT-2: tactics.pia:52:45: proved: the assertion holds [smt]
+// CHECK: tactics.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: tactics.pia:60:44: proved: the postcondition holds [smt]
+// CHECK: tactics.pia:61:31: failed: the postcondition holds
+*)

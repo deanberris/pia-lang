@@ -19,8 +19,9 @@ namespace pia::meta {
 // local functions do not recurse, it refers to itself only by calling
 // itself, and every such call is on a strictly smaller argument in one
 // parameter position they share. An argument is smaller when it is a
-// component of the parameter: `element p`, an element of `field_types p`
-// or of `type_args p` as `map` or `fold` hands it to a lambda, a name that
+// component of the parameter: `element p` or `conclusion p`, an element
+// of `field_types p`, `type_args p`, `children p` or `hypotheses p` as
+// `map` or `fold` hands it to a lambda, a name that
 // a `match` on `p` binds below its top (`e` in `[e]` or `option e`), or a
 // component of one of those.
 //

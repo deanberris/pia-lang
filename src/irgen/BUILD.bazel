@@ -19,6 +19,7 @@ cc_library(
         "//src/meta",
         "//src/sema",
         "//src/syntax",
+        "//src/verify:strategy",
         "//src/verify:triggers",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",

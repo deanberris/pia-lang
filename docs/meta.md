@@ -173,6 +173,58 @@ let theory Conn = machine "conn" conn_state Closed
 
 The prelude's `machine` builds a state machine's theory and its model from a table of `edge`s ([theories.md](theories.md#state-machines)). It is written in Pia with `map` and `fold`, so it is total.
 
+## Tactics
+
+`@by(t args)` on a lemma runs the metaprogram `t`, a tactic, on the lemma's goal ([ADR 0036](adr/0036-library-theories.md), step 6). The tactic gets the goal first, then the arguments. Among the arguments, the lemma's parameters stand for themselves, as names. It returns a list of proof steps, which go before the lemma's body, and the verifier proves them like any others ([verifier.md](verifier.md#solver-strategies-and-tactics)). So a tactic can make a proof possible, or faster, but not wrong.
+
+```ocaml
+let meta induction (g : syntax) (on : syntax) : list =
+  let args = map (let (p) => if p = name on then `( $on - 1 ) else p) (params g) in
+  [ `( if $on > 0 then $(make_call (name g) args) ) ]
+
+let spec count (xs : [u8]) (n : usize) (v : u8) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0 else count xs (n - 1) v + (if xs.[n - 1] = v then 1 else 0)
+
+let lemma split_count (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit @by(induction n)
+  requires n <= len xs && v <> w
+  ensures count xs n v + count xs n w <= n
+  decreases n
+= ()
+```
+
+The goal is the lemma, as written, before its operators expand:
+
+| Builtin | Meaning |
+| --- | --- |
+| `hypotheses g` | the goal's `requires` clauses, as a list of syntax |
+| `conclusion g` | its `ensures` clauses, joined by `&&` (`true` when there are none) |
+| `params g` | its parameters' names, as strings |
+| `name g` | the lemma's name |
+| `children x` | the parts of the syntax `x`, as a list: an operator's two operands, a call's function and arguments, an `if`'s condition and branches |
+| `op x` | an operator's spelling (`"&&"`), the name a call applies, a name's text, or `""` |
+| `make_call f args` | the call of `f` (a name, as a string or syntax) on the list `args` (syntax, or strings for names) |
+
+A step is an expression: a lemma call, an `assert`, an `if` for a case split, or a call or `assert` that instantiates a quantified fact at particular arguments. `` `( fuel 4 ) `` is a hint rather than code: it puts `@fuel(4)` on the lemma. A tactic that returns an item or a value that is not syntax is an error.
+
+**Total and pure.** A tactic writes what a proof assumes, so, as for a theory-building metaprogram, the rules for type-level metaprograms apply ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)): it may not call `listing` or `redefine`, and it may recurse only on a component of a parameter. For syntax, the components are the elements of `children p` and `hypotheses p` that `map` or `fold` hands to a lambda, and `conclusion p`. This one recurses on the operands of `&&` and asserts each conjunct of the goal as its own step:
+
+```ocaml
+let meta conjuncts (e : syntax) : list =
+  if op e = "&&" then fold (let (acc) (c) => concat acc (conjuncts c)) [] (children e)
+  else [e]
+
+let meta split (g : syntax) : list =
+  map (let (c) => `( assert $c )) (conjuncts (conclusion g))
+
+let lemma each (x : u8) : unit @by(split)
+  requires x < 10
+  ensures x < 11 && x + 1 < 12
+= ()
+```
+
 ## Comments and literate programs
 
 Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md), [grammar.md](grammar.md#comments-in-the-syntax-tree)), and metaprograms can read them:
@@ -260,6 +312,7 @@ The loop stops when a pass changes nothing. A metaprogram still waiting then is 
 | `shadowing.pia`, `builtin_name.pia` | the no-shadowing rule, and that quote binders never trip it |
 | `comments.pia` | where comments attach, and that quotes, splices, derives and operators keep them |
 | `doc_lint.pia` | a metaprogram that walks `listing ()` and insists on doc comments |
+| `tactic_errors.pia` | `@by` on something other than a lemma, tactics that are not total or pure, and tactics that return something other than proof steps; `tests/verify/tactics.pia` proves what tactics write |
 | `literate.pia.md`, `literate_errors.pia.md`, `literate_unclosed.pia.md` | a literate program, proved, and its errors |
 
 ## Not yet
