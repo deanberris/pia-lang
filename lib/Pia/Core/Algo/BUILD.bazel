@@ -5,7 +5,10 @@ load("//tools/piac:pia.bzl", "pia_library")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["Search.pia"])
+exports_files([
+    "Modify.pia",
+    "Search.pia",
+])
 
 APPLE_SILICON = [
     "@platforms//os:macos",
@@ -18,6 +21,15 @@ APPLE_SILICON = [
 pia_library(
     name = "search",
     src = "Search.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:order"],
+)
+
+# The modifying sequence algorithms: tests/std/modify.pia checks its goals;
+# tests/std/modify_edges.pia and :modify_run test it through its interface.
+pia_library(
+    name = "modify",
+    src = "Modify.pia",
     target_compatible_with = APPLE_SILICON,
     deps = ["//lib/Pia/Core:order"],
 )
