@@ -39,5 +39,11 @@ let code (x : u8) : u8
    | Empty -> 3)
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: error_sets.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:16:47: proved: '+' does not overflow u16 [smt]
+// CHECK: error_sets.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:23:18: proved: '+' does not overflow int{0..3} [intervals]
+// CHECK: error_sets.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: error_sets.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: 6 proved, 0 failed, 0 skipped
 *)
