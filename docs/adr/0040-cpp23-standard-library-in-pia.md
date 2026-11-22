@@ -22,7 +22,7 @@ Pia provides what the C++23 library lets a program do, in Pia's idioms, not C++'
 
 Each library function's doc comment names the C++ entity it corresponds to, as `(** C++: std::lower_bound *)`, so the language server, search and the map agree.
 
-Names follow Pia's style: snake case, single words where they are clear (`find`, `count`, `fill`, `rotate`), the C++ name where it is the established term (`lower_bound`, `popcount`, `gcd`, `iota`), and no `std::` prefixes, `_t` suffixes or `_if` variants (see section 6).
+Names follow Pia's style: snake case, single words where they are clear (`find`, `count`, `fill`, `rotate`), the C++ name where it is the established term (`lower_bound`, `popcount`, `gcd`, `iota`), and no `std::` prefixes, `_t` suffixes or `_if` variants, whose forms are overloads instead (see section 6).
 
 ### 2. C++'s prose becomes proved contracts
 
@@ -58,7 +58,8 @@ The allocators, `vec` and the containers built on them (issue #72) are owned by 
 
 - Algorithms that compare use `Eq` and `Ord` instances found by argument-dependent lookup ([ADR 0034](0034-concepts-and-overload-resolution.md)), and hashing uses `Hash`. A different order is a different type: a record that wraps the value and has its own `less`, as Rust's `Reverse` does. This is the common case in C++ too, and it monomorphises and vectorises.
 - `<compare>`'s `strong_ordering`, `weak_ordering` and `partial_ordering` are variants in `Pia.Core.Order`, with `compare` (the three-way comparison) derived from `less` and `same`, and `@derive(ord)` as a library metaprogram (#61).
-- The `_if` algorithms (`find_if`, `count_if`, `remove_if`, `all_of`), `transform`, `sort` with a comparator, and `accumulate` with an operation need a predicate or an operation passed as a value. Pia cannot compile function values yet, so these wait for them (see the gaps). They will be the same functions with a function parameter, not a second family.
+- There are no `_if` variants (Dean, 2026-11-22). `find_if`, `count_if`, `remove_if`, `replace_if`, `copy_if`, `partition_point` and the rest are overloads of `find`, `count`, `remove`, `replace`, `copy` and so on, chosen by the argument's type ([ADR 0034](0034-concepts-and-overload-resolution.md)): `find xs x` takes a value and needs `Eq t`, and `find xs p` takes a predicate `t -> bool`. The same goes for an operation or a comparator: `sort xs` uses `Ord t`, and `sort xs less` takes a comparator, whose contract requires a strict weak order; `accumulate xs init` uses `+`, and `accumulate xs init op` takes the operation. `all_of`, `any_of` and `none_of` are `all`, `any` and `none`, which take only a predicate. When the elements are themselves functions, the value overload's `Eq` constraint fails and soft failure drops it ([ADR 0035](0035-substitution-failure-and-total-constraints.md)), so the two forms never clash.
+- A predicate's contract is part of the overload's. The algorithm's `ensures` names `p x`, so the predicate has to be a pure, total function whose result a spec can mention, and an effectful or partial predicate is rejected at the call. These overloads wait for function values and lambdas, designed separately (see the gaps).
 
 ### 7. Text is UTF-8 bytes
 
@@ -140,7 +141,7 @@ Each phase is a set of issues, one PR each, with a module, its tests, and its ro
 4. **Phase 3, the outside world**, after `Pia.Sys` and `Pia.Io` (#57, #58): `format`, `print`, readers and writers for the stream headers, `<filesystem>`, `<cstdio>`, `<chrono>`'s clocks, `<stacktrace>`.
 5. **Phase 4, floats** (M11): `Pia.Math`, floating-point `<charconv>`, the floating-point distributions.
 6. **Phase 5, concurrency** (M12): `Pia.Sync`, `Pia.Task`, `Pia.Chan`, as ADR 0027 designs them.
-7. **Phase 6, function values**: the `_if` algorithms, `transform`, comparator overloads, monadic `option` and `result`, `<functional>`, and `<ranges>`'s views.
+7. **Phase 6, function values**: the predicate, operation and comparator overloads of the phase 1 algorithms (C++'s `_if` forms), `transform`, monadic `option` and `result`, `<functional>`, and `<ranges>`'s views.
 8. **Later**: `<regex>`, `<mdspan>` (with value parameters in generic types), time zones, Unicode tables, `shared_ptr`.
 
 ### 14. Language gaps are listed, not worked around
@@ -150,7 +151,7 @@ Where the library needs something the language does not have, the library waits 
 | Gap | Blocks |
 | --- | --- |
 | Imported types and generic functions across interfaces ([ADR 0039](0039-module-and-interface-syntax.md) step 3) | every program importing a generic library module; until then a module's generics are proved by the definition check, and its tests are in the module's own test file |
-| Function values and closures ("functions as values are not supported yet") | phase 6: predicates, operations, views, `<functional>` |
+| Function values, closures and lambdas ("functions as values are not supported yet"; being designed with generic and typed lambdas) | phase 6: predicate, operation and comparator overloads, views, `<functional>` |
 | Value parameters in generic types (`[t; n]` for a parameter `n`; designed in [design.md](../design.md)) | `std::array` algorithms generic over `N`, `bitset<N>`, `inplace_vector<T, N>`, `mdspan` extents |
 | Core tuple types, values and patterns (section 9; an ADR of their own) | `<tuple>`, `pair` as a tuple, structured bindings, `apply`, argument packs for `format` and `make_unique`, multi-value returns in `<algorithm>` (`minmax`, `mismatch`) |
 | Anonymous sum types | `std::variant<Ts...>` beyond named variants, and `visit` over one |

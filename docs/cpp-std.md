@@ -93,7 +93,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | `<algorithm>` sorting, binary search, heap | `Pia.Core.Algo.Sort`, `Pia.Core.Algo.Heap`; stable forms need an allocator | Direct | phase 1, phase 2 |
 | `<algorithm>` set operations | `Pia.Core.Algo.Set`, into `out` slices | Direct | phase 1 |
 | `<algorithm>` permutations | `Pia.Core.Algo.Perm` | Direct | phase 1 |
-| `<algorithm>` `_if` forms, `transform`, comparator overloads | the same functions with a function parameter | Deferred: function values | phase 6 |
+| `<algorithm>` `_if` forms, `all_of`/`any_of`/`none_of`, `transform`, comparator and operation forms | no `_if` names: overloads of `find`, `count`, `remove`, `replace`, `copy`, `sort`, `accumulate` and the rest that take a predicate, comparator or operation (`find xs p`, `sort xs less`); `all`, `any`, `none` | Idiom: overloads (ADR 0040 section 6) | deferred: function values, phase 6 |
 | `<numeric>` | `Pia.Core.Int` (`gcd`, `lcm`, `midpoint`), `Pia.Core.Algo.Modify` (`iota`, `accumulate`, `reduce`, `partial_sum`, `adjacent_difference`, `inner_product`) | Direct | `gcd` (of signed values, unsigned), `midpoint` done; `gcd`'s contract does not yet say it divides both, and `lcm` waits, both for nonlinear facts the verifier cannot prove yet; the algorithms phase 1 |
 | C++26 saturation (`add_sat`, `sub_sat`, `mul_sat`, `div_sat`, `saturate_cast`) | `add_sat`, `sub_sat` are the core builtins (`+|`, `-|`); `mul_sat`, `div_sat` and `saturate_cast_<t>` (from `i64` and `u64`, since the target cannot be a type argument yet) in `Pia.Core.Int` | Direct | done |
 | `<execution>` | `spread` and `Pia.Par` | Idiom (ADR 0014) | deferred: M12 |
