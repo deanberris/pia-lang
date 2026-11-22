@@ -139,3 +139,4 @@ nav:
       - adr/0037-idiomatic-pia-and-lints.md
       - adr/0038-float-kernels-against-real-theories.md
       - adr/0039-module-and-interface-syntax.md
+      - adr/0041-allocator-semantics-as-a-theory.md

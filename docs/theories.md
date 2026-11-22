@@ -28,6 +28,7 @@ An entry also says whether anything in it is **trusted**. A trusted theory has n
 | [Clocks](#clocks-a-proof-written-by-a-tactic) | elapsed time over many ticks, by induction that a tactic writes | nothing | step 6 |
 | [Units of measure](#units-of-measure) | quantities are combined with the right dimensions | nothing | step 3 |
 | [Network shapes and bounds](#network-shapes-and-bounds) | layer shapes match and Lipschitz bounds compose | nothing | step 3 |
+| [Allocators](#allocators) | a block from `take` aliases no live block, and a given-back block is dead | nothing | step 3 |
 
 The steps are the implementation order of ADR 0036: (1) spec-only `real` and `int`, (2) theories in `@trusted` modules, (3) models and sealing, (4) certificates and `trusting`, (5) theory-building metaprograms, (6) solver strategies and tactics, (7) `--check-vacuity`.
 
@@ -558,6 +559,69 @@ The lemma has no parameters, so there are no values to show: it is false in the 
 ## Network shapes and bounds
 
 The worked example of [ADR 0036](adr/0036-library-theories.md#worked-example) is a theory `Lip` of neural network layers, with a `shapes` model in which a layer is its input width, output width and a Lipschitz bound. A residual block proves both its shape and `lip <= 3.0` from five axioms, and a residual around a layer whose widths differ fails at compile time. That entry also shows where trust enters: claiming that `lip` bounds the true Lipschitz constant of a kernel is a trusted axiom, and it is listed.
+
+## Allocators
+
+An allocator promises a few things about the blocks it hands out: a block it hands out was not live, its memory is apart from every other block's, and a block given back is dead until it is handed out again. Each allocator keeps those promises with its own data structure, such as the free stack of [tests/verify/pool.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/pool.pia), and proving them there takes quantifiers over the pool's arrays. A theory states them once, as facts about an abstract heap, so the users of any allocator reason with small axioms instead ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)):
+
+<!-- example: alloc.pia -->
+<!-- expect: fail -->
+```ocaml
+let blk = type int{0..63}
+
+let theory Alloc = sig
+  let sort heap
+  let spec none : heap
+  let spec live : (h : heap) -> (b : blk) -> bool
+  let spec take : (h : heap) -> (b : blk) -> heap
+  let spec give : (h : heap) -> (b : blk) -> heap
+  let spec base : (b : blk) -> int              \ where the block's 16 bytes start
+
+  let axiom none_live (b : blk) ensures live none b = false
+  let axiom take_live (h : heap) (b : blk) (c : blk)
+    ensures live (take h b) c = (c = b || live h c)
+  let axiom give_live (h : heap) (b : blk) (c : blk)
+    ensures live (give h b) c = (c <> b && live h c)
+  let axiom apart (b : blk) (c : blk) @trigger(base b, base c)
+    requires b <> c
+    ensures base b + 16 <= base c || base c + 16 <= base b
+end
+
+\ The live blocks are bits of a u64, and block b is bytes 16b to 16b + 15.
+let model bits : Alloc = struct
+  let sort heap = u64
+  let spec none : u64 = 0
+  let spec live (h : u64) (b : blk) : bool = ((h >> b) & 1) = 1
+  let spec take (h : u64) (b : blk) : u64 = (h | (1 << b))
+  let spec give (h : u64) (b : blk) : u64 = h & ~(1 << b)
+  let spec base (b : blk) : int = b * 16
+end
+
+\ A block that was not live, once taken, is apart from every live block.
+let lemma fresh_apart (h : Alloc.heap) (a : blk) (b : blk) : unit
+  requires Alloc.live h a && Alloc.live h b = false
+  ensures Alloc.live (Alloc.take h b) a
+  ensures Alloc.base a + 16 <= Alloc.base b || Alloc.base b + 16 <= Alloc.base a
+= ()
+
+\ docs/stdlib.md's reuse: take a, give it back, take b, which may be a's
+\ old block. b is live, and a is dead between the give and the take.
+let lemma reuse (h : Alloc.heap) (a : blk) (b : blk) : unit
+  requires Alloc.live h a = false
+  requires Alloc.live (Alloc.give (Alloc.take h a) a) b = false
+  ensures Alloc.live (Alloc.give (Alloc.take h a) a) a = false
+  ensures Alloc.live (Alloc.take (Alloc.give (Alloc.take h a) a) b) b
+= ()
+
+\ Wrong: a block given back is not live.
+let lemma use_after_give (h : Alloc.heap) (a : blk) : unit
+  ensures Alloc.live (Alloc.give h a) a
+= ()
+```
+
+`fresh_apart` and `reuse` prove from the axioms alone, with no quantifier in sight, and `use_after_give` fails: using a block after giving it back is the use-after-free the theory exists to rule out. The `bits` model proves every axiom, so nothing is trusted.
+
+What the theory cannot do yet is follow a running allocator. Its heap is spec-only, and code cannot hold one, so `take` and `give` in pool.pia cannot say `ensures p.heap = Alloc.take (old p.heap) result.i`. [ADR 0041](adr/0041-allocator-semantics-as-a-theory.md) proposes ghost state for that: a field or parameter the verifier sees and codegen erases. Each allocator then proves, once and privately, that its data structure matches the heap, and its users see only `Alloc`.
 
 ## Writing a theory
 
