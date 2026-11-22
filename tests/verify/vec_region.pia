@@ -1,0 +1,90 @@
+(* A vector that stores its allocator (ADR 0041, ADR 0042 step 2). The
+   bump and the vector share the region `r`: the bump's memory and the
+   vector's buffer both borrow from it, not from each other, so `push`
+   can allocate from `v.alloc` and keep the buffer in `v` without `v`
+   borrowing from itself. Regions are erased: `vec u16` in `demo` is
+   `vec u16 r` for whatever lends `storage`.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let vec = let (t : type) (r : region) => type { alloc : bump t r; buf : borrowed(r) mutable [t]; len : usize }
+
+let push (t : type) (r : region) (v : inout mutable vec t r) (x : t) : result unit oom
+  requires v.alloc.used <= len v.alloc.mem && v.len <= len v.buf
+  ensures v.alloc.used <= len v.alloc.mem && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then
+    (let cap = len v.buf in
+     if cap > 1000000 then Err OutOfMemory
+     else
+       (let nb = alloc v.alloc (2 * cap + 1)? in
+        let old_buf = v.buf in
+        for i in 0 .. v.len
+          invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+        do nb.[i] <- old_buf.[i] done;
+        nb.[v.len] <- x;
+        v.buf <- nb;
+        v.len <- v.len + 1;
+        Ok ()))
+  else
+    (let b = v.buf in
+     b.[v.len] <- x;
+     v.len <- v.len + 1;
+     Ok ())
+
+let demo (storage : borrowed mutable [u16]) : result u16 oom =
+  let v : mutable vec u16 = { alloc = { mem = storage; used = 0 }; buf = storage.[0 .. 0]; len = 0 } in
+  push v 700?;
+  push v 900?;
+  let b = v.buf in
+  Ok (b.[0] + b.[1])
+
+(* Expected report, in order.
+// CHECK: vec_region.pia:54:74: proved: the slice is within bounds [smt]
+// CHECK: vec_region.pia:55:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_region.pia:56:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_region.pia:58:7: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:58:15: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:58:13: proved: '+' does not overflow u16 [smt]
+// CHECK: vec_region.pia:38:35: proved: '*' does not overflow usize [smt]
+// CHECK: vec_region.pia:38:41: proved: '+' does not overflow usize [smt]
+// CHECK: vec_region.pia:38:18: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: vec_region.pia:41:11: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_region.pia:42:22: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:42:12: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:41:11: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_region.pia:43:9: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:45:24: proved: '+' does not overflow usize [smt]
+// CHECK: vec_region.pia:49:6: proved: the index is within bounds [smt]
+// CHECK: vec_region.pia:50:21: proved: '+' does not overflow usize [smt]
+// CHECK: vec_region.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: vec_region.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: vec_region.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: vec_region.pia:19:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_region.pia:21:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_region.pia:22:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_region.pia:22:9: proved: the slice is within bounds [smt]
+// CHECK: vec_region.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: vec_region.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: vec_region.pia:13:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: vec_region.pia:27:1: not proved generically: 'push' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: 26 proved, 0 failed, 0 skipped
+*)
