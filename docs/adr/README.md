@@ -43,7 +43,7 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0037](0037-idiomatic-pia-and-lints.md) | Idiomatic Pia: facts in types first, written as opinions and checked by lints | Accepted |
 | [0038](0038-float-kernels-against-real-theories.md) | Float kernels are proved against real-valued specifications by rounding-error bounds | Accepted |
 | [0039](0039-module-and-interface-syntax.md) | Modules are private by default: one module per file, interfaces list every export, imports name interfaces | Accepted |
-| [0040](0040-cpp23-standard-library-in-pia.md) | The C++23 standard library is mapped onto Pia by capability, with every component proved | Proposed |
+| [0040](0040-cpp23-standard-library-in-pia.md) | The C++23 standard library is mapped onto Pia by capability, with every component proved | Accepted |
 | [0041](0041-allocator-semantics-as-a-theory.md) | Allocator semantics are a theory, and allocators prove they refine it through spec-only state | Accepted |
 | [0042](0042-lifetimes-liveness-and-escape-analysis.md) | Lifetimes are checked by liveness, marked where values cross boundaries, and escape analysis places memory | Accepted |
 | [0043](0043-generic-definitions-proved-once.md) | Generic definitions are proved once, against their concepts, and instances are discharged by that proof | Accepted |
