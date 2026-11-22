@@ -1542,6 +1542,9 @@ class Gen {
   R genMatch(const Node &n, Type expected) {
     R s = genExpr(*n.kids[0], Type());
     if (!s) return s;
+    if (auto rt = mlir::dyn_cast<RecordType>(s->type);
+        rt && !types_.isVariant(rt))
+      return genRecordMatch(n, *s, rt, expected);
     if (!types_.isVariant(s->type))
       return fail(*n.kids[0], "'match' on " + typeName(s->type) +
                                   " is not supported yet; it works on "
@@ -1580,6 +1583,12 @@ class Gen {
       if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
         catchAll = true;
         if (pat.text != "_") a.bind = pat.text;
+        else if (a.as.empty())
+          for (const sema::Ctor *c : ctors)
+            if (!covered.count(c->name) && c->payload && isLinear(c->payload))
+              return fail(pat, "this arm drops the @linear payload of '" +
+                                   c->name + "'; match '" + c->name +
+                                   "' with a name and consume it");
       } else if (pat.kind == NodeKind::PVar ||
                  (pat.kind == NodeKind::PCtor)) {
         const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
@@ -1616,6 +1625,9 @@ class Gen {
             return fail(sub, "only a name, '_' or a variant's only "
                              "constructor can match a payload for now");
           if (!only && sub.text != "_") a.bind = sub.text;
+          if (!only && sub.text == "_" && a.as.empty() && isLinear(c->payload))
+            return fail(sub, "'_' drops this @linear payload; bind it with a "
+                             "name and consume it");
         }
         covered.insert(c->name);
         a.ctor = c;
@@ -1700,6 +1712,88 @@ class Gen {
     R r = genExpr(*chain, expected);
     popScope();
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
+    return r;
+  }
+
+  // `match r with | { a; b = x } -> e` on a record: binds its fields, as
+  // `let a = r.a in let x = r.b in e`. Matching consumes `r`, so this is
+  // how a @linear record is finally taken apart (#56).
+  R genRecordMatch(const Node &n, const TV &s, RecordType rt, Type expected) {
+    if (n.kids.size() != 2)
+      return fail(*n.kids[2]->kids[0], "a record has one shape, so a 'match' "
+                                       "on it has one arm");
+    const Node &arm = *n.kids[1];
+    if (arm.kids.size() > 2 && !arm.kids[2]->kids.empty())
+      return fail(*arm.kids[2], "arm contracts on a record 'match' are not "
+                                "supported yet");
+    const Node &pat = *arm.kids[0];
+    std::string hidden = "#match" + std::to_string(matchCounter_++);
+    syntax::SourceLoc at = n.loc;
+    std::vector<std::pair<std::string, std::string>> binds;  // name, field
+    if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
+      if (pat.text == "_" && isLinear(rt))
+        return fail(pat, "'_' drops this @linear value; bind its fields "
+                         "and consume the @linear ones");
+    } else if (pat.kind == NodeKind::PRecord) {
+      std::set<std::string> seen;
+      for (const syntax::NodePtr &f : pat.kids) {
+        std::optional<unsigned> i = rt.fieldIndex(f->text);
+        if (!i)
+          return fail(*f, typeName(rt) + " has no field '" + f->text + "'");
+        if (!seen.insert(f->text).second)
+          return fail(*f, "'" + f->text + "' is already matched");
+        std::string name = f->text;
+        if (!f->kids.empty() && f->kids[0]->kind != NodeKind::None) {
+          const Node &sub = *f->kids[0];
+          if (sub.kind != NodeKind::PVar || types_.isCtorName(sub.text))
+            return fail(sub, "only a name or '_' can match a field for now");
+          name = sub.text;
+        }
+        if (name == "_") {
+          if (isLinear(rt.getFieldTypes()[*i]))
+            return fail(*f, "'_' drops the @linear field '" + f->text +
+                            "'; bind it and consume it");
+          continue;
+        }
+        binds.emplace_back(name, f->text);
+      }
+      for (auto [j, field] : llvm::enumerate(rt.getFieldNames()))
+        if (!seen.count(field.getValue().str()) &&
+            isLinear(rt.getFieldTypes()[j]))
+          return fail(pat, "this pattern drops the @linear field '" +
+                               field.getValue().str() +
+                               "'; bind it and consume it");
+    } else {
+      return fail(pat, "a record is matched by '{ a; b = x }', a name or '_'");
+    }
+    syntax::NodePtr body = syntax::clone(*arm.kids[1]);
+    if (pat.kind == NodeKind::PVar && pat.text != "_") {
+      auto let = syntax::makeNode(NodeKind::LetIn, pat.loc, pat.text);
+      let->add(syntax::makeNode(NodeKind::Params, pat.loc));
+      let->add(syntax::makeNode(NodeKind::None, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Contracts, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Name, pat.loc, hidden));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
+      auto field = syntax::makeNode(NodeKind::Field, at, it->second);
+      field->add(syntax::makeNode(NodeKind::Name, at, hidden));
+      auto let = syntax::makeNode(NodeKind::LetIn, at, it->first);
+      let->add(syntax::makeNode(NodeKind::Params, at));
+      let->add(syntax::makeNode(NodeKind::None, at));
+      let->add(syntax::makeNode(NodeKind::Contracts, at));
+      let->add(std::move(field));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    if (!frames_.empty() && frames_.back().tails.count(&n)) addTails(*body);
+    const Node &chain = *body;
+    matchTrees_.push_back(std::move(body));  // diagnostics may point into it
+    pushScope();
+    bind(hidden, s.value, s.type, false);
+    R r = genExpr(chain, expected);
+    popScope();
     return r;
   }
 

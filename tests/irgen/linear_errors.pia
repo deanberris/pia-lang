@@ -8,7 +8,8 @@ let open_error = type | Denied
 
 let open_file (x : i32) : result file open_error =
   if x < 0 then Err Denied else Ok { fd = x }
-let close (f : moved file) : unit = ()
+(* Matching a record takes it apart, so this consumes `f`. *)
+let close (f : moved file) : unit = match f with | { fd } -> ()
 let size (f : file) : i32 = f.fd
 
 (* Fine: read, then closed. *)
@@ -55,6 +56,17 @@ let kept (f : moved file) : i32 = size f
 (* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' is borrowed by this function, so it cannot be consumed here; take it as 'moved'
 *)
 let stolen (f : file) : file = f
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '_' drops this @linear value; bind its fields and consume the @linear ones
+*)
+let dropped (f : moved file) : unit = match f with | _ -> ()
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '_' drops this @linear payload; bind it with a name and consume it
+*)
+let ignored (x : i32) : unit = match open_file x with | Ok _ -> () | Err _ -> ()
+
+(* Fine: '_' takes only the errors, which are not @linear. *)
+let handled (x : i32) : unit = match open_file x with | Ok f -> close f | _ -> ()
 
 (* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' was moved to 'close' at [[@LINE+2]]:{{[0-9]+}}, so it can no longer be used here
 *)
