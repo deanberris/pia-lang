@@ -1,0 +1,33 @@
+(* A spec function's facts hold only where its proof covers them: its
+   precondition, and each argument in its parameter's type. A spec body's
+   arithmetic is exact, so `cnt xs (k - 1)` in the branch for k > 0 is,
+   unfolded at k = 0, a call at -1, where `requires k <= len xs` holds;
+   `ensures result <= k` there would contradict the result's type, and
+   once made every goal after the loop below, `assert false` included,
+   was proved. The argument's range now guards each fact.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+let spec cnt (xs : [u8]) (k : usize) : usize
+  requires k <= len xs
+  decreases k
+  ensures result <= k
+= if k = 0 then 0
+  else if xs.[k - 1] = 0 then cnt xs (k - 1)
+  else cnt xs (k - 1) + 1
+
+let nonzero (src : [u8]) : usize
+  ensures result = cnt src (len src)
+= let w : mutable usize = 0 in
+  for i in 0..len src
+    invariant w = cnt src i
+  do
+    if src.[i] = 0 then () else w <- w + 1
+  done;
+  assert false;
+  w
+
+(*
+// CHECK: spec_arg_range.pia:26:3: failed: the assertion holds
+// CHECK: spec_arg_range.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: 1 failed
+*)
