@@ -131,6 +131,13 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'pia.signed' on argument " << argIndex
                            << " must be a unit attribute";
   }
+  // `{pia.erased}`: a spec-only argument, which the C entry point leaves
+  // out (ADR 0041).
+  if (attr.getName() == "pia.erased") {
+    if (isa<UnitAttr>(attr.getValue())) return success();
+    return op->emitError() << "'pia.erased' on argument " << argIndex
+                           << " must be a unit attribute";
+  }
   if (attr.getName() == getLengthOfAttrName()) {
     auto i = dyn_cast<IntegerAttr>(attr.getValue());
     if (i && i.getValue().ult(argIndex)) return success();

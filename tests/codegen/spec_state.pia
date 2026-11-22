@@ -46,19 +46,19 @@ end
 let tracker = type { bits : u64; heap : Alloc.heap }
 
 \ Code stores a spec value in a spec-only field.
-let take (t : inout mutable tracker) (b : blk) : unit
+let take_block (t : inout mutable tracker) (b : blk) : unit
   requires Alloc.live t.heap b = false
   ensures t.heap = Alloc.take (old t.heap) b
   ensures t.bits = (old t.bits | (1 << b))
-= t.bits <- t.bits | (1 << b);
+= t.bits <- (t.bits | (1 << b));
   t.heap <- Alloc.take t.heap b
 
 \ Two blocks taken in turn are both live, from the axioms alone.
 let take_two (a : u8) (b : u8) : u64
   requires a < 64 && b < 64 && a <> b
 = let t : mutable tracker = { bits = 0; heap = Alloc.none } in
-  take t a;
-  take t b;
+  take_block t a;
+  take_block t b;
   assert Alloc.live t.heap a && Alloc.live t.heap b;
   t.bits
 
