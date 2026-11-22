@@ -5,6 +5,7 @@
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
 import Pia.Core.Int.Ops
+import Pia.Core.Int.Div
 
 (* The edges of the unsigned type `t` of `w` bits. *)
 let meta unsigned_edges (t : string) (w : int) : item =
@@ -77,7 +78,23 @@ let casts () : unit =
   assert Pia.Core.Int.saturate_cast_i64 top = 9223372036854775807;
   ()
 
+(* gcd's exact value is euclid, which the interface exports, so a caller
+   knows gcd of given values; quot_rem's remainder is 0 exactly when the
+   divisor divides the dividend. *)
+let exact () : unit =
+  let a : u8 = 6 in
+  let b : u8 = 3 in
+  assert Pia.Core.Int.gcd a b = 3;
+  let n : i32 = -6 in
+  let d : i32 = 3 in
+  assert Pia.Core.Int.gcd n d = 3;
+  assert (Pia.Core.Int.quot_rem n d).rem = 0;
+  assert Pia.Core.Int.divides 3 (-6);
+  assert Pia.Core.Int.divides 0 0;
+  assert Pia.Core.Int.divides 0 5 = false;
+  ()
+
 (* Every goal is proved, from the interface alone.
 // CHECK-NOT: failed
-// CHECK: 118 proved, 0 failed, 0 skipped
+// CHECK: 152 proved, 0 failed, 0 skipped
 *)
