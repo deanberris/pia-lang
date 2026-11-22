@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22): `let rec` and `Indirect` as proposed; shared mutation through leases (section 5a) instead of immutability alone. See "Dean's answers" at the end.
 
 ## Context
 
@@ -70,12 +70,23 @@ A recursive occurrence must sit inside a type that holds its argument behind a p
 `Pia.Mem.Ref` provides shared ownership, next to `Pia.Mem.Box`:
 
 - **`ref t`** is a counted box: one allocation holds a strong count, a weak count, the allocator and the value. `ref.make a v` can fail with the allocator's error. `ref.share r` makes another reference and increments the count; it is a function call, never an implicit copy. Dropping the last strong reference drops the value, and dropping the last reference of either kind frees the memory.
-- **Shared values are immutable.** `ref.get r` is a `borrowed(r)` read. `ref.get_mut r` requires `ref.unique r` (the strong count is one and no weak reference can upgrade), which the caller proves or checks with `ref.try_unique`, as Rust's `Rc::get_mut` and Koka's reuse do. There is no interior mutability through a `ref`.
-- **So strong cycles cannot exist.** A value can only be changed through a unique reference, and while it is borrowed for writing, the borrow rules ([#70](https://github.com/deanberris/pia-lang/issues/70)) stop the program from sharing it, so no reference to a value can be stored inside it, directly or through other values. The case to check is `ref.get_mut r` followed by storing `ref.share r` into `r`'s own contents: `get_mut` lends `r` for writing, so `r` cannot be shared, or used at all, until that loan ends, and the store is rejected. Every value graph built from `ref`s is acyclic by construction, and every value is freed when its last reference goes. This is the proof ADR 0040 asked for: it follows from the rules, so no program has to prove it. It is stated as a lemma of `Pia.Mem.Ref`'s model, proved once, and the verifier keeps the counts as spec-only state ([ADR 0041](0041-allocator-semantics-as-a-theory.md)).
+- **Shared values change only under a lease.** `ref.get r` is a `borrowed(r)` read. `ref.get_mut r` requires `ref.unique r` (the strong count is one and no weak reference can upgrade), which the caller proves or checks with `ref.try_unique`, as Rust's `Rc::get_mut` and Koka's reuse do. A value that is shared is changed only through a lease (section 5a), and there is no other interior mutability.
+- **So strong cycles cannot exist.** Without leases, a value can only be changed through a unique reference, and while it is borrowed for writing, the borrow rules ([#70](https://github.com/deanberris/pia-lang/issues/70)) stop the program from sharing it, so no reference to a value can be stored inside it, directly or through other values. The case to check is `ref.get_mut r` followed by storing `ref.share r` into `r`'s own contents: `get_mut` lends `r` for writing, so `r` cannot be shared, or used at all, until that loan ends, and the store is rejected. Every value graph built from `ref`s is acyclic by construction, and every value is freed when its last reference goes. This is the proof ADR 0040 asked for: it follows from the rules, so no program has to prove it. It is stated as a lemma of `Pia.Mem.Ref`'s model, proved once, and the verifier keeps the counts as spec-only state ([ADR 0041](0041-allocator-semantics-as-a-theory.md)). Leases keep the property with one extra rule (section 5a).
 - **`weak t`** is a reference that does not keep the value alive: `weak.of r`, and `weak.upgrade w : option (ref t)`. Back pointers, such as a tree node's parent, are weak. A cycle that goes through a weak reference is fine, since it never keeps anything alive.
 - **Over a concept.** `ref c` and `weak c` share any type meeting the concept `c`, as `box c` owns one (ADR 0046): the table pointer lives in the counted allocation, and the same single-receiver rule applies. Since a shared value is immutable, `ref.get` on a `ref c` allows only the requirements that read their receiver (`in`). A requirement that writes it needs `ref.get_mut`, and so a unique reference.
 - **Encoding.** Since shared values are immutable, the verifier encodes `ref t` by its value, like `box t`, plus a spec-only identity that `ref.ptr_eq` compares. A `weak t` is an identity and an `option t` that `upgrade` may return.
-- **One thread first.** `ref` and `weak` are not `sendable` ([ADR 0027](0027-coroutines-and-race-freedom.md)): their counts are not atomic. A `shared_ref` with atomic counts comes with atomics in M12, with the same rules.
+- **One thread first.** `ref` and `weak` are not `sendable` ([ADR 0027](0027-coroutines-and-race-freedom.md)): their counts are not atomic. A `shared_ref` with atomic counts comes with atomics in M12, with the same rules, and with leases that are proved not to overlap across threads (section 5a).
+
+### 5a. Leases: mutation of shared values, proved exclusive across threads
+
+Dean asked (2026-11-22) for a `lease` method that gives a mutable reference to a shared value, with a proof, within a theory, that leases held by different threads never overlap.
+
+- **The operation.** `ref.lease r` gives a `lease t`: a `@linear` value that lends the shared value for writing, `lease.get_mut l : borrowed(l) out mutable t`, until the lease is released by `lease.end l` or by its `drop`. Many references may exist while one of them holds a lease; what is exclusive is the lease, not the reference. `ref.read r` gives a read lease, which many holders may share, so a reader never sees a value in the middle of a write.
+- **The theory.** `Pia.Mem.Lease` states the discipline as a theory ([ADR 0036](0036-library-theories.md)), with a model, so it is proved consistent rather than trusted. Its sorts are the shared allocations and the lease holders (tasks, [ADR 0027](0027-coroutines-and-race-freedom.md)); `holds_write h a` and `holds_read h a` are its spec functions. Its axioms: a write lease on `a` excludes every other lease on `a`, read or write, by any holder; read leases exclude only write leases; ending a lease removes exactly that lease; and the value an acquire sees is the value the last release left, which is a happens-before edge ([theories.md](../theories.md#happens-before-and-memory-orders)) from that release to this acquire. Race freedom then follows from ADR 0027's permission rule, with a lease as the permission that justifies each access to the leased value.
+- **Proving leases do not overlap.** Each acquire is a proof goal: the task must not already hold a lease on `a` (re-entering would deadlock or alias), and either the program proves no other holder can hold one (a value only this task's references reach, or a protocol the model checker proves), or the acquire waits. Within one thread, for `ref`, this is usually settled from the borrow rules, since a lease lends `r` and a second `ref.lease` on any reference to the same allocation must be proved to be a different allocation (`not (ref.ptr_eq r r2)`) or rejected. Across threads, for `shared_ref`, `lease` suspends until the allocation is free and `try_lease` returns `option (lease t)`; their implementation is an atomic state word, and the model checker proves it meets the theory's axioms, as ADR 0027 does for the other primitives.
+- **Deadlock.** A waiting lease is an acquire of a lock, so it takes a lock level (`@level(n)` on the shared type, or the theory's `Levels` from [theories.md](../theories.md#lock-levels)), and a task may only lease above every level it holds. Lease-order deadlock is then a type error, as lock-order deadlock is.
+- **Leases and cycles.** A lease could otherwise build a strong cycle: store, through a lease on `a`, a reference that reaches `a`. So storing a strong reference through a lease is a proof goal, `not (reaches x a)`, over the spec-only reference graph that the Ref model keeps. For most types it is discharged by the types alone: if `t` cannot contain a `ref` to a type that contains `t`, nothing stored into a `t` can reach it, and the goal is not even generated. Weak references can always be stored, since they keep nothing alive. With that rule, the acyclicity lemma of section 5 still holds, and so does leak freedom.
+- **Encoding.** While no lease is held, the verifier still sees a `ref t` as its value. A lease makes the value at that allocation a fresh spec-only state from the acquire to the release, related to what the previous release left by the theory's axioms, so code that reads a shared value across a lease it does not hold learns nothing it should not.
 
 ### 6. Metaprograms over recursive types
 
@@ -85,7 +96,7 @@ A recursive occurrence must sit inside a type that holds its argument behind a p
 ### 7. What this ADR does not decide
 
 - Garbage collection and cycle collection: never ([ADR 0026](0026-memory-manager.md)). Cyclic graphs use weak references, or indices into a pool, which ADR 0040 already uses for node containers.
-- Interior mutability (cells inside shared values). It would allow strong cycles, so it is out until a separate ADR shows how to keep values from leaking with it.
+- Interior mutability other than leases (unchecked cells inside shared values). Leases are the one way to change a shared value.
 - Lazy or infinite (codata) types.
 
 ## Implementation order
@@ -94,9 +105,9 @@ A recursive occurrence must sit inside a type that holds its argument behind a p
 2. **Verifier**: recursive variants as SMT-LIB datatypes, `box` and `vec` by their contents, structural termination, `depth` and `size`.
 3. **Codegen**: layouts with pointer occurrences, construction, matching, and the constant-stack drop, proved. Needs `box t` (ADR 0046 step 1, built in `Pia.Mem` after the ADR 0042 region parameter decision).
 4. **Metaprograms**: `is_rec`, `rec_group`, the totality rule, and `@derive(eq)` on recursive types.
-5. **`ref` and `weak`** in `Pia.Mem.Ref`, with the uniqueness rule and the acyclicity lemma; [docs/cpp-std.md](../cpp-std.md) maps `shared_ptr` and `weak_ptr` to them.
+5. **`ref` and `weak`** in `Pia.Mem.Ref`, with the uniqueness rule and the acyclicity lemma; [docs/cpp-std.md](../cpp-std.md) maps `shared_ptr` and `weak_ptr` to them. Then single-threaded leases with the `Lease` theory and its model, and the reachability goal for stores through a lease.
 6. **`ref c` and `weak c`** over concepts, after ADR 0046's concept boxes.
-7. **`shared_ref`** with atomics (M12).
+7. **`shared_ref`** with atomics (M12), with waiting and `try_lease` leases, lease levels, and the model-checked atomic state word.
 
 The JSON DOM (ADR 0045 step 6) needs steps 1 to 3. Proof by reflection needs steps 1 and 2.
 
@@ -104,11 +115,11 @@ The JSON DOM (ADR 0045 step 6) needs steps 1 to 3. Proof by reflection needs ste
 
 - Recursive types are visible in their declarations, and their memory is visible in their constructors: every node is an explicit, fallible allocation, freed exactly once.
 - Recursive structures are proved as values. Shared ones are too, because sharing is immutable.
-- Leak freedom of shared references is a property of the library's rules, not of each program. The cost is no interior mutability through `ref`; programs that need a mutable graph use a pool with indices, or weak back references.
+- Leak freedom of shared references is a property of the library's rules, not of each program. Mutation of a shared value goes through a lease, which costs a proof at each acquire (often free, from the types and borrows) and, across threads, an atomic state word. Programs that need a densely mutable graph can still use a pool with indices.
 - Z3 datatypes make goals over recursive values heavier than goals over flat records. Fuel and structural lemmas keep each goal to a bounded unfolding, and recursive types join the proof benchmark from step 2.
 
-## Questions for Dean
+## Dean's answers (2026-11-22)
 
-1. **Spelling.** Mark recursive types with `let rec`, reusing the function form so there is no new keyword (recommended), or with an attribute such as `@rec`?
-2. **Guards.** Allow recursion only through types meeting the `Indirect` concept (recommended: `box`, `vec`, `ref`, `weak`, and library types that state it), or only through `box`?
-3. **Shared mutation.** Keep shared values immutable, with mutation only through a unique reference, so strong cycles are impossible by construction (recommended), or allow interior mutability and prove the absence of strong cycles per program?
+1. **Spelling.** Yes: `let rec` on types.
+2. **Guards.** Yes: recursion through any type meeting `Indirect`.
+3. **Shared mutation.** A `lease` method that gives a mutable reference, with a proof, within a theory, that leases held by different threads do not overlap. Section 5a.
