@@ -1,4 +1,4 @@
-(* Proofs the solver finds hard (ADR 0036): nonlinear contracts, deep
+(* Proofs the solver finds hard (ADR 0037): nonlinear contracts, deep
    unfolding, unchecked assumptions, and goals that cost much of the
    solver's limit.
 // RUN: piac --check %s 2>&1 | FileCheck %s

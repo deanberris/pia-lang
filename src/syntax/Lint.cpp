@@ -1,4 +1,4 @@
-// Lints for idiomatic Pia (ADR 0036). See Lint.h and docs/idioms.md.
+// Lints for idiomatic Pia (ADR 0037). See Lint.h and docs/idioms.md.
 
 #include "syntax/Lint.h"
 

@@ -4,7 +4,7 @@ let f (x : u8) : u8 @allow(range_requires)
 
 let g (y : u8) : u8 = f (y / 3)
 
-(* The verifier-based lint (ADR 0036): a goal that costs the solver at
+(* The verifier-based lint (ADR 0037): a goal that costs the solver at
    least --costly-goal resource units. With a limit of 1, every goal the
    solver proves is costly. --verify-stats splits the goals into those the
    types raise and those the contracts state.

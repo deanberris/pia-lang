@@ -661,7 +661,7 @@ class Gen {
         fuel_ = static_cast<unsigned>(lit->value.getZExtValue());
         continue;
       }
-      // `@allow(range_requires)` silences a lint (ADR 0036); lints run on
+      // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
       // the syntax tree, so there is nothing to generate.
       if (a->text == "allow" && !a->kids.empty()) {
         bool names = true;

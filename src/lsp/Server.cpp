@@ -581,7 +581,7 @@ class Server {
     if (!doc) return Json();
     const Analysis &a = *doc->analysis;
     Json::Array actions;
-    // A lint's fix (ADR 0036), for each lint the requested range touches.
+    // A lint's fix (ADR 0037), for each lint the requested range touches.
     uint32_t from = offsetOf(a.index(), params["range"]["start"]);
     uint32_t to = offsetOf(a.index(), params["range"]["end"]);
     for (const pia::syntax::Lint &l : a.lints()) {

@@ -1,4 +1,4 @@
-// Lints: opinions about idiomatic Pia (ADR 0036, docs/idioms.md).
+// Lints: opinions about idiomatic Pia (ADR 0037, docs/idioms.md).
 //
 // A lint is a warning, never an error. Each one names a better way to say
 // the same thing, and most carry a fix: text edits that a language server

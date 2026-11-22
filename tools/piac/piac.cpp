@@ -34,7 +34,7 @@
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr
 //   piac --no-lint[=NAME] ...       turn off every lint, or the one named
-//                                   (ADR 0036, docs/idioms.md); repeatable
+//                                   (ADR 0037, docs/idioms.md); repeatable
 //   piac --costly-goal=N ...        warn about a goal whose Z3 resource
 //                                   count is N or more (default 10% of the
 //                                   rlimit); 0 turns the warning off
@@ -185,7 +185,7 @@ std::vector<const pia::verify::Outcome *> unaccepted(
   return out;
 }
 
-// The costly_goal lint (ADR 0036): a goal the solver found hard. It reads
+// The costly_goal lint (ADR 0037): a goal the solver found hard. It reads
 // the cost each goal took, so it runs after verification, not on syntax.
 void warnCostly(const std::vector<pia::verify::Outcome> &outcomes,
                 unsigned long long threshold, unsigned rlimit) {

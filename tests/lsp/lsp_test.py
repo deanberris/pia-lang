@@ -421,7 +421,7 @@ class LspTest(unittest.TestCase):
                          SHADOW_FIXED)
 
     def test_lint_quick_fix(self):
-        # ADR 0036: a constant bound on one parameter is a range type.
+        # ADR 0037: a constant bound on one parameter is a range type.
         uri = "file:///tmp/range.pia"
         self.client.open(uri, RANGE)
         diags = self.client.diagnostics(

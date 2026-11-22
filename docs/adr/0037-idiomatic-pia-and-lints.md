@@ -1,4 +1,4 @@
-# 36. Idiomatic Pia: facts in types first, written as opinions and checked by lints
+# 37. Idiomatic Pia: facts in types first, written as opinions and checked by lints
 
 Date: 2026-11-22
 

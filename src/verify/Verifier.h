@@ -80,7 +80,7 @@ struct Stats {
   unsigned threads = 0;
   unsigned long long cost = 0;  // Z3 resource count over every query
   double encodeMs = 0, solveMs = 0;
-  // Where the selected goals came from (ADR 0036). Type goals are raised by
+  // Where the selected goals came from (ADR 0037). Type goals are raised by
   // operations on typed values: overflow and narrowing into a range type,
   // bounds, divisors, shifts, match exhaustiveness and out parameters.
   // Contract goals are written ones: requires at calls, ensures, loop

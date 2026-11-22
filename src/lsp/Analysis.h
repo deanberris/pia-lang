@@ -105,7 +105,7 @@ class Analysis {
   const syntax::Node *tree() const { return tree_.get(); }
 
   // Syntax errors, with the range of the token each one points at, then
-  // the lints (ADR 0036) as warnings with source "pia-lint".
+  // the lints (ADR 0037) as warnings with source "pia-lint".
   std::vector<Diag> diagnostics() const;
 
   // The lints of a document that parses; empty otherwise.

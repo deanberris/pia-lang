@@ -1,4 +1,4 @@
-(* Facts that belong in types (ADR 0036): constant bounds on one value.
+(* Facts that belong in types (ADR 0037): constant bounds on one value.
 // RUN: piac --check %s 2>&1 | FileCheck %s
 // RUN: piac --check --no-lint %s 2>&1 | FileCheck --allow-empty --check-prefix=OFF %s
 // RUN: piac --check --no-lint=range_requires %s 2>&1 | FileCheck --check-prefix=SOME %s

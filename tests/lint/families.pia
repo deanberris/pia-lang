@@ -1,4 +1,4 @@
-(* Functions that want to be one definition (ADR 0036): the same body at
+(* Functions that want to be one definition (ADR 0037): the same body at
    other types wants a generic function and a concept, the same body with
    other constants wants a parameter or a metaprogram, and hand-written
    field-by-field equality wants @derive(eq).
