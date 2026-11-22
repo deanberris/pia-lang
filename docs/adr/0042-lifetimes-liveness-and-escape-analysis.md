@@ -50,12 +50,12 @@ The boundaries are these:
 | Boundary | Marker |
 | --- | --- |
 | a function's result or `inout`/`out` parameter | `borrowed(m)`, naming the lender parameter (exists) |
-| a record or variant field | a region parameter of the type: `let vec (t : type) (r : region) = type { alloc : borrowed(r) inout mutable bump; ... }` |
+| a record or variant field | a region parameter of the type: `let vec = let (t : type) (r : region) => type { alloc : bump t r; buf : borrowed(r) mutable [t]; len : usize }`, where the allocator and the buffer both borrow from `r` |
 | a task, `spread` worker or channel send | `borrowed(r)` on what is sent; it must name a region that encloses the task ([ADR 0027](0027-coroutines-and-race-freedom.md)) |
 | a coroutine suspension point | inferred, but checked against the frame's region |
 | an interface | as in the function or type it lists |
 
-`region` is a builtin type name, like `type`, not a keyword. A region parameter is deduced from the arguments, as a type parameter is ([ADR 0034](0034-concepts-and-overload-resolution.md)), so users write `vec u8 m` or simply `vec`. It is spec-only state ([ADR 0041](0041-allocator-semantics-as-a-theory.md)): codegen erases it, and it costs nothing at run time.
+`region` is a builtin type name, like `type`, not a keyword. A region parameter is deduced from the arguments, as a type parameter is ([ADR 0034](0034-concepts-and-overload-resolution.md)), so users write `vec u8 r` or simply `vec u8`. It is spec-only state ([ADR 0041](0041-allocator-semantics-as-a-theory.md)): codegen erases it, and it costs nothing at run time.
 
 ### 3. Escape analysis places the memory the compiler owns
 
@@ -106,7 +106,7 @@ Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls
 ## Implementation order
 
 1. Liveness-based loan ends in place of the lexical borrow check, with moves and `@linear` in the same pass, and the new error notes. (Loan ends: implemented, tests/irgen/borrow_liveness.pia.)
-2. `region` parameters on records and variants, with `borrowed(r)` fields. With this, Vec can store its allocator (ADR 0041, step 5).
+2. `region` parameters on records and variants, with `borrowed(r)` fields. With this, Vec can store its allocator (ADR 0041, step 5). (Records and functions: implemented, tests/verify/vec_region.pia and tests/irgen/region_errors.pia; variants and interfaces later.)
 3. Markers at task, channel and coroutine boundaries.
 4. Stack slot lifetimes in codegen, with a stack-size test of `with_arena`s in sequence.
 5. The generational arena in `Pia.Mem`, with its spec-only generations and its `Alloc` refinement.
@@ -125,6 +125,6 @@ Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls
 
 ## Questions for Dean (answered 2026-11-22)
 
-1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name". **Yes** (Dean chose region parameters on types).
+1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name". **Yes** (Dean chose region parameters on types, and later wrote "Explicit with borrowed(m)"). So every marker is written, never inferred, and in one form: `borrowed(m)` names a value at a function boundary, and `borrowed(r)` names a region where a type must hold loans without naming a value, as a vector holding its allocator does. A function names a region only through a parameter whose type mentions it.
 2. **Generations.** Spec-only in proved code, with run-time counters only at FFI and REPL boundaries? **Yes.**
 3. **Stack placement.** Should escape analysis place only compiler-owned memory, and advise (through a lint) rather than rewrite `alloc` calls? This keeps allocation explicit and its failures handled. **Yes.**

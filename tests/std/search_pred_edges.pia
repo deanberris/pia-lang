@@ -1,0 +1,43 @@
+(* The predicate overloads of Pia.Core.Algo.Search, called with lambdas
+   (ADR 0040, section 6; ADR 0044). A unary predicate is a Function
+   object, so find, count, all, any and none are proved once in Search and
+   their instances here are discharged by that proof. A binary predicate
+   is an arrow, so mismatch and equal are proved here, at each lambda.
+   The calls are in code, since a higher-order function cannot be called
+   in a contract yet.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Search.Search as S
+
+(* The value form and the predicate form of find are one name, chosen by
+   the argument: a u8, or a function of a u8. *)
+let unary (xs : [u8]) : unit
+  requires forall (j in 0..len xs). xs.[j] < 100
+= let v = S.find xs 7 in
+  let k = S.find xs (let (x : u8) : bool => x > 3) in
+  assert v <= len xs && k <= len xs;
+  let c = S.count xs (let (x : u8) : bool => x > 3) in
+  assert c <= len xs;
+  let a = S.all xs (let (x : u8) : bool => x < 200) in
+  assert a;
+  let n = S.none xs (let (x : u8) : bool => x >= 100) in
+  assert n;
+  let e = S.any xs (let (x : u8) : bool => x >= 100) in
+  assert e = false;
+  ()
+
+let binary (xs : [u8]) (ys : [u8]) : unit =
+  let m = S.mismatch xs ys (let (a : u8) (b : u8) : bool => a <= b) in
+  assert m <= len xs && m <= len ys;
+  let e = S.equal xs xs (let (a : u8) (b : u8) : bool => a = b) in
+  assert e;
+  ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK-DAG: proved: 'Pia.Core.Algo.Search.count#2<u8, lambda@search_pred_edges.pia:{{[0-9]+}}:{{[0-9]+}}>' is an instance of the generic proof of 'Pia.Core.Algo.Search.count#2' [generic]
+// CHECK: 108 proved, 0 failed, 0 skipped
+*)

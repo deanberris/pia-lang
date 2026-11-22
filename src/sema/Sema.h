@@ -270,6 +270,10 @@ struct Param {
   // `(v : borrowed(m) inout mutable vec)`: the parameter's new value may
   // borrow from the parameter `m` (#70). Empty when it borrows nothing.
   std::string lender;
+  // The regions its type mentions or its `borrowed(r)` names (ADR 0042,
+  // step 2): its value may hold loans from whatever the arguments for
+  // that region's parameters borrow from.
+  std::vector<std::string> regions;
 };
 
 struct FuncSig {
@@ -309,6 +313,11 @@ struct FuncSig {
   std::string resultLender;
   mlir::Type lentType;  // the part of the result that is borrowed
   std::string lentModifiers;  // its modifiers, "borrowed out mutable"
+  // The regions the result type mentions, or `borrowed(r)` names: the
+  // result may hold loans from the arguments for those regions.
+  std::vector<std::string> resultRegions;
+  // Whether the result is `borrowed(r)` of a region.
+  bool lentFromRegion = false;
 };
 
 // Resolves the value parameters and result type of `item` into `sig`, with

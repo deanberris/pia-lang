@@ -171,11 +171,14 @@ let_in: LET REC? binder param* ret_annot? contract* EQ handled IN seq
         | seq HANDLE arms -> handle
 
 // A lambda's result type and contracts (ADR 0044).
-lambda: LET lparam+ (COLON annot)? contract* FATARROW seq
+lambda: LET captures? lparam+ (COLON annot)? contract* FATARROW seq
+// What a lambda captures, and how: copied, borrowed or inout (ADR 0044).
+captures: LBRACKET capture (COMMA capture)* RBRACKET
+capture: (BORROWED | INOUT)? IDENT
 // Inside lists, records and argument lists `;` and `,` separate elements, so
 // a function literal there has a body without top-level sequencing.
 ?elem: stmt
-     | LET lparam+ (COLON annot)? contract* FATARROW elem -> lambda
+     | LET captures? lparam+ (COLON annot)? contract* FATARROW elem -> lambda
 
 lparam: LPAREN pattern (COLON annot)? RPAREN
       | LPAREN RPAREN -> lparam_unit

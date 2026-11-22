@@ -1,19 +1,66 @@
-(* Errors in captures (ADR 0044, section 6).
+(* Errors in captures (ADR 0044, section 6): every local a lambda uses is
+   listed, once, copied, borrowed or referenced, and the loans hold.
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 
 let apply_to (x : u8) (f : u8 -> u8) : u8 = f x
+let for_each (xs : [u8]) (f : inout u8 -> unit) : unit =
+  for i in 0 .. len xs do f xs.[i] done
+let all (xs : [u8]) (f : u8 -> unit) : unit =
+  for i in 0 .. len xs do f xs.[i] done
 
-(* CHECK-DAG: capture_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: a lambda cannot assign 'n', which it captures
+(* CHECK-DAG: capture_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'lim' is used but not captured: add it to the capture list as [lim] (copied), [borrowed lim] or [inout lim]
+*)
+let unlisted (x : u8) (lim : u8) : u8 = apply_to x (let (y : u8) => if y < lim then y else lim)
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'lim' is captured twice; list it once
+*)
+let twice (x : u8) (lim : u8) : u8 = apply_to x (let [lim, lim] (y : u8) => lim)
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'lim' is captured but never used; remove it from the list
+*)
+let unused (x : u8) (lim : u8) : u8 = apply_to x (let [lim] (y : u8) => y)
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'keys' is a [u8], which cannot be copied into a lambda; borrow it, as in '[borrowed keys]'
+*)
+let copies (x : u8) (keys : [u8]) : u8 = apply_to x (let [keys] (y : u8) => if len keys > 0 then keys.[0] else y)
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'lim' is not mutable, so a lambda cannot write it
+*)
+let fixed_lim (xs : [u8]) (lim : u8) : unit = for_each xs (let [inout lim] (y : u8) : unit => lim <- y)
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'n' is copied into this lambda, so it cannot assign it; capture it as '[inout n]' to write it
 *)
 let counts (x : u8) : u8 =
-  let n : mutable u8 = 0 in apply_to x (let (y : u8) => n <- y; y)
+  let n : mutable u8 = 0 in apply_to x (let [n] (y : u8) => n <- y; y)
 
-(* While the lambda is live its buffer stays lent.
+(* While the lambda is live, its borrowed buffer cannot be written.
 // CHECK-DAG: capture_errors.pia:[[@LINE+5]]:{{[0-9]+}}: error: 'xs' is lent to 'at', so it cannot be assigned here
 *)
 let reads (xs : borrowed inout mutable [u8]) : bool
   requires len xs > 1
-= let at = let (i : usize) : bool => i < len xs && xs.[i] = 0 in
+= let at = let [borrowed xs] (i : usize) : bool => i < len xs && xs.[i] = 0 in
   xs.[0] <- 1;
   at 1
+
+(* A borrowed scalar cannot be assigned while the lambda is live.
+// CHECK-DAG: capture_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 'lim' is lent to 'below', so it cannot be assigned here
+*)
+let moves (x : u8) : bool =
+  let lim : mutable u8 = 3 in let below = let [borrowed lim] (y : u8) : bool => y < lim in
+  lim <- 4;
+  below x
+
+(* A referenced capture is the lambda's alone while it is live.
+// CHECK-DAG: capture_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 'total' is captured by 'put' as 'inout', so it cannot be read here
+*)
+let peeks (x : u8) : u8 =
+  let total : mutable u8 = 0 in let put = let [inout total] (y : u8) : unit => total <- y in
+  let seen = total in put x; seen
+
+(* A lambda that writes a capture needs an effectful arrow.
+// CHECK-DAG: capture_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: this lambda writes a captured variable, and 'f' of 'all' is not a function type that may: write it as '(f : inout t -> unit)'
+*)
+let pure_only (xs : [u8]) : unit =
+  let n : mutable u8 = 0 in
+  all xs (let [inout n] (y : u8) : unit => n <- y)

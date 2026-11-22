@@ -1,0 +1,14 @@
+(* Pia.Fn (ADR 0044, section 5): the laws of function arguments are spec
+   functions with nothing to prove, and its interface exports each with
+   its definition.
+// RUN: piac --verify %S/../../lib/Pia/Fn.pia | FileCheck %s
+// RUN: mkdir -p %t/fn && piac --emit=interface -o %t/fn %S/../../lib/Pia/Fn.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/fn/Pia.Fn.Laws.piai
+*)
+
+(* CHECK: 0 proved, 0 failed, 0 skipped
+// IFACE: module Pia.Fn
+// IFACE: let spec strict_weak_order : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> bool
+// IFACE: let spec sorted : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> bool
+// IFACE: let spec strict_weak_order (t : type) (less : (a : t) -> (b : t) -> bool) : bool =
+*)

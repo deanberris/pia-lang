@@ -6,10 +6,12 @@ cc_library(
     name = "irgen",
     srcs = [
         "IRGen.cpp",
+        "Regions.cpp",
         "Theories.cpp",
     ],
     hdrs = [
         "IRGen.h",
+        "Regions.h",
         "Theories.h",
     ],
     strip_include_prefix = "/src",

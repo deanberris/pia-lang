@@ -1,0 +1,19 @@
+load("//tools/piac:pia.bzl", "pia_library")
+
+# Pia.Fn: the laws of function arguments (ADR 0044, section 5), exported as
+# generic spec functions with their definitions.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Fn.pia"])
+
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+pia_library(
+    name = "fn",
+    src = "Fn.pia",
+    target_compatible_with = APPLE_SILICON,
+)

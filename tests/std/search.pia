@@ -1,6 +1,9 @@
 (* Pia.Core.Algo.Search (ADR 0040): every algorithm is proved once, over
    its type parameter (ADR 0043), and its interface exports the generic
-   functions and the spec functions their contracts use.
+   functions and the spec functions their contracts use. The unary
+   predicate overloads are proved once over the predicate's type too; the
+   binary ones, mismatch and equal with a predicate, at each call
+   (tests/std/search_pred_edges.pia).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Search.pia | FileCheck %s
 // RUN: mkdir -p %t/search && piac --emit=interface -o %t/search %S/../../lib/Pia/Core/Algo/Search.pia
@@ -13,7 +16,8 @@
 // CHECK-NOT: failed
 // CHECK-DAG: proved: the postcondition holds [generic]
 // CHECK-DAG: not proved generically: 'minmax_element' is proved at each instance, since it returns a value of extremes [generic]
-// CHECK: 251 proved, 0 failed, 0 skipped
+// CHECK-DAG: proved: the loop invariant holds after each iteration [generic]
+// CHECK: 309 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -22,5 +26,7 @@
 // IFACE-NEXT: {{^}}  let spec count_from : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (i : usize) -> usize{{$}}
 // IFACE:     {{^}}  let find : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> usize{{$}}
 // IFACE:     {{^}}  let is_sorted : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> bool{{$}}
-// IFACE:     {{^}}end{{$}}
+// IFACE:     {{^}}  let find : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> usize{{$}}
+// IFACE:     {{^}}  let equal : (t : type) -> (xs : [t]) -> (ys : [t]) -> (p : t -> t -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
 *)
