@@ -888,7 +888,57 @@ void eraseContracts(mlir::ModuleOp module) {
     if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
       if (isLemma(call)) statements.push_back(op);
   });
+  // What only feeds a contract never runs, so it goes with the contract,
+  // calls included: a contract evaluates both sides of `&&`, so code kept
+  // for one could load out of bounds, and a call to another module's
+  // function, a declaration here, would otherwise stay (it is not known to
+  // be pure). An op is contract-only when each of its uses is in a
+  // contract statement or in a contract-only op. Ops that write are kept.
+  llvm::SmallPtrSet<mlir::Operation *, 32> contractOnly;
+  llvm::SmallPtrSet<mlir::Operation *, 32> isStatement(statements.begin(),
+                                                       statements.end());
+  auto insideOnly = [&](mlir::Operation *user) {
+    for (mlir::Operation *p = user; p; p = p->getParentOp())
+      if (isStatement.count(p) || contractOnly.count(p)) return true;
+    return false;
+  };
+  auto writes = [](mlir::Operation *op) {
+    bool w = false;
+    op->walk([&](mlir::Operation *in) {
+      if (auto e = mlir::dyn_cast<mlir::MemoryEffectOpInterface>(in))
+        if (e.hasEffect<mlir::MemoryEffects::Write>() ||
+            e.hasEffect<mlir::MemoryEffects::Allocate>() ||
+            e.hasEffect<mlir::MemoryEffects::Free>())
+          w = true;
+    });
+    return w;
+  };
+  for (bool changed = true; changed;) {
+    changed = false;
+    module.walk([&](mlir::Operation *op) {
+      if (contractOnly.count(op) || isStatement.count(op)) return;
+      if (op->getNumResults() == 0 || op->use_empty()) return;
+      if (op->hasTrait<mlir::OpTrait::IsTerminator>()) return;
+      if (mlir::isa<mlir::func::FuncOp>(op)) return;
+      for (Value r : op->getResults())
+        for (mlir::Operation *user : r.getUsers())
+          if (!insideOnly(user)) return;
+      if (writes(op)) return;
+      contractOnly.insert(op);
+      changed = true;
+    });
+  }
+  // Outermost first, so a feeder inside another goes with it.
+  llvm::SmallVector<mlir::Operation *> feeders;
+  module.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation *op) {
+    if (!contractOnly.count(op)) return mlir::WalkResult::advance();
+    feeders.push_back(op);
+    return mlir::WalkResult::skip();
+  });
   for (mlir::Operation *op : statements) op->erase();
+  // Users come after definitions, so the last goes first.
+  for (mlir::Operation *op : llvm::reverse(feeders))
+    if (op->use_empty()) op->erase();
   // Spec-only state (ADR 0041): code may store a spec value in a
   // parameter, local or field of a spec-only type, but never computes with
   // one, so each spec computation still in code only feeds such places.

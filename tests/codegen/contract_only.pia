@@ -1,0 +1,23 @@
+(* What only feeds a contract never runs, so codegen erases it with the
+   contract, calls to ordinary functions included. A contract evaluates
+   both sides of `&&`, so kept code would load xs.[result] when result is
+   len xs, out of bounds, and LLVM could then miscompile the function.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-LABEL: func.func @first_zero
+// CHECK-NOT: call @same
+// CHECK: return
+*)
+let same (a : u8) (b : u8) : bool = a = b
+
+let first_zero (xs : [u8]) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> same xs.[result] 0
+= let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> 0
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i

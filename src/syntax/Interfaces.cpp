@@ -94,6 +94,25 @@ void collectCtors(const Node &n, const std::string &module,
 }
 
 // `M.f` in the program becomes the Name `M.f` of the imported item.
+// In an imported definition, such as a generic function's body or a
+// concept's signature, `M.f` naming an item of another imported module,
+// such as the concept `Pia.Core.Order.Eq` that a generic of
+// Pia.Core.Algo.Search is constrained by. Nothing else is renamed: the
+// importer's own unqualified names must not capture the definition's.
+void resolveDotted(Node &n, const Imported &imp) {
+  if (n.kind == N::Field)
+    if (auto d = dotted(n)) {
+      std::string name = unalias(*d, imp);
+      if (imp.items.count(name)) {
+        n.kind = N::Name;
+        n.text = name;
+        n.kids.clear();
+        return;
+      }
+    }
+  for (NodePtr &k : n.kids) resolveDotted(*k, imp);
+}
+
 void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
   if (n.kind == N::TypeName || n.kind == N::TypeInst ||
       n.kind == N::SigInclude) {
@@ -581,8 +600,12 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
   }
   program.kids = std::move(out);
   if (any)
-    for (NodePtr &item : program.kids)
-      if (own.count(item.get())) rewrite(*item, imp, diags);
+    for (NodePtr &item : program.kids) {
+      if (own.count(item.get()))
+        rewrite(*item, imp, diags);
+      else
+        resolveDotted(*item, imp);
+    }
 }
 
 }  // namespace pia::syntax
