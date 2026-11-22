@@ -8,11 +8,11 @@
 *)
 
 (* The laws are proved for each type, and lexicographical_compare meets its
-   definition at each.
+   definition at u8, the one type it is exported for.
 // CHECK-NOT: failed
+// CHECK-NOT: lex_from<i64>
 // CHECK-DAG: proved: the measure of 'lex_from<u8>' decreases
-// CHECK-DAG: proved: the measure of 'lex_from<i64>' decreases
-// CHECK: 766 proved, 0 failed, 0 skipped
+// CHECK: 514 proved, 0 failed, 0 skipped
 *)
 
 (*
