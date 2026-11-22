@@ -201,10 +201,10 @@ static bool holdsBuffer(mlir::Type t) {
 }
 
 bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
-  if (!holdsBuffer(elem) || mlir::isa<ArrayType>(elem)) return true;
-  diags_.error(at, "a buffer of " + typeName(elem) + " is not supported "
-                   "yet: its elements hold a slice");
-  return false;
+  // A buffer whose elements hold slices is a buffer of slices (ADR 0048),
+  // one per slice field; a slice in a variant's payload is not yet.
+  (void)at;
+  return true;
 }
 
 mlir::Type TypeResolver::resolve(const Node &type) {

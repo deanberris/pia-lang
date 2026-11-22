@@ -745,6 +745,9 @@ class Encoder {
       Type sort = sortOf(t);
       if (!sort) return;
       arrays_[arg] = declare(sort, "");
+      if (holdsSlices(t))
+        innerLengths_[arg] = declare(
+            mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "lens " + name);
       auto shared = fn_.getArgAttrOfType<mlir::IntegerAttr>(
           index, PiaDialect::getLengthOfAttrName());
       if (auto a = mlir::dyn_cast<ArrayType>(t)) {
@@ -761,6 +764,59 @@ class Encoder {
       return;
     }
     if (auto v = havoc(t, name)) env_[arg] = *v;
+  }
+
+  // Whether `t` is a buffer whose elements are slices (ADR 0048).
+  static bool holdsSlices(Type t) {
+    if (auto s = mlir::dyn_cast<SliceType>(t))
+      return mlir::isa<SliceType>(s.getElementType());
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return mlir::isa<SliceType>(a.getElementType());
+    return false;
+  }
+
+  // Sets a root buffer's contents. When it is a slice loaded from a buffer
+  // of slices, the write goes back into that buffer's element, and every
+  // other slice loaded from the buffer is read again from it.
+  void setArray(Value root, Value arr) {
+    arrays_[root] = arr;
+    for (Value child = root;;) {
+      auto it = parent_.find(child);
+      if (it == parent_.end()) break;
+      auto [p, at] = it->second;
+      Value parr = arrays_.lookup(p);
+      Value carr = arrays_.lookup(child);
+      if (!parr || !carr) break;
+      parr = create<mlir::smt::ArrayStoreOp>(parr.getType(), parr, at, carr);
+      arrays_[p] = parr;
+      refreshChildren(p, child);
+      child = p;
+    }
+    refreshChildren(root, Value());
+  }
+
+  // The slices loaded from the buffer of slices `p`, but `except`, read
+  // again from its contents.
+  void refreshChildren(Value p, Value except) {
+    auto it = children_.find(p);
+    if (it == children_.end()) return;
+    Value parr = arrays_.lookup(p);
+    if (!parr) return;
+    for (Value c : it->second) {
+      if (c == except) continue;
+      Value at = parent_.lookup(c).second;
+      auto at2 = mlir::cast<mlir::smt::ArrayType>(parr.getType());
+      arrays_[c] = create<mlir::smt::ArraySelectOp>(at2.getRangeType(), parr, at);
+      refreshChildren(c, Value());
+    }
+  }
+
+  // Replaces a root buffer's contents with unknown ones, and its elements'
+  // lengths too when it holds slices.
+  void havocArray(Value root) {
+    setArray(root, declare(arrays_[root].getType(), "", false));
+    if (innerLengths_.count(root))
+      innerLengths_[root] = declare(innerLengths_[root].getType(), "", false);
   }
 
   bool isWritable(Value buffer) {
@@ -858,8 +914,7 @@ class Encoder {
     });
     for (Value r : loop->getResults())
       if (auto v = havoc(r.getType())) env_[r] = *v;
-    for (Value buffer : writtenBuffers(loop))
-      arrays_[buffer] = declare(arrays_[buffer].getType(), "", false);
+    for (Value buffer : writtenBuffers(loop)) havocArray(buffer);
     return true;
   }
 
@@ -1140,10 +1195,25 @@ class Encoder {
            andOf(cmp(P::sge, idx, bv(0)), cmp(P::slt, idx, len)),
            indexByIntervals(store.getBuffer(), store.getIndex()),
            {{"index", idx}, {"length", len}});
+      // Replacing an element of a buffer of slices stores the slice's
+      // contents and its length (ADR 0048).
+      if (mlir::isa<SliceType>(store.getValue().getType())) {
+        Value sv = calleeArray(store.getValue());
+        Value slen = lengths_.lookup(store.getValue());
+        Value inner = innerLengths_.lookup(root);
+        if (sv && slen && inner) {
+          setArray(root, create<mlir::smt::ArrayStoreOp>(arr.getType(), arr, at, sv));
+          innerLengths_[root] = create<mlir::smt::ArrayStoreOp>(
+              inner.getType(), inner, at, slen);
+        } else {
+          havocArray(root);
+        }
+        return true;
+      }
       Value v = term(store.getValue());
       if (v)
-        arrays_[root] = create<mlir::smt::ArrayStoreOp>(arr.getType(), arr,
-                                                        at, v);
+        setArray(root, create<mlir::smt::ArrayStoreOp>(arr.getType(), arr,
+                                                       at, v));
       return true;
     }
 
@@ -1590,10 +1660,26 @@ class Encoder {
       return true;
     }
     if (auto ld = mlir::dyn_cast<LoadOp>(op)) {
-      Value arr = arrays.lookup(rootBuffer(ld.getBuffer()));
+      Value root = rootBuffer(ld.getBuffer());
+      Value arr = arrays.lookup(root);
       Value at = elementIndex(ld.getBuffer(), in[1], views);
       Type sort = sortOf(ld.getType());
       if (!arr || !at || !sort) return false;
+      // An element of a buffer of slices is a slice: its contents and its
+      // length come from the buffer's (ADR 0048).
+      if (mlir::isa<SliceType>(ld.getType())) {
+        Value inner = innerLengths_.lookup(root);
+        if (!inner) return false;
+        arrays[ld.getResult()] = create<mlir::smt::ArraySelectOp>(sort, arr, at);
+        lengths[ld.getResult()] =
+            create<mlir::smt::ArraySelectOp>(bvType(), inner, at);
+        if (&arrays == &arrays_) {
+          parent_[ld.getResult()] = {root, at};
+          children_[root].push_back(ld.getResult());
+        }
+        out.push_back(bv(0));  // a placeholder: buffers are not terms
+        return true;
+      }
       out.push_back(create<mlir::smt::ArraySelectOp>(sort, arr, at));
       return true;
     }
@@ -1864,8 +1950,7 @@ class Encoder {
   }
 
   void havocBuffers(llvm::ArrayRef<Value> buffers) {
-    for (Value b : buffers)
-      arrays_[b] = declare(arrays_[b].getType(), "", false);
+    for (Value b : buffers) havocArray(b);
   }
 
   // A predicate that cannot be encoded is an unknown bool, so a goal on it
@@ -2181,10 +2266,13 @@ class Encoder {
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
       Value off = views_.lookup(actual), len = lengths_.lookup(actual);
-      if (actual != root && off && len)
-        arrays_[root] = writtenThrough(arrays_[root], off, len);
-      else
-        arrays_[root] = declare(arrays_[root].getType(), "", false);
+      if (actual != root && off && len) {
+        setArray(root, writtenThrough(arrays_[root], off, len));
+        if (innerLengths_.count(root))
+          innerLengths_[root] = declare(innerLengths_[root].getType(), "", false);
+      } else {
+        havocArray(root);
+      }
     }
     if (!hasBody) return true;
     Demand post = pre;
@@ -2889,6 +2977,13 @@ class Encoder {
 
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
+  // A buffer of slices (ADR 0048): each element's length, an array from
+  // index to length, by root buffer; and a slice loaded from one, with the
+  // buffer and index it came from, so a write through it reaches the
+  // buffer, and every other slice loaded from it sees the write.
+  llvm::DenseMap<Value, Value> innerLengths_;
+  llvm::DenseMap<Value, std::pair<Value, Value>> parent_;
+  llvm::DenseMap<Value, llvm::SmallVector<Value>> children_;
   llvm::DenseMap<Value, Value> views_;  // a slice's offset in its root buffer
   llvm::DenseSet<Value> chosen_;  // buffers an `if` chose between branches
   std::vector<Value> pc_;

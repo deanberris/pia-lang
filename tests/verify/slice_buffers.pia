@@ -1,0 +1,58 @@
+(* Buffers whose elements hold slices (ADR 0048). A buffer of `cell`s is
+   one buffer per field, so `slot` is a buffer of slices: the verifier
+   sees an array of arrays and an array of lengths. `cell` is `@linear`,
+   so each element owns its slot, the slots are apart, and a write
+   through one changes no other.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let cell = type { slot : [u16]; n : u8 } @linear
+
+(* Reading an element's slice, and its length. *)
+let first (xs : borrowed [[u16]]) : u16
+  requires len xs > 0 && len xs.[0] > 0
+= xs.[0].[0]
+
+(* Writing through an owned slot leaves the others alone. *)
+let set (xs : inout [cell]) : unit
+  requires len xs > 1 && len xs.[0].slot > 0 && len xs.[1].slot > 0
+  ensures xs.[0].slot.[0] = 5 && xs.[1].slot.[0] = old (xs.[1].slot.[0])
+= xs.[0].slot.[0] <- 5
+
+(* A slot taken out is the element's: a write through it shows there. *)
+let through (xs : inout [cell]) : u16
+  requires len xs > 0 && len xs.[0].slot > 0
+  ensures result = 9
+= (let s = xs.[0].slot in s.[0] <- 9; xs.[0].slot.[0])
+
+(* Wrong: the write went to element 0. *)
+let wrong (xs : inout [cell]) : unit
+  requires len xs > 1 && len xs.[0].slot > 0 && len xs.[1].slot > 0
+  ensures xs.[1].slot.[0] = 5
+= xs.[0].slot.[0] <- 5
+
+(* Wrong: an element's slice may be empty. *)
+let unchecked (xs : borrowed [[u16]]) : u16
+  requires len xs > 0
+= xs.[0].[0]
+
+(* Expected report, in order.
+// CHECK: slice_buffers.pia:14:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:14:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:20:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:20:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: slice_buffers.pia:26:12: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:26:27: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:26:39: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:26:39: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:25:3: proved: the postcondition holds [smt]
+// CHECK: slice_buffers.pia:32:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:32:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:31:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: lens xs.slot = {{-?[0-9]+}}, len xs.slot = {{-?[0-9]+}}
+// CHECK: slice_buffers.pia:37:3: proved: the index is within bounds [smt]
+// CHECK: slice_buffers.pia:37:3: failed: the index is within bounds
+// CHECK-NEXT: counterexample: lens xs = {{-?[0-9]+}}, len xs = {{-?[0-9]+}}, index = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: 13 proved, 2 failed, 0 skipped
+*)
