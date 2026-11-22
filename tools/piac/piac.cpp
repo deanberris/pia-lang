@@ -177,6 +177,7 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
           }
           os << "\n";
         }
+        if (!o.hint.empty()) os << "  hint: " << o.hint << "\n";
         break;
     }
   }

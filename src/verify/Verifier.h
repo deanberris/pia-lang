@@ -41,6 +41,8 @@ struct Outcome {
   // For a goal proved with theory axioms: the ones the proof used, from
   // its unsat core (or every axiom it was given, if no core was found).
   std::vector<std::string> axiomsUsed;
+  // For a failed goal: advice on what may be missing, such as fuel.
+  std::string hint;
 };
 
 struct Options {

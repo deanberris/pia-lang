@@ -424,7 +424,7 @@ A variant type and spec functions could say the same thing without a theory. The
 
 Some facts about a theory need induction: one axiom says what a single step does, and a lemma says what many steps do. The proof is the same every time, the lemma calling itself one step smaller, so a tactic can write it ([ADR 0036](adr/0036-library-theories.md), step 6). A tactic is a metaprogram that `@by(...)` on a lemma runs on the lemma's goal. It returns proof steps, and the verifier proves them like steps written by hand. So a tactic can make a proof possible, but it cannot make a wrong one ([meta.md](meta.md#tactics)).
 
-Here the theory is a clock, with one axiom: a tick adds one to the time. `ticks c n` is `n` ticks from `c`. `induction` writes the step `if n > 0 then elapsed c (n - 1)`, and with it the lemma is proved. Without the step, the same goal fails:
+Here the theory is a clock, with one axiom: a tick adds one to the time. `ticks c n` is `n` ticks from `c`. `induction` writes the step `if n > 0 then elapsed c (n - 1)`, and with it the lemma is proved. Without the step, the same goal fails, and the report says why it may: `ticks` was unfolded only once.
 
 <!-- example: clock.pia -->
 <!-- expect: fail -->
@@ -442,7 +442,8 @@ let model counter : Clock = struct
   let spec tick (c : int) : int = c + 1
 end
 
-let rec spec ticks (c : Clock.clock) (n : u8) : Clock.clock
+let rec spec ticks (c : Clock.clock) (n : int) : Clock.clock
+  requires n >= 0
   decreases n
 = if n = 0 then c else Clock.tick (ticks c (n - 1))
 
@@ -450,12 +451,14 @@ let meta induction (g : syntax) (on : syntax) : list =
   let args = map (let (p) => if p = name on then `( $on - 1 ) else p) (params g) in
   [ `( if $on > 0 then $(make_call (name g) args) ) ]
 
-let lemma elapsed (c : Clock.clock) (n : u8) : unit @by(induction n)
+let lemma elapsed (c : Clock.clock) (n : int) : unit @by(induction n)
+  requires n >= 0
   ensures Clock.time (ticks c n) = Clock.time c + n
   decreases n
 = ()
 
-let lemma unaided (c : Clock.clock) (n : u8) : unit
+let lemma unaided (c : Clock.clock) (n : int) : unit
+  requires n >= 0
   ensures Clock.time (ticks c n) = Clock.time c + n
 = ()
 ```
@@ -463,11 +466,12 @@ let lemma unaided (c : Clock.clock) (n : u8) : unit
 ```console
 $ piac --verify clock.pia
 ...
-clock.pia:23:3: proved: the postcondition holds [smt]
-clock.pia:28:3: failed: the postcondition holds
-...
+clock.pia:25:3: proved: the postcondition holds [smt]
+clock.pia:31:23: proved: the precondition of 'ticks' holds [smt]
+clock.pia:31:3: failed: the postcondition holds [the solver gave up: smt tactic failed to show goal to be sat/unsat (incomplete quantifiers)]
+  hint: a recursive spec function was unfolded only as far as its @fuel allows, so this goal may hold; raise @fuel on the function or the lemma, or prove the fact by induction in a lemma
 clock.pia:5:35: proved: the model 'counter' meets the axiom 'Clock.tick_time' [smt]
-6 proved, 1 failed, 0 skipped
+8 proved, 1 failed, 0 skipped
 ```
 
 `induction` reads the goal's parameters with `params g`, replaces `n` with `n - 1`, and builds the call with `make_call`. It recurses on nothing, so it is total, as a tactic must be: like a theory-building metaprogram, it may not read the program, and it must terminate ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)). The lemma still needs its `decreases n`, and the recursive call is checked against it, so a tactic that wrote a call that is not smaller would fail to prove it rather than prove the lemma wrongly. Nothing here is trusted: the model `counter`, where a clock is an integer, proves the axiom.

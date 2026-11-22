@@ -262,6 +262,8 @@ class Encoder {
   }
 
   bool reachedTarget() const { return done_; }
+  // Whether a recursive spec function was left uninterpreted at its fuel.
+  bool truncated() const { return truncated_; }
   void setVacuity(bool v) { vacuity_ = v; }
 
   // The consistency check of a trusted theory (ADR 0036): every axiom of
@@ -1499,6 +1501,22 @@ class Encoder {
   Value decreasesTerm(Value now, Value next) {
     using P = mlir::smt::BVCmpPredicate;
     if (!now || !next) return declare(boolType(), "", false);
+    // A measure of the spec-only `int` is an SMT Int (#187); a bit-vector
+    // one against it is read as the Int it stands for.
+    bool intNow = mlir::isa<mlir::smt::IntType>(now.getType());
+    bool intNext = mlir::isa<mlir::smt::IntType>(next.getType());
+    if (intNow || intNext) {
+      if (!intNow) now = bvToInt(now);
+      if (!intNext) next = bvToInt(next);
+      using IP = mlir::smt::IntPredicate;
+      return andOf(create<mlir::smt::IntCmpOp>(boolType(), IP::ge, now,
+                                               intConst(APInt(64, 0))),
+                   create<mlir::smt::IntCmpOp>(boolType(), IP::lt, next, now));
+    }
+    // Nothing else, such as a `real`, is well-founded: the goal fails.
+    if (!mlir::isa<mlir::smt::BitVectorType>(now.getType()) ||
+        !mlir::isa<mlir::smt::BitVectorType>(next.getType()))
+      return boolConst(false);
     return andOf(cmp(P::sge, now, bv(0)), cmp(P::slt, next, now));
   }
 
@@ -2036,8 +2054,13 @@ class Encoder {
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
-        std::max(fuelOf(callee), minFuel_))
+        std::max(fuelOf(callee), minFuel_)) {
+      // Unfolded as far as the fuel allows: past here the function is
+      // uninterpreted, so a model of the query need not be one of the
+      // program (#188).
+      truncated_ = true;
       return app;
+    }
 
     specStack_.push_back(callee.getOperation());
     unsigned before = unknowns_;
@@ -2359,6 +2382,7 @@ class Encoder {
   std::vector<std::string> sentAxioms_;
   std::vector<std::string> sentAssumes_;
   unsigned minFuel_ = 0;  // a lemma's @fuel (ADR 0036, tactics)
+  bool truncated_ = false;  // an unfolding stopped at the fuel (#188)
   bool vacuity_ = false;  // the target's hypotheses, without its negation
 };
 
@@ -2429,6 +2453,7 @@ struct Query {
   std::vector<Encoder::Decl> decls, witnesses;
   bool reached = false;
   bool theories = false;            // it applies a theory function
+  bool truncated = false;           // an unfolding stopped at the fuel
   std::vector<std::string> axioms;  // the axioms it was given
   std::vector<std::string> assumes;  // the `assume`s it asserts
   // The axiom assertions, by their index among the query's assertions,
@@ -2573,6 +2598,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.witnesses = enc.witnesses();
   q.reached = enc.reachedTarget();
   q.theories = enc.usesTheories();
+  q.truncated = enc.truncated();
   q.axioms = enc.sentAxioms();
   q.assumes = enc.sentAssumes();
   if (target < 0) return q;
@@ -2966,7 +2992,10 @@ void solve(const Job &job, const Options &options, Outcome &out,
       unsigned long long before = rlimitCount(witness);
       z3::check_result w = witness.check();
       js.cost += rlimitCount(witness) - before;
-      if (w == z3::sat) {
+      // A witness query that stopped unfolding at the fuel is not
+      // complete: its model may give a recursive spec function a value
+      // its definition does not, so it is not a counterexample (#188).
+      if (w == z3::sat && !job.witness->truncated) {
         answer = &*job.witness;
         last = &witness;
         result = z3::sat;
@@ -3057,6 +3086,13 @@ void solve(const Job &job, const Options &options, Outcome &out,
     answer = &*job.fallback;
     last = &fallback;
   }
+  // A query that stopped unfolding a recursive spec function at its fuel
+  // may fail only for want of fuel (#188).
+  if (answer->truncated)
+    out.hint = "a recursive spec function was unfolded only as far as its "
+               "@fuel allows, so this goal may hold; raise @fuel on the "
+               "function or the lemma, or prove the fact by induction in a "
+               "lemma";
   if (result == z3::unknown) {
     out.status = Status::Failed;
     out.method = "the solver gave up: " + last->reason_unknown();
