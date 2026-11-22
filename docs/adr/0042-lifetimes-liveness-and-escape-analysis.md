@@ -125,6 +125,6 @@ Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls
 
 ## Questions for Dean (answered 2026-11-22)
 
-1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name". **Yes** (Dean chose region parameters on types).
+1. **Marker syntax.** Name lifetimes by values (`borrowed(m)`) and by `region` parameters on types, rather than Rust-style `'a`? It adds no keyword, and `'` already means "primed name". **Yes** (Dean chose region parameters on types, and later wrote "Explicit with borrowed(m)"). So every marker is written, never inferred, and in one form: `borrowed(m)` names a value at a function boundary, and `borrowed(r)` names a region where a type must hold loans without naming a value, as a vector holding its allocator does. A function names a region only through a parameter whose type mentions it.
 2. **Generations.** Spec-only in proved code, with run-time counters only at FFI and REPL boundaries? **Yes.**
 3. **Stack placement.** Should escape analysis place only compiler-owned memory, and advise (through a lint) rather than rewrite `alloc` calls? This keeps allocation explicit and its failures handled. **Yes.**
