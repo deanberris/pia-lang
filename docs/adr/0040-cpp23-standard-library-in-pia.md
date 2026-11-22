@@ -22,7 +22,7 @@ Pia provides what the C++23 library lets a program do, in Pia's idioms, not C++'
 
 Each library function's doc comment names the C++ entity it corresponds to, as `(** C++: std::lower_bound *)`, so the language server, search and the map agree.
 
-Names follow Pia's style: snake case, single words where they are clear (`find`, `count`, `fill`, `rotate`), the C++ name where it is the established term (`lower_bound`, `popcount`, `gcd`, `iota`), and no `std::` prefixes, `_t` suffixes or `_if` variants (see section 6).
+Names follow Pia's style: snake case, single words where they are clear (`find`, `count`, `fill`, `rotate`), the C++ name where it is the established term (`lower_bound`, `popcount`, `gcd`, `iota`), and no `std::` prefixes, `_t` suffixes or `_if` variants, whose forms are overloads instead (see section 6).
 
 ### 2. C++'s prose becomes proved contracts
 
@@ -43,7 +43,13 @@ Names follow Pia's style: snake case, single words where they are clear (`find`,
 
 - Every allocating function takes a `borrowed` allocator that meets `Allocator` ([ADR 0026](0026-memory-manager.md)). There is no `std::allocator` and no default global heap, so C++'s `std::pmr` is the only model, and `<memory_resource>`'s `monotonic_buffer_resource`, `unsynchronized_pool_resource` and `synchronized_pool_resource` are `Pia.Mem`'s `arena`, `pool` and `shared` allocators.
 - `<scoped_allocator>` has nothing to do: a container's elements that allocate are given their allocator explicitly, and borrows ([ADR 0026](0026-memory-manager.md)) prove that none outlives it.
-- `unique_ptr<T>` is a `@linear` or `Drop` box from an allocator. `shared_ptr` and `weak_ptr` are deferred: shared ownership needs a reference count whose last release frees, which needs atomics for the shared case, and a proof that cycles cannot leak, which needs recursive types.
+- **There is no `unique_ptr`; there is one `box` (Dean, 2026-11-22).** C++'s `unique_ptr<T>` is a nullable pointer plus a deleter, and its type says nothing about what it points to beyond `T`. Pia's `box` is an owning, non-null allocation from a stored allocator, and its parameter is either a type or a concept:
+    - `box t` holds a `t`. Calls on it are direct, and proofs see the concrete value, as for any other `t`.
+    - `box c`, for a concept `c` such as `Shape` or `Function u8 bool` ([ADR 0044](0044-function-values-and-lambdas.md)), holds a value of any type that meets `c`. Boxing a value checks, statically, that its type meets `c` and that the instance's definitions satisfy the requirements' contracts and laws. The box carries the instance's table of requirement functions, and a call through it is an indirect call whose proof uses only the requirement's contract, as ADR 0043 proves a generic body over an abstract type. So everything in the box is proved to have the concept's shape, and no caller can tell which type it is. This replaces C++'s virtual base classes and `std::function`, and is the type-erased box that ADR 0044 reserves for `Pia.Fn` (`box (Function a r)` is Pia's `move_only_function`).
+    - A box is never null: an optional box is `option (box t)`, whose `None` is the null pointer in the layout. It has no deleter: dropping it drops the value (through the table, for a concept box) and returns the memory to the allocator it stores, so a custom deleter is a custom allocator. It is `Drop`, so it is freed at scope end, or `@linear` when the program must free it explicitly; moving it moves ownership and copying it does not exist.
+    - `make_unique` is `box.make alloc v`, which can fail like any allocation. `get`, `operator*` and `operator->` are borrows (`borrowed(b)`), `release` is taking the value apart (`box.into`), and `reset` is a drop followed by a new box.
+    - The core part, a concept used as a type argument, and the rules for calls through a box (only requirements with one receiver) are [ADR 0046](0046-box-over-a-type-or-a-concept.md).
+- `shared_ptr` and `weak_ptr` are `Pia.Mem.Ref`'s `ref` and `weak` ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)): counted, with shared values immutable so that strong cycles cannot be built, one thread first, and an atomic `shared_ref` with M12.
 
 The allocators, `vec` and the containers built on them (issue #72) are owned by the `Pia.Mem` work (#59, #71, #86, #88). This ADR maps C++'s containers onto that work and adds the ones #72 does not list, but does not change `Pia.Mem`'s design.
 
@@ -58,7 +64,8 @@ The allocators, `vec` and the containers built on them (issue #72) are owned by 
 
 - Algorithms that compare use `Eq` and `Ord` instances found by argument-dependent lookup ([ADR 0034](0034-concepts-and-overload-resolution.md)), and hashing uses `Hash`. A different order is a different type: a record that wraps the value and has its own `less`, as Rust's `Reverse` does. This is the common case in C++ too, and it monomorphises and vectorises.
 - `<compare>`'s `strong_ordering`, `weak_ordering` and `partial_ordering` are variants in `Pia.Core.Order`, with `compare` (the three-way comparison) derived from `less` and `same`, and `@derive(ord)` as a library metaprogram (#61).
-- The `_if` algorithms (`find_if`, `count_if`, `remove_if`, `all_of`), `transform`, `sort` with a comparator, and `accumulate` with an operation need a predicate or an operation passed as a value. Pia cannot compile function values yet, so these wait for them (see the gaps). They will be the same functions with a function parameter, not a second family.
+- There are no `_if` variants (Dean, 2026-11-22). `find_if`, `count_if`, `remove_if`, `replace_if`, `copy_if`, `partition_point` and the rest are overloads of `find`, `count`, `remove`, `replace`, `copy` and so on, chosen by the argument's type ([ADR 0034](0034-concepts-and-overload-resolution.md)): `find xs x` takes a value and needs `Eq t`, and `find xs p` takes a predicate `t -> bool`. The same goes for an operation or a comparator: `sort xs` uses `Ord t`, and `sort xs less` takes a comparator, whose contract requires a strict weak order; `accumulate xs init` uses `+`, and `accumulate xs init op` takes the operation. `all_of`, `any_of` and `none_of` are `all`, `any` and `none`, which take only a predicate. When the elements are themselves functions, the value overload's `Eq` constraint fails and soft failure drops it ([ADR 0035](0035-substitution-failure-and-total-constraints.md)), so the two forms never clash.
+- A predicate's contract is part of the overload's. The algorithm's `ensures` names `p x`, so the predicate has to be a pure, total function whose result a spec can mention, and an effectful or partial predicate is rejected at the call. These overloads wait for function values and lambdas, designed separately (see the gaps).
 
 ### 7. Text is UTF-8 bytes
 
@@ -136,11 +143,11 @@ Each phase is a set of issues, one PR each, with a module, its tests, and its ro
    8. `Pia.Core.Algo.Set` (`includes`, `set_union`, `set_intersection`, `set_difference`, `set_symmetric_difference` into `out` slices);
    9. `Pia.Core.Ascii`, `Pia.Core.Utf8` and integer `Pia.Core.Charconv`, with `to_chars`/`from_chars` round trips proved;
    10. `Pia.Core.Hash`, `Pia.Core.Rand` (integer engines such as `minstd_rand` and `mt19937`, and an unbiased `uniform_int`), `Pia.Core.Ratio` and `Pia.Time`'s durations and civil calendar.
-3. **Phase 2, containers and strings over `Pia.Mem`**, with #72: `string`, `deque`, `flat_map`, `flat_set`, `priority_queue`, `stack`, `queue`, `unordered_map`, `unordered_set`, `map` and `set` (B-trees whose nodes live in a pool), `list` and `forward_list` (pool-indexed nodes), the box for `unique_ptr`, and the algorithms that need a buffer (`stable_sort`, `stable_partition`, `inplace_merge`).
+3. **Phase 2, containers and strings over `Pia.Mem`**, with #72: `string`, `deque`, `flat_map`, `flat_set`, `priority_queue`, `stack`, `queue`, `unordered_map`, `unordered_set`, `map` and `set` (B-trees whose nodes live in a pool), `list` and `forward_list` (pool-indexed nodes), `box` (for `unique_ptr`, virtual bases and `move_only_function`), and the algorithms that need a buffer (`stable_sort`, `stable_partition`, `inplace_merge`).
 4. **Phase 3, the outside world**, after `Pia.Sys` and `Pia.Io` (#57, #58): `format`, `print`, readers and writers for the stream headers, `<filesystem>`, `<cstdio>`, `<chrono>`'s clocks, `<stacktrace>`.
 5. **Phase 4, floats** (M11): `Pia.Math`, floating-point `<charconv>`, the floating-point distributions.
 6. **Phase 5, concurrency** (M12): `Pia.Sync`, `Pia.Task`, `Pia.Chan`, as ADR 0027 designs them.
-7. **Phase 6, function values**: the `_if` algorithms, `transform`, comparator overloads, monadic `option` and `result`, `<functional>`, and `<ranges>`'s views.
+7. **Phase 6, function values**: the predicate, operation and comparator overloads of the phase 1 algorithms (C++'s `_if` forms), `transform`, monadic `option` and `result`, `<functional>`, and `<ranges>`'s views.
 8. **Later**: `<regex>`, `<mdspan>` (with value parameters in generic types), time zones, Unicode tables, `shared_ptr`.
 
 ### 14. Language gaps are listed, not worked around
@@ -150,11 +157,12 @@ Where the library needs something the language does not have, the library waits 
 | Gap | Blocks |
 | --- | --- |
 | Imported types and generic functions across interfaces ([ADR 0039](0039-module-and-interface-syntax.md) step 3) | every program importing a generic library module; until then a module's generics are proved by the definition check, and its tests are in the module's own test file |
-| Function values and closures ("functions as values are not supported yet") | phase 6: predicates, operations, views, `<functional>` |
+| Concepts as type arguments (`box c`: a type-erased box whose contents are proved to meet `c`; [ADR 0046](0046-box-over-a-type-or-a-concept.md)) | `box` over a concept, `Pia.Fn`'s dynamic function values, replacements for virtual dispatch |
+| Function values, closures and lambdas ("functions as values are not supported yet"; being designed with generic and typed lambdas) | phase 6: predicate, operation and comparator overloads, views, `<functional>` |
 | Value parameters in generic types (`[t; n]` for a parameter `n`; designed in [design.md](../design.md)) | `std::array` algorithms generic over `N`, `bitset<N>`, `inplace_vector<T, N>`, `mdspan` extents |
 | Core tuple types, values and patterns (section 9; an ADR of their own) | `<tuple>`, `pair` as a tuple, structured bindings, `apply`, argument packs for `format` and `make_unique`, multi-value returns in `<algorithm>` (`minmax`, `mismatch`) |
 | Anonymous sum types | `std::variant<Ts...>` beyond named variants, and `visit` over one |
-| Recursive types | proved `shared_ptr` cycle freedom, recursive values such as a JSON tree; the node containers use pool indices instead, which is their design rather than a workaround |
+| Recursive types ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)) | `ref` and `weak` for `shared_ptr` and `weak_ptr`, recursive values such as the JSON DOM ([ADR 0045](0045-json-derived-codecs-and-conforming-dom.md)); the node containers use pool indices instead, which is their design rather than a workaround |
 | Calls inside a callee's `ensures` are unconstrained at the caller | composing generic algorithms whose contracts name each other's spec functions |
 | Floats (M11), atomics and the concurrency runtime (M12) | phases 4 and 5 |
 | Cost proofs | proving C++'s complexity guarantees |
