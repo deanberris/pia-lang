@@ -1,0 +1,33 @@
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/piac:pia.bzl", "pia_binary")
+
+# The library's tests (ADR 0040, section 11): for each module, a lit test of
+# its goal counts and interfaces, an importer that proves its edge cases
+# from the interface alone, and a program that runs its compiled code.
+lit_tests(
+    name = "std_tests",
+    srcs = glob(["*.pia"]),
+    data = ["//lib/Pia/Core:Bit.pia"],
+    tools = ["//tools/piac"],
+)
+
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+pia_binary(
+    name = "bit_run",
+    src = "Inputs/bit_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:bit"],
+)
+
+sh_test(
+    name = "bit_run_test",
+    srcs = ["bit_run_test.sh"],
+    args = ["$(rootpath :bit_run)"],
+    data = [":bit_run"],
+    target_compatible_with = APPLE_SILICON,
+)

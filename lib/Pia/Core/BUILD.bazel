@@ -1,0 +1,23 @@
+load("//tools/piac:pia.bzl", "pia_library")
+
+# Pia.Core: the parts of the C++23 standard library that need no allocation
+# (ADR 0040, docs/cpp-std.md). Each module is proved and compiled on its own,
+# and importers build against its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files(["Bit.pia"])
+
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+# <bit>: tests/std/bit.pia checks its goals; tests/std/bit_edges.pia and
+# :bit_run test it through its interface.
+pia_library(
+    name = "bit",
+    src = "Bit.pia",
+    target_compatible_with = APPLE_SILICON,
+)
