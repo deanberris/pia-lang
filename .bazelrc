@@ -22,6 +22,9 @@ build --host_per_file_copt=external/.*@-w
 # Building LLVM/MLIR is slow the first time. A disk cache makes clean builds
 # and branch switches cheap.
 build --disk_cache=~/.cache/pia-bazel-disk
+# Without a cap the disk cache grows with every worktree and branch (it
+# reached 249 GB on the iMac). Bazel trims it to this size when idle.
+build --experimental_disk_cache_gc_max_size=50G
 
 test --test_output=errors
 
