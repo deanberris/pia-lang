@@ -1,0 +1,22 @@
+(* A box over a concept is this module's tagged union of the types it
+   widens (ADR 0046, step 5), so another Pia module cannot share its
+   layout until step 6's tables: an interface may not show it, except to C
+   (@abi(c)), whose callers take the documented layout
+   (tests/codegen/box_concept.pia).
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+module Shapes : Scene
+
+interface Scene = sig
+(* CHECK: box_concept_module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'count' shows a box over 'Shape' to other modules, whose layout is this module's for now: a box crosses modules with the table layout of ADR 0046, step 6
+*)
+  let count : (xs : [box Shape]) -> usize
+end
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let meta Shape (t : type) : concept = sig
+  let area : (s : t) -> u32
+end
+
+let count (xs : [box Shape]) : usize = len xs

@@ -107,25 +107,26 @@ Dean's priority is a `vec` of boxes, and most of all `vec (box c)`, so steps 1 t
 2. **Concepts as unsized types.** Parsing a partially applied concept in type position, `@unsized` parameters, the error everywhere else, and arrow types as `Function`.
 3. **`box.widen`.** The use check at widening, tables as constants, the `@linear` and borrow restrictions.
 4. **Calls through a box and forwarding.** The receiver rule, the generated forwarding instance, the verifier's one sort per box, contracts and laws as hypotheses, havoc after `inout`, and purity in contracts.
-5. **Code generation.** Fat pointers, indirect calls, and devirtualising when the table is known. With step 1 this gives the `vec (box Shape)` test.
-6. **The ABI.** Table layout in the published interface, and the loader's check.
+5. **Code generation, within a module.** `box C` lowers to a tagged union of the types the module widens to `C` (its closed world). A call through a box is a switch on the tag into each type's requirement, and a direct call where the tag is known. With step 1 this gives the `vec (box Shape)` test. A box may not cross a Pia module boundary yet: two modules would disagree on the union.
+6. **The ABI.** Fat pointers to a function-pointer table, one per pair of type and concept, with forwarding thunks and indirect calls: the cross-module layout, with [ADR 0030](0030-published-object-layouts.md)'s published layouts, the table layout in the published interface, and the loader's check.
 7. **`Pia.Fn`'s dynamic function values** as `box` at arrow types, and the library's handler tables.
 
 ## Steps 2 to 4 as built
 
-Steps 2 to 4 are built for the verifier (src/irgen/Boxes.cpp); code generation, step 5, comes next.
+Steps 2 to 4 are built for the verifier (src/irgen/Boxes.cpp), and step 5 for code generation within a module.
 
-- **The type.** A type function whose first parameter is `@unsized`, `let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }`, takes a concept there. `box Shape r` is then its own record, `box_Shape = { slot : usize; table : usize }`: the object's address and its table's, the fat pointer of section 7. A concept anywhere else a type is expected is an error that suggests `box` (tests/irgen/box_concept_type_errors.pia).
-- **The verifier's view.** Each requirement callable through a box is an uninterpreted function of the object's address in a generated theory `erased_Shape`, `area_of`. The requirement's contract is an axiom about it, and so is each law of the concept over one value. The axioms hold because `widen` runs the use check. One sort serves every box, which is sound because only single-receiver requirements are callable, and one address is one object.
+- **The type.** A type function whose first parameter is `@unsized`, `let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }`, takes a concept there. `box Shape r` is then its own type, `box_Shape`: the tagged union of the types this module widens to `Shape` (step 5), found by a first pass of IRGen, so the second makes `type | Box_Shape_square of square | Box_Shape_rect of rect`. In tests/codegen/box_concept.pia that is 4 bytes, a tag and the largest field set, square's side or rect's w and h, laid out as one buffer per field. A concept anywhere else a type is expected is an error that suggests `box` (tests/irgen/box_concept_type_errors.pia).
+- **The verifier's view.** Each requirement callable through a box is an uninterpreted function of the box in a generated theory `erased_Shape`, `area_of`. The union's switch is code; the verifier is told only that its result is `area_of b` (an assumption the use check at `widen` justifies), so a proof through a box sees the contract and not which types the module widens. The requirement's contract is an axiom about it, and so is each law of the concept over one value. The axioms hold because `widen` runs the use check. One sort serves every box, which is sound because only single-receiver requirements are callable, and one address is one object.
 - **`widen b`** turns a full `box t` (`b.state = 1`, as for `box t`) into a `box Shape`. It is generic over `t where Shape t`, so the use check runs at each instance. It refuses a `@linear` `t` and a `t` that borrows (tests/irgen/box_concept_errors.pia).
 - **Calls through a box.** `area b`, with `b : box Shape`, is a generated function: its precondition is the requirement's, and it ensures `result = erased_Shape.area_of b.slot`. Those functions are `box Shape`'s instance of `Shape`, so `box Shape` meets `Shape`, and a generic over `Shape` instantiates at it and is discharged by its generic proof. A requirement with two values of the concept's type, or one returning that type, gets a stub whose call is an error naming the reason. For now a box forwards only a receiver it lends.
 - **Gaps.**
   - `widen` gives the box a fresh object, so facts about the boxed value do not carry over. A later step links them: a requirement's result on the box equals its result on the value.
-  - The table, the object's bytes and the indirect call are `extern` placeholders until step 5.
+  - Function-pointer tables and the cross-module layout are step 6; until then an interface may show a box only to C (`@abi(c)`), and a box over an imported concept is refused.
+  - A requirement's precondition that names another requirement is not carried into the switch's call.
   - `remove` and `fill` for `box c` are not built, so a `box c` is always full, which lets the forwarding instance meet the concept without a `full` precondition.
   - Only a concept of one parameter can be boxed.
   - A program that boxes two concepts gets two `widen` overloads that differ only in their result.
-- tests/verify/box_concept.pia holds a square and a rectangle in one slice of `box Shape`, proves the sum of their areas from `Shape`'s contract, calls a generic over `Shape` at `box Shape`, and fails a requirement's precondition through a box.
+- tests/verify/box_concept.pia holds a square and a rectangle in one slice of `box Shape`, proves the sum of their areas from `Shape`'s contract, calls a generic over `Shape` at `box Shape`, and fails a requirement's precondition through a box. tests/codegen/box_concept.pia compiles it, and box_concept_test.c runs it and checks the sum, 19. tests/codegen/box_direct.pia checks that a call through a box straight after `widen` has no test of the tag, and that one through a box from a slice does.
 
 ## Consequences
 

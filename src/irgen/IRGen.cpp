@@ -756,6 +756,15 @@ class Gen {
     // A generic function from another module's interface sees that
     // module's functions, as its own body did there (ADR 0039).
     AdlScope adl(adlModule_, fromModule(item));
+    // A box's call through its union (ADR 0046) assumes that the object's
+    // requirement is the erased one: the use check at widen proved it meets
+    // the contract, which is all a caller is told.
+    struct TrustScope {
+      bool &t;
+      bool saved;
+      ~TrustScope() { t = saved; }
+    } trustScope{trusted_, trusted_};
+    if (hasFlag(item, "box_trusted")) trusted_ = true;
     Location l = loc(item);
     // An instance's body sees its type parameters as their arguments.
     struct TypeScope {
@@ -9460,20 +9469,78 @@ class Gen {
 
 }  // namespace
 
+namespace {
+mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
+                                               std::string_view filename,
+                                               mlir::MLIRContext &ctx,
+                                               syntax::Diagnostics &diags,
+                                               const Options &options);
+}  // namespace
+
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
                                            std::string_view filename,
                                            mlir::MLIRContext &ctx,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
-  // A box over a concept (ADR 0046) becomes its own record and theory.
-  syntax::NodePtr boxed;
-  if (hasErasedBoxes(programIn)) {
-    boxed = syntax::clone(programIn);
-    expandErasedBoxes(*boxed, options.source, diags);
-    if (diags.hasErrors()) return nullptr;
+  if (!hasErasedBoxes(programIn))
+    return generateOnce(programIn, filename, ctx, diags, options);
+  // A box over a concept (ADR 0046) becomes its own record and theory. A
+  // first pass, with a stand-in for the box, finds the types the module
+  // widens to each concept; the second makes `box C` their tagged union
+  // (step 5), the module's closed world.
+  syntax::NodePtr first = syntax::clone(programIn);
+  expandErasedBoxes(*first, options.source, diags);
+  if (diags.hasErrors()) return nullptr;
+  std::map<std::string, std::vector<std::string>> widened;
+  {
+    syntax::Diagnostics scratch;
+    auto module = generateOnce(*first, filename, ctx, scratch, options);
+    if (scratch.hasErrors() || !module) {
+      for (const syntax::Diagnostic &d : scratch.errors())
+        diags.error(d.loc, d.message);
+      return nullptr;
+    }
+    for (auto f : module->getOps<mlir::func::FuncOp>()) {
+      llvm::StringRef name = f.getSymName();
+      if (!name.starts_with("widen<") || !name.ends_with(">") ||
+          f.getNumResults() != 1)
+        continue;
+      auto rt = mlir::dyn_cast<RecordType>(f.getFunctionType().getResult(0));
+      if (!rt || !rt.getName().starts_with("box_")) continue;
+      std::string t = name.drop_front(6).drop_back(1).str();
+      if (t.find_first_of("<>, ") != std::string::npos) {
+        diags.error(programIn.loc,
+                    "a box over a concept holds named types for now, and '" +
+                        t + "' is an instance of a generic one (ADR 0046)");
+        return nullptr;
+      }
+      // box_C: the concept is the name after `box_`.
+      std::string c = rt.getName().drop_front(4).str();
+      auto &ts = widened[c];
+      if (!llvm::is_contained(ts, t)) ts.push_back(t);
+    }
   }
-  const syntax::Node &program = boxed ? *boxed : programIn;
+  std::map<std::string, std::vector<std::string>> byConcept;
+  for (const syntax::NodePtr &item : programIn.kids)
+    if (syntax::isConceptItem(*item)) {
+      std::string m;
+      for (char ch : item->text) m += (ch == '.' ? '_' : ch);
+      if (auto w = widened.find(m); w != widened.end())
+        byConcept[item->text] = w->second;
+    }
+  syntax::NodePtr second = syntax::clone(programIn);
+  expandErasedBoxes(*second, options.source, diags, &byConcept);
+  if (diags.hasErrors()) return nullptr;
+  return generateOnce(*second, filename, ctx, diags, options);
+}
+
+namespace {
+mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
+                                               std::string_view filename,
+                                               mlir::MLIRContext &ctx,
+                                               syntax::Diagnostics &diags,
+                                               const Options &options) {
   // Region parameters (ADR 0042, step 2) are erased into marks first.
   syntax::NodePtr erased;
   RegionInfo regions;
@@ -9509,5 +9576,6 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
   gen.setTrusted(isTrustedFile(program));
   return gen.run(source);
 }
+}  // namespace
 
 }  // namespace pia::irgen

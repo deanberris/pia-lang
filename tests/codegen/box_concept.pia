@@ -1,0 +1,95 @@
+(* tests/verify/box_concept.pia, compiled and run (ADR 0046, step 5):
+   a slice of `box Shape` holding a square and a rectangle, and the sum of
+   their areas through the boxes, which box_concept_test.c checks. In this
+   module `box Shape` is a tagged union of the types it widens, square and
+   rect: a tag and the fields of each, 4 bytes here (the tag, square's
+   side, and rect's w and h), and a call through a box is a switch on the
+   tag. Every goal is proved.
+*)
+module BoxConcept : Run
+
+(* What box_concept_test.c calls, by its C name (ADR 0039). *)
+interface Run @abi(c) = sig
+  let square = type { side : u8 }
+  let rect = type { w : u8; h : u8 }
+  let run : (sq : borrowed mutable [square]) -> (rc : borrowed mutable [rect]) -> (xs : borrowed inout mutable [box Shape]) -> u32
+    requires len sq = 1 && len rc = 1 && len xs = 2
+end
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b.slot = 1 && b.state = 1
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let meta Shape (t : type) : concept = sig
+  let area : (s : t) -> u32 ensures result <= 10000
+  let fits : (s : t) -> (w : u32) -> bool requires w > 0
+  let lemma bounded (a : t) ensures area a <= 10000
+end
+
+let square = type { side : u8 }
+let area (s : square) : u32 ensures result <= 10000 =
+  if s.side <= 100 then s.side * s.side else 10000
+let fits (s : square) (w : u32) : bool requires w > 0 = s.side <= w
+
+let rect = type { w : u8; h : u8 }
+let area (s : rect) : u32 ensures result <= 10000 =
+  if s.w <= 100 && s.h <= 100 then s.w * s.h else 10000
+
+let fits (s : rect) (w : u32) : bool requires w > 0 = s.w <= w
+
+let total (xs : [box Shape]) : u32
+  requires len xs = 2
+  ensures result <= 20000
+= area xs.[0] + area xs.[1]
+
+let two (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : result u32 oom
+  requires len sq = 1 && len rc = 1 && len xs = 2
+= let ms : mutable bump square = { mem = sq; used = 0 } in
+  let mr : mutable bump rect = { mem = rc; used = 0 } in
+  let a = make ms { side = 3 }? in
+  let b = make mr { w = 2; h = 5 }? in
+  xs.[0] <- widen a;
+  xs.[1] <- widen b;
+  Ok (total xs)
+
+(* box Shape meets Shape itself, by forwarding, so generic code over
+   Shape instantiates at it. *)
+let twice (t : type where Shape t) (s : t) : u32
+  ensures result <= 20000
+= area s + area s
+
+let doubled (xs : [box Shape]) : u32
+  requires len xs = 2
+  ensures result <= 20000
+= twice xs.[1]
+
+
+(* What box_concept_test.c calls: 3 * 3 + 2 * 5, through the boxes. *)
+let run (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : u32
+  requires len sq = 1 && len rc = 1 && len xs = 2
+= match two sq rc xs with
+  | Ok v -> v
+  | Err _ -> 0
