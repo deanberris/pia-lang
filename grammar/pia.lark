@@ -52,8 +52,8 @@ binder: IDENT | SPLICE_IDENT
 
 param: IDENT                              -> param_bare
      | SPLICE_IDENT                       -> param_bare
-     | LPAREN IDENT COLON annot RPAREN    -> param_typed
-     | LPAREN SPLICE_IDENT COLON annot RPAREN -> param_typed
+     | LPAREN IDENT COLON annot contract* RPAREN    -> param_typed
+     | LPAREN SPLICE_IDENT COLON annot contract* RPAREN -> param_typed
      | LPAREN RPAREN                      -> param_unit
      | LPAREN HOLE RPAREN                 -> param_hole
 
@@ -170,11 +170,12 @@ let_in: LET REC? binder param* ret_annot? contract* EQ handled IN seq
 ?handled: seq
         | seq HANDLE arms -> handle
 
-lambda: LET lparam+ FATARROW seq
+// A lambda's result type and contracts (ADR 0044).
+lambda: LET lparam+ (COLON annot)? contract* FATARROW seq
 // Inside lists, records and argument lists `;` and `,` separate elements, so
 // a function literal there has a body without top-level sequencing.
 ?elem: stmt
-     | LET lparam+ FATARROW elem -> lambda
+     | LET lparam+ (COLON annot)? contract* FATARROW elem -> lambda
 
 lparam: LPAREN pattern (COLON annot)? RPAREN
       | LPAREN RPAREN -> lparam_unit

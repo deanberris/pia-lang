@@ -90,7 +90,9 @@ class Checker {
     if (lambda.kind != NodeKind::Lambda || k + 1 >= lambda.kids.size())
       return "";
     const Node &p = *lambda.kids[k];
-    if (p.kids.empty() || p.kids[0]->kind != NodeKind::PVar) return "";
+    if (p.kind != NodeKind::LParam || p.kids.empty() ||
+        p.kids[0]->kind != NodeKind::PVar)
+      return "";
     return p.kids[0]->text;
   }
 

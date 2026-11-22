@@ -1,0 +1,30 @@
+(* Function values outside step 1 of ADR 0044 are reported, naming it.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let apply (x : u8) (f : u8 -> u8) : u8 = f x
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a lambda can only be passed to a function whose parameter has a function type for now
+*)
+let stored (x : u8) : u8 = id_of (let (y : u8) => y)
+let id_of (v : u8) : u8 = v
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a lambda's parameters need names and types for now
+*)
+let untyped (x : u8) : u8 = apply x (let (y) => y)
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this lambda takes 2 parameters, but 'f' of 'apply' takes 1 argument
+*)
+let curried (x : u8) : u8 = apply x (let (a : u8) (b : u8) => a)
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' of 'apply' is a function: pass a lambda
+*)
+let local (x : u8) : u8 = apply x x
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: give a lambda bound by 'let' its result type for now
+*)
+let bound (x : u8) : u8 = let g = let (y : u8) => y in g x
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'apply' takes a function; passing it as a value comes later (ADR 0044)
+*)
+let value (x : u8) : u8 = id_of apply

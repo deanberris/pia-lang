@@ -1,0 +1,31 @@
+(* A lambda's own precondition (ADR 0044) must follow from the arrow's:
+   the higher-order function calls it anywhere the arrow's `requires`
+   holds, so the lambda's `requires` is checked as an assertion there.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let apply (x : u8) (f : (y : u8) -> u8 requires y < 100) : u8
+  requires x < 100
+= f x
+
+(* Implied: y < 100 gives y < 200. *)
+let wide (x : u8) : u8 requires x < 100 =
+  apply x (let (z : u8) requires z < 200 => z + 1)
+
+(* Not implied: y < 100 does not give y < 10.
+*)
+let narrow (x : u8) : u8 requires x < 100 =
+  apply x (let (z : u8) requires z < 10 => z + 1)
+
+(* Expected report, in order.
+// CHECK: lambda_requires.pia:13:3: proved: the precondition of 'apply[lambda@lambda_requires.pia:13:12]' holds [smt]
+// CHECK: lambda_requires.pia:18:3: proved: the precondition of 'apply[lambda@lambda_requires.pia:18:12]' holds [smt]
+// CHECK: lambda_requires.pia:13:36: proved: the assertion holds [smt]
+// CHECK: lambda_requires.pia:13:47: proved: '+' does not overflow u8 [smt]
+// CHECK: lambda_requires.pia:9:3: proved: the precondition of 'lambda@lambda_requires.pia:13:12' holds [smt]
+// CHECK: lambda_requires.pia:18:36: failed: the assertion holds
+// CHECK-NEXT: counterexample: z = {{-?[0-9]+}}
+// CHECK: lambda_requires.pia:18:46: proved: '+' does not overflow u8 [smt]
+// CHECK: lambda_requires.pia:9:3: proved: the precondition of 'lambda@lambda_requires.pia:18:12' holds [smt]
+// CHECK: 7 proved, 1 failed, 0 skipped
+*)

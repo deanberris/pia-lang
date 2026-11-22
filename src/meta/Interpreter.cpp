@@ -328,6 +328,7 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
     case NodeKind::Lambda: {
       std::vector<std::string> params;
       for (size_t i = 0; i + 1 < n.kids.size(); ++i) {
+        if (n.kids[i]->kind != NodeKind::LParam) continue;
         const Node &pat = *n.kids[i]->kids[0];
         params.push_back(pat.kind == NodeKind::PVar ? pat.text : "");
       }

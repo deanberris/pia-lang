@@ -1,0 +1,46 @@
+(* A generic higher-order function (ADR 0044): the specialisation at the
+   lambda keeps `find`'s type parameter, so it is then called like any
+   generic function, here at t = u8.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+= find xs (let (x : u8) => x > 3)
+
+let is_odd (x : i32) : bool = (x % 2 <> 0)
+
+let first_odd (xs : [i32]) : usize
+  ensures result < len xs ==> xs.[result] % 2 <> 0
+= find xs is_odd
+
+(* Expected report, in order.
+// CHECK: lambda_generic.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic.pia:21:34: proved: the divisor is not zero [intervals]
+// CHECK: lambda_generic.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic.pia:12:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_generic.pia:11:25: proved: the index is within bounds [smt]
+// CHECK: lambda_generic.pia:14:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_generic.pia:12:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_generic.pia:13:5: proved: the measure decreases [smt]
+// CHECK: lambda_generic.pia:8:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic.pia:12:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_generic.pia:11:25: proved: the index is within bounds [smt]
+// CHECK: lambda_generic.pia:14:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_generic.pia:12:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_generic.pia:13:5: proved: the measure decreases [smt]
+// CHECK: lambda_generic.pia:8:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: 17 proved, 0 failed, 0 skipped
+*)

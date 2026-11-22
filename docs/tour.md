@@ -404,6 +404,46 @@ let below (xs : [u8]) (lim : u8) : bool
 = true
 ```
 
+## Function values
+
+A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
+
+A lambda's body is its definition: where it is passed, the verifier knows what it computes. So `find`'s contract, which mentions `p`, means `x > 3` at this call, and the lambda needs no contract of its own:
+
+<!-- example: find_big.pia -->
+```ocaml
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+= find xs (let (x : u8) => x > 3)
+```
+
+A function type can carry a contract that names its parameters and `result`. The function that takes it may call it wherever its `requires` holds and relies on its `ensures`, and every argument is proved to meet both. A lambda may also give a result type and contracts before its `=>`:
+
+```ocaml
+let apply_twice (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result > y) : u8
+  requires x < 100
+  ensures result > x
+= let a = f x in
+  if a < 200 then f a else a
+
+let plus2 (x : u8) : u8
+  requires x < 100
+  ensures result > x
+= apply_twice x (let (y : u8) : u8 requires y < 250 => y + 1)
+```
+
+For now a lambda's parameters must be typed, and a lambda is passed straight to such a parameter or bound by a `let` and applied. Lambdas that capture variables, untyped and generic lambdas, function objects, and functions stored in data or returned come in later steps of ADR 0044.
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.
@@ -467,11 +507,11 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
 
-**Function values.** A nameless `let` is a function literal, and there is no `fun` keyword. Function literals are curried. Metaprograms use them today, as in the operator declarations above, but ordinary code cannot pass functions around yet.
+**More function values.** Lambdas work today when their parameters are typed and they capture nothing ([Function values](#function-values)). Captures, generic lambdas and function results are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
 
-<!-- untested: function values are not implemented yet -->
+<!-- untested: captures and generic lambdas are not implemented yet -->
 ```ocaml
-let square = let (x : i32) => x * x
+let between (lo : u8) (hi : u8) = let (x : u8) => lo <= x && x <= hi
 let compose f g = let (x) => f (g x)
 ```
 
