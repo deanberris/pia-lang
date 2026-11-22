@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22), with the answers recorded under "Review"
 
 ## Context
 
@@ -218,9 +218,11 @@ In steps, each a PR with tests, as for ADR 0034:
 - Single-file programs keep working, but nothing in them is callable from C until they gain a header.
 - Nested modules cannot be exported yet. Re-exporting another module's items from an interface (a façade such as `Pia.Io` over `Pia.Sys.Fs`) is left for later, and so is choosing between implementations of one interface at link time (like OCaml functors or Backpack).
 
-## Questions for review
+## Review
 
-1. A headerless file exports nothing (section 10). The alternative keeps today's behaviour for headerless files, where every top-level function gets a C entry point, at the cost of an exception to privacy by default.
-2. Access is qualified (`Pixels.blend`) unless an import lists names in `{ ... }`, and there is no wildcard. Is that the right default for Pia?
-3. Module state is never writable by importers (section 7). Is there a case for exporting `mutable` state?
-4. Are `@abi(c)` and `@within(...)` the right spellings for C names and library-internal interfaces?
+Dean accepted this ADR on 2026-11-22 and answered its questions:
+
+1. **A headerless file exports nothing** (section 10). Accepted.
+2. **Access is qualified unless an import lists names in `{ ... }`, with no wildcard** (section 5). Accepted.
+3. **Importers can never write module state** (section 7). Accepted: state changes go through interface functions, which is safer. Exporting `mutable` state needs a demonstrated case before it is considered again.
+4. **Spellings `@abi(c)` and `@within(...)`** (sections 9 and 11). Accepted.
