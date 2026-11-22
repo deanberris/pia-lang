@@ -34,8 +34,10 @@ let model bits : Alloc = struct
   let spec give (h : u64) (b : blk) : u64 = h & ~(1 << b)
 end
 
-let pool = type { cap : usize; free : [u16]; pos : [u16]; top : usize; heap : Alloc.heap }
-let block = type { i : blk } @linear
+(* `id` and `owner` are spec-only too (ADR 0041, step 4): a block goes back
+   only to the pool that handed it out, and that costs nothing at run time. *)
+let pool = type { cap : usize; free : [u16]; pos : [u16]; top : usize; heap : Alloc.heap; id : int }
+let block = type { i : blk; owner : int } @linear
 
 (* The pool's own representation differs from pool.pia's: `free` holds
    every slot, `pos` is its inverse, and the slots at `top` and above are
@@ -49,9 +51,9 @@ let spec ok (p : pool) : bool =
 (* Hands out a block that was not live, and the heap takes it. *)
 let take_slot (p : borrowed inout mutable pool) : result block oom
   requires ok p
-  ensures ok p && p.cap = old p.cap
+  ensures ok p && p.cap = old p.cap && p.id = old p.id
   ensures (match result with
-           | Ok b -> b.i < p.cap && Alloc.live (old p.heap) b.i = false
+           | Ok b -> b.i < p.cap && b.owner = p.id && Alloc.live (old p.heap) b.i = false
                      && p.heap = Alloc.take (old p.heap) b.i
            | Err _ -> p.heap = old p.heap)
 = if p.top = 0 then Err OutOfMemory
@@ -60,13 +62,13 @@ let take_slot (p : borrowed inout mutable pool) : result block oom
      let s = p.free.[j] in
      p.top <- j;
      p.heap <- Alloc.take p.heap s;
-     Ok { i = s })
+     Ok { i = s; owner = p.id })
 
 (* Takes back a live block, and the heap gives it: the block swaps places
    with the slot at `top`, which is the lowest live one. *)
 let give_slot (p : borrowed inout mutable pool) (b : moved block) : unit
-  requires ok p && b.i < p.cap && Alloc.live p.heap b.i
-  ensures ok p && p.cap = old p.cap
+  requires ok p && b.owner = p.id && b.i < p.cap && Alloc.live p.heap b.i
+  ensures ok p && p.cap = old p.cap && p.id = old p.id
   ensures p.heap = Alloc.give (old p.heap) b.i
 = match b with
   | { i } ->
@@ -96,30 +98,44 @@ let reuse (p : borrowed inout mutable pool) : result unit oom
   give_slot p b;
   Ok ()
 
+(* Two pools: each block goes back to its own. Giving a to q instead is
+   refused, since its owner is p (tests/verify/pool_owner_errors.pia). *)
+let two (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : result unit oom
+  requires ok p && ok q && p.id <> q.id
+= let a = take_slot p? in
+  match take_slot q with
+  | Ok b -> (give_slot q b; give_slot p a; Ok ())
+  | Err e -> (give_slot p a; Err e)
+
 (* Expected report, in order.
-// CHECK: pool_alloc.pia:59:20: proved: '-' does not overflow usize [smt]
-// CHECK: pool_alloc.pia:60:14: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:62:34: proved: the value fits in int{0..63} [smt]
-// CHECK: pool_alloc.pia:63:15: proved: the value fits in int{0..63} [smt]
-// CHECK: pool_alloc.pia:52:3: proved: the postcondition holds [smt]
-// CHECK: pool_alloc.pia:53:3: proved: the postcondition holds [smt]
-// CHECK: pool_alloc.pia:74:13: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:75:13: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:76:5: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:77:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:61:20: proved: '-' does not overflow usize [smt]
+// CHECK: pool_alloc.pia:62:14: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:64:34: proved: the value fits in int{0..63} [smt]
+// CHECK: pool_alloc.pia:65:15: proved: the value fits in int{0..63} [smt]
+// CHECK: pool_alloc.pia:54:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:55:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:76:13: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:77:13: proved: the index is within bounds [smt]
 // CHECK: pool_alloc.pia:78:5: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:79:18: proved: the value fits in u16 [smt]
 // CHECK: pool_alloc.pia:79:5: proved: the index is within bounds [smt]
-// CHECK: pool_alloc.pia:80:16: proved: '+' does not overflow usize [smt]
-// CHECK: pool_alloc.pia:69:3: proved: the postcondition holds [smt]
-// CHECK: pool_alloc.pia:70:3: proved: the postcondition holds [smt]
-// CHECK: pool_alloc.pia:89:11: proved: the precondition of 'take_slot' holds [smt]
-// CHECK: pool_alloc.pia:91:3: proved: the assertion holds [smt]
-// CHECK: pool_alloc.pia:92:3: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:80:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:81:18: proved: the value fits in u16 [smt]
+// CHECK: pool_alloc.pia:81:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:82:16: proved: '+' does not overflow usize [smt]
+// CHECK: pool_alloc.pia:71:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:72:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:91:11: proved: the precondition of 'take_slot' holds [smt]
 // CHECK: pool_alloc.pia:93:3: proved: the assertion holds [smt]
-// CHECK: pool_alloc.pia:94:11: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:94:3: proved: the precondition of 'give_slot' holds [smt]
 // CHECK: pool_alloc.pia:95:3: proved: the assertion holds [smt]
-// CHECK: pool_alloc.pia:96:3: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:96:11: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:97:3: proved: the assertion holds [smt]
+// CHECK: pool_alloc.pia:98:3: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:105:11: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:106:9: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:107:14: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:107:29: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:108:15: proved: the precondition of 'give_slot' holds [smt]
 // CHECK: pool_alloc.pia:32:50: proved: the shift amount is less than 64 [intervals]
 // CHECK: pool_alloc.pia:32:50: proved: '>>' does not overflow usize [intervals]
 // CHECK: pool_alloc.pia:32:56: proved: '&' does not overflow usize [intervals]
@@ -133,5 +149,5 @@ let reuse (p : borrowed inout mutable pool) : result unit oom
 // CHECK: pool_alloc.pia:21:33: proved: the model 'bits' meets the axiom 'Alloc.none_live' [smt]
 // CHECK: pool_alloc.pia:23:5: proved: the model 'bits' meets the axiom 'Alloc.take_live' [smt]
 // CHECK: pool_alloc.pia:25:5: proved: the model 'bits' meets the axiom 'Alloc.give_live' [smt]
-// CHECK: 36 proved, 0 failed, 0 skipped
+// CHECK: 41 proved, 0 failed, 0 skipped
 *)

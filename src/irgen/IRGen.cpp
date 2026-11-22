@@ -1931,6 +1931,14 @@ class Gen {
           l, it, b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
     }
     if (isBool(t)) return boolConst(l, false);
+    // A spec-only `int`, such as a block's owner (ADR 0041): 0, exactly.
+    if (mlir::isa<UnboundedIntType>(t)) {
+      llvm::APInt zero(kWidth, 0);
+      Type z = IntType::get(&ctx_, zero, zero);
+      Value c = create<ConstantOp>(
+          l, z, b_.getIntegerAttr(b_.getIntegerType(kWidth), zero));
+      return create<ExactConvertOp>(l, t, c);
+    }
     if (auto st = mlir::dyn_cast<SliceType>(t))
       return create<EmptyOp>(l, st).getResult();
     if (auto rt = mlir::dyn_cast<RecordType>(t)) {
