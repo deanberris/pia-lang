@@ -41,6 +41,11 @@
 //                                   such theory's consistency check
 //   piac --trust-report --why ...   also list, for each trusted axiom, the
 //                                   goals whose proofs used it
+//   piac --check-vacuity ...        with --verify, solve each goal proved
+//                                   with a trusted axiom or an `assume`
+//                                   again without its negation, and fail
+//                                   it if its hypotheses contradict each
+//                                   other (ADR 0036, step 7)
 //   piac --explain-overloads=F:L .. for each overloaded or generic call on
 //                                   line L of F, print its candidates,
 //                                   why each removed one was, and which
@@ -108,7 +113,7 @@ int usage() {
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
-               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats] [--trust-report [--why]]\n"
+               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
                "             [--explain-overloads=<file:line>]\n"
                "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
@@ -268,6 +273,11 @@ void printStats(const pia::verify::Stats &st) {
             << " contract_cost=" << st.contractCost << "\n";
   // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
   // line above the only `verify-stats:` line.
+  // --check-vacuity's extra queries, on a line of their own.
+  if (st.vacuityChecks)
+    std::cerr << "verify-stats-vacuity: checks=" << st.vacuityChecks
+              << " vacuous=" << st.vacuous << " unknown=" << st.vacuityUnknown
+              << " cost=" << st.vacuityCost << "\n";
   for (const auto &[axiom, triggers] : st.triggers) {
     std::cerr << "verify-stats-axiom: " << axiom << " triggers=";
     for (size_t i = 0; i < triggers.size(); ++i)
@@ -535,6 +545,7 @@ int main(int argc, char **argv) {
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
   bool verifyStats = false;
+  bool checkVacuity = false;
   bool trustReport = false;
   bool trustWhy = false;
   std::string explainFile;
@@ -607,6 +618,8 @@ int main(int argc, char **argv) {
       slice = -1;
     else if (arg == "--verify-stats")
       verifyStats = true;
+    else if (arg == "--check-vacuity")
+      verify = checkVacuity = true;
     else if (arg == "--trust-report")
       trustReport = true;
     else if (arg == "--why")
@@ -798,6 +811,7 @@ int main(int argc, char **argv) {
                                   : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
       options.only = verifyOnly;
+      options.checkVacuity = checkVacuity;
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options,
                        verifyStats);
@@ -816,6 +830,10 @@ int main(int argc, char **argv) {
         }
         if (trustReport)
           printTrustReport(*module, stats, outcomes, trustWhy, std::cout);
+        if (checkVacuity && stats.vacuityUnknown)
+          std::cerr << "piac: note: --check-vacuity could not decide "
+                    << stats.vacuityUnknown << " of " << stats.vacuityChecks
+                    << " checked goals within its budget; they stay proved\n";
         if (!verifyOnly.empty() && stats.goals == 0) {
           std::cerr << "piac: error: --verify-only selects no goal\n";
           return 1;
