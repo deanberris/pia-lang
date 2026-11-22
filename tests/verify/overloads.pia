@@ -47,6 +47,7 @@ let general (b : bool) : u8
 = describe b
 
 (* Expected report, in order.
+// CHECK: overloads.pia:34:3: proved: the postcondition holds [generic]
 // CHECK: overloads.pia:11:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:15:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:19:3: proved: the postcondition holds [smt]
@@ -57,7 +58,6 @@ let general (b : bool) : u8
 // CHECK: overloads.pia:38:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:42:3: proved: the postcondition holds [smt]
 // CHECK: overloads.pia:46:3: proved: the postcondition holds [smt]
-// CHECK: overloads.pia:34:3: proved: the postcondition holds [smt]
-// CHECK: overloads.pia:34:3: proved: the postcondition holds [generic]
+// CHECK: overloads.pia:33:1: proved: 'describe<bool>' is an instance of the generic proof of 'describe' [generic]
 // CHECK: 12 proved, 0 failed, 0 skipped
 *)

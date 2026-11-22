@@ -1695,8 +1695,14 @@ class Gen {
       if (archetypes_.count(a.type) || archetypes_.count(c.type)) {
         // A contract may compare values of a type parameter's type: what
         // it means is decided for each instance.
-        if (contract_ && a.type == c.type && (op == "=" || op == "<>"))
-          return TV{boolConst(l, true), boolType()};
+        if (contract_ && a.type == c.type && (op == "=" || op == "<>")) {
+          // At the definition, equality of the values themselves, which a
+          // generic proof encodes as equality in its sort (ADR 0043).
+          Value eq = standInEq(l, a.value, c.value, a.type);
+          if (op == "<>")
+            eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+          return TV{eq, boolType()};
+        }
         Type t = archetypes_.count(a.type) ? a.type : c.type;
         return fail(n, "'" + op + "' is not defined for every '" +
                            typeName(t) + "'; a generic body can use only "
@@ -4355,6 +4361,25 @@ class Gen {
 
   // --- generic proofs (ADR 0043, step 1) ------------------------------
 
+  // `a = b` for values of the stand-in type `t`: a call of `pia.eq<t>`,
+  // which the verifier encodes as equality in t's sort (ADR 0043).
+  Value standInEq(Location l, Value a, Value b, Type t) {
+    std::string name = "pia.eq<" + typeName(t) + ">";
+    if (!module_.lookupSymbol<mlir::func::FuncOp>(name)) {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToEnd(module_.getBody());
+      auto f = create<mlir::func::FuncOp>(l, name,
+                                          b_.getFunctionType({t, t}, {b_.getI1Type()}));
+      f.setPrivate();
+      f->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
+      f->setAttr("pia.generic_eq", b_.getUnitAttr());
+      f->setAttr("pia.generic_proof", b_.getStringAttr("="));
+    }
+    return create<mlir::func::CallOp>(l, name, mlir::TypeRange{b_.getI1Type()},
+                                      mlir::ValueRange{a, b})
+        .getResult(0);
+  }
+
   // Records why `generic` is proved only at its instances, for the report.
   void notParametric(const sema::FuncSig &generic, const std::string &why) {
     for (const NotParametric &n : notParametric_)
@@ -4432,6 +4457,7 @@ class Gen {
   void keepGenericProof(const sema::FuncSig &generic, const std::string &key,
                         const std::map<std::string, Type> &bound,
                         size_t pending, std::set<std::string> &kept) {
+
     for (const syntax::NodePtr &p : generic.item->kids[0]->kids)
       if (const Node *pred = wherePredicate(*p)) {
         std::vector<const Node *> cs, preds;
@@ -5283,6 +5309,10 @@ class Gen {
   // the payload of the constructor they hold. Null when some part of `t`
   // has no such equality (a buffer).
   Value sameValue(Location l, Value a, Value b, Type t) {
+    // A type parameter's stand-in has no fields, so field by field it would
+    // always equal itself: in a generic's proof its values are equal only
+    // when they are the same element of its sort (ADR 0043).
+    if (checking_ && standIns_.contains(t)) return standInEq(l, a, b, t);
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
     if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
       return create<ExactCmpOp>(l, b_.getI1Type(),

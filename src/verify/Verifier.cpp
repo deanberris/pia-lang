@@ -1923,6 +1923,13 @@ class Encoder {
   // fresh result.
   bool stepCall(mlir::func::CallOp call) {
     auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    // `=` on a generic's type parameter is equality in its sort (ADR 0043).
+    if (callee && callee->hasAttr("pia.generic_eq")) {
+      Value a = term(call.getOperand(0)), b = term(call.getOperand(1));
+      if (!a || !b) return false;
+      env_[call.getResult(0)] = eq(a, b);
+      return true;
+    }
     bool hasBody = callee && !callee.isExternal();
     Demand pre;
     if (hasBody) {
@@ -2329,6 +2336,11 @@ class Encoder {
       Value t = demand(thenY.getOperand(i), d);
       Value e = demand(elseY.getOperand(i), d);
       if (c && t && e) result = ite(c, t, e);
+    } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+               call && calleeOf(call) &&
+               calleeOf(call)->hasAttr("pia.generic_eq")) {
+      Value a = demand(call.getOperand(0), d), b = demand(call.getOperand(1), d);
+      if (a && b) result = eq(a, b);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
                call && isAbstract(calleeOf(call))) {
       llvm::SmallVector<Value> args;
@@ -3681,6 +3693,77 @@ void checkVacuity(mlir::ModuleOp module, const std::vector<Proof> &proofs,
   opOf = std::move(ops);
 }
 
+// Whether `f` always returns: no `while` without a measure, and no call
+// to itself without one, and the same of what it calls, to a small depth.
+// What a generic proof assumes of a concept's function holds of a concrete
+// one only when it returns (ADR 0043, "Termination").
+static bool returns(mlir::ModuleOp module, mlir::func::FuncOp f, int depth = 4) {
+  if (!f) return false;
+  if (f.isExternal())
+    return f->hasAttr(PiaDialect::getSpecAttrName()) ||
+           f->hasAttr(PiaDialect::getAbstractAttrName());
+  if (depth == 0) return false;
+  bool measured = false;
+  for (mlir::Operation &op : f.getBody().front())
+    measured |= mlir::isa<contract::DecreasesOp>(op);
+  bool ok = true;
+  f.walk([&](mlir::Operation *op) {
+    if (!ok) return;
+    if (auto w = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+      bool has = false;
+      w.walk([&](contract::DecreasesOp) { has = true; });
+      ok = has;
+    } else if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+      auto callee = module.lookupSymbol<mlir::func::FuncOp>(c.getCallee());
+      if (callee == f) ok = measured;
+      else if (!callee->hasAttr(PiaDialect::getSpecAttrName()) &&
+               !callee->hasAttr(PiaDialect::getLemmaAttrName()))
+        ok = returns(module, callee, depth - 1);
+    }
+  });
+  return ok;
+}
+
+// Whether the instance `inst` of `generic` is what its generic proof
+// proves: its calls are the proof's, one for one, with each call of a
+// concept's function bound to a function that returns, each call of
+// another generic at the type parameters made to that generic's instance,
+// and every other call to the same function. A call the instance resolves
+// differently, such as to a more specific overload at its types, makes it
+// a body of its own, proved at its types (ADR 0043, step 2).
+static bool dischargedByGeneric(mlir::ModuleOp module, mlir::func::FuncOp inst,
+                                const std::string &generic,
+                                const std::set<std::string> &provedOnce) {
+  auto proof = module.lookupSymbol<mlir::func::FuncOp>("definition of " + generic);
+  if (!proof) return false;
+  llvm::SmallVector<mlir::func::CallOp> mine, theirs;
+  inst.walk([&](mlir::func::CallOp c) { mine.push_back(c); });
+  proof.walk([&](mlir::func::CallOp c) {
+    auto callee = module.lookupSymbol<mlir::func::FuncOp>(c.getCallee());
+    if (!callee || !callee->hasAttr("pia.generic_eq")) theirs.push_back(c);
+  });
+  if (mine.size() != theirs.size()) return false;
+  for (size_t i = 0; i < mine.size(); ++i) {
+    auto a = module.lookupSymbol<mlir::func::FuncOp>(mine[i].getCallee());
+    auto b = module.lookupSymbol<mlir::func::FuncOp>(theirs[i].getCallee());
+    if (!a || !b) return false;
+    if (b->hasAttr("pia.generic_proof") &&
+        b->hasAttr(PiaDialect::getAbstractAttrName())) {
+      if (!returns(module, a)) return false;
+      continue;
+    }
+    if (b->hasAttr("pia.generic_proof")) {
+      std::string base = b.getSymName().split('<').first.str();
+      auto of = a->getAttrOfType<mlir::StringAttr>("pia.instance_of");
+      if (!of || of.getValue() != base) return false;
+      continue;
+    }
+    if (a.getSymName() != b.getSymName()) return false;
+  }
+  (void)provedOnce;
+  return true;
+}
+
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options, Stats *stats) {
   auto start = std::chrono::steady_clock::now();
@@ -3775,7 +3858,44 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.theories.push_back(std::move(c));
     }
   }
-  for (auto fn : module.getOps<mlir::func::FuncOp>()) {
+  // ADR 0043: generics' proofs over sorts are solved first, and an instance
+  // of a generic whose proof all held is discharged by it (step 2).
+  std::vector<mlir::func::FuncOp> fnOrder;
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (fn->hasAttr("pia.generic_proof")) fnOrder.push_back(fn);
+  size_t firstPass = fnOrder.size();
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (!fn->hasAttr("pia.generic_proof")) fnOrder.push_back(fn);
+  std::set<std::string> provedOnce;
+  unsigned threads = 0;
+  auto settleGenerics = [&]() {
+    if (!jobs.empty()) {
+      threads = std::max(threads, solveAll(jobs, outcomes, options, st));
+      jobs.clear();
+    }
+    std::map<std::string, bool> held;
+    for (size_t k = 0; k < firstPass; ++k)
+      if (auto g = fnOrder[k]->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+        if (!fnOrder[k].isExternal() &&
+            !fnOrder[k]->hasAttr(PiaDialect::getAxiomAttrName()))
+          held.try_emplace(g.getValue().str(), true);
+    for (const Outcome &o : outcomes) {
+      if (!o.generic) continue;
+      auto f = module.lookupSymbol<mlir::func::FuncOp>(o.function);
+      if (!f) continue;
+      if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+        if (o.status != Status::Proved) held[g.getValue().str()] = false;
+    }
+    for (Operation *op : partial)
+      if (auto f = op->getParentOfType<mlir::func::FuncOp>())
+        if (auto g = f->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
+          held[g.getValue().str()] = false;
+    for (auto &[g, ok] : held)
+      if (ok) provedOnce.insert(g);
+  };
+  for (size_t idx = 0; idx < fnOrder.size(); ++idx) {
+    if (idx == firstPass) settleGenerics();
+    mlir::func::FuncOp fn = fnOrder[idx];
     // An imported function is proved by its own module (ADR 0039).
     if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))
       continue;
@@ -3791,6 +3911,33 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.triggers.emplace_back(fn.getSymName().str(), std::move(texts));
       continue;
     }
+    // An instance of a generic proved over sorts is proved by that proof.
+    if (auto inst = fn->getAttrOfType<mlir::StringAttr>("pia.instance_of"))
+      if (provedOnce.count(inst.getValue().str()) &&
+          dischargedByGeneric(module, fn, inst.getValue().str(), provedOnce)) {
+        Outcome out;
+        out.kind = contract::ObligationKind::ensures;
+        out.where = formatLoc(fn.getLoc());
+        out.function = fn.getSymName().str();
+        out.claim = "'" + fn.getSymName().str() + "' is an instance of " +
+                    "the generic proof of '" + inst.getValue().str() + "'";
+        out.generic = true;
+        out.status = Status::Proved;
+        out.method = "generic";
+        if (!options.only.empty() &&
+            std::none_of(options.only.begin(), options.only.end(),
+                         [&](const std::string &spec) {
+                           return selects(spec, out.where, out.function);
+                         })) {
+          ++st.unselected;
+          continue;
+        }
+        ++st.goals;
+        ++st.instances;
+        opOf.push_back(fn.getOperation());
+        outcomes.push_back(std::move(out));
+        continue;
+      }
     unsigned width = encodingWidth(module, fn);
     std::vector<Goal> goals;
     buildQuery(module, fn, width, -1, goals);
@@ -3879,9 +4026,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       outcomes.push_back(std::move(out));
     }
   }
+  if (firstPass == fnOrder.size()) settleGenerics();
   st.encodeMs = msSince(start);
   auto solving = std::chrono::steady_clock::now();
-  st.threads = solveAll(jobs, outcomes, options, st);
+  st.threads = std::max(threads, solveAll(jobs, outcomes, options, st));
   st.solveMs = msSince(solving);
   for (const Outcome &o : outcomes) {
     bool smt = o.method != "intervals" && o.status != Status::Skipped;
@@ -3913,18 +4061,10 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                   mlir::StringAttr::get(module.getContext(),
                                         state.second ? "smt" : "intervals"));
   }
-  // ADR 0043: what was proved over sorts, the instances of those generics,
-  // and the generics proved only at their instances.
-  std::set<std::string> provedGenerically;
-  for (auto fn : module.getOps<mlir::func::FuncOp>())
-    if (auto g = fn->getAttrOfType<mlir::StringAttr>("pia.generic_proof"))
-      if (!fn.isExternal() && !fn->hasAttr(PiaDialect::getAxiomAttrName()))
-        provedGenerically.insert(g.getValue().str());
+  // ADR 0043: the goals proved over sorts, and the generics proved only at
+  // their instances.
   for (const Outcome &o : outcomes)
     if (o.generic) ++st.genericGoals;
-  for (auto fn : module.getOps<mlir::func::FuncOp>())
-    if (auto i = fn->getAttrOfType<mlir::StringAttr>("pia.instance_of"))
-      if (provedGenerically.count(i.getValue().str())) ++st.instances;
   if (auto notes = module->getAttrOfType<mlir::ArrayAttr>("pia.not_parametric"))
     for (mlir::Attribute a : notes) {
       llvm::SmallVector<llvm::StringRef, 3> parts;

@@ -1,8 +1,10 @@
 (* A generic's body is proved once, over its type parameters as
    uninterpreted sorts, with its concepts' functions uninterpreted and
    their requirement contracts as axioms (ADR 0043, step 1). Its goals are
-   reported [generic]. Its instances are still proved too, in this step.
+   reported [generic]. An instance whose body is the generic's, at types
+   that meet its concepts, is then discharged by that proof (step 2).
 // RUN: not piac --verify %s | FileCheck %s
+// RUN: not piac --verify %s | FileCheck --check-prefix=PER %s
 *)
 let meta Eq (t : type) : concept = sig
   let same : (a : t) -> (b : t) -> bool
@@ -78,8 +80,8 @@ let swap (t : type) (xs : borrowed inout mutable [t]) (i : usize) (j : usize) : 
   xs.[i] <- b;
   xs.[j] <- a
 
-(* Pia.Core.Order's lexicographic compare, proved once over Ord t and,
-   in this step, again at each of u8, i32 and u64.
+(* Pia.Core.Order's lexicographic compare, proved once over Ord t; its
+   instances at u8, i32 and u64 are discharged by that proof.
 // CHECK-DAG: generic_proofs.pia:[[@LINE+9]]:8: proved: the measure of 'lex_from<t>' decreases [generic]
 *)
 let spec lex_from (t : type where Ord t) (xs : [t]) (ys : [t]) (i : usize) : bool
@@ -115,8 +117,57 @@ let lex_u64 (xs : [u64]) (ys : [u64]) : bool = lex_compare<u64> xs ys
 *)
 let pick = let (t : type) => type | One of t | Neither
 let first (t : type) (a : t) : pick t
+  ensures (match result with | One _ -> true | Neither -> false)
 = One a
 
+(* Each instance of a generic proved over sorts is one line.
+// CHECK-DAG: proved: 'lex_compare<u8>' is an instance of the generic proof of 'lex_compare' [generic]
+// CHECK-DAG: proved: 'lex_compare<i32>' is an instance of the generic proof of 'lex_compare' [generic]
+*)
+
+(* An instance made at a type whose `less` breaks the concept's
+   requirement contract (here it is not asymmetric) is still rejected:
+   the use check proves the contract and the laws at i8, and the
+   contract and incomparable_transitive fail.
+// CHECK-DAG: generic_proofs.pia:21:5: failed: the postcondition holds
+// CHECK-DAG: generic_proofs.pia:25:5: failed: the postcondition holds
+*)
+let same (a : i8) (b : i8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+let less (a : i8) (b : i8) : bool = (a <> b)
+
+let lex_i8 (xs : [i8]) (ys : [i8]) : bool = lex_compare<i8> xs ys
+
+(* At u16 the generic's call of `twice` resolves to a concrete overload,
+   not to the generic `twice`, so the instance is a body of its own,
+   proved at u16 rather than discharged.
+// PER-NOT: 'again<u16>' is an instance
+// PER: proved, 4 failed, 0 skipped
+*)
+let twice (t : type) (a : t) : t = a
+let twice (a : u16) : u16 = a / 2
+let again (t : type) (a : t) : t = twice a
+let half (a : u16) : u16 = again<u16> a
+
+(* A generic that is proved only at its instances is still proved there:
+   first<u8>'s postcondition, and what picked uses of it.
+// CHECK-DAG: generic_proofs.pia:120:3: proved: the postcondition holds [smt]
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let picked (a : u8) : bool
+  ensures result
+= (match first<u8> a with | One _ -> true | Neither -> false)
+
+(* A call into an instance discharged by the generic proof still proves
+   the generic's precondition at the call: only the instance's body is not
+   proved again.
+// CHECK-DAG: generic_proofs.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the precondition of 'swap<u8>' holds
+*)
+let unchecked (xs : borrowed inout mutable [u8]) : unit
+= swap<u8> xs 0 1
+
 (*
-// CHECK: proved, 1 failed, 0 skipped
+// CHECK: proved, 4 failed, 0 skipped
 *)

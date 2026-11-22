@@ -62,6 +62,7 @@ let byte (x : i8) : i8
 = same_bytes x
 
 (* Expected report, in order.
+// CHECK: type_functions.pia:35:3: proved: the postcondition holds [generic]
 // CHECK: type_functions.pia:16:3: proved: the postcondition holds [smt]
 // CHECK: type_functions.pia:26:3: proved: the postcondition holds [smt]
 // CHECK: type_functions.pia:30:3: proved: the postcondition holds [smt]
@@ -73,10 +74,9 @@ let byte (x : i8) : i8
 // CHECK: type_functions.pia:23:5: proved: '+' does not overflow u32 [intervals]
 // CHECK: type_functions.pia:22:3: proved: the postcondition holds [smt]
 // CHECK: type_functions.pia:39:3: proved: the postcondition holds [smt]
-// CHECK: type_functions.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: type_functions.pia:34:1: proved: 'tag<u32>' is an instance of the generic proof of 'tag' [generic]
 // CHECK: type_functions.pia:57:3: proved: the postcondition holds [smt]
 // CHECK: type_functions.pia:53:3: proved: the postcondition holds [smt]
-// CHECK: type_functions.pia:35:3: proved: the postcondition holds [generic]
 // CHECK: type_functions.pia:21:1: not proved generically: 'add_wide' is proved at each instance, since its signature applies a type-level metaprogram to a type parameter [generic]
 // CHECK: type_functions.pia:38:1: not proved generically: 'tag#2' is proved at each instance, since a 'where' predicate that is not a concept constrains 't' [generic]
 // CHECK: type_functions.pia:52:1: not proved generically: 'only_bytes' is proved at each instance, since a 'where' predicate that is not a concept constrains 't' [generic]

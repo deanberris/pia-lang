@@ -40,6 +40,7 @@ let seven () : u8
 = let a = sevens in a.[1]
 
 (* Expected report, in order.
+// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [generic]
 // CHECK: contract_equality.pia:18:3: proved: the postcondition holds [smt]
 // CHECK: contract_equality.pia:22:3: proved: the postcondition holds [smt]
 // CHECK: contract_equality.pia:23:3: proved: the postcondition holds [smt]
@@ -48,9 +49,8 @@ let seven () : u8
 // CHECK: contract_equality.pia:35:3: proved: the postcondition holds [smt]
 // CHECK: contract_equality.pia:40:21: proved: the index is within bounds [intervals]
 // CHECK: contract_equality.pia:39:3: proved: the postcondition holds [smt]
-// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
-// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
-// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [smt]
-// CHECK: contract_equality.pia:14:3: proved: the postcondition holds [generic]
+// CHECK: contract_equality.pia:13:1: proved: 'same<option<u16>>' is an instance of the generic proof of 'same' [generic]
+// CHECK: contract_equality.pia:13:1: proved: 'same<point>' is an instance of the generic proof of 'same' [generic]
+// CHECK: contract_equality.pia:13:1: proved: 'same<[u8; 4]>' is an instance of the generic proof of 'same' [generic]
 // CHECK: 12 proved, 0 failed, 0 skipped
 *)

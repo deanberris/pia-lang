@@ -8,15 +8,16 @@
 *)
 
 (* The laws are proved for each type, and lexicographical_compare meets its
-   definition over every Ord t, once [generic], and at u8, the one type it
-   is exported for. compare and the three-way comparison, which return an
-   ordering, are proved only at their instances (ADR 0043, step 1).
+   definition over every Ord t, once [generic]; its instance at each of
+   the 8 integer types is discharged by that proof (ADR 0043). compare and
+   the three-way comparison, which return an ordering, are proved at their
+   instances.
 // CHECK-NOT: failed
-// CHECK-NOT: lex_from<i64>
-// CHECK-DAG: proved: the measure of 'lex_from<u8>' decreases
+// CHECK-DAG: proved: 'lex_compare<u8>' is an instance of the generic proof of 'lex_compare' [generic]
+// CHECK-DAG: proved: 'lex_compare<i64>' is an instance of the generic proof of 'lex_compare' [generic]
 // CHECK-DAG: proved: the measure of 'lex_from<t>' decreases [generic]
 // CHECK-DAG: not proved generically: 'compare' is proved at each instance, since it returns a value of ordering [generic]
-// CHECK: 559 proved, 0 failed, 0 skipped
+// CHECK: 516 proved, 0 failed, 0 skipped
 *)
 
 (*

@@ -39,5 +39,5 @@ let uses (n : u8) : u8
 = 0
 
 (*
-// CHECK: 6 proved, 1 failed, 0 skipped
+// CHECK: 7 proved, 1 failed, 0 skipped
 *)

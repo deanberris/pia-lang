@@ -55,16 +55,16 @@ let off_diagonal (p : pair u8 u16) : u8
 = shape p
 
 (* Expected report, in order.
+// CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [generic]
+// CHECK: concept_ranking.pia:26:3: proved: the postcondition holds [generic]
 // CHECK: concept_ranking.pia:31:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:36:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:50:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:54:3: proved: the postcondition holds [smt]
-// CHECK: concept_ranking.pia:26:3: proved: the postcondition holds [smt]
-// CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: concept_ranking.pia:25:1: proved: 'rank#2<u8>' is an instance of the generic proof of 'rank#2' [generic]
+// CHECK: concept_ranking.pia:21:1: proved: 'rank<u16>' is an instance of the generic proof of 'rank' [generic]
 // CHECK: concept_ranking.pia:46:3: proved: the postcondition holds [smt]
 // CHECK: concept_ranking.pia:42:3: proved: the postcondition holds [smt]
-// CHECK: concept_ranking.pia:22:3: proved: the postcondition holds [generic]
-// CHECK: concept_ranking.pia:26:3: proved: the postcondition holds [generic]
 // CHECK: concept_ranking.pia:41:1: not proved generically: 'shape' is proved at each instance, since it takes a value of pair<a, b> [generic]
 // CHECK: concept_ranking.pia:45:1: not proved generically: 'shape#2' is proved at each instance, since it takes a value of pair<t, t> [generic]
 // CHECK: 10 proved, 0 failed, 0 skipped

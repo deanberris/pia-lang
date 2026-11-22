@@ -88,7 +88,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | --- | --- | --- | --- |
 | `<iterator>` | slices, `usize` indices (with `len xs` for "not found"), and container cursors | Idiom | n/a |
 | `<ranges>` | eager algorithms over slices; views such as `filter`, `transform`, `zip` | Deferred: function values | phase 6 |
-| `<algorithm>` non-modifying | `Pia.Core.Algo.Search`; `min`, `max`, `clamp` (C++'s ties: the first argument when equivalent) and `lexicographical_compare`, `lexicographical_compare_three_way` (defined by the spec function `lex_from`, generic over `Ord`, and exported for `u8`, memcmp's role, since each instance of a generic is proved again at about 9M a type) are in `Pia.Core.Order` | Direct | `Pia.Core.Order`'s done; the rest phase 1 |
+| `<algorithm>` non-modifying | `Pia.Core.Algo.Search`; `min`, `max`, `clamp` (C++'s ties: the first argument when equivalent) and `lexicographical_compare` (defined by the spec function `lex_from`, generic over `Ord`, proved once and exported for every integer type) and `lexicographical_compare_three_way` (exported for `u8`, memcmp's role: it returns an `ordering`, so it is still proved at each instance) are in `Pia.Core.Order` | Direct | `Pia.Core.Order`'s done; the rest phase 1 |
 | `<algorithm>` modifying | `Pia.Core.Algo.Modify` | Direct | phase 1 |
 | `<algorithm>` sorting, binary search, heap | `Pia.Core.Algo.Sort`, `Pia.Core.Algo.Heap`; stable forms need an allocator | Direct | phase 1, phase 2 |
 | `<algorithm>` set operations | `Pia.Core.Algo.Set`, into `out` slices | Direct | phase 1 |
