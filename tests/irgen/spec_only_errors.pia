@@ -1,0 +1,51 @@
+(* `int` and `real` are spec-only (ADR 0036): spec functions, lemmas,
+   contracts and quantifiers may use them, and code may not, so codegen
+   never sees them.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:12: error: the parameter 'x' has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let takes (x : real) : u8 = 0
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:20: error: 'gives' returns a value of the spec-only type int; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let gives (x : u8) : int = x
+
+let summary = type { width : usize; lip : real }
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:12: error: the parameter 'f' has type summary, which holds the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let width (f : summary) : usize = f.width
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let positive (x : u8) : bool = real x > 0.5
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:39: error: 'y' has the spec-only type int; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let annotated (x : u8) : u8 = let y : int = x in x
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:37: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let literal (x : u8) : u8 = let y = 1.5 in x
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:36: error: '+' needs operands of one type, found u8 and real; convert an integer with 'real x'
+*)
+let spec mixed (x : u8) : real = x + 0.5
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:38: error: '/' is not defined on int; convert to real with 'real x' to divide
+*)
+let spec int_div (n : int) : int = n / 2
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:39: error: '%' is not defined on real; int and real have + - * and comparisons, and real also has /
+*)
+let spec modulo (x : real) : real = x % 2.0
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:36: error: '1.5f32': floating-point types are not supported yet; a literal with a decimal point is a spec-only real, with no suffix
+*)
+let spec float (x : real) : real = 1.5f32
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:42: error: 'int' converts an integer, not real
+*)
+let spec truncate (x : real) : int = int x

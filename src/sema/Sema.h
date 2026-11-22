@@ -38,6 +38,10 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view spelling);
 // or a record's name.
 std::string typeName(mlir::Type type);
 
+// The spec-only type (`int` or `real`, ADR 0036) that `type` is or holds,
+// through arrays, slices and record fields; null when there is none.
+mlir::Type specOnlyPart(mlir::Type type);
+
 // Whether a modifier list such as "borrowed in mutable" has `word`.
 bool hasModifier(std::string_view modifiers, std::string_view word);
 

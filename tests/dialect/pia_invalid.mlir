@@ -57,3 +57,27 @@ func.func @no_such_field(%p: !pia.record<"p", x : i1>) {
   %y = pia.field %p, "y" : !pia.record<"p", x : i1> -> i1
   return
 }
+
+// -----
+
+func.func @int_has_no_denominator() {
+  // expected-error @+1 {{an int constant has no denominator}}
+  %c = pia.exact.constant "1/2" : !pia.integer
+  return
+}
+
+// -----
+
+func.func @int_division(%a: !pia.integer) {
+  // expected-error @+1 {{divides reals only}}
+  %q = pia.exact.div %a, %a : !pia.integer
+  return
+}
+
+// -----
+
+func.func @real_to_int(%a: !pia.real) {
+  // expected-error @+1 {{converts an integer to int or real, or an int to real}}
+  %n = pia.exact.convert %a : !pia.real -> !pia.integer
+  return
+}

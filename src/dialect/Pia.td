@@ -12,8 +12,8 @@
 include "mlir/IR/AttrTypeBase.td"
 include "mlir/IR/DialectBase.td"
 include "mlir/IR/EnumAttr.td"
-include "mlir/IR/OpBase.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 
 def Pia_Dialect : Dialect {
   let name = "pia";
@@ -108,6 +108,23 @@ def Pia_IntType : Pia_Type<"Int", "int"> {
   }];
 }
 
+def Pia_UnboundedIntType : Pia_Type<"UnboundedInt", "integer"> {
+  let summary = "a mathematical integer, with no bounds: Pia's spec-only `int`";
+  let description = [{
+    `int` without a range (ADR 0036). It may appear only in specifications:
+    spec functions, lemmas, contracts and quantifiers. The verifier encodes
+    it as the SMT `Int` sort, and codegen never sees it.
+  }];
+}
+
+def Pia_RealType : Pia_Type<"Real", "real"> {
+  let summary = "a mathematical real number: Pia's spec-only `real`";
+  let description = [{
+    `real` (ADR 0036). Spec-only like `int`; the verifier encodes it as the
+    SMT `Real` sort. It is not a floating-point type.
+  }];
+}
+
 def Pia_ArrayType : Pia_Type<"Array", "array"> {
   let summary = "a fixed-length array whose length the prover knows";
   let parameters = (ins "uint64_t":$length, "::mlir::Type":$elementType);
@@ -154,6 +171,10 @@ def Pia_Buffer : Type<CPred<"::llvm::isa<::pia::ArrayType, ::pia::SliceType>($_s
                       "Pia array or slice">;
 def Pia_Record : Type<CPred<"::llvm::isa<::pia::RecordType>($_self)">,
                        "Pia record", "::pia::RecordType">;
+def Pia_Exact : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::RealType>($_self)">,
+                     "Pia spec-only int or real">;
+def Pia_IntOrExact : Type<CPred<"::llvm::isa<::pia::IntType, ::pia::UnboundedIntType, ::pia::RealType>($_self)">,
+                          "Pia integer, int or real">;
 def Pia_Dyn : Type<CPred<"::llvm::isa<::pia::DynType>($_self)">,
                    "Pia dyn value", "::pia::DynType">;
 
@@ -430,6 +451,63 @@ def Pia_DynUnwrapOp : Pia_Op<"dyn.unwrap", [Pure]> {
   let summary = "extract the payload; the tag must be proved to match";
   let arguments = (ins Pia_Dyn:$input);
   let results = (outs AnyType:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Spec-only arithmetic on int and real (ADR 0036, step 1)
+//===----------------------------------------------------------------------===//
+
+def Pia_ExactConstantOp : Pia_Op<"exact.constant", [Pure]> {
+  let summary = "a constant of the spec-only int or real";
+  let description = [{
+    `%c = pia.exact.constant "3/2" : !pia.real`. The value is an exact
+    rational in lowest terms, written `n` or `n/d` with `d > 1`. An `int`
+    constant has no denominator.
+  }];
+  let arguments = (ins StrAttr:$value);
+  let results = (outs Pia_Exact:$result);
+  let assemblyFormat = "$value attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
+class Pia_ExactArithOp<string mnemonic, list<Trait> traits = []>
+    : Pia_Op<"exact." # mnemonic, !listconcat(traits, [Pure, SameOperandsAndResultType])> {
+  let arguments = (ins Pia_Exact:$lhs, Pia_Exact:$rhs);
+  let results = (outs Pia_Exact:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($result)";
+}
+
+def Pia_ExactAddOp : Pia_ExactArithOp<"add", [Commutative]> {
+  let summary = "exact addition of ints or reals; it cannot overflow";
+}
+def Pia_ExactSubOp : Pia_ExactArithOp<"sub"> {
+  let summary = "exact subtraction of ints or reals";
+}
+def Pia_ExactMulOp : Pia_ExactArithOp<"mul", [Commutative]> {
+  let summary = "exact multiplication of ints or reals";
+}
+def Pia_ExactDivOp : Pia_ExactArithOp<"div"> {
+  let summary = "real division; the divisor must be proved non-zero";
+  let hasVerifier = 1;
+}
+
+def Pia_ExactCmpOp : Pia_Op<"exact.cmp", [Pure, SameTypeOperands]> {
+  let summary = "compare two ints or two reals";
+  let arguments = (ins Pia_CmpPredicate:$predicate, Pia_Exact:$lhs, Pia_Exact:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$predicate $lhs `,` $rhs attr-dict `:` type($lhs)";
+}
+
+def Pia_ExactConvertOp : Pia_Op<"exact.convert", [Pure]> {
+  let summary = "an integer as an int or a real, exactly";
+  let description = [{
+    A range-typed integer to `int` or `real`, or an `int` to `real`. Every
+    such conversion is exact, so it raises no goal.
+  }];
+  let arguments = (ins Pia_IntOrExact:$input);
+  let results = (outs Pia_Exact:$result);
   let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
   let hasVerifier = 1;
 }

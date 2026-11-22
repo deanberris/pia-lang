@@ -154,7 +154,7 @@ A theory lowers once per module, in the verifier ([ADR 0018](0018-dialect-layeri
 - an axiom to an `smt.forall` over its parameters, with its trigger patterns, asserted under a name;
 - `real` and `int` to the SMT `Real` and `Int` sorts.
 
-The upstream dialect has uninterpreted sorts, functions, quantifiers with patterns and `Int`. If it still lacks `Real` at our LLVM pin, the first implementation adds it in a small Pia extension that the SMT-LIB export prints, and offers it upstream.
+The upstream dialect has uninterpreted sorts, functions, quantifiers with patterns and `Int`. If it still lacks `Real` at our LLVM pin, the first implementation adds it in a small Pia extension that the SMT-LIB export prints, and offers it upstream. Step 1 found it lacking: `real` is written as a sort named `Real`, the Real operations as functions declared under their SMT-LIB names, and the export drops those declarations so Z3 reads them as its own ([verifier.md](../verifier.md#spec-only-int-and-real)).
 
 Every quantified axiom needs a trigger, because an axiom without one is either ignored by E-matching or instantiated without limit. `piac` infers triggers as Z3 would (the smallest terms that mention every bound variable) and shows them in `--verify-stats`, and `@trigger(seq f g)` sets them explicitly. An axiom with no term that covers all its variables is an error at the definition.
 

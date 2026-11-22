@@ -1,0 +1,28 @@
+(* `int` and `real` are spec-only (ADR 0036): codegen erases the spec
+   functions, lemmas and contracts that use them, so no Pia type, real or
+   otherwise, is left in the code.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: pia.
+// CHECK-NOT: @half
+// CHECK-NOT: @lip_bound
+// CHECK-LABEL: func.func @halve
+// CHECK-NOT: call
+// CHECK-NOT: pia.
+// CHECK: return
+*)
+let summary = type { width : usize; lip : real }
+
+let spec half (x : real) : real = x / 2.0
+
+let lemma lip_bound (s : summary) (k : int) : unit
+  requires 0.0 <= s.lip && s.lip <= 1.0 && k >= 0
+  ensures s.lip * real k <= real k
+= ()
+
+let halve (x : u8) : u8
+  ensures real result <= half (real x) && half (real x) < real result + 1.0
+= lip_bound { width = 0; lip = 0.5 } (int x);
+  x / 2

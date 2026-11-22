@@ -138,7 +138,7 @@ Unlike C, the bit operators bind tighter than comparisons, so `x & mask = 0` is 
 Spacing decides three things.
 
 1. **`name<` opens type arguments.** `sum<i64> xs` and `vec<u8, 16>` instantiate. Less-than must be written with a space: `a < b`. Writing `x<y` is an error that names the rule. Inside the list, `>` closes it, and `>>` closes two lists.
-2. **`name{` opens a range type.** `int{0..255}` is a range-refined integer. A record literal passed to a function is written with a space, `f { x = 1 }`.
+2. **`name{` opens a range type.** `int{0..255}` is a range-refined integer. Bare `int`, with no brace straight after it, is the spec-only unbounded integer ([verifier.md](verifier.md#spec-only-int-and-real)). A record literal passed to a function is written with a space, `f { x = 1 }`.
 3. **A dot followed by whitespace ends quantifier binders.** In `forall i in 0..n. p i` the dot is `QDOT`. Field access never has a space after the dot.
 
 ### Layout rule

@@ -67,6 +67,34 @@ namespace {
 
 constexpr unsigned kBoundWidth = 128;
 
+// The SMT-LIB sort of `real` (see Encoder::realType).
+constexpr llvm::StringLiteral kRealSort = "Real";
+
+// The SMT-LIB functions the encoder declares under their own names because
+// the smt dialect has no op for them (Encoder::interpreted).
+constexpr llvm::StringLiteral kInterpreted[] = {
+    "+", "-", "*", "/", "<", "<=", ">", ">=", "to_real", "bv2int"};
+
+// The exported query with the declarations of interpreted functions and of
+// the Real sort removed, so that Z3 reads them as SMT-LIB's own.
+std::string interpretedSMTLIB(const std::string &smtlib) {
+  std::string out;
+  size_t pos = 0;
+  while (pos < smtlib.size()) {
+    size_t end = smtlib.find('\n', pos);
+    if (end == std::string::npos) end = smtlib.size();
+    llvm::StringRef line(smtlib.data() + pos, end - pos);
+    pos = end + 1;
+    if (line == ("(declare-sort " + kRealSort + " 0)").str()) continue;
+    bool drop = false;
+    for (llvm::StringRef f : kInterpreted)
+      if (line.starts_with(("(declare-fun " + f + " (").str())) drop = true;
+    if (drop) continue;
+    out.append(line.begin(), line.end()).push_back('\n');
+  }
+  return out;
+}
+
 APInt bound(const APInt &v, unsigned width) { return v.sextOrTrunc(width); }
 
 // A proof goal, found by walking a function in order. The same walk runs
@@ -203,12 +231,16 @@ class Encoder {
         goals_(goals),
         ctx_(builder.getContext()),
         loc_(builder.getUnknownLoc()),
-        spec_(specOps(fn)) {}
+        spec_(specOps(fn)),
+        solverBlock_(builder.getInsertionBlock()) {}
+
+  // The sort of a declared constant, so its model value can be read.
+  enum class Sort { BitVector, Bool, Int, Real };
 
   struct Decl {
     std::string exported;  // the SMT-LIB name
     std::string display;   // the name shown in a counterexample
-    bool isBool;
+    Sort sort;
   };
 
   void run() {
@@ -237,10 +269,28 @@ class Encoder {
 
   Type bvType() { return mlir::smt::BitVectorType::get(ctx_, width_); }
   Type boolType() { return mlir::smt::BoolType::get(ctx_); }
+  Type intType() { return mlir::smt::IntType::get(ctx_); }
+  // The upstream smt dialect has no Real sort at our LLVM pin, so `Real`
+  // is written as a sort the export would declare, and that declaration is
+  // dropped from the SMT-LIB text (interpretedSMTLIB).
+  Type realType() {
+    return mlir::smt::SortType::get(ctx_, kRealSort);
+  }
+
+  static Sort sortKind(Type sort) {
+    if (mlir::isa<mlir::smt::BoolType>(sort)) return Sort::Bool;
+    if (mlir::isa<mlir::smt::IntType>(sort)) return Sort::Int;
+    if (auto s = mlir::dyn_cast<mlir::smt::SortType>(sort);
+        s && s.getIdentifier().getValue() == kRealSort)
+      return Sort::Real;
+    return Sort::BitVector;
+  }
 
   Type sortOf(Type t) {
     if (mlir::isa<IntType, mlir::IndexType>(t)) return bvType();
     if (t.isInteger(1)) return boolType();
+    if (mlir::isa<UnboundedIntType>(t)) return intType();
+    if (mlir::isa<RealType>(t)) return realType();
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
@@ -306,8 +356,102 @@ class Encoder {
     std::string name = "pia_" + std::to_string(nextName_++);
     Value v = create<mlir::smt::DeclareFunOp>(sort, b_.getStringAttr(name));
     if (record && !display.empty())
-      decls_.push_back({name, display, mlir::isa<mlir::smt::BoolType>(sort)});
+      decls_.push_back({name, display, sortKind(sort)});
     return v;
+  }
+
+  // --- int and real (ADR 0036) -------------------------------------------
+
+  // An SMT-LIB function that the smt dialect has no op for, such as Real
+  // addition: declared under its SMT-LIB name, once per query, at the top
+  // of the solver block. interpretedSMTLIB drops the declaration from the
+  // exported text, so Z3 reads each use as the interpreted function.
+  Value interpreted(llvm::StringRef name, llvm::ArrayRef<Type> domain,
+                    Type range) {
+    auto it = interpreted_.find(name);
+    if (it != interpreted_.end()) return it->second;
+    OpBuilder::InsertionGuard guard(b_);
+    b_.setInsertionPointToStart(solverBlock_);
+    Value f = create<mlir::smt::DeclareFunOp>(
+        mlir::smt::SMTFuncType::get(ctx_, domain, range),
+        b_.getStringAttr(name));
+    interpreted_[name] = f;
+    return f;
+  }
+  Value apply(llvm::StringRef name, llvm::ArrayRef<Value> args, Type range) {
+    llvm::SmallVector<Type> domain;
+    for (Value a : args) domain.push_back(a.getType());
+    return create<mlir::smt::ApplyFuncOp>(range, interpreted(name, domain, range),
+                                          mlir::ValueRange(args));
+  }
+
+  Value intConst(const APInt &v) {
+    unsigned bits = std::max(64u, v.getBitWidth() + 1);
+    APInt w = v.sext(bits);
+    // SMT-LIB numerals are never negative: -n is (- 0 n).
+    APInt mag = w.isNegative() ? -w : w;
+    Value c = create<mlir::smt::IntConstantOp>(
+        intType(), b_.getIntegerAttr(b_.getIntegerType(bits), mag));
+    if (!w.isNegative()) return c;
+    Value zero = create<mlir::smt::IntConstantOp>(
+        intType(), b_.getIntegerAttr(b_.getIntegerType(bits), 0));
+    return create<mlir::smt::IntSubOp>(intType(), zero, c);
+  }
+  Value toReal(Value i) { return apply("to_real", {i}, realType()); }
+
+  // `n` or `n/d` (pia.exact.constant) as an Int or Real term.
+  Value exactConst(llvm::StringRef text, bool real) {
+    auto [num, den] = text.split('/');
+    unsigned bits = 8 + 4 * static_cast<unsigned>(text.size());
+    APInt n(bits, num, 10);
+    if (!real) return intConst(n);
+    Value r = toReal(intConst(n));
+    if (den.empty()) return r;
+    return apply("/", {r, toReal(intConst(APInt(bits, den, 10)))}, realType());
+  }
+
+  // A signed bit-vector as the Int it stands for: Z3's bv2int reads it
+  // unsigned, so 2^w is taken off a negative value.
+  Value bvToInt(Value x) {
+    using P = mlir::smt::BVCmpPredicate;
+    Value u = apply("bv2int", {x}, intType());
+    Value neg = cmp(P::slt, x, bv(0));
+    Value two = intConst(APInt::getOneBitSet(width_ + 2, width_));
+    Value zero = intConst(APInt(64, 0));
+    return create<mlir::smt::IntSubOp>(intType(), u, ite(neg, two, zero));
+  }
+
+  Value exactArith(Operation *op, Value a, Value c, bool real) {
+    if (real) {
+      llvm::StringRef name = mlir::isa<ExactAddOp>(op)   ? "+"
+                             : mlir::isa<ExactSubOp>(op) ? "-"
+                             : mlir::isa<ExactMulOp>(op) ? "*"
+                                                         : "/";
+      return apply(name, {a, c}, realType());
+    }
+    if (mlir::isa<ExactAddOp>(op))
+      return create<mlir::smt::IntAddOp>(intType(), mlir::ValueRange{a, c});
+    if (mlir::isa<ExactMulOp>(op))
+      return create<mlir::smt::IntMulOp>(intType(), mlir::ValueRange{a, c});
+    return create<mlir::smt::IntSubOp>(intType(), a, c);
+  }
+
+  Value exactCmp(CmpPredicate p, Value a, Value c, bool real) {
+    if (p == CmpPredicate::eq) return eq(a, c);
+    if (p == CmpPredicate::ne) return notOf(eq(a, c));
+    if (real) {
+      llvm::StringRef name = p == CmpPredicate::lt   ? "<"
+                             : p == CmpPredicate::le ? "<="
+                             : p == CmpPredicate::gt ? ">"
+                                                     : ">=";
+      return apply(name, {a, c}, boolType());
+    }
+    using IP = mlir::smt::IntPredicate;
+    IP ip = p == CmpPredicate::lt   ? IP::lt
+            : p == CmpPredicate::le ? IP::le
+            : p == CmpPredicate::gt ? IP::gt
+                                    : IP::ge;
+    return create<mlir::smt::IntCmpOp>(boolType(), ip, a, c);
   }
 
   // A fresh value of a Pia type, with its range assumed.
@@ -400,7 +544,7 @@ class Encoder {
       Value w = declare(value.getType(), "", false);
       witnesses_.push_back({mlir::cast<mlir::smt::DeclareFunOp>(
                                 w.getDefiningOp()).getNamePrefix()->str(),
-                            label, mlir::isa<mlir::smt::BoolType>(value.getType())});
+                            label, sortKind(value.getType())});
       assertTerm(eq(w, value));
     }
     assertTerm(andOf(pathCondition(), notOf(term)));
@@ -751,6 +895,14 @@ class Encoder {
           }
         }
       }
+      if (auto d = mlir::dyn_cast<ExactDivOp>(op)) {
+        if (Value c = term(d.getRhs())) {
+          auto k = d.getRhs().getDefiningOp<ExactConstantOp>();
+          bool constant = k && k.getValue() != "0";
+          goal(ObligationKind::nonzero, op, "the divisor is not zero",
+               notOf(eq(c, exactConst("0", true))), constant);
+        }
+      }
       if (auto cv = mlir::dyn_cast<ConvertOp>(op)) {
         if (cv.getOverflow() == OverflowMode::proof && !cv.isWidening())
           if (Value x = term(cv.getInput()))
@@ -980,6 +1132,27 @@ class Encoder {
     }
     if (auto c = mlir::dyn_cast<ConvertOp>(op)) {
       out.push_back(applyMode(in[0], c.getType(), c.getOverflow()));
+      return true;
+    }
+    if (auto c = mlir::dyn_cast<ExactConstantOp>(op)) {
+      out.push_back(exactConst(c.getValue(), mlir::isa<RealType>(c.getType())));
+      return true;
+    }
+    if (mlir::isa<ExactAddOp, ExactSubOp, ExactMulOp, ExactDivOp>(op)) {
+      out.push_back(exactArith(op, in[0], in[1],
+                               mlir::isa<RealType>(op->getResult(0).getType())));
+      return true;
+    }
+    if (auto c = mlir::dyn_cast<ExactCmpOp>(op)) {
+      out.push_back(exactCmp(c.getPredicate(), in[0], in[1],
+                             mlir::isa<RealType>(c.getLhs().getType())));
+      return true;
+    }
+    if (auto c = mlir::dyn_cast<ExactConvertOp>(op)) {
+      Value x = in[0];
+      if (mlir::isa<IntType>(c.getInput().getType())) x = bvToInt(x);
+      if (mlir::isa<RealType>(c.getType())) x = toReal(x);
+      out.push_back(x);
       return true;
     }
     if (mlir::isa<ToIndexOp, FromIndexOp>(op)) {
@@ -1809,6 +1982,8 @@ class Encoder {
   mlir::MLIRContext *ctx_;
   Location loc_;
   llvm::DenseSet<Operation *> spec_;
+  mlir::Block *solverBlock_;  // where interpreted functions are declared
+  llvm::StringMap<Value> interpreted_;
 
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
@@ -1930,6 +2105,8 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   options.emitReset = false;
   if (mlir::failed(mlir::smt::exportSMTLIB(*scratch, os, options)))
     q.smtlib.clear();
+  else
+    q.smtlib = interpretedSMTLIB(q.smtlib);
   return q;
 }
 
@@ -2186,11 +2363,23 @@ void solve(const Job &job, const Options &options, Outcome &out,
   out.method = "counterexample";
   unsigned width = job.width;
   z3::model m = full.get_model();
+  using Sort = Encoder::Sort;
   auto value = [&](const Encoder::Decl &d) -> std::string {
-    z3::expr c = d.isBool ? ctx.bool_const(d.exported.c_str())
-                          : ctx.bv_const(d.exported.c_str(), width);
+    const char *name = d.exported.c_str();
+    z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
+                 : d.sort == Sort::Int  ? ctx.int_const(name)
+                 : d.sort == Sort::Real ? ctx.real_const(name)
+                                        : ctx.bv_const(name, width);
     z3::expr v = m.eval(c, /*model_completion=*/true);
-    if (d.isBool) return v.is_true() ? "true" : "false";
+    if (d.sort == Sort::Bool) return v.is_true() ? "true" : "false";
+    if (d.sort == Sort::Int) return v.get_decimal_string(0);
+    if (d.sort == Sort::Real) {
+      // A rational as n/d; an irrational root of a nonlinear model as a
+      // decimal approximation.
+      if (v.is_numeral()) return Z3_get_numeral_string(ctx, v);
+      if (v.is_algebraic()) return "~" + v.get_decimal_string(6);
+      return v.to_string();
+    }
     return signedDecimal(v.get_decimal_string(0), width);
   };
   for (const Encoder::Decl &d : q.decls)
