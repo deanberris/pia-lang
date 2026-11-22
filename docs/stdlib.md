@@ -225,6 +225,8 @@ Prior art: Zig's explicit allocators, Odin's and Jai's allocator contexts, C++'s
 
 #### The litmus test: a proved growable array
 
+A first form is proved: [tests/verify/vec_bump.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/vec_bump.pia) is a growable vector of bytes over a bump allocator. `push` proves that the new element is stored and the earlier ones are kept, `grow` copies into a larger loan, and every allocation's failure is handled. The allocator is passed to each call that may grow the vector, Zig-style, since records hold values rather than references; `(v : borrowed(m) inout mutable vec)` keeps the vector from outliving it. The generic, allocator-holding form below comes next.
+
 The memory design is accepted when this works end to end: a dynamically growing array over explicit heap allocation, with its bounds, capacity, initialisation and freedom from leaks all proved. It is a sketch in designed syntax. `Pia.Mem.Vec` is the first target of the implementation.
 
 ```ocaml

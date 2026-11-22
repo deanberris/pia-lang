@@ -13,6 +13,6 @@ let nobody (p : borrowed pool) : borrowed(q) ticket = { n = p.cap }
 *)
 let gone (p : moved pool) : borrowed(p) ticket = match p with | { cap } -> { n = cap }
 
-(* CHECK: borrow_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(q)' names the lender of a function's result; a parameter is just 'borrowed'
+(* CHECK: borrow_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(q)' on a parameter says what the new value of an 'inout' or 'out' parameter borrows; this one is just 'borrowed'
 *)
 let param (q : borrowed pool) (p : borrowed(q) pool) : u8 = p.cap

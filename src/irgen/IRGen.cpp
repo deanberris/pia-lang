@@ -825,6 +825,19 @@ class Gen {
                       : genExpr(*bodyPtr, sig.result);
     if (!body) return;
     if (!isSpec && !ghost_)
+      for (size_t i : threaded(sig))
+        if (BindingPtr b = lookup(sig.params[i].name))
+          for (const BindingPtr &l : b->lenders)
+            if (l->name != sig.params[i].lender) {
+              fail(bodyNode, "'" + name + "' stores a value borrowed from '" +
+                                 l->name + "' in '" + b->name + "'; say so "
+                                 "in its parameter, as in '(" + b->name +
+                                 " : borrowed(" + l->name + ")" +
+                                 withoutBorrowed(sig.params[i].modifiers) +
+                                 " " + typeName(b->type) + ")'");
+              return;
+            }
+    if (!isSpec && !ghost_)
       for (const BindingPtr &l : lendersOf(*bodyPtr))
         if (l->name != sig.resultLender) {
           fail(bodyNode, "'" + name + "' returns a value borrowed from '" +
@@ -2510,8 +2523,32 @@ class Gen {
     }
     R out = emitCall(n, sig, operands);
     if (out)
-      for (size_t k = 0; k < rebind.size(); ++k)
-        if (rebind[k]) rebind[k]->value = threadedResults_[k];
+      for (size_t k = 0; k < rebind.size(); ++k) {
+        BindingPtr b = rebind[k];
+        if (!b) continue;
+        b->value = threadedResults_[k];
+      }
+    // `(v : borrowed(m) inout mutable vec)`: the new value may hold a loan
+    // from the argument passed as `m`, as `push m v x` stores a buffer from
+    // `m` in `v`.
+    if (out && !contract_ && !ghost_) {
+      std::vector<size_t> through = threaded(sig);
+      for (size_t k = 0; k < through.size(); ++k) {
+        const sema::Param &p = sig.params[through[k]];
+        if (p.lender.empty() || !rebind[k]) continue;
+        size_t i = 0;
+        while (sig.params[i].name != p.lender) ++i;
+        Lenders from = lendersOf(*args[i]);
+        if (args[i]->kind == NodeKind::Name && args[i]->flags.empty())
+          if (BindingPtr x = lookup(args[i]->text)) addLenders(from, {x});
+        if (from.empty())
+          return fail(*args[i], "'" + p.name + "' of '" + sig.name +
+                                    "' may borrow from '" + p.lender +
+                                    "', so this argument must be a named "
+                                    "value; bind it with 'let' first");
+        addLenders(rebind[k]->lenders, from);
+      }
+    }
     // Recorded even when empty: a call's result borrows only what its
     // result type says.
     if (out) lent_[&n] = std::move(lenders);
@@ -4994,6 +5031,12 @@ class Gen {
                          "as 'let " + obj.text + " : mutable T = ...'");
       if (!notLent(b, obj, "assigned")) return std::nullopt;
       std::optional<unsigned> i = rt.fieldIndex(place.text);
+      struct AddLenders {
+        Gen &g;
+        BindingPtr b;
+        const Node &v;
+        ~AddLenders() { addLenders(b->lenders, g.lendersOf(v)); }
+      } addAfter{*this, b, valueNode};
       if (!i)
         return fail(place, typeName(rt) + " has no field '" + place.text + "'");
       Type ft = rt.getFieldTypes()[*i];
@@ -5273,6 +5316,16 @@ class Gen {
 
   // --- Borrows (#70) ----------------------------------------------------
 
+  // " inout mutable" from "borrowed inout mutable".
+  static std::string withoutBorrowed(llvm::StringRef mods) {
+    std::string out;
+    llvm::SmallVector<llvm::StringRef> words;
+    mods.split(words, ' ', -1, false);
+    for (llvm::StringRef w : words)
+      if (w != "borrowed") out += " " + w.str();
+    return out;
+  }
+
   using Lenders = std::vector<BindingPtr>;
 
   static void addLenders(Lenders &to, const Lenders &from) {
@@ -5294,8 +5347,15 @@ class Gen {
   bool writable(const Node &n) {
     if (writable_.count(&n)) return true;
     if (n.kind == NodeKind::Name && !contract_ && !ghost_)
-      if (BindingPtr b = lookup(n.text)) return b->writable;
+      if (BindingPtr b = lookup(n.text)) return writableValue(*b);
     return false;
+  }
+
+  // Whether the buffers `b` holds may be written: a borrow that may, or an
+  // `out` or `inout` parameter, whose fields' buffers may be too.
+  static bool writableValue(const Binding &b) {
+    return b.writable || (b.isParam && (sema::hasModifier(b.modifiers, "out") ||
+                                        sema::hasModifier(b.modifiers, "inout")));
   }
 
   // `n` was generated as `other`, a tree made from it.
@@ -5319,7 +5379,7 @@ class Gen {
         if (n.flags.empty())
           if (BindingPtr b = lookup(n.text)) {
             l = b->lenders;
-            w = b->writable;
+            w = writableValue(*b);
           }
         break;
       case NodeKind::Apply:

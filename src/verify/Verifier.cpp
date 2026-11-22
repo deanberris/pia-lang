@@ -1040,6 +1040,8 @@ class Encoder {
       Demand d;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      // `old` inside reads the memory on entry, as it does outside.
+      d.oldArrays = entryArrays_;
       d.envOutside = op;
       if (Value v = quantifier(op, d))
         env_[op->getResult(0)] = v;
@@ -1531,6 +1533,8 @@ class Encoder {
         if (v) d.values[arg] = v;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      // `old` inside reads the memory on entry, as it does outside.
+      d.oldArrays = entryArrays_;
       d.envOutside = forOp;
       return d;
     };
@@ -1619,6 +1623,8 @@ class Encoder {
         if (v) d.values[arg] = v;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      // `old` inside reads the memory on entry, as it does outside.
+      d.oldArrays = entryArrays_;
       d.envOutside = w;
       return d;
     };

@@ -1,0 +1,130 @@
+(* A growable vector of bytes over the bump allocator (#86): the litmus
+   test of ADR 0026 in its first form. The allocator is passed to each call
+   that may grow the vector. `push` proves the new element is stored and
+   the earlier ones kept, and `grow` copies into a larger loan from the
+   allocator. `(v : borrowed(m) inout mutable vec)` says that `v`'s new
+   value may hold a loan from `m`, so `v` cannot outlive `m`.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = type { mem : [u8]; used : usize }
+
+let alloc (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let vec = type { buf : [u8]; len : usize }
+
+let with_capacity (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) vec) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok v -> v.len = 0 && len v.buf = n
+           | Err _ -> true)
+= let b = alloc m n? in
+  Ok { buf = b; len = 0 }
+
+(* Moves the elements into a loan twice as large, plus one. *)
+let grow (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= let cap = len v.buf in
+  if cap > 1000000 then Err OutOfMemory
+  else
+    (let nb = alloc m (2 * cap + 1)? in
+     let old_buf = v.buf in
+     for i in 0 .. v.len
+       invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+     do nb.[i] <- old_buf.[i] done;
+     v.buf <- nb;
+     Ok ())
+
+(* Makes room for one more element, growing the vector if it is full. *)
+let reserve (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then grow m v else Ok ()
+
+let push (m : borrowed inout mutable bump) (v : borrowed(m) inout mutable vec) (x : u8) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= reserve m v?;
+  let b = v.buf in
+  b.[v.len] <- x;
+  v.len <- v.len + 1;
+  Ok ()
+
+(* Two pushes, the second of which grows the vector. *)
+let demo (storage : borrowed [u8]) : result u8 oom =
+  let m : mutable bump = { mem = storage; used = 0 } in
+  let v : mutable vec = with_capacity m 1? in
+  push m v 7?;
+  push m v 9?;
+  let b = v.buf in
+  Ok (b.[0] + b.[1])
+
+(* Expected report, in order.
+// CHECK: vec_bump.pia:19:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_bump.pia:21:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_bump.pia:22:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_bump.pia:22:9: proved: the slice is within bounds [smt]
+// CHECK: vec_bump.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:33:11: proved: the precondition of 'alloc' holds [smt]
+// CHECK: vec_bump.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:48:26: proved: '*' does not overflow usize [smt]
+// CHECK: vec_bump.pia:48:32: proved: '+' does not overflow usize [smt]
+// CHECK: vec_bump.pia:48:15: proved: the precondition of 'alloc' holds [smt]
+// CHECK: vec_bump.pia:51:8: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_bump.pia:52:19: proved: the index is within bounds [smt]
+// CHECK: vec_bump.pia:52:9: proved: the index is within bounds [smt]
+// CHECK: vec_bump.pia:51:8: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_bump.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:44:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:65:29: proved: the precondition of 'grow' holds [smt]
+// CHECK: vec_bump.pia:59:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:61:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:64:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:75:3: proved: the precondition of 'reserve' holds [smt]
+// CHECK: vec_bump.pia:77:3: proved: the index is within bounds [smt]
+// CHECK: vec_bump.pia:78:18: proved: '+' does not overflow usize [smt]
+// CHECK: vec_bump.pia:69:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:71:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:74:3: proved: the postcondition holds [smt]
+// CHECK: vec_bump.pia:84:25: proved: the precondition of 'with_capacity' holds [smt]
+// CHECK: vec_bump.pia:85:3: proved: the precondition of 'push' holds [smt]
+// CHECK: vec_bump.pia:86:3: proved: the precondition of 'push' holds [smt]
+// CHECK: vec_bump.pia:88:7: proved: the index is within bounds [smt]
+// CHECK: vec_bump.pia:88:15: proved: the index is within bounds [smt]
+// CHECK: vec_bump.pia:88:13: proved: '+' does not overflow u8 [smt]
+// CHECK: 38 proved, 0 failed, 0 skipped
+*)
