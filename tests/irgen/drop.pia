@@ -1,0 +1,75 @@
+(* `drop` (#85, ADR 0028): a value whose type has a `drop (x : moved t) :
+   unit` is dropped at every exit from its scope that has not consumed it.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let buffer = type { id : u8 }
+let err = type | Bad
+
+(* `drop` takes its argument apart, so it does not drop it again. *)
+let drop (b : moved buffer) : unit = match b with | { id } -> ()
+let mk (x : u8) : buffer = { id = x }
+let use (b : buffer) : u8 = b.id
+let keep (b : moved buffer) : unit = drop b
+let check (x : u8) : result u8 err = if x = 0 then Err Bad else Ok x
+
+(*
+// CHECK-LABEL: @drop(
+// CHECK-NOT: call @drop(
+// CHECK: return
+*)
+
+(* Dropped at the end of its scope, after its last use. *)
+let scoped (x : u8) : u8 = let b = mk x in use b
+(*
+// CHECK-LABEL: @scoped(
+// CHECK: call @mk(
+// CHECK: call @use(
+// CHECK: call @drop(
+// CHECK: return
+*)
+
+(* Not dropped once it is moved. *)
+let given (x : u8) : unit = let b = mk x in keep b
+(*
+// CHECK-LABEL: @given(
+// CHECK: call @keep(
+// CHECK-NOT: call @drop(
+// CHECK: return
+*)
+
+(* Dropped on both exits: the `?`'s error, and the normal one. *)
+let early (x : u8) : result u8 err = let b = mk x in let y = check x? in Ok (use b + y)
+(*
+// CHECK-LABEL: @early(
+// CHECK: call @check(
+// CHECK: call @use(
+// CHECK: call @drop(
+// CHECK: call @drop(
+// CHECK: return
+*)
+
+(* Returning it consumes it. *)
+let made (x : u8) : buffer = let b = mk x in b
+(*
+// CHECK-LABEL: @made(
+// CHECK-NOT: call @drop(
+// CHECK: return
+*)
+
+(* A `moved` parameter is dropped at the end of the body. *)
+let owned (b : moved buffer) : u8 = use b
+(*
+// CHECK-LABEL: @owned(
+// CHECK: call @use(
+// CHECK: call @drop(
+// CHECK: return
+*)
+
+(* A borrowed one belongs to the caller. *)
+let lent (b : buffer) : u8 = use b
+(*
+// CHECK-LABEL: @lent(
+// CHECK-NOT: call @drop(
+// CHECK: return
+*)
