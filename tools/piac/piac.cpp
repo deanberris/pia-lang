@@ -33,6 +33,11 @@
 //   piac --no-slice ...             always solve each goal's full query
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr
+//   piac --no-lint[=NAME] ...       turn off every lint, or the one named
+//                                   (ADR 0037, docs/idioms.md); repeatable
+//   piac --costly-goal=N ...        warn about a goal whose Z3 resource
+//                                   count is N or more (default 10% of the
+//                                   rlimit); 0 turns the warning off
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
@@ -56,10 +61,12 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "meta/Expand.h"
 #include "syntax/Lexer.h"
+#include "syntax/Lint.h"
 #include "syntax/Parser.h"
 #include "syntax/Syntax.h"
 
@@ -84,6 +91,7 @@ int usage() {
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
                "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats]\n"
+               "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
@@ -93,10 +101,22 @@ int usage() {
   return 2;
 }
 
+// Which lints are on: all but those --no-lint names, or none.
+struct LintSwitch {
+  bool all = true;
+  std::vector<std::string> off;
+  bool on(const std::string &name) const {
+    if (!all) return false;
+    for (const std::string &o : off)
+      if (o == name) return false;
+    return true;
+  }
+};
+
 #ifndef PIA_NO_MLIR
 // Prints one line per obligation and a summary. Returns whether any failed.
 bool report(const std::vector<pia::verify::Outcome> &outcomes,
-            std::ostream &os) {
+            std::ostream &os, bool showCost = false) {
   using pia::verify::Status;
   int proved = 0, failed = 0, skipped = 0;
   for (const pia::verify::Outcome &o : outcomes) {
@@ -104,7 +124,7 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
       case Status::Proved:
         ++proved;
         os << o.where << ": proved: " << o.claim << " [" << o.method << "]";
-        if (o.cost) os << " (cost " << o.cost << ")";
+        if (showCost && o.cost) os << " (cost " << o.cost << ")";
         os << "\n";
         break;
       case Status::Skipped:
@@ -165,6 +185,37 @@ std::vector<const pia::verify::Outcome *> unaccepted(
   return out;
 }
 
+// The costly_goal lint (ADR 0037): a goal the solver found hard. It reads
+// the cost each goal took, so it runs after verification, not on syntax.
+void warnCostly(const std::vector<pia::verify::Outcome> &outcomes,
+                unsigned long long threshold, unsigned rlimit) {
+  if (threshold == 0) return;
+  for (const pia::verify::Outcome &o : outcomes) {
+    if (o.status != pia::verify::Status::Proved || o.cost < threshold) continue;
+    std::string advice;
+    if (o.claim.find("postcondition") != std::string::npos ||
+        o.claim.find("invariant") != std::string::npos ||
+        o.claim.find("assertion") != std::string::npos)
+      advice = "split it into smaller facts proved one at a time with "
+               "'assert', or prove the hard step once as a 'let lemma' and "
+               "call it";
+    else if (o.claim.find("precondition") != std::string::npos)
+      advice = "give the callee's parameters range types so the argument's "
+               "type carries the fact, or state the bound where the argument "
+               "is made";
+    else
+      advice = "bound the values it depends on with range types so intervals "
+               "decide it, or move the step into a function whose contract "
+               "states only what it needs";
+    std::cerr << o.where << ": warning: proving that " << o.claim << " in '"
+              << o.function << "' cost " << o.cost;
+    if (rlimit)
+      std::cerr << " (" << (o.cost * 100 / rlimit) << "% of the solver's limit)";
+    std::cerr << "; " << advice << ". Re-run it alone with --verify-only="
+              << o.where << " [costly_goal]\n";
+  }
+}
+
 std::string obligations(size_t n) {
   return std::to_string(n) + (n == 1 ? " obligation" : " obligations");
 }
@@ -182,7 +233,12 @@ void printStats(const pia::verify::Stats &st) {
             << " sliced=" << st.sliced << " unsliced=" << st.unsliced
             << " threads=" << st.threads << " cost=" << st.cost
             << " encode_ms=" << static_cast<long long>(st.encodeMs)
-            << " solve_ms=" << static_cast<long long>(st.solveMs) << "\n";
+            << " solve_ms=" << static_cast<long long>(st.solveMs)
+            << " type=" << st.typeGoals << " type_smt=" << st.typeSmt
+            << " type_cost=" << st.typeCost
+            << " contract=" << st.contractGoals
+            << " contract_smt=" << st.contractSmt
+            << " contract_cost=" << st.contractCost << "\n";
 }
 
 int compile(mlir::ModuleOp module, const std::string &mode,
@@ -284,6 +340,8 @@ int main(int argc, char **argv) {
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
   bool verifyStats = false;
+  LintSwitch lints;
+  long long costlyGoal = -1;  // -1: 10% of the rlimit
 #ifndef PIA_NO_MLIR
   pia::codegen::Options cg;
 #endif
@@ -345,6 +403,24 @@ int main(int argc, char **argv) {
       slice = -1;
     else if (arg == "--verify-stats")
       verifyStats = true;
+    else if (arg == "--no-lint")
+      lints.all = false;
+    else if (arg.rfind("--no-lint=", 0) == 0) {
+      std::string name = arg.substr(10);
+      bool known = false;
+      for (std::string_view n : pia::syntax::lintNames()) known |= n == name;
+      if (!known) {
+        std::cerr << "piac: no lint is named '" << name << "'\n";
+        return usage();
+      }
+      lints.off.push_back(name);
+    }
+    else if (arg.rfind("--costly-goal=", 0) == 0) {
+      char *end = nullptr;
+      unsigned long long n = std::strtoull(arg.c_str() + 14, &end, 10);
+      if (arg.size() == 14 || *end != '\0') return usage();
+      costlyGoal = static_cast<long long>(n);
+    }
     else if (arg == "--solver-cost")
       verify = solverCost = true;
     else if (arg == "--verify")
@@ -391,6 +467,7 @@ int main(int argc, char **argv) {
   (void)jobs;
   (void)slice;
   (void)verifyStats;
+  (void)costlyGoal;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
     return 2;
@@ -423,6 +500,14 @@ int main(int argc, char **argv) {
                   : pia::syntax::parseProgram(source, diags, literate);
     if (!diags.hasErrors() && mode == "--dump-ast")
       pia::syntax::dump(std::cout, *tree, showComments);
+    // Lints read the program as written, before metaprograms run, so they
+    // point at the user's code and not at generated code.
+    if (!diags.hasErrors() && !contracts &&
+        (mode == "--check" || mode == "--verify" || mode == "--emit=mlir" ||
+         mode == "--emit=core" || mode == "--emit=llvm" ||
+         mode == "--emit=asm" || mode == "--emit=obj"))
+      for (const pia::syntax::Lint &l : pia::syntax::lint(*tree, source))
+        if (lints.on(l.name)) pia::syntax::printLint(std::cerr, l, file, source);
     // Everything past the syntax tree sees the program after its
     // metaprograms have run (docs/meta.md).
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
@@ -443,7 +528,9 @@ int main(int argc, char **argv) {
       options.dumpSmt = dumpSmt;
       options.timeoutMs = solverTimeoutMs;
       options.rlimit = solverRlimit;
-      options.reportCost = solverCost;
+      // Each goal's cost is always kept, for the costly_goal lint; the
+      // report shows it only with --solver-cost.
+      options.reportCost = true;
       options.jobs = jobs;
       options.slice = slice > 0   ? pia::verify::Options::Slice::On
                       : slice < 0 ? pia::verify::Options::Slice::Off
@@ -468,7 +555,13 @@ int main(int argc, char **argv) {
           return 1;
         }
         bool failed =
-            report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout);
+            report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout,
+                   solverCost);
+        if (lints.on("costly_goal"))
+          warnCostly(outcomes,
+                     costlyGoal >= 0 ? static_cast<unsigned long long>(costlyGoal)
+                                     : solverRlimit / 10ull,
+                     solverRlimit);
         if (mode == "--emit=mlir") module->print(llvm::outs());
         // A skipped goal is not proved, so it fails verification too unless
         // --allow-unproved accepts it, as it does for codegen.

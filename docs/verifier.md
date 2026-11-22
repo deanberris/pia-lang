@@ -103,10 +103,10 @@ Earlier goals are still assumed, as in a full run. Unselected goals are left out
 **Statistics.** `--verify-stats` prints one line to stderr, here for `docs/streams.pia.md` on one thread:
 
 ```
-verify-stats: goals=243 unselected=0 intervals=21 skipped=0 solved=222 cached=0 sliced=0 unsliced=0 threads=1 cost=269094119 encode_ms=947 solve_ms=30213
+verify-stats: goals=243 unselected=0 intervals=21 skipped=0 solved=222 cached=0 sliced=0 unsliced=0 threads=1 cost=269094119 encode_ms=947 solve_ms=30213 ...
 ```
 
-`solved` counts the queries sent to Z3, `cached` the goals the cache answered, `sliced` the queries slicing made smaller, `unsliced` the slices solved again in full, and `cost` Z3's resource count over every query. `tools/bench/proof_bench.py` runs these over the benchmark corpus on one thread and on every core, and CI fails when the cost grows by more than 10%. Z3's resource count varies by about 1% from run to run, since some of Z3's hash tables depend on memory addresses, so the benchmark compares reports exactly and costs within 5% over `tools/bench/baseline.json`.
+`solved` counts the queries sent to Z3, `cached` the goals the cache answered, `sliced` the queries slicing made smaller, `unsliced` the slices solved again in full, and `cost` Z3's resource count over every query. The rest of the line splits the goals by where they came from ([ADR 0037](adr/0037-idiomatic-pia-and-lints.md)): `type`, `type_smt` and `type_cost` for goals the types of values raise (overflow and narrowing, bounds, divisors, shifts, exhaustiveness, out parameters), and `contract`, `contract_smt` and `contract_cost` for written ones (preconditions at calls, postconditions, invariants, measures, assertions, laws), with how many of each needed the solver and what they cost. After the report, a goal that cost a tenth of the rlimit or more gets a `costly_goal` warning ([Idiomatic Pia](idioms.md#decomposed-reasoning)). `tools/bench/proof_bench.py` runs these over the benchmark corpus on one thread and on every core, and CI fails when the cost grows by more than 10%. Z3's resource count varies by about 1% from run to run, since some of Z3's hash tables depend on memory addresses, so the benchmark compares reports exactly and costs within 5% over `tools/bench/baseline.json`.
 
 ## Loops
 

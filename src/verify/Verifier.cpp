@@ -2223,6 +2223,21 @@ bool selects(const std::string &spec, const std::string &where,
   return function == spec;
 }
 
+bool isContractGoal(contract::ObligationKind kind) {
+  using K = contract::ObligationKind;
+  switch (kind) {
+    case K::requires_:
+    case K::ensures:
+    case K::invariant:
+    case K::decreases:
+    case K::assert_:
+    case K::law:
+      return true;
+    default:
+      return false;
+  }
+}
+
 mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
                                      const Options &options) {
   struct Site {
@@ -2359,6 +2374,18 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   auto solving = std::chrono::steady_clock::now();
   st.threads = solveAll(jobs, outcomes, options, st);
   st.solveMs = msSince(solving);
+  for (const Outcome &o : outcomes) {
+    bool smt = o.method != "intervals" && o.status != Status::Skipped;
+    if (isContractGoal(o.kind)) {
+      ++st.contractGoals;
+      st.contractSmt += smt;
+      st.contractCost += o.cost;
+    } else {
+      ++st.typeGoals;
+      st.typeSmt += smt;
+      st.typeCost += o.cost;
+    }
+  }
   // Per op: whether every goal it raises holds, and how.
   llvm::DenseMap<Operation *, std::pair<bool, bool>> proved;  // all, smt
   llvm::SmallVector<Operation *> order;

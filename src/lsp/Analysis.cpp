@@ -5,6 +5,7 @@
 
 #include "syntax/Comments.h"
 #include "syntax/Lexer.h"
+#include "syntax/Lint.h"
 #include "syntax/Parser.h"
 
 namespace pia::lsp {
@@ -634,6 +635,8 @@ Analysis::Analysis(std::string text, bool literate)
   tree_ = syntax::parseProgram(text_, diags_, literate);
   if (diags_.hasErrors())
     tree_ = parseItemByItem(literate ? syntax::literateCode(text_) : text_);
+  else
+    lints_ = syntax::lint(*tree_, text_);
 }
 
 
@@ -645,6 +648,15 @@ std::vector<Diag> Analysis::diagnostics() const {
     diag.range = tokenFrom(text_, at);
     diag.source = "pia";
     diag.message = d.message;
+    out.push_back(std::move(diag));
+  }
+  for (const syntax::Lint &l : lints_) {
+    Diag diag;
+    diag.range = {l.loc.offset, std::max(l.end, l.loc.offset + 1)};
+    diag.severity = Severity::Warning;
+    diag.source = "pia-lint";
+    diag.code = l.name;
+    diag.message = l.message;
     out.push_back(std::move(diag));
   }
   return out;

@@ -1,0 +1,9 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# Lints (ADR 0037, docs/idioms.md): `piac --check` prints each warning, its
+# source line and its fix; the verifier-based ones run under --verify.
+lit_tests(
+    name = "lint_tests",
+    srcs = glob(["*.pia"]),
+    tools = ["//tools/piac"],
+)
