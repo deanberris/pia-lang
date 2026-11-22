@@ -26,9 +26,9 @@ let direct (a : u8) (b : u8) : bool = alike a b
 let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
 
 (* CHECK-LABEL: func.func private @"alike<pixel, Same = by_red>"
-// CHECK: call @"by_red.same"
+// CHECK: call @by_red.same(
 // CHECK-LABEL: func.func private @"alike<u8>"
-// CHECK: call @same
+// CHECK: call @same(
 // CHECK-LABEL: func.func private @"alike<u8, Same = always>"
-// CHECK: call @"always.same"
+// CHECK: call @always.same(
 *)
