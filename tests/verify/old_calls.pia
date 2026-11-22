@@ -1,0 +1,55 @@
+(* `old (f m)`: a call under `old` reads the parameters on entry, and means
+   what the callee's contract says, also when `m` holds a buffer or a
+   spec-only field, and when the call is in a callee's postcondition.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let e = type | Bad
+
+let theory Alloc = sig
+  let sort heap
+  let spec none : heap
+end
+let model bits : Alloc = struct
+  let sort heap = u64
+  let spec none : u64 = 0
+end
+
+let bump = type { mem : [u8]; used : usize; h : Alloc.heap }
+let held (m : bump) : Alloc.heap = m.h
+let used_of (m : bump) : usize ensures result = m.used = m.used
+
+let keep (m : inout mutable bump) : unit
+  ensures held m = old (held m)
+= (m.used <- 0)
+
+let reset (m : inout mutable bump) : unit
+  ensures used_of m = 0 && old (used_of m) = old m.used
+= (m.used <- 0)
+
+let fail_keep (m : inout mutable bump) : result unit e
+  ensures (match result with
+           | Ok () -> true
+           | Err _ -> held m = old (held m))
+= (m.used <- 0; Err Bad)
+
+(* The callee's postcondition, with its `old`, holds at the caller. *)
+let twice (m : inout mutable bump) : unit
+  ensures held m = old (held m)
+= (keep m; keep m)
+
+(* Wrong: the old count is not always 1. *)
+let wrong (m : inout mutable bump) : unit
+  ensures old (used_of m) = 1
+= (m.used <- 0)
+
+(* Expected report, in order.
+// CHECK: old_calls.pia:20:32: proved: the postcondition holds [smt]
+// CHECK: old_calls.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: old_calls.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: old_calls.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: old_calls.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: old_calls.pia:43:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: len m.mem = {{-?[0-9]+}}, m.used = {{-?[0-9]+}}, m.h = any
+// CHECK: 5 proved, 1 failed, 0 skipped
+*)

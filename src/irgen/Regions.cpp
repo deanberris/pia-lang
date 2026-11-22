@@ -54,6 +54,13 @@ bool isGenericType(const Node &item) {
          v.kids.back()->kind == NodeKind::TypeValue;
 }
 
+// `let meta C (t : type) (r : region) : concept = sig ... end`.
+bool isConcept(const Node &item) {
+  return item.kind == NodeKind::LetItem && item.kids.size() >= 4 &&
+         item.kids[0]->kind == NodeKind::Params &&
+         item.kids[3]->kind == NodeKind::Sig;
+}
+
 bool isFunction(const Node &item) {
   return item.kind == NodeKind::LetItem && item.kids.size() >= 4 &&
          item.kids[0]->kind == NodeKind::Params &&
@@ -88,9 +95,12 @@ class Eraser {
     // First the generic types, whose shapes the rest need.
     for (Node *item : items)
       if (isGenericType(*item)) shapeOf(*item);
+      else if (isConcept(*item)) conceptShapeOf(*item);
     for (Node *item : items) {
       if (isGenericType(*item)) {
         eraseInType(*item);
+      } else if (isConcept(*item)) {
+        eraseInConcept(*item);
       } else if (isFunction(*item)) {
         eraseInFunction(*item);
       } else {
@@ -106,6 +116,69 @@ class Eraser {
     for (size_t i = 0; i + 1 < value.kids.size(); ++i)
       s.region.push_back(isRegionParam(*value.kids[i]));
     if (s.regions()) shapes_[item.text] = std::move(s);
+  }
+
+  void conceptShapeOf(Node &item) {
+    Shape s;
+    for (const NodePtr &p : item.kids[0]->kids)
+      if (p->kind == NodeKind::Param) s.region.push_back(isRegionParam(*p));
+    if (s.regions()) concepts_[item.text] = std::move(s);
+  }
+
+  // A concept's regions are where the values of its types borrow from: a
+  // requirement's parameter whose type mentions one of the concept's type
+  // parameters is in every region of the concept, and `borrowed(r)` in a
+  // requirement names one of them.
+  void eraseInConcept(Node &item) {
+    Node &params = *item.kids[0];
+    std::vector<std::string> typeParams;
+    for (const NodePtr &p : params.kids)
+      if (p->kind == NodeKind::Param && !p->kids.empty() &&
+          p->kids[0]->kind == NodeKind::Annot &&
+          p->kids[0]->kids[1]->kind == NodeKind::TypeKind)
+        typeParams.push_back(p->text);
+    std::vector<std::string> regions =
+        takeRegions(params, 0, params.kids.size());
+    if (regions.empty()) {
+      strip(item, {});
+      return;
+    }
+    for (NodePtr &r : item.kids[3]->kids) {
+      if (r->kind != NodeKind::SigVal || r->kids.empty()) continue;
+      Node *cur = r->kids[0]->kids.size() > 1 ? r->kids[0]->kids[1].get()
+                                              : nullptr;
+      bool any = false;
+      for (; cur && cur->kind == NodeKind::ArrowType;
+           cur = cur->kids[1].get()) {
+        Node &d = *cur->kids[0];
+        if (d.kids.size() > 1 && namesAny(*d.kids[1], typeParams)) {
+          d.flags = "regions:" + join(regions);
+          any = true;
+        }
+      }
+      forEachLender(*r->kids[0], [&](Node &lender) {
+        if (std::find(regions.begin(), regions.end(), lender.text) ==
+            regions.end())
+          return;
+        lender.flags = "region";
+        if (!any)
+          diags_.error(lender.loc,
+                       "'borrowed(" + lender.text + ")': no parameter of '" +
+                           r->text + "' has a type of '" + item.text +
+                           "', so nothing can lend from the region '" +
+                           lender.text + "'");
+      });
+    }
+    strip(item, regions);
+  }
+
+  static bool namesAny(const Node &n, const std::vector<std::string> &names) {
+    if (n.kind == NodeKind::TypeName &&
+        std::find(names.begin(), names.end(), n.text) != names.end())
+      return true;
+    for (const NodePtr &k : n.kids)
+      if (namesAny(*k, names)) return true;
+    return false;
   }
 
   // Removes the region parameters of `params`, from `first` on, and
@@ -268,8 +341,23 @@ class Eraser {
     for (const NodePtr &k : n.kids) mentionsOf(*k, out);
   }
 
-  // Removes the region arguments of type applications in `n`.
+  // Removes the region arguments of type applications in `n`, and of
+  // constraints such as `Allocator a t r`.
   void strip(Node &n, const std::vector<std::string> &scope) {
+    if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+        n.kids[0]->kind == NodeKind::Name)
+      if (auto s = concepts_.find(n.kids[0]->text); s != concepts_.end() &&
+          n.kids.size() - 1 == s->second.region.size())
+        for (size_t i = s->second.region.size(); i-- > 0;) {
+          if (!s->second.region[i]) continue;
+          const Node &a = *n.kids[i + 1];
+          if ((a.kind != NodeKind::Name && a.kind != NodeKind::TypeName) ||
+              std::find(scope.begin(), scope.end(), a.text) == scope.end())
+            diags_.error(a.loc, "'" + n.kids[0]->text + "' takes a region "
+                                "here, and this is not one: name a region "
+                                "parameter, as in '(r : region)'");
+          n.kids.erase(n.kids.begin() + i + 1);
+        }
     if (n.kind == NodeKind::TypeApp && !n.kids.empty() &&
         n.kids[0]->kind == NodeKind::TypeName)
       if (auto s = shapes_.find(n.kids[0]->text); s != shapes_.end()) {
@@ -300,6 +388,7 @@ class Eraser {
   syntax::Diagnostics &diags_;
   RegionInfo &info_;
   std::map<std::string, Shape> shapes_;
+  std::map<std::string, Shape> concepts_;
 };
 
 bool anyRegion(const Node &n) {

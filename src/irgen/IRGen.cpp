@@ -5147,6 +5147,7 @@ class Gen {
       const std::string &mine = found.params[i].name;
       rename[names[i]] = mine;
       Node *p = params->add(syntax::makeNode(NodeKind::Param, at, mine));
+      p->flags = cur->kids[0]->flags;  // its regions (ADR 0042)
       Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
       annot->add(syntax::makeNode(NodeKind::Modifiers, at));
       annot->add(syntax::clone(*cur->kids[0]->kids[1]));
@@ -5203,6 +5204,7 @@ class Gen {
       const std::string &mine = found.params[i].name;
       rename[names[i]] = mine;
       Node *p = params->add(syntax::makeNode(NodeKind::Param, at, mine));
+      p->flags = cur->kids[0]->flags;  // its regions (ADR 0042)
       Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
       annot->add(syntax::clone(*cur->kids[0]->kids[0]));
       annot->add(syntax::clone(*cur->kids[0]->kids[1]));
@@ -5219,6 +5221,8 @@ class Gen {
     if (!adlModule_.empty()) item->flags = "from:" + adlModule_;
     item->add(std::move(params));
     Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    if (const Node *l = sema::findLender(*cur); l && l->flags == "region")
+      ret->flags = "regions:" + l->text;
     Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
     annot->add(syntax::makeNode(NodeKind::Modifiers, at));
     annot->add(syntax::clone(*cur));
@@ -6409,11 +6413,20 @@ class Gen {
         param.modifiers = d.kids[0]->text;
         param.loc = d.loc;
         param.type = types_.resolve(*d.kids[1]);
+        param.regions = regionsOfFlags(d.flags);
         ok = ok && param.type;
         sig.params.push_back(std::move(param));
       }
       sig.result = types_.resolve(*cur);
       if (!ok || !sig.result) continue;
+      // `borrowed(r)` of the concept's region r (ADR 0042, step 2).
+      if (const Node *l = sema::findLender(*cur); l && l->flags == "region") {
+        const Node &lent = *sema::findLentAnnot(*cur);
+        sig.lentType = types_.resolveAnnot(lent);
+        sig.lentModifiers = lent.kids[0]->text;
+        sig.lentFromRegion = true;
+        sig.resultRegions = {l->text};
+      }
       // Two concepts may promise the same function.
       bool dup = false;
       for (const sema::FuncSig *other : promisedFns_[r->text]) {
@@ -7375,6 +7388,16 @@ class Gen {
   static void addLenders(Lenders &to, const Lenders &from) {
     for (const BindingPtr &b : from)
       if (llvm::find(to, b) == to.end()) to.push_back(b);
+  }
+
+  // "regions:r,s" (Regions.cpp) -> {r, s}.
+  static std::vector<std::string> regionsOfFlags(llvm::StringRef flags) {
+    std::vector<std::string> out;
+    if (!flags.consume_front("regions:")) return out;
+    llvm::SmallVector<llvm::StringRef> names;
+    flags.split(names, ',', -1, false);
+    for (llvm::StringRef n : names) out.push_back(n.str());
+    return out;
   }
 
   // The binding that stands for the region `r` in the current function.
