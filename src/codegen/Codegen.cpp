@@ -277,6 +277,15 @@ bool isSpecOnly(Type t) {
   return mlir::isa<UnboundedIntType, RealType, SortType>(t);
 }
 
+// The buffer of a spec-only field of a buffer's records (ADR 0041): code
+// only stores into it, and those stores are erased, so it holds nothing
+// and C entry points leave it out.
+bool isSpecBuffer(Type t) {
+  if (auto s = mlir::dyn_cast<SliceType>(t)) return isSpecOnly(s.getElementType());
+  if (auto a = mlir::dyn_cast<ArrayType>(t)) return isSpecOnly(a.getElementType());
+  return false;
+}
+
 class CoreTypes : public mlir::TypeConverter {
  public:
   CoreTypes() {
@@ -953,7 +962,7 @@ void eraseContracts(mlir::ModuleOp module) {
     if (specCallee(f)) continue;
     mlir::FunctionType ft = f.getFunctionType();
     for (unsigned i = 0; i < ft.getNumInputs(); ++i)
-      if (isSpecOnly(ft.getInput(i)))
+      if (isSpecOnly(ft.getInput(i)) || isSpecBuffer(ft.getInput(i)))
         f.setArgAttr(i, kErased, mlir::UnitAttr::get(module.getContext()));
     for (unsigned i = 0; i < ft.getNumResults(); ++i)
       if (isSpecOnly(ft.getResult(i)))
@@ -968,6 +977,10 @@ void eraseContracts(mlir::ModuleOp module) {
                 module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())))
           return;
       spec.push_back(op);
+    });
+    // A store into a spec-only field's buffer writes what nothing reads.
+    f.walk([&](StoreOp store) {
+      if (isSpecBuffer(store.getBuffer().getType())) spec.push_back(store);
     });
     // Uses come after definitions, so the last is replaced first.
     for (mlir::Operation *op : llvm::reverse(spec)) {
@@ -1260,8 +1273,25 @@ std::string cName(llvm::StringRef name) {
   return out;
 }
 
-LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
+LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
   mlir::MLIRContext *ctx = module.getContext();
+  // A spec-only field's buffer is left out (ADR 0041), so when the fields
+  // of a slice of records share its length, the first field kept takes the
+  // length instead, and the rest share that one.
+  Entry e = entryInfo;
+  for (unsigned i = 0; i < e.lengthOf.size(); ++i) {
+    if (!e.argErased[i]) continue;
+    int taker = -1;
+    for (unsigned j = i + 1; j < e.lengthOf.size(); ++j) {
+      if (e.lengthOf[j] != int(i)) continue;
+      if (taker < 0) {
+        taker = int(j);
+        e.lengthOf[j] = -1;
+      } else {
+        e.lengthOf[j] = taker;
+      }
+    }
+  }
   auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
   if (!internal) return mlir::emitError(e.loc) << "lost function " << e.name;
   for (Type t : e.type.getResults())
@@ -1312,6 +1342,14 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   for (unsigned i = 0; i < e.type.getNumInputs(); ++i) {
     Type t = e.type.getInput(i);
     if (e.argErased[i]) {
+      // A spec-only field's buffer (ADR 0041) is never read or written,
+      // so it is an empty descriptor.
+      if (mlir::isa<mlir::MemRefType>(t)) {
+        Value null = make<mlir::LLVM::ZeroOp>(
+            b, e.loc, mlir::LLVM::LLVMPointerType::get(ctx));
+        operands.append({null, null, c64(0), c64(0), c64(1)});
+        continue;
+      }
       operands.push_back(make<mlir::LLVM::ConstantOp>(
           b, e.loc, t, b.getIntegerAttr(t, 0)));
       continue;

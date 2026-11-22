@@ -1,0 +1,43 @@
+(* Spec-only fields of a buffer's records (ADR 0041, ADR 0048): a buffer
+   of `cell`s is one buffer per field, so `state` is a buffer of ints that
+   the verifier sees and codegen erases, as `box`'s state is in a
+   `vec (box t)`.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let cell = type { slot : [u16]; state : int } @linear
+
+let spec full (c : cell) : bool = c.state = 1
+
+let mark (xs : inout [cell]) (i : usize) : unit
+  requires i < len xs
+  ensures full xs.[i]
+  ensures len xs = old (len xs)
+= (xs.[i].state <- 1)
+
+(* Marking one element leaves the others as they were. *)
+let keep (xs : inout [cell]) : unit
+  requires len xs > 1 && full xs.[1]
+  ensures full xs.[1] && full xs.[0]
+= (xs.[0].state <- 1)
+
+(* Wrong: element 1 was not marked. *)
+let bad (xs : inout [cell]) : unit
+  requires len xs > 1
+  ensures full xs.[1]
+= (xs.[0].state <- 1)
+
+(* Expected report, in order.
+// CHECK: spec_buffers.pia:16:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:16:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: spec_buffers.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: spec_buffers.pia:22:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:22:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: spec_buffers.pia:28:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:28:4: proved: the index is within bounds [smt]
+// CHECK: spec_buffers.pia:27:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: lens xs.slot = {{-?[0-9]+}}, len xs.slot = {{-?[0-9]+}}
+// CHECK: 9 proved, 1 failed, 0 skipped
+*)
