@@ -1,0 +1,19 @@
+(* A `where` predicate that is false, or cannot be checked, for a call's
+   types (ADR 0035).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta small (t : type) : bool = size_of t <= 2
+
+let first (t : type where small t) (x : t) : t = x
+
+(* CHECK: type_predicate_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the constraint 'small t' is false for t = u32
+*)
+let a (x : u32) : u32 = first x
+
+let any (t : type where size_of t <= 8) (x : t) : u8 = 0
+
+(* CHECK: type_predicate_errors.pia:[[@LINE-3]]:{{[0-9]+}}: error: the constraint 'size_of t <= 8' cannot be checked for t = [u8]: the type [u8] has no fixed size
+// CHECK: type_predicate_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: its constraint 'size_of t <= 8' cannot be checked
+*)
+let b (xs : [u8]) : u8 = any xs

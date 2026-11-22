@@ -1,0 +1,66 @@
+(* Type-level metaprograms in signatures and `where` predicates (ADR 0035,
+   step 1). `widen t` in a type runs the metaprogram `widen` on t; a
+   `where` may state a predicate over types, such as `size_of t = 1`,
+   beside its concepts.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta widen (t : type) : type =
+  if t = u8 then u16 else if t = u16 then u32 else if t = u32 then u64
+  else fail (concat "no integer type is wider than " (name t))
+
+let meta small (t : type) : bool = size_of t <= 2
+
+(* A non-generic signature may use one too. *)
+let wide (x : u8) : widen u8
+  ensures result = x
+= x
+
+(* The sum of two values of t always fits the next wider type. The body is
+   checked for each instance, since `widen t` is only known for each. *)
+let add_wide (t : type where small t) (a : t) (b : t) : widen t
+  ensures result = a + b
+= a + b
+
+let sum8 (a : u8) (b : u8) : u16
+  ensures result = a + b
+= add_wide a b
+
+let sum16 (a : u16) (b : u16) : u32
+  ensures result = a + b
+= add_wide a b
+
+(* A generic with a predicate is more specific than one without. *)
+let tag (t : type) (x : t) : u8
+  ensures result = 0
+= 0
+
+let tag (t : type where size_of t = 1) (x : t) : u8
+  ensures result = 1
+= 1
+
+let tag_u8 (x : u8) : u8
+  ensures result = 1
+= tag x
+
+let tag_u32 (x : u32) : u8
+  ensures result = 0
+= tag x
+
+(* A generic body may call a generic with a predicate that its own `where`
+   states too. *)
+let only_bytes (t : type where t = u8 || t = i8) (x : t) : t
+  ensures result = x
+= x
+
+let same_bytes (u : type where u = u8 || u = i8) (x : u) : u
+  ensures result = x
+= only_bytes x
+
+let byte (x : i8) : i8
+  ensures result = x
+= same_bytes x
+
+(* Expected report, in order.
+// CHECK: 0 failed, 0 skipped
+*)

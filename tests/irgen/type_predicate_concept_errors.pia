@@ -1,0 +1,11 @@
+(* A concept in a `where` is joined to the rest only by `&&` (ADR 0035).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+(* CHECK: type_predicate_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the concept 'Same' can only be joined to other constraints by '&&'
+*)
+let f (t : type where Same t || t = u8) (x : t) : t = x

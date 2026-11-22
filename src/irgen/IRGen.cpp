@@ -13,6 +13,7 @@
 
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/raw_ostream.h"
@@ -22,6 +23,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Verifier.h"
+#include "meta/Interpreter.h"
 #include "sema/Sema.h"
 
 namespace pia::irgen {
@@ -129,12 +131,14 @@ class Gen {
         b_(&ctx),
         file_(mlir::StringAttr::get(&ctx, filename)),
         diags_(diags),
-        types_(ctx, diags) {}
+        types_(ctx, diags),
+        interp_([](const std::string &) { return true; }) {}
 
   mlir::OwningOpRef<mlir::ModuleOp> run(const Node &program) {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         mlir::ModuleOp::create(mlir::FileLineColLoc::get(file_, 1, 1));
     module_ = *module;
+    collectTypeFunctions(program);
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
     collectConstants();
@@ -1851,6 +1855,220 @@ class Gen {
     std::map<std::string, std::string> adapterFor;
   };
 
+  // --- type-level metaprograms (ADR 0035, step 1) ---------------------
+
+  // Makes every type-level metaprogram callable from types and `where`
+  // predicates.
+  void collectTypeFunctions(const Node &program) {
+    for (const syntax::NodePtr &item : program.kids) {
+      if (!syntax::isTypeLevelMetaItem(*item)) continue;
+      const Node &ret = *item->kids[1]->kids[0]->kids[1];
+      auto &table = ret.kind == NodeKind::TypeKind ? typeFns_ : typePredicates_;
+      if (typeFns_.count(item->text) || typePredicates_.count(item->text)) {
+        diags_.error(item->loc, "'" + item->text + "' is already defined");
+        continue;
+      }
+      table[item->text] = item.get();
+      interp_.define(*item);
+    }
+    meta::TypeHost host;
+    host.named = [this](const std::string &name) -> std::optional<std::string> {
+      Type t = types_.builtin(name);
+      if (!t) t = types_.named(name);
+      if (!t) return std::nullopt;
+      return typeValue(t)->s;
+    };
+    host.sizeOf = [this](const std::string &spelling) {
+      return byteSize(typeValues_.at(spelling));
+    };
+    interp_.setTypeHost(std::move(host));
+    types_.setTypeFunctions(
+        [this](const std::string &name) { return typeFns_.count(name) != 0; },
+        [this](const std::string &name, llvm::ArrayRef<Type> args,
+               syntax::SourceLoc at) {
+          return callTypeFunction(name, args, at);
+        });
+  }
+
+  // A type as a metaprogram's value.
+  meta::ValuePtr typeValue(Type t) {
+    std::string spelling = sema::typeName(t);
+    typeValues_[spelling] = t;
+    return meta::Interpreter::typeValue(std::move(spelling));
+  }
+
+  // `size_of t`: the bytes a value takes. An integer takes the smallest of
+  // 1, 2, 4 or 8 bytes that holds its range, a bool 1, an array its
+  // elements', and a record the sum of its fields' (before layout packs
+  // them, ADR 0030). A slice and a stand-in have no fixed size.
+  std::optional<int64_t> byteSize(Type t) {
+    if (standIns_.contains(t)) return std::nullopt;
+    if (auto i = mlir::dyn_cast<IntType>(t)) {
+      llvm::APInt lo = i.getLo(), hi = i.getHi();
+      unsigned bits = lo.isNegative()
+                          ? std::max(lo.getSignificantBits(),
+                                     hi.getSignificantBits())
+                          : hi.getActiveBits();
+      for (unsigned w : {8u, 16u, 32u, 64u})
+        if (bits <= w) return w / 8;
+      return std::nullopt;
+    }
+    if (t == types_.boolType()) return 1;
+    if (types_.isUnit(t)) return 0;
+    if (auto a = mlir::dyn_cast<ArrayType>(t)) {
+      std::optional<int64_t> e = byteSize(a.getElementType());
+      if (!e) return std::nullopt;
+      return *e * static_cast<int64_t>(a.getLength());
+    }
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      int64_t total = 0;
+      for (Type f : r.getFieldTypes()) {
+        std::optional<int64_t> n = byteSize(f);
+        if (!n) return std::nullopt;
+        total += *n;
+      }
+      return total;
+    }
+    return std::nullopt;
+  }
+
+  // `widen u8` in a type: runs the metaprogram `widen` on u8. Its failure
+  // is an error at the type for now; ADR 0035 step 3 makes it remove an
+  // overload candidate instead.
+  Type callTypeFunction(const std::string &name, llvm::ArrayRef<Type> args,
+                        syntax::SourceLoc at) {
+    std::string spelled = name;
+    for (Type a : args) {
+      std::string t = sema::typeName(a);
+      spelled += t.find(' ') == std::string::npos ? " " + t : " (" + t + ")";
+    }
+    size_t arity = interp_.arity(name);
+    if (args.size() != arity) {
+      diags_.error(at, "'" + name + "' takes " + std::to_string(arity) +
+                           " type argument" + (arity == 1 ? "" : "s") +
+                           ", found " + std::to_string(args.size()));
+      return {};
+    }
+    // A stand-in stands for every type, and so does what a metaprogram
+    // makes of it: `widen t` is known only for each instance.
+    for (Type a : args)
+      if (standIns_.contains(a)) {
+        Type r = RecordType::get(&ctx_, spelled, {}, {});
+        standIns_.insert(r);
+        if (checking_) opaqueStandIn_ = true;
+        return r;
+      }
+    std::vector<meta::ValuePtr> values;
+    for (Type a : args) values.push_back(typeValue(a));
+    interp_.setSite(at);
+    try {
+      meta::ValuePtr v = interp_.call(name, std::move(values));
+      if (v->kind != meta::Value::Kind::Type) {
+        diags_.error(at, "'" + name + "' must return a type, but returned " +
+                             meta::Interpreter::kindName(v->kind));
+        return {};
+      }
+      return typeValues_.at(v->s);
+    } catch (const meta::MetaError &e) {
+      diags_.error(at, "the type '" + spelled + "' cannot be formed: " +
+                           e.message);
+    } catch (const meta::Deferred &d) {
+      diags_.error(at, "the type '" + spelled + "' cannot be formed: it "
+                       "needs the type '" + d.type + "'");
+    }
+    return {};
+  }
+
+  // A `where` predicate as written: `size_of t <= 8`. Only an argument of
+  // a call is parenthesised.
+  static std::string predicateText(const Node &n, bool nested = false) {
+    static const std::map<std::string, std::string> infix = {
+        {"eq", "="},  {"ne", "<>"}, {"lt", "<"},       {"gt", ">"},
+        {"le", "<="}, {"ge", ">="}, {"add", "+"},      {"sub", "-"},
+        {"mul", "*"}, {"div", "/"}, {"rem", "%"},      {"and", "&&"},
+        {"or", "||"}, {"implies", "==>"},              {"iff", "<==>"},
+    };
+    switch (n.kind) {
+      case NodeKind::Name: case NodeKind::IntLit: case NodeKind::BoolLit:
+      case NodeKind::TypeName:
+        return n.text;
+      case NodeKind::StringLit:
+        return "\"" + n.text + "\"";
+      case NodeKind::Apply: {
+        std::string out;
+        auto op = n.kids[0]->kind == NodeKind::Name
+                      ? infix.find(n.kids[0]->text)
+                      : infix.end();
+        if (op != infix.end() && n.kids.size() == 3)
+          out = predicateText(*n.kids[1]) + " " + op->second + " " +
+                predicateText(*n.kids[2]);
+        else
+          for (size_t i = 0; i < n.kids.size(); ++i)
+            out += (i ? " " : "") + predicateText(*n.kids[i], true);
+        return nested ? "(" + out + ")" : out;
+      }
+      default:
+        return "...";
+    }
+  }
+
+  // Why the predicate `q` of a `where` is false for the type arguments
+  // `bound`, or nothing when it holds. With a stand-in among them, it holds
+  // only when the generic being defined promises the same predicate.
+  std::optional<std::string> predicateUnmet(
+      const Node &q, const std::map<std::string, Type> &bound) {
+    std::string text = predicateText(q);
+    bool abstract = false;
+    std::map<std::string, std::string> rename;
+    for (auto &[name, t] : bound)
+      if (archetypes_.count(t)) {
+        abstract = true;
+        rename[name] = archetypes_.at(t).name;
+      }
+    if (abstract) {
+      auto dumped = [](const Node &n) {
+        std::ostringstream os;
+        syntax::dump(os, n);
+        return os.str();
+      };
+      NodePtr copy = syntax::clone(q);
+      renameNames(*copy, rename, nullptr);
+      std::string want = dumped(*copy);
+      for (auto &[t, a] : archetypes_)
+        for (const Node *p : a.predicates)
+          if (dumped(*p) == want) return std::nullopt;
+      return "the constraint '" + text + "' is not promised by the "
+             "constraints of the function being defined";
+    }
+    std::vector<std::pair<std::string, meta::ValuePtr>> env;
+    std::string forTypes;
+    for (auto &[name, t] : bound) {
+      env.emplace_back(name, typeValue(t));
+      forTypes += (forTypes.empty() ? "" : ", ") + name + " = " +
+                  sema::typeName(t);
+    }
+    interp_.setSite(q.loc);
+    try {
+      meta::ValuePtr v = interp_.evalWith(q, env);
+      if (v->kind != meta::Value::Kind::Bool) {
+        diags_.error(q.loc, "the constraint '" + text + "' must be a bool, "
+                            "but it is " +
+                            meta::Interpreter::kindName(v->kind));
+        return "its constraint '" + text + "' is not a bool";
+      }
+      if (v->b) return std::nullopt;
+      return "the constraint '" + text + "' is false for " + forTypes;
+    } catch (const meta::MetaError &e) {
+      // A soft failure waits for the totality check (ADR 0035, step 3).
+      diags_.error(q.loc, "the constraint '" + text + "' cannot be checked "
+                          "for " + forTypes + ": " + e.message);
+    } catch (const meta::Deferred &d) {
+      diags_.error(q.loc, "the constraint '" + text + "' needs the type '" +
+                              d.type + "'");
+    }
+    return "its constraint '" + text + "' cannot be checked";
+  }
+
   // Records every concept and checks its form, then checks that each
   // generic function's constraints name concepts with the right number of
   // type arguments.
@@ -1968,13 +2186,19 @@ class Gen {
       for (const syntax::NodePtr &p : sig.item->kids[0]->kids) {
         const Node *pred = wherePredicate(*p);
         if (!pred) continue;
-        std::vector<const Node *> cs;
-        if (!constraintsOf(*pred, cs)) {
+        std::vector<const Node *> cs, preds;
+        if (!constraintsOf(*pred, cs, &preds)) {
           error(pred->loc, "a 'where' on a type parameter names "
                                   "concepts, as in 'where Ord t' or "
-                                  "'where Eq t && Hash t'");
+                                  "'where Eq t && Hash t', or states a "
+                                  "predicate, as in 'where size_of t <= 8'");
           continue;
         }
+        // A concept is met or not, and only '&&' joins it to the rest.
+        for (const Node *q : preds)
+          if (const Node *c = conceptIn(*q))
+            error(c->loc, "the concept '" + c->text + "' can only be "
+                                 "joined to other constraints by '&&'");
         for (const Node *c : cs) {
           checkConceptUse(c->kids[0]->text, c->kids.size() - 1, c->loc, errors);
           for (size_t i = 1; i < c->kids.size(); ++i)
@@ -2021,17 +2245,46 @@ class Gen {
                : nullptr;
   }
 
-  // The concept constraints of a `where`: `C t`, joined by `&&` (which
-  // expands to `and`). False for anything else.
-  static bool constraintsOf(const Node &pred, std::vector<const Node *> &out) {
+  // The constraints of a `where`, joined by `&&` (which expands to
+  // `and`): concepts, `C t`, go to `out`, and predicates over types, such
+  // as `size_of t <= 8` (ADR 0035), to `preds`. False for anything else.
+  bool constraintsOf(const Node &pred, std::vector<const Node *> &out,
+                     std::vector<const Node *> *preds = nullptr) {
+    if (isPredicate(pred)) {
+      if (preds) preds->push_back(&pred);
+      return true;
+    }
     if (pred.kind != NodeKind::Apply || pred.kids.empty() ||
         pred.kids[0]->kind != NodeKind::Name)
       return false;
     if (pred.kids[0]->text == "and" && pred.kids.size() == 3)
-      return constraintsOf(*pred.kids[1], out) &&
-             constraintsOf(*pred.kids[2], out);
+      return constraintsOf(*pred.kids[1], out, preds) &&
+             constraintsOf(*pred.kids[2], out, preds);
     out.push_back(&pred);
     return true;
+  }
+
+  // A name of a concept inside `n`, or null.
+  const Node *conceptIn(const Node &n) const {
+    if (n.kind == NodeKind::Name && concepts_.count(n.text)) return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *c = conceptIn(*k)) return c;
+    return nullptr;
+  }
+
+  // Whether a conjunct of a `where` is a predicate over types rather than
+  // a concept: a comparison or a connective other than `&&`, a bool, or a
+  // call of a type-level metaprogram that returns a bool.
+  bool isPredicate(const Node &n) const {
+    if (n.kind == NodeKind::BoolLit) return true;
+    if (n.kind != NodeKind::Apply || n.kids.empty() ||
+        n.kids[0]->kind != NodeKind::Name)
+      return false;
+    static const std::set<std::string> ops = {
+        "eq", "ne", "lt", "gt", "le", "ge", "or", "implies", "iff",
+    };
+    const std::string &head = n.kids[0]->text;
+    return ops.count(head) || typePredicates_.count(head);
   }
 
   static std::string spellTypes(const std::vector<Type> &ts) {
@@ -2062,8 +2315,11 @@ class Gen {
     for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
       const Node *pred = wherePredicate(*p);
       if (!pred) continue;
-      std::vector<const Node *> cs;
-      constraintsOf(*pred, cs);
+      std::vector<const Node *> cs, preds;
+      constraintsOf(*pred, cs, &preds);
+      for (const Node *q : preds)
+        if (std::optional<std::string> why = predicateUnmet(*q, bound))
+          return why;
       for (const Node *c : cs) {
         std::vector<Type> args;
         for (size_t i = 1; i < c->kids.size(); ++i) {
@@ -2337,7 +2593,8 @@ class Gen {
     for (const std::string &t : generic.typeParams) {
       Type a = RecordType::get(&ctx_, t, {}, {});
       bound[t] = a;
-      archetypes_[a] = {t, {}};
+      archetypes_[a] = {t, {}, {}};
+      standIns_.insert(a);
     }
     if (!promiseConstraints(generic, bound)) {
       archetypes_.clear();
@@ -2355,7 +2612,12 @@ class Gen {
     std::set<std::string> before;
     for (auto &[k, v] : sigs_) before.insert(k);
     checking_ = true;
-    if (sema::resolveSignature(check, types_, diags_)) {
+    opaqueStandIn_ = false;
+    // A signature that applies a type-level metaprogram to a type
+    // parameter, as in `: widen t`, has a type that is only known for
+    // each instance, so its body is checked in each instance instead
+    // (ADR 0035).
+    if (sema::resolveSignature(check, types_, diags_) && !opaqueStandIn_) {
       sigs_.emplace(key, std::move(check));
       genFunction(key);
     }
@@ -2379,9 +2641,10 @@ class Gen {
     for (const syntax::NodePtr &p : generic.item->kids[0]->kids) {
       const Node *pred = wherePredicate(*p);
       if (!pred) continue;
-      std::vector<const Node *> cs;
-      constraintsOf(*pred, cs);
+      std::vector<const Node *> cs, preds;
+      constraintsOf(*pred, cs, &preds);
       archetypes_[bound.at(p->text)].constraints = cs;
+      archetypes_[bound.at(p->text)].predicates = preds;
       for (const Node *c : cs) {
         std::vector<Type> args;
         if (!constraintArgs(*c, bound, args)) return false;
@@ -2418,8 +2681,10 @@ class Gen {
   // Stand-in types for the type parameters of `sig`.
   std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
     std::map<std::string, Type> bound;
-    for (const std::string &t : sig.typeParams)
+    for (const std::string &t : sig.typeParams) {
       bound[t] = RecordType::get(&ctx_, t, {}, {});
+      standIns_.insert(bound[t]);
+    }
     return bound;
   }
 
@@ -2466,18 +2731,20 @@ class Gen {
     promised_.clear();
     promisedFns_.clear();
     std::map<std::string, Type> boundA = standIns(a);
-    for (auto &[t, ty] : boundA) archetypes_[ty] = {t, {}};
+    for (auto &[t, ty] : boundA) archetypes_[ty] = {t, {}, {}};
     bool ok = promiseConstraints(a, boundA);
     for (const syntax::NodePtr &p : b.item->kids[0]->kids) {
       const Node *pred = wherePredicate(*p);
       if (!pred || !ok) continue;
-      std::vector<const Node *> cs;
-      constraintsOf(*pred, cs);
+      std::vector<const Node *> cs, preds;
+      constraintsOf(*pred, cs, &preds);
       for (const Node *c : cs) {
         std::vector<Type> args;
         ok = ok && constraintArgs(*c, mapB, args) &&
              entailed(c->kids[0]->text, args, 0);
       }
+      // A predicate is entailed when a states it too (ADR 0035).
+      for (const Node *q : preds) ok = ok && !predicateUnmet(*q, mapB);
     }
     archetypes_ = std::move(savedArch);
     promised_ = std::move(savedPromised);
@@ -3539,6 +3806,7 @@ class Gen {
   struct Archetype {
     std::string name;
     std::vector<const Node *> constraints;
+    std::vector<const Node *> predicates;  // the `where` that are not concepts
   };
   bool checking_ = false;
   // Overloads with the same parameter types, most specific precondition
@@ -3553,6 +3821,20 @@ class Gen {
   std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
+  // Type-level metaprograms (ADR 0035): those that return a type, and
+  // those that return a bool, by name; the interpreter that runs them; and
+  // each type a metaprogram has seen, by its spelling.
+  std::map<std::string, const Node *> typeFns_;
+  std::map<std::string, const Node *> typePredicates_;
+  meta::Interpreter interp_;
+  std::map<std::string, Type> typeValues_;
+  // Stand-in types, which stand for every type: a generic's type
+  // parameters while its definition is checked or it is ranked, and what
+  // a type-level metaprogram makes of them.
+  llvm::DenseSet<Type> standIns_;
+  // Set when a type-level metaprogram is applied to a stand-in while a
+  // definition is checked.
+  bool opaqueStandIn_ = false;
 };
 
 }  // namespace

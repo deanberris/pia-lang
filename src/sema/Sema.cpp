@@ -155,6 +155,12 @@ mlir::Type TypeResolver::resolve(const Node &type) {
         if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
       if (mlir::Type t = named(type.text)) return t;
+      if (isTypeFunction(type.text)) {
+        diags_.error(type.loc, "'" + type.text + "' is a type-level "
+                               "metaprogram: apply it to types, as in '" +
+                               type.text + " u8'");
+        return {};
+      }
       if (const Generic *g = generic(type.text)) {
         diags_.error(type.loc, "'" + type.text + "' is generic: it takes " +
                                    std::to_string(g->params.size()) +
@@ -168,6 +174,15 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     }
     case NodeKind::TypeApp: {
       const Node &head = *type.kids[0];
+      if (head.kind == NodeKind::TypeName && isTypeFunction(head.text)) {
+        llvm::SmallVector<mlir::Type> args;
+        for (size_t i = 1; i < type.kids.size(); ++i) {
+          mlir::Type a = resolve(*type.kids[i]);
+          if (!a) return {};
+          args.push_back(a);
+        }
+        return callTypeFunction_(head.text, args, type.loc);
+      }
       if (head.kind != NodeKind::TypeName || !generic(head.text)) {
         diags_.error(head.loc, "only a generic type can take type arguments");
         return {};
@@ -643,6 +658,9 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     }
     // Concepts are checked by IRGen, at each use (ADR 0034).
     if (syntax::isConceptItem(*item) && adapter.empty()) continue;
+    // Type-level metaprograms run in IRGen, when a type or a `where`
+    // predicate calls them (ADR 0035).
+    if (syntax::isTypeLevelMetaItem(*item) && adapter.empty()) continue;
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;

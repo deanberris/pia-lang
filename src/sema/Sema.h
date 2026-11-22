@@ -9,6 +9,7 @@
 #ifndef PIA_SEMA_SEMA_H
 #define PIA_SEMA_SEMA_H
 
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -173,6 +174,20 @@ class TypeResolver {
              const std::vector<std::string> &params,
              std::map<std::string, mlir::Type> &bound) const;
 
+  // Type-level metaprograms (ADR 0035): `widen u8` in a type calls the
+  // metaprogram `widen` with u8, through `call`, when `is` says `widen` is
+  // one. `call` reports its own errors and returns null after one.
+  using TypeFunctionCall = std::function<mlir::Type(
+      const std::string &, llvm::ArrayRef<mlir::Type>, syntax::SourceLoc)>;
+  void setTypeFunctions(std::function<bool(const std::string &)> is,
+                        TypeFunctionCall call) {
+    isTypeFunction_ = std::move(is);
+    callTypeFunction_ = std::move(call);
+  }
+  bool isTypeFunction(const std::string &name) const {
+    return isTypeFunction_ && isTypeFunction_(name);
+  }
+
   mlir::Type usize() { return builtin("usize"); }
   mlir::Type i32() { return builtin("i32"); }
   mlir::Type boolType();
@@ -193,6 +208,8 @@ class TypeResolver {
   llvm::DenseMap<mlir::Type, Instance> instanceOf_;
   std::set<std::string> instantiating_;
   std::vector<std::map<std::string, mlir::Type>> typeScopes_;
+  std::function<bool(const std::string &)> isTypeFunction_;
+  TypeFunctionCall callTypeFunction_;
 };
 
 // Whether a top-level `let` defines a type: `let pixel = type { ... }`.
