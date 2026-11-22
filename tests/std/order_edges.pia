@@ -50,7 +50,28 @@ let bools () : unit =
   assert Pia.Core.Order.same true true;
   ()
 
-(* Every goal is proved, from the interface alone.
+(* The generic functions, instantiated here at bool, which meets Ord by
+   Order's own same and less: each instance is discharged by the generic
+   proof in Order (ADR 0043), and the importer reasons with its contract
+   and lex_from's definition. *)
+let generic_bool (xs : [bool]) : unit
+  requires len xs = 0
+= assert Pia.Core.Order.min<bool> true false = false;
+  assert Pia.Core.Order.max<bool> false true = true;
+  assert Pia.Core.Order.clamp<bool> true false false = false;
+  assert Pia.Core.Order.lex_compare<bool> xs xs = false;
+  ()
+
+let generic_three_way (xs : [i16]) (ys : [i16]) : unit
+  requires len xs = 0 && len ys > 0
+= assert Pia.Core.Order.lex_compare_three_way<i16> xs ys = Less;
+  assert Pia.Core.Order.lex_compare_three_way<i16> ys xs = Greater;
+  ()
+
+(* Every goal is proved, from the interface alone. compare and the
+   three-way comparison return an ordering, so they are proved at the
+   instances this file uses (ADR 0043).
 // CHECK-NOT: failed
-// CHECK: 125 proved, 0 failed, 0 skipped
+// CHECK-DAG: not proved generically: 'Pia.Core.Order.compare' is proved at each instance
+// CHECK: 249 proved, 0 failed, 0 skipped
 *)
