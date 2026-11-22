@@ -1,0 +1,80 @@
+(* Typed, untyped and generic lambdas (ADR 0044, section 2).
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+(* Untyped: `x` is a u8, from `find`'s `t -> bool` once `xs` gives
+   t = u8. *)
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+= find xs (let (x) => x > 3)
+
+(* Captures work the same way. *)
+let first_over (xs : [u16]) (lim : u16) : usize
+  ensures result < len xs ==> xs.[result] > lim
+= find xs (let (x) => x > lim)
+
+(* A typed lambda fixes a type parameter no other argument does. *)
+let exists_in (t : type) (p : t -> bool) (x : t) : bool
+  ensures result = p x
+= p x
+
+let is_seven (x : u8) : bool
+  ensures result <==> x = 7
+= exists_in (let (y : u8) => y = 7) x
+
+(* Generic: a `let` of a lambda with untyped parameters and no expected
+   type has an implicit type parameter per untyped parameter, and each
+   use is an instance, proved on its own. The result type is inferred. *)
+let both (a : u8) (b : u16) : bool
+  ensures result <==> a < 100 && b < 100
+= let small = let (v) => v < 100 in
+  small a && small b
+
+(* Explicitly generic, with a constraint: proved once over `t`, and
+   deduced at each application. *)
+let meta Ord (t : type) : concept = sig
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let less (a : u8) (b : u8) : bool = (a < b)
+
+let smaller (a : u8) (b : u8) : u8
+  ensures result = (if b < a then b else a)
+= let min = let (t : type where Ord t) (x : t) (y : t) : t =>
+    if less y x then y else x in
+  min a b
+
+(* Expected report, in order.
+// CHECK: lambda_generic_forms.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:10:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_generic_forms.pia:9:25: proved: the index is within bounds [smt]
+// CHECK: lambda_generic_forms.pia:12:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_generic_forms.pia:10:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_generic_forms.pia:11:5: proved: the measure decreases [smt]
+// CHECK: lambda_generic_forms.pia:6:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:7:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:10:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_generic_forms.pia:9:25: proved: the index is within bounds [smt]
+// CHECK: lambda_generic_forms.pia:12:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_generic_forms.pia:10:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_generic_forms.pia:11:5: proved: the measure decreases [smt]
+// CHECK: lambda_generic_forms.pia:6:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:7:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:28:3: proved: the postcondition holds [smt]
+// CHECK: lambda_generic_forms.pia:53:13: proved: 'lambda@lambda_generic_forms.pia:53:13<u8>' is an instance of the generic proof of 'lambda@lambda_generic_forms.pia:53:13' [generic]
+// CHECK: 21 proved, 0 failed, 0 skipped
+*)
