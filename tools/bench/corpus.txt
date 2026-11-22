@@ -5,3 +5,4 @@ examples/edges/edges.pia
 docs/streams.pia.md
 tests/verify/*.pia
 lib/Pia/*/*.pia
+lib/Pia/*/*/*.pia

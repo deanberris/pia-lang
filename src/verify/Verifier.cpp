@@ -3910,6 +3910,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       continue;
     // A foreign function's contract is trusted, not proved (#55).
     if (fn->hasAttr("pia.extern")) continue;
+    // A spec function from another module's interface is proved there.
+    if (fn->hasAttr("pia.spec_from")) continue;
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).

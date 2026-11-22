@@ -1,0 +1,21 @@
+(* A module whose interface builds on Calc.Digits: it shows a type with a
+   field of Calc.Digits's type, and a spec function whose definition calls
+   Calc.Digits's, for tests/modules/layers.pia. *)
+module Calc.Numerals : Numerals
+
+import Calc.Digits.Digits as D
+
+interface Numerals = sig
+  let numeral = type { base : Calc.Digits.base; value : u8 }
+  let spec ok : (n : numeral) -> bool
+  let make : (b : Calc.Digits.base) -> (x : u8) -> numeral
+    ensures ok result
+end
+
+let numeral = type { base : D.base; value : u8 }
+
+let spec ok (n : numeral) : bool = Calc.Digits.digit n.base n.value
+
+let make (b : D.base) (x : u8) : numeral
+  ensures ok result
+= if x < 2 then { base = b; value = x } else { base = b; value = 0 }

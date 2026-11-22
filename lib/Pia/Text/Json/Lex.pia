@@ -1,0 +1,358 @@
+(* Pia.Text.Json.Lex: a JSON tokenizer over a byte slice (ADR 0045,
+   sections 1 and 7, step 1). `next s pos` skips whitespace from pos and
+   returns the next token, its kind and its byte range, or a lex error at
+   a position. It never reads outside the input, always terminates, and
+   is proved sound against Pia.Text.Json.Spec:
+
+   - the token lies within the input, starts at or after pos, and only
+     whitespace comes between pos and its start, which is not whitespace;
+   - its bytes are a token of its kind (Spec.token_at): a string token
+     is a well-formed literal, so its characters are valid UTF-8 with
+     legal escapes and paired surrogates, and a number token is the
+     longest number at its start;
+   - `End` is returned exactly when only whitespace is left.
+
+   - the token's first byte decides its kind (first_byte), and an error
+     is about the token at the first byte that is not whitespace
+     (fails_at).
+
+   And partly complete: `Unexpected` is returned only at a byte that
+   cannot start any token, `BadLiteral` only where none of `true`,
+   `false` and `null` is, and so every structural token and literal the
+   spec accepts is the one returned. That a number or string the spec
+   accepts is always returned is not proved yet: it needs the uniqueness
+   of the longest number and of a string's closing quote, by induction.
+
+   Errors are a closed set, each with the position it was found at:
+   `Unexpected` at a byte that starts no token, `BadLiteral` at a literal
+   that is not `true`, `false` or `null`, `BadNumber` where a number
+   stopped without being complete, and `BadString` at the first byte of
+   a string that is not a character, or at the opening quote of a string
+   that is never closed.
+
+   The code mirrors the spec's definitions function by function, and each
+   is proved equal to its spec, so every goal stays small. *)
+module Pia.Text.Json.Lex : Lexer
+
+import Pia.Text.Json.Spec.Grammar as Spec
+
+interface Lexer = sig
+  (** A token: its kind and the bytes from start to stop. *)
+  let token = type { kind : Pia.Text.Json.Spec.kind; start : usize; stop : usize }
+  (** What can go wrong, and where. *)
+  let lex_error = type
+    | Unexpected of usize | BadLiteral of usize | BadNumber of usize | BadString of usize
+  (** The position of an error. *)
+  let spec error_at : (e : lex_error) -> usize
+  (** A byte that can start a token. *)
+  let spec starts_token : (b : u8) -> bool
+  (** The token at i is the error e. *)
+  let spec fails_at : (s : [u8]) -> (i : usize) -> (e : lex_error) -> bool
+  (** A token of kind k can start at i: its first byte says so. *)
+  let spec first_byte : (s : [u8]) -> (i : usize) -> (k : Pia.Text.Json.Spec.kind) -> bool
+  (** A byte at p that is neither whitespace nor the start of a token. *)
+  let spec unexpected_at : (s : [u8]) -> (p : usize) -> bool
+  (** The next token at or after pos. *)
+  let next : (s : [u8]) -> (pos : usize) -> result token lex_error
+    requires pos <= len s
+    ensures (match result with
+      | Ok t -> pos <= t.start && t.start <= t.stop && t.stop <= len s
+      | Err e -> pos <= error_at e && error_at e <= len s)
+    ensures (match result with
+      | Ok t -> Pia.Text.Json.Spec.ws_run s pos t.start && Pia.Text.Json.Spec.ws_end s t.start
+      | Err _ -> true)
+    ensures (match result with
+      | Ok t -> Pia.Text.Json.Spec.token_at s t.kind t.start t.stop
+      | Err _ -> true)
+    ensures (match result with
+      | Ok t -> (t.kind = Pia.Text.Json.Spec.End <==> t.start = len s)
+      | Err _ -> true)
+    ensures (match result with
+      | Ok t -> first_byte s t.start t.kind
+      | Err e ->
+          exists (i in pos..len s). Pia.Text.Json.Spec.ws_run s pos i && Pia.Text.Json.Spec.ws_end s i && fails_at s i e)
+end
+
+let token = type { kind : Spec.kind; start : usize; stop : usize }
+
+let lex_error = type
+  | Unexpected of usize | BadLiteral of usize | BadNumber of usize | BadString of usize
+
+let spec error_at (e : lex_error) : usize =
+  match e with
+  | Unexpected p -> p
+  | BadLiteral p -> p
+  | BadNumber p -> p
+  | BadString p -> p
+
+(* '{' '}' '[' ']' ':' ',' '"' '-' a digit, 't' 'f' 'n'. *)
+let spec starts_token (b : u8) : bool =
+  b = 0x7B || b = 0x7D || b = 0x5B || b = 0x5D || b = 0x3A || b = 0x2C
+  || b = 0x22 || b = 0x2D || Pia.Text.Json.Spec.is_digit b || b = 0x74 || b = 0x66 || b = 0x6E
+
+let spec unexpected_at (s : [u8]) (p : usize) : bool =
+  if p < len s then Pia.Text.Json.Spec.is_ws s.[p] = false && starts_token s.[p] = false else false
+
+(* The kind a token starting at i can have, by its first byte. The spec
+   functions the interface lists name Spec by its full path: their
+   definitions are copied into importers, where this file's alias means
+   nothing. *)
+let spec first_byte (s : [u8]) (i : usize) (k : Pia.Text.Json.Spec.kind) : bool =
+  if i < len s then
+    (let b = s.[i] in
+     match k with
+     | LBrace -> b = 0x7B
+     | RBrace -> b = 0x7D
+     | LBracket -> b = 0x5B
+     | RBracket -> b = 0x5D
+     | Colon -> b = 0x3A
+     | Comma -> b = 0x2C
+     | True -> b = 0x74
+     | False -> b = 0x66
+     | Null -> b = 0x6E
+     | Number -> b = 0x2D || Pia.Text.Json.Spec.is_digit b
+     | String -> b = 0x22
+     | End -> false)
+  else k = Pia.Text.Json.Spec.End
+
+(* How the token at i went wrong: what e says and where. *)
+let spec fails_at (s : [u8]) (i : usize) (e : lex_error) : bool =
+  if i < len s then
+    (let b = s.[i] in
+     match e with
+     | Unexpected p -> p = i && unexpected_at s i
+     | BadLiteral p -> p = i && (b = 0x74 || b = 0x66 || b = 0x6E) && Pia.Text.Json.Spec.literal_at s i = false
+     | BadNumber p -> (b = 0x2D || Pia.Text.Json.Spec.is_digit b) && i <= p && p <= len s
+     | BadString p -> b = 0x22 && i <= p && p <= len s)
+  else false
+
+(* Pure functions of a byte, so the verifier unfolds them where they are
+   called; each is its spec function. *)
+let ws (b : u8) : bool = b = 0x20 || b = 0x09 || b = 0x0A || b = 0x0D
+
+let cont (b : u8) : bool = 0x80 <= b && b <= 0xBF
+
+let hex (b : u8) : bool =
+  (0x30 <= b && b <= 0x39) || (0x41 <= b && b <= 0x46) || (0x61 <= b && b <= 0x66)
+
+let step (q : int{0..9}) (b : u8) : int{0..9}
+  ensures result = Spec.num_step q b
+= let d = 0x30 <= b && b <= 0x39 in
+  let e = b = 0x45 || b = 0x65 in
+  if q = 0 then (if b = 0x2D then 1 else if b = 0x30 then 2 else if d then 3 else 9)
+  else if q = 1 then (if b = 0x30 then 2 else if d then 3 else 9)
+  else if q = 2 then (if b = 0x2E then 4 else if e then 6 else 9)
+  else if q = 3 then (if d then 3 else if b = 0x2E then 4 else if e then 6 else 9)
+  else if q = 4 then (if d then 5 else 9)
+  else if q = 5 then (if d then 5 else if e then 6 else 9)
+  else if q = 6 then (if b = 0x2B || b = 0x2D then 7 else if d then 8 else 9)
+  else if q = 7 || q = 8 then (if d then 8 else 9)
+  else 9
+
+(* Whitespace from pos: the first byte that is not whitespace, or the end. *)
+let skip_ws (s : [u8]) (pos : usize) : usize
+  requires pos <= len s
+  ensures pos <= result && result <= len s
+  ensures Spec.ws_run s pos result
+  ensures Spec.ws_end s result
+= let i : mutable usize = pos in
+  while i < len s && ws s.[i]
+    invariant pos <= i && i <= len s
+    invariant Spec.ws_run s pos i
+    decreases len s - i
+  do i <- i + 1 done;
+  i
+
+let utf8_at (s : [u8]) (i : usize) : int{0..4}
+  requires i < len s
+  ensures result = Spec.utf8_len s i
+= let b = s.[i] in
+  if b <= 0x7F then 1
+  else if len s - i < 2 then 0
+  else if 0xC2 <= b && b <= 0xDF then (if cont s.[i + 1] then 2 else 0)
+  else if 0xE0 <= b && b <= 0xEF then
+    (if len s - i < 3 then 0
+     else if cont s.[i + 2]
+        && (if b = 0xE0 then 0xA0 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xED then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x9F
+            else cont s.[i + 1])
+     then 3 else 0)
+  else if 0xF0 <= b && b <= 0xF4 then
+    (if len s - i < 4 then 0
+     else if cont s.[i + 2] && cont s.[i + 3]
+        && (if b = 0xF0 then 0x90 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xF4 then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x8F
+            else cont s.[i + 1])
+     then 4 else 0)
+  else 0
+
+let u_escape_at (s : [u8]) (k : usize) : bool
+  requires k + 6 <= len s
+  ensures result = Spec.u_escape s k
+= s.[k] = 0x5C && s.[k + 1] = 0x75
+  && hex s.[k + 2] && hex s.[k + 3] && hex s.[k + 4] && hex s.[k + 5]
+
+(* The digits D or d, then 8 to B (high) or C to F (low). *)
+let surrogate_at (s : [u8]) (k : usize) (high : bool) : bool
+  requires k + 6 <= len s
+  ensures high ==> result = Spec.high_surrogate s k
+  ensures high = false ==> result = Spec.low_surrogate s k
+= let c = s.[k + 3] in
+  u_escape_at s k && (s.[k + 2] = 0x44 || s.[k + 2] = 0x64)
+  && (if high then (0x38 <= c && c <= 0x39) || c = 0x41 || c = 0x42 || c = 0x61 || c = 0x62
+      else (0x43 <= c && c <= 0x46) || (0x63 <= c && c <= 0x66))
+
+let escape_at (s : [u8]) (i : usize) : int{0..12}
+  requires i < len s
+  ensures result = Spec.escape_len s i
+= if len s - i < 2 then 0
+  else
+    (let c = s.[i + 1] in
+     if c = 0x22 || c = 0x5C || c = 0x2F || c = 0x62 || c = 0x66
+        || c = 0x6E || c = 0x72 || c = 0x74 then 2
+     else if c = 0x75 && len s - i >= 6 then
+       (if u_escape_at s i = false then 0
+        else if surrogate_at s i true then
+          (if len s - i < 12 then 0 else if surrogate_at s (i + 6) false then 12 else 0)
+        else if surrogate_at s i false then 0
+        else 6)
+     else 0)
+
+let char_at (s : [u8]) (i : usize) : int{0..12}
+  requires i < len s
+  ensures result = Spec.char_len s i
+= let b = s.[i] in
+  if b < 0x20 || b = 0x22 then 0
+  else if b = 0x5C then escape_at s i
+  else utf8_at s i
+
+(* A character sequence grows by the character after it. Interfaces cannot
+   list lemmas yet, so this lives here rather than in Spec. *)
+let lemma chars_snoc (s : [u8]) (i : usize) (j : usize) : unit
+  requires Spec.chars s i j && Spec.char_len s j > 0
+  ensures Spec.chars s i (j + Spec.char_len s j)
+  decreases j - i
+= if i < j then chars_snoc s (i + Spec.char_len s i) j
+
+(* The string literal whose opening quote is at i. *)
+let lex_string (s : [u8]) (i : usize) : result usize usize
+  requires i < len s && s.[i] = 0x22
+  ensures (match result with
+    | Ok j -> Spec.string_at s i j
+    | Err p -> i <= p && p <= len s)
+= let k : mutable usize = i + 1 in
+  let bad : mutable bool = false in
+  let at : mutable usize = i in
+  while k < len s && s.[k] <> 0x22
+    invariant i < k && k <= len s
+    invariant i <= at && at <= len s
+    invariant bad ==> k = len s
+    invariant bad = false ==> Spec.chars s (i + 1) k
+    decreases len s - k
+  do
+    let n = char_at s k in
+    if n = 0 then (bad <- true; at <- k; k <- len s)
+    else (chars_snoc s (i + 1) k; k <- k + n)
+  done;
+  if k < len s then Ok (k + 1) else Err at
+
+(* The number that starts at i: the automaton runs until it would die. *)
+let lex_number (s : [u8]) (i : usize) : result usize usize
+  requires i < len s
+  ensures (match result with
+    | Ok j -> Spec.number_at s i j
+    | Err p -> i <= p && p <= len s)
+= let q : mutable int{0..9} = 0 in
+  let k : mutable usize = i in
+  let go : mutable bool = true in
+  while go
+    invariant i <= k && k <= len s
+    invariant q = Spec.num_run s i k
+    invariant go = false ==> Spec.num_stops s k q
+    decreases len s - k + (if go then 1 else 0)
+  do
+    if k < len s then
+      (let r = step q s.[k] in
+       if r = 9 then go <- false else (q <- r; k <- k + 1))
+    else go <- false
+  done;
+  if q = 2 || q = 3 || q = 5 || q = 8 then Ok k else Err k
+
+(* `true`, `false` or `null` at i, whose first byte is t, f or n. *)
+let lex_literal (s : [u8]) (i : usize) : result token usize
+  requires i < len s
+  ensures (match result with
+    | Ok t -> t.start = i && t.stop <= len s && Spec.token_at s t.kind t.start t.stop
+              && t.kind <> Spec.End && i < t.stop && first_byte s i t.kind
+    | Err p -> p = i && Spec.literal_at s i = false)
+= let n = len s - i in
+  if n >= 4 && s.[i] = 0x74 && s.[i + 1] = 0x72 && s.[i + 2] = 0x75 && s.[i + 3] = 0x65 then
+    Ok { kind = Spec.True; start = i; stop = i + 4 }
+  else if n >= 4 && s.[i] = 0x6E && s.[i + 1] = 0x75 && s.[i + 2] = 0x6C && s.[i + 3] = 0x6C then
+    Ok { kind = Spec.Null; start = i; stop = i + 4 }
+  else if n >= 5 && s.[i] = 0x66 && s.[i + 1] = 0x61 && s.[i + 2] = 0x6C && s.[i + 3] = 0x73
+          && s.[i + 4] = 0x65 then
+    Ok { kind = Spec.False; start = i; stop = i + 5 }
+  else Err i
+
+(* A one-byte structural token at i, if s.[i] is one. *)
+let structural (b : u8) : int{0..6} =
+  if b = 0x7B then 1 else if b = 0x7D then 2 else if b = 0x5B then 3
+  else if b = 0x5D then 4 else if b = 0x3A then 5 else if b = 0x2C then 6 else 0
+
+(* The token at i, which is not whitespace. *)
+let scan (s : [u8]) (i : usize) : result token lex_error
+  requires i <= len s && Spec.ws_end s i
+  ensures (match result with
+    | Ok t -> t.start = i && t.start <= t.stop && t.stop <= len s
+    | Err e -> fails_at s i e)
+  ensures (match result with
+    | Ok t -> Spec.token_at s t.kind t.start t.stop
+    | Err _ -> true)
+  ensures (match result with
+    | Ok t -> (t.kind = Spec.End <==> t.start = len s) && first_byte s t.start t.kind
+    | Err _ -> true)
+= if i = len s then Ok { kind = Spec.End; start = i; stop = i }
+  else
+    (let b = s.[i] in
+     let c = structural b in
+     if c = 1 then Ok { kind = Spec.LBrace; start = i; stop = i + 1 }
+     else if c = 2 then Ok { kind = Spec.RBrace; start = i; stop = i + 1 }
+     else if c = 3 then Ok { kind = Spec.LBracket; start = i; stop = i + 1 }
+     else if c = 4 then Ok { kind = Spec.RBracket; start = i; stop = i + 1 }
+     else if c = 5 then Ok { kind = Spec.Colon; start = i; stop = i + 1 }
+     else if c = 6 then Ok { kind = Spec.Comma; start = i; stop = i + 1 }
+     else if b = 0x22 then
+       (match lex_string s i with
+        | Ok j -> Ok { kind = Spec.String; start = i; stop = j }
+        | Err p -> Err (BadString p))
+     else if b = 0x2D || (0x30 <= b && b <= 0x39) then
+       (match lex_number s i with
+        | Ok j -> Ok { kind = Spec.Number; start = i; stop = j }
+        | Err p -> Err (BadNumber p))
+     else if b = 0x74 || b = 0x66 || b = 0x6E then
+       (match lex_literal s i with
+        | Ok t -> Ok t
+        | Err p -> Err (BadLiteral p))
+     else Err (Unexpected i))
+
+let next (s : [u8]) (pos : usize) : result token lex_error
+  requires pos <= len s
+  ensures (match result with
+    | Ok t -> pos <= t.start && t.start <= t.stop && t.stop <= len s
+    | Err e -> pos <= error_at e && error_at e <= len s)
+  ensures (match result with
+    | Ok t -> Spec.ws_run s pos t.start && Spec.ws_end s t.start
+    | Err _ -> true)
+  ensures (match result with
+    | Ok t -> Spec.token_at s t.kind t.start t.stop
+    | Err _ -> true)
+  ensures (match result with
+    | Ok t -> (t.kind = Spec.End <==> t.start = len s)
+    | Err _ -> true)
+  ensures (match result with
+    | Ok t -> first_byte s t.start t.kind
+    | Err e ->
+        exists (i in pos..len s). Spec.ws_run s pos i && Spec.ws_end s i && fails_at s i e)
+= let i = skip_ws s pos in
+  scan s i

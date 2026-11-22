@@ -1,0 +1,20 @@
+(* A module with a spec function and a type, for tests/modules/layers.pia. *)
+module Calc.Digits : Digits
+
+interface Digits = sig
+  let base = type | Bin | Dec
+  let spec digit : (b : base) -> (x : u8) -> bool
+  let spec digit_at : (b : base) -> (xs : [u8]) -> (i : usize) -> bool
+end
+
+let base = type | Bin | Dec
+
+let spec digit (b : base) (x : u8) : bool =
+  match b with
+  | Bin -> x < 2
+  | Dec -> x < 10
+
+(* Its index is a goal here, where it is defined, and not in importers. *)
+let spec digit_at (b : base) (xs : [u8]) (i : usize) : bool
+  requires i < len xs
+= digit b xs.[i]

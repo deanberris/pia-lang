@@ -708,6 +708,11 @@ class Gen {
         fn->setAttr("pia.instance_of",
                     b_.getStringAttr(llvm::StringRef(sig.name).split('<').first));
     }
+    // A spec function copied from another module's interface is proved by
+    // that module; here it is only unfolded (ADR 0039).
+    if (sig.typeArgs.empty() && hasFlag(item, "spec"))
+      if (std::string from = fromModule(item); !from.empty())
+        fn->setAttr("pia.spec_from", b_.getStringAttr(from));
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
@@ -4492,11 +4497,14 @@ class Gen {
     return false;
   }
 
-  // A type of this program that `type` names and no interface lists.
+  // A type of this program that `type` names and no interface lists. A
+  // qualified name, `M.t`, is a type imported from another module's
+  // interface, so it is already public there (ADR 0039).
   std::optional<std::string> privateType(const Node &type,
                                          const std::set<std::string> &shown) {
     if ((type.kind == NodeKind::TypeName || type.kind == NodeKind::TypeInst) &&
-        typeItem(type.text) && !shown.count(type.text))
+        typeItem(type.text) && !shown.count(type.text) &&
+        type.text.find('.') == std::string::npos)
       return type.text;
     for (const syntax::NodePtr &k : type.kids)
       if (std::optional<std::string> name = privateType(*k, shown))

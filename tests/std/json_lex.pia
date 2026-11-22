@@ -1,0 +1,44 @@
+(* Pia.Text.Json.Spec and Pia.Text.Json.Lex (ADR 0045, step 1): every goal
+   of the grammar and of the tokenizer is proved, with nothing accepted
+   unproved: the lexer's reads are in bounds, its loops end, and each
+   token it returns is one of its kind by the grammar.
+// RUN: piac --verify %S/../../lib/Pia/Text/Json/Spec.pia | FileCheck --check-prefix=SPEC %s
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: FileCheck --check-prefix=GRAMMAR %s < %t/Pia.Text.Json.Spec.Grammar.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Lex.pia | FileCheck %s
+// RUN: FileCheck --check-prefix=LEXER %s < %t/Pia.Text.Json.Lex.Lexer.piai
+*)
+
+(* The grammar's own goals: its reads are in bounds and its recursive
+   definitions terminate.
+// SPEC-NOT: failed
+// SPEC-DAG: proved: the measure of 'num_run' decreases [smt]
+// SPEC-DAG: proved: the measure of 'chars' decreases [smt]
+// SPEC: 121 proved, 0 failed, 0 skipped
+*)
+
+(* The tokenizer: whitespace and both scanning loops end, a character
+   sequence grows by induction, and each function meets its spec.
+// CHECK-NOT: failed
+// CHECK-DAG: Lex.pia:162:5: proved: the measure decreases [smt]
+// CHECK-DAG: Lex.pia:235:17: proved: the measure of 'chars_snoc' decreases [smt]
+// CHECK-DAG: Lex.pia:251:5: proved: the measure decreases [smt]
+// CHECK-DAG: Lex.pia:272:5: proved: the measure decreases [smt]
+// CHECK: 181 proved, 0 failed, 0 skipped
+*)
+
+(*
+// GRAMMAR:      {{^}}module Pia.Text.Json.Spec{{$}}
+// GRAMMAR-NEXT: {{^}}interface Grammar = sig{{$}}
+// GRAMMAR-NEXT: {{^}}  let kind = type | LBrace | RBrace | LBracket | RBracket | Colon | Comma | True | False | Null | Number | String | End{{$}}
+// GRAMMAR:      {{^}}  let spec token_at : (s : [u8]) -> (k : kind) -> (i : usize) -> (j : usize) -> bool{{$}}
+// GRAMMAR:      {{^}}let spec chars (s : [u8]) (i : usize) (j : usize) : bool
+
+// LEXER:      {{^}}module Pia.Text.Json.Lex{{$}}
+// LEXER-NEXT: {{^}}interface Lexer = sig{{$}}
+// LEXER-NEXT: {{^}}  let token = type { kind : Pia.Text.Json.Spec.kind; start : usize; stop : usize }{{$}}
+// LEXER-NEXT: {{^}}  let lex_error = type | Unexpected of usize | BadLiteral of usize | BadNumber of usize | BadString of usize{{$}}
+// LEXER:      {{^}}  let next : (s : [u8]) -> (pos : usize) -> result token lex_error requires pos <= len s ensures
+// LEXER-SAME: Pia.Text.Json.Spec.token_at s t.kind t.start t.stop
+*)

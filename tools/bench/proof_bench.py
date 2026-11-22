@@ -32,6 +32,7 @@ import platform
 import re
 import subprocess
 import sys
+import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -52,10 +53,18 @@ def corpus(path):
     return files
 
 
-def run(piac, rel, jobs):
+def interfaces(piac, files, out):
+    """Writes every module's interface artifacts into out, so a file that
+    imports another module of the corpus finds it (ADR 0039)."""
+    for rel in files:
+        subprocess.run([piac, "--emit=interface", "-o", out,
+                        os.path.join(ROOT, rel)], capture_output=True)
+
+
+def run(piac, rel, jobs, ifaces):
     cmd = [piac, "--verify", "--verify-stats", "--jobs=%d" % jobs,
            "--solver-rlimit=%d" % RLIMIT, "--solver-timeout=%d" % TIMEOUT_MS,
-           os.path.basename(rel)]
+           "--iface-path=%s" % ifaces, os.path.basename(rel)]
     start = time.monotonic()
     p = subprocess.run(cmd, cwd=os.path.join(ROOT, os.path.dirname(rel)),
                        capture_output=True, text=True)
@@ -71,9 +80,11 @@ def run(piac, rel, jobs):
 def measure(piac, files, cores):
     result = {}
     nondeterministic = []
+    ifaces = tempfile.mkdtemp(prefix="proof_bench_")
+    interfaces(piac, files, ifaces)
     for rel in files:
-        one, wall1, report1 = run(piac, rel, 1)
-        many, walln, reportn = run(piac, rel, cores)
+        one, wall1, report1 = run(piac, rel, 1, ifaces)
+        many, walln, reportn = run(piac, rel, cores, ifaces)
         # Z3's resource count varies by about 1% between runs, since some of
         # its hash tables depend on memory addresses; the report may not vary.
         if report1 != reportn or abs(one["cost"] - many["cost"]) > 0.05 * max(one["cost"], 1):

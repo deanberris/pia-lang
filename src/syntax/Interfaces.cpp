@@ -405,6 +405,10 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
   // The program's own items, which `as` and `{ }` apply to; imported
   // items name things as their own module does.
   std::set<const Node *> own;
+  // Items copied from interface artifacts (functions' contracts, spec
+  // functions, generic functions, concepts), which may name a third
+  // module's items by path.
+  std::set<const Node *> copied;
   std::set<std::string> binders;
   bindersIn(program, binders);
   for (NodePtr &item : program.kids) {
@@ -520,6 +524,7 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       NodePtr fn = importedFunction(*k, module, members, at, where, diags);
       if (!fn) continue;
       imp.items.insert(qualified);
+      copied.insert(fn.get());
       out.push_back(std::move(fn));
     }
     for (size_t i = 2; i < artifact->kids.size(); ++i) {
@@ -544,6 +549,7 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
         if (p->kind == N::Param) params.insert(p->text);
       qualify(*copy, module, typesAndConcepts, params, params);
       relocate(*copy, at);
+      copied.insert(copy.get());
       out.push_back(std::move(copy));
     }
     imp.modules.insert(module);
@@ -580,9 +586,17 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     }
   }
   program.kids = std::move(out);
-  if (any)
-    for (NodePtr &item : program.kids)
-      if (own.count(item.get())) rewrite(*item, imp, diags);
+  if (!any) return;
+  // A copied item names other modules' items by their full paths,
+  // as its own module's interface artifact wrote them; this file's aliases
+  // and unqualified imports mean nothing there.
+  Imported byPath = imp;
+  byPath.aliases.clear();
+  byPath.unqualified.clear();
+  for (NodePtr &item : program.kids) {
+    if (own.count(item.get())) rewrite(*item, imp, diags);
+    else if (copied.count(item.get())) rewrite(*item, byPath, diags);
+  }
 }
 
 }  // namespace pia::syntax
