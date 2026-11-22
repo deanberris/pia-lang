@@ -14,12 +14,14 @@ cc_binary(
     visibility = ["//visibility:public"],
     deps = [
         "//src/codegen",
+        "//src/dialect",
         "//src/irgen",
         "//src/meta",
         "//src/syntax",
         "//src/verify",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
     ],
 )

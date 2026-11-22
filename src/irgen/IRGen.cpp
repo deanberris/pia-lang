@@ -1,4 +1,6 @@
 #include "irgen/IRGen.h"
+#include "irgen/Theories.h"
+#include "verify/Triggers.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -248,6 +250,7 @@ class Gen {
     }
     if (diags_.hasErrors()) return nullptr;
     checkGhosts();
+    checkAxioms();
     if (diags_.hasErrors()) return nullptr;
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
@@ -300,7 +303,10 @@ class Gen {
         t == part ? "the spec-only type " + typeName(part)
                   : "type " + typeName(t) + ", which holds the spec-only "
                     "type " + typeName(part);
-    return what + "; int and real can be used only in spec functions, "
+    std::string who = mlir::isa<SortType>(part)
+                          ? "a theory's sorts"
+                          : "int and real";
+    return what + "; " + who + " can be used only in spec functions, "
            "lemmas, contracts and quantifiers, not in code (ADR 0036)";
   }
 
@@ -335,8 +341,54 @@ class Gen {
           OverflowModeAttr::get(&ctx_, OverflowMode::proof));
       return TV{c, target};
     }
+    if (inErrorSet(v.type, target)) return widenError(v, target, at);
     return fail(at, "expected " + typeName(target) + ", found " +
                         typeName(v.type));
+  }
+
+  // Whether `member` is one of the variants of the error set `set`.
+  bool inErrorSet(Type member, Type set) const {
+    const std::vector<Type> *ms = types_.unionMembers(set);
+    return ms && std::find(ms->begin(), ms->end(), member) != ms->end();
+  }
+
+  // A value of a member variant as a value of the error set: its
+  // constructors are a block of the set's, so its tag moves up by where the
+  // block starts, and its payload fields carry over.
+  R widenError(const TV &v, Type set, const Node &at) {
+    Location l = loc(at);
+    auto from = mlir::cast<RecordType>(v.type);
+    auto to = mlir::cast<RecordType>(set);
+    std::vector<const sema::Ctor *> mine = types_.ctorsOf(v.type);
+    const sema::Ctor *first = types_.ctorIn(mine[0]->name, set);
+    if (!first) return fail(at, "internal error in an error set");
+    Type ft = from.getFieldTypes()[*from.fieldIndex("tag")];
+    Type tt = to.getFieldTypes()[*to.fieldIndex("tag")];
+    Value tag = create<FieldOp>(l, ft, v.value, b_.getStringAttr("tag"));
+    auto mode = OverflowModeAttr::get(&ctx_, OverflowMode::proof);
+    tag = create<ConvertOp>(l, tt, tag, mode);
+    if (first->tag) {
+      Value k = create<ConstantOp>(
+          l, tt,
+          b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                            llvm::APInt(kWidth, first->tag)));
+      tag = create<AddOp>(l, tt, tag, k, mode);
+    }
+    llvm::SmallVector<Value> fields;
+    for (auto [name, t] : llvm::zip(to.getFieldNames(), to.getFieldTypes())) {
+      if (name.getValue() == "tag") {
+        fields.push_back(tag);
+      } else if (from.fieldIndex(name.getValue())) {
+        fields.push_back(create<FieldOp>(l, t, v.value, name));
+      } else {
+        Value d = defaultValue(l, t);
+        if (!d)
+          return fail(at, "cannot build a value of " + typeName(t) +
+                              " for an unused payload");
+        fields.push_back(d);
+      }
+    }
+    return TV{create<RecordOp>(l, to, fields).getResult(), set};
   }
 
   Value boolConst(Location l, bool v) {
@@ -562,12 +614,31 @@ class Gen {
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
     ghost_ = false;
+    triggers_.clear();
     const Node &ret = *item.kids[1];
     if (ret.kind == NodeKind::RetAnnot && ret.kids.size() > 1 &&
         !genAttributes(*ret.kids[1]))
       return;
     bool isSpec = hasFlag(item, "spec"), isLemma = hasFlag(item, "lemma");
-    ghost_ = isSpec || isLemma;
+    bool isAxiom = hasFlag(item, "axiom");
+    ghost_ = isSpec || isLemma || isAxiom;
+    // A theory's members are named `T.x` (ADR 0036).
+    if (hasFlag(item, "theory"))
+      fn->setAttr("pia.theory",
+                  b_.getStringAttr(llvm::StringRef(sig.name).split('.').first));
+    if (!triggers_.empty() && !isAxiom) {
+      fail(*triggers_.front(), "@trigger applies only to an axiom");
+      return;
+    }
+    // A theory's abstract spec function has no body: to the verifier it is
+    // an uninterpreted function (ADR 0036).
+    if (hasFlag(item, "abstract")) {
+      fn.getBody().getBlocks().clear();
+      fn.setPrivate();
+      fn->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
+      fn->setAttr(PiaDialect::getAbstractAttrName(), b_.getUnitAttr());
+      return;
+    }
     // `int` and `real` exist only for the verifier, so code can neither
     // take nor return them, even inside a record (ADR 0036).
     if (!ghost_) {
@@ -605,6 +676,12 @@ class Gen {
       if (fuel_)
         fn->setAttr(PiaDialect::getFuelAttrName(),
                     b_.getI64IntegerAttr(fuel_));
+    }
+
+    if (isAxiom) {
+      fn->setAttr(PiaDialect::getAxiomAttrName(), b_.getUnitAttr());
+      genAxiom(item, sig);
+      return;
     }
 
     const Node &contracts = *item.kids[2];
@@ -683,6 +760,48 @@ class Gen {
     create<mlir::func::ReturnOp>(l, rets);
   }
 
+  // An axiom (ADR 0036): its preconditions and postconditions, and its
+  // triggers, with no body. The verifier quantifies them over the
+  // parameters; nothing proves them, since without a model they are
+  // trusted.
+  void genAxiom(const Node &item, const sema::FuncSig &sig) {
+    const Node &contracts = *item.kids[2];
+    bool ensures = false;
+    for (const syntax::NodePtr &c : contracts.kids) {
+      if (c->kind == NodeKind::Requires || c->kind == NodeKind::Ensures) {
+        R p = genPredicate(*c->kids[0]);
+        if (!p) return;
+        if (c->kind == NodeKind::Requires)
+          create<contract::RequiresOp>(loc(*c), p->value);
+        else
+          create<contract::EnsuresOp>(loc(*c), p->value);
+        ensures |= c->kind == NodeKind::Ensures;
+      } else {
+        fail(*c, "an axiom has only 'requires' and 'ensures'");
+        return;
+      }
+    }
+    if (!ensures) {
+      fail(item, "the axiom '" + sig.name + "' states nothing: give it an "
+                 "'ensures'");
+      return;
+    }
+    if (sig.result && !isUnit(sig.result)) {
+      fail(item, "an axiom has no result: what it states goes in 'ensures'");
+      return;
+    }
+    for (const Node *t : triggers_) {
+      llvm::SmallVector<Value> terms;
+      for (const syntax::NodePtr &k : t->kids) {
+        R v = genContractExpr(*k, Type());
+        if (!v) return;
+        terms.push_back(v->value);
+      }
+      create<contract::TriggerOp>(loc(*t), terms);
+    }
+    create<mlir::func::ReturnOp>(loc(item), mlir::ValueRange{});
+  }
+
   static bool hasFlag(const Node &item, llvm::StringRef flag) {
     llvm::SmallVector<llvm::StringRef> words;
     llvm::StringRef(item.flags).split(words, ' ', -1, false);
@@ -711,7 +830,7 @@ class Gen {
     };
     std::map<std::string, std::vector<std::string>> calls;
     for (auto f : module_.getOps<mlir::func::FuncOp>()) {
-      if (!isSpec(f)) continue;
+      if (!isSpec(f) || f.isExternal()) continue;  // abstract: no body
       std::string name = f.getSymName().str();
       f.walk([&](mlir::Operation *op) {
         if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op))
@@ -765,6 +884,25 @@ class Gen {
     }
   }
 
+  // Every axiom needs a trigger, or the solver would never use it, or use
+  // it without limit (ADR 0036).
+  void checkAxioms() {
+    for (auto f : module_.getOps<mlir::func::FuncOp>()) {
+      if (!f->hasAttr(PiaDialect::getAxiomAttrName())) continue;
+      for (mlir::Type t : f.getFunctionType().getInputs())
+        if (mlir::isa<ArrayType, SliceType>(t)) {
+          diags_.error(sourceLoc(f.getLoc()),
+                       "an axiom's parameters are values, not buffers");
+          return;
+        }
+      verify::AxiomTriggers t = verify::axiomTriggers(module_, f);
+      if (t.triggers.empty() && !t.error.empty())
+        diags_.error(sourceLoc(f.getLoc()), "the axiom '" +
+                                                f.getSymName().str() +
+                                                "' has no trigger: " + t.error);
+    }
+  }
+
   // `@overflow(wrap)` on the return annotation sets the function's mode.
   bool genAttributes(const Node &attrs) {
     for (const syntax::NodePtr &a : attrs.kids) {
@@ -794,6 +932,11 @@ class Gen {
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
       // the syntax tree, so there is nothing to generate.
+      // `@trigger(t1, t2)` on an axiom: one pattern (ADR 0036).
+      if (a->text == "trigger" && !a->kids.empty()) {
+        triggers_.push_back(a.get());
+        continue;
+      }
       if (a->text == "allow" && !a->kids.empty()) {
         bool names = true;
         for (const syntax::NodePtr &k : a->kids)
@@ -1108,6 +1251,21 @@ class Gen {
       if (contract_ && a.type == c.type && (op == "=" || op == "<>") &&
           (mlir::isa<ArrayType>(a.type) || mlir::isa<SliceType>(a.type)))
         return genBufferEq(n, op, a, c);
+      if (mlir::isa<SortType>(a.type) || mlir::isa<SortType>(c.type)) {
+        // A theory's sort has equality and nothing else (ADR 0036).
+        if (a.type != c.type)
+          return fail(n, "'" + op + "' needs operands of one type, found " +
+                             typeName(a.type) + " and " + typeName(c.type));
+        if (op != "=" && op != "<>")
+          return fail(n, "'" + op + "' is not defined on the sort " +
+                             typeName(a.type) + ", which has only = and <>");
+        return TV{create<ExactCmpOp>(l, b_.getI1Type(),
+                                     CmpPredicateAttr::get(
+                                         &ctx_, op == "=" ? CmpPredicate::eq
+                                                          : CmpPredicate::ne),
+                                     a.value, c.value),
+                  boolType()};
+      }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
@@ -4871,11 +5029,14 @@ class Gen {
                            f.function + "' returns " + typeName(fr) +
                            "; return a result, or give the scope a 'handle'");
       Type ferr = types_.instanceOf(fr)->args[1];
-      if (ferr != err)
+      if (ferr != err && !inErrorSet(err, ferr))
         return fail(t, "this '?' passes on errors of type " +
                            typeName(err) + ", but '" + f.function +
                            "' returns errors of type " + typeName(ferr) +
-                           "; give the scope a 'handle' that converts them");
+                           "; add them to its error set, as in '" +
+                           typeName(ferr) + " | " + typeName(err) +
+                           "', or give the scope a 'handle' that converts "
+                           "them");
       onErr = syntax::makeNode(NodeKind::Apply, at);
       onErr->add(name("Err", ""));
       onErr->add(builtin("#payload", "Err"));
@@ -5060,6 +5221,7 @@ class Gen {
   OverflowMode overflow_ = OverflowMode::proof;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
+  std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
@@ -5120,6 +5282,13 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
+  // Theories (ADR 0036) become ordinary items with qualified names.
+  if (hasTheories(program)) {
+    syntax::NodePtr flat = syntax::clone(program);
+    flattenTheories(*flat, diags);
+    if (diags.hasErrors()) return nullptr;
+    return Gen(ctx, filename, diags, options).run(*flat);
+  }
   return Gen(ctx, filename, diags, options).run(program);
 }
 

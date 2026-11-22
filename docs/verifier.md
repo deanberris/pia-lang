@@ -207,6 +207,94 @@ So codegen never sees them: it erases spec functions, lemmas and contracts, and 
 
 **Encoding.** `int` uses the upstream `smt` dialect's `Int` sort and its operations. The dialect has no `Real` sort at our LLVM pin, so the verifier extends it in the smallest way that keeps it the one encoding: `real` is written as a sort named `Real`, and the operations the dialect lacks (Real `+ - * /` and comparisons, `to_real`, and `bv2int` for converting a bit-vector) are declared as functions under their SMT-LIB names and applied with `smt.apply_func`. When the query is exported to SMT-LIB, those declarations and the sort's `declare-sort` are dropped, so Z3 reads each use as SMT-LIB's own interpreted symbol. A machine integer becomes an `Int` as `bv2int` of its bit-vector, less `2^w` when it is negative, since `bv2int` reads a bit-vector as unsigned. A real literal `n/d` is `(/ (to_real n) (to_real d))`.
 
+## Theories
+
+A theory teaches the verifier a domain: new sorts, functions on them with no body, and axioms about them ([ADR 0036](adr/0036-library-theories.md), and the worked examples in [theories.md](theories.md)). Step 2 of the ADR is implemented. Theories with axioms are trusted, because models, which prove a theory consistent, arrive in step 3.
+
+```ocaml
+@trusted
+
+let theory Lip = sig
+  let sort layer
+  let spec in_w : (f : layer) -> usize
+  let spec out_w : (f : layer) -> usize
+  let spec lip : (f : layer) -> real
+  let spec seq : (f : layer) -> (g : layer) -> layer
+  let spec residual : (f : layer) -> layer
+
+  let axiom lip_nonneg (f : layer) ensures lip f >= 0.0
+  let axiom seq_shape (f : layer) (g : layer)
+    requires out_w f = in_w g
+    ensures in_w (seq f g) = in_w f && out_w (seq f g) = out_w g
+  let axiom seq_lip (f : layer) (g : layer)
+    requires out_w f = in_w g
+    ensures lip (seq f g) <= lip f * lip g
+  let axiom residual_shape (f : layer)
+    requires in_w f = out_w f
+    ensures in_w (residual f) = in_w f && out_w (residual f) = out_w f
+  let axiom residual_lip (f : layer) @trigger(residual f)
+    requires in_w f = out_w f
+    ensures lip (residual f) <= 1.0 + lip f
+end
+
+let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
+  requires Lip.in_w a = 512 && Lip.out_w a = 512 && Lip.lip a <= 0.5
+  requires Lip.in_w b = 512 && Lip.out_w b = 10 && Lip.lip b <= 2.0
+  ensures Lip.lip (Lip.seq (Lip.residual a) b) <= 3.0
+= ()
+```
+
+**What a theory holds.**
+
+- `let sort s` declares a new uninterpreted sort, and `let sort s = t` is another name for the type `t`.
+- `let spec f : (a : t) -> r` is an abstract function, with no body. Its parameters are named.
+- A `let spec` with a body defines a spec function as usual.
+- `let axiom name params requires ... ensures ...` states a fact for all values of its parameters. It has no body.
+- A `let lemma` is proved from the axioms, as any lemma is.
+
+`theory`, `sort` and `axiom` are keywords only between `let` and a name, like `spec` and `lemma`.
+
+**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Pia has no modules yet, so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
+
+**Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot take, return or compute them, and codegen erases the theory along with every contract that uses it. A sort has only `=` and `<>`.
+
+**Trust.** Without a model, nothing proves that a theory's axioms are consistent. So a theory with axioms needs its file marked `@trusted`, on a line of its own, and every axiom is a trusted item. `piac --verify --trust-report` lists them:
+
+```
+lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no model
+...
+5 trusted items
+```
+
+This is the only use of `@trusted` so far. The rule that `assume` and `addr` need it ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)) is not enforced yet.
+
+**Encoding.** A sort is an uninterpreted SMT sort named after it (`(declare-sort Lip.layer 0)`), and an abstract function is a `declare-fun` under its qualified name (`Lip.lip`). The function's result is assumed to lie in its type's range. An axiom is an `smt.forall` over its parameters, `requires ==> ensures`, with each trigger as a pattern. The export cannot name an assertion, so the verifier adds the name afterwards as `(assert (! ... :named |Lip.seq_lip|))`. An axiom with several triggers is asserted once per trigger, under `|Lip.residual_lip#2|` and so on, since the export writes the terms of one quantifier as a single pattern.
+
+**Triggers.** The solver instantiates an axiom where a term matches one of its triggers. `@trigger(seq f g)` sets one, and `@trigger(t1, t2)` sets a pattern of several terms that together mention every parameter. Otherwise `piac` infers them as Z3 would: every smallest call of a theory function that mentions all the parameters. It leaves out a term that would loop, one where the axiom holds a larger instance of it. An example is `in_w f` in `residual_shape`, which also holds `in_w (residual f)`: each instance would make the next, so the trigger chosen is `residual f`. An axiom with no such term is an error at its definition. `--verify-stats` prints each axiom's triggers:
+
+```
+verify-stats-axiom: Lip.seq_lip triggers=(Lip.seq f g)
+verify-stats-axiom: Lip.residual_lip triggers=(Lip.residual f)
+```
+
+**Only the axioms a goal needs.** A query starts with the theory functions its goal's walk applies. An axiom is added when every function in one of its triggers is in the query. The functions it brings can add more, until nothing changes. A query that applies no theory function gets nothing, so it is the same, byte for byte, as without theories. Leaving out an axiom only removes a hypothesis, so a proof found this way is a proof. If the goal is not proved, it is solved again with every axiom of every theory whose functions it mentions, and the counterexample comes from that run, so it is never spurious because an axiom was missing. The proof cache keys that run by its own query. `--verify-stats` prints the axioms each goal was given, and marks the goals that needed the fallback:
+
+```
+verify-stats-goal: lip.pia:31:3 axioms=Lip.lip_nonneg,Lip.seq_shape,Lip.seq_lip,Lip.residual_shape,Lip.residual_lip
+verify-stats-goal: closure.pia:33:45 axioms=Counter.value_small,Counter.label_one fallback=all
+```
+
+These lines have their own prefixes, so `tools/bench` still reads the single `verify-stats:` line.
+
+**Not yet.** These come in the ADR's later steps:
+
+- models and sealing, which lift the `@trusted` requirement (step 3);
+- certificates and `import ... trusting` (step 4);
+- theory-building metaprograms (step 5);
+- per-goal axiom use from unsat cores, for `--trust-report --why`.
+
+A counterexample shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
+
 ## Choosing overloads by precondition
 
 Overloads with the same parameter types are told apart by their preconditions (ADR 0034). IRGen leaves a call between them open: a `func.call` of the least specific one, with every candidate, most specific first, in `pia.overload_candidates`. Before verification and code generation, `resolveOverloads` decides each open call. For each candidate but the last, it encodes the calling function with the call retargeted to that candidate and asks whether each of its preconditions holds at the call, from everything known there: the caller's `requires`, the branches the call is under, loop invariants and earlier calls' `ensures`. The first candidate whose preconditions are all proved is called. If none is, the call keeps the least specific candidate, whose precondition is then an ordinary goal. This runs in every build, with or without `--verify`, and `--verify-only` does not limit it. Each query uses the proof cache like any goal.

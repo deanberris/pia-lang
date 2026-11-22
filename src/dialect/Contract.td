@@ -53,6 +53,16 @@ def Contract_DecreasesOp : Contract_Op<"decreases"> {
   let assemblyFormat = "$measure attr-dict `:` type($measure)";
 }
 
+def Contract_TriggerOp : Contract_Op<"trigger"> {
+  let summary = "a trigger of the enclosing axiom: the terms that instantiate it";
+  let description = [{
+    `@trigger(seq f g)` on a theory's axiom (ADR 0036). Its terms form one
+    pattern, which together must mention every parameter of the axiom.
+  }];
+  let arguments = (ins Variadic<AnyType>:$terms);
+  let assemblyFormat = "$terms attr-dict `:` type($terms)";
+}
+
 def Contract_AssertOp : Contract_Op<"assert"> {
   let summary = "a goal the verifier must prove at this point";
   let arguments = (ins I1:$predicate);

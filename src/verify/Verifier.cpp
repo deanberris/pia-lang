@@ -7,6 +7,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -38,6 +39,7 @@
 #include "mlir/Target/SMTLIB/ExportSMTLIB.h"
 #include "sema/Sema.h"
 #include "transforms/ScalarizeRecords.h"
+#include "verify/Triggers.h"
 #include "z3++.h"
 
 namespace pia::verify {
@@ -163,7 +165,7 @@ bool isContractSink(Operation *op) {
                    contract::InvariantOp, contract::DecreasesOp,
                    contract::AssertOp, contract::AssumeOp,
                    contract::ObligationOp, contract::OldOp,
-                   contract::YieldOp>(op);
+                   contract::YieldOp, contract::TriggerOp>(op);
 }
 
 bool insideQuantifier(Operation *op) {
@@ -235,7 +237,7 @@ class Encoder {
         solverBlock_(builder.getInsertionBlock()) {}
 
   // The sort of a declared constant, so its model value can be read.
-  enum class Sort { BitVector, Bool, Int, Real };
+  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted };
 
   struct Decl {
     std::string exported;  // the SMT-LIB name
@@ -252,6 +254,55 @@ class Encoder {
   }
 
   bool reachedTarget() const { return done_; }
+  const std::vector<std::string> &sentAxioms() const { return sentAxioms_; }
+  const std::set<std::string> &sorts() const { return sorts_; }
+  bool usesTheories() const { return !theoryFuns_.empty(); }
+
+  // The axioms a query gets (ADR 0036, "Build time"). With `all` unset,
+  // the relevance closure: an axiom is added when every function of one of
+  // its triggers is in the query, and the functions it brings can fire
+  // more, to a fixed point. With `all`, every axiom of every theory the
+  // query mentions, for the fallback. A query that applies no theory
+  // function gets none, so it is exactly what it was without theories.
+  void addAxioms(bool all) {
+    if (theoryFuns_.empty() || !goalAssert_) return;
+    std::vector<mlir::func::FuncOp> axioms;
+    for (auto f : module_.getOps<mlir::func::FuncOp>())
+      if (f->hasAttr(PiaDialect::getAxiomAttrName())) axioms.push_back(f);
+    std::vector<AxiomTriggers> triggers;
+    for (auto f : axioms) triggers.push_back(axiomTriggers(module_, f));
+    std::vector<bool> sent(axioms.size(), false);
+    for (bool changed = true; changed;) {
+      changed = false;
+      std::set<std::string> theories;
+      for (const std::string &f : theoryFuns_)
+        theories.insert(llvm::StringRef(f).split('.').first.str());
+      for (size_t i = 0; i < axioms.size(); ++i) {
+        if (sent[i]) continue;
+        bool fire = false;
+        if (all) {
+          fire = theories.count(theoryOf(axioms[i])) > 0;
+        } else if (triggers[i].triggers.empty()) {
+          // No parameters: it is a plain fact about its functions.
+          fire = true;
+          axioms[i].walk([&](mlir::func::CallOp c) {
+            if (!theoryFuns_.count(c.getCallee().str())) fire = false;
+          });
+        } else {
+          for (const Trigger &t : triggers[i].triggers) {
+            bool covered = true;
+            for (const std::string &f : t.functions)
+              covered &= theoryFuns_.count(f) > 0;
+            fire |= covered;
+          }
+        }
+        if (!fire) continue;
+        sent[i] = true;
+        changed = true;
+        assertAxiom(axioms[i], triggers[i]);
+      }
+    }
+  }
   const std::vector<Decl> &decls() const { return decls_; }
   const std::vector<Decl> &witnesses() const { return witnesses_; }
 
@@ -280,9 +331,9 @@ class Encoder {
   static Sort sortKind(Type sort) {
     if (mlir::isa<mlir::smt::BoolType>(sort)) return Sort::Bool;
     if (mlir::isa<mlir::smt::IntType>(sort)) return Sort::Int;
-    if (auto s = mlir::dyn_cast<mlir::smt::SortType>(sort);
-        s && s.getIdentifier().getValue() == kRealSort)
-      return Sort::Real;
+    if (auto s = mlir::dyn_cast<mlir::smt::SortType>(sort))
+      return s.getIdentifier().getValue() == kRealSort ? Sort::Real
+                                                       : Sort::Uninterpreted;
     return Sort::BitVector;
   }
 
@@ -291,6 +342,11 @@ class Encoder {
     if (t.isInteger(1)) return boolType();
     if (mlir::isa<UnboundedIntType>(t)) return intType();
     if (mlir::isa<RealType>(t)) return realType();
+    // A theory's sort is an uninterpreted SMT sort of the same name.
+    if (auto so = mlir::dyn_cast<SortType>(t)) {
+      sorts_.insert(so.getName().str());
+      return mlir::smt::SortType::get(ctx_, so.getName());
+    }
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
@@ -547,7 +603,7 @@ class Encoder {
                             label, sortKind(value.getType())});
       assertTerm(eq(w, value));
     }
-    assertTerm(andOf(pathCondition(), notOf(term)));
+    goalAssert_ = create<mlir::smt::AssertOp>(andOf(pathCondition(), notOf(term)));
     done_ = true;
   }
 
@@ -1636,6 +1692,14 @@ class Encoder {
       }
       if (auto v = havoc(r.getType())) env_[r] = *v;
     }
+    // A theory's abstract function is uninterpreted.
+    if (isAbstract(callee) && call.getNumResults() == 1) {
+      llvm::SmallVector<Value> args;
+      for (Value a : call.getOperands()) args.push_back(term(a));
+      Value app = abstractCall(callee, args);
+      Value r = env_.lookup(call.getResult(0));
+      if (app && r) assume(eq(r, app));
+    }
     // A spec function's result is its definition applied to the arguments.
     if (hasBody && isSpecFunction(callee))
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
@@ -1715,6 +1779,34 @@ class Encoder {
   static bool isSpecFunction(mlir::func::FuncOp f) {
     return f && !f.isExternal() && f->hasAttr(PiaDialect::getSpecAttrName());
   }
+  // A theory's spec function with no body (ADR 0036).
+  static bool isAbstract(mlir::func::FuncOp f) {
+    return f && f->hasAttr(PiaDialect::getAbstractAttrName());
+  }
+  bool hasSpecDecl(mlir::func::FuncOp f) {
+    return isSpecFunction(f) || isAbstract(f);
+  }
+
+  // `f a` for an abstract `f`: the uninterpreted function applied, with
+  // its result type's range, and nothing else.
+  Value abstractCall(mlir::func::FuncOp callee, llvm::ArrayRef<Value> args) {
+    auto it = specFuns_.find(callee.getOperation());
+    if (it == specFuns_.end() || callee.getNumResults() != 1) return Value();
+    for (Value a : args)
+      if (!a) return Value();
+    noteTheoryUse(callee);
+    Type rt = callee.getFunctionType().getResult(0);
+    Value fun = it->second[0];
+    Value app = args.empty() ? fun
+                             : create<mlir::smt::ApplyFuncOp>(
+                                   sortOf(rt), fun, mlir::ValueRange(args));
+    if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
+    return app;
+  }
+
+  void noteTheoryUse(mlir::func::FuncOp f) {
+    if (!theoryOf(f).empty()) theoryFuns_.insert(f.getSymName().str());
+  }
 
   static unsigned fuelOf(mlir::func::FuncOp f) {
     if (auto a = f->getAttrOfType<mlir::IntegerAttr>(PiaDialect::getFuelAttrName()))
@@ -1724,7 +1816,7 @@ class Encoder {
 
   void declareSpecFunctions() {
     for (auto f : module_.getOps<mlir::func::FuncOp>()) {
-      if (!isSpecFunction(f)) continue;
+      if (!hasSpecDecl(f)) continue;
       llvm::SmallVector<Type> domain;
       bool ok = true;
       for (Type t : f.getFunctionType().getInputs()) {
@@ -1741,7 +1833,13 @@ class Encoder {
         Type ft = domain.empty()
                       ? sort
                       : mlir::smt::SMTFuncType::get(ctx_, domain, sort);
-        funs.push_back(declare(ft, "", false));
+        // A theory's functions keep their names, `Lip.lip`, so queries
+        // that combine theories never confuse them (ADR 0036).
+        if (!theoryOf(f).empty())
+          funs.push_back(create<mlir::smt::DeclareFunOp>(
+              ft, b_.getStringAttr(f.getSymName())));
+        else
+          funs.push_back(declare(ft, "", false));
       }
       if (ok && !funs.empty()) specFuns_[f.getOperation()] = std::move(funs);
     }
@@ -1757,6 +1855,7 @@ class Encoder {
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
     if (it == specFuns_.end()) return Value();
+    noteTheoryUse(callee);
     mlir::Block &entry = callee.getBody().front();
     llvm::SmallVector<Value> flat;
     for (mlir::BlockArgument a : entry.getArguments()) {
@@ -1897,6 +1996,11 @@ class Encoder {
       Value e = demand(elseY.getOperand(i), d);
       if (c && t && e) result = ite(c, t, e);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+               call && isAbstract(calleeOf(call))) {
+      llvm::SmallVector<Value> args;
+      for (Value a : call.getOperands()) args.push_back(demand(a, d));
+      result = abstractCall(calleeOf(call), args);
+    } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
                call && isSpecFunction(calleeOf(call))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
@@ -1973,6 +2077,112 @@ class Encoder {
     return q->getResult(0);
   }
 
+  // An axiom, `forall params. requires ==> ensures`, asserted before the
+  // negated goal under its name, once per trigger, each with its pattern.
+  void assertAxiom(mlir::func::FuncOp axiom, const AxiomTriggers &triggers) {
+    OpBuilder::InsertionGuard guard(b_);
+    b_.setInsertionPoint(goalAssert_);
+    mlir::Block &entry = axiom.getBody().front();
+    std::string name = axiom.getSymName().str();
+    sentAxioms_.push_back(name);
+    auto fact = [&](Demand &d) -> Value {
+      Value pre = boolConst(true), post = boolConst(true);
+      for (auto r : entry.getOps<contract::RequiresOp>()) {
+        Value p = demand(r.getPredicate(), d);
+        if (!p) return Value();
+        pre = andOf(pre, p);
+      }
+      for (auto e : entry.getOps<contract::EnsuresOp>()) {
+        Value p = demand(e.getPredicate(), d);
+        if (!p) return Value();
+        post = andOf(post, p);
+      }
+      return implies(pre, post);
+    };
+    auto named = [&](Value t, unsigned k) {
+      auto a = create<mlir::smt::AssertOp>(t);
+      std::string label = name;
+      if (k > 0) label += "#" + std::to_string(k + 1);
+      a->setAttr("pia.axiom", b_.getStringAttr(label));
+    };
+    if (entry.getNumArguments() == 0) {
+      Demand d;
+      unsigned before = unknowns_;
+      if (Value t = fact(d); t && unknowns_ == before) named(t, 0);
+      return;
+    }
+    llvm::SmallVector<Type> sorts;
+    llvm::SmallVector<std::string> names;
+    for (mlir::BlockArgument a : entry.getArguments()) {
+      Type so = sortOf(a.getType());
+      if (!so) return;
+      sorts.push_back(so);
+      auto n = mlir::dyn_cast<mlir::NameLoc>(a.getLoc());
+      names.push_back(n ? n.getName().str() : "x");
+    }
+    llvm::SmallVector<llvm::StringRef> nameRefs(names.begin(), names.end());
+    for (size_t k = 0; k < triggers.triggers.size(); ++k) {
+      const Trigger &trigger = triggers.triggers[k];
+      bool failed = false;
+      unsigned before = unknowns_;
+      auto body = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
+        OpBuilder::InsertionGuard g(b_);
+        b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+        ++quantifierDepth_;
+        Demand d;
+        Value range = boolConst(true);
+        for (auto [arg, var] : llvm::zip(entry.getArguments(), vars)) {
+          d.values[arg] = var;
+          if (auto it = mlir::dyn_cast<IntType>(arg.getType()))
+            range = andOf(range, inRange(var, it));
+        }
+        size_t mark = pendingDefs_.size();
+        Value p = fact(d);
+        if (!p) {
+          failed = true;
+          p = boolConst(true);
+        }
+        // Facts about the terms in the axiom, such as the range of
+        // `in_w f`, hold for every value, so they join the conclusion. As
+        // hypotheses they would weaken the axiom for terms whose range the
+        // query never states, such as `out_w (residual a)`.
+        Value facts = boolConst(true);
+        for (size_t i = mark; i < pendingDefs_.size(); ++i)
+          facts = andOf(facts, pendingDefs_[i]);
+        pendingDefs_.resize(mark);
+        --quantifierDepth_;
+        return implies(range, andOf(facts, p));
+      };
+      llvm::SmallVector<Value> patternTerms;
+      auto patterns = [&](OpBuilder &ob, Location,
+                          mlir::ValueRange vars) -> mlir::ValueRange {
+        OpBuilder::InsertionGuard g(b_);
+        b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+        ++quantifierDepth_;
+        Demand d;
+        for (auto [arg, var] : llvm::zip(entry.getArguments(), vars))
+          d.values[arg] = var;
+        size_t mark = pendingDefs_.size();
+        for (Value t : trigger.terms) {
+          Value v = demand(t, d);
+          if (!v) failed = true;
+          else patternTerms.push_back(v);
+        }
+        pendingDefs_.resize(mark);  // facts made while building the terms
+        --quantifierDepth_;
+        return mlir::ValueRange(patternTerms);
+      };
+      auto q = create<mlir::smt::ForallOp>(mlir::TypeRange(sorts), body,
+                                           llvm::ArrayRef<llvm::StringRef>(nameRefs),
+                                           patterns);
+      if (failed || unknowns_ != before) {
+        q->erase();
+        continue;
+      }
+      named(q.getResult(), static_cast<unsigned>(k));
+    }
+  }
+
   mlir::ModuleOp module_;
   mlir::func::FuncOp fn_;
   unsigned width_;
@@ -2001,6 +2211,13 @@ class Encoder {
   std::vector<Value> pendingDefs_;
   unsigned unknowns_ = 0;  // values demand() could not encode
   bool done_ = false;
+  // Theories (ADR 0036): the theory functions the query applies, the
+  // negated goal (axioms are asserted before it, so it stays last for
+  // slicing), and the axioms sent.
+  std::set<std::string> theoryFuns_;
+  std::set<std::string> sorts_;  // the theory sorts the query uses
+  mlir::smt::AssertOp goalAssert_;
+  std::vector<std::string> sentAxioms_;
 };
 
 // Values in the bit-vector encoding are signed and wide enough for every
@@ -2069,10 +2286,63 @@ struct Query {
   std::string smtlib;
   std::vector<Encoder::Decl> decls, witnesses;
   bool reached = false;
+  bool theories = false;            // it applies a theory function
+  std::vector<std::string> axioms;  // the axioms it was given
 };
 
+// The export declares a sort only where an op produces a value of it, so
+// a sort that appears only in a function's signature, such as `tag` in
+// `label : tag -> u8`, is declared here, at the top of the query.
+std::string declareSorts(const std::string &smtlib,
+                         const std::set<std::string> &sorts) {
+  std::string missing;
+  for (const std::string &so : sorts)
+    if (smtlib.find("(declare-sort " + so + " 0)") == std::string::npos)
+      missing += "(declare-sort " + so + " 0)\n";
+  if (missing.empty()) return smtlib;
+  size_t at = 0;
+  if (llvm::StringRef(smtlib).starts_with(";")) at = smtlib.find('\n') + 1;
+  return smtlib.substr(0, at) + missing + smtlib.substr(at);
+}
+
+// Each axiom's assertion as `(assert (! <fact> :named |T.a|))`: the
+// export cannot name an assertion, so the k-th top-level assert, counted
+// as the export prints them, gets the name its AssertOp carries.
+std::string nameAxioms(const std::string &smtlib,
+                       const std::map<unsigned, std::string> &names) {
+  if (names.empty()) return smtlib;
+  std::string out;
+  size_t pos = 0;
+  unsigned k = 0;
+  // A statement starts with `(` or a `;` comment at column 0; the lines of
+  // one statement after its first start otherwise.
+  while (pos < smtlib.size()) {
+    size_t end = smtlib.find('\n', pos);
+    if (end == std::string::npos) end = smtlib.size();
+    size_t stmtEnd = end;
+    while (stmtEnd + 1 < smtlib.size() && smtlib[stmtEnd + 1] != '(' &&
+           smtlib[stmtEnd + 1] != ';') {
+      size_t next = smtlib.find('\n', stmtEnd + 1);
+      stmtEnd = next == std::string::npos ? smtlib.size() : next;
+    }
+    llvm::StringRef stmt(smtlib.data() + pos, stmtEnd - pos);
+    pos = stmtEnd + 1;
+    if (stmt.starts_with("(assert ")) {
+      auto it = names.find(k++);
+      if (it != names.end() && stmt.ends_with(")")) {
+        out += "(assert (! ";
+        out += stmt.drop_front(8).drop_back(1).str();
+        out += " :named |" + it->second + "|))\n";
+        continue;
+      }
+    }
+    out.append(stmt.begin(), stmt.end()).push_back('\n');
+  }
+  return out;
+}
+
 Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
-                 int target, std::vector<Goal> &goals) {
+                 int target, std::vector<Goal> &goals, bool allAxioms = false) {
   mlir::MLIRContext *ctx = module.getContext();
   OpBuilder b(ctx);
   mlir::OwningOpRef<mlir::ModuleOp> scratch =
@@ -2089,6 +2359,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   b.setInsertionPointToEnd(block);
   Encoder enc(module, fn, width, target, b, goals);
   enc.run();
+  if (target >= 0) enc.addAxioms(allAxioms);
   b.setInsertionPointToEnd(block);
 #if LLVM_VERSION_MAJOR >= 21
   mlir::smt::YieldOp::create(b, b.getUnknownLoc());
@@ -2099,14 +2370,25 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.decls = enc.decls();
   q.witnesses = enc.witnesses();
   q.reached = enc.reachedTarget();
+  q.theories = enc.usesTheories();
+  q.axioms = enc.sentAxioms();
   if (target < 0) return q;
+  std::map<unsigned, std::string> axiomNames;
+  unsigned k = 0;
+  for (Operation &op : *block)
+    if (auto a = mlir::dyn_cast<mlir::smt::AssertOp>(op)) {
+      if (auto n = a->getAttrOfType<mlir::StringAttr>("pia.axiom"))
+        axiomNames[k] = n.getValue().str();
+      ++k;
+    }
   llvm::raw_string_ostream os(q.smtlib);
   mlir::smt::SMTEmissionOptions options;
   options.emitReset = false;
   if (mlir::failed(mlir::smt::exportSMTLIB(*scratch, os, options)))
     q.smtlib.clear();
   else
-    q.smtlib = interpretedSMTLIB(q.smtlib);
+    q.smtlib = declareSorts(
+        nameAxioms(interpretedSMTLIB(q.smtlib), axiomNames), enc.sorts());
   return q;
 }
 
@@ -2119,6 +2401,10 @@ struct Job {
   unsigned width;
   std::string script;  // the query's declarations and assertions
   bool autoSlice = false;  // in a function with a buffer of records
+  // With theories: the query with every axiom of the theories it uses,
+  // solved when the relevance closure's query is not proved (ADR 0036).
+  std::optional<Query> fallback;
+  std::string fallbackScript;
 };
 
 // What one job did, summed into Stats once every thread has finished.
@@ -2354,18 +2640,70 @@ void solve(const Job &job, const Options &options, Outcome &out,
     out.method = std::string("the solver failed: ") + e.msg();
     return;
   }
+  // Not proved with the axioms the relevance closure chose: solve again
+  // with every axiom of the theories the goal mentions, and take the
+  // counterexample from that run, so a missing axiom never makes one up
+  // (ADR 0036, "Fallback on failure").
+  const Query *answer = &q;
+  z3::solver fallback(ctx);
+  z3::solver *last = &full;
+  if (job.fallback) {
+    out.fallback = true;
+    out.axioms = job.fallback->axioms;
+    std::string fkey;
+    if (!options.cacheDir.empty()) {
+      fkey = goalHash(job.fallbackScript, options);
+      unsigned long long cost = 0;
+      if (cacheLookup(options, fkey, cost)) {
+        js.cached = true;
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost) out.cost = cost;
+        return;
+      }
+    }
+    fallback.set(p);
+    try {
+      fallback.from_string(job.fallbackScript.c_str());
+      unsigned long long before = rlimitCount(fallback);
+      result = fallback.check();
+      unsigned long long now = rlimitCount(fallback);
+      js.cost += now - before;
+      if (result == z3::unsat) {
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost) out.cost = now - before;
+        if (!fkey.empty()) cacheStore(options, fkey, now - before);
+        return;
+      }
+    } catch (const z3::exception &e) {
+      out.status = Status::Failed;
+      out.method = std::string("the solver failed: ") + e.msg();
+      return;
+    }
+    answer = &*job.fallback;
+    last = &fallback;
+  }
   if (result == z3::unknown) {
     out.status = Status::Failed;
-    out.method = "the solver gave up: " + full.reason_unknown();
+    out.method = "the solver gave up: " + last->reason_unknown();
     return;
   }
   out.status = Status::Failed;
   out.method = "counterexample";
   unsigned width = job.width;
-  z3::model m = full.get_model();
+  z3::model m = last->get_model();
   using Sort = Encoder::Sort;
   auto value = [&](const Encoder::Decl &d) -> std::string {
     const char *name = d.exported.c_str();
+    if (d.sort == Sort::Uninterpreted) {
+      // A value of a theory's sort: Z3 names the model's elements, such as
+      // `Lip.layer!val!0`; two names that differ are different values.
+      for (unsigned i = 0; i < m.num_consts(); ++i)
+        if (m.get_const_decl(i).name().str() == d.exported)
+          return m.get_const_interp(m.get_const_decl(i)).to_string();
+      return "any";
+    }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
                  : d.sort == Sort::Int  ? ctx.int_const(name)
                  : d.sort == Sort::Real ? ctx.real_const(name)
@@ -2382,9 +2720,9 @@ void solve(const Job &job, const Options &options, Outcome &out,
     }
     return signedDecimal(v.get_decimal_string(0), width);
   };
-  for (const Encoder::Decl &d : q.decls)
+  for (const Encoder::Decl &d : answer->decls)
     out.counterexample.push_back({d.display, value(d)});
-  for (const Encoder::Decl &d : q.witnesses)
+  for (const Encoder::Decl &d : answer->witnesses)
     out.counterexample.push_back({d.display, value(d)});
 }
 
@@ -2549,6 +2887,14 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   std::vector<Job> jobs;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
     if (fn.isExternal()) continue;
+    // An axiom is not proved: without a model it is trusted (ADR 0036).
+    if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
+      std::vector<std::string> texts;
+      for (const Trigger &t : axiomTriggers(module, fn).triggers)
+        texts.push_back(t.text);
+      st.triggers.emplace_back(fn.getSymName().str(), std::move(texts));
+      continue;
+    }
     unsigned width = encodingWidth(module, fn);
     std::vector<Goal> goals;
     buildQuery(module, fn, width, -1, goals);
@@ -2587,6 +2933,20 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
         if (options.dumpSmt && !job.query.smtlib.empty())
           llvm::errs() << "; " << out.where << ": " << out.claim << "\n"
                        << job.query.smtlib << "\n";
+        out.axioms = job.query.axioms;
+        if (job.query.theories) {
+          std::vector<Goal> unused2;
+          Query all = buildQuery(module, fn, width, static_cast<int>(i),
+                                 unused2, /*allAxioms=*/true);
+          if (all.axioms.size() > job.query.axioms.size()) {
+            job.fallbackScript = scriptOf(all.smtlib);
+            if (options.dumpSmt && !all.smtlib.empty())
+              llvm::errs() << "; " << out.where << ": " << out.claim
+                           << " (fallback, every axiom)\n"
+                           << all.smtlib << "\n";
+            job.fallback = std::move(all);
+          }
+        }
         jobs.push_back(std::move(job));
       }
       opOf.push_back(g.op);

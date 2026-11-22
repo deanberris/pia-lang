@@ -1,0 +1,22 @@
+(* A theory's sorts and functions are spec-only (ADR 0036): code cannot
+   take, return or compute them, and a sort has only = and <>.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+end
+
+(* CHECK: theory_code_errors.pia:[[@LINE+2]]:11: error: the parameter 'x' has the spec-only type T.s; a theory's sorts can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+*)
+let code (x : T.s) : u8 = 0
+
+(* CHECK: theory_code_errors.pia:[[@LINE+2]]:54: error: '<' is not defined on the sort T.s, which has only = and <>
+*)
+let lemma order (x : T.s) (y : T.s) : unit ensures x < y = ()
+
+(* CHECK: theory_code_errors.pia:[[@LINE+2]]:26: error: 'T.f' is a spec function, so it can be used only in contracts, spec functions and lemmas
+*)
+let call (n : u8) : u8 = T.f n

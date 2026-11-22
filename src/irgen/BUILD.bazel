@@ -4,8 +4,14 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # pia_contract dialects, with control flow in scf.
 cc_library(
     name = "irgen",
-    srcs = ["IRGen.cpp"],
-    hdrs = ["IRGen.h"],
+    srcs = [
+        "IRGen.cpp",
+        "Theories.cpp",
+    ],
+    hdrs = [
+        "IRGen.h",
+        "Theories.h",
+    ],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
@@ -13,6 +19,7 @@ cc_library(
         "//src/meta",
         "//src/sema",
         "//src/syntax",
+        "//src/verify:triggers",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",

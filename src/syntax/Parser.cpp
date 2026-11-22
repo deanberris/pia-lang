@@ -203,11 +203,28 @@ class Parser {
         if (kind(1) == K::Ident && tok(1).text == "adapter" &&
             kind(2) == K::Ident && kind(3) == K::Colon)
           return adapterItem();
+        // `let theory T = sig ... end` (ADR 0036); `theory`, `sort` and
+        // `axiom` are keywords only between `let` and a name.
+        if (kind(1) == K::Ident && tok(1).text == "theory" &&
+            kind(2) == K::Ident)
+          return theoryItem();
+        if (kind(1) == K::Ident &&
+            (tok(1).text == "sort" || tok(1).text == "axiom") &&
+            kind(2) == K::Ident)
+          fail("'" + std::string(tok(1).text) + "' declares part of a theory, "
+               "so it belongs inside 'let theory T = sig ... end'");
         return let(/*allowItem=*/true, /*allowIn=*/false);
       case K::Interface:
         return interfaceItem();
       case K::Module:
         return moduleItem();
+      // `@trusted` on a line of its own marks the whole file (ADR 0036).
+      case K::Attr: {
+        auto n = makeNode(N::FileAttr, loc(),
+                          std::string(tok().text.substr(1)));
+        take();
+        return n;
+      }
       case K::Import: {
         auto n = makeNode(N::Import, loc());
         take();
@@ -232,11 +249,53 @@ class Parser {
     return p;
   }
 
+  // `let theory T = sig item* end`. An item is `let sort s [= t]`, an
+  // abstract `let spec f : (a : t) -> r` with no body, a spec function, a
+  // `let axiom name params requires ... ensures ...` (no body) or a lemma.
+  NodePtr theoryItem() {
+    auto n = makeNode(N::Theory, loc());
+    take();  // let
+    take();  // theory
+    n->text = std::string(expect(K::Ident, "a theory name").text);
+    expect(K::Eq, "'='");
+    expect(K::Sig, "'sig'");
+    skipSeps();
+    while (!at(K::End)) {
+      if (!at(K::Let)) fail("expected 'let' or 'end' in a theory");
+      if (kind(1) == K::Ident && tok(1).text == "sort" && kind(2) == K::Ident) {
+        auto sort = makeNode(N::SortItem, loc());
+        take();
+        take();
+        sort->text = std::string(take().text);
+        if (accept(K::Eq)) sort->add(type());
+        n->add(std::move(sort));
+      } else if (kind(1) == K::Ident && tok(1).text == "axiom" &&
+                 kind(2) == K::Ident) {
+        n->add(let(true, false, Bodyless::Axiom));
+      } else if (kind(1) == K::Spec) {
+        n->add(let(true, false, Bodyless::Abstract));
+      } else {
+        n->add(let(true, false));
+      }
+      skipSeps();
+    }
+    take();
+    return n;
+  }
+
+  // A definition with no body: an abstract spec function, `let spec f :
+  // (a : t) -> r`, or an axiom, whose contracts are all it says.
+  enum class Bodyless { No, Abstract, Axiom };
+
   // `let [rec] [spec|lemma] [meta] name params [: annot attrs] contracts = body [in body]`
-  NodePtr let(bool allowItem, bool allowIn) {
+  NodePtr let(bool allowItem, bool allowIn, Bodyless bodyless = Bodyless::No) {
     SourceLoc start = loc();
     expect(K::Let, "'let'");
     std::string flags;
+    if (bodyless == Bodyless::Axiom) {
+      take();  // axiom
+      flags = "axiom";
+    }
     if (accept(K::Rec)) flags = "rec";
     if (accept(K::Spec)) flags += flags.empty() ? "spec" : " spec";
     else if (accept(K::Lemma)) flags += flags.empty() ? "lemma" : " lemma";
@@ -251,6 +310,16 @@ class Parser {
     while (atContract()) contracts->add(contract());
 
     NodePtr body;
+    if (bodyless == Bodyless::Axiom) {
+      // An axiom has no body, so its last clause is never split at `=`.
+      n->add(makeNode(N::None, loc()));
+      return n;
+    }
+    if (bodyless == Bodyless::Abstract && !at(K::Eq)) {
+      n->flags += " abstract";
+      n->add(makeNode(N::None, loc()));
+      return n;
+    }
     if (accept(K::Eq)) {
       body = seq();
     } else {
@@ -674,6 +743,11 @@ class Parser {
       case K::Ident: {
         std::string name = text();
         take();
+        // A qualified name, such as a theory's sort `Lip.layer` (ADR 0036).
+        while (at(K::Dot) && kind(1) == K::Ident) {
+          take();
+          name += "." + std::string(take().text);
+        }
         if (at(K::TargsOpen)) {
           auto n = makeNode(N::TypeInst, start, name);
           targs(*n);
