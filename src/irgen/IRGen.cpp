@@ -943,6 +943,9 @@ class Gen {
                            typeName(t) + "'; a generic body can use only "
                            "what its constraints promise");
       }
+      if (contract_ && a.type == c.type && (op == "=" || op == "<>") &&
+          (mlir::isa<ArrayType>(a.type) || mlir::isa<SliceType>(a.type)))
+        return genBufferEq(n, op, a, c);
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
@@ -3565,6 +3568,63 @@ class Gen {
     Location l = loc(n);
     Value v = create<mlir::arith::XOrIOp>(l, eq->value, boolConst(l, true));
     return TV{v, boolType()};
+  }
+
+  // `=` on two arrays or slices in a contract: the same length and the
+  // same element at every index, as
+  // `len a = len b && forall (k in 0..len a). a.[k] = b.[k]`.
+  R genBufferEq(const Node &n, const std::string &op, TV a, TV c) {
+    syntax::SourceLoc at = n.loc;
+    unsigned k = matchCounter_++;
+    std::string an = "#eqa" + std::to_string(k), cn = "#eqb" + std::to_string(k),
+                kn = "#eqk" + std::to_string(k);
+    auto name = [&](const std::string &s) {
+      return syntax::makeNode(NodeKind::Name, at, s);
+    };
+    auto len = [&](const std::string &s) {
+      auto app = syntax::makeNode(NodeKind::Apply, at);
+      app->add(name("len"));
+      app->add(name(s));
+      return app;
+    };
+    auto index = [&](const std::string &s) {
+      auto ix = syntax::makeNode(NodeKind::Index, at);
+      ix->add(name(s));
+      ix->add(name(kn));
+      return ix;
+    };
+    auto range = syntax::makeNode(NodeKind::Range, at);
+    range->add(syntax::makeNode(NodeKind::IntLit, at, "0"));
+    range->add(len(an));
+    auto binder = syntax::makeNode(NodeKind::RangeBinder, at, kn);
+    binder->add(std::move(range));
+    auto same = syntax::makeNode(NodeKind::Binary, at, "=");
+    same->add(index(an));
+    same->add(index(cn));
+    auto all = syntax::makeNode(NodeKind::Quantifier, at, "forall");
+    all->add(std::move(binder));
+    all->add(std::move(same));
+    syntax::NodePtr pred = std::move(all);
+    if (mlir::isa<SliceType>(a.type)) {
+      auto lens = syntax::makeNode(NodeKind::Binary, at, "=");
+      lens->add(len(an));
+      lens->add(len(cn));
+      auto both = syntax::makeNode(NodeKind::Binary, at, "&&");
+      both->add(std::move(lens));
+      both->add(std::move(pred));
+      pred = std::move(both);
+    }
+    const Node &ref = *pred;
+    matchTrees_.push_back(std::move(pred));
+    pushScope();
+    bind(an, a.value, a.type, false);
+    bind(cn, c.value, c.type, false);
+    R r = genExpr(ref, boolType());
+    popScope();
+    if (!r || op == "=") return r;
+    Location l = loc(n);
+    return TV{create<mlir::arith::XOrIOp>(l, r->value, boolConst(l, true)),
+              boolType()};
   }
 
   // Whether `a` and `b`, of type `t`, are the same value: integers and
