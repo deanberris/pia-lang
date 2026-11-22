@@ -1,0 +1,128 @@
+(* The spec-only types `real` and `int` (ADR 0036, step 1). They are SMT
+   Real and Int: exact, with no range and no overflow, so a contract can
+   state a bound that no machine type holds.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* Real literals are exact rationals: 0.5 is 1/2 and 1.0e3 is 1000. *)
+let lemma literals : unit
+  ensures 0.5 + 0.5 = 1.0 && 1.0e3 = 1000.0 && 2.5e-1 * 4.0 = 1.0
+  ensures -0.25 * 4.0 = -1.0
+= ()
+
+let spec half (x : real) : real = x / 2.0
+
+let lemma halves (x : real) : unit
+  ensures half x + half x = x
+= ()
+
+(* A nonlinear goal, decided by Z3's nonlinear real arithmetic. *)
+let lemma product (x : real) (y : real) : unit
+  requires 0.0 <= x && x <= 1.5 && 0.0 <= y && y <= 2.0
+  ensures x * y <= 3.0
+= ()
+
+(* The bound is reached at x = 1.5, y = 2, so a strict one fails. *)
+let lemma product_strict (x : real) (y : real) : unit
+  requires 0.0 <= x && x <= 1.5 && 0.0 <= y && y <= 2.0
+  ensures x * y < 3.0
+= ()
+
+(* Division needs a divisor that is not zero. *)
+let spec inverse (y : real) : real = 1.0 / y
+
+let spec safe_inverse (y : real) : real requires y > 0.0 = 1.0 / y
+
+let lemma inverse_times (y : real) : unit
+  requires y > 0.0
+  ensures safe_inverse y * y = 1.0
+= ()
+
+(* `int` is unbounded: the product of two u64 values never overflows it. *)
+let lemma wide_product (a : u64) (b : u64) : unit
+  ensures int a * int b <= 340282366920938463426481119284349108225
+= ()
+
+let lemma wide_product_strict (a : u64) (b : u64) : unit
+  ensures int a * int b < 340282366920938463426481119284349108225
+= ()
+
+let spec square (n : int) : int = n * n
+
+let lemma square_nonneg (n : int) : unit ensures square n >= 0 = ()
+
+(* Every integer converts exactly, and an integer argument widens to an
+   int parameter without a conversion. *)
+let lemma conversions (n : i8) : unit
+  ensures real (int n) = real n && int n < 128 && square n <= 16384
+= ()
+
+(* Quantifiers range over int and real. *)
+let lemma squares_nonneg : unit ensures forall (y : real). y * y >= 0.0 = ()
+
+let lemma halves_exist (x : real) : unit
+  ensures exists (y : real). y + y = x
+= ()
+
+(* A record field of type real, used only by spec code. *)
+let summary = type { width : usize; lip : real }
+
+let spec seq_lip (f : summary) (g : summary) : real = f.lip * g.lip
+
+let spec scaled (f : summary) (k : real) : summary =
+  { width = f.width; lip = f.lip * k }
+
+let lemma seq_bound (f : summary) (g : summary) : unit
+  requires 0.0 <= f.lip && f.lip <= 0.5 && 0.0 <= g.lip && g.lip <= 2.0
+  ensures seq_lip f g <= 1.0
+  ensures (scaled f 2.0).lip <= 1.0 && (scaled f 2.0).width = f.width
+= ()
+
+(* Without the lower bounds, two negative factors make a large product. *)
+let lemma seq_bound_wrong (f : summary) (g : summary) : unit
+  requires f.lip <= 0.5 && g.lip <= 2.0
+  ensures seq_lip f g <= 1.0
+= ()
+
+(* Code may state its contract in reals; the contract is erased. *)
+let halve (x : u8) : u8
+  ensures real result <= real x / 2.0 && real x / 2.0 < real result + 1.0
+= x / 2
+
+let halve_wrong (x : u8) : u8
+  ensures real result = real x / 2.0
+= x / 2
+
+(* Expected report, in order.
+// CHECK: reals.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:13:37: proved: the divisor is not zero [intervals]
+// CHECK: reals.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:28:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = 3/2, y = 2
+// CHECK: reals.pia:32:42: failed: the divisor is not zero
+// CHECK-NEXT: counterexample: y = 0
+// CHECK: reals.pia:34:64: proved: the divisor is not zero [smt]
+// CHECK: reals.pia:38:11: proved: the precondition of 'safe_inverse' holds [smt]
+// CHECK: reals.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:47:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: a = 18446744073709551615, b = 18446744073709551615
+// CHECK: reals.pia:52:42: proved: the postcondition holds [smt]
+// CHECK: reals.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:61:33: proved: the postcondition holds [smt]
+// CHECK: reals.pia:64:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:77:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:78:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:84:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: f.width = {{-?[0-9]+}}, f.lip = {{[-0-9/]+}}, g.width = {{-?[0-9]+}}, g.lip = {{[-0-9/]+}}
+// CHECK: reals.pia:90:5: proved: the divisor is not zero [intervals]
+// CHECK: reals.pia:90:5: proved: '/' does not overflow u8 [intervals]
+// CHECK: reals.pia:89:3: proved: the postcondition holds [smt]
+// CHECK: reals.pia:94:5: proved: the divisor is not zero [intervals]
+// CHECK: reals.pia:94:5: proved: '/' does not overflow u8 [intervals]
+// CHECK: reals.pia:93:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: 20 proved, 5 failed, 0 skipped
+*)

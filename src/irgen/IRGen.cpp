@@ -1,6 +1,7 @@
 #include "irgen/IRGen.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <deque>
 #include <functional>
 #include <map>
@@ -14,6 +15,7 @@
 
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
+#include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
@@ -77,9 +79,58 @@ std::string plural(size_t n, const std::string &word) {
 }
 
 bool isLiteral(const Node &n) {
-  return n.kind == NodeKind::IntLit ||
-         (n.kind == NodeKind::Neg && n.kids.size() == 1 &&
-          n.kids[0]->kind == NodeKind::IntLit);
+  auto lit = [](const Node &k) {
+    return k.kind == NodeKind::IntLit || k.kind == NodeKind::FloatLit;
+  };
+  return lit(n) || (n.kind == NodeKind::Neg && n.kids.size() == 1 &&
+                    lit(*n.kids[0]));
+}
+
+// A literal with a decimal point or an exponent, such as `0.5` or `1.0e3`,
+// as an exact rational in lowest terms: "n" or "n/d". Null if malformed.
+std::optional<std::string> realLiteral(llvm::StringRef text, bool negate) {
+  std::string digits;
+  int exp10 = 0;
+  size_t i = 0;
+  bool point = false;
+  for (; i < text.size(); ++i) {
+    char c = text[i];
+    if (c == '_') continue;
+    if (c == '.') {
+      if (point) return std::nullopt;
+      point = true;
+      continue;
+    }
+    if (c < '0' || c > '9') break;
+    digits.push_back(c);
+    if (point) --exp10;
+  }
+  if (i < text.size() && (text[i] == 'e' || text[i] == 'E')) {
+    int e = 0;
+    if (text.substr(i + 1).getAsInteger(10, e)) return std::nullopt;
+    if (e > 4000 || e < -4000) return std::nullopt;
+    exp10 += e;
+  } else if (i != text.size()) {
+    return std::nullopt;
+  }
+  if (digits.empty()) return std::nullopt;
+  unsigned bits = 64 + static_cast<unsigned>(digits.size() * 4 +
+                                             std::abs(exp10) * 4);
+  llvm::APInt num(bits, digits, 10), den(bits, 1);
+  llvm::APInt ten(bits, 10);
+  for (; exp10 > 0; --exp10) num *= ten;
+  for (; exp10 < 0; ++exp10) den *= ten;
+  if (!num.isZero()) {
+    llvm::APInt g = llvm::APIntOps::GreatestCommonDivisor(num, den);
+    num = num.udiv(g);
+    den = den.udiv(g);
+  } else {
+    den = llvm::APInt(bits, 1);
+  }
+  std::string out = (negate && !num.isZero() ? "-" : "") +
+                    llvm::toString(num, 10, false);
+  if (!den.isOne()) out += "/" + llvm::toString(den, 10, false);
+  return out;
 }
 
 bool isComparison(const std::string &op) {
@@ -227,6 +278,26 @@ class Gen {
 
   std::string typeName(Type t) { return sema::typeName(t); }
 
+  // The spec-only `int` and `real` (ADR 0036).
+  static bool isExact(Type t) {
+    return mlir::isa_and_nonnull<UnboundedIntType, RealType>(t);
+  }
+  TV exactConst(Location l, Type t, const std::string &value) {
+    return TV{create<ExactConstantOp>(l, t, b_.getStringAttr(value)), t};
+  }
+
+  // Why `t`, which is or holds the spec-only `part`, cannot be in code:
+  // "the spec-only type real; ..." or "type summary, which holds ...".
+  std::string specOnlyMessage(Type t) {
+    Type part = sema::specOnlyPart(t);
+    std::string what =
+        t == part ? "the spec-only type " + typeName(part)
+                  : "type " + typeName(t) + ", which holds the spec-only "
+                    "type " + typeName(part);
+    return what + "; int and real can be used only in spec functions, "
+           "lemmas, contracts and quantifiers, not in code (ADR 0036)";
+  }
+
   // The smallest range type holding both.
   IntType join(IntType a, IntType b) {
     llvm::APInt alo = widen(a.getLo()), blo = widen(b.getLo());
@@ -249,6 +320,9 @@ class Gen {
               l, static_cast<int64_t>(a.getLength()));
           return TV{create<SliceOp>(l, sl, v.value, lo, hi), target};
         }
+    // Every integer is an `int` (ADR 0036): the conversion is exact.
+    if (mlir::isa<IntType>(v.type) && mlir::isa<UnboundedIntType>(target))
+      return TV{create<ExactConvertOp>(loc(at), target, v.value), target};
     if (mlir::isa<IntType>(v.type) && mlir::isa<IntType>(target)) {
       Value c = create<ConvertOp>(
           loc(at), target, v.value,
@@ -531,6 +605,21 @@ class Gen {
       return;
     bool isSpec = hasFlag(item, "spec"), isLemma = hasFlag(item, "lemma");
     ghost_ = isSpec || isLemma;
+    // `int` and `real` exist only for the verifier, so code can neither
+    // take nor return them, even inside a record (ADR 0036).
+    if (!ghost_) {
+      for (const sema::Param &p : sig.params)
+        if (sema::specOnlyPart(p.type)) {
+          diags_.error(p.loc, "the parameter '" + p.name + "' has " +
+                                  specOnlyMessage(p.type));
+          return;
+        }
+      if (sema::specOnlyPart(sig.result)) {
+        fail(ret, "'" + name + "' returns a value of " +
+                      specOnlyMessage(sig.result));
+        return;
+      }
+    }
     if (fuel_ && !isSpec) {
       fail(item, "@fuel applies only to a spec function");
       return;
@@ -774,15 +863,39 @@ class Gen {
     return r;
   }
 
+  // Every expression in code is checked for a spec-only type, so neither
+  // `int` nor `real` reaches code generation (ADR 0036).
   R genExpr(const Node &n, Type expected) {
+    R r = genExprOf(n, expected);
+    if (r && !contract_ && !ghost_)
+      if (sema::specOnlyPart(r->type))
+        return fail(n, "this expression has " + specOnlyMessage(r->type));
+    return r;
+  }
+
+  R genExprOf(const Node &n, Type expected) {
     if (!frames_.empty() && frames_.back().tails.count(&n))
       if (const Node *t = hoistable(n)) return genTry(n, *t, expected);
     switch (n.kind) {
       case NodeKind::IntLit: {
         auto lit = sema::parseIntLiteral(n.text);
+        // An int literal has no bounds (ADR 0036).
+        if (!lit && isExact(expected)) {
+          std::string digits;
+          for (char c : n.text)
+            if (c != '_') digits.push_back(c);
+          if (!digits.empty() &&
+              llvm::all_of(digits, [](char c) { return c >= '0' && c <= '9'; }))
+            return exactConst(loc(n), expected,
+                              llvm::toString(llvm::APInt(8 + 4 * digits.size(),
+                                                         digits, 10),
+                                             10, false));
+        }
         if (!lit) return fail(n, "invalid integer literal '" + n.text + "'");
         return genIntConst(n, lit->value, lit->suffix, expected);
       }
+      case NodeKind::FloatLit:
+        return genRealConst(n, n.text, false, expected);
       case NodeKind::BoolLit:
         return TV{boolConst(loc(n), n.text == "true"), boolType()};
       case NodeKind::Unit:
@@ -873,6 +986,8 @@ class Gen {
   R genIntConst(const Node &n, llvm::APInt v, const std::string &suffix,
                 Type expected) {
     Type t;
+    if (suffix.empty() && isExact(expected))
+      return exactConst(loc(n), expected, llvm::toString(v, 10, true));
     if (!suffix.empty()) {
       t = types_.builtin(suffix);
     } else if (mlir::isa_and_nonnull<IntType>(expected)) {
@@ -892,6 +1007,20 @@ class Gen {
     Value c = create<ConstantOp>(
         loc(n), t, b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
     return TV{c, t};
+  }
+
+  // `0.5`, `1.0e3`: a real, exact. Pia has no floating-point types yet.
+  R genRealConst(const Node &n, llvm::StringRef text, bool negate,
+                 Type expected) {
+    size_t f = text.find_first_of("fiu");
+    if (f != llvm::StringRef::npos)
+      return fail(n, "'" + text.str() + "': floating-point types are not "
+                     "supported yet; a literal with a decimal point is a "
+                     "spec-only real, with no suffix");
+    std::optional<std::string> v = realLiteral(text, negate);
+    if (!v) return fail(n, "invalid real literal '" + text.str() + "'");
+    (void)expected;  // a mismatch is reported where the value is used
+    return exactConst(loc(n), RealType::get(&ctx_), *v);
   }
 
   R genName(const Node &n, Type expected) {
@@ -948,6 +1077,28 @@ class Gen {
   std::optional<std::pair<TV, TV>> unify(TV a, TV c, const Node &n,
                                          const std::string &op,
                                          const Node &lhs, const Node &rhs) {
+    if (isExact(a.type) || isExact(c.type)) {
+      // An integer joins `int` exactly; a real meets only a real.
+      Type t = mlir::isa<RealType>(c.type) || !isExact(a.type) ? c.type
+                                                                 : a.type;
+      auto fits = [&](Type x) {
+        return x == t || (mlir::isa<IntType>(x) &&
+                          mlir::isa<UnboundedIntType>(t));
+      };
+      bool ok = fits(a.type) && fits(c.type);
+      if (!ok) {
+        std::string hint = mlir::isa<RealType>(t)
+                               ? "; convert an integer with 'real x'"
+                               : "";
+        fail(n, "'" + op + "' needs operands of one type, found " +
+                    typeName(a.type) + " and " + typeName(c.type) + hint);
+        return std::nullopt;
+      }
+      R a2 = coerce(a, t, lhs);
+      R c2 = coerce(c, t, rhs);
+      if (!a2 || !c2) return std::nullopt;
+      return std::make_pair(*a2, *c2);
+    }
     auto at = mlir::dyn_cast<IntType>(a.type);
     auto ct = mlir::dyn_cast<IntType>(c.type);
     if (!at || !ct) {
@@ -1004,14 +1155,23 @@ class Gen {
                        : op == "<=" ? CmpPredicate::le
                        : op == ">"  ? CmpPredicate::gt
                                     : CmpPredicate::ge;
+      if (isExact(u->first.type))
+        return TV{create<ExactCmpOp>(l, b_.getI1Type(),
+                                     CmpPredicateAttr::get(&ctx_, p),
+                                     u->first.value, u->second.value),
+                  boolType()};
       return TV{cmp(l, p, u->first.value, u->second.value), boolType()};
     }
     if (isArith(op)) {
       auto ops = genOperands(lhsNode, rhsNode,
-                             mlir::isa_and_nonnull<IntType>(expected)
+                             mlir::isa_and_nonnull<IntType>(expected) ||
+                                     isExact(expected)
                                  ? expected
                                  : Type());
       if (!ops) return std::nullopt;
+      if (isExact(ops->first.type) || isExact(ops->second.type))
+        return genExactArith(n, op, ops->first, ops->second, lhsNode,
+                             rhsNode);
       // Arithmetic happens at the join of the operand types and, when the
       // context expects a wider integer, at that type: `dst.[i] <- src.[i] * 3`
       // with u8 `src` and u16 `dst` multiplies at u16.
@@ -1051,6 +1211,49 @@ class Gen {
       return TV{v, t};
     }
     return fail(n, "the operator '" + op + "' is not supported yet");
+  }
+
+  // `+ - *` on `int` and `real`, and `/` on `real`: exact, so there is
+  // nothing to overflow (ADR 0036).
+  R genExactArith(const Node &n, const std::string &op, TV lhs, TV rhs,
+                  const Node &lhsNode, const Node &rhsNode) {
+    if (op != "+" && op != "-" && op != "*" && op != "/")
+      return fail(n, "'" + op + "' is not defined on " +
+                         typeName(isExact(lhs.type) ? lhs.type : rhs.type) +
+                         "; int and real have + - * and comparisons, and "
+                         "real also has /");
+    auto u = unify(lhs, rhs, n, op, lhsNode, rhsNode);
+    if (!u) return std::nullopt;
+    Type t = u->first.type;
+    Value a = u->first.value, c = u->second.value;
+    Location l = loc(n);
+    Value v;
+    if (op == "+") v = create<ExactAddOp>(l, t, a, c);
+    else if (op == "-") v = create<ExactSubOp>(l, t, a, c);
+    else if (op == "*") v = create<ExactMulOp>(l, t, a, c);
+    else if (mlir::isa<RealType>(t)) v = create<ExactDivOp>(l, t, a, c);
+    else
+      return fail(n, "'/' is not defined on int; convert to real with "
+                     "'real x' to divide");
+    return TV{v, t};
+  }
+
+  // `int x` and `real x`: an integer as an exact int or real.
+  R genExactConversion(const Node &n, const std::string &to, const Node &arg) {
+    Type target = to == "int" ? Type(UnboundedIntType::get(&ctx_))
+                              : Type(RealType::get(&ctx_));
+    if (isLiteral(arg)) return genExpr(arg, target);
+    R v = genExpr(arg, Type());
+    if (!v) return v;
+    if (v->type == target) return v;
+    bool ok = mlir::isa<IntType>(v->type) ||
+              (mlir::isa<UnboundedIntType>(v->type) &&
+               mlir::isa<RealType>(target));
+    if (!ok)
+      return fail(arg, "'" + to + "' converts an integer" +
+                           std::string(to == "real" ? " or an int" : "") +
+                           ", not " + typeName(v->type));
+    return TV{create<ExactConvertOp>(loc(n), target, v->value), target};
   }
 
   R genShift(const Node &n, const std::string &op, TV lhs, TV rhs,
@@ -1524,13 +1727,20 @@ class Gen {
 
   R genNeg(const Node &n, Type expected) {
     const Node &operand = *n.kids[0];
-    if (operand.kind == NodeKind::IntLit) {
+    if (operand.kind == NodeKind::FloatLit)
+      return genRealConst(n, operand.text, true, expected);
+    if (operand.kind == NodeKind::IntLit && !isExact(expected)) {
       auto lit = sema::parseIntLiteral(operand.text);
       if (!lit) return fail(operand, "invalid integer literal");
       return genIntConst(n, -lit->value, lit->suffix, expected);
     }
     R v = genExpr(operand, expected);
     if (!v) return v;
+    if (isExact(v->type)) {
+      TV zero = exactConst(loc(n), v->type, "0");
+      return TV{create<ExactSubOp>(loc(n), v->type, zero.value, v->value),
+                v->type};
+    }
     auto t = mlir::dyn_cast<IntType>(v->type);
     if (!t) return fail(n, "'-' needs an integer, found " + typeName(v->type));
     Value zero = create<ConstantOp>(
@@ -1630,6 +1840,10 @@ class Gen {
           return fail(n, "'" + fn.text + "' takes two arguments");
         return genBinary(n, op, *n.kids[1], *n.kids[2], expected);
       }
+      if (fn.text == "int" || fn.text == "real") {
+        if (argc != 1) return fail(n, "'" + fn.text + "' takes one argument");
+        return genExactConversion(n, fn.text, *n.kids[1]);
+      }
       if (fn.text == "len") {
         if (argc != 1) return fail(n, "'len' takes one argument");
         R buf = genExpr(*n.kids[1], Type());
@@ -1670,6 +1884,14 @@ class Gen {
     if (sig.item && hasFlag(*sig.item, "lemma") && contract_)
       return fail(n, "'" + sig.name + "' is a lemma: call it as a statement, "
                      "and its postcondition holds after the call");
+    // A lemma's call is erased from code, so its arguments are
+    // specification, which may use spec functions, `int` and `real`.
+    bool savedGhost = ghost_;
+    if (sig.item && hasFlag(*sig.item, "lemma")) ghost_ = true;
+    struct Restore {
+      bool &flag, value;
+      ~Restore() { flag = value; }
+    } restoreGhost{ghost_, savedGhost};
     llvm::SmallVector<Value> operands;
     for (size_t i = 0; i < args.size(); ++i) {
       R a = early && (*early)[i] ? (*early)[i]
@@ -4544,6 +4766,10 @@ class Gen {
       modifiers = ret.kids[0]->kids[0]->text;
       declared = types_.resolveAnnot(*ret.kids[0]);
       if (!declared) return std::nullopt;
+      if (!contract_ && !ghost_)
+        if (sema::specOnlyPart(declared))
+          return fail(*ret.kids[0], "'" + n.text + "' has " +
+                                        specOnlyMessage(declared));
       if (ret.kids.size() > 1 && !ret.kids[1]->kids.empty())
         return fail(*ret.kids[1]->kids[0],
                     "attributes on a local 'let' are not supported yet");

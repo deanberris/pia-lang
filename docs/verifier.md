@@ -167,6 +167,46 @@ One unfolding proves each step: the lemma's call for `n - 1`, plus `count`'s def
 
 Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `spec` and `lemma` are keywords only between `let` (or `let rec`) and the name ([grammar.md](grammar.md#identifiers-and-keywords)).
 
+## Spec-only `int` and `real`
+
+Two types exist only for specifications ([ADR 0036](adr/0036-library-theories.md), step 1):
+
+- **`int`**, an unbounded mathematical integer. Bare `int` is unbounded, and `int{lo..hi}` is still a range type: a range is written with its braces right after `int`, so the two spellings cannot be confused ([grammar.md](grammar.md)). The verifier encodes `int` as the SMT `Int` sort.
+- **`real`**, a mathematical real number, encoded as the SMT `Real` sort. It is not a floating-point type.
+
+They have `+`, `-`, `*`, unary `-` and the comparisons, and `real` also has `/`. All of it is exact, so nothing overflows and no `nooverflow` goal is raised. A real division raises a `nonzero` goal for its divisor where it is walked as code, such as in a spec function's body. An integer literal takes either type from the context, and an `int` literal may be larger than any machine type. A literal with a decimal point or an exponent, such as `0.5` or `1.0e3`, is a `real`, read as an exact rational (`1/2`, `1000`), and a suffix such as `0.5f32` is an error until Pia has floating-point types.
+
+Conversions are exact, so none raises a goal. `int x` turns any integer into an `int`, and an integer also widens to `int` wherever an `int` is expected, as a range type widens to a larger one. `real x` turns an integer or an `int` into a `real`. There is no conversion back: a value of a machine type cannot come from a specification.
+
+```ocaml
+let spec half (x : real) : real = x / 2.0
+
+let lemma product (x : real) (y : real) : unit
+  requires 0.0 <= x && x <= 1.5 && 0.0 <= y && y <= 2.0
+  ensures x * y <= 3.0
+= ()
+
+let lemma wide (a : u64) (b : u64) : unit
+  ensures int a * int b <= 340282366920938463426481119284349108225
+= ()
+
+let halve (x : u8) : u8
+  ensures real result <= half (real x) && half (real x) < real result + 1.0
+= x / 2
+```
+
+`product` is nonlinear, and Z3 decides it with its nonlinear real arithmetic; with `x * y < 3.0` it fails with the counterexample `x = 3/2, y = 2`. A counterexample shows a real as a fraction, and an irrational value from a nonlinear model as a decimal approximation marked `~`.
+
+**Spec-only.** `int` and `real` may appear in spec functions, lemmas, contracts, quantifiers (`forall (y : real). y * y >= 0.0`), the arguments of a lemma call, and record fields that only spec code reads. Code may not compute with them. A parameter or result of an ordinary function whose type is or holds one, such as a record with a `real` field, is an error, and so is any expression of such a type in code. `let positive (x : u8) : bool = real x > 0.5` gives:
+
+```
+positive.pia:1:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036)
+```
+
+So codegen never sees them: it erases spec functions, lemmas and contracts, and with them every value of these types.
+
+**Encoding.** `int` uses the upstream `smt` dialect's `Int` sort and its operations. The dialect has no `Real` sort at our LLVM pin, so the verifier extends it in the smallest way that keeps it the one encoding: `real` is written as a sort named `Real`, and the operations the dialect lacks (Real `+ - * /` and comparisons, `to_real`, and `bv2int` for converting a bit-vector) are declared as functions under their SMT-LIB names and applied with `smt.apply_func`. When the query is exported to SMT-LIB, those declarations and the sort's `declare-sort` are dropped, so Z3 reads each use as SMT-LIB's own interpreted symbol. A machine integer becomes an `Int` as `bv2int` of its bit-vector, less `2^w` when it is negative, since `bv2int` reads a bit-vector as unsigned. A real literal `n/d` is `(/ (to_real n) (to_real d))`.
+
 ## Choosing overloads by precondition
 
 Overloads with the same parameter types are told apart by their preconditions (ADR 0034). IRGen leaves a call between them open: a `func.call` of the least specific one, with every candidate, most specific first, in `pia.overload_candidates`. Before verification and code generation, `resolveOverloads` decides each open call. For each candidate but the last, it encodes the calling function with the call retargeted to that candidate and asks whether each of its preconditions holds at the call, from everything known there: the caller's `requires`, the branches the call is under, loop invariants and earlier calls' `ensures`. The first candidate whose preconditions are all proved is called. If none is, the call keeps the least specific candidate, whose precondition is then an ordinary goal. This runs in every build, with or without `--verify`, and `--verify-only` does not limit it. Each query uses the proof cache like any goal.

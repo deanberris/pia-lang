@@ -102,3 +102,22 @@ func.func @records(%a: !pia.int<0, 255>) -> !pia.int<0, 255> {
   %g = pia.field %p, "g" : !pia.record<"pixel", r : !pia.int<0, 255>, g : !pia.int<0, 255>> -> !pia.int<0, 255>
   return %g : !pia.int<0, 255>
 }
+
+// The spec-only int and real (ADR 0036): exact constants, arithmetic,
+// comparisons and conversions from range-typed integers.
+// CHECK-LABEL: func.func @exact
+// CHECK: %[[H:.*]] = pia.exact.constant "1/2" : !pia.real
+// CHECK: %[[N:.*]] = pia.exact.convert %{{.*}} : !pia.int<0, 255> -> !pia.integer
+// CHECK: %[[X:.*]] = pia.exact.convert %[[N]] : !pia.integer -> !pia.real
+// CHECK: pia.exact.mul %[[X]], %[[H]] : !pia.real
+// CHECK: pia.exact.div %{{.*}}, %[[H]] : !pia.real
+// CHECK: pia.exact.cmp le %{{.*}}, %{{.*}} : !pia.real
+func.func @exact(%a: !pia.int<0, 255>) -> i1 attributes {pia.spec} {
+  %h = pia.exact.constant "1/2" : !pia.real
+  %n = pia.exact.convert %a : !pia.int<0, 255> -> !pia.integer
+  %x = pia.exact.convert %n : !pia.integer -> !pia.real
+  %p = pia.exact.mul %x, %h : !pia.real
+  %q = pia.exact.div %p, %h : !pia.real
+  %c = pia.exact.cmp le %p, %q : !pia.real
+  return %c : i1
+}

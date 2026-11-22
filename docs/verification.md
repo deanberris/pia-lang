@@ -124,6 +124,18 @@ let larger (a : u8) (b : u8) : u8
 
 A recursive spec function needs a `decreases` measure, and each call is unfolded once. Facts that need induction, such as one about every prefix of an array, are lemmas: functions that return unit, proved once and erased from code, whose postcondition holds after each call. A recursive lemma is a proof by induction ([verifier.md](verifier.md#spec-functions-and-lemmas)).
 
+Specifications can also use two types that code cannot: `int`, an integer with no bounds, and `real`, an exact real number. Nothing in them overflows, so a contract can state what a machine type cannot hold, and the verifier hands them to Z3 as its `Int` and `Real` ([verifier.md](verifier.md#spec-only-int-and-real)):
+
+```ocaml
+let lemma wide (a : u64) (b : u64) : unit
+  ensures int a * int b <= 340282366920938463426481119284349108225
+= ()
+
+let halve (x : u8) : u8
+  ensures real result <= real x / 2.0 && real x / 2.0 < real result + 1.0
+= x / 2
+```
+
 ## What it means for code generation
 
 Codegen runs only when no goal has failed. It erases every contract and everything only contracts used, such as quantifiers and `old`. A proved index needs no bounds check and a proved addition needs no overflow check, so the machine code has none. Proved facts are also what lets LLVM vectorise loops safely.

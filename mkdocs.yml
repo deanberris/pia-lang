@@ -70,7 +70,9 @@ nav:
   - A tour of Pia: tour.md
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
+  - "Theories: teaching the verifier a domain": theories.md
   - The REPL: repl.md
+  - Debugging C++ with the REPL: repl-debugging.md
   - Agent skills: agents.md
   - Case studies:
       - Famous bugs, proved away: cases/index.md
@@ -135,3 +137,5 @@ nav:
       - adr/0035-substitution-failure-and-total-constraints.md
       - adr/0036-library-theories.md
       - adr/0037-idiomatic-pia-and-lints.md
+      - adr/0038-float-kernels-against-real-theories.md
+      - adr/0039-module-and-interface-syntax.md

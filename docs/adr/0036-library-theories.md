@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (2026-11-22, with Dean's answers to its open questions below, and a catalogue of example theories added at Dean's request: [docs/theories.md](../theories.md))
 
 ## Context
 
@@ -52,7 +52,7 @@ let theory Lip = sig
   let lemma residual_twice (f : layer)
     requires in_w f = out_w f
     ensures lip (residual (residual f)) <= 2.0 + lip f
-  = ()
+= ()
 end
 ```
 
@@ -81,7 +81,7 @@ So a library can describe its domain as data (a table of layer kinds, each with 
 
 A theory with axioms has one of two statuses, recorded in its module's certificate.
 
-**Modelled (the default, and nothing is trusted).** The module that declares the theory also gives a model: a structure that picks a concrete Pia type for each sort and a spec function for each abstract function, and proves every axiom as a lemma about them.
+**Modelled (the default, and nothing is trusted).** A model is given, in the theory's module or in another module found by the ADL rule (see [the answers below](#answers-to-the-open-questions)): a structure that picks a concrete Pia type for each sort and a spec function for each abstract function, and proves every axiom as a lemma about them.
 
 ```ocaml
 let summary = type { in_w : usize; out_w : usize; lip : real where lip >= 0.0 }
@@ -154,7 +154,7 @@ A theory lowers once per module, in the verifier ([ADR 0018](0018-dialect-layeri
 - an axiom to an `smt.forall` over its parameters, with its trigger patterns, asserted under a name;
 - `real` and `int` to the SMT `Real` and `Int` sorts.
 
-The upstream dialect has uninterpreted sorts, functions, quantifiers with patterns and `Int`. If it still lacks `Real` at our LLVM pin, the first implementation adds it in a small Pia extension that the SMT-LIB export prints, and offers it upstream.
+The upstream dialect has uninterpreted sorts, functions, quantifiers with patterns and `Int`. If it still lacks `Real` at our LLVM pin, the first implementation adds it in a small Pia extension that the SMT-LIB export prints, and offers it upstream. Step 1 found it lacking: `real` is written as a sort named `Real`, the Real operations as functions declared under their SMT-LIB names, and the export drops those declarations so Z3 reads them as its own ([verifier.md](../verifier.md#spec-only-int-and-real)).
 
 Every quantified axiom needs a trigger, because an axiom without one is either ignored by E-matching or instantiated without limit. `piac` infers triggers as Z3 would (the smallest terms that mention every bound variable) and shows them in `--verify-stats`, and `@trigger(seq f g)` sets them explicitly. An axiom with no term that covers all its variables is an error at the definition.
 
@@ -180,13 +180,13 @@ The theory `Lip` and model `shapes` above are in the library `Pia.Nn`. A network
 ```ocaml
 import Pia.Nn.Lip
 
-let lemma block_bound (a : Lip.layer) (b : Lip.layer)
+let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
   requires Lip.in_w a = 512 && Lip.out_w a = 512 && Lip.lip a <= 0.5
   requires Lip.in_w b = 512 && Lip.out_w b = 10 && Lip.lip b <= 2.0
   ensures Lip.in_w (Lip.seq (Lip.residual a) b) = 512
   ensures Lip.out_w (Lip.seq (Lip.residual a) b) = 10
   ensures Lip.lip (Lip.seq (Lip.residual a) b) <= 3.0
-  = ()
+= ()
 ```
 
 The goal mentions `seq`, `residual`, `in_w`, `out_w` and `lip`, so the closure brings in `residual_shape` and `residual_lip` (triggered by `residual a`), then `seq_shape` and `seq_lip` (by `seq (residual a) b`), and `lip_nonneg`. Z3 instantiates them: `residual a` is 512 to 512 with `lip <= 1.5`, so `seq` applies, and `lip <= 1.5 * lip b <= 1.5 * 2.0 = 3.0`, using `lip b >= 0` for the product. The model never enters the query, and nothing is trusted.
@@ -194,10 +194,10 @@ The goal mentions `seq`, `residual`, `in_w`, `out_w` and `lip`, so the closure b
 The shape rule catches a mistake before any kernel exists. Applying the residual to the wrong layer:
 
 ```ocaml
-let lemma wrong (b : Lip.layer)
+let lemma wrong (b : Lip.layer) : unit
   requires Lip.in_w b = 512 && Lip.out_w b = 10
   ensures Lip.lip (Lip.residual b) <= 1.0 + Lip.lip b
-  = ()
+= ()
 ```
 
 fails: the precondition of `residual_lip`, `in_w b = out_w b`, does not hold, so the axiom gives nothing, and the counterexample is a `layer` with `in_w = 512` and `out_w = 10`, whose `residual` has some unconstrained `lip`. The report names the axiom whose precondition did not hold.
@@ -213,10 +213,12 @@ The weights enter through the kernel library's abstraction function (`abs` above
 - Quantified axioms bring E-matching, and with it the risk of matching loops and slow goals. Required triggers, the corpus benchmark and the rlimit contain that risk, but theory authors will need guidance on triggers in [docs/verifier.md](../verifier.md).
 - Unsat cores are needed for per-goal trust, which costs some solver time on queries with theory axioms. If the benchmark shows it matters, cores can be computed only when a trusted axiom is in the query.
 - New spec-only types `real` and `int`, and the keywords `theory`, `sort`, `axiom`, `model` and `trusting` in their positions.
-- Implementation order, each step a PR with tests: (1) spec-only `real` and `int`, with their `smt` lowering; (2) `let theory` with sorts, abstract functions and axioms, in `@trusted` modules only, with SMT-LIB names, triggers and the relevance closure; (3) `let model`, the model check (reusing the adapter check) and sealing, which lifts the `@trusted` requirement; (4) certificate status, `trusting` imports, consistency checks and per-goal axiom use in `--trust-report --why`; (5) theory-building metaprograms; (6) `@solver` strategies and tactics as proof-writing metaprograms, then proof by reflection; (7) `--check-vacuity`. Native decision procedures stay deferred.
+- Implementation order, each step a PR with tests: (1) spec-only `real` and `int`, with their `smt` lowering; (2) `let theory` with sorts, abstract functions and axioms, in `@trusted` modules only, with SMT-LIB names, triggers and the relevance closure; (3) `let model`, the model check (reusing the adapter check) and sealing, which lifts the `@trusted` requirement; (4) certificate status, models found by ADL, `trusting` imports, consistency checks and per-goal axiom use in `--trust-report --why`; (5) theory-building metaprograms; (6) `@solver` strategies and tactics as proof-writing metaprograms, then proof by reflection; (7) `--check-vacuity`. Native decision procedures stay deferred.
 
-## Questions for review
+## Answers to the open questions
 
-- Is `import M trusting` the right opt-in, or should trust be granted per axiom, or on the command line (`--trust=Pia.Nn.Spectral`) so that it is visible in the build file?
-- Should a model be allowed in a different module from its theory, for example a theory in an interface-only library with models from several implementations? This ADR requires the same module, which keeps "modelled" a property of one certificate.
-- The worked example stays in real arithmetic. Proving float kernels against a real-valued theory, with rounding bounds, needs its own ADR. Should that come next, or after the first theory lands?
+Dean answered the three questions this ADR ended with when he accepted it (2026-11-22):
+
+- **Trust is declared only in the source, and it covers a whole theory.** `import M trusting` is the only way to trust a theory, so it works the same in a file, in the REPL and in an MCP session ([ADR 0031](0031-verified-repl-and-live-environment.md)), and there is no command-line flag for it. It trusts every trusted axiom of every theory `M` exports. A theory is trusted as a whole or not at all, so there is no list of individual axioms to grant. The compiler generates the list of trusted axioms from the `trusting` imports: it is part of the importer's certificate, and `--trust-report` prints it, with `--why` naming the goals that used each axiom.
+- **A model is found by the ADL rule.** A model need not be in its theory's module. As for adapters and operators ([ADR 0022](0022-metaprogram-hygiene.md), rule 5), a model of theory `T` counts where it is found in `T`'s own module or in a module the program imports explicitly. A theory with no model found that way is trusted, so importing it needs `trusting`. Importing a module that holds a proved model makes the theory modelled for that importer, with no `trusting`. Unlike adapters, two models found at once are not an ambiguity: a model is evidence that the axioms are consistent and never chooses what code means, so any one of them is enough. A module that declares a theory without a model must still be `@trusted`, and a model's certificate records the theory hash it models, so the loader can check it like any other interface hash.
+- **Floats against real-valued theories get their own ADR**: [ADR 0038](0038-float-kernels-against-real-theories.md), for Dean's review. The catalogue's examples use integers, booleans and reals, so nothing in them waits on it.

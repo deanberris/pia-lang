@@ -412,3 +412,37 @@ LogicalResult DynIsOp::verify() {
 LogicalResult DynUnwrapOp::verify() {
   return checkTag(*this, getInput().getType(), getResult().getType());
 }
+
+//===----------------------------------------------------------------------===//
+// Spec-only int and real
+//===----------------------------------------------------------------------===//
+
+LogicalResult ExactConstantOp::verify() {
+  StringRef v = getValue();
+  auto [num, den] = v.split('/');
+  StringRef digits = num;
+  digits.consume_front("-");
+  auto allDigits = [](StringRef s) {
+    return !s.empty() && llvm::all_of(s, [](char c) { return c >= '0' && c <= '9'; });
+  };
+  if (!allDigits(digits) || (v.contains('/') && !allDigits(den)))
+    return emitOpError("expected a rational 'n' or 'n/d', got '") << v << "'";
+  if (v.contains('/') && isa<UnboundedIntType>(getType()))
+    return emitOpError("an int constant has no denominator");
+  return success();
+}
+
+LogicalResult ExactDivOp::verify() {
+  if (!isa<RealType>(getType()))
+    return emitOpError("divides reals only");
+  return success();
+}
+
+LogicalResult ExactConvertOp::verify() {
+  Type in = getInput().getType(), out = getType();
+  if (isa<IntType>(in)) return success();
+  if (isa<UnboundedIntType>(in) && isa<RealType>(out)) return success();
+  return emitOpError("converts an integer to int or real, or an int to "
+                     "real, not ")
+         << in << " to " << out;
+}

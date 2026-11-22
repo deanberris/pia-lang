@@ -73,6 +73,19 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   return lit;
 }
 
+mlir::Type specOnlyPart(mlir::Type t) {
+  if (!t) return {};
+  if (mlir::isa<UnboundedIntType, RealType>(t)) return t;
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return specOnlyPart(a.getElementType());
+  if (auto s = mlir::dyn_cast<SliceType>(t))
+    return specOnlyPart(s.getElementType());
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    for (mlir::Type f : r.getFieldTypes())
+      if (mlir::Type x = specOnlyPart(f)) return x;
+  return {};
+}
+
 std::string typeName(mlir::Type t) {
   if (!t) return "?";
   if (mlir::isa<mlir::NoneType>(t)) return "unit";
@@ -96,6 +109,8 @@ std::string typeName(mlir::Type t) {
   if (auto s = mlir::dyn_cast<SliceType>(t))
     return "[" + typeName(s.getElementType()) + "]";
   if (auto r = mlir::dyn_cast<RecordType>(t)) return r.getName().str();
+  if (mlir::isa<UnboundedIntType>(t)) return "int";
+  if (mlir::isa<RealType>(t)) return "real";
   std::string out;
   llvm::raw_string_ostream os(out);
   t.print(os);
@@ -126,6 +141,9 @@ mlir::Type TypeResolver::builtin(std::string_view name) {
   }
   if (name == "bool") return boolType();
   if (name == "unit") return unitType();
+  // The spec-only types of ADR 0036: `int` without a range is unbounded.
+  if (name == "int") return UnboundedIntType::get(&ctx_);
+  if (name == "real") return RealType::get(&ctx_);
   return {};
 }
 
