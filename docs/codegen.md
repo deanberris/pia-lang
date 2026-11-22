@@ -66,7 +66,7 @@ LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@ove
 
 ## C ABI
 
-Each public Pia function `f` becomes an internal function and a C entry point named `f`. Calls between Pia functions use the internal one, which takes MLIR memref descriptors. The entry point maps C arguments onto it:
+Each Pia function `f` becomes an internal function. Only the functions a module exports through an interface also get a C entry point ([ADR 0039](adr/0039-module-and-interface-syntax.md)): one in an interface marked `@abi(c)` is named `f`, and one in any other interface is named after its module's path, so `luma` in `module Image.Pixels` is `pia$Image$Pixels$luma`. A file with no `module` header exports nothing but its `main`. Private functions keep internal linkage, so LLVM can inline them and remove the ones nothing calls. Calls between Pia functions use the internal one, which takes MLIR memref descriptors. The entry point maps C arguments onto it:
 
 | Pia parameter | C parameters |
 | --- | --- |
@@ -109,5 +109,4 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
 
 - There is no vectorisation yet. Loops compile to scalar code, apart from whatever LLVM's own vectoriser does with them.
 - `dyn`, nested buffers and buffer results are not lowered.
-- Functions are not exported through module interfaces yet. Every public function gets a C entry point.
 - `scf.for` compares its bounds as signed 64-bit integers, so a slice of 2^63 elements or more is not supported.

@@ -303,7 +303,9 @@ int compile(mlir::ModuleOp module, const std::string &mode,
     module.print(out);
     return 0;
   }
-  if (mlir::failed(pia::codegen::lowerToLLVM(module))) return 1;
+  // Only what a module exports gets a C entry point (ADR 0039).
+  if (mlir::failed(pia::codegen::lowerToLLVM(module, /*exportsOnly=*/true)))
+    return 1;
   llvm::LLVMContext llvmCtx;
   std::string error;
   std::unique_ptr<llvm::Module> llvmModule =

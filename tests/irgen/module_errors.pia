@@ -1,0 +1,53 @@
+(* A module must meet every interface it claims (ADR 0039).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK-DAG: module_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: unknown module attribute '@fast'; a module header takes only @trusted
+   CHECK-DAG: module_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: the module 'Shapes' claims the interface 'Ops' twice
+   CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: no interface 'Missing' in this file
+*)
+module Shapes @fast : Ops, Ops, Missing, Types, Other.Ops, Attrs
+
+(* CHECK-DAG: module_errors.pia:[[@LINE-2]]:{{[0-9]+}}: error: the interface 'Other.Ops' is in another module; a module can claim only interfaces declared in its own file for now
+*)
+
+interface Ops = sig
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'area : u8 -> u16'
+*)
+  let area : (side : u8) -> u16
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'grow : u8 -> u8'
+*)
+  let grow : (x : mutable u8) -> u8
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Ops': no function 'nothing : u8'
+*)
+  let nothing : u8
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: 'corner' is exported, but its type names 'point', which no interface of 'Shapes' lists
+*)
+  let corner : (s : u8) -> point
+end
+
+interface Types = sig
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': no type 'colour'
+*)
+  let colour : type
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the module 'Shapes' does not meet 'Types': the type 'size' is defined differently; an interface that shows a type with '=' must show its definition exactly
+*)
+  let size = type { w : u8; h : u16 }
+end
+
+(* CHECK-DAG: module_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @abi takes one argument, c
+*)
+interface Attrs @abi(rust) = sig
+end
+
+(* CHECK-DAG: module_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: the interface 'Attrs' is already defined
+*)
+interface Attrs = sig
+end
+
+let point = type { x : u8; y : u8 }
+let size = type { w : u8; h : u8 }
+
+let area (side : u8) : u32 = side * side
+let grow (x : u8) : u8 = x
+let corner (s : u8) : point = { x = s; y = s }

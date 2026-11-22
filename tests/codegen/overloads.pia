@@ -9,6 +9,15 @@
 // CHECK-DAG: define {{.*}} @same__u16_u16(
 // CHECK-DAG: define {{.*}} @both(
 *)
+module Overloads : Same
+
+(* An interface can list each overload it exports (ADR 0039). *)
+interface Same @abi(c) = sig
+  let same : (a : u8) -> (b : u8) -> bool
+  let same : (a : u16) -> (b : u16) -> bool
+  let both : (a : u8) -> (b : u16) -> bool
+end
+
 let same (a : u8) (b : u8) : bool = a = b
 let same (a : u16) (b : u16) : bool = a = b
 

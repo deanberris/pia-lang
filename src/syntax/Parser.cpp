@@ -69,6 +69,7 @@ class Parser {
     skipSeps();
     while (!at(K::Eof)) {
       try {
+        firstItem_ = prog->kids.empty();
         prog->add(item());
         if (!at(K::Eof) && !at(K::Sep))
           fail("expected the end of the item; a new top-level item starts in "
@@ -397,6 +398,7 @@ class Parser {
     auto n = makeNode(N::Interface, loc());
     take();
     n->text = std::string(expect(K::Ident, "an interface name").text);
+    n->add(attrs());  // `interface I @abi(c) = sig` (ADR 0039)
     expect(K::Eq, "'='");
     expect(K::Sig, "'sig'");
     sigItems(*n, /*isConcept=*/false);
@@ -489,16 +491,38 @@ class Parser {
     return n;
   }
 
+  // `module Pixels.Core @attrs : I, J` as the first item of a file is its
+  // header (ADR 0039): the rest of the file is the module's body.
+  // `module M : I = struct ... end` is a module nested in the file.
   NodePtr moduleItem() {
-    auto n = makeNode(N::Module, loc());
+    SourceLoc start = loc();
+    bool first = firstItem_;
+    firstItem_ = false;
     take();
-    n->text = std::string(expect(K::Ident, "a module name").text);
-    Node *paths = n->add(makeNode(N::Paths, loc()));
+    std::string name = path();
+    NodePtr as = attrs();
+    auto paths = makeNode(N::Paths, loc());
     if (accept(K::Colon)) {
       do {
         paths->add(makeNode(N::Path, loc(), path()));
       } while (accept(K::Comma));
     }
+    if (!at(K::Eq)) {
+      if (!first)
+        diags_.error(start, "a module header must be the first item of its "
+                            "file; a nested module is 'module M : I = struct "
+                            "... end' (ADR 0039)");
+      auto h = makeNode(N::ModuleHeader, start, name);
+      h->add(std::move(as));
+      h->add(std::move(paths));
+      return h;
+    }
+    if (name.find('.') != std::string::npos)
+      fail("a nested module's name is one identifier, not a path");
+    if (!as->kids.empty())
+      fail("attributes go on a module header, not on a nested module");
+    auto n = makeNode(N::Module, start, name);
+    n->add(std::move(paths));
     expect(K::Eq, "'='");
     expect(K::Struct, "'struct'");
     skipSeps();
@@ -1380,6 +1404,9 @@ class Parser {
   Diagnostics &diags_;
   const OperatorTable &operators_;
   size_t pos_ = 0;
+  // Whether the item being parsed is the file's first, where a module
+  // header may stand.
+  bool firstItem_ = false;
   bool contractMode_ = false;  // parsing a requires/ensures predicate
   bool clauseEnded_ = false;   // the predicate has ended at a body `=`
   bool bitOr_ = false;         // `|` is bitwise or here (binaryInfo)

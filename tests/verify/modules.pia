@@ -1,0 +1,39 @@
+(* A module meets its interfaces by proof (ADR 0039): each function listed
+   must take what the interface says, so its own precondition follows from
+   the interface's, and must give what the interface says, so its own
+   postcondition implies the interface's. An interface may promise less
+   than the function proves.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+module Clamp : Clamping
+
+interface Clamping = sig
+  (* Weaker than the definition's postcondition, which is fine. *)
+  let clamp : (lo : u8) -> (hi : u8) -> (x : u8) -> u8
+    requires lo <= hi
+    ensures lo <= result
+  (* Stronger than the definition's precondition, which is fine. *)
+  let halve : (x : u8) -> u8
+    requires x < 200
+    ensures result <= 100
+  (* The definition needs `b > 0`, which the interface does not say. *)
+  let ratio : (a : u8) -> (b : u8) -> u8
+  (* The definition does not promise this. *)
+  let double : (x : u8) -> u16
+    ensures result > x
+end
+
+let clamp (lo : u8) (hi : u8) (x : u8) : u8
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+= if x < lo then lo else if x > hi then hi else x
+
+let halve (x : u8) : u8
+  ensures result <= x
+= x / 2
+
+let ratio (a : u8) (b : u8) : u8
+  requires b > 0
+= a / b
+
+let double (x : u8) : u16 = x + x

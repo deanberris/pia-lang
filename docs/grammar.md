@@ -158,7 +158,7 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 ### Programs and items
 
 ```ebnf
-program   = [ item { SEP item } ] ;
+program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
 item      = let_item | meta_operator | interface | module | import | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
 import    = "import" path ;
@@ -307,7 +307,7 @@ pfield       = IDENT [ "=" pattern ] ;
 ### Modules and interfaces
 
 ```ebnf
-interface = "interface" IDENT "=" "sig" { sig_item } "end" ;
+interface = "interface" IDENT { attribute } "=" "sig" { sig_item } "end" ;   (* @abi(c), @within(...) *)
 sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
           | "let" binder "=" type_value                           (* exported type *)
           | "..." ;
@@ -316,7 +316,10 @@ concept_item = "include" type                                  (* "include" is c
              | "let" "lemma" IDENT { param } { contract } ;   (* a law *)
 adapter   = "let" "adapter" IDENT ":" type "=" "struct" { item } "end" ;  (* "adapter" is contextual *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
+module_header = "module" path { attribute } [ ":" path { "," path } ] ;  (* a file's first item only *)
 ```
+
+A file is one module. Its first item may be a module header, `module Pixels : PixelOps, PixelCodec`, which names the module and the interfaces it claims; the rest of the file is the module's body. A `let` is private unless one of those interfaces lists it, and each item an interface lists is checked against the module, with contracts proved ([ADR 0039](adr/0039-module-and-interface-syntax.md)). A header anywhere but first is an error. `module M : I = struct ... end` is a module nested in a file.
 
 ## Disambiguation
 

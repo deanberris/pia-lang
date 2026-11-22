@@ -60,7 +60,7 @@ bazel test //examples/edges/...
    precondition says the whole 3x3 window is in bounds, and the column
    loops `assert` the step from the loop bounds to that precondition.
 *)
-
+module Edges : Pipeline
 (* Brightness, as (r + 2g + b) / 4, a cheap stand-in for BT.601's
    0.299r + 0.587g + 0.114b. The weights add up to 4, so the result fits in
    a byte. *)
@@ -176,6 +176,21 @@ let edges (rgb : [u8]) (w : usize) (luma_buf : out mutable [u8])
   gray rgb luma_buf;
   blur luma_buf w smooth;
   sobel smooth w dst
+
+(* What main.c calls, by its C names (ADR 0039). The helpers above are
+   private to the module. *)
+interface Pipeline @abi(c) = sig
+  let gray : (rgb : [u8]) -> (dst : out mutable [u8]) -> unit
+    requires len rgb = len dst + len dst + len dst
+  let blur : (src : [u8]) -> (w : usize) -> (dst : out mutable [u8]) -> unit
+    requires len dst = len src && w >= 3 && w + w + w <= len src
+  let sobel : (src : [u8]) -> (w : usize) -> (dst : out mutable [u8]) -> unit
+    requires len dst = len src && w >= 3 && w + w + w <= len src
+  let edges : (rgb : [u8]) -> (w : usize) -> (luma_buf : out mutable [u8])
+      -> (smooth : out mutable [u8]) -> (dst : out mutable [u8]) -> unit
+    requires len rgb = len dst + len dst + len dst && len luma_buf = len dst
+    requires len smooth = len dst && w >= 3 && w + w + w <= len dst
+end
 ```
 
 Every goal in it is proved:
