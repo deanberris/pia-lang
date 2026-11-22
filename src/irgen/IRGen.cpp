@@ -3956,6 +3956,22 @@ class Gen {
 
   // --- `?` and `handle` (ADR 0028) -----------------------------------
 
+  // The scopes a `?` can leave (ADR 0028): the function body, and each
+  // `handle` inside it. A deque, so a frame stays put while inner ones come
+  // and go.
+  struct Frame {
+    const Node *handle = nullptr;  // null for the function body
+    Type result;                   // the function's result type, if written
+    std::string function;
+    // The nodes whose value is the scope's value: a `?` there can end the
+    // scope, since nothing after it in the scope still needs a value.
+    std::set<const Node *> tails;
+    unsigned loops = 0;            // loops open inside the scope
+    unsigned sites = 0;            // the `?`s that reach the handler
+    std::set<const Node *> armsUsed;
+    std::set<std::string> binds;   // the names the handled scope binds
+  };
+
   static bool definesResult(const Node &n) {
     if ((n.kind == NodeKind::LetItem && n.text == "result") ||
         (n.kind == NodeKind::Ctor && (n.text == "Ok" || n.text == "Err")))
@@ -4384,21 +4400,6 @@ class Gen {
   std::map<std::string, Constant> consts_;
   unsigned matchCounter_ = 0;
   std::vector<syntax::NodePtr> matchTrees_;
-  // The scopes a `?` can leave (ADR 0028): the function body, and each
-  // `handle` inside it. A deque, so a frame stays put while inner ones come
-  // and go.
-  struct Frame {
-    const Node *handle = nullptr;  // null for the function body
-    Type result;                   // the function's result type, if written
-    std::string function;
-    // The nodes whose value is the scope's value: a `?` there can end the
-    // scope, since nothing after it in the scope still needs a value.
-    std::set<const Node *> tails;
-    unsigned loops = 0;            // loops open inside the scope
-    unsigned sites = 0;            // the `?`s that reach the handler
-    std::set<const Node *> armsUsed;
-    std::set<std::string> binds;   // the names the handled scope binds
-  };
   std::deque<Frame> frames_;
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.

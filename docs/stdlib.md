@@ -115,6 +115,8 @@ handle
 - **The handler covers a closed set.** The compiler computes the set of every error a `?` in the scope can produce, and the handler's arms must cover exactly that set: a missing case is an error, and so is a case that cannot happen. The verifier knows the `Ok` payload on the normal path and the `Err` value in the handler.
 - **Without a handler, `?` returns the error** from the function, and the function's declared error set must include it. Calling a function adds its error set to the scope's, and nothing is inferred across an interface.
 - `handle` attaches to a function body, a `let ... in` scope, or a loop body. It is one keyword, in Dean's style.
+- **An arm knows only what holds where its errors are raised** (Dean, 2026-11-22). Each arm is checked and proved once per `?` that can reach it, so the arm for `decode_png`'s errors may use `bytes`, while the arm for `open_read`'s errors may not. `| PngError p ->` binds the payload, and `| e ->` or `| NoEntry as e ->` binds the whole error.
+- Implemented for single error types (#84): see [irgen.md](irgen.md#errors). Unions of error sets, or-patterns in arms, and `defer` come next.
 
 **Cleanup at scope end.** Two forms, both run in reverse order of registration on every exit from the scope: falling off the end, `?`, a handler's result, and a loop's next iteration.
 

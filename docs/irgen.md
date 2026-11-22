@@ -63,7 +63,18 @@ A variant `let shape = type | Circle of u16 | Empty` is a record named `shape` w
 - `&&`, `||` and `==>` in code short-circuit, so they lower to `scf.if`. This keeps `i < len xs && xs.[i] <> x` from loading out of bounds.
 - `for i in lo..hi step s do ... done` lowers to `scf.for` over `index`. The bounds are joined to one type, and `i` is bound with `pia.from_index` at that type. The range is half-open. Two literal bounds are `usize`.
 - `while c do ... done` lowers to `scf.while`. The condition is computed in the `before` region.
-- `a; b` evaluates `a` for its effects.
+- `a; b` evaluates `a` for its effects. `a` may not be a `result`: a result is never dropped unexamined, and neither is a loop body's value.
+
+## Errors
+
+`result t e` (`Ok` of a `t`, or `Err` of an `e`) is in the prelude, unless the program defines its own `result`, `Ok` or `Err`. `e?` and `handle` follow [ADR 0028](adr/0028-error-propagation-and-cleanup.md):
+
+- A `?` ends its scope early, so it must be in a *tail* of the scope: the scope itself, the body of a `let ... in`, the second part of `a; b`, a branch of an `if` or an arm of a `match` that is itself a tail, or anything those always evaluate first (a `let` value, an `if` condition, an operand). A `?` inside a branch whose value the scope still needs, or in a loop body without a `handle` of its own, is an error.
+- There it becomes an `if` on the result's tag. `Ok` goes on with the rest of the scope, with the payload where the `?` was. `Err` becomes the scope's value: `Err e` returned to the caller when no `handle` encloses it, which needs the function to return a `result` with the same error type, or the handler's arms for that error.
+- The arms are generated at each `?` that reaches them, so each is checked and proved once per `?`, knowing only what holds there: what was bound before it and what earlier calls promised. An arm that uses a name bound after some `?` that reaches it is an error that names that `?`.
+- At each `?` the arms taken are those for the error type's constructors, in order, up to the first catch-all. A constructor no arm takes is an error at the `?`, and an arm no `?` reaches is an error at the arm, as is a `handle` with no `?` in its scope.
+- `| C p ->` binds the payload, `| e ->` the whole error, and `| C as e ->` both tests `C` and binds the whole error.
+- An expression is evaluated from its first `?` on: in `g a + f x?`, `f x` runs before `g a`. A `?` inside a handler arm, unions of error sets, and `defer` are not supported yet.
 
 ## Contracts
 
@@ -112,4 +123,4 @@ A name may have several generic overloads. The first keeps the name and the othe
 
 ## Not yet
 
-Local functions and lambdas, recursive types, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where` on values), modules, `decreases` for metaprograms, soft failure of a type-level metaprogram, generic adapters, entailment proved from laws and contracts, and precondition orders that need a proof rather than included clauses.
+Local functions and lambdas, recursive types, `dyn`, floats, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where` on values), modules, `decreases` for metaprograms, generic adapters, entailment proved from laws and contracts, and precondition orders that need a proof rather than included clauses.
