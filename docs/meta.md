@@ -77,9 +77,30 @@ There, types are values. A type's name, such as `u8` or `pixel`, denotes the typ
 | Builtin | Meaning |
 | --- | --- |
 | `size_of t` | the bytes a value of `t` takes: an integer the smallest of 1, 2, 4 or 8 that holds its range, a bool 1, an array its elements', a record the sum of its fields'; a slice has no fixed size, which is an error |
+| `type_kind t` | `"int"`, `"bool"`, `"unit"`, `"array"`, `"slice"`, `"record"` or `"variant"` |
+| `element t` | an array's or a slice's element type |
+| `field_types t` | a record's field types, or a variant's payload types, as a list |
+| `type_args t` | a generic instance's type arguments, as a list (empty for any other type) |
 | `eq ne lt gt le ge add sub mul div rem and or implies iff` | the core builtins that a `where` predicate's operators expand to |
 
 A metaprogram that runs during expansion has no type values: a type's name there is an unknown name, as before.
+
+A type-level metaprogram that a type or a constraint uses must terminate, so that which overloads a call can choose never depends on the step budget. The compiler checks this where it is defined, and an error is reported only where one that may not terminate is used:
+
+- it may call the builtins, except `listing` and `redefine`, and other type-level metaprograms that terminate;
+- a recursive call must be on a component of a type parameter, in one parameter position that all its recursive calls share: `element t`, or an element of `field_types t` or `type_args t` that `map` or `fold` hands to a lambda, or a component of one of those. Types are finite trees, so this always ends;
+- local functions may not recurse, it may refer to itself only by calling itself, and a cycle of metaprograms calling each other is rejected (it would need a measure they all decrease, which is not supported yet).
+
+```ocaml
+let meta plain (t : type) : bool =
+  if type_kind t = "int" || type_kind t = "bool" then true
+  else if type_kind t = "array" then plain (element t)
+  else if type_kind t = "record" then
+    fold (let (ok) (f) => ok && plain f) true (field_types t)
+  else false
+```
+
+Running out of steps in such a metaprogram is an internal compiler error.
 
 ## Quotes and splices
 

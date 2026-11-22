@@ -1,0 +1,46 @@
+(* Type-level metaprograms that types and constraints use must terminate
+   (ADR 0035, step 2). Recursion on a component of a type parameter, such
+   as `element t` or an element of `field_types t`, always does, since
+   types are finite trees.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* Plain data: integers and bools, and arrays and records of plain data,
+   but no slices. *)
+let meta plain (t : type) : bool =
+  if type_kind t = "int" || type_kind t = "bool" then true
+  else if type_kind t = "array" then plain (element t)
+  else if type_kind t = "record" then
+    fold (let (ok) (f) => ok && plain f) true (field_types t)
+  else false
+
+(* The innermost element type of nested arrays. *)
+let meta innermost (t : type) : type =
+  if type_kind t = "array" then innermost (element t) else t
+
+let pixel = type { r : u8; g : u8; b : u8 }
+let tile = type { corner : pixel; lit : bool }
+
+let fields (t : type where plain t) (x : t) : u8
+  ensures result = 1
+= 1
+
+let of_pixel (p : pixel) : u8
+  ensures result = 1
+= fields p
+
+let of_tile (t : tile) : u8
+  ensures result = 1
+= fields t
+
+let of_array (a : [u8; 4]) : u8
+  ensures result = 1
+= fields a
+
+let first_of (m : [u16; 4]) : innermost [u16; 4]
+  ensures result = m.[0]
+= m.[0]
+
+(* Expected report, in order.
+// CHECK: 0 failed, 0 skipped
+*)

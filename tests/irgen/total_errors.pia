@@ -1,0 +1,36 @@
+(* A type-level metaprogram that a constraint or a type uses must be
+   proved to terminate (ADR 0035, step 2). One that is not is still a
+   metaprogram, and only its uses are errors.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta spin (t : type) : bool = spin t
+let meta ping (t : type) : bool = pong t
+let meta pong (t : type) : bool = ping (element t)
+let meta reads (t : type) : bool = length (listing ()) > 0
+let meta via (t : type) : bool = spin t
+let meta each (t : type) : bool =
+  fold (let (ok) (f) => ok && each t) true (field_types t)
+
+(* Never used, so never an error. *)
+let meta unused (t : type) : bool = unused t
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'spin' is used in a constraint, so it must terminate, but the recursive call at 7:35 has no argument that is a component of its parameter, such as 'element t'
+*)
+let a (t : type where spin t) (x : t) : u8 = 0
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'ping' is used in a constraint, so it must terminate, but it is mutually recursive ('ping' calls 'pong' calls 'ping'), which is not supported yet
+*)
+let b (t : type where ping t) (x : t) : u8 = 0
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'reads' is used in a constraint, so it must terminate, but it calls 'listing' at 10:44, which reads or changes the program
+*)
+let c (t : type where reads t) (x : t) : u8 = 0
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'via' is used in a constraint, so it must terminate, but it calls 'spin', which may not terminate: the recursive call at 7:35 has no argument that is a component of its parameter, such as 'element t'
+*)
+let d (t : type where via t) (x : t) : u8 = 0
+
+(* CHECK: total_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'each' is used in a constraint, so it must terminate, but the recursive call at 13:31 has no argument that is a component of its parameter, such as 'element t'
+*)
+let e (t : type where each t) (x : t) : u8 = 0
