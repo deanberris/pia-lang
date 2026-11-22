@@ -183,7 +183,7 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type: case K::Sig:
+      case K::Assume: case K::Type: case K::Sig: case K::Defer:
         return true;
       default:
         return false;

@@ -4505,6 +4505,7 @@ class Gen {
         break;
       case NodeKind::While:
       case NodeKind::Handle:
+      case NodeKind::Defer:  // cleanup runs later, and cannot fail
       case NodeKind::Lambda:
       case NodeKind::Quantifier:
       case NodeKind::Assert:

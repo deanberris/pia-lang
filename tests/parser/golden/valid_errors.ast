@@ -276,4 +276,50 @@
       )
     )
   )
+  (LetItem "both"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Sequence
+      (Apply
+        (Name "note")
+        (IntLit "0")
+      )
+      (Sequence
+        (Defer
+          (Apply
+            (Name "note")
+            (IntLit "1")
+          )
+        )
+        (Sequence
+          (Defer
+            (Apply
+              (Name "note")
+              (IntLit "2")
+            )
+          )
+          (Apply
+            (Name "note")
+            (Name "x")
+          )
+        )
+      )
+    )
+  )
 )

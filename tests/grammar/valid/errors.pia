@@ -29,3 +29,5 @@ let read (path : u8) : result u8 load_error =
   let f = open_read path? in
   defer close f;
   read_all f?
+
+let both (x : u8) : unit = note 0; defer note 1; defer note 2; note x

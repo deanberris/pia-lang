@@ -7,7 +7,7 @@
 let step_error = type | Zero
 
 let step (x : u8) : result u8 step_error
-  ensures (match result with | Ok v -> v = x | Err _ -> x = 0)
+  ensures (match result with | Ok v -> v = x && x <> 0 | Err _ -> x = 0)
 = if x = 0 then Err Zero else Ok x
 
 (* Pushes `v` onto a two-entry log, newest first. *)
@@ -36,7 +36,7 @@ let handled (log : borrowed inout mutable [u8; 2]) (x : u8) : u8
 
 (* Each branch is an exit. *)
 let pick (log : borrowed inout mutable [u8; 2]) (b : bool) : u8
-  ensures log.[0] = 3 && result <= 2
+  ensures log.[0] = 3 && (b ==> result = 1)
 = defer mark log 3;
   if b then 1 else 2
 
