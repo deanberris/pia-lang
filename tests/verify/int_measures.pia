@@ -1,0 +1,31 @@
+(* A measure of the spec-only `int` (#187): the measure goals are over
+   SMT Ints, so a recursive spec function or lemma over `int` is checked
+   like one over a bit-vector, and a measure that can go negative fails.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let rec spec down (n : int) : int
+  requires n >= 0
+  decreases n
+= if n = 0 then 0 else down (n - 1)
+
+(* Without the precondition, `n` may be negative, so the measure is not
+   bounded below. *)
+let rec spec unbounded (n : int) : int
+  decreases n
+= if n = 0 then 0 else unbounded (n - 1)
+
+let lemma down_zero (n : int) : unit
+  requires n >= 0
+  ensures down n = 0
+  decreases n
+= if n > 0 then down_zero (n - 1)
+
+(* Expected report.
+// CHECK: int_measures.pia:10:24: proved: the measure of 'down' decreases [smt]
+// CHECK: int_measures.pia:16:24: failed: the measure of 'unbounded' decreases
+// CHECK-NEXT: counterexample: n = -1
+// CHECK: int_measures.pia:22:17: proved: the measure of 'down_zero' decreases [smt]
+// CHECK: int_measures.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: 6 proved, 1 failed, 0 skipped
+*)

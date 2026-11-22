@@ -1,0 +1,56 @@
+(* A goal fails in a model's witness copy only if the witness query is
+   complete (#188). If it stopped unfolding a recursive spec function at
+   its fuel, that function is uninterpreted past there, so the model's
+   "counterexample" may not be one: the goal is decided over the axioms
+   instead, and the report hints at the fuel.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let theory Clock = sig
+  let sort clock
+  let spec time : (c : clock) -> int
+  let spec tick : (c : clock) -> clock
+  let axiom tick_time (c : clock) ensures time (tick c) = time c + 1
+end
+
+let model counter : Clock = struct
+  let sort clock = int
+  let spec time (c : int) : int = c
+  let spec tick (c : int) : int = c + 1
+end
+
+let rec spec ticks (c : Clock.clock) (n : u8) : Clock.clock
+  decreases n
+= if n = 0 then c else Clock.tick (ticks c (n - 1))
+
+(* True, but beyond one unfolding: no counterexample in the model. *)
+let lemma unaided (c : Clock.clock) (n : u8) : unit
+  ensures Clock.time (ticks c n) = Clock.time c + n
+= ()
+
+(* Three ticks need four unfoldings, which the fuel gives. *)
+let lemma short (c : Clock.clock) : unit
+  ensures Clock.time (ticks c 3) = Clock.time c + 3
+= ()
+let lemma fueled (c : Clock.clock) : unit @fuel(4)
+  ensures Clock.time (ticks c 3) = Clock.time c + 3
+= ()
+
+(* False, with no recursion: the model's counterexample stands. *)
+let lemma wrong (c : Clock.clock) : unit
+  ensures Clock.time (Clock.tick c) = Clock.time c
+= ()
+
+(* Expected report.
+// CHECK: fuel_counterexamples.pia:28:3: failed: the postcondition holds
+// CHECK-NOT: in the model
+// CHECK: hint: a recursive spec function was unfolded only as far as its @fuel allows, so this goal may hold; raise @fuel on the function or the lemma, or prove the fact by induction in a lemma
+// CHECK: fuel_counterexamples.pia:33:3: failed: the postcondition holds
+// CHECK-NOT: in the model
+// CHECK: hint: a recursive spec function
+// CHECK: fuel_counterexamples.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: fuel_counterexamples.pia:41:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample in the model 'counter': c = {{-?[0-9]+}}
+// CHECK-NOT: hint
+// CHECK: proved: the model 'counter' meets the axiom 'Clock.tick_time' [smt]
+*)
