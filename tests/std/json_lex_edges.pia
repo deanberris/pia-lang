@@ -1,0 +1,85 @@
+(* Importers of Pia.Text.Json.Lex see only its interface's contracts and
+   Pia.Text.Json.Spec's definitions, and those decide the edges: the end
+   of the input, whitespace before a token, the kind of a structural
+   token from its first byte, and where errors can be.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Lex.Lexer as Lex
+
+(* Nothing left, or only whitespace: the end, where the input ends. *)
+let empty (s : [u8]) : unit
+  requires len s = 0
+= match Lex.next s 0 with
+  | Ok t -> assert t.kind = Spec.End && t.start = 0 && t.stop = 0; ()
+  | Err e -> assert false; ()
+
+let blank (s : [u8]) : unit
+  requires len s = 3 && s.[0] = 0x20 && s.[1] = 0x09 && s.[2] = 0x0D
+= match Lex.next s 0 with
+  | Ok t -> assert t.kind = Spec.End && t.start = 3; ()
+  | Err e -> assert false; ()
+
+(* At the end of the input the token is the end, from any position. *)
+let at_end (s : [u8]) : unit =
+  match Lex.next s (len s) with
+  | Ok t -> assert t.kind = Spec.End && t.start = len s && t.stop = len s; ()
+  | Err e -> assert false; ()
+
+(* Whitespace, then '[': the token is the bracket, after the whitespace. *)
+let bracket (s : [u8]) : unit
+  requires len s >= 3 && s.[0] = 0x20 && s.[1] = 0x0A && s.[2] = 0x5B
+= (* Which bytes are whitespace, so the solver can place the start. *)
+  assert Spec.is_ws s.[0] && Spec.is_ws s.[1] && Spec.is_ws s.[2] = false;
+  match Lex.next s 0 with
+  | Ok t -> assert t.kind = Spec.LBracket && t.start = 2 && t.stop = 3; ()
+  | Err e -> assert false; ()
+
+(* A comma is a comma, wherever it is. *)
+let comma (s : [u8]) (i : usize) : unit
+  requires i < len s && s.[i] = 0x2C
+= assert Spec.is_ws s.[i] = false;
+  match Lex.next s i with
+  | Ok t ->
+      assert t.start = i;
+      assert t.kind = Spec.Comma;
+      assert t.stop = i + 1; ()
+  | Err e -> assert false; ()
+
+(* A token never ends before it starts, nor past the input, and an error
+   is found within the input. *)
+let bounds (s : [u8]) (pos : usize) : unit
+  requires pos <= len s
+= match Lex.next s pos with
+  | Ok t -> assert pos <= t.start && t.start <= t.stop && t.stop <= len s; ()
+  | Err e -> assert pos <= Lex.error_at e && Lex.error_at e <= len s; ()
+
+(* A string token is a well-formed literal: it starts and ends with a
+   quote. *)
+let quoted (s : [u8]) (pos : usize) : unit
+  requires pos <= len s
+= match Lex.next s pos with
+  | Ok t ->
+      (match t.kind with
+       | String ->
+           assert t.stop - t.start >= 2 && s.[t.start] = 0x22 && s.[t.stop - 1] = 0x22; ()
+       | _ -> ())
+  | Err e -> ()
+
+(* `true` at 0 is a literal token, so it is never a BadLiteral there. *)
+let truth (s : [u8]) : unit
+  requires len s >= 4 && s.[0] = 0x74 && s.[1] = 0x72 && s.[2] = 0x75 && s.[3] = 0x65
+= assert Spec.is_ws s.[0] = false;
+  match Lex.next s 0 with
+  | Ok t -> assert t.kind = Spec.True && t.stop = 4; ()
+  | Err e ->
+      (match e with
+       | BadLiteral p -> assert p <> 0; ()
+       | _ -> ())
+
+(* Every goal is proved, from the interfaces alone.
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

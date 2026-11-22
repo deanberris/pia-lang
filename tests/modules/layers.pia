@@ -1,0 +1,31 @@
+(* Interfaces in layers (ADR 0039, step 3): Calc.Numerals shows a type
+   that names Calc.Digits's type, and a spec function whose definition
+   calls Calc.Digits's spec function by its path. An importer of both, under
+   aliases of its own, reasons with both definitions: the copied definition
+   names Calc.Digits by its path, which this file's aliases do not change.
+   The goals of imported spec functions, such as digit_at's index, are
+   proved in their own module and not again here.
+// RUN: piac --emit=interface -o %t %S/Inputs/digits.pia
+// RUN: piac --emit=interface -o %t %S/Inputs/numerals.pia
+// RUN: piac --verify --iface-path=%t %S/Inputs/numerals.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Calc.Digits.Digits as Dg
+import Calc.Numerals.Numerals as Nm
+
+let spec all_digits (xs : [u8]) : bool =
+  forall (i in 0..len xs). Dg.digit_at Dg.Dec xs i
+
+(* Calc.Numerals.make promises a digit of the base, so a decimal one. *)
+let small (x : u8) : u8
+  ensures Dg.digit Dg.Dec result
+= let n = Nm.make Dg.Dec x in
+  n.value
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: the index is within bounds
+// CHECK-NOT: failed
+// CHECK: 1 proved, 0 failed, 0 skipped
+*)

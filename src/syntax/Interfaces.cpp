@@ -97,7 +97,8 @@ void collectCtors(const Node &n, const std::string &module,
 // In an imported definition, such as a generic function's body or a
 // concept's signature, `M.f` naming an item of another imported module,
 // such as the concept `Pia.Core.Order.Eq` that a generic of
-// Pia.Core.Algo.Search is constrained by. Nothing else is renamed: the
+// Pia.Core.Algo.Search is constrained by, or a constructor of another
+// module's type. Nothing else is renamed: the
 // importer's own unqualified names must not capture the definition's.
 void resolveDotted(Node &n, const Imported &imp) {
   if (n.kind == N::Field)
@@ -106,6 +107,14 @@ void resolveDotted(Node &n, const Imported &imp) {
       if (imp.items.count(name)) {
         n.kind = N::Name;
         n.text = name;
+        n.kids.clear();
+        return;
+      }
+      // `M.C` is the constructor `C`, as in the program's own items: a
+      // contract copied from Pia.Text.Json.Lex names Pia.Text.Json.Spec.End.
+      if (imp.ctors.count(name)) {
+        n.kind = N::Name;
+        n.text = name.substr(name.rfind('.') + 1);
         n.kids.clear();
         return;
       }

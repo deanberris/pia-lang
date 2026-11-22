@@ -15,6 +15,8 @@ lit_tests(
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:Search.pia",
+        "//lib/Pia/Text/Json:Lex.pia",
+        "//lib/Pia/Text/Json:Spec.pia",
     ],
     tools = ["//tools/piac"],
 )
@@ -102,5 +104,23 @@ sh_test(
     srcs = ["search_run_test.sh"],
     args = ["$(rootpath :search_run)"],
     data = [":search_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "json_lex_run",
+    src = "Inputs/json_lex_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:spec",
+    ],
+)
+
+sh_test(
+    name = "json_lex_run_test",
+    srcs = ["json_lex_run_test.sh"],
+    args = ["$(rootpath :json_lex_run)"],
+    data = [":json_lex_run"],
     target_compatible_with = APPLE_SILICON,
 )
