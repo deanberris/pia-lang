@@ -101,10 +101,10 @@ let plus3 (a : u8) (b : u8) (c : u8) : u8 = plus (plus a b) c
 $ piac --verify calls.pia
 calls.pia:4:5: proved: '+' does not overflow u8 [smt]
 calls.pia:3:3: proved: the postcondition holds [smt]
-calls.pia:6:32: failed: the precondition of 'inc' holds
-  counterexample: x = 255
-calls.pia:6:27: failed: the precondition of 'inc' holds
-  counterexample: x = 254
+calls.pia:6:51: failed: the precondition of 'plus' holds
+  counterexample: a = 255, b = 255, c = 0
+calls.pia:6:45: failed: the precondition of 'plus' holds
+  counterexample: a = 3, b = 252, c = 255
 2 proved, 2 failed, 0 skipped
 ```
 
