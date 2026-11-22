@@ -59,11 +59,11 @@ A constraint may require constraints on other types: `Eq (pair a b)` requires `E
 
 ### Matching on types
 
-Accepted on a condition (Dean, 2026-11-22): metaprograms need a way to pattern-match on a type instead of cascading `if t = u8 then ... else if ...`. `match` already takes values, and types are values, so it takes a type too, with type patterns:
+Accepted on a condition (Dean, 2026-11-22): metaprograms need a way to pattern-match on a type instead of cascading `if t = u8 then ... else if ...`. Dean added that the `switch` can itself be a metaprogram, so it lives in the library, not the core language:
 
 ```ocaml
 let meta widen (t : type) : type =
-  match t with
+  switch t with
   | u8 -> u16
   | u16 -> u32
   | u32 -> u64
@@ -72,13 +72,22 @@ let meta widen (t : type) : type =
   | _ -> fail (concat "no integer type is wider than " (name t))
 ```
 
-- A type name (`u8`, `pixel`) matches exactly that type. `[e]` and `[e; n]` match a slice or an array and bind its element type (and length). A generic's name applied to patterns, as in `option e` or `result t e`, matches its instances and binds or matches their type arguments.
-- A lower-case name that is not a type binds the whole type, and `_` matches anything. Kind patterns match by shape: `record fs` and `variant cs` bind the list of field or payload types, `int` matches every integer type. A name that is both a type and a binder is an error, as shadowing always is (ADR 0022).
-- Types are an open set, so a type `match` must end with a catch-all. An arm after one that already covers it is an error, as for value `match`.
-- The names a type pattern binds are components of the matched type, so a recursive call on them is structural recursion under "Constraints are total", with no `decreases` needed.
-- It is ordinary metaprogram code, so it needs no new keyword, and the interpreter evaluates it arm by arm. A predicate can use it as well: `let meta small (t : type) : bool = match t with | u8 -> true | [e; n] -> n <= 16 && small e | _ -> false`.
+What the patterns mean:
 
-It is scheduled alongside `?` and the error handlers (#84).
+- A type name (`u8`, `pixel`) matches exactly that type. `[e]` and `[e; n]` match a slice or an array and bind its element type (and length). A generic's name applied to patterns, as in `option e` or `result t e`, matches its instances and binds or matches their type arguments.
+- A lower-case name that is not a type binds the whole type, and `_` matches anything. Kind patterns match by shape: `record fs` and `variant cs` bind the list of field or payload types, and `int` matches every integer type. A name that is both a type and a binder is an error, as shadowing always is (ADR 0022).
+- Types are an open set, so a `switch` must end with a catch-all. An arm after one that already covers it is an error.
+- The names a pattern binds are components of the switched type, so a recursive call on them is structural recursion under "Constraints are total", with no `decreases` needed.
+
+How it is built: `switch` is a prelude metaprogram that rewrites itself, during expansion, into the cascade of tests it replaces (`eq t u8`, `type_kind t = "slice"`, `element t`, `type_args t`, ...). So the interpreter, the totality check and IRGen see only code they already handle. The metaprogram facilities need five things that they lack today, each useful beyond `switch`:
+
+1. **Declared expression forms.** A `let meta form switch` declaration, like `let meta operator`, that tells the parser `switch e with | p -> e ...` is a form whose arms reach the metaprogram as syntax. The parser already learns operators from declarations and parses again; forms work the same way. Without it, `switch` would have to be a call over a quoted block of arms, which reads worse than the cascade it replaces.
+2. **Type constructors as metaprogram values.** A type-level metaprogram can return a type it names (`u16`), but cannot build `[e]`, `[e; n]` or `option e` from a type value `e`. The interpreter needs `slice_of`, `array_of` and `instance_of` (or type expressions with splices), so arms like `[widen e]` can be written at all.
+3. **Builtins for what patterns test.** `generic_of t` (the generic an instance comes from, or nothing) and `length_of t` (an array's length). `type_kind`, `element`, `field_types` and `type_args` already cover the rest.
+4. **Totality through indexing.** The expansion binds `option e` as `let e = nth (type_args t) 0 in ...`. The totality check must count `nth (type_args p) k` as a component of `p`; today only elements that `map` or `fold` hand to a lambda count.
+5. **Binders from user syntax.** The names an arm binds come from the user, so the expansion must bind them unrenamed, as `$!` splices already allow (ADR 0022), and report a clash with a type name as shadowing.
+
+It is scheduled after `?` and the error handlers (#84): (2), (3) and (4) first, since they also serve hand-written cascades; then (1) and the `switch` metaprogram itself.
 
 ### Results are cached
 
@@ -96,5 +105,5 @@ A candidate's substitution result, viable with its instance's signature or faile
 
 - Step 1 (type-level metaprograms in types, and `where` predicates): a `where` predicate is any conjunct that is a comparison, a connective other than `&&`, or a call of a type-level metaprogram returning `bool`; a false one removes the candidate with its reason. Until steps 2 and 3, a metaprogram's failure in a type or a predicate is a hard error. In the definition check, a type-level metaprogram applied to a type parameter gives a stand-in type, and a signature that has one is checked in each instance rather than once, since nothing yet relates `widen t` to `t`; concept requirements that mention type-level metaprograms would close that gap. A generic whose constraints state every predicate of another's is the more specific, and a generic body may only call a generic whose predicates its own constraints state.
 - Step 2 (the totality check): structural recursion is recognised on `element p` and on the elements of `field_types p` and `type_args p` that `map` or `fold` hand to a lambda, transitively. Since a type-level metaprogram's parameters are all types, an integer `decreases` measure has nothing to measure yet; it waits for metaprograms with value parameters in constraints. Local functions may not recurse, `listing` and `redefine` are impure, and a cycle between metaprograms is rejected.
-- Matching on types (the acceptance condition): not implemented yet; it comes alongside `?` and the error handlers (#84).
+- Matching on types (the acceptance condition): not implemented yet; it comes after `?` and the error handlers (#84), in the order given under "Matching on types".
 - Step 3 (soft failure): a metaprogram's `fail` while a candidate's signature is substituted, or while its predicates are evaluated, removes the candidate with the reason. Running out of steps there, and a use of a metaprogram that may not terminate, stay errors. Results are not cached per candidate and type arguments yet; concept checks already are. `--explain-overloads=<file:line>` prints the candidates, their reasons and the choice, as notes.
