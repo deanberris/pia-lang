@@ -37,6 +37,9 @@ struct Outcome {
   // When the counterexample was found in a model's witness copy of the
   // function: that model's name.
   std::string model;
+  // For a goal proved with theory axioms: the ones the proof used, from
+  // its unsat core (or every axiom it was given, if no core was found).
+  std::vector<std::string> axiomsUsed;
 };
 
 struct Options {
@@ -76,6 +79,14 @@ struct Options {
 
 // What one verifyModule call did, for --verify-stats and the build-time
 // benchmark (tools/bench).
+// A trusted theory's consistency check: "consistent" when Z3 found a
+// model of its axioms (a witness), "inconsistent" with the axioms that
+// contradict each other, or "unchecked" when the solver could not decide.
+struct TheoryCheck {
+  std::string theory, where, status, reason;
+  std::vector<std::string> core;
+};
+
 struct Stats {
   unsigned goals = 0;        // selected goals
   unsigned unselected = 0;   // goals --verify-only left out
@@ -100,6 +111,8 @@ struct Stats {
   unsigned long long typeCost = 0, contractCost = 0;
   // Each axiom's triggers, as written: `Lip.seq_lip` -> {"Lip.seq f g"}.
   std::vector<std::pair<std::string, std::vector<std::string>>> triggers;
+  // The consistency check of each trusted theory (ADR 0036).
+  std::vector<TheoryCheck> theories;
 };
 
 // Whether a goal of this kind is written in a contract, rather than raised

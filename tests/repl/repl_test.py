@@ -91,6 +91,24 @@ class ReplTest(unittest.TestCase):
         self.assertTrue(any(p["status"] == "failed" for p in kinds(r, "proof")))
         self.assertEqual(kinds(r, "value"), [])
 
+    def test_theory_and_trusting(self):
+        # A theory, and `import T trusting`, work in the REPL as in a file
+        # (ADR 0036): the import changes nothing in the module that declares
+        # T, and a lemma over T is proved from its axioms.
+        r = self.repl.run("@trusted\n"
+                          "let theory T = sig\n"
+                          "  let sort s\n"
+                          "  let spec f : (x : s) -> u8\n"
+                          "  let axiom small (x : s) ensures f x < 10\n"
+                          "end")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("import T trusting")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("let lemma l (x : T.s) : unit ensures T.f x < 11 = ()")
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(kinds(r, "proof"), r)
+        self.assertTrue(all(p["status"] == "proved" for p in kinds(r, "proof")))
+
     def test_no_shadowing(self):
         self.repl.run("let f (a : u8) : u8 = a")
         r = self.repl.run("let f (a : u8) : u8 = 0")

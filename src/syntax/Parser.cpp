@@ -233,6 +233,12 @@ class Parser {
         auto n = makeNode(N::Import, loc());
         take();
         n->text = path();
+        // `import M trusting` accepts every trusted axiom of the theories M
+        // exports (ADR 0036); `trusting` is a keyword only here.
+        if (at(K::Ident) && text() == "trusting") {
+          take();
+          n->flags = "trusting";
+        }
         return n;
       }
       default:

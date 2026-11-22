@@ -1,0 +1,56 @@
+(* Trusted theories (ADR 0036, step 4). A theory with no model is checked
+   for consistency when it is defined: contradictory axioms are an error
+   that names them. Every goal proved with axioms records, from its unsat
+   core, the ones it used, and `--trust-report --why` lists them per
+   trusted axiom. The cores live in the proof cache too.
+// RUN: not piac --verify --trust-report --why %s | FileCheck %s
+// RUN: rm -rf $TEST_TMPDIR/cache && not piac --verify --proof-cache=$TEST_TMPDIR/cache %s > /dev/null
+// RUN: not piac --verify --trust-report --why --verify-stats --proof-cache=$TEST_TMPDIR/cache %s 2>&1 | FileCheck %s --check-prefix=CACHED
+*)
+@trusted
+
+let theory Good = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let spec g : (x : s) -> u8
+  let axiom f_small (x : s) ensures f x < 10
+  let axiom g_small (x : s) ensures g x < 20
+end
+
+import Good trusting
+
+let theory Bad = sig
+  let sort t
+  let spec h : (x : t) -> u8
+  let spec k : (x : t) -> u8
+  let axiom zero (x : t) ensures h x = 0
+  let axiom one (x : t) ensures h x = 1
+  let axiom fine (x : t) ensures k x < 5
+end
+
+(* Uses f_small only. *)
+let lemma uses_f (x : Good.s) : unit ensures Good.f x < 11 = ()
+
+(* Uses no axiom: it is fully proved, though its file trusts Good. *)
+let lemma uses_none (x : Good.s) : unit ensures Good.f x = Good.f x = ()
+
+(* A lemma's callers rest on what the lemma did. *)
+let lemma through (x : Good.s) : unit ensures Good.f x < 11 = uses_f x
+
+(* Expected report, in order.
+// CHECK: trust_checks.pia:26:3: the theory 'Bad' is inconsistent: its axioms contradict each other
+// CHECK: trust_checks.pia:16:3: the theory 'Good' is consistent: the solver found a witness, a model of its axioms
+// CHECK: trust_checks.pia:20:1: trusting the theory 'Good'
+// CHECK: trust_checks.pia:16:3: trusted: the axiom 'Good.f_small', since the theory 'Good' has no model
+// CHECK-NEXT: used by: {{.*}}trust_checks.pia:32:38, {{.*}}trust_checks.pia:38:39
+// CHECK: trust_checks.pia:17:3: trusted: the axiom 'Good.g_small', since the theory 'Good' has no model
+// CHECK-NEXT: used by no proved goal
+// CHECK: 5 trusted items
+// CHECK: 2 of 3 proved goals rest on a trusted axiom; the other 1 are fully proved
+// CHECK: trust_checks.pia:26:3: failed: the axioms of the theory 'Bad' are consistent [they contradict each other: Bad.one, Bad.zero]
+*)
+
+(* From the cache, the cores are the same.
+// CACHED: verify-stats: goals={{[0-9]+}} {{.*}} cached=3
+// CACHED: used by: {{.*}}trust_checks.pia:32:38, {{.*}}trust_checks.pia:38:39
+*)

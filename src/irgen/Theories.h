@@ -4,6 +4,7 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "syntax/Diagnostics.h"
 #include "syntax/Syntax.h"
@@ -35,6 +36,8 @@ struct TheoryInfo {
   // `m.witness.f` -> `f`: a client with the model's definitions in place
   // of the theory's, where a failed goal looks for a counterexample.
   std::map<std::string, std::string> witnesses;
+  // `import T trusting`: each theory a module trusts, and where.
+  std::vector<std::pair<std::string, syntax::SourceLoc>> trusting;
 };
 void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,
                      TheoryInfo *info = nullptr);

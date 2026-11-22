@@ -319,8 +319,10 @@ std::string functionType(mlir::func::FuncOp fn, const std::set<std::string> &sta
   std::string out = unit ? "() -> " : "";
   for (unsigned i = 0; i < t.getNumInputs(); ++i) {
     std::string name;
-    if (auto nl = mlir::dyn_cast<mlir::NameLoc>(fn.getArgument(i).getLoc()))
-      name = nl.getName().str();
+    // A theory's abstract function has no body, so no arguments to name.
+    if (!fn.isExternal())
+      if (auto nl = mlir::dyn_cast<mlir::NameLoc>(fn.getArgument(i).getLoc()))
+        name = nl.getName().str();
     name = name.substr(0, name.find('#'));  // a quote's renamed parameter
     if (states.count(name)) continue;
     std::string mods;
@@ -1029,7 +1031,7 @@ struct Session::Impl {
     std::map<std::string, std::string> newShapes;
     std::set<std::string> nullary;  // compiling replaces the func ops
     for (auto &[name, f] : fns) {
-      if (f.getNumArguments() == 0) nullary.insert(name);
+      if (f.getFunctionType().getNumInputs() == 0) nullary.insert(name);
       newTypes[name] = functionType(f, stateNames, su.unitFns.count(name) > 0);
       newShapes[name] = functionShape(f);
       mlir::FunctionType t = f.getFunctionType();

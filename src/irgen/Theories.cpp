@@ -241,7 +241,14 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
     if (item->kind == NodeKind::FileAttr) continue;
     // `import T` of a theory in this program needs nothing: there are no
     // modules yet, so its names are already here.
-    if (item->kind == NodeKind::Import && theories.count(item->text)) continue;
+    if (item->kind == NodeKind::Import && theories.count(item->text)) {
+      // `import T trusting` grants trust in T's axioms (ADR 0036). In the
+      // module that declares T it changes nothing, since T is trusted
+      // there already; the grant is recorded for --trust-report.
+      if (info && item->flags == "trusting")
+        info->trusting.emplace_back(item->text, item->loc);
+      continue;
+    }
     if (item->kind != NodeKind::Theory && item->kind != NodeKind::Model) {
       out.push_back(std::move(item));
       continue;
@@ -382,6 +389,12 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
               llvm::StringRef(n.text).starts_with(prefix) &&
               !t.abstracts.count(n.text))
             return false;
+          // Another theory's member may take or return this theory's
+          // sorts, which the witness replaces: no copy for its users.
+          if (n.kind == NodeKind::Name || n.kind == NodeKind::TypeName) {
+            auto other = llvm::StringRef(n.text).split('.').first.str();
+            if (other != t.name && theories.count(other)) return false;
+          }
           if (n.kind == NodeKind::TypeName &&
               llvm::StringRef(n.text).starts_with(prefix) &&
               !t.sorts.count(n.text))

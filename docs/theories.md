@@ -3,7 +3,7 @@
 A *theory* teaches the verifier about a domain. It declares new sorts, functions on them that have no body, and axioms about them, and it lives in a library, not in the compiler ([ADR 0036](adr/0036-library-theories.md)). This page is a catalogue of worked theories. Each one shows the theory, a model that proves its axioms, a proof that uses the theory, and a mistake that the theory catches.
 
 !!! note "Status"
-    Theories, models and sealing are implemented (ADR 0036, steps 1 to 3), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. The examples that need `trusting` (step 4) or theory-building metaprograms (step 5) are still marked `untested` and skipped; the table below says which.
+    Theories, models and sealing are implemented (ADR 0036, steps 1 to 4), and the documentation test proves every example below with `piac --verify`, and checks that each mistake fails. Consistency checks of trusted theories, `--trust-report --why` and `import ... trusting` (step 4) are implemented too. The examples that need theory-building metaprograms (step 5) are still marked `untested` and skipped.
 
 ## How to read an entry
 
@@ -216,25 +216,54 @@ let lemma request_budget (a : Prob.event) (b : Prob.event) (c : Prob.event) : un
 
 A request fails if any of three stages fails. Each stage's failure rate is at most one in a thousand, so `request_budget` proves that the request succeeds at least 99.7% of the time. The refinement on `chance` is what makes the model meet `pr_range`: every `chance` has `0.0 <= p && p <= 1.0`, and each of the model's functions proves it of the `chance` it returns.
 
-**Independence is a trusted axiom.** A tighter bound, such as "two replicas both lose a write with probability at most p²", needs independence, and no deterministic random number generator is truly independent. That is the idealisation every analysis of a randomised algorithm makes, so Pia makes it visible: the axiom lives in a `@trusted` module, and its users must import that theory with `trusting`. Trust covers the whole theory, so `Ideal` holds only the axiom that needs it.
+**Independence is a trusted axiom.** A tighter bound, such as "two replicas both lose a write with probability at most p²", needs independence, and no deterministic random number generator is truly independent. That is the idealisation every analysis of a randomised algorithm makes, so Pia makes it visible: the axiom lives in a theory with no model, which only a `@trusted` module may declare, and its users import it with `trusting`. Trust covers the whole theory, so `Ideal` holds only the axiom that needs it.
 
-<!-- untested: trusted theories and `trusting` land in ADR 0036 step 4 -->
+Modules cannot import one another yet, so this program repeats `Prob` and its model, and declares `Ideal` in the same `@trusted` file. In a library, `Ideal` would be its own module, `Pia.Rand.Ideal`, and the client would write `import Pia.Rand.Ideal trusting`.
+
+<!-- example: ideal.pia -->
 ```ocaml
-(* Pia.Rand.Ideal, @trusted *)
-import Prob
+@trusted
 
+let theory Prob = sig
+  let sort event
+  let spec pr : (e : event) -> real
+  let spec either : (a : event) -> (b : event) -> event
+  let spec both : (a : event) -> (b : event) -> event
+  let spec opposite : (a : event) -> event
+
+  let axiom pr_range (e : event) ensures 0.0 <= pr e && pr e <= 1.0
+  let axiom union_bound (a : event) (b : event)
+    ensures pr (either a b) <= pr a + pr b
+  let axiom both_le (a : event) (b : event)
+    ensures pr (both a b) <= pr a && pr (both a b) <= pr b
+  let axiom complement (a : event) ensures pr (opposite a) = 1.0 - pr a
+end
+
+\ An event is only its probability. `either` and `both` take the
+\ worst case the axioms allow (the Fréchet bounds).
+let chance = type { p : real where 0.0 <= p && p <= 1.0 }
+
+let model bounds : Prob = struct
+  let sort event = chance
+  let spec pr (e : chance) : real = e.p
+  let spec either (a : chance) (b : chance) : chance =
+    { p = if a.p + b.p <= 1.0 then a.p + b.p else 1.0 }
+  let spec both (a : chance) (b : chance) : chance =
+    { p = if a.p + b.p >= 1.0 then a.p + b.p - 1.0 else 0.0 }
+  let spec opposite (a : chance) : chance = { p = 1.0 - a.p }
+end
+
+\ Independence is an idealisation: no model of Prob here has it (in
+\ `bounds`, two events of probability 0.01 have a joint probability of
+\ 0), so it is a theory of its own, trusted, and this file says so.
 let theory Ideal = sig
   let spec lost : (replica : u32) -> Prob.event
   let axiom independent (i : u32) (j : u32)
     requires i <> j
     ensures Prob.pr (Prob.both (lost i) (lost j)) = Prob.pr (lost i) * Prob.pr (lost j)
 end
-```
 
-<!-- untested: trusted theories and `trusting` land in ADR 0036 step 4 -->
-```ocaml
-import Prob
-import Pia.Rand.Ideal trusting
+import Ideal trusting
 
 let lemma two_replicas : unit
   requires Prob.pr (Ideal.lost 0) <= 0.01 && Prob.pr (Ideal.lost 1) <= 0.01
@@ -242,7 +271,19 @@ let lemma two_replicas : unit
 = ()
 ```
 
-`Ideal` is consistent with `Prob`'s axioms, but not with its `bounds` model, in which two events of probability 0.01 have a joint probability of 0. That is fine, because clients reason with `Prob`'s axioms and never with the model, and it is a reminder that `bounds` is a worst-case summary, not a probability space. When `Ideal` is compiled, `piac` asks Z3 whether its axioms and `Prob`'s are consistent, and records the model Z3 finds as a witness. The trust report lists `Pia.Rand.Ideal.independent` and, with `--why`, the goal `two_replicas` that used it.
+```console
+$ piac --verify --trust-report --why ideal.pia
+ideal.pia:37:3: the theory 'Ideal' is consistent: the solver found a witness, a model of its axioms
+ideal.pia:42:1: trusting the theory 'Ideal'
+ideal.pia:37:3: trusted: the axiom 'Ideal.independent', since the theory 'Ideal' has no model
+  used by: ideal.pia:46:3
+1 trusted item
+1 of 26 proved goals rest on a trusted axiom; the other 25 are fully proved
+...
+26 proved, 0 failed, 0 skipped
+```
+
+`Ideal` is consistent with `Prob`'s axioms, but not with its `bounds` model, in which two events of probability 0.01 have a joint probability of 0. That is fine, because clients reason with `Prob`'s axioms and never with the model, and it is a reminder that `bounds` is a worst-case summary, not a probability space. When `Ideal` is compiled, `piac` asks Z3 whether its axioms and the `Prob` axioms they use are consistent, and finds a witness. The trust report lists `Ideal.independent`, and with `--why` the goal `two_replicas` that used it. The other goals, including `Prob`'s model check, rest on nothing trusted.
 
 ## Fail-safe control
 
