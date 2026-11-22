@@ -70,11 +70,24 @@ The allocators, `vec` and the containers built on them (issue #72) are owned by 
 
 `<type_traits>` and most of `<concepts>` exist because C++ templates cannot ask questions about types directly. In Pia, a metaprogram can ([ADR 0035](0035-substitution-failure-and-total-constraints.md)): `is_integral t` is a type `match`, `make_unsigned` is a type-level function, `enable_if` is a `where` clause, and `std::same_as`, `std::integral` and `std::totally_ordered` are concepts in `Pia.Core.Order` and `Pia.Core.Int`. `Pia.Core.Traits` collects the type-level metaprograms that turn out to be needed, rather than mirroring the header. `<typeinfo>`, `<typeindex>` and `<any>` have no counterpart: there is no run-time type information, and dynamic values are `dyn` ([ADR 0003](0003-static-typing-with-tagged-dyn.md)).
 
-### 9. Maths is proved in Pia, never libm
+### 9. Tuples are a core type
+
+Tuples are first-class types and values in the core, as arrays and records are, rather than a library type waiting for variadic generics (Dean, 2026-11-22). This needs a core change of its own, with its own ADR, before `<tuple>` is done; this section records what the library expects of it.
+
+- **Values and types share one syntax.** `(a, b, c)` is a tuple value and, since types are values, `(u8, str, bool)` is its type: a tuple of types is a tuple type. `()` is the empty tuple, the same value as `unit`. There is no one-element tuple: `(x)` is `x` in parentheses.
+- **Access is positional.** `t.0`, `t.1` and so on, checked when compiled, so an index out of range is a type error, not a proof goal. Patterns destructure: `match t with | (a, b) -> ...` and `let (a, b) = t in ...`; a pattern is told apart from a function literal `let (x) => ...` by the `=>`, as [grammar.md](../grammar.md) already plans.
+- **A tuple is an anonymous record.** It has the same layout, ownership and modifier rules as a record whose fields are named `0`, `1`, ...: layout optimisation ([ADR 0030](0030-published-object-layouts.md)), struct-of-arrays buffers (`[(u32, f32)]` is one buffer per element), `moved` and `@linear` elements, borrows, and contracts that name `t.0`. Tuples of the same element types are the same type wherever they are written, which is what a named record is not.
+- **Equality, order and hashing are structural.** `Eq`, `Ord` and `Hash` instances for a tuple come from its elements' instances, element by element and lexicographically, with the laws proved once for the generic definition (ADR 0043). This is C++'s `operator<=>` on `tuple`.
+- **Tuple types are the type lists for variadic code.** A type parameter can stand for a tuple type, and a metaprogram walks it with a type `match` on `()` and on a head and tail, proved terminating by structural recursion as ADR 0035 requires. That is enough for `apply`, `tuple_cat`, `tuple_size`, `tuple_element`, `std::get` by type, and argument packs for `format` and `make_unique`, without a separate pack feature. `variant<Ts...>` stays a named variant for now: an anonymous sum type is a separate decision.
+- **Foreign code** sees a tuple as the C struct of its elements, in the order the layout chooses and advertises in the ABI, as for records.
+
+`std::pair` is a two-element tuple, `std::tie` is a tuple pattern, and structured bindings are `let (a, b) = ...`.
+
+### 10. Maths is proved in Pia, never libm
 
 `<cmath>`, `<numbers>`, `<complex>`, floating-point `<charconv>` and the floating-point distributions of `<random>` are `Pia.Math` and wait for floats (M11), with error bounds in their contracts ([ADR 0023](0023-minimal-core-self-hosted-stdlib.md), [ADR 0038](0038-float-kernels-against-real-theories.md)). Everything over integers comes first: `<bit>`, `<numeric>`, integer `<charconv>`, `<chrono>`'s integer durations and calendar, `<ratio>`, and `<random>`'s integer engines and `uniform_int_distribution`.
 
-### 10. Module layout
+### 11. Module layout
 
 The library is a tree of modules, one per file ([ADR 0039](0039-module-and-interface-syntax.md)), in `lib/`, named by path: `lib/Pia/Core/Bit.pia` holds `module Pia.Core.Bit`. Each module has a `pia_library` target in `lib/Pia/<Layer>/BUILD.bazel`, so it is proved on its own and its dependents build against its interface artifact.
 
@@ -101,13 +114,13 @@ The library is a tree of modules, one per file ([ADR 0039](0039-module-and-inter
 
 Out of scope, with what replaces each: `<exception>` and `<stdexcept>` (error variants), `<typeinfo>`, `<typeindex>` and `<any>` (metaprograms and `dyn`), `<locale>`, `<clocale>`, `<codecvt>` and `<cwctype>` (UTF-8 only), `<valarray>` (`vec<T, k>` and `spread`), `<csetjmp>` (nothing), `<cstdarg>` (Pia has no C variadics, and calling a variadic C function is not supported), `<initializer_list>` (array literals), `<scoped_allocator>` (explicit allocators), `<iosfwd>`, `<streambuf>` and `<syncstream>` (the `reader` and `writer` concepts), and `<version>` (the compiler version is a metaprogram builtin if it is ever needed).
 
-### 11. Every component is proved and tested
+### 12. Every component is proved and tested
 
 - A library module is accepted only when it proves with no unproved goals and no `--allow-unproved`. `assume`, `unsafe` and `@trusted` appear only in `Pia.Sys.Posix` and `Pia.Rt`, so `piac --trust-report` on any program that uses only the library lists nothing from it outside those two.
 - Each module has a lit test in `tests/std/` that checks its goal counts, and a test program that runs it on examples, including the edge cases the C++ standard calls out (empty ranges, one element, all equal, the extreme values of each integer type).
 - Proving the library is part of the build-time benchmark ([ADR 0032](0032-parallel-sliced-cached-proving.md)): `lib/` joins `tools/bench/baseline.json`, and a library PR that raises proof cost by more than the gate allows has to say why.
 
-### 12. Phases
+### 13. Phases
 
 Each phase is a set of issues, one PR each, with a module, its tests, and its row of [docs/cpp-std.md](../cpp-std.md) updated.
 
@@ -130,7 +143,7 @@ Each phase is a set of issues, one PR each, with a module, its tests, and its ro
 7. **Phase 6, function values**: the `_if` algorithms, `transform`, comparator overloads, monadic `option` and `result`, `<functional>`, and `<ranges>`'s views.
 8. **Later**: `<regex>`, `<mdspan>` (with value parameters in generic types), time zones, Unicode tables, `shared_ptr`.
 
-### 13. Language gaps are listed, not worked around
+### 14. Language gaps are listed, not worked around
 
 Where the library needs something the language does not have, the library waits for it, and the gap is an issue of its own. Known now:
 
@@ -139,7 +152,8 @@ Where the library needs something the language does not have, the library waits 
 | Imported types and generic functions across interfaces ([ADR 0039](0039-module-and-interface-syntax.md) step 3) | every program importing a generic library module; until then a module's generics are proved by the definition check, and its tests are in the module's own test file |
 | Function values and closures ("functions as values are not supported yet") | phase 6: predicates, operations, views, `<functional>` |
 | Value parameters in generic types (`[t; n]` for a parameter `n`; designed in [design.md](../design.md)) | `std::array` algorithms generic over `N`, `bitset<N>`, `inplace_vector<T, N>`, `mdspan` extents |
-| Variadic generics and heterogeneous tuples | `std::tuple` beyond records, `std::variant<Ts...>` beyond named variants, `apply`, `visit`, argument packs for `format` and `make_unique`; `format` can be a metaprogram over its call's syntax without them |
+| Core tuple types, values and patterns (section 9; an ADR of their own) | `<tuple>`, `pair` as a tuple, structured bindings, `apply`, argument packs for `format` and `make_unique`, multi-value returns in `<algorithm>` (`minmax`, `mismatch`) |
+| Anonymous sum types | `std::variant<Ts...>` beyond named variants, and `visit` over one |
 | Recursive types | proved `shared_ptr` cycle freedom, recursive values such as a JSON tree; the node containers use pool indices instead, which is their design rather than a workaround |
 | Calls inside a callee's `ensures` are unconstrained at the caller | composing generic algorithms whose contracts name each other's spec functions |
 | Floats (M11), atomics and the concurrency runtime (M12) | phases 4 and 5 |
