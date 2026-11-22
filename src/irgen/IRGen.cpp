@@ -2864,7 +2864,11 @@ class Gen {
         return TV{create<FromIndexOp>(l, usize, i), usize};
       }
       if (fn.text == "old") {
-        if (!contract_) return fail(n, "'old' is only allowed in contracts");
+        // A lemma's arguments are spec too: `occurrences_swapped (old xs)
+        // xs i j` relates the state on entry to this one.
+        if (!contract_ && !ghost_)
+          return fail(n, "'old' is only allowed in contracts and in a "
+                         "lemma's arguments");
         if (argc != 1) return fail(n, "'old' takes one argument");
         // `old` reads the parameters as they were on entry. A buffer is
         // the same value throughout; the verifier reads its entry memory.
@@ -3111,6 +3115,13 @@ class Gen {
     const std::vector<std::string> &params = generic.typeParams;
     std::map<std::string, Type> bound;
     std::map<std::string, std::string> named;
+    // A lemma's arguments are spec, including those generated early to
+    // deduce its type arguments.
+    struct GhostScope {
+      bool &flag, value;
+      ~GhostScope() { flag = value; }
+    } ghostScope{ghost_, ghost_};
+    if (generic.item && hasFlag(*generic.item, "lemma")) ghost_ = true;
     if (!bindTypeArgs(generic, targs, bound, &named)) return std::nullopt;
     // What a higher-order call deduced from its function arguments.
     if (preBound)

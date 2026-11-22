@@ -1,0 +1,22 @@
+(* Runs Pia.Core.Algo.Sort's compiled code on a buffer in an arena, linked
+   by pia_binary: 0 when every result is what C++'s sort gives, and
+   otherwise the number of the first wrong one. *)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+
+let checks (xs : borrowed inout mutable [u8]) : i32
+  requires len xs = 5
+= xs.[0] <- 5; xs.[1] <- 1; xs.[2] <- 4; xs.[3] <- 1; xs.[4] <- 9;
+  S.insertion_sort xs (let (a : u8) (b : u8) : bool => a < b);
+  if xs.[0] <> 1 || xs.[1] <> 1 || xs.[2] <> 4 || xs.[3] <> 5 || xs.[4] <> 9 then 1
+  else (
+    S.insertion_sort xs (let (a : u8) (b : u8) : bool => a > b);
+    if xs.[0] <> 9 || xs.[4] <> 1 then 2
+    else (
+      S.exchange xs 0 4;
+      if xs.[0] <> 1 || xs.[4] <> 9 then 3
+      else 0))
+
+let main () : i32 = with_arena 5 (let (m) => checks m.mem)

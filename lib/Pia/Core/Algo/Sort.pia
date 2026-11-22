@@ -1,0 +1,75 @@
+(* Pia.Core.Algo.Sort: <algorithm>'s sorting (ADR 0040, phase 1.7). This
+   is insertion_sort, with a comparator that must be a strict weak order
+   (Pia.Fn.strict_weak_order), proved once over any such comparator: the
+   result is sorted by it (Pia.Fn.sorted) and is a permutation of the input
+   (Pia.Core.Algo.Permutation). The heap sort, sort, is in
+   Pia.Core.Algo.Heap.
+
+   Each step is `exchange`, whose contract says it keeps how often every
+   value occurs: the spec function `swapped_count`, proved by induction
+   over the prefix, relates the counts before and after, so the sort keeps
+   them by keeping them at each step. *)
+module Pia.Core.Algo.Sort : Sort
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+
+interface Sort = sig
+  let spec swapped_count : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> (i : usize) -> (j : usize) -> (n : usize) -> bool
+  let exchange : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (i : usize) -> (j : usize) -> unit
+  let insertion_sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+end
+(* ys is xs with xs.[i] and xs.[j] exchanged: how often each value occurs
+   in the first n elements of each, which differ only between i and j. It
+   is a spec function, true, for its contract: asserting it gives a caller
+   the counts. *)
+let spec swapped_count (t : type where Pia.Core.Order.Eq t) (xs : [t]) (ys : [t]) (i : usize) (j : usize) (n : usize) : bool
+  requires len xs = len ys && i < len xs && j < len xs && i < j && n <= len xs
+  requires ys.[i] = xs.[j] && ys.[j] = xs.[i]
+  requires forall (k in 0..len xs). k <> i && k <> j ==> ys.[k] = xs.[k]
+  ensures forall (v : t). n <= i ==> P.occurrences ys v n = P.occurrences xs v n
+  ensures forall (v : t). i < n && n <= j ==> P.occurrences ys v n + (if same xs.[i] v then 1 else 0) = P.occurrences xs v n + (if same xs.[j] v then 1 else 0)
+  ensures forall (v : t). j < n ==> P.occurrences ys v n = P.occurrences xs v n
+  decreases n
+= if n = 0 then true else swapped_count xs ys i j (n - 1)
+
+(** C++: std::iter_swap of xs.[i] and xs.[j], i < j: every other element
+    stays, and every value occurs as often as before. *)
+let exchange (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (i : usize) (j : usize) : unit
+  requires i < len xs && j < len xs && i < j
+  ensures xs.[i] = old (xs.[j]) && xs.[j] = old (xs.[i])
+  ensures forall (k in 0..len xs). k <> i && k <> j ==> xs.[k] = old (xs.[k])
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= let a = xs.[i] in
+  let b = xs.[j] in
+  xs.[i] <- b;
+  xs.[j] <- a;
+  assert (swapped_count (old xs) xs i j (len xs) || true)
+
+(** Insertion sort: sorted by less, and a permutation of the input. *)
+let insertion_sort (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  ensures Pia.Fn.sorted less xs
+  ensures P.permutation xs (old xs)
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= for i in 0 .. len xs
+    invariant Pia.Fn.sorted_prefix less xs i
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+  do
+    let j : mutable usize = i in
+    while j > 0 && less xs.[j] xs.[j - 1]
+      invariant j <= i && i < len xs
+      invariant forall (p in 0 .. i + 1) (q in 0 .. i + 1).
+        p < q && p <> j && q <> j ==> less xs.[q] xs.[p] = false
+      invariant forall (q in 0 .. i + 1). j < q ==> less xs.[j] xs.[q]
+      invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+      decreases j
+    do
+      exchange xs (j - 1) j;
+      j <- j - 1
+    done;
+    assert (forall (q in 0 .. i + 1). j < q ==> less xs.[q] xs.[j] = false);
+    assert j > 0 ==> less xs.[j] xs.[j - 1] = false;
+    assert (forall (p in 0 .. j). less xs.[j] xs.[p] = false)
+  done

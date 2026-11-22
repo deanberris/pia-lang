@@ -1,0 +1,21 @@
+(* Pia.Core.Algo.Sort (ADR 0040, phase 1.7): insertion_sort and exchange
+   are proved once, over the element type and any strict weak order (ADR
+   0043, ADR 0044), and the interface exports them.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Sort.pia | FileCheck %s
+// RUN: mkdir -p %t/s && piac --emit=interface -o %t/s %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/s/Pia.Core.Algo.Sort.Sort.piai
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 70 proved, 0 failed, 0 skipped
+
+// IFACE:      {{^}}interface Sort = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec swapped_count : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> (i : usize) -> (j : usize) -> (n : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let exchange : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (i : usize) -> (j : usize) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let insertion_sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

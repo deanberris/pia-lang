@@ -1,0 +1,32 @@
+(* Importers of Pia.Core.Algo.Sort sort with their own comparators, prove
+   them strict weak orders, and know the result is sorted by them and a
+   permutation of the input, from the interface alone: by `<` and `>` at
+   u8, and by Pia.Core.Order's less at i32.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+
+let ascending (xs : borrowed inout mutable [u8]) : unit
+  ensures forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures P.permutation xs (old xs)
+= S.insertion_sort xs (let (a : u8) (b : u8) : bool => a < b)
+
+let descending (xs : borrowed inout mutable [u8]) : unit
+  ensures forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] >= xs.[j]
+= S.insertion_sort xs (let (a : u8) (b : u8) : bool => a > b)
+
+let by_order (xs : borrowed inout mutable [i32]) : unit
+  ensures Pia.Fn.sorted (let (a : i32) (b : i32) => Pia.Core.Order.less a b) xs
+= S.insertion_sort xs (let (a : i32) (b : i32) : bool => Pia.Core.Order.less a b)
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 26 proved, 0 failed, 0 skipped
+*)
