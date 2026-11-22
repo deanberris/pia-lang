@@ -1,0 +1,18 @@
+(* `borrowed(m)` (#70) names a parameter the result is borrowed from.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let pool = type { cap : u8 }
+let ticket = type { n : u8 }
+
+(* CHECK: borrow_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(q)': the result is borrowed from a parameter, and 'nobody' has no parameter 'q'
+*)
+let nobody (p : borrowed pool) : borrowed(q) ticket = { n = p.cap }
+
+(* CHECK: borrow_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is moved into 'gone', so it ends there and the result cannot borrow from it; take it 'borrowed'
+*)
+let gone (p : moved pool) : borrowed(p) ticket = match p with | { cap } -> { n = cap }
+
+(* CHECK: borrow_sig_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'borrowed(q)' names the lender of a function's result; a parameter is just 'borrowed'
+*)
+let param (q : borrowed pool) (p : borrowed(q) pool) : u8 = p.cap

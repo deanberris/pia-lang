@@ -1,0 +1,12 @@
+(* Borrowed results (#70): `borrowed(m)` says the result is borrowed from
+   the parameter `m`, so it cannot outlive `m`, and `m` cannot be moved
+   while the result is in scope. *)
+let first (m : borrowed [u8]) (n : usize) : borrowed(m) [u8]
+  requires n <= len m
+  = m.[0 .. n]
+
+let take (m : borrowed arena) (n : usize) : result (borrowed(m) out mutable [u8]) OutOfMemory =
+  alloc m u8 n
+
+(* With a space, the parenthesis starts a type: a plain borrowed parameter. *)
+let peek (m : borrowed (u8)) : u8 = m

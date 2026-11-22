@@ -58,7 +58,7 @@ namespace pia::syntax {
   X(NamedArg)      /* text=name; value */                                    \
   /* annotations and types */                                                \
   X(Annot)         /* Modifiers, type, where-predicate? */                   \
-  X(Modifiers)     /* text="borrowed in mutable" (any subset, in order) */   \
+  X(Modifiers)     /* "borrowed in mutable"; Name? = lender of borrowed(m) */\
   X(TypeName)      /* text=name */                                           \
   X(TypeKind)      /* the type of types */                                   \
   X(TypeInst)      /* text=name; type arguments */                           \

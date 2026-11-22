@@ -1,0 +1,59 @@
+(* Borrowed results (#70): a call whose result type is `borrowed(m) ...`
+   borrows from its argument `m`. The borrow is lexical: it ends with the
+   scope of the local that holds it, and then `m` may be moved.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let pool = type { cap : u8 }
+let ticket = type { n : u8 }
+let err = type | Empty
+
+let mk (x : u8) : pool = { cap = x }
+let close (p : moved pool) : unit = match p with | { cap } -> ()
+let lend (p : borrowed pool) : borrowed(p) ticket = { n = p.cap }
+
+(* Passed on: the result says it borrows from `p` too. *)
+let relend (p : borrowed pool) : borrowed(p) ticket = lend p
+
+(* Through a result, as `alloc` returns its buffer. *)
+let try_lend (p : borrowed pool) : result (borrowed(p) ticket) err =
+  if p.cap = 0 then Err Empty else Ok (lend p)
+
+(* A field of a borrow is a copy, so it borrows nothing. *)
+let read (x : u8) : u8 = let p = mk x in let t = lend p in t.n
+(*
+// CHECK-LABEL: @read(
+// CHECK: call @lend(
+*)
+
+(* `p` is moved after the borrow's scope ends. *)
+let later (x : u8) : u8 =
+  let p = mk x in
+  let n = (let t = relend p in t.n) in
+  close p;
+  n
+(*
+// CHECK-LABEL: @later(
+// CHECK: call @relend(
+// CHECK: call @close(
+*)
+
+(* `?` and `match` hand the payload on, still borrowed. *)
+let tried (x : u8) : result u8 err =
+  let p = mk x in
+  let t = try_lend p? in
+  Ok t.n
+(*
+// CHECK-LABEL: @tried(
+// CHECK: call @try_lend(
+*)
+
+let matched (x : u8) : u8 =
+  let p = mk x in
+  match try_lend p with
+  | Ok t -> t.n
+  | Err _ -> 0
+(*
+// CHECK-LABEL: @matched(
+// CHECK: call @try_lend(
+*)
