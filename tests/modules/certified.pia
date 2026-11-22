@@ -1,0 +1,20 @@
+(* A concept's laws and requirement contracts at a type of its module are
+   proved once, by that module (ADR 0039, step 6), so an importer does not
+   prove them again: Algo.Order proves Before at u8, met by its own
+   `before`, and this file proves only its own goals.
+// RUN: piac --emit=interface -o %t %S/Inputs/order.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Algo.Order.Ord
+
+let least (a : u8) (b : u8) : u8
+  ensures result <= a && result <= b
+= Algo.Order.smaller<u8> a b
+
+(* No goal at the import, where an imported law or requirement contract
+   would be reported.
+// CHECK-NOT: certified.pia:8:
+// CHECK: certified.pia:11:3: proved: the postcondition holds
+// CHECK-NOT: certified.pia:8:
+// CHECK: 0 failed, 0 skipped
+*)

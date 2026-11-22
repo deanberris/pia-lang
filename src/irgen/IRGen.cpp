@@ -21,6 +21,7 @@
 #include "dialect/PiaDialect.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Path.h"
@@ -744,6 +745,9 @@ class Gen {
     if (sig.typeArgs.empty() && hasFlag(item, "spec"))
       if (std::string from = fromModule(item); !from.empty())
         fn->setAttr("pia.spec_from", b_.getStringAttr(from));
+    // A law or requirement contract that the concept's module proved.
+    if (auto c = certified_.find(sig.name); c != certified_.end())
+      fn->setAttr("pia.certified", b_.getStringAttr(c->second));
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
@@ -4971,10 +4975,73 @@ class Gen {
       if (sema::isTypeParam(*p) && i < args.size()) scope[p->text] = args[i++];
     std::vector<std::map<std::string, Type>> saved =
         types_.replaceTypeScopes({scope});
+    size_t queued = queuedLog_.size(), matched = matchedLog_.size();
     std::optional<std::string> why = requirementsUnmet(item, key, scope, via);
     types_.replaceTypeScopes(std::move(saved));
     met_[key] = why;
+    if (!why && !via) certify(fromModule(item), args, queued, matched);
     return why;
+  }
+
+  // An imported concept met at types of its own module, or built-in ones,
+  // by functions of that module alone was checked there: a module proves
+  // every such instance its interfaces allow (checkModule). So the laws and
+  // requirement contracts queued for it are its module's proofs, which
+  // this program does not repeat (ADR 0039, step 6).
+  void certify(const std::string &from, const std::vector<Type> &args,
+               size_t queued, size_t matched) {
+    if (from.empty()) return;
+    for (Type t : args) {
+      if (mlir::isa<ArrayType, SliceType>(t)) return;
+      if (auto rec = mlir::dyn_cast<RecordType>(t))
+        if (!llvm::StringRef(rec.getName()).starts_with(from + ".")) return;
+    }
+    for (size_t i = matched; i < matchedLog_.size(); ++i) {
+      const sema::FuncSig &sig = sigs_.at(matchedLog_[i]);
+      if (!sig.item || fromModule(*sig.item) != from) return;
+    }
+    for (size_t i = queued; i < queuedLog_.size(); ++i)
+      certified_[queuedLog_[i]] = from;
+  }
+
+  // Proves, in a module, each instance of the concepts its interfaces list
+  // that its exported functions meet at its own types or built-in ones, so
+  // importers can rely on it (certify). A type that does not meet a
+  // concept is no error, and leaves nothing to prove.
+  void proveExportedConcepts(const std::vector<std::string> &concepts) {
+    llvm::SetVector<Type> types;
+    auto candidate = [&](Type t) {
+      if (!t || mlir::isa<ArrayType, SliceType>(t)) return;
+      if (auto rec = mlir::dyn_cast<RecordType>(t)) {
+        llvm::StringRef name = rec.getName();
+        if (name.contains('<') || name.contains('.')) return;
+      }
+      types.insert(t);
+    };
+    for (const auto &[symbol, path] : exports_) {
+      const sema::FuncSig &sig = sigs_.at(symbol);
+      for (const sema::Param &p : sig.params) candidate(p.type);
+      candidate(sig.result);
+    }
+    for (const std::string &cname : concepts) {
+      auto c = concepts_.find(cname);
+      if (c == concepts_.end()) continue;
+      size_t params = 0;
+      for (const syntax::NodePtr &p : c->second->kids[0]->kids)
+        params += sema::isTypeParam(*p);
+      if (params != 1) continue;
+      for (Type t : types) {
+        size_t queued = queuedLog_.size();
+        std::vector<std::string> before(pendingInstances_.begin(),
+                                        pendingInstances_.end());
+        if (!unmet(cname, {t})) continue;
+        // Unmet: what it queued for the requirements it did meet goes.
+        for (size_t i = queued; i < queuedLog_.size(); ++i)
+          sigs_.erase(queuedLog_[i]);
+        pendingInstances_.assign(before.begin(), before.end());
+        queuedLog_.resize(queued);
+      }
+    }
   }
 
   std::optional<std::string> requirementsUnmet(
@@ -5051,6 +5118,7 @@ class Gen {
     }
     if (!found) return "no function '" + spelled + "'";
     if (matched) *matched = found->name;
+    matchedLog_.push_back(found->name);
     // An interface is all its importers will see (ADR 0039), so a
     // function's own `requires` must follow from the interface's even when
     // the interface states none.
@@ -5176,6 +5244,7 @@ class Gen {
     if (!sema::resolveSignature(sig, types_, diags_)) return;
     sigs_.emplace(symbol, std::move(sig));
     pendingInstances_.push_back(symbol);
+    queuedLog_.push_back(symbol);
   }
 
   // Renames free names in a contract; `result` becomes `call` when given.
@@ -5221,6 +5290,7 @@ class Gen {
     if (!sema::resolveSignature(sig, types_, diags_)) return;
     sigs_.emplace(symbol, std::move(sig));
     pendingInstances_.push_back(symbol);
+    queuedLog_.push_back(symbol);
   }
 
   // --- modules (ADR 0039) ---------------------------------------------
@@ -5284,6 +5354,13 @@ class Gen {
       }
       checkInterface(*header, *it->second, shown);
     }
+    std::vector<std::string> concepts;
+    for (const syntax::NodePtr &path : header->kids[1]->kids)
+      if (auto it = interfaces.find(path->text); it != interfaces.end())
+        for (const syntax::NodePtr &r : it->second->kids)
+          if (r->kind == NodeKind::SigVal && r->flags == "meta")
+            concepts.push_back(r->text);
+    proveExportedConcepts(concepts);
     // An exported function's symbols come from what the interfaces list,
     // never from private overloads (#204): a name exported once is linked
     // and entered by that name, and only a name exported with several
@@ -8593,6 +8670,11 @@ class Gen {
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
+  // Lemmas queued and functions matched to requirements, in order, so a
+  // concept check can tell which are its own (certify).
+  std::vector<std::string> queuedLog_, matchedLog_;
+  // Lemma symbol -> the module whose proof it is (ADR 0039, step 6).
+  std::map<std::string, std::string> certified_;
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
   std::map<std::string, const Node *> concepts_;
