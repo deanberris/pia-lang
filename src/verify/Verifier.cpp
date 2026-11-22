@@ -1502,6 +1502,10 @@ class Encoder {
           } else {
             post.arrays[formal] = arrays_.lookup(actual);
             post.lengths[formal] = lengths_.lookup(actual);
+            // Known, so the callee's body is not encoded for it: `result`
+            // is the call's array, not what the body built. Buffers are
+            // not terms, so the term is a placeholder.
+            post.values[formal] = bv(0);
           }
           continue;
         }
