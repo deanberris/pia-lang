@@ -66,7 +66,7 @@ A generic body may use only what its constraints promise. A call whose arguments
 
 The binding is made at the definition. The instance `max<u8>` calls the function that met `Ord u8` at the use check, whatever else is in scope when it is generated, so an instance can never pick up a different `lt` than the one the concept checked.
 
-Each instance is still proved on its own, so goals stay about concrete types. Proving a generic body once against the concepts' contracts would save build time ([ADR 0032](0032-parallel-sliced-cached-proving.md)). It is sound once requirement contracts are proved at the use check, and it is left as a measured follow-up.
+Each instance is still proved on its own, so goals stay about concrete types. Proving a generic body once against the concepts' contracts would save build time ([ADR 0032](0032-parallel-sliced-cached-proving.md)). It is sound once requirement contracts are proved at the use check, and it is left as a measured follow-up. [ADR 0043](0043-generic-definitions-proved-once.md) proposes it.
 
 ### Overloading
 
