@@ -15,6 +15,7 @@ lit_tests(
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Result.pia",
+        "//lib/Pia/Core/Algo:Heap.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
         "//lib/Pia/Core/Algo:Remove.pia",
@@ -168,5 +169,26 @@ sh_test(
     srcs = ["sort_run_test.sh"],
     args = ["$(rootpath :sort_run)"],
     data = [":sort_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "heap_run",
+    src = "Inputs/heap_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:heap",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:sort",
+    ],
+)
+
+sh_test(
+    name = "heap_run_test",
+    srcs = ["heap_run_test.sh"],
+    args = ["$(rootpath :heap_run)"],
+    data = [":heap_run"],
     target_compatible_with = APPLE_SILICON,
 )

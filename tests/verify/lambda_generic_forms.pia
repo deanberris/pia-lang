@@ -55,7 +55,6 @@ let smaller (a : u8) (b : u8) : u8
   min a b
 
 (* Expected report, in order.
-// CHECK: lambda_generic_forms.pia:28:3: proved: the postcondition holds [generic]
 // CHECK: lambda_generic_forms.pia:10:5: proved: the loop invariant holds on entry [generic]
 // CHECK: lambda_generic_forms.pia:9:25: proved: the index is within bounds [generic]
 // CHECK: lambda_generic_forms.pia:12:13: proved: '+' does not overflow usize [generic]
@@ -63,6 +62,7 @@ let smaller (a : u8) (b : u8) : u8
 // CHECK: lambda_generic_forms.pia:11:5: proved: the measure decreases [generic]
 // CHECK: lambda_generic_forms.pia:6:3: proved: the postcondition holds [generic]
 // CHECK: lambda_generic_forms.pia:7:3: proved: the postcondition holds [generic]
+// CHECK: lambda_generic_forms.pia:28:3: proved: the postcondition holds [generic]
 // CHECK: lambda_generic_forms.pia:18:3: proved: the postcondition holds [smt]
 // CHECK: lambda_generic_forms.pia:23:3: proved: the postcondition holds [smt]
 // CHECK: lambda_generic_forms.pia:32:3: proved: the postcondition holds [smt]

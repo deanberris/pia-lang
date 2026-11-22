@@ -1,0 +1,40 @@
+(* Pia.Core.Algo.Heap (ADR 0040, phase 1.7): is_heap_until, is_heap,
+   push_heap, pop_heap, make_heap, sort_heap and sort, a heap sort, are
+   proved once, over the element type and any strict weak order (ADR 0043,
+   ADR 0044), and the interface exports them with the steps their bodies
+   call.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Heap.pia | FileCheck %s
+// RUN: mkdir -p %t/h && piac --emit=interface -o %t/h %S/../../lib/Pia/Core/Algo/Heap.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/h/Pia.Core.Algo.Heap.Heap.piai
+*)
+
+(* No function of the module is left unproved: a generic function whose
+   proof fails is reported, not dropped. (Pia.Core.Order's compare and
+   lex_compare_three_way, imported, are proved at each instance.)
+// CHECK-NOT: not proved generically: '{{[a-z_]+}}'
+// CHECK-NOT: failed
+// CHECK: 185 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.Heap{{$}}
+// IFACE-NEXT: {{^}}interface Heap = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec heap : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (n : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec heap_top : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let is_heap_until : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let is_heap : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec not_less_trans : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (a : t) -> (b : t) -> (c : t) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let sift_up : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let larger_child : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (j : usize) -> (n : usize) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let sift_down : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (i : usize) -> (n : usize) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let push_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let pop_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let make_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let sort_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

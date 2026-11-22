@@ -1,0 +1,45 @@
+(* Importers of Pia.Core.Algo.Heap sort with their own comparators, prove
+   them strict weak orders, and know the result is sorted by them and a
+   permutation of the input, from the interface alone: heap sort by `<`
+   and `>` at u8, by Pia.Core.Order's less at i32, and make_heap's result
+   is a heap.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Heap.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Heap.Heap as H
+
+let ascending (xs : borrowed inout mutable [u8]) : unit
+  ensures forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures P.permutation xs (old xs)
+= H.sort xs (let (a : u8) (b : u8) : bool => a < b)
+
+let descending (xs : borrowed inout mutable [u8]) : unit
+  ensures forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] >= xs.[j]
+= H.sort xs (let (a : u8) (b : u8) : bool => a > b)
+
+let by_order (xs : borrowed inout mutable [i32]) : unit
+  ensures Pia.Fn.sorted (let (a : i32) (b : i32) => Pia.Core.Order.less a b) xs
+= H.sort xs (let (a : i32) (b : i32) : bool => Pia.Core.Order.less a b)
+
+let heapify (xs : borrowed inout mutable [u8]) : unit
+  ensures H.heap (let (a : u8) (b : u8) : bool => a < b) xs (len xs)
+  ensures forall (v : u8). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= H.make_heap xs (let (a : u8) (b : u8) : bool => a < b)
+
+(* Every goal is proved, and the functions sort and make_heap call, which
+   take the comparator too, are instances of their own proofs rather than
+   proved again here at u8.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.Heap.make_heap[lambda@heap_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.Heap.make_heap#proof' [generic]
+// CHECK-DAG: 'Pia.Core.Algo.Heap.sift_down[lambda@heap_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.Heap.sift_down#proof' [generic]
+// CHECK-DAG: 'Pia.Core.Algo.Heap.sort_heap[lambda@heap_edges.pia:{{[0-9:]+}}]<i32>' is an instance of the generic proof of 'Pia.Core.Algo.Heap.sort_heap#proof' [generic]
+// CHECK: 73 proved, 0 failed, 0 skipped
+*)
