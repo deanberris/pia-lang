@@ -1,0 +1,41 @@
+(* A borrow lasts until its last use, not to the end of its scope
+   (ADR 0042): once nothing reads 't' again, its lender is free to be
+   moved, assigned or made anew. A use in a cleanup, such as a drop or a
+   `defer`, counts as last, since it runs at the exit.
+// RUN: piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let pool = type { cap : u8 }
+let ticket = type { n : u8 }
+
+let mk (x : u8) : pool = { cap = x }
+let close (p : moved pool) : unit = match p with | { cap } -> ()
+let refill (p : out mutable pool) : unit = p <- { cap = 0 }
+let lend (p : borrowed pool) : borrowed(p) ticket = { n = p.cap }
+
+(* CHECK: func.func @moved_after_last_use
+*)
+let moved_after_last_use (x : u8) : u8 =
+  let p = mk x in
+  let t = lend p in
+  let n = t.n in
+  close p;
+  n
+
+(* CHECK: func.func @made_anew_after_last_use
+*)
+let made_anew_after_last_use (x : u8) : u8 =
+  let p : mutable pool = mk x in
+  let t = lend p in
+  let n = t.n in
+  refill p;
+  n + p.cap
+
+(* CHECK: func.func @assigned_after_last_use
+*)
+let assigned_after_last_use (x : u8) : u8 =
+  let p : mutable pool = mk x in
+  let t = lend p in
+  let n = t.n in
+  p <- mk 0;
+  n

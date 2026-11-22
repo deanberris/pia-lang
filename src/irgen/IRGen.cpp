@@ -88,6 +88,9 @@ struct Binding {
   bool writable = false;
   // A `with_arena`'s arena, which lends its own memory (#70).
   bool arena = false;
+  // A local's scope, the body of its `let`: a loan it holds ends at its
+  // last use there (ADR 0042).
+  const syntax::Node *scope = nullptr;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -5782,24 +5785,86 @@ class Gen {
     return b.writable;
   }
 
-  // A named local that borrows from `b` and is still in scope, if any.
-  BindingPtr borrowerOf(const BindingPtr &b) {
+  // A use of the local `x` after `at`, which keeps its loans alive there
+  // (ADR 0042): a mention of it later in its scope, in evaluation order,
+  // which follows the source except around loops. In a loop opened after
+  // `x` was bound, every use is later, so `at` itself is returned.
+  const Node *usedAfter(const BindingPtr &x, const Node &at) {
+    if (!x->scope || x->loopDepth < loopDepth_) return &at;
+    std::set<const Node *> inside;
+    std::function<void(const Node &)> mark = [&](const Node &k) {
+      inside.insert(&k);
+      for (const NodePtr &c : k.kids) mark(*c);
+    };
+    mark(at);
+    // A cleanup, such as a `defer` or a drop, runs after the exit it is
+    // attached to, wherever its source is, so a use in one is later unless
+    // `at` is in that cleanup itself.
+    std::function<bool(const Node &)> holdsAt = [&](const Node &k) {
+      if (&k == &at) return true;
+      for (const NodePtr &c : k.kids)
+        if (holdsAt(*c)) return true;
+      return false;
+    };
+    std::function<bool(const Node &)> holdsCopyOfAt = [&](const Node &k) {
+      if (&k == &at || (k.kind == at.kind && k.loc.offset == at.loc.offset))
+        return true;
+      for (const NodePtr &c : k.kids)
+        if (holdsCopyOfAt(*c)) return true;
+      return false;
+    };
+    const Node *use = nullptr;
+    std::function<void(const Node &, bool)> find = [&](const Node &k,
+                                                       bool later) {
+      if (use || inside.count(&k)) return;
+      if (k.kind == NodeKind::Name && k.text == x->name &&
+          (later || k.loc.offset > at.loc.offset)) {
+        use = &k;
+        return;
+      }
+      // A `defer` in the source is generated from a copy of its scope, so
+      // `at` may be a copy of a node here: it is the same node if it has
+      // the same kind and place.
+      if (k.kind == NodeKind::Defer && !holdsCopyOfAt(k)) later = true;
+      for (size_t i = 0; i < k.kids.size(); ++i) {
+        bool cleanup = k.kind == NodeKind::Cleanup && i > 0 &&
+                       !holdsAt(*k.kids[i]);
+        find(*k.kids[i], later || cleanup);
+      }
+    };
+    find(*x->scope, false);
+    return use;
+  }
+
+  // A named local that borrows from `b`, is in scope, and is used after
+  // `at`, if any, with that use.
+  std::pair<BindingPtr, const Node *> borrowerOf(const BindingPtr &b,
+                                                 const Node &at) {
     for (const auto &scope : scopes_)
       for (const auto &[name, x] : scope)
         if (x != b && name.find('#') == std::string::npos &&
             llvm::find(x->lenders, b) != x->lenders.end())
-          return x;
-    return nullptr;
+          if (const Node *use = usedAfter(x, at)) return {x, use};
+    return {nullptr, nullptr};
   }
 
-  // `b` is about to change: not while something borrows from it.
+  // Why `x`'s loan is still alive at `at`.
+  std::string stillUsed(const BindingPtr &x, const Node &at, const Node *use) {
+    if (use == &at)
+      return "'" + x->name + "' was bound outside this loop, so its borrow "
+             "lasts through the loop";
+    return "'" + x->name + "' is used later, at " + where(*use);
+  }
+
+  // `b` is about to change: not while something that borrows from it is
+  // used later.
   bool notLent(const BindingPtr &b, const Node &at, const std::string &how) {
     if (contract_ || ghost_) return true;
-    BindingPtr x = borrowerOf(b);
+    auto [x, use] = borrowerOf(b, at);
     if (!x) return true;
     fail(at, "'" + b->name + "' is lent to '" + x->name + "', so it cannot "
-             "be " + how + " while '" + x->name + "' is in scope; a borrow "
-             "lasts to the end of its scope");
+             "be " + how + " here; " + stillUsed(x, at, use) +
+             ", and a borrow lasts until its last use");
     return false;
   }
 
@@ -5835,10 +5900,12 @@ class Gen {
     for (const BindingPtr &l : b->lenders) {
       auto m = moved_.find(l);
       if (m == moved_.end()) continue;
-      fail(m->second.node ? *m->second.node : n,
-           "'" + l->name + "' is lent to '" + b->name + "', so it cannot be " +
-               m->second.what + " while '" + b->name + "' is in scope; a "
-               "borrow lasts to the end of its scope");
+      const Node &at = m->second.node ? *m->second.node : n;
+      const Node *use = m->second.node ? usedAfter(b, at) : &at;
+      if (!use) continue;  // moved after `b`'s last use
+      fail(at, "'" + l->name + "' is lent to '" + b->name + "', so it cannot "
+               "be " + m->second.what + " here; " + stillUsed(b, at, use) +
+               ", and a borrow lasts until its last use");
       return false;
     }
     lent_[&n] = std::move(out);
@@ -6722,6 +6789,7 @@ class Gen {
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     b->lenders = lendersOf(valueNode);
     b->writable = writable(valueNode);
+    b->scope = n.kids[4].get();
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
     // `let` (#70).
@@ -6742,6 +6810,7 @@ class Gen {
         frames_.back().defers.push_back(drop);
       }
     }
+    b->scope = bodyNode;  // with its drop, which uses it last
     R body = genExpr(*bodyNode, expected);
     if (drop && !frames_.empty()) frames_.back().defers.pop_back();
     if (body && !consumed(b, n.loc)) body = std::nullopt;
