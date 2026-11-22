@@ -35,6 +35,9 @@ namespace pia::syntax {
   X(SigInclude)    /* text=concept; type arguments */                        \
   X(SigLemma)      /* text=name; Params, Contracts */                        \
   X(Adapter)       /* text=name; concept type, item* */                      \
+  X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
+  X(SortItem)      /* text=name; abbreviated type? */                        \
+  X(FileAttr)      /* text=name: `@trusted` on its own line, for the file */ \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
   /* bindings */                                                             \

@@ -9,6 +9,7 @@ cc_library(
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
+        ":triggers",
         "//src/dialect",
         "//src/sema",
         "//src/transforms",
@@ -20,5 +21,22 @@ cc_library(
         "@llvm-project//mlir:SMTDialect",
         "@llvm-project//mlir:TargetSMTLIB",
         "@z3//:z3_static",
+    ],
+)
+
+# An axiom's triggers (ADR 0036), shared by IRGen, which reports an axiom
+# with none, and the verifier, which encodes them as patterns.
+cc_library(
+    name = "triggers",
+    srcs = ["Triggers.cpp"],
+    hdrs = ["Triggers.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/dialect",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:IR",
     ],
 )

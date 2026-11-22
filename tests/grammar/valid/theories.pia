@@ -1,0 +1,73 @@
+(* The theory of ADR 0036's worked example: layers with shapes and
+   Lipschitz bounds. It has no model yet (step 3), so its axioms are
+   trusted, and the file must say so.
+// RUN: not piac --verify --trust-report %s | FileCheck %s
+*)
+@trusted
+
+let theory Lip = sig
+  let sort layer
+  let spec in_w : (f : layer) -> usize
+  let spec out_w : (f : layer) -> usize
+  let spec lip : (f : layer) -> real
+  let spec seq : (f : layer) -> (g : layer) -> layer
+  let spec residual : (f : layer) -> layer
+
+  let axiom lip_nonneg (f : layer) ensures lip f >= 0.0
+  let axiom seq_shape (f : layer) (g : layer)
+    requires out_w f = in_w g
+    ensures in_w (seq f g) = in_w f && out_w (seq f g) = out_w g
+  let axiom seq_lip (f : layer) (g : layer)
+    requires out_w f = in_w g
+    ensures lip (seq f g) <= lip f * lip g
+  let axiom residual_shape (f : layer)
+    requires in_w f = out_w f
+    ensures in_w (residual f) = in_w f && out_w (residual f) = out_w f
+  let axiom residual_lip (f : layer) @trigger(residual f)
+    requires in_w f = out_w f
+    ensures lip (residual f) <= 1.0 + lip f
+  let lemma residual_twice (f : layer) : unit
+    requires in_w f = out_w f
+    ensures lip (residual (residual f)) <= 2.0 + lip f
+  = ()
+end
+
+(* A residual block of width 512 followed by a 512-to-10 layer. *)
+let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
+  requires Lip.in_w a = 512 && Lip.out_w a = 512 && Lip.lip a <= 0.5
+  requires Lip.in_w b = 512 && Lip.out_w b = 10 && Lip.lip b <= 2.0
+  ensures Lip.in_w (Lip.seq (Lip.residual a) b) = 512
+  ensures Lip.out_w (Lip.seq (Lip.residual a) b) = 10
+  ensures Lip.lip (Lip.seq (Lip.residual a) b) <= 3.0
+= ()
+
+(* The residual of a layer whose shape changes: residual_lip's
+   precondition does not hold, so nothing bounds its constant. *)
+let lemma wrong (b : Lip.layer) : unit
+  requires Lip.in_w b = 512 && Lip.out_w b = 10
+  ensures Lip.lip (Lip.residual b) <= 1.0 + Lip.lip b
+= ()
+
+(* A lemma's postcondition is assumed after its call, as for any lemma. *)
+let lemma twice_then (f : Lip.layer) : unit
+  requires Lip.in_w f = 64 && Lip.out_w f = 64 && Lip.lip f <= 1.0
+  ensures Lip.lip (Lip.residual (Lip.residual f)) <= 3.0
+= Lip.residual_twice f
+
+(* Expected report, in order: the trusted axioms, then the goals.
+// CHECK: theory_lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no model
+// CHECK: theory_lip.pia:17:3: trusted: the axiom 'Lip.seq_shape', since the theory 'Lip' has no model
+// CHECK: theory_lip.pia:20:3: trusted: the axiom 'Lip.seq_lip', since the theory 'Lip' has no model
+// CHECK: theory_lip.pia:23:3: trusted: the axiom 'Lip.residual_shape', since the theory 'Lip' has no model
+// CHECK: theory_lip.pia:26:3: trusted: the axiom 'Lip.residual_lip', since the theory 'Lip' has no model
+// CHECK: 5 trusted items
+// CHECK: theory_lip.pia:31:5: proved: the postcondition holds [smt]
+// CHECK: theory_lip.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: theory_lip.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: theory_lip.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: theory_lip.pia:48:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: b = Lip.layer!val!{{[0-9]+}}
+// CHECK: theory_lip.pia:55:3: proved: the precondition of 'Lip.residual_twice' holds [smt]
+// CHECK: theory_lip.pia:54:3: proved: the postcondition holds [smt]
+// CHECK: 6 proved, 1 failed, 0 skipped
+*)

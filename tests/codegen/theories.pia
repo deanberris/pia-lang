@@ -1,0 +1,24 @@
+(* A theory is spec-only (ADR 0036): codegen erases its functions, axioms
+   and lemmas, and every contract that uses them.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: T.
+// CHECK-LABEL: func.func @clamp
+// CHECK-NOT: call
+// CHECK: return
+// CHECK-NOT: T.
+*)
+@trusted
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let axiom small (x : s) ensures f x < 10
+  let lemma small_too (x : s) : unit ensures f x <= 9 = ()
+end
+
+let clamp (n : u8) : u8
+  ensures result <= n && forall (x : T.s). T.f x < 10
+= if n > 9 then 9 else n

@@ -1,0 +1,17 @@
+(* A name a theory does not declare (ADR 0036).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let theory T = sig
+  let sort s
+  let spec f : (x : s) -> u8
+end
+
+(* CHECK: theory_unknown.pia:[[@LINE+2]]:41: error: the theory 'T' has no 'nope'
+*)
+let lemma uses (x : T.s) : unit ensures T.nope x = 1 = ()
+
+(* CHECK: theory_unknown.pia:[[@LINE+2]]:22: error: the theory 'T' has no 't'
+*)
+let lemma sorts (x : T.t) : unit ensures T.f x = 1 = ()

@@ -71,6 +71,16 @@ def Pia_Dialect : Dialect {
     static constexpr ::llvm::StringLiteral getFuelAttrName() {
       return ::llvm::StringLiteral("pia.fuel");
     }
+
+    // A theory's members (ADR 0036): an abstract spec function has no
+    // body, and an axiom is a fact its parameters are quantified over.
+    static constexpr ::llvm::StringLiteral getAbstractAttrName() {
+      return ::llvm::StringLiteral("pia.abstract");
+    }
+
+    static constexpr ::llvm::StringLiteral getAxiomAttrName() {
+      return ::llvm::StringLiteral("pia.axiom");
+    }
   }];
   let hasRegionArgAttrVerify = 1;
   // Folded `index` values become `arith.constant`; folded Pia integers become
@@ -125,6 +135,17 @@ def Pia_RealType : Pia_Type<"Real", "real"> {
   }];
 }
 
+def Pia_SortType : Pia_Type<"Sort", "sort"> {
+  let summary = "an uninterpreted sort a theory declares (ADR 0036)";
+  let description = [{
+    `let theory Lip = sig let sort layer ... end` declares
+    `!pia.sort<"Lip.layer">`. Values of a sort are spec-only: the verifier
+    encodes it as an uninterpreted SMT sort, and nothing else sees it.
+  }];
+  let parameters = (ins StringRefParameter<"the sort's qualified name">:$name);
+  let assemblyFormat = "`<` $name `>`";
+}
+
 def Pia_ArrayType : Pia_Type<"Array", "array"> {
   let summary = "a fixed-length array whose length the prover knows";
   let parameters = (ins "uint64_t":$length, "::mlir::Type":$elementType);
@@ -173,6 +194,8 @@ def Pia_Record : Type<CPred<"::llvm::isa<::pia::RecordType>($_self)">,
                        "Pia record", "::pia::RecordType">;
 def Pia_Exact : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::RealType>($_self)">,
                      "Pia spec-only int or real">;
+def Pia_Comparable : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::RealType, ::pia::SortType>($_self)">,
+                          "Pia spec-only int, real or sort value">;
 def Pia_IntOrExact : Type<CPred<"::llvm::isa<::pia::IntType, ::pia::UnboundedIntType, ::pia::RealType>($_self)">,
                           "Pia integer, int or real">;
 def Pia_Dyn : Type<CPred<"::llvm::isa<::pia::DynType>($_self)">,
@@ -494,8 +517,9 @@ def Pia_ExactDivOp : Pia_ExactArithOp<"div"> {
 }
 
 def Pia_ExactCmpOp : Pia_Op<"exact.cmp", [Pure, SameTypeOperands]> {
-  let summary = "compare two ints or two reals";
-  let arguments = (ins Pia_CmpPredicate:$predicate, Pia_Exact:$lhs, Pia_Exact:$rhs);
+  let summary = "compare two ints or two reals, or two values of a sort for equality";
+  let arguments = (ins Pia_CmpPredicate:$predicate, Pia_Comparable:$lhs, Pia_Comparable:$rhs);
+  let hasVerifier = 1;
   let results = (outs I1:$result);
   let assemblyFormat = "$predicate $lhs `,` $rhs attr-dict `:` type($lhs)";
 }

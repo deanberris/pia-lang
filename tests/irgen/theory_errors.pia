@@ -1,0 +1,28 @@
+(* The rules of theories (ADR 0036, step 2) that hold before any code is
+   generated: a theory with axioms has no model yet, so its file must be
+   @trusted, and its members cannot shadow what is visible (ADR 0022).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let helper (x : u8) : u8 = x
+
+let theory Untrusted = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let axiom small (x : s) ensures f x < 10
+end
+
+let theory Shadows = sig
+  let sort s
+  let spec len : (x : s) -> u8
+  let spec helper : (x : s) -> u8
+  let spec u8 : (x : s) -> bool
+  let spec g : (s : s) -> u8
+end
+
+(* Each error, in order.
+// CHECK: theory_errors.pia:9:1: error: the theory 'Untrusted' has axioms and no model, so its axioms are trusted: mark the file '@trusted' on a line of its own (models, which make a theory proved, come in ADR 0036 step 3)
+// CHECK: theory_errors.pia:17:3: error: 'len' shadows a core builtin; Pia does not allow shadowing (ADR 0022), so rename it to len'
+// CHECK: theory_errors.pia:18:3: error: 'helper' shadows the item 'helper'; Pia does not allow shadowing (ADR 0022), so rename it to helper'
+// CHECK: theory_errors.pia:19:3: error: 'u8' shadows the type 'u8'; Pia does not allow shadowing (ADR 0022), so rename it to u8'
+*)

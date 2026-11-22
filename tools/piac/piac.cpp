@@ -32,7 +32,12 @@
 //                                   that drops a declaration)
 //   piac --no-slice ...             always solve each goal's full query
 //   piac --verify-stats ...         print a summary of the proof work, and
-//                                   how long it took, to stderr
+//                                   how long it took, to stderr; with
+//                                   theories, each axiom's triggers and the
+//                                   axioms each goal was given
+//   piac --trust-report ...         with --verify, list the trusted items
+//                                   the proofs rest on: today, the axioms
+//                                   of theories with no model
 //   piac --explain-overloads=F:L .. for each overloaded or generic call on
 //                                   line L of F, print its candidates,
 //                                   why each removed one was, and which
@@ -76,7 +81,9 @@
 
 #ifndef PIA_NO_MLIR
 #include "codegen/Codegen.h"
+#include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
@@ -94,7 +101,7 @@ int usage() {
                "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
                "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
                "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
-               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats]\n"
+               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats] [--trust-report]\n"
                "             [--explain-overloads=<file:line>]\n"
                "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
@@ -244,6 +251,43 @@ void printStats(const pia::verify::Stats &st) {
             << " contract=" << st.contractGoals
             << " contract_smt=" << st.contractSmt
             << " contract_cost=" << st.contractCost << "\n";
+  // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
+  // line above the only `verify-stats:` line.
+  for (const auto &[axiom, triggers] : st.triggers) {
+    std::cerr << "verify-stats-axiom: " << axiom << " triggers=";
+    for (size_t i = 0; i < triggers.size(); ++i)
+      std::cerr << (i ? " | " : "") << "(" << triggers[i] << ")";
+    std::cerr << "\n";
+  }
+}
+
+// The axioms each goal over a theory was given (ADR 0036).
+void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
+  for (const pia::verify::Outcome &o : outcomes) {
+    if (o.axioms.empty() && !o.fallback) continue;
+    std::cerr << "verify-stats-goal: " << o.where << " axioms=";
+    for (size_t i = 0; i < o.axioms.size(); ++i)
+      std::cerr << (i ? "," : "") << o.axioms[i];
+    if (o.fallback) std::cerr << " fallback=all";
+    std::cerr << "\n";
+  }
+}
+
+// `--trust-report`: what the program's proofs rest on without proof. Today
+// that is the axioms of theories with no model (ADR 0036, step 2).
+void printTrustReport(mlir::ModuleOp module, std::ostream &os) {
+  unsigned n = 0;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
+    std::string theory;
+    if (auto t = f->getAttrOfType<mlir::StringAttr>("pia.theory"))
+      theory = t.getValue().str();
+    os << pia::verify::formatLoc(f.getLoc()) << ": trusted: the axiom '"
+       << f.getSymName().str() << "', since the theory '" << theory
+       << "' has no model\n";
+    ++n;
+  }
+  os << n << (n == 1 ? " trusted item\n" : " trusted items\n");
 }
 
 int compile(mlir::ModuleOp module, const std::string &mode,
@@ -259,7 +303,10 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   }
   std::vector<Outcome> outcomes =
       pia::verify::verifyModule(module, verifyOptions, &stats);
-  if (verifyStats) printStats(stats);
+  if (verifyStats) {
+    printStats(stats);
+    printGoalAxioms(outcomes);
+  }
   bool failed = false;
   for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
@@ -345,6 +392,7 @@ int main(int argc, char **argv) {
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
   bool verifyStats = false;
+  bool trustReport = false;
   std::string explainFile;
   unsigned explainLine = 0;
   LintSwitch lints;
@@ -410,6 +458,8 @@ int main(int argc, char **argv) {
       slice = -1;
     else if (arg == "--verify-stats")
       verifyStats = true;
+    else if (arg == "--trust-report")
+      trustReport = true;
     else if (arg.rfind("--explain-overloads=", 0) == 0) {
       std::string spec = arg.substr(20);
       size_t colon = spec.rfind(':');
@@ -485,6 +535,7 @@ int main(int argc, char **argv) {
   (void)jobs;
   (void)slice;
   (void)verifyStats;
+  (void)trustReport;
   (void)explainLine;
   (void)costlyGoal;
   if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
@@ -584,7 +635,11 @@ int main(int argc, char **argv) {
         }
         std::vector<pia::verify::Outcome> outcomes =
             pia::verify::verifyModule(*module, options, &stats);
-        if (verifyStats) printStats(stats);
+        if (verifyStats) {
+          printStats(stats);
+          printGoalAxioms(outcomes);
+        }
+        if (trustReport) printTrustReport(*module, std::cout);
         if (!verifyOnly.empty() && stats.goals == 0) {
           std::cerr << "piac: error: --verify-only selects no goal\n";
           return 1;

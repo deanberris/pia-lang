@@ -446,3 +446,10 @@ LogicalResult ExactConvertOp::verify() {
                      "real, not ")
          << in << " to " << out;
 }
+
+LogicalResult ExactCmpOp::verify() {
+  if (isa<SortType>(getLhs().getType()) &&
+      getPredicate() != CmpPredicate::eq && getPredicate() != CmpPredicate::ne)
+    return emitOpError("compares values of a sort only for equality");
+  return success();
+}
