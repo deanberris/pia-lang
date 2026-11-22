@@ -439,17 +439,7 @@ let is_sorted_until (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : 
 let is_sorted (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : bool
   requires Pia.Fn.strict_weak_order less
   ensures result <==> Pia.Fn.sorted less xs
-= if len xs < 2 then true else (
-    let i : mutable usize = 1 in
-    while i < len xs && less xs.[i] xs.[i - 1] = false
-      invariant 1 <= i && i <= len xs
-      invariant Pia.Fn.sorted_prefix less xs i
-      decreases len xs - i
-    do
-      assert (forall (p in 0..i). less xs.[i] xs.[p] = false);
-      i <- i + 1
-    done;
-    i = len xs)
+= (is_sorted_until xs less = len xs)
 
 (** C++: std::max_element with a comparator. *)
 let max_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
@@ -515,7 +505,7 @@ let adjacent_find (t : type) (xs : [t]) (p : (a : t) -> (b : t) -> bool) : usize
     if i + 1 < len xs then i else len xs)
 
 (** C++: std::minmax_element with a comparator: the first smallest and the
-    last largest, in one pass. *)
+    last largest. *)
 let minmax_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : extremes
   requires Pia.Fn.strict_weak_order less
   ensures len xs = 0 ==> result.lowest = 0 && result.highest = 0
@@ -524,20 +514,4 @@ let minmax_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : e
   ensures len xs > 0 ==> (forall (j in 0..result.lowest). less xs.[result.lowest] xs.[j])
   ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[result.highest] xs.[j] = false)
   ensures len xs > 0 ==> (forall (j in result.highest + 1..len xs). less xs.[j] xs.[result.highest])
-= if len xs = 0 then { lowest = 0; highest = 0 } else (
-    let lo : mutable usize = 0 in
-    let hi : mutable usize = 0 in
-    let i : mutable usize = 1 in
-    while i < len xs
-      invariant 1 <= i && i <= len xs && lo < i && hi < i
-      invariant forall (j in 0..i). less xs.[j] xs.[lo] = false
-      invariant forall (j in 0..lo). less xs.[lo] xs.[j]
-      invariant forall (j in 0..i). less xs.[hi] xs.[j] = false
-      invariant forall (j in hi + 1..i). less xs.[j] xs.[hi]
-      decreases len xs - i
-    do
-      (if less xs.[i] xs.[lo] then lo <- i else ());
-      (if less xs.[i] xs.[hi] = false then hi <- i else ());
-      i <- i + 1
-    done;
-    { lowest = lo; highest = hi })
+= { lowest = min_element xs less; highest = last_max_element xs less }

@@ -2759,7 +2759,10 @@ class Gen {
         return genApply(*keep(std::move(call)), expected);
       }
     if (!local && fn.flags != "prelude")
-      if (auto h = hofs_.find(fn.text); h != hofs_.end()) {
+      // In code from another module, its higher-order functions by their
+      // own names, as its other functions are found (ADR 0039, section 6;
+      // #257).
+      if (auto h = findHof(fn.text); h != hofs_.end()) {
         std::vector<const Node *> args;
         for (size_t i = 1; i < n.kids.size(); ++i)
           args.push_back(n.kids[i].get());
@@ -4462,6 +4465,17 @@ class Gen {
   }
 
   // The functions a written name may call: one, or an overload set.
+  // The higher-order functions named `name`: in code from another module,
+  // that module's by their own names too.
+  std::map<std::string, std::vector<sema::FuncSig>>::iterator findHof(
+      const std::string &name) {
+    auto h = hofs_.find(name);
+    if (h == hofs_.end() && !adlModule_.empty() &&
+        name.find('.') == std::string::npos)
+      h = hofs_.find(adlModule_ + "." + name);
+    return h;
+  }
+
   std::vector<sema::FuncSig *> overloadSet(const std::string &name) {
     std::vector<sema::FuncSig *> out;
     // An instance made through an adapter calls the adapter's functions,

@@ -2,7 +2,10 @@
    (ADR 0040, section 6; ADR 0044). Each requires its comparator to be a
    strict weak order, Pia.Fn's strict_weak_order, which the caller proves
    here of `<`, of `>` and of Pia.Core.Order's less; each is proved once in
-   Search, so the instances here are discharged by those proofs.
+   Search, so the instances here are discharged by those proofs. is_sorted
+   and minmax_element call is_sorted_until, min_element and
+   last_max_element's comparator overloads by their own names, which this
+   importer resolves among Search's higher-order overloads (#257).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
@@ -42,5 +45,5 @@ let neighbours (xs : [u8]) : unit =
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 53 proved, 0 failed, 0 skipped
+// CHECK: 43 proved, 0 failed, 0 skipped
 *)
