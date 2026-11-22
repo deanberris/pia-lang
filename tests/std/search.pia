@@ -13,7 +13,7 @@
 // CHECK-NOT: failed
 // CHECK-DAG: proved: the postcondition holds [generic]
 // CHECK-DAG: not proved generically: 'minmax_element' is proved at each instance, since it returns a value of extremes [generic]
-// CHECK: 243 proved, 0 failed, 0 skipped
+// CHECK: 315 proved, 0 failed, 0 skipped
 *)
 
 (*

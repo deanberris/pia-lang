@@ -46,12 +46,14 @@ pia_library(
     target_compatible_with = APPLE_SILICON,
 )
 
-# <optional>: generic, so nothing can be imported from it yet;
-# tests/std/option.pia checks its goals.
+# <optional>, exported as a generic type and generic functions:
+# tests/std/option.pia checks its goals; tests/std/option_edges.pia tests it
+# through its interface.
 pia_library(
     name = "option",
     src = "Option.pia",
     target_compatible_with = APPLE_SILICON,
+    deps = [":order"],
 )
 
 # <expected> on the language's result type: tests/std/result.pia checks its

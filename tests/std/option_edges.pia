@@ -1,0 +1,31 @@
+(* Importers of Pia.Core.Option instantiate its generic type and functions
+   at their own types, and prove those instances (ADR 0043): an empty and a
+   full option of u16, and nullopt before every value, as C++ orders them.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional
+
+let edges (d : u16) : unit =
+  let none : Pia.Core.Option.option u16 = Pia.Core.Option.None in
+  let full : Pia.Core.Option.option u16 = Pia.Core.Option.Some 65535 in
+  let zero : Pia.Core.Option.option u16 = Pia.Core.Option.Some 0 in
+  assert Pia.Core.Option.has_value<u16> full;
+  assert Pia.Core.Option.is_none<u16> none;
+  assert Pia.Core.Option.value_or<u16> full d = 65535;
+  assert Pia.Core.Option.value_or<u16> none d = d;
+  assert Pia.Core.Option.same<u16> none none;
+  assert Pia.Core.Option.same<u16> none zero = false;
+  assert Pia.Core.Option.same<u16> full full;
+  assert Pia.Core.Option.less<u16> none zero;
+  assert Pia.Core.Option.less<u16> zero none = false;
+  assert Pia.Core.Option.less<u16> none none = false;
+  assert Pia.Core.Option.less<u16> zero full;
+  ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 88 proved, 0 failed, 0 skipped
+*)

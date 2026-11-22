@@ -3272,9 +3272,24 @@ class Gen {
     // A concept's function, called by its own name in a generic over an
     // imported concept, is also found in the concept's module: a generic of
     // Pia.Core.Algo.Search calls `same`, which Pia.Core.Order defines for
-    // u8 as Pia.Core.Order.same (ADR 0039, section 6). Only when nothing
-    // else is found, so it can never make a call ambiguous.
-    if (out.empty() && name.find('.') == std::string::npos)
+    // u8 as Pia.Core.Order.same (ADR 0039, section 6). The arguments'
+    // types choose among them and this module's own (genOverloadedCall),
+    // as when Pia.Core.Option's generic `same` over options calls Eq's
+    // `same` on its elements; one with the parameter types of a function
+    // already found is left out, so it never makes a call ambiguous.
+    auto shadowed = [&](const sema::FuncSig &f) {
+      for (const sema::FuncSig *o : out) {
+        if (o->isGeneric() || f.isGeneric() ||
+            o->params.size() != f.params.size())
+          continue;
+        bool same = true;
+        for (size_t i = 0; same && i < f.params.size(); ++i)
+          same = o->params[i].type == f.params[i].type;
+        if (same) return true;
+      }
+      return false;
+    };
+    if (name.find('.') == std::string::npos)
       for (auto &[cname, item] : concepts_) {
         llvm::StringRef module = llvm::StringRef(cname).rsplit('.').first;
         if (module == cname) continue;
@@ -3285,7 +3300,8 @@ class Gen {
         if (auto m = overloads_.find(module.str() + "." + name); m != overloads_.end())
           for (const std::string &symbol : m->second)
             if (auto s = sigs_.find(symbol); s != sigs_.end())
-              if (!llvm::is_contained(out, &s->second)) out.push_back(&s->second);
+              if (!llvm::is_contained(out, &s->second) && !shadowed(s->second))
+                out.push_back(&s->second);
       }
     return out;
   }
