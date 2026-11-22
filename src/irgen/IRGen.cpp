@@ -1131,6 +1131,28 @@ class Gen {
   // only to other spec functions. A recursive one needs a `decreases`
   // measure, and spec functions cannot be mutually recursive yet. Lemmas
   // are erased from code, so code cannot use what they compute.
+  // An ordinary function whose body is a definition, as a spec function's
+  // is: scalar parameters and result, and no loop, call, buffer, write or
+  // `abort`, so it always returns exactly what its body computes. A spec
+  // function may call one, such as a concept's `less` for u8, and the
+  // verifier unfolds it there (docs/verifier.md).
+  static bool definesValue(mlir::func::FuncOp f) {
+    if (!f || f.isExternal() || f.getNumResults() != 1) return false;
+    auto scalar = [](mlir::Type t) {
+      return mlir::isa<IntType>(t) || t.isInteger(1);
+    };
+    if (!scalar(f.getFunctionType().getResult(0))) return false;
+    for (mlir::Type t : f.getFunctionType().getInputs())
+      if (!scalar(t)) return false;
+    bool ok = true;
+    f.walk([&](mlir::Operation *op) {
+      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                    AbortOp, LoadOp, StoreOp>(op))
+        ok = false;
+    });
+    return ok;
+  }
+
   void checkGhosts() {
     auto isSpec = [](mlir::func::FuncOp f) {
       return f && f->hasAttr(PiaDialect::getSpecAttrName());
@@ -1154,12 +1176,14 @@ class Gen {
         else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op)) {
           auto callee =
               module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
-          if (!isSpec(callee))
-            diags_.error(sourceLoc(op->getLoc()),
-                         "a spec function can call only spec functions, "
-                         "and '" + call.getCallee().str() + "' is not one");
-          else
+          if (isSpec(callee))
             calls[name].push_back(call.getCallee().str());
+          else if (!definesValue(callee))
+            diags_.error(sourceLoc(op->getLoc()),
+                         "a spec function can call only spec functions and "
+                         "pure functions of scalars (no loop, call, buffer "
+                         "or 'abort'), and '" + call.getCallee().str() +
+                             "' is neither");
         }
       });
       bool recursive = llvm::is_contained(calls[name], name);
