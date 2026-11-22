@@ -1,0 +1,59 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
+
+# Modules across files (ADR 0039, step 2): interface artifacts, imports
+# resolved through --iface-path, and link symbols.
+lit_tests(
+    name = "modules_tests",
+    srcs = glob(["*.pia"]),
+    data = glob(["Inputs/*.pia"]),
+    tools = ["//tools/piac"],
+)
+
+# Separate compilation end to end, on Apple Silicon: Blend imports
+# Image.Pixels, each is proved and compiled on its own, and a C harness
+# calls Blend's entry point, which calls into Image.Pixels.
+APPLE_SILICON = [
+    "@platforms//os:macos",
+    "@platforms//cpu:arm64",
+]
+
+pia_library(
+    name = "pixels",
+    src = "Inputs/pixels.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_library(
+    name = "blend",
+    src = "Inputs/blend.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [":pixels"],
+)
+
+cc_test(
+    name = "blend_test",
+    srcs = [
+        "blend_test.c",
+        ":blend",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# A Pia `main` that imports a module, linked with pia_binary.
+pia_binary(
+    name = "grey",
+    src = "Inputs/grey.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [":pixels"],
+)
+
+sh_test(
+    name = "grey_test",
+    srcs = ["grey_test.sh"],
+    args = ["$(rootpath :grey)"],
+    data = [":grey"],
+    target_compatible_with = APPLE_SILICON,
+)

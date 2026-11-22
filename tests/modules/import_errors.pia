@@ -1,0 +1,19 @@
+(* Imports name one interface of one module, found on --iface-path, and
+   reach only what it lists (ADR 0039).
+// RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
+// RUN: not piac --dump-expanded --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+import Image.Pixels.Ops
+(* CHECK-DAG: import_errors.pia:[[@LINE+2]]:1: error: 'Image.Pixels.Ops' is already imported
+*)
+import Image.Pixels.Ops
+(* CHECK-DAG: import_errors.pia:[[@LINE+2]]:1: error: no interface artifact 'Image.Pixels.Colour.piai' on the interface path
+*)
+import Image.Pixels.Colour
+(* CHECK-DAG: import_errors.pia:[[@LINE+2]]:1: error: 'import Pixels' names no interface
+*)
+import Pixels
+
+(* CHECK-DAG: import_errors.pia:[[@LINE+2]]:26: error: the module 'Image.Pixels' has no 'helper' in the interfaces this file imports
+*)
+let half (x : u8) : u8 = Image.Pixels.helper x

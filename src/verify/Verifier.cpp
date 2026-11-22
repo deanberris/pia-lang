@@ -2930,7 +2930,9 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       witnessOf[w.getValue().str()] = fn;
   std::map<Operation *, std::vector<Goal>> witnessGoals;
   for (auto fn : module.getOps<mlir::func::FuncOp>()) {
-    if (fn.isExternal()) continue;
+    // An imported function is proved by its own module (ADR 0039).
+    if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))
+      continue;
     // A foreign function's contract is trusted, not proved (#55).
     if (fn->hasAttr("pia.extern")) continue;
     // A witness copy only explains another function's failures.

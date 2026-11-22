@@ -668,7 +668,36 @@ void loadDialects(mlir::MLIRContext &ctx) {
   mlir::registerLLVMDialectTranslation(ctx);
 }
 
+namespace {
+std::string cName(llvm::StringRef name);
+
+// The symbol under which a module's function keeps its Pia calling
+// convention, for importers to call (ADR 0039): `__pia$Image$Png$decode`.
+std::string linkSymbol(llvm::StringRef path, llvm::StringRef name) {
+  std::string p = path.str();
+  std::replace(p.begin(), p.end(), '.', '$');
+  return "__pia$" + p + "$" + cName(name);
+}
+}  // namespace
+
 void eraseContracts(mlir::ModuleOp module) {
+  // An imported function's body is its interface's contract, for the
+  // verifier. The code is in its module's object file, so what remains is
+  // a declaration of the module's link symbol (ADR 0039).
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    auto from = f->getAttrOfType<mlir::StringAttr>(PiaDialect::getImportAttrName());
+    if (!from) continue;
+    llvm::StringRef local = f.getSymName();
+    local.consume_front(from.getValue());
+    local.consume_front(".");
+    auto link = mlir::StringAttr::get(module.getContext(),
+                                      linkSymbol(from.getValue(), local));
+    (void)mlir::SymbolTable::replaceAllSymbolUses(f, link, module);
+    f.setSymName(link);
+    f.getBody().getBlocks().clear();
+    f.setPrivate();
+    f->removeAttr(PiaDialect::getImportAttrName());
+  }
   // Lemmas and spec functions exist only for the verifier: calls to them,
   // and the functions themselves, are erased (docs/codegen.md).
   auto isLemma = [&](mlir::func::CallOp call) {
@@ -839,6 +868,10 @@ struct Entry {
   // For each argument, the earlier argument whose length it shares (a
   // field buffer of a slice of records), or -1.
   std::vector<int> lengthOf = {};
+  // The function itself, renamed: `__pia_f`, or a module's link symbol.
+  std::string internal = {};
+  // Whether `internal` stays external, for other modules to call.
+  bool linked = false;
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -895,8 +928,7 @@ std::string cName(llvm::StringRef name) {
 
 LogicalResult buildEntry(mlir::ModuleOp module, const Entry &e) {
   mlir::MLIRContext *ctx = module.getContext();
-  auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
-      (kInternalPrefix + e.name).str());
+  auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
   if (!internal) return mlir::emitError(e.loc) << "lost function " << e.name;
   for (Type t : e.type.getResults())
     if (mlir::isa<mlir::MemRefType>(t))
@@ -997,15 +1029,25 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
     Entry e{f.getSymName().str(), cName(f.getSymName()), f.getFunctionType(),
             {}, false, f.getLoc()};
-    // An exported function's entry point is named by its module (ADR 0039).
+    e.internal = (kInternalPrefix + e.name).str();
+    // An exported function's entry point is named by its module unless its
+    // interface is `@abi(c)`, and its Pia calling convention stays
+    // reachable, for importers, under its link symbol (ADR 0039).
     auto exported =
         f->getAttrOfType<mlir::StringAttr>(PiaDialect::getExportAttrName());
     if (exported && !exported.getValue().empty()) {
-      std::string path = exported.getValue().str();
-      std::replace(path.begin(), path.end(), '.', '$');
-      e.cname = "pia$" + path + "$" + e.cname;
+      if (exportsOnly) {
+        e.internal = linkSymbol(exported.getValue(), f.getSymName());
+        e.linked = true;
+      }
+      if (!f->hasAttr(PiaDialect::getAbiCAttrName())) {
+        std::string path = exported.getValue().str();
+        std::replace(path.begin(), path.end(), '.', '$');
+        e.cname = "pia$" + path + "$" + e.cname;
+      }
     }
     if (exported) f->removeAttr(PiaDialect::getExportAttrName());
+    f->removeAttr(PiaDialect::getAbiCAttrName());
     if (exportsOnly && !exported && f.isPublic() && !f.isExternal())
       f.setPrivate();
     for (unsigned i = 0; i < f.getNumArguments(); ++i) {
@@ -1025,11 +1067,10 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
       f.removeResAttrsAttr();
     }
     if (f.isExternal() || !f.isPublic()) continue;
-    std::string internal = (kInternalPrefix + e.name).str();
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
-            f, mlir::StringAttr::get(ctx, internal), module)))
+            f, mlir::StringAttr::get(ctx, e.internal), module)))
       return mlir::failure();
-    f.setSymName(internal);
+    f.setSymName(e.internal);
     f.setPrivate();
     entries.push_back(std::move(e));
   }
@@ -1063,8 +1104,12 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
       }
   for (const Entry &e : entries) {
     if (mlir::failed(buildEntry(module, e))) return mlir::failure();
-    auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(
-        (kInternalPrefix + e.name).str());
+    auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
+    if (e.linked) {
+      internal.setLinkage(mlir::LLVM::Linkage::External);
+      internal.setSymVisibility(std::nullopt);
+      continue;
+    }
     internal.setLinkage(mlir::LLVM::Linkage::Internal);
     internal.setSymVisibility(std::nullopt);
   }

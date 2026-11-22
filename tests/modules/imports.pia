@@ -1,0 +1,24 @@
+(* An importer is checked against the imported interface's contracts
+   (ADR 0039): it may assume what `ensures` promises, and must prove what
+   `requires` asks, but it sees nothing of the bodies or of private items.
+// RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Image.Pixels.Ops
+
+let blend (x : u8) (y : u8) : u8
+  ensures result <= x || result <= y
+= Image.Pixels.mix x y
+
+let grey (v : u8) : u8
+  requires v <= 200
+= Image.Pixels.luma v v v
+
+let bright (v : u8) : u8 = Image.Pixels.luma v v v
+
+(*
+// CHECK-DAG: imports.pia:10:3: proved: the postcondition holds
+// CHECK-DAG: imports.pia:15:{{[0-9]+}}: proved: the precondition of 'Image.Pixels.luma' holds
+// CHECK-DAG: imports.pia:17:{{[0-9]+}}: failed: the precondition of 'Image.Pixels.luma' holds
+// CHECK: 2 proved, 1 failed, 0 skipped
+*)

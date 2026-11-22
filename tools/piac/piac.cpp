@@ -74,6 +74,7 @@
 #include <vector>
 
 #include "meta/Expand.h"
+#include "syntax/Interfaces.h"
 #include "syntax/Lexer.h"
 #include "syntax/Lint.h"
 #include "syntax/Parser.h"
@@ -106,10 +107,13 @@ int usage() {
                "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
                "<file.pia>\n"
+               "       piac --emit=interface -o <dir> <file.pia>\n"
                "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
                "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
                "             [--allow-unproved=<function>|<file:line[:col]>]... "
-               "<file.pia>\n";
+               "<file.pia>\n"
+               "       Every mode but --emit=interface takes "
+               "[--iface-path=<dir>]...\n";
   return 2;
 }
 
@@ -400,6 +404,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 int main(int argc, char **argv) {
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
+  std::vector<std::string> ifacePaths;
   bool contracts = false, verify = false, dumpSmt = false;
   bool literate = false, showComments = false;
   pia::meta::Options meta;
@@ -428,8 +433,13 @@ int main(int argc, char **argv) {
     if (arg == "--dump-ast" || arg == "--dump-expanded" ||
         arg == "--dump-tokens" || arg == "--check" ||
         arg == "--emit=mlir" || arg == "--emit=core" || arg == "--emit=llvm" ||
-        arg == "--emit=asm" || arg == "--emit=obj")
+        arg == "--emit=asm" || arg == "--emit=obj" ||
+        arg == "--emit=interface")
       mode = arg;
+    else if (arg.rfind("--iface-path=", 0) == 0) {
+      if (arg.size() == 13) return usage();
+      ifacePaths.push_back(arg.substr(13));
+    }
     else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
@@ -548,7 +558,11 @@ int main(int argc, char **argv) {
   if (codegen && verify) return usage();
   if (!allowUnproved.empty() && !codegen && !verify) return usage();
   if (mode == "--emit=obj" && output.empty()) return usage();
-  if (!output.empty() && !codegen) return usage();
+  bool emitInterface = mode == "--emit=interface";
+  if (emitInterface && (output.empty() || verify || contracts ||
+                        !ifacePaths.empty()))
+    return usage();
+  if (!output.empty() && !codegen && !emitInterface) return usage();
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();
 #ifdef PIA_NO_MLIR
@@ -593,6 +607,20 @@ int main(int argc, char **argv) {
                   : pia::syntax::parseProgram(source, diags, literate);
     if (!diags.hasErrors() && mode == "--dump-ast")
       pia::syntax::dump(std::cout, *tree, showComments);
+    // An interface artifact is the interface as written (ADR 0039), so it
+    // needs neither metaprograms nor the verifier.
+    if (!diags.hasErrors() && emitInterface) {
+      for (const pia::syntax::InterfaceArtifact &a :
+           pia::syntax::interfaceArtifacts(*tree, source, literate, diags)) {
+        std::string path = output + "/" + a.fileName();
+        std::ofstream out(path, std::ios::binary);
+        out << a.text;
+        if (!out) {
+          std::cerr << "piac: cannot write " << path << "\n";
+          return 2;
+        }
+      }
+    }
     // Lints read the program as written, before metaprograms run, so they
     // point at the user's code and not at generated code.
     if (!diags.hasErrors() && !contracts &&
@@ -603,8 +631,13 @@ int main(int argc, char **argv) {
         if (lints.on(l.name)) pia::syntax::printLint(std::cerr, l, file, source);
     // Everything past the syntax tree sees the program after its
     // metaprograms have run (docs/meta.md).
+    // Imports bring in the functions of other modules' interfaces, as
+    // items whose bodies are elsewhere (ADR 0039).
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
-        mode != "--check")
+        mode != "--check" && !emitInterface)
+      pia::syntax::resolveImports(*tree, ifacePaths, diags);
+    if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
+        mode != "--check" && !emitInterface)
       pia::meta::expand(*tree, diags, meta);
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
