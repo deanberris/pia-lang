@@ -37,6 +37,14 @@ interface Search = sig
   let minmax_element : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> extremes
   let is_sorted_until : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> usize
   let is_sorted : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> bool
+  let spec count_where : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> (i : usize) -> usize
+  let find : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> usize
+  let count : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> usize
+  let all : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> bool
+  let any : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> bool
+  let none : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> bool
+  let mismatch : (t : type) -> (xs : [t]) -> (ys : [t]) -> (p : t -> t -> bool) -> usize
+  let equal : (t : type) -> (xs : [t]) -> (ys : [t]) -> (p : t -> t -> bool) -> bool
 end
 
 (* The number of elements of xs.[i ..] that are the same as v. *)
@@ -275,3 +283,100 @@ let is_sorted (t : type where Pia.Core.Order.Ord t) (xs : [t]) : bool
   ensures result ==> sorted_prefix xs (len xs)
   ensures result = false ==> (exists (i in 1..len xs). less xs.[i] xs.[i - 1])
 = (is_sorted_until<t> xs = len xs)
+
+(* The predicate overloads (ADR 0040, section 6): no _if names. find xs p
+   is find xs v's overload, chosen by the argument's type (ADR 0044,
+   section 4). A unary predicate is a type f meeting Function f t bool,
+   so these are proved once, over both type parameters (ADR 0043). *)
+
+(* The number of elements of xs.[i ..] for which p holds. *)
+let spec count_where (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) (i : usize) : usize
+  requires i <= len xs
+  decreases len xs - i
+  ensures result <= len xs - i
+= if i = len xs then 0
+  else if p xs.[i] then 1 + count_where xs p (i + 1)
+  else count_where xs p (i + 1)
+
+(** C++: std::find_if. The first index of an element for which p holds,
+    or len xs. *)
+let find (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : usize
+  ensures result <= len xs
+  ensures forall (j in 0..result). p xs.[j] = false
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    invariant forall (j in 0..i). p xs.[j] = false
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+(** C++: std::count_if. *)
+let count (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : usize
+  ensures result = count_where xs p 0
+= let c : mutable usize = 0 in
+  let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs && c <= i
+    invariant c + count_where xs p i = count_where xs p 0
+    decreases len xs - i
+  do
+    (if p xs.[i] then c <- c + 1 else ());
+    i <- i + 1
+  done;
+  c
+
+(** C++: std::all_of. *)
+let all (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : bool
+  ensures result <==> (forall (j in 0..len xs). p xs.[j])
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i]
+    invariant i <= len xs
+    invariant forall (j in 0..i). p xs.[j]
+    decreases len xs - i
+  do i <- i + 1 done;
+  i = len xs
+
+(** C++: std::any_of. *)
+let any (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : bool
+  ensures result <==> (exists (j in 0..len xs). p xs.[j])
+= (find xs p < len xs)
+
+(** C++: std::none_of. *)
+let none (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : bool
+  ensures result <==> (forall (j in 0..len xs). p xs.[j] = false)
+= (find xs p = len xs)
+
+(* The binary predicate overloads. Function takes one argument, so a
+   binary predicate is an arrow, t -> t -> bool, and these are proved at
+   each specialisation, for the function passed (ADR 0044, section 5).
+   adjacent_find with a predicate, and the comparator overloads of
+   min_element, max_element, minmax_element, is_sorted_until and
+   is_sorted, wait for binary function values proved once (lambdas step
+   6): proved at each call, they cost 40M to 100M an importer. *)
+
+(** C++: std::mismatch with a predicate. The first index at which p does
+    not hold of xs.[i] and ys.[i], or the shorter length. *)
+let mismatch (t : type) (xs : [t]) (ys : [t]) (p : t -> t -> bool) : usize
+  ensures result <= len xs && result <= len ys
+  ensures forall (j in 0..result). p xs.[j] ys.[j]
+  ensures result < len xs && result < len ys ==> p xs.[result] ys.[result] = false
+= let i : mutable usize = 0 in
+  while i < len xs && i < len ys && p xs.[i] ys.[i]
+    invariant i <= len xs && i <= len ys
+    invariant forall (j in 0..i). p xs.[j] ys.[j]
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+(** C++: std::equal of two ranges, with a predicate. *)
+let equal (t : type) (xs : [t]) (ys : [t]) (p : t -> t -> bool) : bool
+  ensures result <==> len xs = len ys && (forall (j in 0..len xs). p xs.[j] ys.[j])
+= let i : mutable usize = 0 in
+  while len xs = len ys && i < len xs && p xs.[i] ys.[i]
+    invariant i <= len xs
+    invariant len xs = len ys ==> (forall (j in 0..i). p xs.[j] ys.[j])
+    decreases len xs - i
+  do i <- i + 1 done;
+  len xs = len ys && i = len xs

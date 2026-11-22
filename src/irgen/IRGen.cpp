@@ -1208,8 +1208,11 @@ class Gen {
       return mlir::isa<IntType>(t) || t.isInteger(1);
     };
     if (!scalar(f.getFunctionType().getResult(0))) return false;
-    for (mlir::Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
+    // A lambda passed as a function object is its closure's `apply`,
+    // whose first parameter is the closure: its captures (ADR 0044).
+    bool closure = f.getSymName().starts_with("apply[lambda@");
+    for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
+      if (!scalar(t) && !(closure && i == 0)) return false;
     bool ok = true;
     f.walk([&](mlir::Operation *op) {
       if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
@@ -5377,6 +5380,10 @@ class Gen {
           found = found || (sigs_.at(symbol).item &&
                             hasFlag(*sigs_.at(symbol).item, "spec") &&
                             sameSignature(r, *sigs_.at(symbol).item));
+        if (auto h = hofs_.find(r.text); h != hofs_.end())
+          for (const sema::FuncSig &hof : h->second)
+            found = found || (hof.item && hasFlag(*hof.item, "spec") &&
+                              sameSignature(r, *hof.item));
         if (!found)
           diags_.error(r.loc, unmet + "no spec function '" + r.text +
                                   "' with exactly this signature; a spec "
@@ -5397,6 +5404,11 @@ class Gen {
         for (const std::string &symbol : overloads_[r.text])
           found = found || (sigs_.at(symbol).isGeneric() &&
                             sameSignature(r, *sigs_.at(symbol).item));
+        // A higher-order function is generic in its function parameters
+        // (ADR 0044), and is called only through specialisations.
+        if (auto h = hofs_.find(r.text); h != hofs_.end())
+          for (const sema::FuncSig &hof : h->second)
+            found = found || (hof.item && sameSignature(r, *hof.item));
         if (!found)
           diags_.error(r.loc, unmet + "no generic function '" + r.text +
                                   "' with exactly this signature; a generic "

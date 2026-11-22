@@ -193,6 +193,15 @@ std::string smtSymbol(llvm::StringRef name) {
 // It always returns, with exactly the value its body computes. A lambda
 // passed to a higher-order function is usually one (ADR 0044), and so is
 // the wrapper that gives a named function an arrow's contract.
+// A lambda passed as a function object is its closure's `apply`, whose
+// first parameter is the closure. One that captures nothing is a record
+// with no fields, which has one value (ADR 0044).
+static bool closureParam(mlir::func::FuncOp f, Type t) {
+  auto r = mlir::dyn_cast<RecordType>(t);
+  return r && r.getFieldTypes().empty() &&
+         f.getSymName().starts_with("apply[lambda@");
+}
+
 bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
@@ -201,8 +210,8 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
     return false;
   auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
   if (!scalar(f.getFunctionType().getResult(0))) return false;
-  for (Type t : f.getFunctionType().getInputs())
-    if (!scalar(t)) return false;
+  for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
+    if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
   if (auto it = memo.find(f.getOperation()); it != memo.end())
     return it->second;
   memo[f.getOperation()] = false;  // a cycle is recursion
@@ -516,6 +525,16 @@ class Encoder {
     if (auto r = mlir::dyn_cast<RecordType>(t))
       if (r.getFieldTypes().empty() && fn_ && fn_->hasAttr("pia.generic_proof")) {
         std::string name = "generic." + r.getName().str();
+        sorts_.insert(name);
+        return mlir::smt::SortType::get(ctx_, name);
+      }
+    // Any other record left with no fields, such as the closure of a
+    // lambda that captures nothing passed as a function object (ADR 0044),
+    // has one value; as an uninterpreted sort, a spec function can still
+    // take it, and nothing is claimed about it.
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      if (r.getFieldTypes().empty()) {
+        std::string name = "unit." + r.getName().str();
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
@@ -2253,11 +2272,13 @@ class Encoder {
       return mlir::isa<IntType>(t) || t.isInteger(1);
     };
     if (!scalar(f.getFunctionType().getResult(0))) return false;
-    for (Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
+    for (auto [i, t] : llvm::enumerate(f.getFunctionType().getInputs()))
+      if (!scalar(t) && !(i == 0 && closureParam(f, t))) return false;
     return pureScalar(f, definesValue_);
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
+  // The one value of each record type with no fields, by name.
+  std::map<std::string, Value> unitValues_;
 
   // `f a` for an abstract `f`: the uninterpreted function applied, with
   // its result type's range, and nothing else.
@@ -2480,6 +2501,16 @@ class Encoder {
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
     if (Value t = d.memo.lookup(v)) return t;
+    // A record with no fields has one value: the closure of a lambda that
+    // captures nothing is the same whatever made it (ADR 0044).
+    if (auto r = mlir::dyn_cast<RecordType>(v.getType()))
+      if (r.getFieldTypes().empty() && !(fn_ && fn_->hasAttr("pia.generic_proof"))) {
+        std::string key = r.getName().str();
+        auto it = unitValues_.find(key);
+        if (it == unitValues_.end())
+          it = unitValues_.emplace(key, declare(sortOf(r), "", false)).first;
+        return it->second;
+      }
     if (d.envOutside) {
       Operation *def = v.getDefiningOp();
       mlir::Region *r = v.getParentRegion();
