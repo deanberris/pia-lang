@@ -423,6 +423,17 @@ def Pia_SliceOp : Pia_Op<"slice", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Pia_EmptyOp : Pia_Op<"empty", [Pure]> {
+  let summary = "a slice with no elements";
+  let description = [{
+    The value of a slice that nothing reads: an unused payload of a variant,
+    such as the `Ok` field of `Err e` in `result [u8] e`. It has length 0,
+    so every load or store through it is out of bounds.
+  }];
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{

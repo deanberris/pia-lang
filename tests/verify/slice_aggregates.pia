@@ -1,0 +1,52 @@
+(* Slices inside records and variants: a record field or a constructor's
+   payload may be a slice, which is how an allocator returns its buffer,
+   `result (borrowed(m) [u8]) OutOfMemory`. The unused payload of a
+   variant is an empty slice. A slice that an `if` or `match` chose is read
+   from the branch taken; writing through one is refused.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let err = type | OutOfMemory
+let span = type { data : [u8]; used : usize }
+
+let try_take (buf : borrowed [u8]) (n : usize) : result (borrowed(buf) [u8]) err
+  ensures (match result with | Ok s -> len s = n | Err _ -> n > len buf)
+= if n <= len buf then Ok buf.[0 .. n] else Err OutOfMemory
+
+(* The payload's length comes from the postcondition. *)
+let first (buf : borrowed [u8]) : u8 =
+  match try_take buf 1 with
+  | Ok s -> s.[0]
+  | Err _ -> 0
+
+(* A record holding a slice, taken apart and read. *)
+let unused (sp : borrowed span) : usize
+  requires sp.used <= len sp.data
+= len sp.data - sp.used
+
+let peek (sp : borrowed span) : u8
+  requires sp.used < len sp.data
+= sp.data.[sp.used]
+
+let make (buf : borrowed [u8]) : borrowed(buf) span = { data = buf; used = 0 }
+
+let fresh (buf : borrowed [u8]) : usize = let sp = make buf in unused sp
+
+(* A slice chosen by an `if` is read from the branch taken. *)
+let pick (a : borrowed [u8]) (b : borrowed [u8]) (c : bool) : u8
+  requires len a = 4 && len b = 2
+= let s = if c then a else b.[0 .. 1] in s.[0]
+
+(* Out of bounds on one branch. *)
+let pick_bad (a : borrowed [u8]) (b : borrowed [u8]) (c : bool) : u8
+  requires len a = 4 && len b = 2
+= let s = if c then a else b.[0 .. 0] in s.[0]
+
+(* Writing through a chosen slice is refused. *)
+let fill (x : borrowed out [u8]) : unit
+  requires len x > 0
+= x.[0] <- 1
+
+let poke (a : borrowed out [u8]) (b : borrowed out [u8]) (c : bool) : unit
+  requires len a > 0 && len b > 0
+= let s = if c then a else b in fill s

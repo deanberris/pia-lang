@@ -104,6 +104,8 @@ class TypeResolver {
 
   // The type of an `Annot` node, which must not carry a `where` refinement.
   mlir::Type resolveAnnot(const syntax::Node &annot);
+  // Whether `elem` can be a buffer's element type; an error if not.
+  bool plainElement(mlir::Type elem, syntax::SourceLoc at);
 
   // Built-in integer types by name (`u8`, `i32`, `usize`, ...), or null.
   mlir::Type builtin(std::string_view name);

@@ -909,6 +909,10 @@ class Encoder {
       Value idx = term(store.getIndex());
       Value len = lengths_.lookup(store.getBuffer());
       Value root = rootBuffer(store.getBuffer());
+      if (chosen_.contains(root)) {
+        refuseChosenWrite(op);
+        return true;
+      }
       Value arr = arrays_.lookup(root);
       Value at = elementIndex(store.getBuffer(), idx, views_);
       if (!idx || !len || !arr || !at) return true;
@@ -1113,6 +1117,15 @@ class Encoder {
         .getResult();
   }
 
+  // A write through a buffer that an `if` or `match` chose: the verifier
+  // does not know which buffer it reaches, so it is a goal that fails.
+  void refuseChosenWrite(Operation *op) {
+    goal(ObligationKind::assert_, op,
+         "the write reaches a known buffer (writing through a slice chosen "
+         "by an 'if' or 'match' is not supported yet; write before choosing)",
+         boolConst(false), false);
+  }
+
   // A fresh array that holds a slice's elements, read from `root` at
   // `off`: what a callee sees as its parameter.
   Value viewArray(Value root, Value off, Value len) {
@@ -1232,6 +1245,15 @@ class Encoder {
       out.push_back(create<mlir::smt::ArraySelectOp>(sort, arr, at));
       return true;
     }
+    // An empty slice: no element can be read or written.
+    if (auto e = mlir::dyn_cast<EmptyOp>(op)) {
+      Type sort = sortOf(e.getType());
+      if (!sort) return false;
+      arrays[e.getResult()] = declare(sort, "", false);
+      lengths[e.getResult()] = bv(0);
+      out.push_back(bv(0));  // a placeholder: buffers are not terms
+      return true;
+    }
     // Constant data: an array of its values, all known.
     if (auto k = mlir::dyn_cast<ConstArrayOp>(op)) {
       auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(
@@ -1315,10 +1337,22 @@ class Encoder {
     }
     auto before = arrays_;
     llvm::SmallVector<Value> thenYields, elseYields;
+    // A buffer result: each branch's elements and length.
+    llvm::SmallVector<std::pair<Value, Value>> thenBufs, elseBufs;
+    auto buffers = [&](mlir::Region &r,
+                       llvm::SmallVectorImpl<std::pair<Value, Value>> &out) {
+      if (r.empty()) return;
+      auto y = mlir::cast<mlir::scf::YieldOp>(r.front().getTerminator());
+      for (Value v : y.getOperands())
+        out.push_back(mlir::isa<ArrayType, SliceType>(v.getType())
+                          ? std::pair{calleeArray(v), lengths_.lookup(v)}
+                          : std::pair{Value(), Value()});
+    };
     pc_.push_back(c);
     bool ok = walkBlock(ifOp.getThenRegion().front(), &thenYields);
     pc_.pop_back();
     if (!ok) return false;
+    buffers(ifOp.getThenRegion(), thenBufs);
     auto thenArrays = arrays_;
     arrays_ = before;
     if (!ifOp.getElseRegion().empty()) {
@@ -1326,12 +1360,34 @@ class Encoder {
       ok = walkBlock(ifOp.getElseRegion().front(), &elseYields);
       pc_.pop_back();
       if (!ok) return false;
+      buffers(ifOp.getElseRegion(), elseBufs);
     }
     for (auto &[buffer, array] : arrays_) {
       Value t = thenArrays.lookup(buffer);
       if (t && t != array) array = ite(c, t, array);
     }
     for (unsigned i = 0; i < ifOp.getNumResults(); ++i) {
+      Value r = ifOp.getResult(i);
+      if (mlir::isa<ArrayType, SliceType>(r.getType())) {
+        // Either branch's buffer: its own root, whose elements are those of
+        // the branch taken. A write through it would not reach the buffer
+        // it views, so writes are refused (`chosen_`).
+        auto [ta, tl] = i < thenBufs.size() ? thenBufs[i] : std::pair<Value, Value>{};
+        auto [ea, el] = i < elseBufs.size() ? elseBufs[i] : std::pair<Value, Value>{};
+        Type sort = sortOf(r.getType());
+        if (ta && tl && ea && el) {
+          arrays_[r] = ite(c, ta, ea);
+          lengths_[r] = ite(c, tl, el);
+        } else if (sort) {
+          arrays_[r] = declare(sort, "", false);
+          Value len = declare(bvType(), "", false);
+          assertTerm(inRange(len, indexRange()));
+          lengths_[r] = len;
+        }
+        chosen_.insert(r);
+        env_[r] = bv(0);  // a placeholder: buffers are not terms
+        continue;
+      }
       Value t = i < thenYields.size() ? thenYields[i] : Value();
       Value e = i < elseYields.size() ? elseYields[i] : Value();
       if (t && e)
@@ -1715,6 +1771,7 @@ class Encoder {
       }
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
+      if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
       Value off = views_.lookup(actual), len = lengths_.lookup(actual);
       if (actual != root && off && len)
@@ -2207,6 +2264,7 @@ class Encoder {
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
   llvm::DenseMap<Value, Value> views_;  // a slice's offset in its root buffer
+  llvm::DenseSet<Value> chosen_;  // buffers an `if` chose between branches
   std::vector<Value> pc_;
   std::vector<Decl> decls_, witnesses_;
   int counter_ = 0;

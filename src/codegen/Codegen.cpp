@@ -564,6 +564,23 @@ struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
   }
 };
 
+// An empty slice, the unused payload of a variant: zero elements of no
+// storage in particular.
+struct EmptyLowering : mlir::OpConversionPattern<EmptyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      EmptyOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!type) return mlir::failure();
+    auto none = mlir::MemRefType::get({0}, type.getElementType());
+    Value storage = make<mlir::memref::AllocaOp>(rw, op.getLoc(), none);
+    rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, type, storage);
+    return mlir::success();
+  }
+};
+
 // `abort ()`: proved unreachable; if reached anyway, it traps. A result it
 // stands for is never used, so it is zero.
 struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
@@ -807,7 +824,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, AbortLowering, ConstArrayLowering,
+               StoreLowering, SliceLowering, EmptyLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(
       types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
