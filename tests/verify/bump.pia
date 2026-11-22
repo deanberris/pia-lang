@@ -1,0 +1,31 @@
+(* A bump allocator over a caller's buffer, the first of Pia.Mem's
+   allocators (#59, ADR 0026). `alloc` updates the allocator, which it
+   takes `inout`, and lends out a slice of its memory that the caller may
+   write: `borrowed(m) out mutable [u8]`. Running out is a `result` the
+   caller must handle. Several loans from one allocator live at once.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = type { mem : [u8]; used : usize }
+
+let alloc (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) out mutable [u8]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n && m.used = old m.used + n
+           | Err _ -> m.used = old m.used)
+= if n <= len m.mem - m.used then
+    let start = m.used in
+    m.used <- start + n;
+    Ok m.mem.[start .. start + n]
+  else Err OutOfMemory
+
+(* Two loans at once, each written and read back. *)
+let pair (storage : borrowed [u8]) : result u8 oom =
+  let m : mutable bump = { mem = storage; used = 0 } in
+  let a = alloc m 4? in
+  let b = alloc m 4? in
+  a.[0] <- 1;
+  b.[0] <- 2;
+  Ok (a.[0] + b.[0])

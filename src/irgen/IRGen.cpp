@@ -78,6 +78,9 @@ struct Binding {
   // the result of a call whose result type is `borrowed(m) ...`, or a part
   // of one.
   std::vector<std::shared_ptr<Binding>> lenders;
+  // A buffer borrowed with a result type that lets it be written,
+  // `borrowed(m) out mutable [u8]`.
+  bool writable = false;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -1206,6 +1209,7 @@ class Gen {
   // `int` nor `real` reaches code generation (ADR 0036).
   R genExpr(const Node &n, Type expected) {
     lent_.erase(&n);
+    writable_.erase(&n);
     R r = genExprOf(n, expected);
     if (r && !contract_ && !ghost_)
       if (sema::specOnlyPart(r->type))
@@ -1916,7 +1920,11 @@ class Gen {
       chain = std::move(ifNode);
     }
     pushScope();
-    bind(hidden, s->value, s->type, false)->lenders = lendersOf(*n.kids[0]);
+    {
+      BindingPtr h = bind(hidden, s->value, s->type, false);
+      h->lenders = lendersOf(*n.kids[0]);
+      h->writable = writable(*n.kids[0]);
+    }
     R r = genExpr(*chain, expected);
     popScope();
     passLenders(n, *chain);
@@ -2000,7 +2008,11 @@ class Gen {
     const Node &chain = *body;
     matchTrees_.push_back(std::move(body));  // diagnostics may point into it
     pushScope();
-    bind(hidden, s.value, s.type, false)->lenders = lendersOf(*n.kids[0]);
+    {
+      BindingPtr h = bind(hidden, s.value, s.type, false);
+      h->lenders = lendersOf(*n.kids[0]);
+      h->writable = writable(*n.kids[0]);
+    }
     R r = genExpr(chain, expected);
     popScope();
     passLenders(n, chain);
@@ -2404,12 +2416,14 @@ class Gen {
         unconsume(*args[i]);
       else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
         return std::nullopt;
-      if ((writes(sig.params[i]) ||
-           sema::hasModifier(sig.params[i].modifiers, "mutable")) &&
+      // `inout` may update a lender, as `alloc` updates its allocator:
+      // what the callee's contract promises keeps the loans valid. `out`
+      // makes it anew, which would end them.
+      if (sema::hasModifier(sig.params[i].modifiers, "out") &&
           args[i]->kind == NodeKind::Name && args[i]->flags.empty())
         if (BindingPtr b = lookup(args[i]->text))
           if (!notLent(b, *args[i], "passed to '" + sig.params[i].name +
-                                        "', which may change it,"))
+                                        "', which makes it anew,"))
             return std::nullopt;
       operands.push_back(c->value);
     }
@@ -2435,6 +2449,11 @@ class Gen {
     // Recorded even when empty: a call's result borrows only what its
     // result type says.
     if (out) lent_[&n] = std::move(lenders);
+    if (out && !sig.resultLender.empty() &&
+        (sema::hasModifier(sig.lentModifiers, "out") ||
+         sema::hasModifier(sig.lentModifiers, "inout") ||
+         sema::hasModifier(sig.lentModifiers, "mutable")))
+      writable_.insert(&n);
     return out;
   }
 
@@ -4840,8 +4859,7 @@ class Gen {
     if (!rt || types_.isVariant(rt))
       return fail(place, "'." + place.text + "' needs a record, found " +
                              typeName(elem));
-    if (!b->isParam || !(sema::hasModifier(b->modifiers, "out") ||
-                         sema::hasModifier(b->modifiers, "inout")))
+    if (!writableBuffer(*b))
       return fail(obj, "cannot write to '" + obj.text +
                            "': declare the parameter 'out' or 'inout'");
     std::optional<unsigned> i = rt.fieldIndex(place.text);
@@ -4933,8 +4951,7 @@ class Gen {
       if (!elem)
         return fail(obj, "only arrays and slices can be indexed, found " +
                              typeName(b->type));
-      if (!b->isParam || !(sema::hasModifier(b->modifiers, "out") ||
-                           sema::hasModifier(b->modifiers, "inout")))
+      if (!writableBuffer(*b))
         return fail(obj, "cannot write to '" + obj.text +
                              "': declare the parameter 'out' or 'inout'");
       auto idx = genIndexValue(*place.kids[1]);
@@ -5185,8 +5202,17 @@ class Gen {
     return {};
   }
 
+  // Whether `n`'s value is a buffer borrowed as writable.
+  bool writable(const Node &n) {
+    if (writable_.count(&n)) return true;
+    if (n.kind == NodeKind::Name && !contract_ && !ghost_)
+      if (BindingPtr b = lookup(n.text)) return b->writable;
+    return false;
+  }
+
   // `n` was generated as `other`, a tree made from it.
   void passLenders(const Node &n, const Node &other) {
+    if (writable(other)) writable_.insert(&n);
     Lenders l = lendersOf(other);
     if (l.empty()) lent_.erase(&n);
     else lent_[&n] = std::move(l);
@@ -5199,33 +5225,48 @@ class Gen {
   void noteLenders(const Node &n, const TV &r) {
     if (contract_ || ghost_ || lent_.count(&n) || !mayBorrow(r.type)) return;
     Lenders l;
+    bool w = false;
     switch (n.kind) {
       case NodeKind::Name:
         if (n.flags.empty())
-          if (BindingPtr b = lookup(n.text)) l = b->lenders;
+          if (BindingPtr b = lookup(n.text)) {
+            l = b->lenders;
+            w = b->writable;
+          }
         break;
       case NodeKind::Apply:
         // Not a call, which records its own: a constructor, `Ok (lend p)`,
         // or `#payload x Ok` from a match or a `?`. Either holds what its
         // arguments borrow.
-        for (size_t i = 1; i < n.kids.size(); ++i)
+        for (size_t i = 1; i < n.kids.size(); ++i) {
           addLenders(l, lendersOf(*n.kids[i]));
+          w |= writable(*n.kids[i]);
+        }
         break;
       case NodeKind::Field:
         l = lendersOf(*n.kids[0]);
+        w = writable(*n.kids[0]);
         break;
       case NodeKind::Index:
-        if (n.kids[1]->kind == NodeKind::Range) l = lendersOf(*n.kids[0]);
+        if (n.kids[1]->kind == NodeKind::Range) {
+          l = lendersOf(*n.kids[0]);
+          w = writable(*n.kids[0]);
+        }
         break;
       case NodeKind::Sequence:
         l = lendersOf(*n.kids.back());
+        w = writable(*n.kids.back());
         break;
       case NodeKind::Cleanup:
         l = lendersOf(*n.kids[0]);
+        w = writable(*n.kids[0]);
         break;
       case NodeKind::If:
-        for (size_t i = 1; i < n.kids.size(); ++i)
+        w = n.kids.size() > 2;
+        for (size_t i = 1; i < n.kids.size(); ++i) {
           addLenders(l, lendersOf(*n.kids[i]));
+          w &= writable(*n.kids[i]);
+        }
         break;
       case NodeKind::RecordLit:
         for (const syntax::NodePtr &f : n.kids)
@@ -5234,6 +5275,7 @@ class Gen {
       default:
         break;
     }
+    if (w) writable_.insert(&n);
     if (!l.empty()) lent_[&n] = std::move(l);
   }
 
@@ -5249,6 +5291,16 @@ class Gen {
         if (mayBorrow(f, depth + 1)) return true;
     if (Type e = elementType(t)) return mayBorrow(e, depth + 1);
     return false;
+  }
+
+  // Whether the buffer `b` names may be written: an `out` or `inout`
+  // parameter, or a local holding a borrow whose result type lets it be
+  // written, as `alloc`'s does.
+  static bool writableBuffer(const Binding &b) {
+    if (b.isParam)
+      return sema::hasModifier(b.modifiers, "out") ||
+             sema::hasModifier(b.modifiers, "inout");
+    return b.writable;
   }
 
   // A named local that borrows from `b` and is still in scope, if any.
@@ -5294,6 +5346,7 @@ class Gen {
       return false;
     }
     lent_[&n] = std::move(out);
+    if (writable(body)) writable_.insert(&n);
     return true;
   }
 
@@ -5923,7 +5976,11 @@ class Gen {
     // What follows the `?` is still a tail: it may raise again.
     addTails(*chain.kids[1]);
     pushScope();
-    bind(hidden, r->value, r->type, false)->lenders = lendersOf(*t.kids[0]);
+    {
+      BindingPtr h = bind(hidden, r->value, r->type, false);
+      h->lenders = lendersOf(*t.kids[0]);
+      h->writable = writable(*t.kids[0]);
+    }
     R out = genExpr(chain, expected);
     popScope();
     passLenders(n, chain);
@@ -6106,6 +6163,7 @@ class Gen {
     BindingPtr b =
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     b->lenders = lendersOf(valueNode);
+    b->writable = writable(valueNode);
     // A value with a `drop` is dropped at every exit from its scope that
     // has not consumed it (#85), as if by a `defer` registered here.
     const Node *bodyNode = n.kids[4].get();
@@ -6203,6 +6261,7 @@ class Gen {
   // What each expression generated so far is borrowed from (#70).
   std::map<const Node *, std::vector<BindingPtr>> lent_;
   std::set<const void *> lentTypes_;  // the types borrowed results borrow
+  std::set<const Node *> writable_;    // borrowed buffers that may be written
   std::set<const void *> linear_;  // the `@linear` types
   Type dropping_;                  // the type a `drop` being generated takes
   const Node *unsafeAt_ = nullptr; // the call an `unsafe` marks

@@ -298,6 +298,7 @@ struct FuncSig {
   // here, so it cannot outlive it (#70). Empty when it borrows nothing.
   std::string resultLender;
   mlir::Type lentType;  // the part of the result that is borrowed
+  std::string lentModifiers;  // its modifiers, "borrowed out mutable"
 };
 
 // Resolves the value parameters and result type of `item` into `sig`, with

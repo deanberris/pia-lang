@@ -9,7 +9,7 @@ let err = type | Empty
 
 let mk (x : u8) : pool = { cap = x }
 let close (p : moved pool) : unit = match p with | { cap } -> ()
-let refill (p : inout pool) : unit = ()
+let refill (p : out pool) : unit = p <- { cap = 0 }
 let lend (p : borrowed pool) : borrowed(p) ticket = { n = p.cap }
 let try_lend (p : borrowed pool) : result (borrowed(p) ticket) err =
   if p.cap = 0 then Err Empty else Ok (lend p)
@@ -18,7 +18,7 @@ let try_lend (p : borrowed pool) : result (borrowed(p) ticket) err =
 *)
 let moved_while_lent (x : u8) : u8 = let p = mk x in let t = lend p in close p; t.n
 
-(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is lent to 't', so it cannot be passed to 'p', which may change it, while 't' is in scope; a borrow lasts to the end of its scope
+(* CHECK: borrow_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'p' is lent to 't', so it cannot be passed to 'p', which makes it anew, while 't' is in scope; a borrow lasts to the end of its scope
 *)
 let changed_while_lent (x : u8) : u8 = let p : mutable pool = mk x in let t = lend p in refill p; t.n
 
