@@ -1,0 +1,31 @@
+(* Errors in adapter definitions (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+(* CHECK-DAG: adapter_definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Nope' is not a concept
+*)
+let adapter a : Nope u8 = struct
+  let same (x : u8) (y : u8) : bool = true
+end
+
+(* CHECK-DAG: adapter_definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Same' takes 1 type argument, given 2
+*)
+let adapter b : Same u8 u16 = struct
+  let same (x : u8) (y : u8) : bool = true
+end
+
+(* CHECK-DAG: adapter_definition_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: an adapter's functions are not generic for now
+*)
+let adapter c : Same u8 = struct
+  let same (t : type) (x : t) (y : t) : bool = true
+end
+
+(* CHECK-DAG: adapter_definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'Same' is already defined
+*)
+let adapter Same : Same u16 = struct
+  let same (x : u16) (y : u16) : bool = true
+end

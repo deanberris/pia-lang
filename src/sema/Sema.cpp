@@ -618,22 +618,39 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                                  syntax::Diagnostics &diags) {
   defineTypes(program, types, diags);
   std::vector<FuncSig> all;
+  // An adapter's functions are named after it, `by_red.same`.
+  std::vector<std::pair<const Node *, std::string>> items;
   for (const syntax::NodePtr &item : program.kids) {
-    if (isTypeItem(*item) || isGenericTypeItem(*item)) continue;
+    if (item->kind != NodeKind::Adapter) {
+      items.emplace_back(item.get(), "");
+      continue;
+    }
+    for (size_t i = 1; i < item->kids.size(); ++i)
+      items.emplace_back(item->kids[i].get(), item->text);
+  }
+  for (auto &[itemPtr, adapter] : items) {
+    const Node *item = itemPtr;
+    if (isTypeItem(*item) || isGenericTypeItem(*item)) {
+      if (!adapter.empty())
+        diags.error(item->loc, "an adapter holds functions; define types "
+                               "outside it");
+      continue;
+    }
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");
       continue;
     }
     // Concepts are checked by IRGen, at each use (ADR 0034).
-    if (syntax::isConceptItem(*item)) continue;
+    if (syntax::isConceptItem(*item) && adapter.empty()) continue;
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;
     }
     FuncSig sig;
-    sig.name = item->text;
-    sig.item = item.get();
+    sig.name = adapter.empty() ? item->text : adapter + "." + item->text;
+    sig.item = item;
+    sig.adapter = adapter;
     for (const syntax::NodePtr &p : item->kids[0]->kids)
       if (isTypeParam(*p)) {
         if (std::find(sig.typeParams.begin(), sig.typeParams.end(), p->text) !=
