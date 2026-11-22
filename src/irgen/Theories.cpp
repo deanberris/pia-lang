@@ -137,6 +137,17 @@ bool hasTheories(const Node &program) {
   return false;
 }
 
+bool isTrustedFile(const Node &program) {
+  for (const NodePtr &item : program.kids) {
+    if (item->kind == NodeKind::ModuleHeader && !item->kids.empty())
+      for (const NodePtr &a : item->kids[0]->kids)
+        if (a->text == "trusted") return true;
+    if (item->kind == NodeKind::FileAttr && item->text == "trusted")
+      return true;
+  }
+  return false;
+}
+
 namespace {
 
 // `let s = type <t>`, the type item a sort becomes; `#sort` for a new
@@ -169,19 +180,12 @@ void substitute(Node &n, const Theory &t, const std::string &model) {
 
 void flattenTheories(Node &program, syntax::Diagnostics &diags,
                      TheoryInfo *info) {
-  bool trusted = false;
+  bool trusted = isTrustedFile(program);
   std::set<std::string> topLevel;
   std::map<std::string, Theory> theories;
   for (const NodePtr &item : program.kids) {
-    // `module M @trusted : I` marks the module, which is the file
-    // (ADR 0039).
-    if (item->kind == NodeKind::ModuleHeader && !item->kids.empty())
-      for (const NodePtr &a : item->kids[0]->kids)
-        if (a->text == "trusted") trusted = true;
     if (item->kind == NodeKind::FileAttr) {
-      if (item->text == "trusted")
-        trusted = true;
-      else
+      if (item->text != "trusted")
         diags.error(item->loc, "only '@trusted' can mark a whole file; "
                                "@" + item->text + " is not a file attribute");
       continue;

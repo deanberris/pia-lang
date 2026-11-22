@@ -301,7 +301,16 @@ lip.pia:16:3: trusted: the axiom 'Lip.lip_nonneg', since the theory 'Lip' has no
 5 trusted items
 ```
 
-This is the only use of `@trusted` so far. The rule that `assume` and `addr` need it ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)) is not enforced yet.
+**`assume` needs `@trusted` too.** Nothing checks an `assume p`, so it is allowed only in a file marked `@trusted` ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)); anywhere else it is an error that suggests `assert`, a lemma or a `requires` instead. (`addr`, the other construct ADR 0023 restricts, does not exist yet.) Each `assume` is a trusted item. Its assertion is tracked in the unsat core like an axiom's, so `--why` lists the goals whose proofs used it, and the callers of a function whose proof did:
+
+```
+next.pia:11:3: trusted: the 'assume' in 'next'
+  used by: next.pia:12:5, next.pia:21:3
+...
+2 of 5 proved goals rest on a trusted axiom or 'assume'; the other 3 are fully proved
+```
+
+A goal whose query asserts an `assume` is solved a second time, tracked, to find its core, as for axioms. Files without `assume` are solved exactly as before.
 
 **Consistency of a trusted theory.** A trusted theory is checked once, when its file is verified: are its axioms, with the axioms of other theories they use (by the relevance closure), satisfiable, under the usual rlimit? The answer is in the trust report. `sat` means Z3 found a witness, a model of the axioms, so they cannot contradict each other. `unknown` leaves the theory unchecked, and the report says so with the solver's reason. `unsat` is an error that names the axioms that contradict each other, from the unsat core:
 

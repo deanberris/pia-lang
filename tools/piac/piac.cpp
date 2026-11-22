@@ -296,8 +296,8 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 
 // `--trust-report`: what the program's proofs rest on without proof: the
 // axioms of theories with no model (ADR 0036), with each such theory's
-// consistency check, foreign functions' contracts, and `unsafe` calls
-// (#55).
+// consistency check, foreign functions' contracts, `unsafe` calls (#55)
+// and `assume`s (ADR 0023).
 void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
                       const std::vector<pia::verify::Outcome> &outcomes,
                       bool why, std::ostream &os) {
@@ -348,8 +348,24 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
       all.insert(behind[g].begin(), behind[g].end());
     return all;
   };
-  unsigned n = 0;
-  std::set<std::string> trustedAxioms;
+  // `--why`: the goals whose proofs used a trusted axiom or `assume`
+  // (ADR 0036).
+  auto usedBy = [&](const std::string &name) {
+    std::vector<std::string> users;
+    for (const pia::verify::Outcome &o : outcomes)
+      if (o.status == pia::verify::Status::Proved && restsOn(o).count(name))
+        users.push_back(o.where);
+    if (users.empty()) {
+      os << "  used by no proved goal\n";
+    } else {
+      os << "  used by:";
+      for (size_t i = 0; i < users.size(); ++i)
+        os << (i ? ", " : " ") << users[i];
+      os << "\n";
+    }
+  };
+  unsigned n = 0, assumes = 0;
+  std::set<std::string> trustedAxioms;  // and `assume file:line:col`
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     if (auto sym = f->getAttrOfType<mlir::StringAttr>("pia.extern")) {
       os << pia::verify::formatLoc(f.getLoc())
@@ -364,6 +380,18 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
          << "of '" << c.getCallee().str() << "'\n";
       ++n;
     });
+    // An `assume` is trusted (ADR 0023): the goals whose proofs used it
+    // are those whose unsat core names it.
+    f.walk([&](pia::contract::AssumeOp a) {
+      std::string where = pia::verify::formatLoc(a.getLoc());
+      std::string name = "assume " + where;
+      trustedAxioms.insert(name);
+      ++assumes;
+      os << where << ": trusted: the 'assume' in '" << f.getSymName().str()
+         << "'\n";
+      if (why) usedBy(name);
+      ++n;
+    });
     if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
     // A theory with a model is proved consistent by it: nothing trusted.
     if (f->hasAttr("pia.modelled")) continue;
@@ -374,21 +402,7 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
     trustedAxioms.insert(name);
     os << pia::verify::formatLoc(f.getLoc()) << ": trusted: the axiom '"
        << name << "', since the theory '" << theory << "' has no model\n";
-    if (why) {
-      // `--why`: the goals whose proofs used it (ADR 0036).
-      std::vector<std::string> users;
-      for (const pia::verify::Outcome &o : outcomes)
-        if (o.status == pia::verify::Status::Proved && restsOn(o).count(name))
-          users.push_back(o.where);
-      if (users.empty()) {
-        os << "  used by no proved goal\n";
-      } else {
-        os << "  used by:";
-        for (size_t i = 0; i < users.size(); ++i)
-          os << (i ? ", " : " ") << users[i];
-        os << "\n";
-      }
-    }
+    if (why) usedBy(name);
     ++n;
   }
   os << n << (n == 1 ? " trusted item\n" : " trusted items\n");
@@ -406,7 +420,8 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
         }
     }
     os << resting << " of " << proved << " proved goals rest on a trusted "
-       << "axiom; the other " << (proved - resting) << " are fully proved\n";
+       << (assumes ? "axiom or 'assume'" : "axiom") << "; the other "
+       << (proved - resting) << " are fully proved\n";
   }
 }
 

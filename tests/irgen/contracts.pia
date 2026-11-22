@@ -69,8 +69,7 @@ let has (xs : [i32]) (v : i32) : bool
 
 let some_square (n : u16) : unit
   requires exists (k : u8). k * k = n
-= assert n >= 0;
-  assume n < 65535
+= assert n >= 0
 
 (* `old` marks an entry value.
 // CHECK-LABEL: func.func @fill

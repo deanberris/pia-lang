@@ -13,7 +13,7 @@ The verifier proves each function on its own, from its own contracts and the *co
 | `ensures p` | postcondition; `result` is the returned value |
 | `old e` | in an `ensures`, `e` as it was on entry |
 | `forall (i in lo..hi). p`, `exists (i in lo..hi). p` | bounded quantifiers |
-| `assert p`, `assume p` | proved here; assumed here without proof (avoid `assume`) |
+| `assert p`, `assume p` | proved here; assumed here without proof (avoid `assume`; it needs a `@trusted` file) |
 | `invariant p` | on a loop: holds on entry and after every iteration |
 | `decreases m` | on a `while` loop or a recursive function: never negative, and goes down |
 
@@ -135,4 +135,4 @@ A **spec function** (`let spec`) is pure, total and erased by codegen. It is the
 - **No shadowing.** A `let` inside a body cannot reuse any name in scope, including a parameter's.
 - **Narrow operands shift at their own width.** `buf.[i] << 8` on a `u8` fails `the shift amount is less than 8`. C promotes before shifting, Pia does not. Widening is implicit, so bind the operand to a wider `let` first (`let hi : usize = buf.[i] in hi << 8`), or write the shift first under a wide annotation, as in `let size : usize = (buf.[i + 1] << 8) | buf.[i]`.
 - **Wrap and saturate only on purpose.** `+|` saturates; overflow behaviour is otherwise a goal, not a silent wrap.
-- **`assume` is a hole in the proof.** Prefer `requires`, which moves the obligation to callers, where it is proved.
+- **`assume` is a hole in the proof.** It is an error outside a file marked `@trusted`. Prefer `requires`, which moves the obligation to callers, where it is proved.

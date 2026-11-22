@@ -1,0 +1,13 @@
+(* `assume` is never checked, so only a file marked @trusted may use it
+   (ADR 0023). This file is not.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let next (x : u8) : u8 =
+  assume x < 255;
+  x + 1
+
+(* The error, once.
+// CHECK: assume_errors.pia:7:3: error: 'assume' is only allowed in a file marked '@trusted' (ADR 0023), since nothing checks it: prove the fact with 'assert' or a lemma, make it a 'requires' if callers can promise it, or mark the file '@trusted' on a line of its own
+// CHECK-NOT: error
+*)

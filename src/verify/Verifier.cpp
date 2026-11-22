@@ -272,6 +272,8 @@ class Encoder {
     addAxioms(false);
   }
   const std::vector<std::string> &sentAxioms() const { return sentAxioms_; }
+  // The `assume`s the query asserts, as `assume file:line:col`.
+  const std::vector<std::string> &sentAssumes() const { return sentAssumes_; }
   const std::set<std::string> &sorts() const { return sorts_; }
   bool usesTheories() const { return !theoryFuns_.empty(); }
 
@@ -420,7 +422,7 @@ class Encoder {
   Value ite(Value c, Value t, Value e) {
     return create<mlir::smt::IteOp>(t.getType(), c, t, e);
   }
-  void assertTerm(Value t) { create<mlir::smt::AssertOp>(t); }
+  Operation *assertTerm(Value t) { return create<mlir::smt::AssertOp>(t); }
 
   Value inRange(Value t, IntType ty) {
     using P = mlir::smt::BVCmpPredicate;
@@ -590,11 +592,9 @@ class Encoder {
     return pc;
   }
 
-  void assume(Value t) {
-    if (pc_.empty())
-      assertTerm(t);
-    else
-      assertTerm(implies(pathCondition(), t));
+  Operation *assume(Value t) {
+    if (pc_.empty()) return assertTerm(t);
+    return assertTerm(implies(pathCondition(), t));
   }
 
   // Registers goal number `counter_`. In the listing walk it records the
@@ -889,7 +889,14 @@ class Encoder {
       return true;
     }
     if (auto a = mlir::dyn_cast<contract::AssumeOp>(op)) {
-      assume(term(a.getPredicate()));
+      // An `assume` is trusted (ADR 0023). Its assertion is tracked like
+      // an axiom's, `assume file:line:col`, so that the unsat core says
+      // which goals rest on it; `#k` keeps two encodings of it apart.
+      Operation *as = assume(term(a.getPredicate()));
+      std::string label = "assume " + formatLoc(op->getLoc());
+      sentAssumes_.push_back(label);
+      label += "#" + std::to_string(sentAssumes_.size());
+      as->setAttr("pia.axiom", b_.getStringAttr(label));
       return true;
     }
     if (auto e = mlir::dyn_cast<contract::EnsuresOp>(op)) {
@@ -2309,6 +2316,7 @@ class Encoder {
   std::set<std::string> sorts_;  // the theory sorts the query uses
   mlir::smt::AssertOp goalAssert_;
   std::vector<std::string> sentAxioms_;
+  std::vector<std::string> sentAssumes_;
 };
 
 // Values in the bit-vector encoding are signed and wide enough for every
@@ -2379,6 +2387,7 @@ struct Query {
   bool reached = false;
   bool theories = false;            // it applies a theory function
   std::vector<std::string> axioms;  // the axioms it was given
+  std::vector<std::string> assumes;  // the `assume`s it asserts
   // The axiom assertions, by their index among the query's assertions,
   // and how many assertions there are: for tracking unsat cores.
   std::map<unsigned, std::string> axiomAsserts;
@@ -2520,6 +2529,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.reached = enc.reachedTarget();
   q.theories = enc.usesTheories();
   q.axioms = enc.sentAxioms();
+  q.assumes = enc.sentAssumes();
   if (target < 0) return q;
   std::map<unsigned, std::string> axiomNames;
   unsigned k = 0;
@@ -2820,6 +2830,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
       if (r == z3::unsat) return coreAxioms(*t);
     }
     std::set<std::string> all(query.axioms.begin(), query.axioms.end());
+    all.insert(query.assumes.begin(), query.assumes.end());
     return std::vector<std::string>(all.begin(), all.end());
   };
   if (q.axioms.empty() && (options.slice == Options::Slice::On ||
@@ -2888,7 +2899,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
       out.status = Status::Proved;
       out.method = "smt";
       if (options.reportCost) out.cost = now - before;
-      if (!q.axioms.empty()) out.axiomsUsed = used(full, q);
+      if (!q.axioms.empty() || !q.assumes.empty())
+        out.axiomsUsed = used(full, q);
       if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
       return;
     }
@@ -2904,7 +2916,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
         out.status = Status::Proved;
         out.method = "smt";
         if (options.reportCost) out.cost = now - before;
-        if (!key.empty()) cacheStore(options, key, now - before);
+        if (!q.assumes.empty()) out.axiomsUsed = used(full, q);
+        if (!key.empty()) cacheStore(options, key, now - before, &out.axiomsUsed);
         return;
       }
     }

@@ -15,6 +15,11 @@ namespace pia::irgen {
 // that flattenTheories has something to do.
 bool hasTheories(const syntax::Node &program);
 
+// Whether the file is marked `@trusted`, on a line of its own or in its
+// module header, `module M @trusted : I` (ADR 0023, ADR 0039). Only such a
+// file may declare a theory without a model or use `assume`.
+bool isTrustedFile(const syntax::Node &program);
+
 // Replaces each `let theory T = sig ... end` with its items, named `T.x`:
 // a sort becomes a type item, an abstract spec function a bodyless spec
 // item ("spec abstract"), and axioms, spec functions and lemmas keep their

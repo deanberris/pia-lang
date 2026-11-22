@@ -1,0 +1,15 @@
+(* In a file marked @trusted, `assume p` lowers to pia_contract.assume
+   (ADR 0023).
+// RUN: piac --emit=mlir %s | FileCheck %s
+// RUN: piac --emit=mlir %s | pia-opt | FileCheck %s
+*)
+@trusted
+
+(*
+// CHECK-LABEL: func.func @some_square
+// CHECK: %[[LT:.*]] = pia.cmp lt
+// CHECK-NEXT: pia_contract.assume %[[LT]]
+*)
+let some_square (n : u16) : unit
+  requires exists (k : u8). k * k = n
+= assume n < 65535
