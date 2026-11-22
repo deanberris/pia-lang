@@ -1,0 +1,34 @@
+(* An instance made through an adapter calls the adapter's functions
+   (ADR 0034): each call of 'alike' below gets its own instance.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let pixel = type { r : u8; g : u8 }
+
+let adapter by_red : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool = (p.r = q.r)
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let adapter always : Same u8 = struct
+  let same (a : u8) (b : u8) : bool = true
+end
+
+let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+let red_alike (p : pixel) (q : pixel) : bool = alike p q
+let direct (a : u8) (b : u8) : bool = alike a b
+let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
+
+(* CHECK-LABEL: func.func private @"alike<pixel, Same = by_red>"
+// CHECK: call @"by_red.same"
+// CHECK-LABEL: func.func private @"alike<u8>"
+// CHECK: call @same
+// CHECK-LABEL: func.func private @"alike<u8, Same = always>"
+// CHECK: call @"always.same"
+*)

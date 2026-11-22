@@ -35,18 +35,23 @@ let alike (t : type where Same t) (a : t) (b : t) : bool
   ensures result <==> same a b
 = same a b
 
-let red_alike (p : pixel) (q : pixel) : bool
-  ensures result <==> p.r = q.r
-= alike p q
+(* Each call makes its own instance, and each proves Same's law about the
+   functions it uses. tests/irgen/adapters.pia checks which they call. *)
+let red_alike (p : pixel) (q : pixel) : bool = alike p q
 
-let direct (a : u8) (b : u8) : bool
-  ensures result <==> a = b
-= alike a b
+let direct (a : u8) (b : u8) : bool = alike a b
 
-let forced (a : u8) (b : u8) : bool
-  ensures result
-= alike<Same = always> a b
+let forced (a : u8) (b : u8) : bool = alike<Same = always> a b
 
 (* Expected report, in order.
-// CHECK: 0 proved, 0 failed, 0 skipped
+// CHECK: adapters.pia:17:5: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:28:5: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:9:31: proved: the postcondition holds [smt]
+// CHECK: adapters.pia:35:3: proved: the postcondition holds [smt]
+// CHECK: 9 proved, 0 failed, 0 skipped
 *)
