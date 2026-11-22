@@ -157,6 +157,12 @@ NodePtr clone(const Node &node);
 // `let meta C (t : type) : concept = sig ... end`.
 bool isConceptItem(const Node &item);
 
+// Whether a top-level `let meta` is a type-level metaprogram (ADR 0035):
+// its parameters are all types and it returns a type or a bool, as in
+// `let meta widen (t : type) : type = ...`. Such metaprograms outlive
+// expansion, since types and `where` predicates call them.
+bool isTypeLevelMetaItem(const Node &item);
+
 // Writes the tree as an indented S-expression, one node per line. This is the
 // `piac --dump-ast` format that the golden tests compare. With `comments`,
 // each node's comments come first among its children (`--comments`).

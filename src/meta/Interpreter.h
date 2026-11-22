@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -22,11 +23,12 @@ struct Env;
 using EnvPtr = std::shared_ptr<Env>;
 
 struct Value {
-  enum class Kind { Unit, Int, Bool, Str, Syntax, List, Closure, Builtin };
+  enum class Kind { Unit, Int, Bool, Str, Syntax, List, Closure, Builtin, Type };
   Kind kind = Kind::Unit;
   int64_t i = 0;
   bool b = false;
-  std::string s;                          // Str; Builtin: its name
+  std::string s;                          // Str; Builtin: its name; Type: its
+                                          // spelling, `u8` or `option<u8>`
   std::shared_ptr<syntax::Node> syntax;   // Syntax
   std::vector<ValuePtr> list;             // List; Closure, Builtin: bound args
   // Closure: a lambda or a `let` with parameters. An empty parameter name
@@ -57,6 +59,17 @@ struct Deferred {
   std::string type;
 };
 
+// What a type-level metaprogram can ask about types (ADR 0035). Types are
+// values spelled as Pia spells them; the compiler maps a spelling back to
+// its type. Outside the compiler's type checking these are unset, and type
+// names are not values.
+struct TypeHost {
+  // The spelling of the type a name denotes, such as `u8` or `pixel`.
+  std::function<std::optional<std::string>(const std::string &)> named;
+  // Its size in bytes, or nothing when it has no fixed size.
+  std::function<std::optional<int64_t>(const std::string &)> sizeOf;
+};
+
 class Interpreter {
  public:
   // `isTypeDefined` says whether a type name resolves now: a builtin type or
@@ -71,6 +84,21 @@ class Interpreter {
 
   // Evaluates an expression with no local bindings.
   ValuePtr eval(const syntax::Node &expr);
+
+  // Evaluates an expression with `bindings` in scope, as a fresh run.
+  ValuePtr evalWith(
+      const syntax::Node &expr,
+      const std::vector<std::pair<std::string, ValuePtr>> &bindings);
+
+  // Calls the top-level metaprogram `name`, as a fresh run.
+  ValuePtr call(const std::string &name, std::vector<ValuePtr> args);
+
+  // The number of parameters of the metaprogram `name`.
+  size_t arity(const std::string &name) const;
+
+  void setTypeHost(TypeHost host) { host_ = std::move(host); }
+  static ValuePtr typeValue(std::string spelling);
+  static const char *kindName(Value::Kind k);
 
   ValuePtr apply(const ValuePtr &fn, std::vector<ValuePtr> args);
 
@@ -106,6 +134,7 @@ class Interpreter {
                        const std::vector<ValuePtr> &args,
                        const syntax::Node *at);
   ValuePtr binary(const syntax::Node &n, const EnvPtr &env);
+  ValuePtr binop(const std::string &op, const ValuePtr &a, const ValuePtr &b);
   ValuePtr quote(const syntax::Node &n, const EnvPtr &env);
   void tick(const syntax::Node &n);
 
@@ -115,6 +144,7 @@ class Interpreter {
   std::vector<const syntax::Node *> listing_;
   const syntax::Node *program_ = nullptr;
   bool live_ = false;
+  TypeHost host_;
   uint64_t fuel_ = 0;
   unsigned fresh_ = 0;
   std::vector<std::string> ran_;

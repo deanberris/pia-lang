@@ -1,0 +1,10 @@
+(* A generic body may only call a generic with a predicate that its own
+   constraints state too (ADR 0035, with ADR 0034's definition check).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let only_bytes (t : type where t = u8 || t = i8) (x : t) : t = x
+
+(* CHECK: type_predicate_definition_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: {{.*}}the constraint 't = u8 || t = i8' is not promised by the constraints of the function being defined
+*)
+let any (u : type) (x : u) : u = only_bytes x

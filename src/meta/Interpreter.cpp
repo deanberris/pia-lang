@@ -61,6 +61,7 @@ const char *kindName(K k) {
     case K::Syntax: return "syntax";
     case K::List: return "a list";
     case K::Closure: case K::Builtin: return "a function";
+    case K::Type: return "a type";
   }
   return "?";
 }
@@ -76,6 +77,13 @@ const std::map<std::string, size_t> &metaBuiltins() {
       {"fail", 1},
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
+      // Types, in type-level metaprograms (ADR 0035).
+      {"size_of", 1},
+      // The core builtins that operators expand to, so a `where`
+      // predicate, which is expanded code, can run (ADR 0035).
+      {"eq", 2}, {"ne", 2}, {"lt", 2}, {"gt", 2}, {"le", 2}, {"ge", 2},
+      {"add", 2}, {"sub", 2}, {"mul", 2}, {"div", 2}, {"rem", 2},
+      {"and", 2}, {"or", 2}, {"implies", 2}, {"iff", 2},
   };
   return table;
 }
@@ -165,6 +173,44 @@ std::vector<std::string> Interpreter::takeRan() {
 
 void Interpreter::define(const Node &item) { globals_[item.text] = &item; }
 
+const char *Interpreter::kindName(K k) { return pia::meta::kindName(k); }
+
+ValuePtr Interpreter::typeValue(std::string spelling) {
+  Value v;
+  v.kind = K::Type;
+  v.s = std::move(spelling);
+  return make(std::move(v));
+}
+
+ValuePtr Interpreter::evalWith(
+    const Node &expr,
+    const std::vector<std::pair<std::string, ValuePtr>> &bindings) {
+  fuel_ = 0;
+  EnvPtr env;
+  for (auto &[name, value] : bindings) {
+    auto e = std::make_shared<Env>();
+    e->name = name;
+    e->value = value;
+    e->parent = env;
+    env = e;
+  }
+  return eval(expr, env);
+}
+
+ValuePtr Interpreter::call(const std::string &name,
+                           std::vector<ValuePtr> args) {
+  fuel_ = 0;
+  Node n;
+  n.kind = NodeKind::Name;
+  n.text = name;
+  return apply(lookup(n, nullptr), std::move(args));
+}
+
+size_t Interpreter::arity(const std::string &name) const {
+  auto g = globals_.find(name);
+  return g == globals_.end() ? 0 : g->second->kids[0]->kids.size();
+}
+
 void Interpreter::tick(const Node &) {
   if (++fuel_ > kFuel)
     throw MetaError{site_, "the metaprogram ran out of fuel after " +
@@ -210,6 +256,10 @@ ValuePtr Interpreter::lookup(const Node &n, const EnvPtr &env) {
     v.s = n.text;
     return make(std::move(v));
   }
+  // In a type-level metaprogram, a type's name is the type (ADR 0035).
+  if (host_.named)
+    if (std::optional<std::string> t = host_.named(n.text))
+      return typeValue(*t);
   throw MetaError{site_, "unknown name '" + n.text + "' in a metaprogram"};
 }
 
@@ -317,6 +367,19 @@ ValuePtr Interpreter::binary(const Node &n, const EnvPtr &env) {
   }
   ValuePtr a = eval(*n.kids[0], env);
   ValuePtr b = eval(*n.kids[1], env);
+  return binop(op, a, b);
+}
+
+ValuePtr Interpreter::binop(const std::string &op, const ValuePtr &a,
+                            const ValuePtr &b) {
+  if (op == "&&" || op == "||" || op == "==>" || op == "<==>") {
+    if (a->kind != K::Bool || b->kind != K::Bool)
+      throw MetaError{site_, "'" + op + "' needs bools"};
+    if (op == "&&") return boolValue(a->b && b->b);
+    if (op == "||") return boolValue(a->b || b->b);
+    if (op == "==>") return boolValue(!a->b || b->b);
+    return boolValue(a->b == b->b);
+  }
   if (op == "=" || op == "<>") {
     bool eq;
     if (a->kind != b->kind)
@@ -326,7 +389,7 @@ ValuePtr Interpreter::binary(const Node &n, const EnvPtr &env) {
     switch (a->kind) {
       case K::Int: eq = a->i == b->i; break;
       case K::Bool: eq = a->b == b->b; break;
-      case K::Str: eq = a->s == b->s; break;
+      case K::Str: case K::Type: eq = a->s == b->s; break;
       case K::Unit: eq = true; break;
       default:
         throw MetaError{site_, std::string("'") + op + "' cannot compare " +
@@ -426,9 +489,30 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     for (const NodePtr &f : record->kids) out.push_back(strValue(f->text));
     return listValue(std::move(out));
   }
+  // A core builtin, as a `where` predicate's operators expand to.
+  static const std::map<std::string, std::string> ops = {
+      {"eq", "="},  {"ne", "<>"},  {"lt", "<"},  {"gt", ">"},
+      {"le", "<="}, {"ge", ">="},  {"add", "+"}, {"sub", "-"},
+      {"mul", "*"}, {"div", "/"},  {"rem", "%"}, {"and", "&&"},
+      {"or", "||"}, {"implies", "==>"},          {"iff", "<==>"},
+  };
+  if (auto op = ops.find(name); op != ops.end())
+    return binop(op->second, args[0], args[1]);
+  if (name == "size_of") {
+    if (args[0]->kind != K::Type)
+      throw MetaError{site_, std::string("'size_of' needs a type, found ") +
+                                 kindName(args[0]->kind)};
+    if (!host_.sizeOf)
+      throw MetaError{site_, "'size_of' is only available in types and "
+                             "constraints"};
+    if (std::optional<int64_t> n = host_.sizeOf(args[0]->s))
+      return intValue(*n);
+    throw MetaError{site_, "the type " + args[0]->s + " has no fixed size"};
+  }
   if (name == "name") {
     const Value &v = *args[0];
     if (v.kind == K::Str) return args[0];
+    if (v.kind == K::Type) return strValue(v.s);
     if (v.kind == K::Syntax && v.syntax &&
         (v.syntax->kind == NodeKind::LetItem ||
          v.syntax->kind == NodeKind::Name ||
