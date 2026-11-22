@@ -1,0 +1,30 @@
+(* Pia.Core.Order (ADR 0040): every goal of the module is proved: the
+   generic functions at each integer type, the laws of Eq and Ord for each
+   type that meets them, and each instance's interface contract.
+// RUN: piac --verify %S/../../lib/Pia/Core/Order.pia | FileCheck %s
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: FileCheck --check-prefix=OPS %s < %t/Pia.Core.Order.Ops.piai
+// RUN: FileCheck --check-prefix=CMP %s < %t/Pia.Core.Order.Compare.piai
+*)
+
+(* The laws are proved for each type, and lexicographical_compare meets its
+   definition at each.
+// CHECK-NOT: failed
+// CHECK-DAG: proved: the measure of 'lex_from<u8>' decreases
+// CHECK-DAG: proved: the measure of 'lex_from<i64>' decreases
+// CHECK: 766 proved, 0 failed, 0 skipped
+*)
+
+(*
+// OPS:       {{^}}module Pia.Core.Order{{$}}
+// OPS-NEXT:  {{^}}interface Ops = sig{{$}}
+// OPS-NEXT:  {{^}}  let same : (a : u8) -> (b : u8) -> bool ensures result <==> a = b{{$}}
+// OPS-NEXT:  {{^}}  let less : (a : u8) -> (b : u8) -> bool ensures result <==> a < b{{$}}
+// OPS:       {{^}}  let swap : (xs : borrowed inout mutable [i64]) -> (i : usize) -> (j : usize) -> unit requires i < len xs && j < len xs{{$}}
+// OPS:       {{^}}  let less : (a : bool) -> (b : bool) -> bool ensures result <==> a = false && b{{$}}
+// OPS-NEXT:  {{^}}end{{$}}
+
+// CMP:       {{^}}interface Compare = sig{{$}}
+// CMP-NEXT:  {{^}}  let ordering = type | Less | Equal | Greater{{$}}
+// CMP-NEXT:  {{^}}  let compare : (a : u8) -> (b : u8) -> ordering ensures
+*)

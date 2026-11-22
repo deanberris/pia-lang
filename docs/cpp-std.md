@@ -1,6 +1,6 @@
 # The C++23 standard library in Pia
 
-Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and `lib/` has its first modules, `Pia.Core.Bit` and `Pia.Core.Int` (`lib/Pia/Core/`, tested in `tests/std/`).
+Status: proposed design ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)). This page maps every C++23 standard header onto the Pia module that provides it, and is updated by each library pull request, so it is also the library's status page. The first pieces are in the core, and `lib/` has its first modules, `Pia.Core.Bit`, `Pia.Core.Int` and `Pia.Core.Order` (`lib/Pia/Core/`, tested in `tests/std/`).
 
 Pia gives what the C++ library lets a program do, in Pia's idioms: slices instead of iterator pairs, `result` and `?` instead of exceptions, explicit allocators instead of `std::allocator`, concepts instead of comparator objects, and metaprograms instead of type traits. Every function has a contract that the compiler proves, so what is undefined behaviour in C++ is a proof goal at the call in Pia.
 
@@ -12,10 +12,10 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 
 | Header | Pia | Kind | Status |
 | --- | --- | --- | --- |
-| `<concepts>` | `Pia.Core.Order` (`Eq`, `Ord`), `Pia.Core.Int` (`Integral`); the rest are concepts written where needed | Idiom: concepts with laws (ADR 0034) | phase 1 |
+| `<concepts>` | `Pia.Core.Order`'s `Eq` (`same`: reflexive, symmetric, transitive) and `Ord` (`less`: a strict weak order, asymmetric by contract), with instances for every integer type and `bool`; `Pia.Core.Int` (`Integral`); the rest are concepts written where needed | Idiom: concepts with laws (ADR 0034) | `Eq`, `Ord` done, used inside `Pia.Core.Order`; importing a concept waits for ADR 0039 step 3 |
 | `<coroutine>` | the core's `wait`, `yield` and `@suspends` | Core (ADR 0027) | deferred: M12 |
-| `<compare>` | `Pia.Core.Order`: `ordering`, `weak_ordering`, `partial_ordering`, `compare`, `@derive(ord)` | Direct | phase 1 |
-| `<utility>` | `swap`, `exchange` in `Pia.Core.Order`; `cmp_equal`, `cmp_less` and the other safe comparisons are Pia's own `=`, `<` and so on, which compare integers of any two types exactly (an `i32` below a `u32` is `a < b`), so `Pia.Core.Int` does not repeat them; `in_range` is a narrowing goal (`let y : u8 = x` proves `x` fits) until a type's bounds can be values in generic code; `pair` is a record; `move`, `forward` are the `moved` modifier; `to_underlying` is `widen`; `unreachable` is a proof goal (`assert false`) | Direct and Core | safe comparisons done (core); `swap`, `exchange` phase 1 |
+| `<compare>` | `Pia.Core.Order`: `ordering` (`strong_ordering`: `Less`, `Equal`, `Greater`) and `compare`, generic over `Ord` and for each integer type; `partial_ordering` and `weak_ordering` wait for floats and for types with equivalent but distinct values; `@derive(ord)` waits for exported metaprograms | Direct | `ordering`, `compare` done (importing them waits for imported types) |
+| `<utility>` | `swap`, `exchange` in `Pia.Core.Order`, of a slice's elements, since Pia has no references to scalars; `cmp_equal`, `cmp_less` and the other safe comparisons are Pia's own `=`, `<` and so on, which compare integers of any two types exactly (an `i32` below a `u32` is `a < b`), so `Pia.Core.Int` does not repeat them; `in_range` is a narrowing goal (`let y : u8 = x` proves `x` fits) until a type's bounds can be values in generic code; `pair` is a record; `move`, `forward` are the `moved` modifier; `to_underlying` is `widen`; `unreachable` is a proof goal (`assert false`) | Direct and Core | safe comparisons done (core); `swap`, `exchange` done (an interface cannot state their postconditions yet) |
 | `<optional>` | `Pia.Core.Option` over the core `option` | Direct; monadic `and_then`, `transform`, `or_else` deferred | phase 1, phase 6 |
 | `<expected>` | `Pia.Core.Result` over the core `result` and `?` | Direct; monadic operations deferred | phase 1, phase 6 |
 | `<variant>` | sum types and `match` | Core; `variant<Ts...>` and `visit` need variadic generics | n/a |
@@ -88,7 +88,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | --- | --- | --- | --- |
 | `<iterator>` | slices, `usize` indices (with `len xs` for "not found"), and container cursors | Idiom | n/a |
 | `<ranges>` | eager algorithms over slices; views such as `filter`, `transform`, `zip` | Deferred: function values | phase 6 |
-| `<algorithm>` non-modifying | `Pia.Core.Algo.Search` | Direct | phase 1 |
+| `<algorithm>` non-modifying | `Pia.Core.Algo.Search`; `min`, `max`, `clamp` (C++'s ties: the first argument when equivalent) and `lexicographical_compare`, `lexicographical_compare_three_way` (defined by the spec function `lex_from`) are in `Pia.Core.Order` | Direct | `Pia.Core.Order`'s done; the rest phase 1 |
 | `<algorithm>` modifying | `Pia.Core.Algo.Modify` | Direct | phase 1 |
 | `<algorithm>` sorting, binary search, heap | `Pia.Core.Algo.Sort`, `Pia.Core.Algo.Heap`; stable forms need an allocator | Direct | phase 1, phase 2 |
 | `<algorithm>` set operations | `Pia.Core.Algo.Set`, into `out` slices | Direct | phase 1 |

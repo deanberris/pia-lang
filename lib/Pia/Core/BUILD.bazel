@@ -10,6 +10,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Bit.pia",
     "Int.pia",
+    "Order.pia",
 ])
 
 APPLE_SILICON = [
@@ -31,5 +32,14 @@ pia_library(
 pia_library(
     name = "int",
     src = "Int.pia",
+    target_compatible_with = APPLE_SILICON,
+)
+
+# <compare>, the comparison concepts, swap and exchange, and min, max,
+# clamp and lexicographical_compare: tests/std/order.pia checks its goals;
+# tests/std/order_edges.pia and :order_run test it through its interface.
+pia_library(
+    name = "order",
+    src = "Order.pia",
     target_compatible_with = APPLE_SILICON,
 )

@@ -1,0 +1,56 @@
+(* Importers of Pia.Core.Order see only its interface's contracts, and
+   those decide the edges C++ calls out: equal arguments (min and max
+   return the first), the extremes of each width, a clamp to a single
+   value, and empty sequences.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+
+(* The edges at the integer type `t`, whose smallest and largest values
+   are `lo` and `hi`. *)
+let meta order_edges (t : string) : item =
+  let n = concat "edges_" t in
+  `( let $n (lo : $t) (hi : $t) (v : $t) : unit
+       requires lo <= v && v <= hi
+     =
+       assert Pia.Core.Order.same v v;
+       assert Pia.Core.Order.less v v = false;
+       assert Pia.Core.Order.min v v = v;
+       assert Pia.Core.Order.max v v = v;
+       assert Pia.Core.Order.min lo hi = lo;
+       assert Pia.Core.Order.max lo hi = hi;
+       assert Pia.Core.Order.min hi lo = lo;
+       assert Pia.Core.Order.clamp v lo hi = v;
+       assert Pia.Core.Order.clamp lo v v = v;
+       assert Pia.Core.Order.clamp hi v v = v;
+       assert Pia.Core.Order.clamp v v v = v;
+       () )
+
+order_edges "u8"
+order_edges "u16"
+order_edges "u32"
+order_edges "u64"
+order_edges "i8"
+order_edges "i16"
+order_edges "i32"
+order_edges "i64"
+
+(* An empty sequence is before every other, and nothing is before it. *)
+let empty (xs : [u8]) (none : [u8]) : unit
+  requires len none = 0
+= assert Pia.Core.Order.lexicographical_compare xs none = false;
+  assert Pia.Core.Order.lexicographical_compare none xs <==> len xs > 0;
+  ()
+
+(* false is before true. *)
+let bools () : unit =
+  assert Pia.Core.Order.less false true;
+  assert Pia.Core.Order.less true false = false;
+  assert Pia.Core.Order.same true true;
+  ()
+
+(* Every goal is proved, from the interface alone.
+// CHECK-NOT: failed
+// CHECK: 125 proved, 0 failed, 0 skipped
+*)

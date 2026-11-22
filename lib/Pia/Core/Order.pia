@@ -1,0 +1,537 @@
+(* Pia.Core.Order: C++'s <compare>, the comparison concepts of
+   <concepts>, <utility>'s swap and exchange, and <algorithm>'s min, max,
+   clamp and lexicographical_compare (ADR 0040, docs/cpp-std.md).
+
+   The concepts Eq and Ord, with their laws, and the generic functions
+   over them are defined and proved here. Interfaces cannot list concepts
+   or generic functions yet (ADR 0039, step 3), so what other modules can
+   import is the instances for each integer type, stamped out by the
+   metaprograms below from the generic functions, and each proved:
+
+   - Eq: `same`, reflexive, symmetric and transitive.
+   - Ord: Eq and `less`, a strict weak order: irreflexive, transitive,
+     with incomparability transitive, and `less a b` never `same a b`.
+     `less` is asymmetric by contract, which is what generic code can use
+     (laws are proved for each type but are not facts in generic bodies).
+   - compare, the three-way comparison, giving an `ordering`.
+   - min, max and clamp, with C++'s ties: min and max return the first
+     argument when the two are equivalent, and clamp requires lo not after
+     hi.
+   - swap and exchange of a slice's elements: Pia has no references to
+     scalars, so C++'s swap a b is swap of xs.[i] and xs.[j].
+   - lexicographical_compare and lexicographical_compare_three_way,
+     defined by the spec function `lex_from`. *)
+module Pia.Core.Order : Ops, Compare
+
+interface Ops = sig
+  (** Eq: equality of integers. *)
+  let same : (a : u8) -> (b : u8) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : u8) -> (b : u8) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : u8) -> (b : u8) -> u8
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : u8) -> (b : u8) -> u8
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : u8) -> (lo : u8) -> (hi : u8) -> u8
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [u8]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [u8]) -> (i : usize) -> (v : u8) -> u8
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [u8]) -> (ys : [u8]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : u16) -> (b : u16) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : u16) -> (b : u16) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : u16) -> (b : u16) -> u16
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : u16) -> (b : u16) -> u16
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : u16) -> (lo : u16) -> (hi : u16) -> u16
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [u16]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [u16]) -> (i : usize) -> (v : u16) -> u16
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [u16]) -> (ys : [u16]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : u32) -> (b : u32) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : u32) -> (b : u32) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : u32) -> (b : u32) -> u32
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : u32) -> (b : u32) -> u32
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : u32) -> (lo : u32) -> (hi : u32) -> u32
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [u32]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [u32]) -> (i : usize) -> (v : u32) -> u32
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [u32]) -> (ys : [u32]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : u64) -> (b : u64) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : u64) -> (b : u64) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : u64) -> (b : u64) -> u64
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : u64) -> (b : u64) -> u64
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : u64) -> (lo : u64) -> (hi : u64) -> u64
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [u64]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [u64]) -> (i : usize) -> (v : u64) -> u64
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [u64]) -> (ys : [u64]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : i8) -> (b : i8) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : i8) -> (b : i8) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : i8) -> (b : i8) -> i8
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : i8) -> (b : i8) -> i8
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : i8) -> (lo : i8) -> (hi : i8) -> i8
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [i8]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [i8]) -> (i : usize) -> (v : i8) -> i8
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [i8]) -> (ys : [i8]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : i16) -> (b : i16) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : i16) -> (b : i16) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : i16) -> (b : i16) -> i16
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : i16) -> (b : i16) -> i16
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : i16) -> (lo : i16) -> (hi : i16) -> i16
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [i16]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [i16]) -> (i : usize) -> (v : i16) -> i16
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [i16]) -> (ys : [i16]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : i32) -> (b : i32) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : i32) -> (b : i32) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : i32) -> (b : i32) -> i32
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : i32) -> (b : i32) -> i32
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : i32) -> (lo : i32) -> (hi : i32) -> i32
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [i32]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [i32]) -> (i : usize) -> (v : i32) -> i32
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [i32]) -> (ys : [i32]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of integers. *)
+  let same : (a : i64) -> (b : i64) -> bool
+    ensures result <==> a = b
+  (** Ord: the order of integers, a strict weak order. *)
+  let less : (a : i64) -> (b : i64) -> bool
+    ensures result <==> a < b
+  (** C++: std::min. a when the two are equal. *)
+  let min : (a : i64) -> (b : i64) -> i64
+    ensures b < a ==> result = b
+    ensures b >= a ==> result = a
+  (** C++: std::max. a when the two are equal. *)
+  let max : (a : i64) -> (b : i64) -> i64
+    ensures a < b ==> result = b
+    ensures a >= b ==> result = a
+  (** C++: std::clamp. *)
+  let clamp : (v : i64) -> (lo : i64) -> (hi : i64) -> i64
+    requires lo <= hi
+    ensures v < lo ==> result = lo
+    ensures hi < v ==> result = hi
+    ensures lo <= v && v <= hi ==> result = v
+  (** C++: std::swap, of two elements. The definition ensures they are
+      exchanged and nothing else changes; an interface cannot state the
+      postcondition of a function with inout parameters yet. *)
+  let swap : (xs : borrowed inout mutable [i64]) -> (i : usize) -> (j : usize) -> unit
+    requires i < len xs && j < len xs
+  (** C++: std::exchange: xs.[i] becomes v, and its old value is returned.
+      The postcondition is the definition's, as for swap. *)
+  let exchange : (xs : borrowed inout mutable [i64]) -> (i : usize) -> (v : i64) -> i64
+    requires i < len xs
+  (** C++: std::lexicographical_compare. Its exact definition is the spec function lex_from, which interfaces cannot list yet. *)
+  let lexicographical_compare : (xs : [i64]) -> (ys : [i64]) -> bool
+    ensures len xs = 0 ==> (result <==> len ys > 0)
+    ensures len ys = 0 ==> result = false
+  (** Eq: equality of booleans. *)
+  let same : (a : bool) -> (b : bool) -> bool
+    ensures result <==> a = b
+  (** Ord: false before true. *)
+  let less : (a : bool) -> (b : bool) -> bool
+    ensures result <==> a = false && b
+end
+
+interface Compare = sig
+  (** C++: std::strong_ordering. *)
+  let ordering = type | Less | Equal | Greater
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : u8) -> (b : u8) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [u8]) -> (ys : [u8]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : u16) -> (b : u16) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [u16]) -> (ys : [u16]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : u32) -> (b : u32) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [u32]) -> (ys : [u32]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : u64) -> (b : u64) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [u64]) -> (ys : [u64]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : i8) -> (b : i8) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [i8]) -> (ys : [i8]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : i16) -> (b : i16) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [i16]) -> (ys : [i16]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : i32) -> (b : i32) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [i32]) -> (ys : [i32]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+  (** C++: operator<=>, the three-way comparison. *)
+  let compare : (a : i64) -> (b : i64) -> ordering
+    ensures result = Less <==> a < b
+    ensures result = Equal <==> a = b
+    ensures result = Greater <==> b < a
+  (** C++: std::lexicographical_compare_three_way. *)
+  let lexicographical_compare_three_way : (xs : [i64]) -> (ys : [i64]) -> ordering
+    ensures len xs = 0 && len ys = 0 ==> result = Equal
+end
+
+(** C++: std::equality_comparable, with equality an equivalence. *)
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+  let lemma symmetric (a : t) (b : t) requires same a b ensures same b a
+  let lemma transitive (a : t) (b : t) (c : t)
+    requires same a b && same b c
+    ensures same a c
+end
+
+(** C++: std::strict_weak_order over std::totally_ordered's operator<. *)
+let meta Ord (t : type) : concept = sig
+  include Eq t
+  let less : (a : t) -> (b : t) -> bool
+    ensures result ==> less b a = false
+  let lemma irreflexive (a : t) ensures less a a = false
+  let lemma less_transitive (a : t) (b : t) (c : t)
+    requires less a b && less b c
+    ensures less a c
+  let lemma incomparable_transitive (a : t) (b : t) (c : t)
+    requires less a b = false && less b a = false && less b c = false && less c b = false
+    ensures less a c = false && less c a = false
+  let lemma distinct (a : t) (b : t) requires less a b ensures same a b = false
+end
+
+(** C++: std::strong_ordering. *)
+let ordering = type | Less | Equal | Greater
+
+(* The generic functions, over any Ord t. *)
+
+let compare (t : type where Ord t) (a : t) (b : t) : ordering
+  ensures result = Less <==> less a b
+  ensures result = Greater <==> less b a
+= if less a b then Less else if less b a then Greater else Equal
+
+let min (t : type where Ord t) (a : t) (b : t) : t
+  ensures result = (if less b a then b else a)
+= if less b a then b else a
+
+let max (t : type where Ord t) (a : t) (b : t) : t
+  ensures result = (if less a b then b else a)
+= if less a b then b else a
+
+let clamp (t : type where Ord t) (v : t) (lo : t) (hi : t) : t
+  requires less hi lo = false
+  ensures result = (if less v lo then lo else if less hi v then hi else v)
+= if less v lo then lo else if less hi v then hi else v
+
+let swap (t : type) (xs : borrowed inout mutable [t]) (i : usize) (j : usize) : unit
+  requires i < len xs && j < len xs
+  ensures xs.[i] = old (xs.[j]) && xs.[j] = old (xs.[i])
+  ensures forall (k in 0..len xs). k <> i && k <> j ==> xs.[k] = old (xs.[k])
+= let a = xs.[i] in
+  let b = xs.[j] in
+  xs.[i] <- b;
+  xs.[j] <- a
+
+let exchange (t : type) (xs : borrowed inout mutable [t]) (i : usize) (v : t) : t
+  requires i < len xs
+  ensures result = old (xs.[i]) && xs.[i] = v
+  ensures forall (k in 0..len xs). k <> i ==> xs.[k] = old (xs.[k])
+= let a = xs.[i] in
+  xs.[i] <- v;
+  a
+
+(* xs before ys in C++'s lexicographical order, comparing from index i:
+   the first comparable pair decides, and a proper prefix comes first. *)
+let spec lex_from (t : type where Ord t) (xs : [t]) (ys : [t]) (i : usize) : bool
+  requires i <= len xs && i <= len ys
+  decreases len xs - i
+= if i = len xs then i < len ys
+  else if i = len ys then false
+  else if less xs.[i] ys.[i] then true
+  else if less ys.[i] xs.[i] then false
+  else lex_from xs ys (i + 1)
+
+let lexicographical_compare (t : type where Ord t) (xs : [t]) (ys : [t]) : bool
+  ensures result = lex_from xs ys 0
+= let n : usize = if len xs < len ys then len xs else len ys in
+  let i : mutable usize = 0 in
+  while i < n && less xs.[i] ys.[i] = false && less ys.[i] xs.[i] = false
+    invariant i <= n
+    invariant lex_from xs ys 0 = lex_from xs ys i
+    decreases n - i
+  do i <- i + 1 done;
+  if i < n then less xs.[i] ys.[i] else len xs < len ys
+
+let lexicographical_compare_three_way (t : type where Ord t) (xs : [t]) (ys : [t]) : ordering
+  ensures result = Less <==> lex_from xs ys 0
+  ensures result = Greater ==> lex_from ys xs 0
+  ensures result = Equal ==> lex_from xs ys 0 = false && lex_from ys xs 0 = false
+= if lexicographical_compare<t> xs ys then Less
+  else if lexicographical_compare<t> ys xs then Greater
+  else Equal
+
+(* The instances for the integer type `t`. *)
+let meta order_family (t : string) : item =
+  `( let same ($!a : $t) ($!b : $t) : bool
+       ensures $!result <==> $!a = $!b
+     = ($!a = $!b)
+
+     let less ($!a : $t) ($!b : $t) : bool
+       ensures $!result <==> $!a < $!b
+     = ($!a < $!b)
+
+     let compare ($!a : $t) ($!b : $t) : ordering
+       ensures $!result = Less <==> $!a < $!b
+       ensures $!result = Equal <==> $!a = $!b
+       ensures $!result = Greater <==> $!b < $!a
+     = compare<$t> $!a $!b
+
+     let min ($!a : $t) ($!b : $t) : $t
+       ensures $!b < $!a ==> $!result = $!b
+       ensures $!b >= $!a ==> $!result = $!a
+     = min<$t> $!a $!b
+
+     let max ($!a : $t) ($!b : $t) : $t
+       ensures $!a < $!b ==> $!result = $!b
+       ensures $!a >= $!b ==> $!result = $!a
+     = max<$t> $!a $!b
+
+     let clamp ($!v : $t) ($!lo : $t) ($!hi : $t) : $t
+       requires $!lo <= $!hi
+       ensures $!v < $!lo ==> $!result = $!lo
+       ensures $!hi < $!v ==> $!result = $!hi
+       ensures $!lo <= $!v && $!v <= $!hi ==> $!result = $!v
+     = clamp<$t> $!v $!lo $!hi
+
+     let swap ($!xs : borrowed inout mutable [$t]) ($!i : usize) ($!j : usize) : unit
+       requires $!i < len $!xs && $!j < len $!xs
+       ensures $!xs.[$!i] = old ($!xs.[$!j]) && $!xs.[$!j] = old ($!xs.[$!i])
+     = swap<$t> $!xs $!i $!j
+
+     let exchange ($!xs : borrowed inout mutable [$t]) ($!i : usize) ($!v : $t) : $t
+       requires $!i < len $!xs
+       ensures $!result = old ($!xs.[$!i]) && $!xs.[$!i] = $!v
+     = exchange<$t> $!xs $!i $!v
+
+     let lexicographical_compare ($!xs : [$t]) ($!ys : [$t]) : bool
+       ensures len $!xs = 0 ==> ($!result <==> len $!ys > 0)
+       ensures len $!ys = 0 ==> $!result = false
+     = lexicographical_compare<$t> $!xs $!ys
+
+     let lexicographical_compare_three_way ($!xs : [$t]) ($!ys : [$t]) : ordering
+       ensures len $!xs = 0 && len $!ys = 0 ==> $!result = Equal
+     = lexicographical_compare_three_way<$t> $!xs $!ys )
+
+order_family "u8"
+order_family "u16"
+order_family "u32"
+order_family "u64"
+order_family "i8"
+order_family "i16"
+order_family "i32"
+order_family "i64"
+
+(** Eq: equality of booleans. *)
+let same (a : bool) (b : bool) : bool
+  ensures result <==> a = b
+= (a = b)
+
+(** Ord: false before true. *)
+let less (a : bool) (b : bool) : bool
+  ensures result <==> a = false && b
+= (a = false && b)
+
+(* bool meets Ord too; its laws are proved where it is used with it. *)
+let bool_min (a : bool) (b : bool) : bool
+  ensures result = (a && b)
+= min<bool> a b
