@@ -2,6 +2,8 @@
 
 Status: accepted design, 2026-11-21 ([ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md)). Nothing here is implemented yet. Code blocks show designed syntax.
 
+For how the C++23 standard library maps onto these layers, header by header, see [The C++23 standard library in Pia](cpp-std.md) ([ADR 0040](adr/0040-cpp23-standard-library-in-pia.md)).
+
 This page answers one question: **what is the smallest set of things the compiler has to provide, so that everything else in the standard library can be written in Pia and proved like any other Pia code?**
 
 It also covers two requirements that shape the answer:
