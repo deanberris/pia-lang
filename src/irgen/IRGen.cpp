@@ -2619,13 +2619,23 @@ class Gen {
   // return the same type.
   void checkPreconditionOverloads() {
     for (auto &[name, symbols] : overloads_) {
-      std::map<std::vector<Type>, std::vector<const sema::FuncSig *>> byTypes;
+      // Grouped in the order the overloads are visited: mlir::Type has no
+      // ordering, and pointer order would make the diagnostics' order vary.
+      std::vector<std::pair<std::vector<Type>,
+                            std::vector<const sema::FuncSig *>>>
+          byTypes;
       for (const std::string &sym : symbols) {
         const sema::FuncSig &f = sigs_.at(sym);
         if (f.isGeneric()) continue;
         std::vector<Type> ts;
         for (const sema::Param &p : f.params) ts.push_back(p.type);
-        byTypes[ts].push_back(&f);
+        auto it = std::find_if(byTypes.begin(), byTypes.end(),
+                               [&](const auto &e) { return e.first == ts; });
+        if (it == byTypes.end()) {
+          byTypes.emplace_back(ts, std::vector<const sema::FuncSig *>{});
+          it = std::prev(byTypes.end());
+        }
+        it->second.push_back(&f);
       }
       for (auto &[ts, group] : byTypes) {
         if (group.size() < 2) continue;

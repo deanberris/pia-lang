@@ -5,7 +5,7 @@
 let size (x : u8) : u8 = 1
 let size (x : u16) : u8 = 2
 
-(* CHECK: overload_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'size' already has an overload with these parameter types and the same preconditions at line 5, so no call could choose between them
+(* CHECK: overload_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'size' is already defined with these parameter types, and neither has a precondition to tell them apart
 *)
 let size (y : u8) : u8 = 3
 

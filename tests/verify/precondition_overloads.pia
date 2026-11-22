@@ -43,5 +43,19 @@ let five () : u8
 = pick 5
 
 (* Expected report, in order.
-// CHECK: 0 proved, 0 failed, 0 skipped
+// CHECK: precondition_overloads.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:30:3: proved: the precondition of 'pick(u8)#2' holds [smt]
+// CHECK: precondition_overloads.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:35:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:35:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:39:18: proved: the precondition of 'pick(u8)#2' holds [smt]
+// CHECK: precondition_overloads.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: precondition_overloads.pia:43:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:43:3: proved: the precondition of 'pick(u8)#3' holds [smt]
+// CHECK: precondition_overloads.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: 14 proved, 0 failed, 0 skipped
 *)

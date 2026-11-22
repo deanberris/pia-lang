@@ -723,7 +723,21 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         for (size_t i = 0; i < sig.params.size(); ++i)
           same = same && sig.params[i].type == other.params[i].type;
         twins += same;
+        // With no precondition on either, nothing could tell them apart.
+        auto hasRequires = [](const Node &it) {
+          for (const syntax::NodePtr &c : it.kids[2]->kids)
+            if (c->kind == NodeKind::Requires) return true;
+          return false;
+        };
+        if (same && !hasRequires(item) && !hasRequires(*other.item)) {
+          error(item.loc, "'" + name + "' is already defined with these "
+                                "parameter types, and neither has a "
+                                "precondition to tell them apart");
+          drop[group[k]] = true;
+          break;
+        }
       }
+      if (drop[group[k]]) continue;
       std::string symbol = name + "(";
       for (size_t i = 0; i < sig.params.size(); ++i)
         symbol += (i ? ", " : "") + typeName(sig.params[i].type);
