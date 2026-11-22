@@ -51,3 +51,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0045](0045-json-derived-codecs-and-conforming-dom.md) | JSON: derived streaming codecs, typed construction by passing the type, and a recursive DOM over the input proved to conform to a type | Accepted |
 | [0046](0046-box-over-a-type-or-a-concept.md) | A box holds a type or any type meeting a concept, and what it holds is proved to have the concept's shape | Accepted |
 | [0047](0047-recursive-sum-types-and-shared-references.md) | Recursive sum types are explicit (`let rec`), recurse through an `Indirect` owning type, and share through `ref` and `weak`, mutated only under leases proved exclusive across threads | Accepted |
+| [0048](0048-buffers-whose-elements-hold-slices.md) | Buffers may hold slices: owned slices are written through, shared ones only read | Proposed |
