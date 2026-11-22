@@ -710,6 +710,10 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         if (++generics > 1) sig.name = name + "#" + std::to_string(generics);
         continue;
       }
+      // Overloads with the same parameter types are told apart by their
+      // preconditions (ADR 0034); IRGen checks that they can be. The
+      // second and later are numbered, `copy(out [u8], [u8])#2`.
+      unsigned twins = 0;
       for (size_t j = 0; j < k; ++j) {
         const FuncSig &other = all[group[j]];
         if (drop[group[j]] || other.isGeneric() ||
@@ -718,20 +722,13 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         bool same = true;
         for (size_t i = 0; i < sig.params.size(); ++i)
           same = same && sig.params[i].type == other.params[i].type;
-        if (same) {
-          error(item.loc, "'" + name + "' is already defined with "
-                                "these parameter types; overloads told "
-                                "apart by their preconditions are not "
-                                "supported yet");
-          drop[group[k]] = true;
-          break;
-        }
+        twins += same;
       }
-      if (drop[group[k]]) continue;
       std::string symbol = name + "(";
       for (size_t i = 0; i < sig.params.size(); ++i)
         symbol += (i ? ", " : "") + typeName(sig.params[i].type);
       sig.name = symbol + ")";
+      if (twins) sig.name += "#" + std::to_string(twins + 1);
     }
     for (size_t k : group) all[k].overloaded = true;
   }

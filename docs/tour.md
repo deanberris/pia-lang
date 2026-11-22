@@ -315,7 +315,24 @@ let red_alike (p : pixel) (q : pixel) : bool = alike p q
 
 A type that meets a concept directly uses its own functions. An adapter is used when the call names it, as in `alike<Same = by_red> p q`, or when it is the only way the type meets the concept, as here. Its laws are proved about its own functions. Two adapters for the same concept and type, with neither named, are an error that names both.
 
-Functions may share a name when their parameter types differ. They form an overload set, and each call picks the one that fits its arguments best: an exact type beats a conversion, and a function that is not generic beats a generic one. A generic overload whose type arguments do not meet its constraints drops out of the call, so it is only chosen for the types it can serve. Between two generics that both fit, the one whose parameter types are an instance of the other's wins (`pair t t` over `pair a b`), and then the one whose constraints entail the other's: a `rank` for `Ord t` beats a `rank` for `Same t` when the type meets both, because `Ord` includes `Same`. Two concepts that require the same functions and state no laws entail each other, whatever their names, so two overloads that differ only by them are an error at the second.
+Functions may share a name when their parameter types differ. They form an overload set, and each call picks the one that fits its arguments best: an exact type beats a conversion, and a function that is not generic beats a generic one. A generic overload whose type arguments do not meet its constraints drops out of the call, so it is only chosen for the types it can serve. Overloads with the same parameter types are told apart by their preconditions, and each call gets the most specific one whose precondition is proved where it is made. The choice is made at compile time, from proofs, and never adds a test at run time:
+
+```ocaml
+let pick (x : u8) : u8
+  ensures result = 0
+= 0
+
+let pick (x : u8) : u8
+  requires x < 10
+  ensures result = 1
+= 1
+
+let by_branch (x : u8) : u8
+  ensures (x < 10 ==> result = 1) && (x >= 10 ==> result = 0)
+= if x < 10 then pick x else pick x
+```
+
+Their `requires` clauses must be ordered, each overload's including every clause of a less specific one, so the most specific is always well defined. Between two generics that both fit, the one whose parameter types are an instance of the other's wins (`pair t t` over `pair a b`), and then the one whose constraints entail the other's: a `rank` for `Ord t` beats a `rank` for `Same t` when the type meets both, because `Ord` includes `Same`. Two concepts that require the same functions and state no laws entail each other, whatever their names, so two overloads that differ only by them are an error at the second.
 
 
 ## Control flow
