@@ -1783,6 +1783,9 @@ class Encoder {
     llvm::DenseMap<Value, Value> memo;
     bool envForBlockArgs = false;
     Operation *envOutside = nullptr;  // values defined outside it use env_
+    // A spec call's parameters whose arguments are computed, so may be
+    // outside the parameter's type (argsInRange).
+    llvm::DenseSet<Value> computed;
   };
 
   // --- loops -------------------------------------------------------------
@@ -2353,6 +2356,20 @@ class Encoder {
     else assertTerm(fact);
   }
 
+  // Each integer argument of a call is in its parameter's type. A spec
+  // body's terms are exact, so in a branch the body does not take an
+  // argument can be outside it, as `cnt xs (k - 1)` is at k = 0; facts
+  // about the function there, which its proof never covered, must not be
+  // claimed (a precondition `k <= len xs` alone holds of k = -1).
+  Value argsInRange(mlir::Block &entry, Demand &args) {
+    Value ok = boolConst(true);
+    for (mlir::BlockArgument a : entry.getArguments())
+      if (auto it = mlir::dyn_cast<IntType>(a.getType()))
+        if (args.computed.contains(a))
+          if (Value v = args.values.lookup(a)) ok = andOf(ok, inRange(v, it));
+    return ok;
+  }
+
   // `f a`, result `k`, where `args` maps f's parameters to the arguments.
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
@@ -2415,7 +2432,7 @@ class Encoder {
       callee.walk([&](mlir::func::ReturnOp ret) {
         if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
       });
-      Value pre = boolConst(true), facts = boolConst(true);
+      Value pre = argsInRange(entry, args), facts = boolConst(true);
       bool ok = callee.getNumResults() == 1;
       for (auto r : entry.getOps<contract::RequiresOp>()) {
         Value p = demand(r.getPredicate(), post);
@@ -2451,7 +2468,7 @@ class Encoder {
     callee.walk([&](mlir::func::ReturnOp ret) {
       if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
     });
-    Value pre = boolConst(true);
+    Value pre = argsInRange(entry, args);
     for (auto r : entry.getOps<contract::RequiresOp>()) {
       Value p = demand(r.getPredicate(), body);
       if (!p) def = Value();
@@ -2492,6 +2509,12 @@ class Encoder {
         Value t = demand(actual, d);
         if (!t) return Value();
         args.values[formal] = t;
+        // An argument the spec body computed, `k - 1`, is exact, and may
+        // be outside the parameter's type; a parameter, a load or a
+        // constant is not.
+        if (Operation *def = actual.getDefiningOp())
+          if (!mlir::isa<LoadOp>(def) && !def->hasTrait<mlir::OpTrait::ConstantLike>())
+            args.computed.insert(formal);
       }
     }
     return specCall(callee, k, args);
