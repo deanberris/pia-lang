@@ -1176,6 +1176,12 @@ class Parser {
         p->add(makeNode(N::None, p->loc));
       } else {
         Bracket b(*this);
+        // `(@unsized t : type)`, a type parameter that takes an unsized
+        // type, such as a concept (ADR 0046, section 2).
+        if (at(K::Attr) && text() == "@unsized") {
+          take();
+          p->flags = "unsized";
+        }
         p->add(pattern());
         if (accept(K::Colon))
           p->add(annot());

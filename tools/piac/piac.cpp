@@ -791,6 +791,7 @@ int main(int argc, char **argv) {
         (mode == "--emit=mlir" || mode == "--verify" || codegen)) {
       mlir::MLIRContext ctx;
       pia::irgen::Options irgenOptions;
+      irgenOptions.source = source;
       std::vector<pia::syntax::Diagnostic> explanations;
       auto sameFile = [&](const std::string &a, const std::string &b) {
         auto base = [](const std::string &p) {

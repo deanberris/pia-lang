@@ -111,6 +111,22 @@ Dean's priority is a `vec` of boxes, and most of all `vec (box c)`, so steps 1 t
 6. **The ABI.** Table layout in the published interface, and the loader's check.
 7. **`Pia.Fn`'s dynamic function values** as `box` at arrow types, and the library's handler tables.
 
+## Steps 2 to 4 as built
+
+Steps 2 to 4 are built for the verifier (src/irgen/Boxes.cpp); code generation, step 5, comes next.
+
+- **The type.** A type function whose first parameter is `@unsized`, `let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }`, takes a concept there. `box Shape r` is then its own record, `box_Shape = { slot : usize; table : usize }`: the object's address and its table's, the fat pointer of section 7. A concept anywhere else a type is expected is an error that suggests `box` (tests/irgen/box_concept_type_errors.pia).
+- **The verifier's view.** Each requirement callable through a box is an uninterpreted function of the object's address in a generated theory `erased_Shape`, `area_of`. The requirement's contract is an axiom about it, and so is each law of the concept over one value. The axioms hold because `widen` runs the use check. One sort serves every box, which is sound because only single-receiver requirements are callable, and one address is one object.
+- **`widen b`** turns a full `box t` (`b.state = 1`, as for `box t`) into a `box Shape`. It is generic over `t where Shape t`, so the use check runs at each instance. It refuses a `@linear` `t` and a `t` that borrows (tests/irgen/box_concept_errors.pia).
+- **Calls through a box.** `area b`, with `b : box Shape`, is a generated function: its precondition is the requirement's, and it ensures `result = erased_Shape.area_of b.slot`. Those functions are `box Shape`'s instance of `Shape`, so `box Shape` meets `Shape`, and a generic over `Shape` instantiates at it and is discharged by its generic proof. A requirement with two values of the concept's type, or one returning that type, gets a stub whose call is an error naming the reason. For now a box forwards only a receiver it lends.
+- **Gaps.**
+  - `widen` gives the box a fresh object, so facts about the boxed value do not carry over. A later step links them: a requirement's result on the box equals its result on the value.
+  - The table, the object's bytes and the indirect call are `extern` placeholders until step 5.
+  - `remove` and `fill` for `box c` are not built, so a `box c` is always full, which lets the forwarding instance meet the concept without a `full` precondition.
+  - Only a concept of one parameter can be boxed.
+  - A program that boxes two concepts gets two `widen` overloads that differ only in their result.
+- tests/verify/box_concept.pia holds a square and a rectangle in one slice of `box Shape`, proves the sum of their areas from `Shape`'s contract, calls a generic over `Shape` at `box Shape`, and fails a requirement's precondition through a box.
+
 ## Consequences
 
 - C++'s `unique_ptr`, virtual base classes, `std::function` and `move_only_function` become one type with one set of rules. Whatever a box holds is proved, statically, to meet the concept it is boxed as, laws included, which C++ cannot check for a derived class.

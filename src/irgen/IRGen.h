@@ -27,6 +27,9 @@ struct Options {
   // it had, which it removed and why, and which it chose (ADR 0035).
   unsigned explainLine = 0;
   std::vector<syntax::Diagnostic> *explanations = nullptr;
+  // The program's text, which a box over a concept reads its
+  // requirements' contracts from (ADR 0046).
+  std::string_view source;
 };
 
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,

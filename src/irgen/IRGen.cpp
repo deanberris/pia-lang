@@ -1,4 +1,5 @@
 #include "irgen/IRGen.h"
+#include "irgen/Boxes.h"
 #include "irgen/Regions.h"
 #include "irgen/Theories.h"
 #include "verify/Strategy.h"
@@ -2850,6 +2851,10 @@ class Gen {
   R genCall(const Node &n, const sema::FuncSig &sig,
             const std::vector<const Node *> &args,
             const std::vector<std::optional<TV>> *early = nullptr) {
+    // A requirement a box over a concept cannot forward (ADR 0046).
+    if (sig.item)
+      if (std::string why = boxUncallable(*sig.item); !why.empty())
+        return fail(n, why);
     if (args.size() != sig.params.size())
       return fail(n, "'" + sig.name + "' takes " +
                          plural(sig.params.size(), "argument") + ", given " +
@@ -3106,6 +3111,20 @@ class Gen {
         return fail(n, "cannot tell what '" + t + "' is in this call of '" +
                            generic.name + "'; give it, as in '" +
                            generic.name + "<" + t + " = u8>'");
+    // `widen`, which boxes a value as a concept (ADR 0046, section 3): the
+    // box would hide a @linear value's obligation to be released, and
+    // could outlive what a borrowing value lends from.
+    if (generic.item && hasFlag(*generic.item, "box_widen"))
+      if (auto t = bound.find("t"); t != bound.end()) {
+        if (isLinear(t->second))
+          return fail(n, "a value of the @linear type " + typeName(t->second) +
+                             " cannot be boxed as a concept: the box would "
+                             "hide the obligation to release it (ADR 0046)");
+        if (holdsRegionField(t->second))
+          return fail(n, "a value of " + typeName(t->second) + " borrows, "
+                             "and cannot be boxed as a concept: the box "
+                             "could outlive its lender (ADR 0046)");
+      }
     Choice choice;
     std::optional<std::string> why =
         constraintsUnmet(generic, bound, named, &choice);
@@ -6339,7 +6358,12 @@ class Gen {
         // Another generic's proof declared it: shared, and kept by it.
       }
       std::string axiom = r.name + ".contract";
-      if (r.item->kids[2]->kids.empty() || sigs_.count(axiom)) continue;
+      // A requirement with only a precondition has no fact to assume: its
+      // precondition is a goal at each call.
+      bool ensures = false;
+      for (const syntax::NodePtr &c : r.item->kids[2]->kids)
+        ensures |= c->kind == NodeKind::Ensures;
+      if (!ensures || sigs_.count(axiom)) continue;
       size_t errors = diags_.count();
       if (!queueRequirementAxiom(r, axiom, bound)) {
         made.push_back(axiom);
@@ -9303,12 +9327,20 @@ class Gen {
 
 }  // namespace
 
-mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
+mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
                                            std::string_view filename,
                                            mlir::MLIRContext &ctx,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
+  // A box over a concept (ADR 0046) becomes its own record and theory.
+  syntax::NodePtr boxed;
+  if (hasErasedBoxes(programIn)) {
+    boxed = syntax::clone(programIn);
+    expandErasedBoxes(*boxed, options.source, diags);
+    if (diags.hasErrors()) return nullptr;
+  }
+  const syntax::Node &program = boxed ? *boxed : programIn;
   // Region parameters (ADR 0042, step 2) are erased into marks first.
   syntax::NodePtr erased;
   RegionInfo regions;
