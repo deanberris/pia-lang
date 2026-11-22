@@ -16,9 +16,9 @@ let alloc (m : borrowed inout mutable bump) (n : usize) : result (borrowed(m) ou
            | Ok b -> len b = n && m.used = old m.used + n
            | Err _ -> m.used = old m.used)
 = if n <= len m.mem - m.used then
-    let start = m.used in
-    m.used <- start + n;
-    Ok m.mem.[start .. start + n]
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
   else Err OutOfMemory
 
 (* Two loans at once, each written and read back. *)
