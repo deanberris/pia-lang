@@ -41,3 +41,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0035](0035-substitution-failure-and-total-constraints.md) | Substitution failure removes an overload candidate; constraint metaprograms are proved to terminate | Accepted (with type `match`) |
 | [0036](0036-library-theories.md) | Libraries extend the solver with theories, proved consistent by a model or listed as trusted | Proposed |
 | [0037](0037-idiomatic-pia-and-lints.md) | Idiomatic Pia: facts in types first, written as opinions and checked by lints | Accepted |
+| [0039](0039-module-and-interface-syntax.md) | Modules are private by default: one module per file, interfaces list every export, imports name interfaces | Proposed |
