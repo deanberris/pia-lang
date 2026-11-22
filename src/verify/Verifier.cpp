@@ -2583,7 +2583,7 @@ class Encoder {
       if (!s) return Value();
       sorts.push_back(s);
     }
-    bool failed = false;
+    bool failed = false, hadDefs = false;
     auto build = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
@@ -2608,6 +2608,7 @@ class Encoder {
       }
       // Spec definitions instantiated at the bound variables hold for every
       // value of them, so they join the range as hypotheses.
+      hadDefs = hadDefs || pendingDefs_.size() > mark;
       for (size_t k = mark; k < pendingDefs_.size(); ++k)
         range = andOf(range, pendingDefs_[k]);
       pendingDefs_.resize(mark);
@@ -2624,6 +2625,40 @@ class Encoder {
       // The caller treats the quantifier as an unknown bool.
       q->erase();
       return Value();
+    }
+    // The definitions are facts for every value of the bound variables,
+    // whatever the quantifier's polarity, so they are also asserted on
+    // their own: as hypotheses alone, an assumed `forall` whose body calls
+    // an imported `same` would say nothing until the solver proved its
+    // contract at each element, which it cannot (Pia.Core.Algo.Modify's
+    // replace at u8).
+    if (quantifierDepth_ == 0 && hadDefs) {
+      bool again = false;
+      auto defsOnly = [&](OpBuilder &ob, Location, mlir::ValueRange vars) -> Value {
+        OpBuilder::InsertionGuard guard(b_);
+        b_.setInsertionPoint(ob.getInsertionBlock(), ob.getInsertionPoint());
+        ++quantifierDepth_;
+        Demand d = outer;
+        d.memo.clear();
+        Value range = boolConst(true);
+        for (auto [arg, var] : llvm::zip(body.getArguments(), vars)) {
+          d.values[arg] = var;
+          if (auto it = mlir::dyn_cast<IntType>(arg.getType()))
+            range = andOf(range, inRange(var, it));
+        }
+        auto yield = mlir::cast<contract::YieldOp>(body.getTerminator());
+        size_t mark = pendingDefs_.size();
+        if (!demand(yield.getPredicate(), d)) again = true;
+        Value defs = boolConst(true);
+        for (size_t k = mark; k < pendingDefs_.size(); ++k)
+          defs = andOf(defs, pendingDefs_[k]);
+        pendingDefs_.resize(mark);
+        --quantifierDepth_;
+        return implies(range, defs);
+      };
+      auto facts = create<mlir::smt::ForallOp>(mlir::TypeRange(sorts), defsOnly);
+      if (again) facts->erase();
+      else define(facts.getResult());
     }
     return q->getResult(0);
   }
