@@ -1,8 +1,8 @@
-# 41. Allocator semantics are a theory, and allocators prove they refine it through ghost state
+# 41. Allocator semantics are a theory, and allocators prove they refine it through spec-only state
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Proposed. Dean decided on 2026-11-22 that there is no `ghost` keyword: a spec-only type marks state that codegen erases (fewer keywords is better).
 
 ## Context
 
@@ -43,16 +43,16 @@ The theory has these parts:
   - A size class (step 4) bounds `size`.
 - **A model** proves every axiom, as for every entry in docs/theories.md, so nothing is trusted.
 
-### 2. Ghost state: fields and parameters the verifier sees and codegen erases
+### 2. Spec-only state: fields and parameters the verifier sees and codegen erases
 
-- **Declaring it:** `ghost` is a new modifier, `(h : ghost Alloc.heap)` or `{ ...; heap : ghost Alloc.heap }`. A ghost place may have a spec-only type.
-- **Writing it:** code may assign a spec expression to a ghost place, as in `p.heap <- Alloc.take p.heap s`.
-- **The one-way rule:** nothing that is not ghost may read a ghost place. So erasing ghost state cannot change what a program computes.
-- **Codegen drops ghost fields and parameters.** The C ABI and the layout ([ADR 0030](0030-published-object-layouts.md)) do not include them.
+- **Declaring it:** there is no keyword. A field or parameter whose type is spec-only (`int`, `real` or a theory's sort, [ADR 0036](0036-library-theories.md)) is spec-only state, as in `(h : Alloc.heap)` or `{ ...; heap : Alloc.heap }`. A counter that only proofs need is an `int`. It is not `meta`: meta state lives only while metaprograms expand and has one value per compilation, but this state has a value per pool and per execution path, as `p.top` does.
+- **Writing it:** code may assign a spec expression to a spec-only place, as in `p.heap <- Alloc.take p.heap s`, and pass one as a spec-only argument.
+- **The one-way rule follows from the type:** code already cannot compute with spec-only values, so a spec-only place can only flow into other spec-only places and into contracts. Erasing it cannot change what a program computes.
+- **Codegen drops spec-only fields and parameters.** The C ABI and the layout ([ADR 0030](0030-published-object-layouts.md)) do not include them.
 
 ### 3. Each allocator proves, privately, that it refines `Alloc`
 
-The pool, for example, adds `heap : ghost Alloc.heap` and proves a coupling invariant inside its module: `forall s. Alloc.live p.heap s <==> p.pos.[s] = 65535`.
+The pool, for example, adds `heap : Alloc.heap` and proves a coupling invariant inside its module: `forall s. Alloc.live p.heap s <==> p.pos.[s] = 65535`.
 
 Its exported contracts mention only the heap:
 
@@ -61,9 +61,9 @@ Its exported contracts mention only the heap:
 
 The coupling invariant is module state ([ADR 0006](0006-contracts-and-module-state.md)), so it is not in the interface ([ADR 0039](0039-module-and-interface-syntax.md)). Users reason with `Alloc`'s axioms, with no quantifiers.
 
-### 4. A block carries its allocator as a ghost `owner`
+### 4. A block carries its allocator as a spec-only `owner`
 
-A block is `{ i : u16; owner : ghost Alloc.id }`, and `give` requires `b.owner = p.id`. So reuse cannot cross allocators: this is the `owns` fact of ADR 0026.
+A block is `{ i : u16; owner : Alloc.id }`, and `give` requires `b.owner = p.id`. So reuse cannot cross allocators: this is the `owns` fact of ADR 0026.
 
 ### 5. `Allocator` the concept refers to `Alloc` the theory
 
@@ -72,19 +72,19 @@ The `Allocator` concept of [ADR 0034](0034-concepts-and-overload-resolution.md) 
 ## Implementation order
 
 1. The theory and the bitmask model in docs/theories.md (done with this ADR).
-2. `ghost` parameters and fields: Sema, IRGen, the verifier, and codegen erasure, with an error when code reads a ghost place.
-3. pool.pia refines `Alloc` through a ghost heap, and `reuse` proves using only the theory.
+2. Spec-only parameters and fields in code: Sema, IRGen, the verifier, and codegen erasure, with errors when code computes with them.
+3. pool.pia refines `Alloc` through a spec-only heap, and `reuse` proves using only the theory.
 4. Owners, then size classes and `general` (the rest of #88).
 5. `Allocator` refers to `Alloc`, and Vec stores its allocator (Dean's choice of 2026-11-22).
 
 ## Consequences
 
 - Users of every allocator get the same small facts, and proofs get cheaper, because no user quantifies over an allocator's arrays.
-- Ghost state is a language feature with uses beyond allocators: lock levels (docs/theories.md, "Lock levels") and units of measure already describe a "ghost argument" that code cannot pass today.
-- The one-way rule is enforced by the compiler. Getting it wrong would let erased state change behaviour, so it gets its own error tests.
+- Spec-only state is a language feature with uses beyond allocators: lock levels (docs/theories.md, "Lock levels") and units of measure already describe a "ghost argument" that code cannot pass today. It adds no keyword.
+- The one-way rule rests on the existing ban on computing with spec-only values. Getting it wrong would let erased state change behaviour, so it gets its own error tests.
 
 ## Open questions for Dean
 
-1. Should `ghost` be a modifier word like `borrowed` and `mutable`, or an attribute, `@ghost`?
+1. ~~Should `ghost` be a modifier word or an attribute?~~ Neither (Dean, 2026-11-22): a spec-only type marks the state.
 2. Should the coupling invariant be module state, as proposed? The other option is a `requires`/`ensures` pair that every allocator function repeats.
 3. Should `Alloc` have one theory with an `id` sort for owners? The other option is one theory instance per allocator, generated by a metaprogram as `machine` is in docs/theories.md.
