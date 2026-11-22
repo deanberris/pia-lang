@@ -50,5 +50,5 @@ let by_predicate (xs : borrowed inout mutable [u8]) : unit
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 92 proved, 0 failed, 0 skipped
+// CHECK: 28 proved, 0 failed, 0 skipped
 *)

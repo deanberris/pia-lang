@@ -4362,6 +4362,9 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     if (fn->hasAttr("pia.witness_of")) continue;
     // An imported generic's proof was made by its module (ADR 0043).
     if (fn->hasAttr("pia.generic_imported")) continue;
+    // A law or requirement contract of an imported concept, at a type of
+    // its module, was proved by that module (ADR 0039, step 6).
+    if (fn->hasAttr("pia.certified")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;

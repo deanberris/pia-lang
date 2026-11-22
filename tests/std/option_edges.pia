@@ -27,5 +27,5 @@ let edges (d : u16) : unit =
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 88 proved, 0 failed, 0 skipped
+// CHECK: 24 proved, 0 failed, 0 skipped
 *)
