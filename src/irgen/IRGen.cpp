@@ -3388,6 +3388,16 @@ class Gen {
     return t;
   }
 
+  // How a synthesized item writes the type `t` of a function object: its
+  // name, or for a type parameter's stand-in in a definition check, an
+  // alias of it (ADR 0044, step 6). Empty when there is neither.
+  std::string writtenName(Type t) {
+    std::string name = typeName(t);
+    if (types_.named(name) == t) return name;
+    if (standIns_.contains(t)) return typeAlias(t, "standin#" + name);
+    return "";
+  }
+
   // A name for a type, so a synthesized item can write it.
   std::string typeAlias(Type t, const std::string &name) {
     std::string alias = "type#" + name;
@@ -3852,7 +3862,9 @@ class Gen {
       if (arrow.contracts)
         for (const NodePtr &c : arrow.contracts->kids)
           if (c->kind != NodeKind::Ensures) return;
-      std::string tp = q->text + "#type";
+      // Named after the function too: two proofs must not share the
+      // instances made at their stand-ins.
+      std::string tp = hof.name + "#" + q->text + "#type";
       std::string cname = hof.name + "#" + q->text;
       // `let meta find#p (f : type) (t : type) : concept = sig
       //    let apply : (g : f) -> (x : t) -> bool ensures ... end`
@@ -4247,10 +4259,10 @@ class Gen {
                          "'apply' taking " +
                          plural(arrow.domains.size(), "argument") +
                          " after it, so it is not a function object");
-        std::string tname = typeName(g->type);
-        if (types_.named(tname) != g->type)
-          return fail(a, "a function object of the generic type " + tname +
-                         " cannot be passed yet");
+        std::string tname = writtenName(g->type);
+        if (tname.empty())
+          return fail(a, "a function object of the generic type " +
+                             typeName(g->type) + " cannot be passed yet");
         if (!g->refs.empty()) {
           if (!effectfulArrow(arrow))
             return fail(a, "'" + a.text + "' writes a captured variable, "
@@ -4336,7 +4348,7 @@ class Gen {
             sema::isFunctionParam(*q) && o != objects.end())
         {
           q->kids[0]->kids[1] = syntax::makeNode(
-              NodeKind::TypeName, q->loc, typeName(o->second.first));
+              NodeKind::TypeName, q->loc, writtenName(o->second.first));
           if (writing.count(q->text)) q->kids[0]->kids[0]->text = "inout mutable";
         }
       for (auto &[name, object] : objects)
