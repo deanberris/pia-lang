@@ -20,7 +20,10 @@
 
 start: program
 
-program: SEP? (item (SEP item)*)? SEP?
+program: SEP? ((module_header | item) (SEP item)*)? SEP?
+
+// The first item of a file may be its module header (ADR 0039).
+module_header: MODULE path attribute* (COLON path (COMMA path)*)?
 
 ?item: let_item
      | meta_operator
@@ -185,6 +188,7 @@ arm_contract: REQUIRES stmt -> requires
      | quantifier
      | ASSERT imp_e  -> assert_e
      | ASSUME imp_e  -> assume_e
+     | DEFER imp_e   -> defer_e
      | type_value
      | sig_value
      | imp_e
@@ -300,7 +304,7 @@ pfield: IDENT (EQ pattern)?
 
 // ---------------------------------------------------------------- modules
 
-interface_item: INTERFACE IDENT EQ SIG sig_item* END
+interface_item: INTERFACE IDENT attribute* EQ SIG sig_item* END
 sig_item: LET binder COLON annot ret_attrs contract*   -> sig_val
         | LET binder EQ type_value                     -> sig_type
         | HOLE                                         -> sig_hole

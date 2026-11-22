@@ -36,31 +36,40 @@ let lemma too_far (r : Gauge.reading) : unit
   ensures Gauge.value (Gauge.bump r) <= 99
 = ()
 
-(* True in the model, where bump stops at 100, but not a consequence of
-   the axioms: a client cannot use what only the model says. It is not
-   proved, though the solver cannot build a counterexample over the
-   axioms' quantifiers either. *)
-let lemma sealed (r : Gauge.reading) : unit
-  requires Gauge.value r = 100
-  ensures Gauge.value (Gauge.bump r) = 100
-= ()
+(* Sealing. In the model a mark is always 3, but the axioms say only that
+   it is at most 10, so a client cannot prove it is 3: what only the model
+   says is not for clients. The counterexample comes from the axioms. *)
+let theory Mark = sig
+  let sort mark
+  let spec score : (m : mark) -> u8
+  let axiom score_small (m : mark) ensures score m <= 10
+end
+
+let model threes : Mark = struct
+  let sort mark = u8
+  let spec score (m : u8) : u8 = 3
+end
+
+let lemma sealed (m : Mark.mark) : unit ensures Mark.score m = 3 = ()
 
 (* Expected report, in order: no trusted axioms, then the goals.
 // CHECK: 0 trusted items
 // CHECK: models.pia:31:3: proved: the postcondition holds [smt]
 // CHECK: models.pia:36:3: failed: the postcondition holds
 // CHECK-NEXT: counterexample in the model 'levels': r.v = 100
-// CHECK: models.pia:45:3: failed: the postcondition holds
+// CHECK: models.pia:53:41: failed: the postcondition holds
+// CHECK-NEXT: counterexample: m = Mark.mark!val!{{[0-9]+}}
 // CHECK: models.pia:20:35: proved: the postcondition holds [smt]
 // CHECK: models.pia:13:39: proved: the model 'levels' meets the axiom 'Gauge.value_small' [smt]
 // CHECK: models.pia:16:5: proved: the model 'levels' meets the axiom 'Gauge.bump_grows' [smt]
-// CHECK: 10 proved, 2 failed, 0 skipped
+// CHECK: models.pia:45:36: proved: the model 'threes' meets the axiom 'Mark.score_small' [smt]
+// CHECK: 11 proved, 2 failed, 0 skipped
 *)
 
 (* The client's query never declares the model's functions, let alone
    their definitions; only the witness copy, which looks for a
    counterexample in the model, does.
-// SEALED: models.pia:45:3: the postcondition holds
-// SEALED-NOT: levels.
-// SEALED: (in the model 'levels')
+// SEALED: models.pia:53:41: the postcondition holds
+// SEALED-NOT: threes.
+// SEALED: (in the model 'threes')
 *)

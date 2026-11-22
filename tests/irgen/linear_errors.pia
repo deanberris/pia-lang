@@ -1,0 +1,73 @@
+(* `@linear` (#56): a value of a linear type must be consumed, passed as
+   `moved` or used as a value, on every path out of its scope.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let file = type { fd : i32 } @linear
+let open_error = type | Denied
+
+let open_file (x : i32) : result file open_error =
+  if x < 0 then Err Denied else Ok { fd = x }
+(* Matching a record takes it apart, so this consumes `f`. *)
+let close (f : moved file) : unit = match f with | { fd } -> ()
+let size (f : file) : i32 = f.fd
+
+(* Fine: read, then closed. *)
+let used (x : i32) : i32 =
+  let f : file = { fd = x } in
+  let n = size f + f.fd in
+  close f;
+  n
+
+(* Fine: returned, directly or in a result. *)
+let made (x : i32) : file = let f : file = { fd = x } in f
+let wrapped (x : i32) : result file open_error = let f : file = { fd = x } in Ok f
+
+(* Fine: `?` hands back a file that is then closed. *)
+let opened (x : i32) : result i32 open_error =
+  let f = open_file x? in
+  let n = size f in
+  close f;
+  Ok n
+
+(* Fine: a `moved` parameter closed by a `defer`, on every exit. *)
+let deferred (f : moved file) (x : i32) : result i32 open_error =
+  defer close f;
+  let g = open_file x? in
+  close g;
+  Ok (size f)
+
+(* CHECK: linear_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'f' has the @linear type file, so it must be consumed on every path out of its scope, by passing it as 'moved' or returning it; nothing consumes it
+*)
+let leaked (x : i32) : i32 =
+  let f : file = { fd = x } in
+  size f
+
+(* CHECK: linear_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'f' has the @linear type file, so it must be consumed on every path out of its scope, by passing it as 'moved' or returning it; it is consumed on only some paths
+*)
+let sometimes (b : bool) (x : i32) : unit =
+  let f : file = { fd = x } in
+  if b then close f
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' has the @linear type file, so it must be consumed on every path out of its scope, by passing it as 'moved' or returning it; nothing consumes it
+*)
+let kept (f : moved file) : i32 = size f
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' is borrowed by this function, so it cannot be consumed here; take it as 'moved'
+*)
+let stolen (f : file) : file = f
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '_' drops this @linear value; bind its fields and consume the @linear ones
+*)
+let dropped (f : moved file) : unit = match f with | _ -> ()
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '_' drops this @linear payload; bind it with a name and consume it
+*)
+let ignored (x : i32) : unit = match open_file x with | Ok _ -> () | Err _ -> ()
+
+(* Fine: '_' takes only the errors, which are not @linear. *)
+let handled (x : i32) : unit = match open_file x with | Ok f -> close f | _ -> ()
+
+(* CHECK: linear_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' was moved to 'close' at [[@LINE+2]]:{{[0-9]+}}, so it can no longer be used here
+*)
+let twice (f : moved file) : i32 = close f; size f

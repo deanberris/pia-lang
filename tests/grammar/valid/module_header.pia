@@ -1,0 +1,18 @@
+(* A file is one module, named by its header (ADR 0039). *)
+module Pixels @trusted : PixelOps, PixelCodec
+
+interface PixelOps @abi(c) = sig
+  let pixel : type
+  let opaque : pixel
+  let blend : (a : pixel) -> (b : pixel) -> (t : u8) -> pixel
+    ensures result.a = max a.a b.a
+end
+
+interface PixelCodec @within(Image) = sig
+  let decode_error = type | Truncated | BadHeader
+end
+
+let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+let opaque : pixel = { r = 0; g = 0; b = 0; a = 255 }
+let mix (x : u8) (y : u8) : u8 = x
+let blend (a : pixel) (b : pixel) (t : u8) : pixel = a

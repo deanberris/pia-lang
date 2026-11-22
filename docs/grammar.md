@@ -158,7 +158,7 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 ### Programs and items
 
 ```ebnf
-program   = [ item { SEP item } ] ;
+program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
 item      = let_item | meta_operator | interface | module | import | theory | model | file_attr | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
 import    = "import" path ;
@@ -247,6 +247,7 @@ stmt   = postfix "<-" stmt
        | "while" seq { loop_annot } "do" handled "done"
        | quantifier
        | "assert" imp_e | "assume" imp_e
+       | "defer" imp_e
        | type_value
        | sig_value
        | imp_e ;
@@ -289,7 +290,7 @@ match = "match" seq "with" [ "|" ] arm { "|" arm } ;
 arm   = pattern { ( "requires" | "ensures" ) stmt } "->" seq ;
 ```
 
-`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer` is reserved for scope cleanup and is not accepted yet.
+`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer e; rest` registers `e` as cleanup for `rest`, the rest of the sequence it starts; `defer` with nothing after it is an error.
 
 ### Patterns
 
@@ -308,7 +309,7 @@ pfield       = IDENT [ "=" pattern ] ;
 ### Modules and interfaces
 
 ```ebnf
-interface = "interface" IDENT "=" "sig" { sig_item } "end" ;
+interface = "interface" IDENT { attribute } "=" "sig" { sig_item } "end" ;   (* @abi(c), @within(...) *)
 sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported symbol *)
           | "let" binder "=" type_value                           (* exported type *)
           | "..." ;
@@ -317,6 +318,7 @@ concept_item = "include" type                                  (* "include" is c
              | "let" "lemma" IDENT { param } { contract } ;   (* a law *)
 adapter   = "let" "adapter" IDENT ":" type "=" "struct" { item } "end" ;  (* "adapter" is contextual *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
+module_header = "module" path { attribute } [ ":" path { "," path } ] ;  (* a file's first item only *)
 theory    = "let" "theory" IDENT "=" "sig" { theory_member } "end" ;  (* ADR 0036 *)
 theory_member = "let" "sort" IDENT [ "=" type ]
               | "let" "spec" binder ":" annot { attribute }           (* abstract: no body *)
@@ -326,6 +328,8 @@ model     = "let" "model" IDENT ":" IDENT "=" "struct" { model_member } "end" ;
 model_member = "let" "sort" IDENT "=" type | let_item ;
 file_attr = ATTR ;                                             (* `@trusted`, on its own line *)
 ```
+
+A file is one module. Its first item may be a module header, `module Pixels : PixelOps, PixelCodec`, which names the module and the interfaces it claims; the rest of the file is the module's body. A `let` is private unless one of those interfaces lists it, and each item an interface lists is checked against the module, with contracts proved ([ADR 0039](adr/0039-module-and-interface-syntax.md)). A header anywhere but first is an error. `module M : I = struct ... end` is a module nested in a file.
 
 ## Disambiguation
 

@@ -14,7 +14,7 @@ Every theory has the same four parts.
 3. **A proof that uses it.** A lemma or a function contract that the axioms prove.
 4. **A mistake it catches.** A version that is wrong and fails with a counterexample.
 
-Pia has no modules yet, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
+Modules cannot import one another yet, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
 
 An entry also says whether anything in it is **trusted**. A trusted theory has no model that the program can find, so it is declared in a `@trusted` module and imported with `trusting`. Trust covers the whole theory, and the compiler lists every axiom it brings in `piac --trust-report`.
 

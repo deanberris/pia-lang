@@ -482,11 +482,11 @@ static mlir::Type buildType(const std::string &name, const Node &value,
                      TypeResolver &types, syntax::Diagnostics &diags,
                      bool instance) {
   const Node &body = *value.kids[0];
-  if (!value.kids[1]->kids.empty()) {
-    const Node &attr = *value.kids[1]->kids[0];
-    diags.error(attr.loc, "the attribute @" + attr.text +
-                              " on a type is not supported yet");
-  }
+  // `@linear` (#56) is read by IRGen; `@derive` is expanded before this.
+  for (const syntax::NodePtr &attr : value.kids[1]->kids)
+    if (attr->text != "linear")
+      diags.error(attr->loc, "the attribute @" + attr->text +
+                                 " on a type is not supported yet");
   if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
     diags.error(value.kids[2]->loc,
                 "refinements ('where') are not supported yet");
@@ -762,6 +762,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                "outside it");
       continue;
     }
+    // A module header and its interfaces are checked by IRGen (ADR 0039).
+    if ((item->kind == NodeKind::ModuleHeader ||
+         item->kind == NodeKind::Interface) &&
+        adapter.empty())
+      continue;
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");

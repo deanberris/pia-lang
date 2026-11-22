@@ -46,6 +46,23 @@
 // LLVM: store i8 %0
 *)
 
+(* Only what a module exports gets a C entry point (ADR 0039).
+*)
+module Lower : Lowered
+
+interface Lowered @abi(c) = sig
+  let dec : (x : u8) -> u8
+    requires x > 3
+    ensures result >= 3
+  let add_trap : (a : u16) -> (b : u16) -> u16
+  let digit : (a : int{0..9}) -> (b : int{0..9}) -> int{0..9}
+  let less : (a : i8) -> (b : u8) -> bool
+  let twice : (x : u8) -> u16
+  let pair = type { x : u8; y : u16 }
+  let swapped = type { y : u16; x : u8 }
+  let swap : (p : pair) -> swapped
+end
+
 (* The precondition, postcondition and assertion are proved, then erased.
 *)
 let dec (x : u8) : u8

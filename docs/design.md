@@ -101,7 +101,7 @@ Each parameter carries up to three modifiers, one per axis, and omitted ones tak
 
 | Axis | Options | Default | What the prover gets |
 | --- | --- | --- | --- |
-| Ownership | `borrowed`, `moved` | `borrowed` | a moved value is dead in the caller after the call, so no aliasing to track |
+| Ownership | `borrowed`, `moved` | `borrowed` | a moved value is dead in the caller after the call, so no aliasing to track (checked by IRGen: [irgen.md](irgen.md#bindings-and-mutation)) |
 | Access | `in`, `out`, `inout` | `in` | `out` must be fully written before return, `in` is never written |
 | Modifiability | `fixed`, `mutable` | `fixed` | a `fixed` value's model is one constant for the whole call |
 

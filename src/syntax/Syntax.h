@@ -25,8 +25,9 @@ namespace pia::syntax {
   X(LetItem)       /* text=name, flags; Params, RetAnnot?, Contracts, body */ \
   X(MetaOperator)  /* text=op; Fixity?, for-type?, body */                   \
   X(Fixity)        /* text="prec level assoc" */                             \
-  X(Interface)     /* text=name; sig items */                                \
+  X(Interface)     /* text=name; Attrs, sig items */                         \
   X(Module)        /* text=name; Paths, item* */                             \
+  X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
   X(Import)        /* text=path */                                           \
   X(ExprItem)      /* expr */                                                \
   X(SigVal)        /* text=name; Annot, Attrs, Contracts */                  \
@@ -108,6 +109,8 @@ namespace pia::syntax {
   X(Assert) X(Assume) /* predicate */                                        \
   X(Try)           /* operand: `e?` (ADR 0028) */                            \
   X(Handle)        /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */   \
+  X(Defer)         /* cleanup: `defer e`, first part of a Sequence */        \
+  X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
   X(Sequence)      /* stmt, stmt (right-nested) */                           \
   X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
   X(Lambda)        /* LParam+, body */                                       \

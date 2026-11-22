@@ -1,0 +1,20 @@
+(* `defer` (#85, ADR 0028): cleanup cannot fail and runs for its effect.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let step_error = type | Zero
+
+let step (x : u8) : result u8 step_error = if x = 0 then Err Zero else Ok x
+let note (x : u8) : unit = ()
+
+(* CHECK: defer_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: cleanup cannot fail, so a 'defer' cannot pass an error on with '?'; 'match' the result there
+*)
+let failing (x : u8) : result u8 step_error = defer step x?; Ok x
+
+(* CHECK: defer_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a 'defer' runs only for its effect, so its expression must have type unit, but this has type u8
+*)
+let valued (x : u8) : u8 = defer x + 1; x
+
+(* CHECK: defer_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'defer' registers cleanup for the rest of its sequence, so something must follow it, as in 'defer close f; use f'
+*)
+let alone (x : u8) : unit = defer note x

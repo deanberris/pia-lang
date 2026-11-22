@@ -73,6 +73,7 @@ struct Binding {
   bool isMutable = false;
   std::string modifiers;  // a parameter's modifiers, empty for locals
   bool isParam = false;
+  unsigned loopDepth = 0;  // the loops open where it was bound
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -210,6 +211,7 @@ class Gen {
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
+    collectLinear(program);
     collectConstants();
     if (diags_.hasErrors()) return nullptr;
     std::map<const Node *, std::string> symbolOf;
@@ -218,6 +220,12 @@ class Gen {
       if (sig.adapter.empty()) overloads_[sig.source()].push_back(symbol);
     }
     collectConcepts(program);
+    if (diags_.hasErrors()) return nullptr;
+    for (const syntax::NodePtr &item : program.kids)
+      if (item->kind == NodeKind::LetItem && item->kids.size() > 3 &&
+          item->kids[3]->kind == NodeKind::TypeValue)
+        typeItems_.emplace_back(item->text, item.get());
+    checkModule(program);
     if (diags_.hasErrors()) return nullptr;
     checkGenericOverloads();
     checkPreconditionOverloads();
@@ -417,6 +425,7 @@ class Gen {
     b->value = v;
     b->type = t;
     b->isMutable = isMutable;
+    b->loopDepth = loopDepth_;
     scopes_.back()[name] = b;
     return b;
   }
@@ -583,6 +592,9 @@ class Gen {
     // An instance is internal: C calls the generic's instances only through
     // Pia functions, which name concrete types.
     if (!sig.typeArgs.empty()) fn.setPrivate();
+    if (auto e = exports_.find(sig.name); e != exports_.end())
+      fn->setAttr(PiaDialect::getExportAttrName(),
+                  b_.getStringAttr(e->second));
     for (size_t i = 0; i < sig.params.size(); ++i)
       if (!sig.params[i].modifiers.empty())
         fn.setArgAttr(i, PiaDialect::getModifiersAttrName(),
@@ -727,6 +739,17 @@ class Gen {
       std::deque<Frame> saved;
       ~FrameScope() { frames = std::move(saved); }
     } frameScope{frames_, std::move(frames_)};
+    struct MovedScope {
+      std::map<BindingPtr, Move> &moved;
+      std::map<BindingPtr, Move> saved;
+      unsigned &depth, savedDepth;
+      ~MovedScope() {
+        moved = std::move(saved);
+        depth = savedDepth;
+      }
+    } movedScope{moved_, std::move(moved_), loopDepth_, loopDepth_};
+    moved_.clear();
+    loopDepth_ = 0;
     frames_.clear();
     frames_.emplace_back();
     frames_.back().result = sig.result;
@@ -735,6 +758,22 @@ class Gen {
     R body = isSpec ? genContractExpr(bodyNode, sig.result)
                     : genExpr(bodyNode, sig.result);
     if (!body) return;
+    if (!isSpec && !ghost_) {
+      bool owned = true;
+      for (const sema::Param &p : sig.params) {
+        BindingPtr b = lookup(p.name);
+        if (!b) continue;
+        if (sema::hasModifier(p.modifiers, "moved")) {
+          owned &= consumed(b, p.loc);
+        } else if (auto m = moved_.find(b); m != moved_.end()) {
+          diags_.error(m->second.at,
+                       "'" + p.name + "' is borrowed by this function, so it "
+                       "cannot be consumed here; take it as 'moved'");
+          owned = false;
+        }
+      }
+      if (!owned) return;
+    }
     Type result = sig.result;
     if (!result) {
       result = body->type;
@@ -1158,6 +1197,7 @@ class Gen {
       case NodeKind::While:
         return genWhile(n);
       case NodeKind::Sequence: {
+        if (n.kids[0]->kind == NodeKind::Defer) return genDefer(n, expected);
         R first = genExpr(*n.kids[0], Type());
         if (!first) return first;
         if (!mustUse(*first, *n.kids[0])) return std::nullopt;
@@ -1167,6 +1207,12 @@ class Gen {
         return fail(n, tryMisplaced());
       case NodeKind::Handle:
         return genHandle(n, expected);
+      case NodeKind::Defer:
+        return fail(n, "'defer' registers cleanup for the rest of its "
+                       "sequence, so something must follow it, as in "
+                       "'defer close f; use f'");
+      case NodeKind::Cleanup:
+        return genCleanup(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
       case NodeKind::Assert:
@@ -1238,7 +1284,11 @@ class Gen {
 
   R genName(const Node &n, Type expected) {
     if (n.flags.empty())
-      if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+      if (BindingPtr b = lookup(n.text)) {
+        if (!usable(b, n)) return std::nullopt;
+        consumeValue(b, n);
+        return TV{b->value, b->type};
+      }
     if (types_.isCtorName(n.text)) {
       const sema::Ctor *c = ctorFor(n, n.text, expected, std::nullopt);
       if (!c) return std::nullopt;
@@ -1608,6 +1658,9 @@ class Gen {
   R genMatch(const Node &n, Type expected) {
     R s = genExpr(*n.kids[0], Type());
     if (!s) return s;
+    if (auto rt = mlir::dyn_cast<RecordType>(s->type);
+        rt && !types_.isVariant(rt))
+      return genRecordMatch(n, *s, rt, expected);
     if (!types_.isVariant(s->type))
       return fail(*n.kids[0], "'match' on " + typeName(s->type) +
                                   " is not supported yet; it works on "
@@ -1646,6 +1699,12 @@ class Gen {
       if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
         catchAll = true;
         if (pat.text != "_") a.bind = pat.text;
+        else if (a.as.empty())
+          for (const sema::Ctor *c : ctors)
+            if (!covered.count(c->name) && c->payload && isLinear(c->payload))
+              return fail(pat, "this arm drops the @linear payload of '" +
+                                   c->name + "'; match '" + c->name +
+                                   "' with a name and consume it");
       } else if (pat.kind == NodeKind::PVar ||
                  (pat.kind == NodeKind::PCtor)) {
         const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
@@ -1682,6 +1741,9 @@ class Gen {
             return fail(sub, "only a name, '_' or a variant's only "
                              "constructor can match a payload for now");
           if (!only && sub.text != "_") a.bind = sub.text;
+          if (!only && sub.text == "_" && a.as.empty() && isLinear(c->payload))
+            return fail(sub, "'_' drops this @linear payload; bind it with a "
+                             "name and consume it");
         }
         covered.insert(c->name);
         a.ctor = c;
@@ -1766,6 +1828,88 @@ class Gen {
     R r = genExpr(*chain, expected);
     popScope();
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
+    return r;
+  }
+
+  // `match r with | { a; b = x } -> e` on a record: binds its fields, as
+  // `let a = r.a in let x = r.b in e`. Matching consumes `r`, so this is
+  // how a @linear record is finally taken apart (#56).
+  R genRecordMatch(const Node &n, const TV &s, RecordType rt, Type expected) {
+    if (n.kids.size() != 2)
+      return fail(*n.kids[2]->kids[0], "a record has one shape, so a 'match' "
+                                       "on it has one arm");
+    const Node &arm = *n.kids[1];
+    if (arm.kids.size() > 2 && !arm.kids[2]->kids.empty())
+      return fail(*arm.kids[2], "arm contracts on a record 'match' are not "
+                                "supported yet");
+    const Node &pat = *arm.kids[0];
+    std::string hidden = "#match" + std::to_string(matchCounter_++);
+    syntax::SourceLoc at = n.loc;
+    std::vector<std::pair<std::string, std::string>> binds;  // name, field
+    if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
+      if (pat.text == "_" && isLinear(rt))
+        return fail(pat, "'_' drops this @linear value; bind its fields "
+                         "and consume the @linear ones");
+    } else if (pat.kind == NodeKind::PRecord) {
+      std::set<std::string> seen;
+      for (const syntax::NodePtr &f : pat.kids) {
+        std::optional<unsigned> i = rt.fieldIndex(f->text);
+        if (!i)
+          return fail(*f, typeName(rt) + " has no field '" + f->text + "'");
+        if (!seen.insert(f->text).second)
+          return fail(*f, "'" + f->text + "' is already matched");
+        std::string name = f->text;
+        if (!f->kids.empty() && f->kids[0]->kind != NodeKind::None) {
+          const Node &sub = *f->kids[0];
+          if (sub.kind != NodeKind::PVar || types_.isCtorName(sub.text))
+            return fail(sub, "only a name or '_' can match a field for now");
+          name = sub.text;
+        }
+        if (name == "_") {
+          if (isLinear(rt.getFieldTypes()[*i]))
+            return fail(*f, "'_' drops the @linear field '" + f->text +
+                            "'; bind it and consume it");
+          continue;
+        }
+        binds.emplace_back(name, f->text);
+      }
+      for (auto [j, field] : llvm::enumerate(rt.getFieldNames()))
+        if (!seen.count(field.getValue().str()) &&
+            isLinear(rt.getFieldTypes()[j]))
+          return fail(pat, "this pattern drops the @linear field '" +
+                               field.getValue().str() +
+                               "'; bind it and consume it");
+    } else {
+      return fail(pat, "a record is matched by '{ a; b = x }', a name or '_'");
+    }
+    syntax::NodePtr body = syntax::clone(*arm.kids[1]);
+    if (pat.kind == NodeKind::PVar && pat.text != "_") {
+      auto let = syntax::makeNode(NodeKind::LetIn, pat.loc, pat.text);
+      let->add(syntax::makeNode(NodeKind::Params, pat.loc));
+      let->add(syntax::makeNode(NodeKind::None, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Contracts, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Name, pat.loc, hidden));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
+      auto field = syntax::makeNode(NodeKind::Field, at, it->second);
+      field->add(syntax::makeNode(NodeKind::Name, at, hidden));
+      auto let = syntax::makeNode(NodeKind::LetIn, at, it->first);
+      let->add(syntax::makeNode(NodeKind::Params, at));
+      let->add(syntax::makeNode(NodeKind::None, at));
+      let->add(syntax::makeNode(NodeKind::Contracts, at));
+      let->add(std::move(field));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    if (!frames_.empty() && frames_.back().tails.count(&n)) addTails(*body);
+    const Node &chain = *body;
+    matchTrees_.push_back(std::move(body));  // diagnostics may point into it
+    pushScope();
+    bind(hidden, s.value, s.type, false);
+    R r = genExpr(chain, expected);
+    popScope();
     return r;
   }
 
@@ -2076,6 +2220,7 @@ class Gen {
         if (argc != 1) return fail(n, "'len' takes one argument");
         R buf = genExpr(*n.kids[1], Type());
         if (!buf) return buf;
+        unconsume(*n.kids[1]);
         if (!mlir::isa<ArrayType, SliceType>(buf->type))
           return fail(*n.kids[1], "'len' needs an array or slice, found " +
                                       typeName(buf->type));
@@ -2131,6 +2276,10 @@ class Gen {
         return fail(*args[i], "constant data cannot be passed to '" +
                                   sig.params[i].name + "', which is 'out' or "
                                   "'inout'");
+      if (!sema::hasModifier(sig.params[i].modifiers, "moved"))
+        unconsume(*args[i]);
+      else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
+        return std::nullopt;
       operands.push_back(c->value);
     }
     return emitCall(n, sig, operands);
@@ -3260,45 +3409,9 @@ class Gen {
         if (std::optional<std::string> why = unmet(r->text, args, via))
           return *why + " (from 'include " + r->text + "')";
       } else if (r->kind == NodeKind::SigVal) {
-        std::vector<std::string> names, mods;
-        std::vector<Type> ptypes;
-        const Node *cur = r->kids[0]->kids[1].get();
-        for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
-          const Node &d = *cur->kids[0];
-          names.push_back(d.text);
-          mods.push_back(d.kids[0]->text);
-          Type t = types_.resolve(*d.kids[1]);
-          if (!t) return "the type of '" + r->text + "' cannot be formed";
-          ptypes.push_back(t);
-        }
-        Type result = types_.resolve(*cur);
-        if (!result) return "the type of '" + r->text + "' cannot be formed";
-        std::string spelled = r->text + " : ";
-        for (Type t : ptypes) spelled += typeName(t) + " -> ";
-        spelled += typeName(result);
-        const sema::FuncSig *found = nullptr;
-        // An adapter's own functions come first.
-        std::vector<sema::FuncSig *> cands;
-        if (via)
-          if (auto f = via->fns.find(r->text); f != via->fns.end())
-            for (const std::string &sym : f->second)
-              cands.push_back(&sigs_.at(sym));
-        for (sema::FuncSig *cand : overloadSet(r->text))
-          cands.push_back(cand);
-        for (sema::FuncSig *cand : cands) {
-          if (found) break;
-          if (cand->isGeneric() || cand->params.size() != ptypes.size() ||
-              cand->result != result)
-            continue;
-          bool same = true;
-          for (size_t i = 0; i < ptypes.size(); ++i)
-            same = same && cand->params[i].type == ptypes[i] &&
-                   cand->params[i].modifiers == mods[i];
-          if (same) found = cand;
-        }
-        if (!found) return "no function '" + spelled + "'";
-        if (!r->kids[2]->kids.empty())
-          queueContractLemma(*r, key, names, *found, scope, via);
+        if (std::optional<std::string> why =
+                sigValUnmet(*r, key, scope, via, nullptr))
+          return why;
       } else if (r->kind == NodeKind::SigLemma) {
         queueLemma(key + "." + r->text, syntax::clone(*r->kids[0]),
                    syntax::clone(*r->kids[1]),
@@ -3306,6 +3419,64 @@ class Gen {
                    via);
       }
     }
+    return std::nullopt;
+  }
+
+  // Why no function meets the requirement `r`, a `let name : type`
+  // contracts item of a concept or an interface, or nothing when one does:
+  // a function with that name, exactly that type and modifiers, and a
+  // contract at least as strong, which is queued as a lemma. `matched`, if
+  // given, gets the function's symbol.
+  std::optional<std::string> sigValUnmet(
+      const Node &req, const std::string &key,
+      const std::map<std::string, Type> &scope, const AdapterInfo *via,
+      std::string *matched, bool strict = false) {
+    const Node *r = &req;
+    std::vector<std::string> names, mods;
+    std::vector<Type> ptypes;
+    const Node *cur = r->kids[0]->kids[1].get();
+    for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+      const Node &d = *cur->kids[0];
+      names.push_back(d.text);
+      mods.push_back(d.kids[0]->text);
+      Type t = types_.resolve(*d.kids[1]);
+      if (!t) return "the type of '" + r->text + "' cannot be formed";
+      ptypes.push_back(t);
+    }
+    Type result = types_.resolve(*cur);
+    if (!result) return "the type of '" + r->text + "' cannot be formed";
+    std::string spelled = r->text + " : ";
+    for (Type t : ptypes) spelled += typeName(t) + " -> ";
+    spelled += typeName(result);
+    const sema::FuncSig *found = nullptr;
+    // An adapter's own functions come first.
+    std::vector<sema::FuncSig *> cands;
+    if (via)
+      if (auto f = via->fns.find(r->text); f != via->fns.end())
+        for (const std::string &sym : f->second)
+          cands.push_back(&sigs_.at(sym));
+    for (sema::FuncSig *cand : overloadSet(r->text)) cands.push_back(cand);
+    for (sema::FuncSig *cand : cands) {
+      if (found) break;
+      if (cand->isGeneric() || cand->params.size() != ptypes.size() ||
+          cand->result != result)
+        continue;
+      bool same = true;
+      for (size_t i = 0; i < ptypes.size(); ++i)
+        same = same && cand->params[i].type == ptypes[i] &&
+               cand->params[i].modifiers == mods[i];
+      if (same) found = cand;
+    }
+    if (!found) return "no function '" + spelled + "'";
+    if (matched) *matched = found->name;
+    // An interface is all its importers will see (ADR 0039), so a
+    // function's own `requires` must follow from the interface's even when
+    // the interface states none.
+    bool ownRequires = false;
+    for (const syntax::NodePtr &c : found->item->kids[2]->kids)
+      ownRequires = ownRequires || c->kind == NodeKind::Requires;
+    if (!r->kids[2]->kids.empty() || (strict && ownRequires))
+      queueContractLemma(*r, key, names, *found, scope, via);
     return std::nullopt;
   }
 
@@ -3400,6 +3571,217 @@ class Gen {
     if (!sema::resolveSignature(sig, types_, diags_)) return;
     sigs_.emplace(symbol, std::move(sig));
     pendingInstances_.push_back(symbol);
+  }
+
+  // --- modules (ADR 0039) ---------------------------------------------
+
+  // Checks the file's module header against the interfaces it claims, and
+  // records what the module exports: the functions those interfaces list.
+  // Everything else is private. A file with no header exports nothing but
+  // its `main`.
+  void checkModule(const Node &program) {
+    const Node *header = nullptr;
+    std::map<std::string, const Node *> interfaces;
+    for (const syntax::NodePtr &item : program.kids) {
+      if (item->kind == NodeKind::ModuleHeader) header = item.get();
+      if (item->kind != NodeKind::Interface) continue;
+      if (!interfaces.emplace(item->text, item.get()).second)
+        diags_.error(item->loc,
+                     "the interface '" + item->text + "' is already defined");
+      checkInterfaceAttrs(*item);
+    }
+    // `main` is the program's entry point, and is never in an interface.
+    for (const std::string &symbol : overloads_["main"])
+      if (!sigs_.at(symbol).overloaded) exports_[symbol] = "";
+    if (!header) return;
+    for (const syntax::NodePtr &a : header->kids[0]->kids)
+      if (a->text != "trusted" || !a->kids.empty())
+        diags_.error(a->loc, "unknown module attribute '@" + a->text +
+                                 "'; a module header takes only @trusted");
+    // The types the module's interfaces list, abstract or not. An exported
+    // signature may name only these, so importers can always form it.
+    std::set<std::string> shown;
+    for (const syntax::NodePtr &path : header->kids[1]->kids)
+      if (auto it = interfaces.find(path->text); it != interfaces.end())
+        for (const syntax::NodePtr &item : it->second->kids) {
+          const Node &r = *item;
+          if (r.kind == NodeKind::SigType ||
+              (r.kind == NodeKind::SigVal &&
+               r.kids[0]->kids[1]->kind == NodeKind::TypeKind))
+            shown.insert(r.text);
+        }
+    std::set<std::string> claimed;
+    for (const syntax::NodePtr &path : header->kids[1]->kids) {
+      if (!claimed.insert(path->text).second) {
+        diags_.error(path->loc, "the module '" + header->text +
+                                    "' claims the interface '" + path->text +
+                                    "' twice");
+        continue;
+      }
+      auto it = interfaces.find(path->text);
+      if (it == interfaces.end()) {
+        diags_.error(path->loc,
+                     path->text.find('.') != std::string::npos
+                         ? "the interface '" + path->text +
+                               "' is in another module; a module can claim "
+                               "only interfaces declared in its own file "
+                               "for now"
+                         : "no interface '" + path->text + "' in this file");
+        continue;
+      }
+      checkInterface(*header, *it->second, shown);
+    }
+  }
+
+  // `@abi(c)` and `@within(Prefix)` are an interface's attributes.
+  void checkInterfaceAttrs(const Node &iface) {
+    for (const syntax::NodePtr &a : attrsOf(iface).kids) {
+      if (a->text == "abi" && a->kids.size() == 1 &&
+          a->kids[0]->kind == NodeKind::Name && a->kids[0]->text == "c")
+        continue;
+      if (a->text == "within" && a->kids.size() == 1) continue;
+      diags_.error(a->loc, a->text == "abi"
+                               ? "@abi takes one argument, c"
+                               : "unknown interface attribute '@" + a->text +
+                                     "'; an interface takes @abi(c) and "
+                                     "@within(...)");
+    }
+  }
+
+  // An interface's attributes, which comments do not displace.
+  static const Node &attrsOf(const Node &iface) {
+    for (const syntax::NodePtr &k : iface.kids)
+      if (k->kind == NodeKind::Attrs) return *k;
+    return *iface.kids[0];
+  }
+
+  static bool hasAbiC(const Node &iface) {
+    for (const syntax::NodePtr &a : attrsOf(iface).kids)
+      if (a->text == "abi") return true;
+    return false;
+  }
+
+  // The module meets each item its interface lists: a function or value
+  // of exactly that type, with a contract at least as strong (proved, as a
+  // concept's requirement is), a type for `let t : type`, and the same
+  // definition for `let t = type ...`.
+  void checkInterface(const Node &header, const Node &iface,
+                      const std::set<std::string> &shown) {
+    const std::string key = header.text + "." + iface.text;
+    std::string unmet =
+        "the module '" + header.text + "' does not meet '" + iface.text + "': ";
+    for (const syntax::NodePtr &item : iface.kids) {
+      const Node &r = *item;
+      if (r.kind == NodeKind::Hole) {
+        diags_.error(r.loc, "the interface '" + iface.text +
+                                "' is unfinished ('...')");
+        continue;
+      }
+      if (r.kind == NodeKind::SigType) {
+        if (std::optional<std::string> name = privateType(*r.kids[0], shown))
+          diags_.error(r.loc, "the type '" + r.text + "' is shown, but its "
+                                  "definition names '" + *name + "', which "
+                                  "no interface of '" + header.text +
+                                  "' lists");
+        const Node *own = typeItem(r.text);
+        if (!own)
+          diags_.error(r.loc, unmet + "no type '" + r.text + "'");
+        else if (!sameTree(*own->kids[3], *r.kids[0]))
+          diags_.error(r.loc, unmet + "the type '" + r.text +
+                                  "' is defined differently; an interface "
+                                  "that shows a type with '=' must show its "
+                                  "definition exactly");
+        continue;
+      }
+      if (r.kind != NodeKind::SigVal) continue;
+      const Node &type = *r.kids[0]->kids[1];
+      if (type.kind == NodeKind::TypeKind) {
+        if (!types_.named(r.text) && !typeItem(r.text))
+          diags_.error(r.loc, unmet + "no type '" + r.text + "'");
+        continue;
+      }
+      if (auto c = consts_.find(r.text); c != consts_.end()) {
+        if (types_.resolve(type) != Type(c->second.type))
+          diags_.error(r.loc, unmet + "'" + r.text + "' has type " +
+                                  typeName(c->second.type));
+        continue;
+      }
+      if (hasEnsures(r) && writesParam(type)) {
+        diags_.error(r.loc, "an interface cannot yet state a postcondition "
+                            "of '" + r.text + "', which has out or inout "
+                            "parameters");
+        continue;
+      }
+      if (std::optional<std::string> name = privateType(type, shown))
+        diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
+                                "names '" + *name + "', which no interface "
+                                "of '" + header.text + "' lists");
+      std::string symbol;
+      if (std::optional<std::string> why =
+              sigValUnmet(r, key, {}, nullptr, &symbol, /*strict=*/true)) {
+        diags_.error(r.loc, unmet + *why);
+        continue;
+      }
+      if (sigs_.at(symbol).isGeneric() || !sigs_.at(symbol).typeArgs.empty())
+        continue;
+      // A function in a C interface keeps its C name.
+      auto [e, fresh] = exports_.emplace(symbol, hasAbiC(iface) ? "" : header.text);
+      if (!fresh && hasAbiC(iface)) e->second = "";
+    }
+  }
+
+  static bool hasEnsures(const Node &sigVal) {
+    for (const syntax::NodePtr &c : sigVal.kids[2]->kids)
+      if (c->kind == NodeKind::Ensures) return true;
+    return false;
+  }
+
+  // Whether a function type has an `out`, `inout` or `mutable` parameter.
+  static bool writesParam(const Node &type) {
+    for (const Node *cur = &type; cur->kind == NodeKind::ArrowType;
+         cur = cur->kids[1].get()) {
+      const std::string &mods = cur->kids[0]->kids[0]->text;
+      if (sema::hasModifier(mods, "out") || sema::hasModifier(mods, "inout") ||
+          sema::hasModifier(mods, "mutable"))
+        return true;
+    }
+    return false;
+  }
+
+  // A type of this program that `type` names and no interface lists.
+  std::optional<std::string> privateType(const Node &type,
+                                         const std::set<std::string> &shown) {
+    if ((type.kind == NodeKind::TypeName || type.kind == NodeKind::TypeInst) &&
+        typeItem(type.text) && !shown.count(type.text))
+      return type.text;
+    for (const syntax::NodePtr &k : type.kids)
+      if (std::optional<std::string> name = privateType(*k, shown))
+        return name;
+    return std::nullopt;
+  }
+
+  // The top-level `let t = type ...` named `name`, if any.
+  const Node *typeItem(const std::string &name) const {
+    for (const auto &[n, item] : typeItems_)
+      if (n == name) return item;
+    return nullptr;
+  }
+
+  // Whether two trees are the same apart from locations and comments.
+  static bool sameTree(const Node &a, const Node &b) {
+    if (a.kind != b.kind || a.text != b.text || a.flags != b.flags)
+      return false;
+    auto code = [](const Node &n) {
+      std::vector<const Node *> out;
+      for (const syntax::NodePtr &k : n.kids)
+        if (k->kind != NodeKind::Comment) out.push_back(k.get());
+      return out;
+    };
+    std::vector<const Node *> x = code(a), y = code(b);
+    if (x.size() != y.size()) return false;
+    for (size_t i = 0; i < x.size(); ++i)
+      if (!sameTree(*x[i], *y[i])) return false;
+    return true;
   }
 
   // --- the definition check (ADR 0034) --------------------------------
@@ -4196,6 +4578,7 @@ class Gen {
   R genIndex(const Node &n) {
     R buf = genExpr(*n.kids[0], Type());
     if (!buf) return buf;
+    unconsume(*n.kids[0]);
     Type elem = elementType(buf->type);
     if (!elem)
       return fail(*n.kids[0], "only arrays and slices can be indexed, found " +
@@ -4269,6 +4652,7 @@ class Gen {
   R genField(const Node &n) {
     R obj = genExpr(*n.kids[0], Type());
     if (!obj) return obj;
+    unconsume(*n.kids[0]);
     auto rt = mlir::dyn_cast<RecordType>(obj->type);
     if (!rt || types_.isVariant(rt))
       return fail(n, "'." + n.text + "' needs a record, found " +
@@ -4337,6 +4721,7 @@ class Gen {
         return fail(obj, "only a field of a named record can be assigned");
       BindingPtr b = lookup(obj.text);
       if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      if (!usable(b, obj)) return std::nullopt;
       auto rt = mlir::dyn_cast<RecordType>(b->type);
       if (!rt)
         return fail(place, "'." + place.text + "' needs a record, found " +
@@ -4375,6 +4760,7 @@ class Gen {
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
       b->value = c->value;
+      moved_.erase(b);  // a moved local holds a value again
       return unit();
     }
     if (place.kind == NodeKind::Index) {
@@ -4403,6 +4789,165 @@ class Gen {
     return fail(place, "only a name or an element can be assigned");
   }
 
+  // --- ownership: `moved` (docs/design.md) ---------------------------
+
+  // A local after it is moved, and where. `maybe` when only some paths to
+  // here move it.
+  struct Move {
+    syntax::SourceLoc at;
+    std::string what;              // "moved to 'take'"
+    bool maybe = false;
+    const Node *node = nullptr;    // the use that moved it
+  };
+
+  struct Deeper {
+    unsigned &depth;
+    explicit Deeper(unsigned &d) : depth(d) { ++depth; }
+    ~Deeper() { --depth; }
+  };
+
+  // Values of scalar types are copied, so passing one as `moved` leaves
+  // the caller's copy alive.
+  bool copied(Type t) {
+    return mlir::isa<IntType>(t) || isBool(t) || mlir::isa<mlir::FloatType>(t) ||
+           isUnit(t);
+  }
+
+  // Whether `b` may be used at `n`: not after it was moved. Contracts and
+  // ghost code may still name it, since they describe values, not use them.
+  bool usable(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_) return true;
+    auto m = moved_.find(b);
+    if (m == moved_.end()) return true;
+    fail(n, "'" + n.text + "' " + (m->second.maybe ? "may have been" : "was") +
+                " " + m->second.what + " at " +
+                std::to_string(m->second.at.line) + ":" +
+                std::to_string(m->second.at.column) +
+                ", so it can no longer be used here" +
+                (m->second.maybe ? " (it is moved on some paths to here)"
+                                 : ""));
+    return false;
+  }
+
+  // The argument `arg` passed as the `moved` parameter `p` of `sig`: a
+  // local is dead after the call.
+  bool moveArgument(const Node &arg, Type t, const sema::FuncSig &sig,
+                    const sema::Param &p) {
+    if (contract_ || ghost_ || copied(t)) return true;
+    if (arg.kind != NodeKind::Name || !arg.flags.empty()) return true;
+    BindingPtr b = lookup(arg.text);
+    if (!b) return true;
+    if (b->isParam && !sema::hasModifier(b->modifiers, "moved")) {
+      fail(arg, "'" + arg.text + "' is borrowed by this function, so it "
+                "cannot be moved to '" + p.name + "' of '" + sig.name +
+                "'; take it as 'moved', as in '(" + arg.text + " : moved " +
+                typeName(t) + ")'");
+      return false;
+    }
+    if (b->loopDepth < loopDepth_) {
+      fail(arg, "'" + arg.text + "' is moved inside a loop, so the next "
+                "iteration would use it after the move; bind it inside the "
+                "loop, or move it after the loop");
+      return false;
+    }
+    moved_[b] = Move{arg.loc, "moved to '" + sig.name + "'", false, &arg};
+    return true;
+  }
+
+  // --- `@linear` (#56) --------------------------------------------------
+
+  // The types marked `@linear`: a value of one must be consumed, passed as
+  // `moved` or used as a value, on every path out of its scope.
+  void collectLinear(const Node &program) {
+    for (const syntax::NodePtr &item : program.kids) {
+      if (!sema::isTypeItem(*item)) continue;
+      const Node &tv = *item->kids[3];
+      if (tv.kids.size() < 2) continue;
+      for (const syntax::NodePtr &a : tv.kids[1]->kids)
+        if (a->text == "linear")
+          if (Type t = types_.named(item->text))
+            linear_.insert(t.getAsOpaquePointer());
+    }
+  }
+
+  // A `@linear` type, or a record, variant or instance holding one.
+  bool isLinear(Type t) {
+    if (!t || linear_.empty()) return false;
+    if (linear_.count(t.getAsOpaquePointer())) return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t))
+      for (Type f : rt.getFieldTypes())
+        if (isLinear(f)) return true;
+    return false;
+  }
+
+  // A use of a linear local as a value consumes it, unless the use turns
+  // out to be a borrow (`unconsume`).
+  void consumeValue(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_ || n.text.find('#') != std::string::npos ||
+        !isLinear(b->type))
+      return;
+    moved_[b] = Move{n.loc, "consumed by its use as a value", false, &n};
+  }
+
+  // `n` was only borrowed: a field read, `len`, or an argument of a
+  // borrowed parameter.
+  void unconsume(const Node &n) {
+    if (n.kind != NodeKind::Name || !n.flags.empty()) return;
+    BindingPtr b = lookup(n.text);
+    if (!b) return;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && m->second.node == &n) moved_.erase(m);
+  }
+
+  // At the end of `b`'s scope: a linear value must have been consumed on
+  // every path.
+  bool consumed(const BindingPtr &b, syntax::SourceLoc at) {
+    if (b->name.find('#') != std::string::npos || !isLinear(b->type))
+      return true;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && !m->second.maybe) return true;
+    diags_.error(at, "'" + b->name + "' has the @linear type " +
+                         typeName(b->type) + ", so it must be consumed on "
+                         "every path out of its scope, by passing it as "
+                         "'moved' or returning it" +
+                         (m != moved_.end()
+                              ? "; it is consumed on only some paths"
+                              : "; nothing consumes it"));
+    return false;
+  }
+
+  // After a loop body: nothing bound outside the loop was moved in it.
+  bool checkLoopMoves() {
+    for (auto &[b, m] : moved_)
+      if (b->loopDepth < loopDepth_) {
+        diags_.error(m.at, "'" + b->name + "' is moved inside a loop, so the "
+                           "next iteration would use it after the move; "
+                           "bind it inside the loop, or move it after the "
+                           "loop");
+        return false;
+      }
+    return true;
+  }
+
+  // After an `if`: a local moved on either branch is moved, or maybe
+  // moved, after it. `moved_` holds the else branch's moves.
+  void mergeMoves(const std::map<BindingPtr, Move> &thenMoves) {
+    std::map<BindingPtr, Move> out;
+    for (auto &[b, m] : thenMoves) {
+      auto e = moved_.find(b);
+      Move merged = m;
+      merged.maybe = m.maybe || e == moved_.end() || e->second.maybe;
+      out[b] = merged;
+    }
+    for (auto &[b, m] : moved_)
+      if (!thenMoves.count(b)) {
+        Move merged = m;
+        merged.maybe = true;
+        out[b] = merged;
+      }
+    moved_ = std::move(out);
+  }
+
   R genIf(const Node &n, Type expected) {
     Location l = loc(n);
     R c = genExpr(*n.kids[0], boolType());
@@ -4425,6 +4970,7 @@ class Gen {
     {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPointToEnd(thenBlock.get());
+      std::map<BindingPtr, Move> movedBefore = moved_;
       pushScope();
       R t = genExpr(thenNode, expected);
       popScope();
@@ -4432,6 +4978,8 @@ class Gen {
       tv = *t;
       thenVars = values(vars);
       setValues(vars, before);
+      std::map<BindingPtr, Move> movedThen = std::move(moved_);
+      moved_ = std::move(movedBefore);
       if (elseNode) {
         b_.setInsertionPointToEnd(elseBlock.get());
         pushScope();
@@ -4442,6 +4990,7 @@ class Gen {
       }
       elseVars = values(vars);
       setValues(vars, before);
+      mergeMoves(movedThen);
     }
 
     Type rt;
@@ -4573,7 +5122,9 @@ class Gen {
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
       LoopScope inLoop(frames_);
+      Deeper deeper(loopDepth_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
+      if (r && !checkLoopMoves()) r = std::nullopt;
       if (r && !mustUse(*r, body)) r = std::nullopt;
       if (r) create<mlir::scf::YieldOp>(l, values(vars));
       popScope();
@@ -4619,7 +5170,9 @@ class Gen {
           pushScope();
           setValues(vars, args);
           LoopScope inLoop(frames_);
+          Deeper deeper(loopDepth_);
           R r = genExpr(body, Type());
+          if (r && !checkLoopMoves()) r = std::nullopt;
           if (r && !mustUse(*r, body)) r = std::nullopt;
           if (r)
             create<mlir::scf::YieldOp>(l, values(vars));
@@ -4648,6 +5201,10 @@ class Gen {
     unsigned sites = 0;            // the `?`s that reach the handler
     std::set<const Node *> armsUsed;
     std::set<std::string> binds;   // the names the handled scope binds
+    // The `defer`s registered so far in the scope, outermost first: a `?`
+    // that leaves the scope runs them, innermost first, before its error
+    // reaches the handler or the caller.
+    std::vector<const Node *> defers;
   };
 
   static bool definesResult(const Node &n) {
@@ -4726,6 +5283,7 @@ class Gen {
         break;
       case NodeKind::While:
       case NodeKind::Handle:
+      case NodeKind::Defer:  // cleanup runs later, and cannot fail
       case NodeKind::Lambda:
       case NodeKind::Quantifier:
       case NodeKind::Assert:
@@ -4926,6 +5484,16 @@ class Gen {
       for (const Node *arm : *arms) onErr->add(syntax::clone(*arm));
     }
 
+    // Cleanup runs first, innermost first, on the way out (ADR 0028). The
+    // error is the `?`'s own immutable payload, read after the cleanup, so
+    // no cleanup can change or replace it.
+    for (const Node *d : f.defers) {
+      auto seq = syntax::makeNode(NodeKind::Sequence, at);
+      seq->add(syntax::clone(*d));
+      seq->add(std::move(onErr));
+      onErr = std::move(seq);
+    }
+
     syntax::NodePtr okValue = isUnit(ok)
                                   ? syntax::makeNode(NodeKind::Unit, at)
                                   : builtin("#payload", "Ok");
@@ -4942,6 +5510,97 @@ class Gen {
     R out = genExpr(chain, expected);
     popScope();
     return out;
+  }
+
+  // `defer d; rest`: `d` runs at every exit from `rest` (ADR 0028). Each
+  // normal exit, the nodes whose value is `rest`'s value, gets a copy of
+  // `d` after it, and each `?` that leaves the scope runs it before its
+  // error goes on, so every exit's cleanup is ordinary code there, which
+  // the verifier walks like the rest.
+  R genDefer(const Node &n, Type expected) {
+    const Node &d = *n.kids[0]->kids[0];
+    if (const Node *t = firstTry(d))
+      return fail(*t, "cleanup cannot fail, so a 'defer' cannot pass an "
+                      "error on with '?'; 'match' the result there");
+    syntax::NodePtr rest = withCleanup(*n.kids[1], d);
+    const Node &r = *rest;
+    matchTrees_.push_back(std::move(rest));  // diagnostics may point into it
+    if (frames_.empty()) return genExpr(r, expected);
+    if (frames_.back().tails.count(&n)) addTails(r);
+    frames_.back().defers.push_back(&d);
+    R out = genExpr(r, expected);
+    frames_.back().defers.pop_back();
+    return out;
+  }
+
+  static const Node *firstTry(const Node &n) {
+    if (n.kind == NodeKind::Try) return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *t = firstTry(*k)) return t;
+    return nullptr;
+  }
+
+  // A copy of `n` with `d` run after each node whose value is `n`'s value.
+  // An inner `defer`'s cleanup goes inside an outer one's, so they run in
+  // reverse order of registration.
+  static syntax::NodePtr withCleanup(const Node &n, const Node &d) {
+    auto copy = [&](std::initializer_list<size_t> exits) {
+      auto c = std::make_unique<Node>();
+      c->kind = n.kind;
+      c->text = n.text;
+      c->flags = n.flags;
+      c->loc = n.loc;
+      for (size_t i = 0; i < n.kids.size(); ++i) {
+        bool exit = false;
+        for (size_t e : exits) exit |= e == i;
+        c->kids.push_back(exit ? withCleanup(*n.kids[i], d)
+                               : syntax::clone(*n.kids[i]));
+      }
+      for (const syntax::NodePtr &k : n.comments)
+        c->comments.push_back(syntax::clone(*k));
+      return c;
+    };
+    switch (n.kind) {
+      case NodeKind::LetIn:
+        return copy({4});
+      case NodeKind::Sequence:
+      case NodeKind::Arm:
+        return copy({1});
+      case NodeKind::Cleanup:
+        return copy({0});
+      case NodeKind::If:
+        if (n.kids.size() > 2 && n.kids[2]->kind != NodeKind::None)
+          return copy({1, 2});
+        break;
+      case NodeKind::Match: {
+        auto c = copy({});
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          c->kids[i] = withCleanup(*n.kids[i], d);
+        return c;
+      }
+      default:
+        break;
+    }
+    auto c = syntax::makeNode(NodeKind::Cleanup, n.loc);
+    c->add(syntax::clone(n));
+    c->add(syntax::clone(d));
+    return c;
+  }
+
+  // An exit from a `defer`'s scope: its value, then the cleanup.
+  R genCleanup(const Node &n, Type expected) {
+    R v = genExpr(*n.kids[0], expected);
+    if (!v) return v;
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      R c = genExpr(*n.kids[i], Type());
+      if (!c) return c;
+      if (!isUnit(c->type))
+        return fail(*n.kids[i],
+                    "a 'defer' runs only for its effect, so its expression "
+                    "must have type unit, but this has type " +
+                        typeName(c->type));
+    }
+    return v;
   }
 
   // `body handle | p -> e ...`: the body with its `?`s handled here.
@@ -5017,8 +5676,10 @@ class Gen {
       return fail(valueNode, "'" + n.text + "' would have type unit");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
     pushScope();
-    bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
+    BindingPtr b =
+        bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
     R body = genExpr(*n.kids[4], expected);
+    if (body && !consumed(b, n.loc)) body = std::nullopt;
     popScope();
     return body;
   }
@@ -5083,9 +5744,19 @@ class Gen {
   mlir::ModuleOp module_;
   std::map<std::string, sema::FuncSig> sigs_;
   std::map<std::string, Constant> consts_;
+  // Exported function symbols (ADR 0039), each with its module's path, or
+  // empty for a plain C name.
+  std::map<std::string, std::string> exports_;
+  // The program's top-level type items, by name.
+  std::vector<std::pair<std::string, const Node *>> typeItems_;
   unsigned matchCounter_ = 0;
   std::vector<syntax::NodePtr> matchTrees_;
   std::deque<Frame> frames_;
+  // The locals moved so far on the path being generated (`moved`), and the
+  // loops open there.
+  std::map<BindingPtr, Move> moved_;
+  unsigned loopDepth_ = 0;
+  std::set<const void *> linear_;  // the `@linear` types
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;

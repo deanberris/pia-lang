@@ -94,6 +94,7 @@
     )
   )
   (Interface "Stream"
+    (Attrs)
     (SigType "status"
       (TypeValue
         (Variants

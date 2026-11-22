@@ -1,6 +1,26 @@
 (* Codegen v0 (M6): programs the C harness in saturate_test.c runs and
    compares against C reference implementations.
 *)
+module Saturate : Pixels
+
+(* What saturate_test.c calls, by its C names (ADR 0039).
+*)
+interface Pixels @abi(c) = sig
+  let add_px : (a : u8) -> (b : u8) -> u8
+  let sub_px : (a : u8) -> (b : u8) -> u8
+  let add_i8 : (a : i8) -> (b : i8) -> i8
+  let mul_i16 : (a : i16) -> (b : i16) -> i16
+  let add_wrap : (a : u8) -> (b : u8) -> u8
+  let add_wide : (a : u8) -> (b : u8) -> u16
+  let half : (x : i32) -> i32
+  let add_rows : (a : [u8]) -> (b : [u8]) -> (dst : out mutable [u8]) -> unit
+    requires len a = len dst && len b = len dst
+  let sum4 : (xs : [u16; 4]) -> u32
+  let pixel = type { r : u8; g : u8; b : u8; a : u8 }
+  let blend : (p : pixel) -> (q : pixel) -> pixel
+  let luma : (p : pixel) -> u16
+end
+
 
 (* Saturating arithmetic on pixels, the milestone's "done when" case.
 *)

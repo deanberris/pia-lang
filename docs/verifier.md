@@ -254,7 +254,7 @@ let lemma block_bound (a : Lip.layer) (b : Lip.layer) : unit
 
 `theory`, `sort` and `axiom` are keywords only between `let` and a name, like `spec` and `lemma`.
 
-**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Pia has no modules yet, so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
+**Names.** Inside its theory, a member is used unqualified (`lip f`, `layer`). Everywhere else it is `T.x`: `Lip.lip`, `Lip.layer`. Modules cannot import one another yet ([ADR 0039](adr/0039-module-and-interface-syntax.md) step 1 has headers and interfaces, not imports), so a theory is used in the file that declares it, and `import T` of such a theory does nothing. A module header's `@trusted` (`module M @trusted`) marks the file like a `@trusted` line. A name the theory does not declare is an error (`the theory 'Lip' has no 'nope'`). A member cannot shadow a name that is visible inside the theory, such as another item, a core builtin like `len`, or a builtin type. A parameter of a member cannot take a member's name either ([ADR 0022](adr/0022-metaprogram-hygiene.md)).
 
 **Spec-only.** A theory's sorts and functions are spec-only, like `int` and `real`. Code cannot take, return or compute them, and codegen erases the theory along with every contract that uses it. A sort has only `=` and `<>`.
 
