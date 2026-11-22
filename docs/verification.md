@@ -89,26 +89,26 @@ When one function calls another, the verifier does not look inside the callee. I
 <!-- example: calls.pia -->
 <!-- expect: fail -->
 ```ocaml
-let inc (x : u8) : u8
-  requires x < 255
-  ensures result = x + 1
-= x + 1
+let plus (a : u8) (b : u8) : u8
+  requires a + b <= 255
+  ensures result = a + b
+= a + b
 
-let twice (x : u8) : u8 = inc (inc x)
+let plus3 (a : u8) (b : u8) (c : u8) : u8 = plus (plus a b) c
 ```
 
 ```console
 $ piac --verify calls.pia
 calls.pia:4:5: proved: '+' does not overflow u8 [smt]
 calls.pia:3:3: proved: the postcondition holds [smt]
-calls.pia:6:32: failed: the precondition of 'inc' holds
-  counterexample: x = 255
-calls.pia:6:27: failed: the precondition of 'inc' holds
-  counterexample: x = 254
+calls.pia:6:51: failed: the precondition of 'plus' holds
+  counterexample: a = 255, b = 255, c = 0
+calls.pia:6:45: failed: the precondition of 'plus' holds
+  counterexample: a = 3, b = 252, c = 255
 2 proved, 2 failed, 0 skipped
 ```
 
-Both calls fail: the inner one when `x` is 255, and the outer one when `x` is 254, because the inner call then returns 255. Adding `requires x < 200` to `twice` proves both. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.
+Both calls fail: the inner one when `a + b` is too big, and the outer one when the inner sum plus `c` is. Adding `requires a + b + c <= 255` to `plus3` proves both, the inner call from it directly and the outer one from it and `plus`'s postcondition. This is the same assume-guarantee rule that modules will use across files, where a module is proved against the interfaces it imports and never against another module's code.
 
 ## Spec functions say what code means
 

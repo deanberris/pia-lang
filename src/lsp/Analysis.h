@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "syntax/Diagnostics.h"
+#include "syntax/Lint.h"
 #include "syntax/Syntax.h"
 
 namespace pia::lsp {
@@ -50,8 +51,8 @@ enum class Severity { Error = 1, Warning = 2, Information = 3, Hint = 4 };
 struct Diag {
   Range range;
   Severity severity = Severity::Error;
-  std::string source;  // "pia" or "pia-verify"
-  std::string code;    // a goal kind for proof diagnostics, else empty
+  std::string source;  // "pia", "pia-lint" or "pia-verify"
+  std::string code;    // a goal kind for proof diagnostics, a lint name, or empty
   std::string message;
 };
 
@@ -103,8 +104,12 @@ class Analysis {
   bool parsed() const { return !diags_.hasErrors(); }
   const syntax::Node *tree() const { return tree_.get(); }
 
-  // Syntax errors, with the range of the token each one points at.
+  // Syntax errors, with the range of the token each one points at, then
+  // the lints (ADR 0037) as warnings with source "pia-lint".
   std::vector<Diag> diagnostics() const;
+
+  // The lints of a document that parses; empty otherwise.
+  const std::vector<syntax::Lint> &lints() const { return lints_; }
 
   // Top-level items, with interface members and module items as children.
   std::vector<Symbol> symbols() const;
@@ -125,6 +130,7 @@ class Analysis {
   TextIndex index_;
   syntax::Diagnostics diags_;
   syntax::NodePtr tree_;
+  std::vector<syntax::Lint> lints_;
 };
 
 // Reserved words, for completion.

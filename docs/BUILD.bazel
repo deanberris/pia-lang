@@ -11,6 +11,7 @@ exports_files([
     "demo.md",
     "design.md",
     "getting-started.md",
+    "idioms.md",
     "index.md",
     "repl.md",
     "status.md",

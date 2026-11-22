@@ -1,7 +1,8 @@
 (* Codegen v0: contracts are erased, range types become machine integers,
-   and each overflow mode has its own lowering (docs/codegen.md).
-// RUN: piac --emit=core %s 2>&1 | FileCheck %s
-// RUN: piac --emit=llvm %s 2>&1 | FileCheck %s --check-prefix=LLVM
+   and each overflow mode has its own lowering (docs/codegen.md). Lints are
+   off: the CHECK-NOT below is about codegen's own warnings.
+// RUN: piac --emit=core --no-lint %s 2>&1 | FileCheck %s
+// RUN: piac --emit=llvm --no-lint %s 2>&1 | FileCheck %s --check-prefix=LLVM
 *)
 
 (*

@@ -82,7 +82,13 @@ total.pia:7:13: proved: '+' does not overflow u32 [smt]
 total.pia:6:5: proved: the loop invariant holds after each iteration [smt]
 total.pia:3:3: proved: the postcondition holds [smt]
 5 proved, 0 failed, 0 skipped
+total.pia:3:3: warning: this postcondition only bounds the result by constants; say it in the type instead, the return type int{0..255000}, so the fact travels with the value and intervals can use it [range_ensures]
+    ensures result <= 255000
+    ^
+  fix: Move the bound into the type: the return type int{0..255000}
 ```
+
+The warning is a lint (docs/idioms.md): a constant bound on the result says what the return type `int{0..255000}` would, and the type carries the fact to callers for free.
 
 Patterns that come up again and again:
 

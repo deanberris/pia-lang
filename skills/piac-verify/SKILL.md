@@ -34,10 +34,15 @@ limits.pia:6:32: failed: the precondition of 'inc' holds
 limits.pia:6:27: failed: the precondition of 'inc' holds
   counterexample: x = 254
 2 proved, 2 failed, 0 skipped
+limits.pia:2:3: warning: this precondition only bounds 'x' by constants; say it in the type instead, (x : int{0..254}), so the fact travels with the value and intervals can use it [range_requires]
+    requires x < 255
+    ^
+  fix: Move the bound into the type: (x : int{0..254})
 ```
 
 - One line per goal: `file:line:col: status: claim [method]`. The method is `intervals` (range analysis, cheap) or `smt` (Z3).
 - **proved** holds for every input. **failed** has an input that breaks it, the counterexample, when Z3 found one. **skipped** means this verifier cannot decide it yet, for example a `while` loop or recursion with no `decreases`.
+- `warning: ... [name]` lines on stderr are lints (docs/idioms.md, ADR 0037): opinions about a better way to say the same thing, never errors. `@allow(name)` on a function's return annotation, or `--no-lint=name`, turns one off.
 - The last line counts them. The exit status is 0 if nothing failed and nothing was skipped without being accepted, 1 otherwise, and 2 for a usage error.
 
 ## Reading a counterexample

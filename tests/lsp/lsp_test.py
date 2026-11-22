@@ -34,6 +34,17 @@ let ok (a : u8) : u8 = a
 let broken (a : u8) : u8 = (a +
 """
 
+RANGE = """\
+let scale (x : u8) : u16
+  requires x < 100
+= x * 2
+"""
+
+RANGE_FIXED = """\
+let scale (x : int{0..99}) : u16
+= x * 2
+"""
+
 SHADOW = """\
 let helper (x : u8) : u8 = x
 
@@ -408,6 +419,31 @@ class LspTest(unittest.TestCase):
         self.assertEqual(len(actions), 1)
         self.assertEqual(self.apply(SHADOW, actions[0]["edit"]["changes"][uri]),
                          SHADOW_FIXED)
+
+    def test_lint_quick_fix(self):
+        # ADR 0037: a constant bound on one parameter is a range type.
+        uri = "file:///tmp/range.pia"
+        self.client.open(uri, RANGE)
+        diags = self.client.diagnostics(
+            uri, lambda ds: any(d.get("source") == "pia-lint" for d in ds))
+        lints = [d for d in diags if d.get("source") == "pia-lint"]
+        self.assertEqual(len(lints), 1)
+        d = lints[0]
+        self.assertEqual(d["code"], "range_requires")
+        self.assertEqual(d["severity"], 2)
+        self.assertEqual(d["range"]["start"], pos(RANGE, "requires"))
+        self.assertIn("int{0..99}", d["message"])
+        actions = self.client.request("textDocument/codeAction", {
+            "textDocument": {"uri": uri}, "range": d["range"],
+            "context": {"diagnostics": [d]}})["result"]
+        self.assertEqual(len(actions), 1)
+        a = actions[0]
+        self.assertEqual(a["kind"], "quickfix")
+        self.assertTrue(a["isPreferred"])
+        self.assertEqual(a["title"],
+                         "Move the bound into the type: (x : int{0..99})")
+        self.assertEqual(self.apply(RANGE, a["edit"]["changes"][uri]),
+                         RANGE_FIXED)
 
     def test_unknown_request(self):
         reply = self.client.request("textDocument/foldingRange", {
