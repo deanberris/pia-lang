@@ -184,7 +184,7 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type: case K::Sig:
+      case K::Assume: case K::Type: case K::Sig: case K::Defer:
         return true;
       default:
         return false;
@@ -208,6 +208,10 @@ class Parser {
         if (kind(1) == K::Ident && tok(1).text == "theory" &&
             kind(2) == K::Ident)
           return theoryItem();
+        // `let model m : T = struct ... end` (ADR 0036).
+        if (kind(1) == K::Ident && tok(1).text == "model" &&
+            kind(2) == K::Ident && kind(3) == K::Colon)
+          return modelItem();
         if (kind(1) == K::Ident &&
             (tok(1).text == "sort" || tok(1).text == "axiom") &&
             kind(2) == K::Ident)
@@ -274,6 +278,40 @@ class Parser {
         n->add(let(true, false, Bodyless::Axiom));
       } else if (kind(1) == K::Spec) {
         n->add(let(true, false, Bodyless::Abstract));
+      } else {
+        n->add(let(true, false));
+      }
+      skipSeps();
+    }
+    take();
+    return n;
+  }
+
+  // `let model m : T = struct item* end`: a sort for each of T's sorts,
+  // `let sort s = t`, and a spec function with a body for each of its
+  // abstract functions.
+  NodePtr modelItem() {
+    auto n = makeNode(N::Model, loc());
+    take();  // let
+    take();  // model
+    n->text = std::string(take().text);
+    expect(K::Colon, "':'");
+    SourceLoc theoryAt = loc();
+    n->add(makeNode(N::TypeName, theoryAt,
+                    std::string(expect(K::Ident, "a theory").text)));
+    expect(K::Eq, "'='");
+    expect(K::Struct, "'struct'");
+    skipSeps();
+    while (!at(K::End)) {
+      if (!at(K::Let)) fail("expected 'let' or 'end' in a model");
+      if (kind(1) == K::Ident && tok(1).text == "sort" && kind(2) == K::Ident) {
+        auto sort = makeNode(N::SortItem, loc());
+        take();
+        take();
+        sort->text = std::string(take().text);
+        expect(K::Eq, "'=' and the type the sort is, as in 'let sort s = u8'");
+        sort->add(type());
+        n->add(std::move(sort));
       } else {
         n->add(let(true, false));
       }
@@ -1064,9 +1102,12 @@ class Parser {
       case K::Forall:
       case K::Exists:
         return quantifier();
-      case K::Defer:
-        fail("'defer' is reserved for scope cleanup (ADR 0028), which is "
-             "not supported yet");
+      case K::Defer: {
+        auto n = makeNode(N::Defer, start);
+        take();
+        n->add(binary(0));
+        return n;
+      }
       case K::Assert:
       case K::Assume: {
         auto n = makeNode(at(K::Assert) ? N::Assert : N::Assume, start);

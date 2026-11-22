@@ -64,7 +64,7 @@ borrowed moved out inout fixed mutable mod handle defer as
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
 
-`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
+`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -159,7 +159,7 @@ Without this rule, a bare top-level metaprogram call would be read as further ar
 
 ```ebnf
 program   = [ ( module_header | item ) { SEP item } ] ;  (* ADR 0039 *)
-item      = let_item | meta_operator | interface | module | import | theory | file_attr | expr_item ;
+item      = let_item | meta_operator | interface | module | import | theory | model | file_attr | expr_item ;
 expr_item = application ;                         (* a compile-time call that yields items *)
 import    = "import" path ;
 path      = IDENT { "." IDENT } ;
@@ -247,6 +247,7 @@ stmt   = postfix "<-" stmt
        | "while" seq { loop_annot } "do" handled "done"
        | quantifier
        | "assert" imp_e | "assume" imp_e
+       | "defer" imp_e
        | type_value
        | sig_value
        | imp_e ;
@@ -289,7 +290,7 @@ match = "match" seq "with" [ "|" ] arm { "|" arm } ;
 arm   = pattern { ( "requires" | "ensures" ) stmt } "->" seq ;
 ```
 
-`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer` is reserved for scope cleanup and is not accepted yet.
+`e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer e; rest` registers `e` as cleanup for `rest`, the rest of the sequence it starts; `defer` with nothing after it is an error.
 
 ### Patterns
 
@@ -323,6 +324,8 @@ theory_member = "let" "sort" IDENT [ "=" type ]
               | "let" "spec" binder ":" annot { attribute }           (* abstract: no body *)
               | "let" "axiom" IDENT { param } [ ret_annot ] contract { contract }
               | let_item ;
+model     = "let" "model" IDENT ":" IDENT "=" "struct" { model_member } "end" ;
+model_member = "let" "sort" IDENT "=" type | let_item ;
 file_attr = ATTR ;                                             (* `@trusted`, on its own line *)
 ```
 

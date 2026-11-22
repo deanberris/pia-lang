@@ -38,6 +38,7 @@ namespace pia::syntax {
   X(Adapter)       /* text=name; concept type, item* */                      \
   X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
   X(SortItem)      /* text=name; abbreviated type? */                        \
+  X(Model)         /* text=name; TypeName theory, SortItem|LetItem* */       \
   X(FileAttr)      /* text=name: `@trusted` on its own line, for the file */ \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
@@ -108,6 +109,8 @@ namespace pia::syntax {
   X(Assert) X(Assume) /* predicate */                                        \
   X(Try)           /* operand: `e?` (ADR 0028) */                            \
   X(Handle)        /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */   \
+  X(Defer)         /* cleanup: `defer e`, first part of a Sequence */        \
+  X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
   X(Sequence)      /* stmt, stmt (right-nested) */                           \
   X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
   X(Lambda)        /* LParam+, body */                                       \

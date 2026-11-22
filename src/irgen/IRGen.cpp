@@ -73,6 +73,7 @@ struct Binding {
   bool isMutable = false;
   std::string modifiers;  // a parameter's modifiers, empty for locals
   bool isParam = false;
+  unsigned loopDepth = 0;  // the loops open where it was bound
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -191,6 +192,8 @@ class Gen {
         types_(ctx, diags),
         interp_([](const std::string &) { return true; }) {}
 
+  void setTheoryInfo(TheoryInfo info) { theoryInfo_ = std::move(info); }
+
   mlir::OwningOpRef<mlir::ModuleOp> run(const Node &program) {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         mlir::ModuleOp::create(mlir::FileLineColLoc::get(file_, 1, 1));
@@ -208,6 +211,7 @@ class Gen {
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
+    collectLinear(program);
     collectConstants();
     if (diags_.hasErrors()) return nullptr;
     std::map<const Node *, std::string> symbolOf;
@@ -251,6 +255,7 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     checkGhosts();
     checkAxioms();
+    checkModels();
     if (diags_.hasErrors()) return nullptr;
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
@@ -420,6 +425,7 @@ class Gen {
     b->value = v;
     b->type = t;
     b->isMutable = isMutable;
+    b->loopDepth = loopDepth_;
     scopes_.back()[name] = b;
     return b;
   }
@@ -626,9 +632,27 @@ class Gen {
     bool isAxiom = hasFlag(item, "axiom");
     ghost_ = isSpec || isLemma || isAxiom;
     // A theory's members are named `T.x` (ADR 0036).
-    if (hasFlag(item, "theory"))
-      fn->setAttr("pia.theory",
-                  b_.getStringAttr(llvm::StringRef(sig.name).split('.').first));
+    if (hasFlag(item, "theory")) {
+      std::string theory = llvm::StringRef(sig.name).split('.').first.str();
+      fn->setAttr("pia.theory", b_.getStringAttr(theory));
+      if (auto m = theoryInfo_.modelled.find(theory);
+          m != theoryInfo_.modelled.end())
+        fn->setAttr("pia.modelled", b_.getStringAttr(m->second));
+    }
+    // A model's items, and the lemmas that check it, see its definitions;
+    // nothing else does (sealing).
+    if (auto m = theoryInfo_.modelOf.find(sig.name);
+        m != theoryInfo_.modelOf.end())
+      fn->setAttr("pia.model", b_.getStringAttr(m->second));
+    if (auto w = theoryInfo_.witnesses.find(sig.name);
+        w != theoryInfo_.witnesses.end())
+      fn->setAttr("pia.witness_of", b_.getStringAttr(w->second));
+    if (auto o = theoryInfo_.obligations.find(sig.name);
+        o != theoryInfo_.obligations.end())
+      fn->setAttr("pia.obligation",
+                  b_.getStringAttr("the model '" + o->second.first +
+                                   "' meets the axiom '" + o->second.second +
+                                   "'"));
     if (!triggers_.empty() && !isAxiom) {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
@@ -686,6 +710,11 @@ class Gen {
                     b_.getI64IntegerAttr(fuel_));
     }
 
+    // A parameter whose record type refines its fields holds them: the
+    // caller proves them, and the body assumes them (ADR 0036).
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      if (!refine(entry->getArgument(i), sig.params[i].type, false)) return;
+
     if (isAxiom) {
       fn->setAttr(PiaDialect::getAxiomAttrName(), b_.getUnitAttr());
       genAxiom(item, sig);
@@ -718,14 +747,61 @@ class Gen {
       std::deque<Frame> saved;
       ~FrameScope() { frames = std::move(saved); }
     } frameScope{frames_, std::move(frames_)};
+    struct MovedScope {
+      std::map<BindingPtr, Move> &moved;
+      std::map<BindingPtr, Move> saved;
+      unsigned &depth, savedDepth;
+      ~MovedScope() {
+        moved = std::move(saved);
+        depth = savedDepth;
+      }
+    } movedScope{moved_, std::move(moved_), loopDepth_, loopDepth_};
+    moved_.clear();
+    loopDepth_ = 0;
     frames_.clear();
     frames_.emplace_back();
     frames_.back().result = sig.result;
     frames_.back().function = sig.source();
-    if (!isSpec) addTails(bodyNode);
+    // `drop` itself takes its argument apart rather than dropping it.
+    struct DropScope {
+      Type &t;
+      Type saved;
+      ~DropScope() { t = saved; }
+    } dropScope{dropping_, dropping_};
+    dropping_ = sig.name == "drop" && sig.params.size() == 1
+                    ? sig.params[0].type
+                    : Type();
+    // A `moved` parameter with a `drop` is dropped at the end of the body
+    // unless it is consumed first.
+    const Node *bodyPtr = &bodyNode;
+    if (!isSpec && !ghost_)
+      for (const sema::Param &p : sig.params)
+        if (sema::hasModifier(p.modifiers, "moved"))
+          if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
+            const Node &d = dropNode(p.name, p.loc);
+            bodyPtr = keep(withCleanup(*bodyPtr, d));
+            frames_.back().defers.push_back(&d);
+          }
+    if (!isSpec) addTails(*bodyPtr);
     R body = isSpec ? genContractExpr(bodyNode, sig.result)
-                    : genExpr(bodyNode, sig.result);
+                    : genExpr(*bodyPtr, sig.result);
     if (!body) return;
+    if (!isSpec && !ghost_) {
+      bool owned = true;
+      for (const sema::Param &p : sig.params) {
+        BindingPtr b = lookup(p.name);
+        if (!b) continue;
+        if (sema::hasModifier(p.modifiers, "moved")) {
+          owned &= consumed(b, p.loc);
+        } else if (auto m = moved_.find(b); m != moved_.end()) {
+          diags_.error(m->second.at,
+                       "'" + p.name + "' is borrowed by this function, so it "
+                       "cannot be consumed here; take it as 'moved'");
+          owned = false;
+        }
+      }
+      if (!owned) return;
+    }
     Type result = sig.result;
     if (!result) {
       result = body->type;
@@ -758,6 +834,8 @@ class Gen {
 
     pushScope();
     if (!rets.empty()) bind("result", rets[0], result, false);
+    // So does a result: the function proves its fields' refinements.
+    if (!rets.empty() && !refine(rets[0], result, true)) return;
     for (const syntax::NodePtr &c : contracts.kids) {
       if (c->kind != NodeKind::Ensures) continue;
       R p = genPredicate(*c->kids[0]);
@@ -804,6 +882,50 @@ class Gen {
     }
     popScope();
     create<mlir::func::ReturnOp>(loc(item), rets);
+  }
+
+  // `{ p : real where 0.0 <= p }`: a `requires` (or, for a result, an
+  // `ensures`) per refined field of `v`'s record type, and of the records
+  // in its fields, with the field's name standing for the field.
+  bool refined(Type t) {
+    auto rec = mlir::dyn_cast<RecordType>(t);
+    if (!rec) return false;
+    if (types_.refinements(rec.getName().str())) return true;
+    for (Type ft : rec.getFieldTypes())
+      if (refined(ft)) return true;
+    return false;
+  }
+
+  bool refine(Value v, Type t, bool ensures) {
+    if (!refined(t)) return true;
+    auto rec = mlir::cast<RecordType>(t);
+    for (auto [name, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
+      if (mlir::isa<RecordType>(ft)) {
+        Value f = create<FieldOp>(b_.getUnknownLoc(), ft, v, name);
+        if (!refine(f, ft, ensures)) return false;
+      }
+    const auto *refs = types_.refinements(rec.getName().str());
+    if (!refs) return true;
+    for (const auto &[field, pred] : *refs) {
+      auto index = rec.fieldIndex(field);
+      if (!index) continue;
+      Type ft = rec.getFieldTypes()[*index];
+      Location l = loc(*pred);
+      Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(field));
+      scopes_.emplace_back();
+      scopes_.back()[field] = std::make_shared<Binding>();
+      scopes_.back()[field]->name = field;
+      scopes_.back()[field]->value = f;
+      scopes_.back()[field]->type = ft;
+      R p = genPredicate(*pred);
+      scopes_.pop_back();
+      if (!p) return false;
+      if (ensures)
+        create<contract::EnsuresOp>(l, p->value);
+      else
+        create<contract::RequiresOp>(l, p->value);
+    }
+    return true;
   }
 
   // An axiom (ADR 0036): its preconditions and postconditions, and its
@@ -926,6 +1048,50 @@ class Gen {
           break;
         }
         for (const std::string &d : calls[c]) work.push_back(d);
+      }
+    }
+  }
+
+  // A model defines each abstract function with the theory's type, its
+  // sorts replaced by the model's (ADR 0036).
+  void checkModels() {
+    for (const auto &[item, model] : theoryInfo_.modelOf) {
+      if (theoryInfo_.obligations.count(item) ||
+          theoryInfo_.witnesses.count(item))
+        continue;
+      auto f = module_.lookupSymbol<mlir::func::FuncOp>(item);
+      if (!f) continue;
+      std::string member = item.substr(model.size());  // ".x"
+      mlir::func::FuncOp abstract;
+      std::string theory;
+      for (const auto &[t, m] : theoryInfo_.modelled)
+        if (m == model) theory = t;
+      abstract = module_.lookupSymbol<mlir::func::FuncOp>(theory + member);
+      if (!abstract) continue;
+      auto as = [&](Type t) -> Type {
+        if (auto so = mlir::dyn_cast<SortType>(t)) {
+          std::string name = so.getName().str();
+          if (Type m = types_.named(model + name.substr(theory.size())))
+            return m;
+        }
+        return t;
+      };
+      mlir::FunctionType want = abstract.getFunctionType();
+      mlir::FunctionType have = f.getFunctionType();
+      bool same = want.getNumInputs() == have.getNumInputs() &&
+                  want.getNumResults() == have.getNumResults();
+      for (unsigned i = 0; same && i < want.getNumInputs(); ++i)
+        same = as(want.getInput(i)) == have.getInput(i);
+      for (unsigned i = 0; same && i < want.getNumResults(); ++i)
+        same = as(want.getResult(i)) == have.getResult(i);
+      if (!same) {
+        std::string w;
+        for (unsigned i = 0; i < want.getNumInputs(); ++i)
+          w += typeName(as(want.getInput(i))) + " -> ";
+        w += want.getNumResults() ? typeName(as(want.getResult(0))) : "unit";
+        diags_.error(sourceLoc(f.getLoc()),
+                     "the model '" + model + "' defines '" + theory + member +
+                         "' with the wrong type: in this model it is " + w);
       }
     }
   }
@@ -1097,6 +1263,7 @@ class Gen {
       case NodeKind::While:
         return genWhile(n);
       case NodeKind::Sequence: {
+        if (n.kids[0]->kind == NodeKind::Defer) return genDefer(n, expected);
         R first = genExpr(*n.kids[0], Type());
         if (!first) return first;
         if (!mustUse(*first, *n.kids[0])) return std::nullopt;
@@ -1106,6 +1273,12 @@ class Gen {
         return fail(n, tryMisplaced());
       case NodeKind::Handle:
         return genHandle(n, expected);
+      case NodeKind::Defer:
+        return fail(n, "'defer' registers cleanup for the rest of its "
+                       "sequence, so something must follow it, as in "
+                       "'defer close f; use f'");
+      case NodeKind::Cleanup:
+        return genCleanup(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
       case NodeKind::Assert:
@@ -1177,7 +1350,11 @@ class Gen {
 
   R genName(const Node &n, Type expected) {
     if (n.flags.empty())
-      if (BindingPtr b = lookup(n.text)) return TV{b->value, b->type};
+      if (BindingPtr b = lookup(n.text)) {
+        if (!usable(b, n)) return std::nullopt;
+        consumeValue(b, n);
+        return TV{b->value, b->type};
+      }
     if (types_.isCtorName(n.text)) {
       const sema::Ctor *c = ctorFor(n, n.text, expected, std::nullopt);
       if (!c) return std::nullopt;
@@ -1547,6 +1724,9 @@ class Gen {
   R genMatch(const Node &n, Type expected) {
     R s = genExpr(*n.kids[0], Type());
     if (!s) return s;
+    if (auto rt = mlir::dyn_cast<RecordType>(s->type);
+        rt && !types_.isVariant(rt))
+      return genRecordMatch(n, *s, rt, expected);
     if (!types_.isVariant(s->type))
       return fail(*n.kids[0], "'match' on " + typeName(s->type) +
                                   " is not supported yet; it works on "
@@ -1585,6 +1765,12 @@ class Gen {
       if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
         catchAll = true;
         if (pat.text != "_") a.bind = pat.text;
+        else if (a.as.empty())
+          for (const sema::Ctor *c : ctors)
+            if (!covered.count(c->name) && c->payload && isLinear(c->payload))
+              return fail(pat, "this arm drops the @linear payload of '" +
+                                   c->name + "'; match '" + c->name +
+                                   "' with a name and consume it");
       } else if (pat.kind == NodeKind::PVar ||
                  (pat.kind == NodeKind::PCtor)) {
         const sema::Ctor *c = types_.ctorIn(pat.text, s->type);
@@ -1621,6 +1807,9 @@ class Gen {
             return fail(sub, "only a name, '_' or a variant's only "
                              "constructor can match a payload for now");
           if (!only && sub.text != "_") a.bind = sub.text;
+          if (!only && sub.text == "_" && a.as.empty() && isLinear(c->payload))
+            return fail(sub, "'_' drops this @linear payload; bind it with a "
+                             "name and consume it");
         }
         covered.insert(c->name);
         a.ctor = c;
@@ -1705,6 +1894,88 @@ class Gen {
     R r = genExpr(*chain, expected);
     popScope();
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
+    return r;
+  }
+
+  // `match r with | { a; b = x } -> e` on a record: binds its fields, as
+  // `let a = r.a in let x = r.b in e`. Matching consumes `r`, so this is
+  // how a @linear record is finally taken apart (#56).
+  R genRecordMatch(const Node &n, const TV &s, RecordType rt, Type expected) {
+    if (n.kids.size() != 2)
+      return fail(*n.kids[2]->kids[0], "a record has one shape, so a 'match' "
+                                       "on it has one arm");
+    const Node &arm = *n.kids[1];
+    if (arm.kids.size() > 2 && !arm.kids[2]->kids.empty())
+      return fail(*arm.kids[2], "arm contracts on a record 'match' are not "
+                                "supported yet");
+    const Node &pat = *arm.kids[0];
+    std::string hidden = "#match" + std::to_string(matchCounter_++);
+    syntax::SourceLoc at = n.loc;
+    std::vector<std::pair<std::string, std::string>> binds;  // name, field
+    if (pat.kind == NodeKind::PVar && !types_.isCtorName(pat.text)) {
+      if (pat.text == "_" && isLinear(rt))
+        return fail(pat, "'_' drops this @linear value; bind its fields "
+                         "and consume the @linear ones");
+    } else if (pat.kind == NodeKind::PRecord) {
+      std::set<std::string> seen;
+      for (const syntax::NodePtr &f : pat.kids) {
+        std::optional<unsigned> i = rt.fieldIndex(f->text);
+        if (!i)
+          return fail(*f, typeName(rt) + " has no field '" + f->text + "'");
+        if (!seen.insert(f->text).second)
+          return fail(*f, "'" + f->text + "' is already matched");
+        std::string name = f->text;
+        if (!f->kids.empty() && f->kids[0]->kind != NodeKind::None) {
+          const Node &sub = *f->kids[0];
+          if (sub.kind != NodeKind::PVar || types_.isCtorName(sub.text))
+            return fail(sub, "only a name or '_' can match a field for now");
+          name = sub.text;
+        }
+        if (name == "_") {
+          if (isLinear(rt.getFieldTypes()[*i]))
+            return fail(*f, "'_' drops the @linear field '" + f->text +
+                            "'; bind it and consume it");
+          continue;
+        }
+        binds.emplace_back(name, f->text);
+      }
+      for (auto [j, field] : llvm::enumerate(rt.getFieldNames()))
+        if (!seen.count(field.getValue().str()) &&
+            isLinear(rt.getFieldTypes()[j]))
+          return fail(pat, "this pattern drops the @linear field '" +
+                               field.getValue().str() +
+                               "'; bind it and consume it");
+    } else {
+      return fail(pat, "a record is matched by '{ a; b = x }', a name or '_'");
+    }
+    syntax::NodePtr body = syntax::clone(*arm.kids[1]);
+    if (pat.kind == NodeKind::PVar && pat.text != "_") {
+      auto let = syntax::makeNode(NodeKind::LetIn, pat.loc, pat.text);
+      let->add(syntax::makeNode(NodeKind::Params, pat.loc));
+      let->add(syntax::makeNode(NodeKind::None, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Contracts, pat.loc));
+      let->add(syntax::makeNode(NodeKind::Name, pat.loc, hidden));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    for (auto it = binds.rbegin(); it != binds.rend(); ++it) {
+      auto field = syntax::makeNode(NodeKind::Field, at, it->second);
+      field->add(syntax::makeNode(NodeKind::Name, at, hidden));
+      auto let = syntax::makeNode(NodeKind::LetIn, at, it->first);
+      let->add(syntax::makeNode(NodeKind::Params, at));
+      let->add(syntax::makeNode(NodeKind::None, at));
+      let->add(syntax::makeNode(NodeKind::Contracts, at));
+      let->add(std::move(field));
+      let->add(std::move(body));
+      body = std::move(let);
+    }
+    if (!frames_.empty() && frames_.back().tails.count(&n)) addTails(*body);
+    const Node &chain = *body;
+    matchTrees_.push_back(std::move(body));  // diagnostics may point into it
+    pushScope();
+    bind(hidden, s.value, s.type, false);
+    R r = genExpr(chain, expected);
+    popScope();
     return r;
   }
 
@@ -1921,6 +2192,7 @@ class Gen {
   }
 
   R genApply(const Node &n, Type expected) {
+    if (n.flags == "drop") return genDrop(n);
     // `f<u8> x` names the type arguments; the rest are deduced.
     const Node *targs = nullptr;
     const Node *callee = n.kids[0].get();
@@ -2015,6 +2287,7 @@ class Gen {
         if (argc != 1) return fail(n, "'len' takes one argument");
         R buf = genExpr(*n.kids[1], Type());
         if (!buf) return buf;
+        unconsume(*n.kids[1]);
         if (!mlir::isa<ArrayType, SliceType>(buf->type))
           return fail(*n.kids[1], "'len' needs an array or slice, found " +
                                       typeName(buf->type));
@@ -2070,6 +2343,10 @@ class Gen {
         return fail(*args[i], "constant data cannot be passed to '" +
                                   sig.params[i].name + "', which is 'out' or "
                                   "'inout'");
+      if (!sema::hasModifier(sig.params[i].modifiers, "moved"))
+        unconsume(*args[i]);
+      else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
+        return std::nullopt;
       operands.push_back(c->value);
     }
     return emitCall(n, sig, operands);
@@ -4306,6 +4583,10 @@ class Gen {
   // has no such equality (a buffer).
   Value sameValue(Location l, Value a, Value b, Type t) {
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
+    if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
+      return create<ExactCmpOp>(l, b_.getI1Type(),
+                                CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
+                                a, b);
     if (isBool(t))
       return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
                                          a, b);
@@ -4367,6 +4648,7 @@ class Gen {
   R genIndex(const Node &n) {
     R buf = genExpr(*n.kids[0], Type());
     if (!buf) return buf;
+    unconsume(*n.kids[0]);
     Type elem = elementType(buf->type);
     if (!elem)
       return fail(*n.kids[0], "only arrays and slices can be indexed, found " +
@@ -4440,6 +4722,7 @@ class Gen {
   R genField(const Node &n) {
     R obj = genExpr(*n.kids[0], Type());
     if (!obj) return obj;
+    unconsume(*n.kids[0]);
     auto rt = mlir::dyn_cast<RecordType>(obj->type);
     if (!rt || types_.isVariant(rt))
       return fail(n, "'." + n.text + "' needs a record, found " +
@@ -4508,6 +4791,7 @@ class Gen {
         return fail(obj, "only a field of a named record can be assigned");
       BindingPtr b = lookup(obj.text);
       if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      if (!usable(b, obj)) return std::nullopt;
       auto rt = mlir::dyn_cast<RecordType>(b->type);
       if (!rt)
         return fail(place, "'." + place.text + "' needs a record, found " +
@@ -4546,6 +4830,7 @@ class Gen {
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
       b->value = c->value;
+      moved_.erase(b);  // a moved local holds a value again
       return unit();
     }
     if (place.kind == NodeKind::Index) {
@@ -4574,6 +4859,219 @@ class Gen {
     return fail(place, "only a name or an element can be assigned");
   }
 
+  // --- ownership: `moved` (docs/design.md) ---------------------------
+
+  // A local after it is moved, and where. `maybe` when only some paths to
+  // here move it.
+  struct Move {
+    syntax::SourceLoc at;
+    std::string what;              // "moved to 'take'"
+    bool maybe = false;
+    const Node *node = nullptr;    // the use that moved it
+  };
+
+  struct Deeper {
+    unsigned &depth;
+    explicit Deeper(unsigned &d) : depth(d) { ++depth; }
+    ~Deeper() { --depth; }
+  };
+
+  // Values of scalar types are copied, so passing one as `moved` leaves
+  // the caller's copy alive.
+  bool copied(Type t) {
+    return mlir::isa<IntType>(t) || isBool(t) || mlir::isa<mlir::FloatType>(t) ||
+           isUnit(t);
+  }
+
+  // Whether `b` may be used at `n`: not after it was moved. Contracts and
+  // ghost code may still name it, since they describe values, not use them.
+  bool usable(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_) return true;
+    auto m = moved_.find(b);
+    if (m == moved_.end()) return true;
+    fail(n, "'" + n.text + "' " + (m->second.maybe ? "may have been" : "was") +
+                " " + m->second.what + " at " +
+                std::to_string(m->second.at.line) + ":" +
+                std::to_string(m->second.at.column) +
+                ", so it can no longer be used here" +
+                (m->second.maybe ? " (it is moved on some paths to here)"
+                                 : ""));
+    return false;
+  }
+
+  // The argument `arg` passed as the `moved` parameter `p` of `sig`: a
+  // local is dead after the call.
+  bool moveArgument(const Node &arg, Type t, const sema::FuncSig &sig,
+                    const sema::Param &p) {
+    if (contract_ || ghost_ || copied(t)) return true;
+    if (arg.kind != NodeKind::Name || !arg.flags.empty()) return true;
+    BindingPtr b = lookup(arg.text);
+    if (!b) return true;
+    if (b->isParam && !sema::hasModifier(b->modifiers, "moved")) {
+      fail(arg, "'" + arg.text + "' is borrowed by this function, so it "
+                "cannot be moved to '" + p.name + "' of '" + sig.name +
+                "'; take it as 'moved', as in '(" + arg.text + " : moved " +
+                typeName(t) + ")'");
+      return false;
+    }
+    if (b->loopDepth < loopDepth_) {
+      fail(arg, "'" + arg.text + "' is moved inside a loop, so the next "
+                "iteration would use it after the move; bind it inside the "
+                "loop, or move it after the loop");
+      return false;
+    }
+    moved_[b] = Move{arg.loc, "moved to '" + sig.name + "'", false, &arg};
+    return true;
+  }
+
+  // --- `@linear` (#56) --------------------------------------------------
+
+  // The types marked `@linear`: a value of one must be consumed, passed as
+  // `moved` or used as a value, on every path out of its scope.
+  void collectLinear(const Node &program) {
+    for (const syntax::NodePtr &item : program.kids) {
+      if (!sema::isTypeItem(*item)) continue;
+      const Node &tv = *item->kids[3];
+      if (tv.kids.size() < 2) continue;
+      for (const syntax::NodePtr &a : tv.kids[1]->kids)
+        if (a->text == "linear")
+          if (Type t = types_.named(item->text))
+            linear_.insert(t.getAsOpaquePointer());
+    }
+  }
+
+  // A `@linear` type, or a record, variant or instance holding one.
+  bool isLinear(Type t) {
+    if (!t || linear_.empty()) return false;
+    if (linear_.count(t.getAsOpaquePointer())) return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t))
+      for (Type f : rt.getFieldTypes())
+        if (isLinear(f)) return true;
+    return false;
+  }
+
+  // --- `drop` (#85) -----------------------------------------------------
+
+  // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
+  // scope: the `Drop` concept, met by name like any other (ADR 0034).
+  bool hasDrop(Type t) {
+    if (!t || copied(t)) return false;
+    for (const sema::FuncSig *f : overloadSet("drop"))
+      if (!f->isGeneric() && f->params.size() == 1 &&
+          f->params[0].type == t &&
+          sema::hasModifier(f->params[0].modifiers, "moved") &&
+          f->result && isUnit(f->result))
+        return true;
+    return false;
+  }
+
+  bool needsDrop(const BindingPtr &b) {
+    return !contract_ && !ghost_ && b->name.find('#') == std::string::npos &&
+           b->type != dropping_ && hasDrop(b->type);
+  }
+
+  const Node *keep(syntax::NodePtr n) {
+    const Node *p = n.get();
+    matchTrees_.push_back(std::move(n));  // diagnostics may point into it
+    return p;
+  }
+
+  // `drop x`, marked so that it runs only where `x` is not consumed.
+  const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->flags = "drop";
+    call->add(syntax::makeNode(NodeKind::Name, at, "drop"));
+    call->add(syntax::makeNode(NodeKind::Name, at, name));
+    return *keep(std::move(call));
+  }
+
+  // An exit's drop: nothing where the value was consumed on the way, the
+  // call where it was not.
+  R genDrop(const Node &n) {
+    const Node &arg = *n.kids[1];
+    BindingPtr b = lookup(arg.text);
+    if (!b) return unit();
+    auto m = moved_.find(b);
+    if (m != moved_.end()) {
+      if (!m->second.maybe) return unit();
+      return fail(n, "'" + arg.text + "' is consumed on only some paths to "
+                     "here, so whether to drop it at the end of its scope "
+                     "is unknown; consume it on every path, or on none");
+    }
+    auto call = syntax::clone(n);
+    call->flags.clear();
+    const Node &c = *keep(std::move(call));
+    return genApply(c, Type());
+  }
+
+  // A use of a linear local, or of one with a drop, as a value consumes
+  // it, unless the use turns out to be a borrow (`unconsume`).
+  void consumeValue(const BindingPtr &b, const Node &n) {
+    if (contract_ || ghost_ || n.text.find('#') != std::string::npos ||
+        !(isLinear(b->type) || hasDrop(b->type)))
+      return;
+    moved_[b] = Move{n.loc, "consumed by its use as a value", false, &n};
+  }
+
+  // `n` was only borrowed: a field read, `len`, or an argument of a
+  // borrowed parameter.
+  void unconsume(const Node &n) {
+    if (n.kind != NodeKind::Name || !n.flags.empty()) return;
+    BindingPtr b = lookup(n.text);
+    if (!b) return;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && m->second.node == &n) moved_.erase(m);
+  }
+
+  // At the end of `b`'s scope: a linear value must have been consumed on
+  // every path.
+  bool consumed(const BindingPtr &b, syntax::SourceLoc at) {
+    if (b->name.find('#') != std::string::npos || !isLinear(b->type))
+      return true;
+    auto m = moved_.find(b);
+    if (m != moved_.end() && !m->second.maybe) return true;
+    diags_.error(at, "'" + b->name + "' has the @linear type " +
+                         typeName(b->type) + ", so it must be consumed on "
+                         "every path out of its scope, by passing it as "
+                         "'moved' or returning it" +
+                         (m != moved_.end()
+                              ? "; it is consumed on only some paths"
+                              : "; nothing consumes it"));
+    return false;
+  }
+
+  // After a loop body: nothing bound outside the loop was moved in it.
+  bool checkLoopMoves() {
+    for (auto &[b, m] : moved_)
+      if (b->loopDepth < loopDepth_) {
+        diags_.error(m.at, "'" + b->name + "' is moved inside a loop, so the "
+                           "next iteration would use it after the move; "
+                           "bind it inside the loop, or move it after the "
+                           "loop");
+        return false;
+      }
+    return true;
+  }
+
+  // After an `if`: a local moved on either branch is moved, or maybe
+  // moved, after it. `moved_` holds the else branch's moves.
+  void mergeMoves(const std::map<BindingPtr, Move> &thenMoves) {
+    std::map<BindingPtr, Move> out;
+    for (auto &[b, m] : thenMoves) {
+      auto e = moved_.find(b);
+      Move merged = m;
+      merged.maybe = m.maybe || e == moved_.end() || e->second.maybe;
+      out[b] = merged;
+    }
+    for (auto &[b, m] : moved_)
+      if (!thenMoves.count(b)) {
+        Move merged = m;
+        merged.maybe = true;
+        out[b] = merged;
+      }
+    moved_ = std::move(out);
+  }
+
   R genIf(const Node &n, Type expected) {
     Location l = loc(n);
     R c = genExpr(*n.kids[0], boolType());
@@ -4596,6 +5094,7 @@ class Gen {
     {
       OpBuilder::InsertionGuard guard(b_);
       b_.setInsertionPointToEnd(thenBlock.get());
+      std::map<BindingPtr, Move> movedBefore = moved_;
       pushScope();
       R t = genExpr(thenNode, expected);
       popScope();
@@ -4603,6 +5102,8 @@ class Gen {
       tv = *t;
       thenVars = values(vars);
       setValues(vars, before);
+      std::map<BindingPtr, Move> movedThen = std::move(moved_);
+      moved_ = std::move(movedBefore);
       if (elseNode) {
         b_.setInsertionPointToEnd(elseBlock.get());
         pushScope();
@@ -4613,6 +5114,7 @@ class Gen {
       }
       elseVars = values(vars);
       setValues(vars, before);
+      mergeMoves(movedThen);
     }
 
     Type rt;
@@ -4744,7 +5246,9 @@ class Gen {
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
       LoopScope inLoop(frames_);
+      Deeper deeper(loopDepth_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;
+      if (r && !checkLoopMoves()) r = std::nullopt;
       if (r && !mustUse(*r, body)) r = std::nullopt;
       if (r) create<mlir::scf::YieldOp>(l, values(vars));
       popScope();
@@ -4790,7 +5294,9 @@ class Gen {
           pushScope();
           setValues(vars, args);
           LoopScope inLoop(frames_);
+          Deeper deeper(loopDepth_);
           R r = genExpr(body, Type());
+          if (r && !checkLoopMoves()) r = std::nullopt;
           if (r && !mustUse(*r, body)) r = std::nullopt;
           if (r)
             create<mlir::scf::YieldOp>(l, values(vars));
@@ -4819,6 +5325,10 @@ class Gen {
     unsigned sites = 0;            // the `?`s that reach the handler
     std::set<const Node *> armsUsed;
     std::set<std::string> binds;   // the names the handled scope binds
+    // The `defer`s registered so far in the scope, outermost first: a `?`
+    // that leaves the scope runs them, innermost first, before its error
+    // reaches the handler or the caller.
+    std::vector<const Node *> defers;
   };
 
   static bool definesResult(const Node &n) {
@@ -4897,6 +5407,7 @@ class Gen {
         break;
       case NodeKind::While:
       case NodeKind::Handle:
+      case NodeKind::Defer:  // cleanup runs later, and cannot fail
       case NodeKind::Lambda:
       case NodeKind::Quantifier:
       case NodeKind::Assert:
@@ -5097,6 +5608,16 @@ class Gen {
       for (const Node *arm : *arms) onErr->add(syntax::clone(*arm));
     }
 
+    // Cleanup runs first, innermost first, on the way out (ADR 0028). The
+    // error is the `?`'s own immutable payload, read after the cleanup, so
+    // no cleanup can change or replace it.
+    for (const Node *d : f.defers) {
+      auto seq = syntax::makeNode(NodeKind::Sequence, at);
+      seq->add(syntax::clone(*d));
+      seq->add(std::move(onErr));
+      onErr = std::move(seq);
+    }
+
     syntax::NodePtr okValue = isUnit(ok)
                                   ? syntax::makeNode(NodeKind::Unit, at)
                                   : builtin("#payload", "Ok");
@@ -5113,6 +5634,97 @@ class Gen {
     R out = genExpr(chain, expected);
     popScope();
     return out;
+  }
+
+  // `defer d; rest`: `d` runs at every exit from `rest` (ADR 0028). Each
+  // normal exit, the nodes whose value is `rest`'s value, gets a copy of
+  // `d` after it, and each `?` that leaves the scope runs it before its
+  // error goes on, so every exit's cleanup is ordinary code there, which
+  // the verifier walks like the rest.
+  R genDefer(const Node &n, Type expected) {
+    const Node &d = *n.kids[0]->kids[0];
+    if (const Node *t = firstTry(d))
+      return fail(*t, "cleanup cannot fail, so a 'defer' cannot pass an "
+                      "error on with '?'; 'match' the result there");
+    syntax::NodePtr rest = withCleanup(*n.kids[1], d);
+    const Node &r = *rest;
+    matchTrees_.push_back(std::move(rest));  // diagnostics may point into it
+    if (frames_.empty()) return genExpr(r, expected);
+    if (frames_.back().tails.count(&n)) addTails(r);
+    frames_.back().defers.push_back(&d);
+    R out = genExpr(r, expected);
+    frames_.back().defers.pop_back();
+    return out;
+  }
+
+  static const Node *firstTry(const Node &n) {
+    if (n.kind == NodeKind::Try) return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (const Node *t = firstTry(*k)) return t;
+    return nullptr;
+  }
+
+  // A copy of `n` with `d` run after each node whose value is `n`'s value.
+  // An inner `defer`'s cleanup goes inside an outer one's, so they run in
+  // reverse order of registration.
+  static syntax::NodePtr withCleanup(const Node &n, const Node &d) {
+    auto copy = [&](std::initializer_list<size_t> exits) {
+      auto c = std::make_unique<Node>();
+      c->kind = n.kind;
+      c->text = n.text;
+      c->flags = n.flags;
+      c->loc = n.loc;
+      for (size_t i = 0; i < n.kids.size(); ++i) {
+        bool exit = false;
+        for (size_t e : exits) exit |= e == i;
+        c->kids.push_back(exit ? withCleanup(*n.kids[i], d)
+                               : syntax::clone(*n.kids[i]));
+      }
+      for (const syntax::NodePtr &k : n.comments)
+        c->comments.push_back(syntax::clone(*k));
+      return c;
+    };
+    switch (n.kind) {
+      case NodeKind::LetIn:
+        return copy({4});
+      case NodeKind::Sequence:
+      case NodeKind::Arm:
+        return copy({1});
+      case NodeKind::Cleanup:
+        return copy({0});
+      case NodeKind::If:
+        if (n.kids.size() > 2 && n.kids[2]->kind != NodeKind::None)
+          return copy({1, 2});
+        break;
+      case NodeKind::Match: {
+        auto c = copy({});
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          c->kids[i] = withCleanup(*n.kids[i], d);
+        return c;
+      }
+      default:
+        break;
+    }
+    auto c = syntax::makeNode(NodeKind::Cleanup, n.loc);
+    c->add(syntax::clone(n));
+    c->add(syntax::clone(d));
+    return c;
+  }
+
+  // An exit from a `defer`'s scope: its value, then the cleanup.
+  R genCleanup(const Node &n, Type expected) {
+    R v = genExpr(*n.kids[0], expected);
+    if (!v) return v;
+    for (size_t i = 1; i < n.kids.size(); ++i) {
+      R c = genExpr(*n.kids[i], Type());
+      if (!c) return c;
+      if (!isUnit(c->type))
+        return fail(*n.kids[i],
+                    "a 'defer' runs only for its effect, so its expression "
+                    "must have type unit, but this has type " +
+                        typeName(c->type));
+    }
+    return v;
   }
 
   // `body handle | p -> e ...`: the body with its `?`s handled here.
@@ -5188,8 +5800,23 @@ class Gen {
       return fail(valueNode, "'" + n.text + "' would have type unit");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
     pushScope();
-    bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
-    R body = genExpr(*n.kids[4], expected);
+    BindingPtr b =
+        bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
+    // A value with a `drop` is dropped at every exit from its scope that
+    // has not consumed it (#85), as if by a `defer` registered here.
+    const Node *bodyNode = n.kids[4].get();
+    const Node *drop = nullptr;
+    if (needsDrop(b)) {
+      drop = &dropNode(n.text, n.loc);
+      bodyNode = keep(withCleanup(*bodyNode, *drop));
+      if (!frames_.empty()) {
+        if (frames_.back().tails.count(&n)) addTails(*bodyNode);
+        frames_.back().defers.push_back(drop);
+      }
+    }
+    R body = genExpr(*bodyNode, expected);
+    if (drop && !frames_.empty()) frames_.back().defers.pop_back();
+    if (body && !consumed(b, n.loc)) body = std::nullopt;
     popScope();
     return body;
   }
@@ -5264,6 +5891,12 @@ class Gen {
   unsigned matchCounter_ = 0;
   std::vector<syntax::NodePtr> matchTrees_;
   std::deque<Frame> frames_;
+  // The locals moved so far on the path being generated (`moved`), and the
+  // loops open there.
+  std::map<BindingPtr, Move> moved_;
+  unsigned loopDepth_ = 0;
+  std::set<const void *> linear_;  // the `@linear` types
+  Type dropping_;                  // the type a `drop` being generated takes
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;
@@ -5273,6 +5906,7 @@ class Gen {
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
+  TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
@@ -5336,9 +5970,12 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,
   // Theories (ADR 0036) become ordinary items with qualified names.
   if (hasTheories(program)) {
     syntax::NodePtr flat = syntax::clone(program);
-    flattenTheories(*flat, diags);
+    TheoryInfo info;
+    flattenTheories(*flat, diags, &info);
     if (diags.hasErrors()) return nullptr;
-    return Gen(ctx, filename, diags, options).run(*flat);
+    Gen gen(ctx, filename, diags, options);
+    gen.setTheoryInfo(std::move(info));
+    return gen.run(*flat);
   }
   return Gen(ctx, filename, diags, options).run(program);
 }
