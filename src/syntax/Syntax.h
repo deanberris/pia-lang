@@ -115,6 +115,7 @@ namespace pia::syntax {
   X(PLit)          /* text=spelling */                                       \
   X(PCtor)         /* text=ctor; pattern+ */                                 \
   X(PTyped)        /* pattern, type */                                       \
+  X(PAs)           /* text=name; pattern */                                  \
   X(PRecord)       /* PField* */                                             \
   X(PField)        /* text=field; pattern? */                                \
   X(PSplice)       /* text=name */                                           \

@@ -7,7 +7,7 @@
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
-%declare ADAPTER HANDLE DEFER QUESTION
+%declare ADAPTER HANDLE DEFER QUESTION AS
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
 %declare IDENT INT FLOAT STRING QIDENT SPLICE_IDENT SPLICE_OPEN QUOTE_OPEN
 %declare ATTR ATTR_OPEN TARGS_OPEN TARGS_CLOSE LBRACE_ADJ HOLE
@@ -273,8 +273,10 @@ quoted_items: (let_item | meta_operator) (SEP? (let_item | meta_operator))*
 
 // ---------------------------------------------------------------- patterns
 
-?pattern: IDENT pattern_atom+ -> ctor_pattern
-        | pattern_atom
+?pattern: pattern_core
+        | pattern_core AS IDENT -> as_pattern
+?pattern_core: IDENT pattern_atom+ -> ctor_pattern
+             | pattern_atom
 
 ?pattern_atom: IDENT                         -> pvar
              | INT                           -> plit

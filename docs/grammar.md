@@ -59,7 +59,7 @@ Reserved words:
 let rec meta in type of where if then else match with for spread while do done
 requires ensures invariant decreases assert assume forall exists
 interface sig module struct end import operator true false
-borrowed moved out inout fixed mutable mod handle defer
+borrowed moved out inout fixed mutable mod handle defer as
 ```
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
@@ -293,14 +293,15 @@ arm   = pattern "->" seq ;
 ### Patterns
 
 ```ebnf
-pattern      = IDENT pattern_atom { pattern_atom } | pattern_atom ;   (* Num n *)
+pattern      = pattern_core [ "as" IDENT ] ;                          (* NoEntry as e *)
+pattern_core = IDENT pattern_atom { pattern_atom } | pattern_atom ;   (* Num n *)
 pattern_atom = IDENT | INT | STRING | "true" | "false" | SPLICE_IDENT
              | "(" pattern ":" type ")" | "(" pattern ")"
              | "{" pfield { ";" pfield } [ ";" ] "}" ;
 pfield       = IDENT [ "=" pattern ] ;
 ```
 
-`_` is an ordinary identifier pattern that binds nothing.
+`_` is an ordinary identifier pattern that binds nothing. `p as x` matches `p` and also binds `x` to the whole value, as in a handler arm `| NoEntry as e -> Err (Wrapped e)`.
 
 ### Modules and interfaces
 

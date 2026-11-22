@@ -1,0 +1,69 @@
+(* `?` and `handle` (#84, ADR 0028): what a handler cannot see, the errors
+   it must cover, and results that must be used.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let open_error = type | NoEntry | Denied
+let parse_error = type | Empty | TooLong of u8
+let app_error = type | Missing | Bad of u16
+
+let open_file (x : u8) : result u16 open_error = Ok x
+let parse (v : u16) : result u16 parse_error = Ok v
+let check (x : u8) : result unit open_error = Ok ()
+
+(* The arm for open_file's NoEntry runs before x'' exists. *)
+let late (x : u8) : result u16 app_error =
+  let x' = open_file x? in
+  let x'' = parse x'? in
+  Ok x''
+handle
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this arm is reached from the '?' at 16:{{[0-9]+}}, where 'x''' is not bound yet; an arm may use only what is bound at every '?' that reaches it (ADR 0028)
+*)
+| NoEntry -> Err (Bad x'')
+| e -> Err Missing
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this '?' can raise Denied, which no arm of the handler at {{[0-9]+}}:{{[0-9]+}} takes; add an arm for each, or a catch-all '| e -> ...'
+*)
+let uncovered (x : u8) : u16 = (open_file x? handle | NoEntry -> 0)
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this arm is never reached: no '?' in its scope can raise 'Empty' before an earlier arm takes it
+*)
+let unreached (x : u8) : u16 = (open_file x? handle | NoEntry -> 0 | Denied -> 1 | Empty -> 2)
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this arm is never reached: earlier arms take every error the '?'s in its scope can raise
+*)
+let extra (x : u8) : u16 = (open_file x? handle | NoEntry -> 0 | Denied -> 1 | e -> 2)
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: nothing in this scope passes an error on with '?', so its handler is never used
+*)
+let unused (x : u8) : u16 = (0 handle | NoEntry -> 1)
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this result is never used; pass its error on with '?', or 'match' it
+*)
+let dropped (x : u8) : u16 = (open_file x; 0)
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: '?' passes the error on to the caller, but 'plain' returns u16; return a result, or give the scope a 'handle'
+*)
+let plain (x : u8) : u16 = open_file x?
+
+let mismatch (x : u16) : result u16 open_error =
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this '?' passes on errors of type parse_error, but 'mismatch' returns errors of type open_error; give the scope a 'handle' that converts them
+*)
+  let v = parse x? in
+  Ok v
+
+let looped (n : u8) : result unit open_error =
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: a '?' in a loop body needs a 'handle' on that body for now, as in 'do step i? handle | e -> () done': its error cannot leave the loop yet
+*)
+  for i in 0..n do check i? done;
+  Ok ()
+
+let branch (x : u8) : result u16 open_error =
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: this '?' cannot end its scope from here: the scope still needs a value from the branch, arm or expression it is in; bind it with 'let' first, or give that part its own 'handle'
+*)
+  let v = (if x = 0 then 0 else open_file x?) in
+  Ok v
+
+(* CHECK: handler_errors.pia:[[@LINE+1]]:{{[0-9]+}}: error: a '?' inside a handler arm is not supported yet; 'match' the result there instead
+*)
+let nested (x : u8) : u16 = (open_file x? handle | NoEntry -> open_file 1? | e -> 0)

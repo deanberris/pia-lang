@@ -152,4 +152,79 @@
       )
     )
   )
+  (LetItem "wrap"
+    (Params
+      (Param "path"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeApp
+          (TypeName "result")
+          (TypeName "u8")
+          (TypeName "app_error")
+        )
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Handle
+      (LetIn "f"
+        (Params)
+        (None)
+        (Contracts)
+        (Try
+          (Apply
+            (Name "open_read")
+            (Name "path")
+          )
+        )
+        (Apply
+          (Name "Ok")
+          (Name "f")
+        )
+      )
+      (Arm
+        (PAs "e"
+          (PVar "NoEntry")
+        )
+        (Apply
+          (Name "Err")
+          (Apply
+            (Name "Wrapped")
+            (Name "e")
+          )
+        )
+      )
+      (Arm
+        (PCtor "PngError"
+          (PVar "p")
+        )
+        (Apply
+          (Name "Err")
+          (Apply
+            (Name "BadImage")
+            (Name "p")
+          )
+        )
+      )
+      (Arm
+        (PVar "e")
+        (Apply
+          (Name "Err")
+          (Apply
+            (Name "Other")
+            (Name "e")
+          )
+        )
+      )
+    )
+  )
 )

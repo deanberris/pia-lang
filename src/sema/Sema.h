@@ -265,6 +265,10 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
 // Whether a parameter is a type parameter: `(t : type)`.
 bool isTypeParam(const syntax::Node &param);
 
+// Defines the type items of `program` alone, as for the prelude's types.
+void defineTypeItems(const syntax::Node &program, TypeResolver &types,
+                     syntax::Diagnostics &diags);
+
 // Defines every type item, in order, then collects the signature of every
 // top-level function. Items outside the subset are reported here, so IRGen
 // only sees definitions it can lower. The map is keyed by symbol, which is

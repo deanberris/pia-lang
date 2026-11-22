@@ -1279,14 +1279,24 @@ class Parser {
     }
   }
 
+  // `p as x` matches `p` and binds `x` to the whole value. The node sits
+  // at `x`, the name it binds.
   NodePtr pattern() {
+    NodePtr p;
     if (at(K::Ident) && canStartPatternAtom(kind(1))) {
       auto c = makeNode(N::PCtor, loc(), text());
       take();
       while (canStartPatternAtom(kind())) c->add(patternAtom());
-      return c;
+      p = std::move(c);
+    } else {
+      p = patternAtom();
     }
-    return patternAtom();
+    if (!accept(K::As)) return p;
+    SourceLoc at = loc();
+    auto a = makeNode(N::PAs, at,
+                      std::string(expect(K::Ident, "a name after 'as'").text));
+    a->add(std::move(p));
+    return a;
   }
 
   NodePtr patternAtom() {

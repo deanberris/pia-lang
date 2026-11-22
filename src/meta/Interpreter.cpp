@@ -138,8 +138,8 @@ bool isTypePosition(NodeKind parent, size_t index) {
 bool hasBinderText(NodeKind k) {
   switch (k) {
     case NodeKind::LetItem: case NodeKind::LetIn: case NodeKind::Param:
-    case NodeKind::PVar: case NodeKind::Binder: case NodeKind::RangeBinder:
-    case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
+    case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
+    case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
     case NodeKind::QuotedDecl:
       return true;
     default:
@@ -664,7 +664,8 @@ class QuoteBuilder {
   void collectBinders(const Node &n, bool top) {
     if (n.kind == NodeKind::Splice) return;
     bool binds = n.kind == NodeKind::LetIn || n.kind == NodeKind::Param ||
-                 n.kind == NodeKind::PVar || n.kind == NodeKind::Binder ||
+                 n.kind == NodeKind::PVar || n.kind == NodeKind::PAs ||
+                 n.kind == NodeKind::Binder ||
                  n.kind == NodeKind::RangeBinder ||
                  (n.kind == NodeKind::LetItem && !top);
     if (binds && !n.text.empty() && n.text[0] != '$' &&

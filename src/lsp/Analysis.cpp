@@ -125,7 +125,7 @@ const std::vector<std::string_view> &keywords() {
       "exists",   "interface", "sig",     "module",    "struct",   "end",
       "import",   "operator", "true",     "false",     "borrowed", "moved",
       "out",      "inout",    "fixed",    "mutable",   "mod",      "step",
-      "handle",   "defer"};
+      "handle",   "defer",    "as"};
   return words;
 }
 
@@ -368,6 +368,7 @@ class Resolver {
       bind(simple(p, role));
       return;
     }
+    if (p.kind == N::PAs) bind(simple(p, role));
     for (const auto &k : p.kids)
       if (k) {
         if (p.kind == N::PTyped && k.get() != p.kids[0].get()) walk(*k);

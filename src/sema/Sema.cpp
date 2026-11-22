@@ -574,6 +574,11 @@ void defineTypes(const Node &program, TypeResolver &types,
 
 }  // namespace
 
+void defineTypeItems(const Node &program, TypeResolver &types,
+                     syntax::Diagnostics &diags) {
+  defineTypes(program, types, diags);
+}
+
 bool isTypeParam(const Node &p) {
   return p.kind == NodeKind::Param && !p.kids.empty() &&
          p.kids[0]->kind == NodeKind::Annot &&
