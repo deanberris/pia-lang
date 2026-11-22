@@ -49,6 +49,8 @@ A variant `let shape = type | Circle of u16 | Empty` is a record named `shape` w
 
 `match` checks its arms first: they must cover every constructor or end with a catch-all, and an arm after a catch-all, a constructor matched twice, or a catch-all after every constructor is an error. It then becomes a chain of `if`s on the tag, the last arm untested, with each arm's payload bound by a `let`. So arms carry mutable locals and join their result types exactly as `if` does.
 
+An arm may carry contracts between its pattern and `->` ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)): `| Some i requires i < len xs ensures result = xs.[i] -> xs.[i]`. A `requires` is not a guard. It becomes an assertion at the start of the arm, so it is proved for every value that reaches the arm, from what is known at the `match`. An `ensures` becomes an assertion on the arm's value, `result`. Handler arms are arms of a `match`, so they take contracts too, proved at each `?` that reaches them.
+
 ## Bindings and mutation
 
 - `let x = e in body` binds an SSA value. An annotation converts `e` to the declared type.

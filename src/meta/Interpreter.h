@@ -73,6 +73,9 @@ struct TypeInfo {
   std::vector<std::string> args;
   // Its size in bytes, or nothing when it has no fixed size.
   std::optional<int64_t> size;
+  // An array's length, and the generic an instance comes from (`option`).
+  std::optional<int64_t> length;
+  std::string generic;
 };
 
 struct TypeHost {
@@ -148,6 +151,8 @@ class Interpreter {
   ValuePtr binary(const syntax::Node &n, const EnvPtr &env);
   ValuePtr binop(const std::string &op, const ValuePtr &a, const ValuePtr &b);
   ValuePtr quote(const syntax::Node &n, const EnvPtr &env);
+  ValuePtr match(const syntax::Node &n, const EnvPtr &env);
+  bool matches(const syntax::Node &p, const ValuePtr &v, EnvPtr &env);
   void tick(const syntax::Node &n);
 
   std::function<bool(const std::string &)> isTypeDefined_;

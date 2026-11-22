@@ -1140,6 +1140,7 @@ class Gen {
       std::string bind;
       std::string as;  // `p as x` binds `x` to the whole value
       syntax::SourceLoc asAt;
+      const Node *contracts = nullptr;  // `requires` and `ensures` (ADR 0035)
       const Node *body = nullptr;
       const Node *at = nullptr;
     };
@@ -1150,6 +1151,7 @@ class Gen {
       const Node &arm = *n.kids[i];
       const Node &pat = corePattern(*arm.kids[0]);
       ArmInfo a;
+      if (arm.kids.size() > 2) a.contracts = arm.kids[2].get();
       if (arm.kids[0]->kind == NodeKind::PAs) {
         a.as = arm.kids[0]->text;
         a.asAt = arm.kids[0]->loc;
@@ -1239,6 +1241,7 @@ class Gen {
     bool tail = !frames_.empty() && frames_.back().tails.count(&n);
     auto armBody = [&](const ArmInfo &a) -> syntax::NodePtr {
       syntax::NodePtr body = syntax::clone(*a.body);
+      if (a.contracts) body = withArmContracts(*a.contracts, std::move(body));
       // An arm of a match that ends its scope ends it too, so a `?` there
       // can end it as well.
       if (tail) addTails(*body);
@@ -1282,6 +1285,59 @@ class Gen {
     popScope();
     matchTrees_.push_back(std::move(chain));  // diagnostics may point into it
     return r;
+  }
+
+  // An arm's contracts (ADR 0035) as assertions: each `requires` is proved
+  // for every value that reaches the arm, before its body, and each
+  // `ensures` of the arm's value, named `result` there.
+  syntax::NodePtr withArmContracts(const Node &contracts,
+                                   syntax::NodePtr body) {
+    syntax::SourceLoc at = contracts.loc;
+    std::string value = "#arm" + std::to_string(matchCounter_++);
+    std::vector<const Node *> ensures;
+    for (const syntax::NodePtr &c : contracts.kids)
+      if (c->kind == NodeKind::Ensures) ensures.push_back(c.get());
+    if (!ensures.empty()) {
+      syntax::NodePtr rest = syntax::makeNode(NodeKind::Name, at, value);
+      for (auto it = ensures.rbegin(); it != ensures.rend(); ++it) {
+        auto assert = syntax::makeNode(NodeKind::Assert, (*it)->loc);
+        assert->add(renamed(*(*it)->kids[0], "result", value));
+        auto seq = syntax::makeNode(NodeKind::Sequence, (*it)->loc);
+        seq->add(std::move(assert));
+        seq->add(std::move(rest));
+        rest = std::move(seq);
+      }
+      auto let = syntax::makeNode(NodeKind::LetIn, at, value);
+      let->add(syntax::makeNode(NodeKind::Params, at));
+      let->add(syntax::makeNode(NodeKind::None, at));
+      let->add(syntax::makeNode(NodeKind::Contracts, at));
+      let->add(std::move(body));
+      let->add(std::move(rest));
+      body = std::move(let);
+    }
+    for (size_t i = contracts.kids.size(); i-- > 0;) {
+      const Node &c = *contracts.kids[i];
+      if (c.kind != NodeKind::Requires) continue;
+      auto assert = syntax::makeNode(NodeKind::Assert, c.loc);
+      assert->add(syntax::clone(*c.kids[0]));
+      auto seq = syntax::makeNode(NodeKind::Sequence, c.loc);
+      seq->add(std::move(assert));
+      seq->add(std::move(body));
+      body = std::move(seq);
+    }
+    return body;
+  }
+
+  // A copy of `n` with the name `from` spelled `to`.
+  static syntax::NodePtr renamed(const Node &n, const std::string &from,
+                                 const std::string &to) {
+    syntax::NodePtr c = syntax::clone(n);
+    std::function<void(Node &)> go = [&](Node &x) {
+      if (x.kind == NodeKind::Name && x.text == from) x.text = to;
+      for (syntax::NodePtr &k : x.kids) go(*k);
+    };
+    go(*c);
+    return c;
   }
 
   // `#is s C` and `#payload s C`, which only `match` produces.
@@ -2110,6 +2166,7 @@ class Gen {
     } else if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       info.kind = "array";
       info.element = typeValue(a.getElementType())->s;
+      info.length = static_cast<int64_t>(a.getLength());
     } else if (auto sl = mlir::dyn_cast<SliceType>(t)) {
       info.kind = "slice";
       info.element = typeValue(sl.getElementType())->s;
@@ -2124,8 +2181,10 @@ class Gen {
     } else {
       info.kind = "unknown";
     }
-    if (const sema::Instance *inst = types_.instanceOf(t))
+    if (const sema::Instance *inst = types_.instanceOf(t)) {
+      info.generic = inst->generic;
       for (Type a : inst->args) info.args.push_back(typeValue(a)->s);
+    }
     return info;
   }
 

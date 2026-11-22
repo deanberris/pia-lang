@@ -285,7 +285,7 @@ quoted = let_item { [ SEP ] let_item }            (* items *)
        | seq ;                                     (* an expression *)
 
 match = "match" seq "with" [ "|" ] arm { "|" arm } ;
-arm   = pattern "->" seq ;
+arm   = pattern { ( "requires" | "ensures" ) stmt } "->" seq ;
 ```
 
 `e?` passes an error on ([ADR 0028](adr/0028-error-propagation-and-cleanup.md)): it applies to the whole application before it, so `read_all m f?` is `(read_all m f)?`, and it binds tighter than every binary operator. `handle` ends the expression before it and attaches to what encloses it: a function body, a `let` value, a parenthesised expression (which is how a `let ... in` scope gets one) or a loop body. Its arms are parsed like a `match`'s. `defer` is reserved for scope cleanup and is not accepted yet.
@@ -297,7 +297,8 @@ pattern      = pattern_core [ "as" IDENT ] ;                          (* NoEntry
 pattern_core = IDENT pattern_atom { pattern_atom } | pattern_atom ;   (* Num n *)
 pattern_atom = IDENT | INT | STRING | "true" | "false" | SPLICE_IDENT
              | "(" pattern ":" type ")" | "(" pattern ")"
-             | "{" pfield { ";" pfield } [ ";" ] "}" ;
+             | "{" pfield { ";" pfield } [ ";" ] "}"
+             | "[" pattern "]" | "[" pattern ";" pattern "]" ;       (* types *)
 pfield       = IDENT [ "=" pattern ] ;
 ```
 

@@ -83,12 +83,35 @@ There, types are values. A type's name, such as `u8` or `pixel`, denotes the typ
 | `type_args t` | a generic instance's type arguments, as a list (empty for any other type) |
 | `eq ne lt gt le ge add sub mul div rem and or implies iff` | the core builtins that a `where` predicate's operators expand to |
 
+`match` takes a type too, which reads better than a cascade of `if`s:
+
+```ocaml
+let meta widen (t : type) : type =
+  match t with
+  | u8 ensures size_of result = 2 -> u16
+  | u16 -> u32
+  | u32 -> u64
+  | _ -> fail (concat "no integer type is wider than " (name t))
+
+let meta small (t : type) : bool =
+  match t with
+  | int -> size_of t <= 2
+  | [e; n] requires n > 0 -> n <= 16 && small e
+  | option e -> small e
+  | _ -> false
+```
+
+- A type's name matches that type, and `int` every integer type. `[e]` matches a slice and `[e; n]` an array, binding the element type and the length. A generic's name applied to patterns, as in `option e`, matches its instances, binding their type arguments. `record fs` and `variant cs` bind the list of field or payload types. Any other name binds the whole type, and `p as x` binds it as well as matching `p`.
+- Types are an open set, so a match on a type must end with a catch-all.
+- An arm's `requires` is not a guard: if a type reaches the arm and it does not hold, that is an error (or, during overload resolution, the candidate's reason). An arm's `ensures` is checked of the arm's value, `result`, when the arm is taken.
+- The same arm contracts work on a value `match` in ordinary code, where they are proof goals ([irgen.md](irgen.md#variants)).
+
 A metaprogram that runs during expansion has no type values: a type's name there is an unknown name, as before.
 
 A type-level metaprogram that a type or a constraint uses must terminate, so that which overloads a call can choose never depends on the step budget. The compiler checks this where it is defined, and an error is reported only where one that may not terminate is used:
 
 - it may call the builtins, except `listing` and `redefine`, and other type-level metaprograms that terminate;
-- a recursive call must be on a component of a type parameter, in one parameter position that all its recursive calls share: `element t`, or an element of `field_types t` or `type_args t` that `map` or `fold` hands to a lambda, or a component of one of those. Types are finite trees, so this always ends;
+- a recursive call must be on a component of a type parameter, in one parameter position that all its recursive calls share: `element t`, an element of `field_types t` or `type_args t` that `map` or `fold` hands to a lambda, a name that a `match` on `t` binds below its top (`e` in `[e]` or `option e`), or a component of one of those. Types are finite trees, so this always ends;
 - local functions may not recurse, it may refer to itself only by calling itself, and a cycle of metaprograms calling each other is rejected (it would need a measure they all decrease, which is not supported yet).
 
 ```ocaml

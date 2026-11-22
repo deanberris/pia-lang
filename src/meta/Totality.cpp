@@ -169,12 +169,53 @@ class Checker {
         walk(*n.kids[4], inner);
         return;
       }
+      case NodeKind::Match: {
+        // A match on a parameter binds its components: `[e]`, `[e; n]`
+        // and the type arguments of `option e` are smaller than it.
+        walk(*n.kids[0], smaller);
+        std::optional<size_t> of;
+        for (size_t i = 0; i < params_.size(); ++i)
+          if (reaches(*n.kids[0], i, smaller)) of = i;
+        for (size_t a = 1; a < n.kids.size(); ++a) {
+          const Node &arm = *n.kids[a];
+          Smaller inner = smaller;
+          if (of) bindComponents(*arm.kids[0], *of, false, inner);
+          for (size_t k = 1; k < arm.kids.size(); ++k) walk(*arm.kids[k], inner);
+        }
+        return;
+      }
       case NodeKind::Quote:
         // Only what a quote splices runs.
         walkSplices(n, smaller);
         return;
       default:
         for (const NodePtr &k : n.kids) walk(*k, smaller);
+    }
+  }
+
+  // The names a type pattern binds below its top: components of `i`.
+  void bindComponents(const Node &p, size_t i, bool below, Smaller &out) {
+    switch (p.kind) {
+      case NodeKind::PVar:
+        if (below && p.text != "_") out[p.text] = i;
+        return;
+      case NodeKind::PAs:
+        if (below) out[p.text] = i;
+        bindComponents(*p.kids[0], i, below, out);
+        return;
+      case NodeKind::PSlice:
+        bindComponents(*p.kids[0], i, true, out);
+        return;
+      case NodeKind::PArray:  // the length is a number, not a component
+        bindComponents(*p.kids[0], i, true, out);
+        return;
+      case NodeKind::PCtor:
+        // `record fs` binds a list, which is not itself a type.
+        if (p.text == "record" || p.text == "variant") return;
+        for (const NodePtr &k : p.kids) bindComponents(*k, i, true, out);
+        return;
+      default:
+        return;
     }
   }
 
