@@ -1672,6 +1672,16 @@ class Gen {
       if (isExact(ops->first.type) || isExact(ops->second.type))
         return genExactArith(n, op, ops->first, ops->second, lhsNode,
                              rhsNode);
+      // A spec function's `int` result, or another exact context, takes
+      // the exact value: `b * 16` with a range-typed `b` cannot overflow.
+      if (isExact(expected) &&
+          (op == "+" || op == "-" || op == "*" || op == "/" || op == "%") &&
+          mlir::isa<IntType>(ops->first.type) &&
+          mlir::isa<IntType>(ops->second.type)) {
+        R l2 = coerce(ops->first, expected, lhsNode);
+        if (!l2) return std::nullopt;
+        return genExactArith(n, op, *l2, ops->second, lhsNode, rhsNode);
+      }
       // Arithmetic happens at the join of the operand types and, when the
       // context expects a wider integer, at that type: `dst.[i] <- src.[i] * 3`
       // with u8 `src` and u16 `dst` multiplies at u16.

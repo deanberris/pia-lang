@@ -619,7 +619,18 @@ let lemma use_after_give (h : Alloc.heap) (a : blk) : unit
 = ()
 ```
 
-`fresh_apart` and `reuse` prove from the axioms alone, with no quantifier in sight, and `use_after_give` fails: using a block after giving it back is the use-after-free the theory exists to rule out. The `bits` model proves every axiom, so nothing is trusted.
+```console
+$ piac --verify alloc.pia
+alloc.pia:34:3: proved: the postcondition holds [smt]
+...
+alloc.pia:49:3: failed: the postcondition holds
+  counterexample in the model 'bits': h = 12297829382473034410, a = 2
+...
+alloc.pia:18:5: proved: the model 'bits' meets the axiom 'Alloc.apart' [smt]
+18 proved, 1 failed, 0 skipped
+```
+
+`fresh_apart` and `reuse` prove from the axioms alone, with no quantifier in sight, and `use_after_give` fails: using a block after giving it back is the use-after-free the theory exists to rule out. In the counterexample, `h` is `0xAAAA...AAAA`, whose bit 2 is clear, so block 2 is dead after the give. The `bits` model proves every axiom, so nothing is trusted.
 
 What the theory cannot do yet is follow a running allocator. Its heap is spec-only, and code cannot hold one, so `take` and `give` in pool.pia cannot say `ensures p.heap = Alloc.take (old p.heap) result.i`. [ADR 0041](adr/0041-allocator-semantics-as-a-theory.md) proposes ghost state for that: a field or parameter the verifier sees and codegen erases. Each allocator then proves, once and privately, that its data structure matches the heap, and its users see only `Alloc`.
 
