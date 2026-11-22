@@ -14,6 +14,7 @@ DOCS = [
     "//docs:repl.md",
     "//docs:status.md",
     "//docs:streams.pia.md",
+    "//docs:theories.md",
 ]
 
 py_test(
