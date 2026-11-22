@@ -293,6 +293,9 @@ struct FuncSig {
   // specialisation, in which those parameters are gone. These are their
   // names, in order.
   std::vector<std::string> fnParams;
+  // Its result is written as a function type, `: u8 -> u8`: an opaque
+  // type that meets `Function`, the closure the body makes (ADR 0044).
+  bool arrowResult = false;
   bool isHigherOrder() const { return !fnParams.empty(); }
   // One of several functions that share the written name `item->text`
   // (ADR 0034). `name`, the symbol, then carries the parameter types.

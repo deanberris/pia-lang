@@ -183,7 +183,7 @@ std::string smtSymbol(llvm::StringRef name) {
   for (char c : name) {
     if (c == ' ') continue;
     // A function parameter's stand-in type, `p#type` (ADR 0044, step 6).
-    out += c == ',' ? '.' : c == '#' ? '!' : c;
+    out += c == ',' ? '.' : c == '#' ? '!' : c == ':' ? '$' : c;
   }
   return out;
 }
@@ -552,7 +552,7 @@ class Encoder {
     // take it, and nothing is claimed about it.
     if (auto r = mlir::dyn_cast<RecordType>(t))
       if (r.getFieldTypes().empty()) {
-        std::string name = "unit." + r.getName().str();
+        std::string name = "unit." + smtSymbol(r.getName());
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
