@@ -43,7 +43,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 
 | Header | Pia | Kind | Status |
 | --- | --- | --- | --- |
-| `<memory>` | `Pia.Mem`: allocators (ADR 0026); `unique_ptr` is a `@linear` or `Drop` box; `uninitialized_*` are `out` slices | Idiom | phase 2 |
+| `<memory>` | `Pia.Mem`: allocators (ADR 0026); no `unique_ptr`: one non-null `box t` or `box c` over a concept `c` (type-erased, contents proved to meet `c`; ADR 0040 section 4), freed through its stored allocator, `option (box t)` when it may be empty; `uninitialized_*` are `out` slices | Idiom | phase 2 |
 | `shared_ptr`, `weak_ptr` | `Pia.Mem.Rc` | Deferred: atomics, recursive types | later |
 | `<memory_resource>` | `arena` (`monotonic_buffer_resource`), `pool` (`unsynchronized_pool_resource`), `shared` (`synchronized_pool_resource`) | Direct: every Pia container is a `pmr` container | #59, #71 |
 | `<new>` | allocation is a `Pia.Mem` call returning `result`; there is no `new`, no placement `new` (`out` memory is written instead) and no `bad_alloc` (`OutOfMemory`) | Idiom (ADR 0026) | n/a |
