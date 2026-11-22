@@ -763,10 +763,17 @@ class Gen {
     dropping_ = sig.name == "drop" && sig.params.size() == 1
                     ? sig.params[0].type
                     : Type();
+    // `= extern "symbol"`: a C function (#55).
+    std::string foreign;
+    bool isExtern = externSymbol(bodyNode, foreign);
+    if (isExtern) {
+      fn.setPrivate();
+      fn->setAttr("pia.extern", b_.getStringAttr(foreign));
+    }
     // A `moved` parameter with a `drop` is dropped at the end of the body
     // unless it is consumed first.
     const Node *bodyPtr = &bodyNode;
-    if (!isSpec && !ghost_)
+    if (!isSpec && !ghost_ && !isExtern)
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
           if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
@@ -775,8 +782,9 @@ class Gen {
             frames_.back().defers.push_back(&d);
           }
     if (!isSpec) addTails(*bodyPtr);
-    R body = isSpec ? genContractExpr(bodyNode, sig.result)
-                    : genExpr(*bodyPtr, sig.result);
+    R body = isExtern ? genForeign(bodyNode, foreign, sig, entry)
+             : isSpec ? genContractExpr(bodyNode, sig.result)
+                      : genExpr(*bodyPtr, sig.result);
     if (!body) return;
     if (!isSpec && !ghost_) {
       bool owned = true;
@@ -2147,6 +2155,15 @@ class Gen {
 
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
+    if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
+                                     f.flags.empty() && !lookup(f.text) &&
+                                     overloadSet(f.text).empty()) {
+      if (f.text == "unsafe") return genUnsafe(n);
+      if (f.text == "extern")
+        return fail(n, "'extern \"symbol\"' is only a function's whole body, "
+                       "as in 'let f (x : i32) : i32 ensures true = extern "
+                       "\"f\"'");
+    }
     // `f<u8> x` names the type arguments; the rest are deduced.
     const Node *targs = nullptr;
     const Node *callee = n.kids[0].get();
@@ -2278,6 +2295,26 @@ class Gen {
     if (sig.item && hasFlag(*sig.item, "lemma") && contract_)
       return fail(n, "'" + sig.name + "' is a lemma: call it as a statement, "
                      "and its postcondition holds after the call");
+    {
+      std::string symbol;
+      bool foreign = sig.item && sig.item->kids.size() > 3 &&
+                     externSymbol(*sig.item->kids[3], symbol);
+      bool contracted = false;
+      if (foreign)
+        for (const syntax::NodePtr &c : sig.item->kids[2]->kids)
+          contracted |= c->kind == NodeKind::Requires ||
+                        c->kind == NodeKind::Ensures;
+      bool isUnsafe = unsafeAt_ == &n;
+      if (foreign && !contracted && !isUnsafe)
+        return fail(n, "'" + sig.name + "' is a foreign function without a "
+                       "contract, so only 'unsafe " + sig.name + " ...' can "
+                       "call it; or give its declaration a 'requires' or "
+                       "'ensures', even 'ensures true'");
+      if (isUnsafe && !(foreign && !contracted))
+        return fail(n, "'unsafe' marks a call of a foreign function without "
+                       "a contract, and '" + sig.name + "' is not one; "
+                       "call it without 'unsafe'");
+    }
     // A lemma's call is erased from code, so its arguments are
     // specification, which may use spec functions, `int` and `real`.
     bool savedGhost = ghost_;
@@ -4417,6 +4454,7 @@ class Gen {
     if (!isUnit(sig.result)) results.push_back(sig.result);
     auto call = create<mlir::func::CallOp>(loc(n), sig.name, results,
                                               operands);
+    if (unsafeAt_ == &n) call->setAttr("pia.unsafe", b_.getUnitAttr());
     // A call left open between overloads told apart by their
     // preconditions: the verifier chooses (verify::resolveOverloads).
     if (openCandidates_ && sig.name == openFor_) {
@@ -4899,6 +4937,78 @@ class Gen {
       for (Type f : rt.getFieldTypes())
         if (isLinear(f)) return true;
     return false;
+  }
+
+  // --- FFI (#55) -------------------------------------------------------
+
+  // Whether `body` is `extern "symbol"`, and the symbol.
+  static bool externSymbol(const Node &body, std::string &symbol) {
+    if (body.kind != NodeKind::Apply || body.kids.size() != 2) return false;
+    const Node &f = *body.kids[0], &s = *body.kids[1];
+    if (f.kind != NodeKind::Name || f.text != "extern" || !f.flags.empty() ||
+        s.kind != NodeKind::StringLit)
+      return false;
+    symbol = s.text;
+    if (symbol.size() >= 2 && symbol.front() == '"' && symbol.back() == '"')
+      symbol = symbol.substr(1, symbol.size() - 2);
+    return true;
+  }
+
+  bool foreignType(Type t) {
+    if (mlir::isa<IntType>(t) || isBool(t)) return true;
+    if (mlir::isa<ArrayType, SliceType>(t))
+      return mlir::isa<IntType>(elementType(t));
+    return false;
+  }
+
+  // An extern's body: the C call, with the parameters as its arguments.
+  R genForeign(const Node &body, const std::string &symbol,
+               const sema::FuncSig &sig, Block *entry) {
+    if (symbol.empty() ||
+        !llvm::all_of(symbol, [](char c) {
+          return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        }))
+      return fail(*body.kids[1], "a C symbol is letters, digits and '_'");
+    for (const sema::Param &p : sig.params)
+      if (!foreignType(p.type)) {
+        diags_.error(p.loc, "a foreign function takes integers, bools and "
+                            "buffers of integers for now, but '" + p.name +
+                            "' has type " + typeName(p.type));
+        return std::nullopt;
+      }
+    if (!sig.result || !(isUnit(sig.result) || mlir::isa<IntType>(sig.result) ||
+                         isBool(sig.result)))
+      return fail(body, "a foreign function returns unit, an integer or a "
+                        "bool for now");
+    llvm::SmallVector<Type> results;
+    if (!isUnit(sig.result)) results.push_back(sig.result);
+    llvm::SmallVector<Value> args(entry->getArguments().begin(),
+                                  entry->getArguments().end());
+    auto op = create<ForeignOp>(loc(body), results,
+                                b_.getStringAttr(symbol), args);
+    if (results.empty()) return unit();
+    return TV{op.getResult(0), sig.result};
+  }
+
+  // `unsafe f x`: a call of a foreign function that has no contract. The
+  // caller vouches for it; the verifier assumes nothing it does.
+  R genUnsafe(const Node &n) {
+    if (n.kids.size() < 2 || n.kids[1]->kind != NodeKind::Name)
+      return fail(n, "'unsafe' marks one call, as in 'unsafe f x'");
+    syntax::NodePtr call;
+    if (n.kids.size() == 2) {
+      call = syntax::clone(*n.kids[1]);
+    } else {
+      call = syntax::makeNode(NodeKind::Apply, n.kids[1]->loc);
+      for (size_t i = 1; i < n.kids.size(); ++i)
+        call->add(syntax::clone(*n.kids[i]));
+    }
+    const Node *c = keep(std::move(call));
+    const Node *saved = unsafeAt_;
+    unsafeAt_ = c;
+    R r = genExpr(*c, Type());
+    unsafeAt_ = saved;
+    return r;
   }
 
   // --- `drop` (#85) -----------------------------------------------------
@@ -5846,6 +5956,7 @@ class Gen {
   unsigned loopDepth_ = 0;
   std::set<const void *> linear_;  // the `@linear` types
   Type dropping_;                  // the type a `drop` being generated takes
+  const Node *unsafeAt_ = nullptr; // the call an `unsafe` marks
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;

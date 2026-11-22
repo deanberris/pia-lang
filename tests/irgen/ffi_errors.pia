@@ -1,0 +1,24 @@
+(* Foreign functions (#55): a call without a contract needs `unsafe`.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let point = type { x : i32 }
+
+let raw (x : i32) : i32 = extern "raw_c"
+let clamp (x : i32) : i32 ensures result >= 0 = extern "clamp_c"
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'raw' is a foreign function without a contract, so only 'unsafe raw ...' can call it; or give its declaration a 'requires' or 'ensures', even 'ensures true'
+*)
+let plain (x : i32) : i32 = raw x
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'unsafe' marks a call of a foreign function without a contract, and 'clamp' is not one; call it without 'unsafe'
+*)
+let needless (x : i32) : i32 = unsafe clamp x
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a foreign function takes integers, bools and buffers of integers for now, but 'p' has type point
+*)
+let by_record (p : point) : i32 ensures true = extern "by_record"
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'extern "symbol"' is only a function's whole body
+*)
+let inside (x : i32) : i32 = extern "f" + 1

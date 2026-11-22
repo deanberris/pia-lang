@@ -434,6 +434,22 @@ def Pia_AbortOp : Pia_Op<"abort"> {
   let assemblyFormat = "attr-dict (`:` type($results)^)?";
 }
 
+def Pia_ForeignOp : Pia_Op<"foreign"> {
+  let summary = "call a C function: the body of an `extern` declaration";
+  let description = [{
+    `%r = pia.foreign "crc32_z"(%crc, %buf, %n) : (...) -> ...` is the whole
+    body of `let crc32_z ... = extern "crc32_z"` (#55). The verifier never
+    looks inside: callers rely on the declaration's contract, which is
+    trusted. Codegen calls the C symbol, passing a buffer as its data
+    pointer.
+  }];
+  let arguments = (ins StrAttr:$symbol, Variadic<AnyType>:$args);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $symbol `(` $args `)` attr-dict `:` functional-type($args, $results)
+  }];
+}
+
 def Pia_RecordOp : Pia_Op<"record", [Pure]> {
   let summary = "build a record from its fields, in declaration order";
   let description = [{
