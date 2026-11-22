@@ -581,6 +581,45 @@ struct EmptyLowering : mlir::OpConversionPattern<EmptyOp> {
   }
 };
 
+// A `with_arena`'s memory (#70): stack storage made once on entry to the
+// function, so a `with_arena` in a loop does not grow the stack, and
+// zeroed each time the `with_arena` is entered.
+struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      RegionOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!type) return mlir::failure();
+    auto elem = mlir::dyn_cast<mlir::IntegerType>(type.getElementType());
+    auto fn = op->getParentOfType<mlir::func::FuncOp>();
+    if (!elem || !fn) return mlir::failure();
+    Value storage;
+    {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(&fn.getBody().front());
+      storage = make<mlir::memref::AllocaOp>(rw, loc, type);
+    }
+    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem,
+                                               rw.getIntegerAttr(elem, 0));
+    Value lo = make<mlir::arith::ConstantIndexOp>(rw, loc, 0);
+    Value hi = make<mlir::arith::ConstantIndexOp>(
+        rw, loc, static_cast<int64_t>(op.getType().getLength()));
+    Value one = make<mlir::arith::ConstantIndexOp>(rw, loc, 1);
+    auto loop = make<mlir::scf::ForOp>(rw, loc, lo, hi, one);
+    {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPoint(loop.getBody()->getTerminator());
+      make<mlir::memref::StoreOp>(rw, loc, zero, storage,
+                                  mlir::ValueRange{loop.getInductionVar()});
+    }
+    rw.replaceOp(op, storage);
+    return mlir::success();
+  }
+};
+
 // `abort ()`: proved unreachable; if reached anyway, it traps. A result it
 // stands for is never used, so it is zero.
 struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
@@ -853,7 +892,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                ArithLowering<ShlOp, Arith::Shl>,
                ArithLowering<ShrOp, Arith::Shr>, ConvertLowering, CmpLowering,
                ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, EmptyLowering, AbortLowering, ConstArrayLowering,
+               StoreLowering, SliceLowering, EmptyLowering, RegionLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(
       types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
