@@ -3,7 +3,7 @@
    `result (borrowed(m) [u8]) OutOfMemory`. The unused payload of a
    variant is an empty slice. A slice that an `if` or `match` chose is read
    from the branch taken; writing through one is refused.
-// RUN: not piac --verify %s | FileCheck %s
+// RUN: not piac --verify --no-lint %s | FileCheck %s
 *)
 
 let err = type | OutOfMemory
@@ -28,7 +28,9 @@ let peek (sp : borrowed span) : u8
   requires sp.used < len sp.data
 = sp.data.[sp.used]
 
-let make (buf : borrowed [u8]) : borrowed(buf) span = { data = buf; used = 0 }
+let make (buf : borrowed [u8]) : borrowed(buf) span
+  ensures result.used = 0 && len result.data = len buf
+= { data = buf; used = 0 }
 
 let fresh (buf : borrowed [u8]) : usize = let sp = make buf in unused sp
 
@@ -40,7 +42,7 @@ let pick (a : borrowed [u8]) (b : borrowed [u8]) (c : bool) : u8
 (* Out of bounds on one branch. *)
 let pick_bad (a : borrowed [u8]) (b : borrowed [u8]) (c : bool) : u8
   requires len a = 4 && len b = 2
-= let s = if c then a else b.[0 .. 0] in s.[0]
+= let s = if c then a else b.[0 .. len b - 2] in s.[0]
 
 (* Writing through a chosen slice is refused. *)
 let fill (x : borrowed out [u8]) : unit
@@ -50,3 +52,24 @@ let fill (x : borrowed out [u8]) : unit
 let poke (a : borrowed out [u8]) (b : borrowed out [u8]) (c : bool) : unit
   requires len a > 0 && len b > 0
 = let s = if c then a else b in fill s
+
+(* Expected report, in order.
+// CHECK: slice_aggregates.pia:14:27: proved: the slice is within bounds [smt]
+// CHECK: slice_aggregates.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: slice_aggregates.pia:19:13: proved: the index is within bounds [smt]
+// CHECK: slice_aggregates.pia:25:15: proved: '-' does not overflow usize [smt]
+// CHECK: slice_aggregates.pia:29:3: proved: the index is within bounds [smt]
+// CHECK: slice_aggregates.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: slice_aggregates.pia:35:{{[0-9]+}}: proved: the precondition of 'unused' holds [smt]
+// CHECK: slice_aggregates.pia:40:28: proved: the slice is within bounds [smt]
+// CHECK: slice_aggregates.pia:40:42: proved: the index is within bounds [smt]
+// CHECK: slice_aggregates.pia:45:{{[0-9]+}}: proved: '-' does not overflow usize
+// CHECK: slice_aggregates.pia:45:28: proved: the slice is within bounds [smt]
+// CHECK: slice_aggregates.pia:45:{{[0-9]+}}: failed: the index is within bounds
+// CHECK-NEXT: counterexample: len a = {{-?[0-9]+}}, len b = {{-?[0-9]+}}, c = false, index = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: slice_aggregates.pia:50:3: proved: the index is within bounds [smt]
+// CHECK: slice_aggregates.pia:54:33: proved: the precondition of 'fill' holds [smt]
+// CHECK: slice_aggregates.pia:54:33: failed: the write reaches a known buffer (writing through a slice chosen by an 'if' or 'match' is not supported yet; write before choosing)
+// CHECK-NEXT: counterexample: len a = {{-?[0-9]+}}, len b = {{-?[0-9]+}}, c = false
+// CHECK: 13 proved, 2 failed, 0 skipped
+*)
