@@ -1,0 +1,29 @@
+(* Pia.Core.Algo.Permutation: the multiset spec functions the sorting
+   algorithms state their results with (ADR 0040, phase 1.7), as counts,
+   which docs/stdlib.md plans first: ys is a permutation of xs when each
+   element of either occurs as often in both. They are spec functions,
+   exported for contracts such as `ensures permutation xs (old xs)`. *)
+module Pia.Core.Algo.Permutation : Permutation
+
+import Pia.Core.Order.Ops
+
+interface Permutation = sig
+  let spec occurrences : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (k : usize) -> usize
+  let spec permutation : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> bool
+end
+
+(** How many of xs.[0 .. k] are the same as v. *)
+let spec occurrences (t : type where Pia.Core.Order.Eq t) (xs : [t]) (v : t) (k : usize) : usize
+  requires k <= len xs
+  decreases k
+  ensures result <= k
+= if k = 0 then 0
+  else if same xs.[k - 1] v then occurrences xs v (k - 1) + 1
+  else occurrences xs v (k - 1)
+
+(** ys holds the same elements as xs, each as often: C++'s
+    std::is_permutation as a spec. *)
+let spec permutation (t : type where Pia.Core.Order.Eq t) (xs : [t]) (ys : [t]) : bool
+= len xs = len ys &&
+  (forall (i in 0..len xs). occurrences xs xs.[i] (len xs) = occurrences ys xs.[i] (len ys)) &&
+  (forall (i in 0..len ys). occurrences xs ys.[i] (len xs) = occurrences ys ys.[i] (len ys))

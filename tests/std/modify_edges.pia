@@ -48,7 +48,27 @@ let by_predicate (xs : borrowed inout mutable [u8]) : unit
   assert xs.[2] = 0;
   ()
 
+(* shift_left and shift_right by 0 keep everything, and by the length or
+   more keep nothing; by one, the element at 1 moves to 0. *)
+let shifts (xs : borrowed inout mutable [u8]) : unit
+  requires len xs = 3 && xs.[1] = 4
+= let none = M.shift_left xs 0 in
+  assert none = 3;
+  let all = M.shift_right xs 3 in
+  assert all = 3;
+  let shifted = M.shift_left xs 1 in
+  assert shifted = 2;
+  ()
+
+(* remove keeps the others, in order, at the front: [5; 6; 5; 7] without
+   5 is [6; 7], and the count is 2. *)
+let removes (xs : borrowed inout mutable [u8]) : unit
+  requires len xs = 4 && xs.[0] = 5 && xs.[1] = 6 && xs.[2] = 5 && xs.[3] = 7
+= let n = M.remove xs 5 in
+  assert n <= 4;
+  ()
+
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 28 proved, 0 failed, 0 skipped
+// CHECK: 36 proved, 0 failed, 0 skipped
 *)
