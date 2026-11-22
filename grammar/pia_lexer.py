@@ -6,6 +6,7 @@ tested before the C++ front end (milestone M2) is written. The C++ lexer must
 produce the same token stream for every file in tests/grammar.
 """
 
+import re
 from dataclasses import dataclass
 
 KEYWORDS = {
@@ -135,6 +136,10 @@ class Lexer:
                 self.line_start = self.pos + 1
             self.pos += 1
 
+    def name_then_colon_follows(self):
+        m = re.compile(r"\s*[A-Za-z_][A-Za-z0-9_']*\s*:(?!:)").match(self.text, self.pos)
+        return m is not None
+
     def name_follows(self):
         i = self.pos
         while i < len(self.text) and self.text[i] in " \t\r\n":
@@ -245,6 +250,11 @@ class Lexer:
                     kind = "STEP"
                 # `spec` and `lemma` are keywords only between `let` (or
                 # `let rec`) and the name they define.
+                # `adapter` is a keyword only in `let adapter name : ...`.
+                if word == "adapter" and self.out and \
+                        self.out[-1].type == "LET" and \
+                        self.name_then_colon_follows():
+                    kind = "ADAPTER"
                 if word in ("spec", "lemma") and self.out and \
                         self.out[-1].type in ("LET", "REC") and \
                         self.name_follows():

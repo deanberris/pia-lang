@@ -228,6 +228,16 @@ struct FuncSig {
   // (ADR 0034). `name`, the symbol, then carries the parameter types.
   bool overloaded = false;
   const std::string &source() const { return item->text; }
+  // A function of the adapter `adapter` (ADR 0034), named
+  // `adapter.name`: it is called only through the adapter, never by its
+  // own name.
+  std::string adapter;
+  // While this function is generated, names that call an adapter's
+  // functions instead, by symbol: an instance or a law made for a type
+  // that meets a concept through an adapter.
+  std::map<std::string, std::vector<std::string>> adapted;
+  // The adapter chosen for each concept and arguments, `Same<u8>`.
+  std::map<std::string, std::string> adapterFor;
 };
 
 // Resolves the value parameters and result type of `item` into `sig`, with

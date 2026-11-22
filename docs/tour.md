@@ -292,6 +292,29 @@ let biggest (a : u8) (b : u8) : u8 = max a b
 
 A type meets a concept when a function with each requirement's name and exact type is in scope, so `u8` meets `Ord` through the two functions above. Each law is then proved for `u8`, from those functions' contracts. A call with a type that does not meet a constraint is an error that says what is missing: `bool does not meet Ord: no function 'same : bool -> bool -> bool' (from 'include Same')`. A generic body may use only what its constraints promise, and that is checked where the generic is written: with `(t : type where Same t)`, a call `less a b` is an error that suggests constraining `t` by `Ord t`, even if no caller has used the generic yet.
 
+An adapter supplies a concept's requirements for a type that does not meet it, or meets it in a way a caller does not want. Its functions are reached only through it, never by their own names:
+
+```ocaml
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+end
+
+let pixel = type { r : u8; g : u8 }
+
+let adapter by_red : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool
+    ensures result <==> p.r = q.r
+  = (p.r = q.r)
+end
+
+let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+let red_alike (p : pixel) (q : pixel) : bool = alike p q
+```
+
+A type that meets a concept directly uses its own functions. An adapter is used when the call names it, as in `alike<Same = by_red> p q`, or when it is the only way the type meets the concept, as here. Its laws are proved about its own functions. Two adapters for the same concept and type, with neither named, are an error that names both.
+
 Functions may share a name when their parameter types differ. They form an overload set, and each call picks the one that fits its arguments best: an exact type beats a conversion, and a function that is not generic beats a generic one. A generic overload whose type arguments do not meet its constraints drops out of the call, so it is only chosen for the types it can serve.
 
 

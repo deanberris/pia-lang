@@ -308,6 +308,7 @@ sig_item  = "let" binder ":" annot { attribute } { contract }    (* exported sym
 sig_value = "sig" { sig_item | concept_item } "end" ;          (* a concept's body *)
 concept_item = "include" type                                  (* "include" is contextual *)
              | "let" "lemma" IDENT { param } { contract } ;   (* a law *)
+adapter   = "let" "adapter" IDENT ":" type "=" "struct" { item } "end" ;  (* "adapter" is contextual *)
 module    = "module" IDENT [ ":" path { "," path } ] "=" "struct" { item } "end" ;
 ```
 

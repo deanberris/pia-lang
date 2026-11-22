@@ -1,0 +1,48 @@
+(* Adapters (ADR 0034): an adapter supplies a concept's requirements for a
+   type. It is used when a call names it, or when it is the only way the
+   type meets the concept. Its laws are proved about its own functions.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let meta Same (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+  let lemma reflexive (a : t) ensures same a a
+end
+
+let pixel = type { r : u8; g : u8 }
+
+(* pixel has no 'same' of its own, so this adapter is the only way. *)
+let adapter by_red : Same pixel = struct
+  let same (p : pixel) (q : pixel) : bool
+    ensures result <==> p.r = q.r
+  = (p.r = q.r)
+end
+
+let same (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= (a = b)
+
+(* u8 meets Same directly, so this one is used only when it is named. *)
+let adapter always : Same u8 = struct
+  let same (a : u8) (b : u8) : bool
+    ensures result
+  = true
+end
+
+let alike (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+let red_alike (p : pixel) (q : pixel) : bool
+  ensures result <==> p.r = q.r
+= alike p q
+
+let direct (a : u8) (b : u8) : bool
+  ensures result <==> a = b
+= alike a b
+
+let forced (a : u8) (b : u8) : bool
+  ensures result
+= alike<Same = always> a b
+
+(* Expected report, in order.
+// CHECK: 0 proved, 0 failed, 0 skipped
+*)
