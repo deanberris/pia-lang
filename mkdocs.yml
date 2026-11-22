@@ -141,3 +141,4 @@ nav:
       - adr/0038-float-kernels-against-real-theories.md
       - adr/0039-module-and-interface-syntax.md
       - adr/0040-cpp23-standard-library-in-pia.md
+      - adr/0041-allocator-semantics-as-a-theory.md
