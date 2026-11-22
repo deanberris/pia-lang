@@ -674,6 +674,11 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                "outside it");
       continue;
     }
+    // A module header and its interfaces are checked by IRGen (ADR 0039).
+    if ((item->kind == NodeKind::ModuleHeader ||
+         item->kind == NodeKind::Interface) &&
+        adapter.empty())
+      continue;
     if (item->kind != NodeKind::LetItem) {
       diags.error(item->loc, std::string("'") + syntax::nodeKindName(item->kind) +
                                  "' items are not supported yet");
