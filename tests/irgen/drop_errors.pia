@@ -1,0 +1,16 @@
+(* `drop` (#85): whether to drop a value at an exit must be known there.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let buffer = type { id : u8 }
+let drop (b : moved buffer) : unit = match b with | { id } -> ()
+let mk (x : u8) : buffer = { id = x }
+let keep (b : moved buffer) : unit = drop b
+
+(* CHECK: drop_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'b' is consumed on only some paths to here, so whether to drop it at the end of its scope is unknown; consume it on every path, or on none
+*)
+let some (c : bool) (x : u8) : unit = let b = mk x in if c then keep b
+
+(* CHECK: drop_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'b' was moved to 'keep' at [[@LINE+2]]:{{[0-9]+}}, so it can no longer be used here
+*)
+let after (x : u8) : u8 = let b = mk x in keep b; b.id

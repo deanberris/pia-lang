@@ -728,9 +728,29 @@ class Gen {
     frames_.emplace_back();
     frames_.back().result = sig.result;
     frames_.back().function = sig.source();
-    if (!isSpec) addTails(bodyNode);
+    // `drop` itself takes its argument apart rather than dropping it.
+    struct DropScope {
+      Type &t;
+      Type saved;
+      ~DropScope() { t = saved; }
+    } dropScope{dropping_, dropping_};
+    dropping_ = sig.name == "drop" && sig.params.size() == 1
+                    ? sig.params[0].type
+                    : Type();
+    // A `moved` parameter with a `drop` is dropped at the end of the body
+    // unless it is consumed first.
+    const Node *bodyPtr = &bodyNode;
+    if (!isSpec && !ghost_)
+      for (const sema::Param &p : sig.params)
+        if (sema::hasModifier(p.modifiers, "moved"))
+          if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
+            const Node &d = dropNode(p.name, p.loc);
+            bodyPtr = keep(withCleanup(*bodyPtr, d));
+            frames_.back().defers.push_back(&d);
+          }
+    if (!isSpec) addTails(*bodyPtr);
     R body = isSpec ? genContractExpr(bodyNode, sig.result)
-                    : genExpr(bodyNode, sig.result);
+                    : genExpr(*bodyPtr, sig.result);
     if (!body) return;
     if (!isSpec && !ghost_) {
       bool owned = true;
@@ -2010,6 +2030,7 @@ class Gen {
   }
 
   R genApply(const Node &n, Type expected) {
+    if (n.flags == "drop") return genDrop(n);
     // `f<u8> x` names the type arguments; the rest are deduced.
     const Node *targs = nullptr;
     const Node *callee = n.kids[0].get();
@@ -4760,11 +4781,65 @@ class Gen {
     return false;
   }
 
-  // A use of a linear local as a value consumes it, unless the use turns
-  // out to be a borrow (`unconsume`).
+  // --- `drop` (#85) -----------------------------------------------------
+
+  // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
+  // scope: the `Drop` concept, met by name like any other (ADR 0034).
+  bool hasDrop(Type t) {
+    if (!t || copied(t)) return false;
+    for (const sema::FuncSig *f : overloadSet("drop"))
+      if (!f->isGeneric() && f->params.size() == 1 &&
+          f->params[0].type == t &&
+          sema::hasModifier(f->params[0].modifiers, "moved") &&
+          f->result && isUnit(f->result))
+        return true;
+    return false;
+  }
+
+  bool needsDrop(const BindingPtr &b) {
+    return !contract_ && !ghost_ && b->name.find('#') == std::string::npos &&
+           b->type != dropping_ && hasDrop(b->type);
+  }
+
+  const Node *keep(syntax::NodePtr n) {
+    const Node *p = n.get();
+    matchTrees_.push_back(std::move(n));  // diagnostics may point into it
+    return p;
+  }
+
+  // `drop x`, marked so that it runs only where `x` is not consumed.
+  const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->flags = "drop";
+    call->add(syntax::makeNode(NodeKind::Name, at, "drop"));
+    call->add(syntax::makeNode(NodeKind::Name, at, name));
+    return *keep(std::move(call));
+  }
+
+  // An exit's drop: nothing where the value was consumed on the way, the
+  // call where it was not.
+  R genDrop(const Node &n) {
+    const Node &arg = *n.kids[1];
+    BindingPtr b = lookup(arg.text);
+    if (!b) return unit();
+    auto m = moved_.find(b);
+    if (m != moved_.end()) {
+      if (!m->second.maybe) return unit();
+      return fail(n, "'" + arg.text + "' is consumed on only some paths to "
+                     "here, so whether to drop it at the end of its scope "
+                     "is unknown; consume it on every path, or on none");
+    }
+    auto call = syntax::clone(n);
+    call->flags.clear();
+    const Node &c = *keep(std::move(call));
+    return genApply(c, Type());
+  }
+
+  // A use of a linear local, or of one with a drop, as a value consumes
+  // it, unless the use turns out to be a borrow (`unconsume`).
   void consumeValue(const BindingPtr &b, const Node &n) {
     if (contract_ || ghost_ || n.text.find('#') != std::string::npos ||
-        !isLinear(b->type))
+        !(isLinear(b->type) || hasDrop(b->type)))
       return;
     moved_[b] = Move{n.loc, "consumed by its use as a value", false, &n};
   }
@@ -5558,7 +5633,20 @@ class Gen {
     pushScope();
     BindingPtr b =
         bind(n.text, v->value, v->type, sema::hasModifier(modifiers, "mutable"));
-    R body = genExpr(*n.kids[4], expected);
+    // A value with a `drop` is dropped at every exit from its scope that
+    // has not consumed it (#85), as if by a `defer` registered here.
+    const Node *bodyNode = n.kids[4].get();
+    const Node *drop = nullptr;
+    if (needsDrop(b)) {
+      drop = &dropNode(n.text, n.loc);
+      bodyNode = keep(withCleanup(*bodyNode, *drop));
+      if (!frames_.empty()) {
+        if (frames_.back().tails.count(&n)) addTails(*bodyNode);
+        frames_.back().defers.push_back(drop);
+      }
+    }
+    R body = genExpr(*bodyNode, expected);
+    if (drop && !frames_.empty()) frames_.back().defers.pop_back();
     if (body && !consumed(b, n.loc)) body = std::nullopt;
     popScope();
     return body;
@@ -5637,6 +5725,7 @@ class Gen {
   std::map<BindingPtr, Move> moved_;
   unsigned loopDepth_ = 0;
   std::set<const void *> linear_;  // the `@linear` types
+  Type dropping_;                  // the type a `drop` being generated takes
   unsigned tryCounter_ = 0;
   // The prelude's types (`result`), when the program does not define them.
   syntax::NodePtr prelude_;
