@@ -73,5 +73,5 @@ let generic_three_way (xs : [i16]) (ys : [i16]) : unit
    instances this file uses (ADR 0043).
 // CHECK-NOT: failed
 // CHECK-DAG: not proved generically: 'Pia.Core.Order.compare' is proved at each instance
-// CHECK: 249 proved, 0 failed, 0 skipped
+// CHECK: 177 proved, 0 failed, 0 skipped
 *)

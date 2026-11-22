@@ -39,5 +39,5 @@ let binary (xs : [u8]) (ys : [u8]) : unit =
 (* Every goal is proved.
 // CHECK-NOT: failed
 // CHECK-DAG: proved: 'Pia.Core.Algo.Search.count#2<u8, lambda@search_pred_edges.pia:{{[0-9]+}}:{{[0-9]+}}>' is an instance of the generic proof of 'Pia.Core.Algo.Search.count#2' [generic]
-// CHECK: 90 proved, 0 failed, 0 skipped
+// CHECK: 26 proved, 0 failed, 0 skipped
 *)

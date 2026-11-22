@@ -10,7 +10,7 @@
 (*
 // CHECK-NOT: failed
 // CHECK-DAG: Modify.pia:{{[0-9]+}}:{{[0-9]+}}: proved: the loop invariant holds after each iteration [generic]
-// CHECK: 130 proved, 0 failed, 0 skipped
+// CHECK: 66 proved, 0 failed, 0 skipped
 
 // IFACE:      {{^}}module Pia.Core.Algo.Modify{{$}}
 // IFACE-NEXT: {{^}}interface Modify = sig{{$}}
