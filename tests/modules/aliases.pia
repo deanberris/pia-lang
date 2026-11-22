@@ -15,7 +15,7 @@ let order (a : u8) (b : u8) : ordering
 = O.compare a b
 
 let same_order (a : u8) (b : u8) : Algo.Order.ordering
-  ensures b < a ==> result = Gt
+  ensures a < b ==> result = Lt
 = Algo.Order.compare a b
 
 let both_smaller (t : type where O.Before t) (a : t) (b : t) (c : t) : t

@@ -1,0 +1,18 @@
+(* A module that exports a spec function (ADR 0039, step 3): importers get
+   its definition, so they can reason with it in their own contracts and
+   proofs, and the functions it describes state their results with it. *)
+module Calc.Range : Range
+
+interface Range = sig
+  let spec within : (x : u8) -> (lo : u8) -> (hi : u8) -> bool
+  let clamp : (v : u8) -> (lo : u8) -> (hi : u8) -> u8
+    requires lo <= hi
+    ensures within result lo hi
+end
+
+let spec within (x : u8) (lo : u8) (hi : u8) : bool = lo <= x && x <= hi
+
+let clamp (v : u8) (lo : u8) (hi : u8) : u8
+  requires lo <= hi
+  ensures within result lo hi
+= if v < lo then lo else if hi < v then hi else v

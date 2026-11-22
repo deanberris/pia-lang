@@ -1,26 +1,19 @@
 (* An importer reasons with a spec function from another module's
-   interface (ADR 0039, step 3): it names it as `Calc.Sums.total`, in its
-   own contracts and in its own spec code.
-// RUN: piac --emit=interface -o %t %S/Inputs/sums.pia
-// RUN: piac --verify %S/Inputs/sums.pia | FileCheck --check-prefix=LIB %s
+   interface (ADR 0039, step 3): it names it as `Calc.Range.within`, in its
+   own contracts and in its own spec code, and the verifier unfolds the
+   imported definition.
+// RUN: piac --emit=interface -o %t %S/Inputs/range.pia
+// RUN: piac --verify %S/Inputs/range.pia | FileCheck --check-prefix=LIB %s
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
-import Calc.Sums.Sums
+import Calc.Range.Range
 
-(* The total of no elements is zero, by the imported definition. *)
-let sum_none (xs : [u8]) : u32
-  requires len xs = 0
-  ensures result = 0
-= Calc.Sums.sum xs
+let spec teen (x : u8) : bool = Calc.Range.within x 13 19
 
-let spec twice (xs : [u8]) : int
-= 2 * Calc.Sums.total xs (len xs)
-
-let doubled (xs : [u8]) : u32
-  requires len xs <= 1000
-  ensures result = twice xs
-= let s = Calc.Sums.sum xs in
-  s + s
+let teen_of (v : u8) : u8
+  ensures teen result
+  ensures result >= 13 && result <= 19
+= Calc.Range.clamp v 13 19
 
 (*
 // LIB-NOT: failed

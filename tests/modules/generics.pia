@@ -1,7 +1,7 @@
 (* An importer uses a concept and generic functions from another module's
    interface (ADR 0039, step 3). They come with their definitions, so it
    instantiates them at its own types: `u8` meets the imported concept
-   `Algo.Order.Before` through the module's own `before`, and a local type
+   `Algo.Order.Before` through the module's own `before`, and `u16`
    meets it through a local `before`.
 // RUN: piac --emit=interface -o %t %S/Inputs/order.pia
 // RUN: piac --verify %S/Inputs/order.pia | FileCheck --check-prefix=LIB %s
@@ -17,16 +17,14 @@ let order (a : u8) (b : u8) : Algo.Order.ordering
   ensures a < b ==> result = Lt
 = Algo.Order.compare a b
 
-(* A type of this module meets the imported concept. *)
-let rank = type | Low | High
+(* A type meets the imported concept through a function of this module:
+   Algo.Order lists no `before` on u16. *)
+let before (a : u16) (b : u16) : bool
+  ensures result <==> a < b
+= a < b
 
-let before (a : rank) (b : rank) : bool
-  ensures result ==> before b a = false
-= match a with
-  | Low -> (match b with | High -> true | Low -> false)
-  | High -> false
-
-let lowest (a : rank) (b : rank) : rank
+let lowest (a : u16) (b : u16) : u16
+  ensures result <= a && result <= b
 = Algo.Order.smaller a b
 
 (* A generic function of this module, over the imported concept. *)
