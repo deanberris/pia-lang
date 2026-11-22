@@ -548,6 +548,19 @@ def Pia_ArbitraryOp : Pia_Op<"arbitrary"> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def Pia_ErasedOp : Pia_Op<"erased", [Pure]> {
+  let summary = "a spec-only value that codegen has erased";
+  let description = [{
+    Spec-only state (ADR 0041): a parameter, local or record field whose
+    type is spec-only (`int`, `real` or a theory's sort) is visible to the
+    verifier and absent from the program. Before lowering, codegen replaces
+    each spec computation that feeds such a place with this op, which holds
+    no information and lowers to a constant.
+  }];
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "attr-dict `:` type($result)";
+}
+
 def Pia_ForeignOp : Pia_Op<"foreign"> {
   let summary = "call a C function: the body of an `extern` declaration";
   let description = [{

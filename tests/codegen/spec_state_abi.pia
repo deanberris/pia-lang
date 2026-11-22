@@ -1,0 +1,36 @@
+(* Spec-only parameters, locals and fields are erased (ADR 0041): the C
+   entry points leave them out, and no `pia.erased` reaches LLVM IR.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s --check-prefix=CORE
+// RUN: piac --emit=llvm %s 2>&1 | FileCheck %s
+*)
+module SpecAbi : Abi
+
+interface Abi @abi(c) = sig
+  let tally = type { v : u8; steps : int }
+  let skip : (n : int) -> (x : u8) -> u8
+    requires x < 255
+  let count_up : (x : u8) -> tally
+    requires x < 200
+end
+
+(*
+// CORE: func.func @skip({{.*}}: i1 {pia.erased}
+// CORE: func.func @count_up({{.*}}-> (i8, i1 {pia.erased})
+// CHECK-NOT: pia.erased
+// CHECK-DAG: define {{.*}}i8 @skip(i8 {{.*}}%{{[0-9]+}})
+// CHECK-DAG: define {{.*}}i8 @count_up(i8 {{.*}}%{{[0-9]+}})
+// CHECK-NOT: pia.erased
+*)
+
+let skip (n : int) (x : u8) : u8
+  requires x < 255
+  ensures result = x + 1
+= x + 1
+
+let tally = type { v : u8; steps : int }
+
+let count_up (x : u8) : tally
+  requires x < 200
+  ensures result.v = x + 10 && result.steps = 10
+= let steps : int = 10 in
+  { v = x + 10; steps = steps }
