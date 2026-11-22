@@ -4,10 +4,12 @@
    discharged by the generic proofs in Modify (ADR 0043).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Modify.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Remove.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Modify.Modify as M
+import Pia.Core.Algo.Remove.Remove as R
 
 (* On an empty slice nothing is written, and nothing fails. *)
 let empty (xs : borrowed inout mutable [u16]) (ys : borrowed inout mutable [u16]) : unit
@@ -64,7 +66,7 @@ let shifts (xs : borrowed inout mutable [u8]) : unit
    5 is [6; 7], and the count is 2. *)
 let removes (xs : borrowed inout mutable [u8]) : unit
   requires len xs = 4 && xs.[0] = 5 && xs.[1] = 6 && xs.[2] = 5 && xs.[3] = 7
-= let n = M.remove xs 5 in
+= let n = R.remove xs 5 in
   assert n <= 4;
   ()
 

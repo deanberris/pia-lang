@@ -1,0 +1,46 @@
+(* The comparator overloads of Pia.Core.Algo.Search, called with lambdas
+   (ADR 0040, section 6; ADR 0044). Each requires its comparator to be a
+   strict weak order, Pia.Fn's strict_weak_order, which the caller proves
+   here of `<`, of `>` and of Pia.Core.Order's less; each is proved once in
+   Search, so the instances here are discharged by those proofs.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Search.Search as S
+
+let smallest (xs : [i32]) : unit
+  requires len xs > 0
+= let m = S.min_element xs (let (a : i32) (b : i32) : bool => a < b) in
+  assert m < len xs;
+  let h = S.max_element xs (let (a : i32) (b : i32) : bool => a < b) in
+  assert h < len xs;
+  ()
+
+(* By Pia.Core.Order's less, whose contract makes it a strict weak order. *)
+let by_order (xs : [u16]) : unit
+  requires len xs > 0
+= let e = S.minmax_element xs (let (a : u16) (b : u16) : bool => Pia.Core.Order.less a b) in
+  assert e.lowest < len xs && e.highest < len xs;
+  ()
+
+(* Sorted in decreasing order, by `>`. *)
+let descending (xs : [i32]) : unit =
+  let k = S.is_sorted_until xs (let (a : i32) (b : i32) : bool => a > b) in
+  assert k <= len xs;
+  let s = S.is_sorted xs (let (a : i32) (b : i32) : bool => a > b) in
+  assert s ==> k = len xs;
+  ()
+
+let neighbours (xs : [u8]) : unit =
+  let d = S.adjacent_find xs (let (a : u8) (b : u8) : bool => a = b) in
+  assert d <= len xs;
+  ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 53 proved, 0 failed, 0 skipped
+*)

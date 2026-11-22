@@ -3,10 +3,12 @@
    empty slice, one element, all equal, the extremes of a width, and an
    empty pattern. The instances are discharged by the generic proofs made
    in Pia.Core.Algo.Search (ADR 0043); the goals here are the importer's.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Search.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
+import Pia.Fn.Laws
 import Pia.Core.Order.Ops
 import Pia.Core.Algo.Search.Search as S
 

@@ -1,0 +1,18 @@
+(* Pia.Core.Algo.Remove (ADR 0040, phase 1.6): remove and its spec
+   function `kept` are proved once, over the element type (ADR 0043), and
+   the interface exports them.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Remove.pia | FileCheck %s
+// RUN: mkdir -p %t/r && piac --emit=interface -o %t/r %S/../../lib/Pia/Core/Algo/Remove.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/r/Pia.Core.Algo.Remove.Remove.piai
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 42 proved, 0 failed, 0 skipped
+
+// IFACE:      {{^}}interface Remove = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec kept : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (k : usize) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let remove : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (v : t) -> usize{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

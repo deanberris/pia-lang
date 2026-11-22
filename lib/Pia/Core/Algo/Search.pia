@@ -13,6 +13,7 @@
 module Pia.Core.Algo.Search : Search
 
 import Pia.Core.Order.Ops
+import Pia.Fn.Laws
 
 interface Search = sig
   let spec count_from : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (i : usize) -> usize
@@ -45,6 +46,14 @@ interface Search = sig
   let none : (t : type) -> (f : type where Function f t bool) -> (xs : [t]) -> (p : f) -> bool
   let mismatch : (t : type) -> (xs : [t]) -> (ys : [t]) -> (p : t -> t -> bool) -> usize
   let equal : (t : type) -> (xs : [t]) -> (ys : [t]) -> (p : t -> t -> bool) -> bool
+  let min_element : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let is_sorted_until : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let is_sorted : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let max_element : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let last_max_element : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let spec no_pair : (t : type) -> (xs : [t]) -> (p : (a : t) -> (b : t) -> bool) -> (k : usize) -> bool
+  let adjacent_find : (t : type) -> (xs : [t]) -> (p : (a : t) -> (b : t) -> bool) -> usize
+  let minmax_element : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> extremes
 end
 
 (* The number of elements of xs.[i ..] that are the same as v. *)
@@ -380,3 +389,155 @@ let equal (t : type) (xs : [t]) (ys : [t]) (p : t -> t -> bool) : bool
     decreases len xs - i
   do i <- i + 1 done;
   len xs = len ys && i = len xs
+
+(* The comparator overloads (ADR 0040, section 6): a comparator's contract
+   is Pia.Fn's strict_weak_order, which each caller proves of its
+   argument, and these are proved once over any such comparator (ADR 0044,
+   step 6). is_sorted says Pia.Fn.sorted, so a caller knows it of its
+   comparator. adjacent_find takes a binary predicate. *)
+
+(** C++: std::min_element with a comparator. *)
+let min_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  ensures len xs = 0 ==> result = 0
+  ensures len xs > 0 ==> result < len xs
+  ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[j] xs.[result] = false)
+  ensures len xs > 0 ==> (forall (j in 0..result). less xs.[result] xs.[j])
+= if len xs = 0 then 0 else (
+    let m : mutable usize = 0 in
+    let i : mutable usize = 1 in
+    while i < len xs
+      invariant 1 <= i && i <= len xs && m < i
+      invariant forall (j in 0..i). less xs.[j] xs.[m] = false
+      invariant forall (j in 0..m). less xs.[m] xs.[j]
+      decreases len xs - i
+    do
+      (if less xs.[i] xs.[m] then m <- i else ());
+      i <- i + 1
+    done;
+    m)
+
+(** C++: std::is_sorted_until with a comparator. *)
+let is_sorted_until (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  ensures result <= len xs
+  ensures Pia.Fn.sorted_prefix less xs result
+  ensures result < len xs ==> result > 0 && less xs.[result] xs.[result - 1]
+= if len xs < 2 then len xs else (
+    let i : mutable usize = 1 in
+    while i < len xs && less xs.[i] xs.[i - 1] = false
+      invariant 1 <= i && i <= len xs
+      invariant Pia.Fn.sorted_prefix less xs i
+      decreases len xs - i
+    do
+      assert (forall (p in 0..i). less xs.[i] xs.[p] = false);
+      i <- i + 1
+    done;
+    i)
+
+(** C++: std::is_sorted with a comparator. *)
+let is_sorted (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : bool
+  requires Pia.Fn.strict_weak_order less
+  ensures result <==> Pia.Fn.sorted less xs
+= if len xs < 2 then true else (
+    let i : mutable usize = 1 in
+    while i < len xs && less xs.[i] xs.[i - 1] = false
+      invariant 1 <= i && i <= len xs
+      invariant Pia.Fn.sorted_prefix less xs i
+      decreases len xs - i
+    do
+      assert (forall (p in 0..i). less xs.[i] xs.[p] = false);
+      i <- i + 1
+    done;
+    i = len xs)
+
+(** C++: std::max_element with a comparator. *)
+let max_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  ensures len xs = 0 ==> result = 0
+  ensures len xs > 0 ==> result < len xs
+  ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[result] xs.[j] = false)
+  ensures len xs > 0 ==> (forall (j in 0..result). less xs.[j] xs.[result])
+= if len xs = 0 then 0 else (
+    let m : mutable usize = 0 in
+    let i : mutable usize = 1 in
+    while i < len xs
+      invariant 1 <= i && i <= len xs && m < i
+      invariant forall (j in 0..i). less xs.[m] xs.[j] = false
+      invariant forall (j in 0..m). less xs.[j] xs.[m]
+      decreases len xs - i
+    do
+      (if less xs.[m] xs.[i] then m <- i else ());
+      i <- i + 1
+    done;
+    m)
+
+(* The last largest, by less: minmax_element's second. *)
+let last_max_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  ensures len xs = 0 ==> result = 0
+  ensures len xs > 0 ==> result < len xs
+  ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[result] xs.[j] = false)
+  ensures len xs > 0 ==> (forall (j in result + 1..len xs). less xs.[j] xs.[result])
+= if len xs = 0 then 0 else (
+    let m : mutable usize = 0 in
+    let i : mutable usize = 1 in
+    while i < len xs
+      invariant 1 <= i && i <= len xs && m < i
+      invariant forall (j in 0..i). less xs.[m] xs.[j] = false
+      invariant forall (j in m + 1..i). less xs.[j] xs.[m]
+      decreases len xs - i
+    do
+      (if less xs.[i] xs.[m] = false then m <- i else ());
+      i <- i + 1
+    done;
+    m)
+
+(* p holds of no xs.[j - 1], xs.[j] with j < k. *)
+let spec no_pair (t : type) (xs : [t]) (p : (a : t) -> (b : t) -> bool) (k : usize) : bool
+  requires k <= len xs
+  decreases k
+= if k < 2 then true
+  else no_pair xs p (k - 1) && p xs.[k - 2] xs.[k - 1] = false
+
+(** C++: std::adjacent_find with a binary predicate. *)
+let adjacent_find (t : type) (xs : [t]) (p : (a : t) -> (b : t) -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> result + 1 < len xs && p xs.[result] xs.[result + 1]
+  ensures no_pair xs p (if result < len xs then result + 1 else len xs)
+= if len xs < 2 then len xs else (
+    let i : mutable usize = 0 in
+    while i + 1 < len xs && p xs.[i] xs.[i + 1] = false
+      invariant i + 1 <= len xs
+      invariant no_pair xs p (i + 1)
+      decreases len xs - i
+    do i <- i + 1 done;
+    if i + 1 < len xs then i else len xs)
+
+(** C++: std::minmax_element with a comparator: the first smallest and the
+    last largest, in one pass. *)
+let minmax_element (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : extremes
+  requires Pia.Fn.strict_weak_order less
+  ensures len xs = 0 ==> result.lowest = 0 && result.highest = 0
+  ensures len xs > 0 ==> result.lowest < len xs && result.highest < len xs
+  ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[j] xs.[result.lowest] = false)
+  ensures len xs > 0 ==> (forall (j in 0..result.lowest). less xs.[result.lowest] xs.[j])
+  ensures len xs > 0 ==> (forall (j in 0..len xs). less xs.[result.highest] xs.[j] = false)
+  ensures len xs > 0 ==> (forall (j in result.highest + 1..len xs). less xs.[j] xs.[result.highest])
+= if len xs = 0 then { lowest = 0; highest = 0 } else (
+    let lo : mutable usize = 0 in
+    let hi : mutable usize = 0 in
+    let i : mutable usize = 1 in
+    while i < len xs
+      invariant 1 <= i && i <= len xs && lo < i && hi < i
+      invariant forall (j in 0..i). less xs.[j] xs.[lo] = false
+      invariant forall (j in 0..lo). less xs.[lo] xs.[j]
+      invariant forall (j in 0..i). less xs.[hi] xs.[j] = false
+      invariant forall (j in hi + 1..i). less xs.[j] xs.[hi]
+      decreases len xs - i
+    do
+      (if less xs.[i] xs.[lo] then lo <- i else ());
+      (if less xs.[i] xs.[hi] = false then hi <- i else ());
+      i <- i + 1
+    done;
+    { lowest = lo; highest = hi })

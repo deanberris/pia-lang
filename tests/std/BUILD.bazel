@@ -16,6 +16,7 @@ lit_tests(
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
+        "//lib/Pia/Core/Algo:Remove.pia",
         "//lib/Pia/Core/Algo:Search.pia",
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Text/Json:Lex.pia",
@@ -97,6 +98,7 @@ pia_binary(
     src = "Inputs/search_run.pia",
     target_compatible_with = APPLE_SILICON,
     deps = [
+        "//lib/Pia:fn",
         "//lib/Pia/Core:order",
         "//lib/Pia/Core/Algo:search",
     ],
@@ -135,6 +137,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:order",
         "//lib/Pia/Core/Algo:modify",
+        "//lib/Pia/Core/Algo:remove",
     ],
 )
 

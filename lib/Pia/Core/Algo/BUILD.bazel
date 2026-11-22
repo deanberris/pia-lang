@@ -8,6 +8,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Modify.pia",
     "Permutation.pia",
+    "Remove.pia",
     "Search.pia",
 ])
 
@@ -23,7 +24,10 @@ pia_library(
     name = "search",
     src = "Search.pia",
     target_compatible_with = APPLE_SILICON,
-    deps = ["//lib/Pia/Core:order"],
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
 )
 
 # The modifying sequence algorithms: tests/std/modify.pia checks its goals;
@@ -40,6 +44,16 @@ pia_library(
 pia_library(
     name = "permutation",
     src = "Permutation.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core:order"],
+)
+
+# remove, in its own module so its proof runs in parallel with Modify's:
+# tests/std/remove.pia checks its goals, and modify_edges.pia and
+# :modify_run use it.
+pia_library(
+    name = "remove",
+    src = "Remove.pia",
     target_compatible_with = APPLE_SILICON,
     deps = ["//lib/Pia/Core:order"],
 )
