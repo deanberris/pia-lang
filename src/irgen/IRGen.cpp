@@ -5806,6 +5806,13 @@ class Gen {
         if (holdsAt(*c)) return true;
       return false;
     };
+    std::function<bool(const Node &)> holdsCopyOfAt = [&](const Node &k) {
+      if (&k == &at || (k.kind == at.kind && k.loc.offset == at.loc.offset))
+        return true;
+      for (const NodePtr &c : k.kids)
+        if (holdsCopyOfAt(*c)) return true;
+      return false;
+    };
     const Node *use = nullptr;
     std::function<void(const Node &, bool)> find = [&](const Node &k,
                                                        bool later) {
@@ -5815,6 +5822,10 @@ class Gen {
         use = &k;
         return;
       }
+      // A `defer` in the source is generated from a copy of its scope, so
+      // `at` may be a copy of a node here: it is the same node if it has
+      // the same kind and place.
+      if (k.kind == NodeKind::Defer && !holdsCopyOfAt(k)) later = true;
       for (size_t i = 0; i < k.kids.size(); ++i) {
         bool cleanup = k.kind == NodeKind::Cleanup && i > 0 &&
                        !holdsAt(*k.kids[i]);
@@ -5823,10 +5834,6 @@ class Gen {
     };
     find(*x->scope, false);
     return use;
-  }
-
-  std::string where(const Node &k) {
-    return std::to_string(k.loc.line) + ":" + std::to_string(k.loc.column);
   }
 
   // A named local that borrows from `b`, is in scope, and is used after

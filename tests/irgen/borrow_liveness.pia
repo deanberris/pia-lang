@@ -10,7 +10,7 @@ let ticket = type { n : u8 }
 
 let mk (x : u8) : pool = { cap = x }
 let close (p : moved pool) : unit = match p with | { cap } -> ()
-let refill (p : out pool) : unit = p <- { cap = 0 }
+let refill (p : out mutable pool) : unit = p <- { cap = 0 }
 let lend (p : borrowed pool) : borrowed(p) ticket = { n = p.cap }
 
 (* CHECK: func.func @moved_after_last_use
