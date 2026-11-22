@@ -1,0 +1,37 @@
+(* Truncating division at full width (#194): the quotient and remainder
+   rebuild the dividend, the remainder has the dividend's sign and is
+   smaller than the divisor, and a quotient fits its type unless it is the
+   minimum divided by -1. Bit-blasting the divider cannot show these at 32
+   and 64 bits within the solver's limit, so the verifier states them as
+   facts beside each division, and tries each goal with division
+   uninterpreted first.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+let remainder (n : i64) (d : i64) : i64
+  requires d <> 0 && (n <> -9223372036854775808 || d <> -1)
+  ensures (n / d) * d + result = n
+  ensures d > 0 ==> 0 - d < result && result < d
+  ensures d < 0 ==> d < result && result < 0 - d
+  ensures (n >= 0 ==> result >= 0) && (n <= 0 ==> result <= 0)
+= n % d
+
+let quot (n : i32) (d : i32) : i32
+  requires d <> 0 && (n <> -2147483648 || d <> -1)
+  ensures result * d + n % d = n
+= n / d
+
+let unsigned (n : u64) (d : u64) : u64
+  requires d <> 0
+  ensures (n / d) * d + result = n && result < d
+= n % d
+
+(* The minimum divided by -1 does not fit, and is refuted.
+// CHECK: division_facts.pia:[[@LINE+4]]:{{[0-9]+}}: failed: '/' does not overflow i32
+*)
+let overflows (n : i32) (d : i32) : i32
+  requires d <> 0
+= n / d
+
+(*
+// CHECK: 11 proved, 1 failed, 0 skipped
+*)

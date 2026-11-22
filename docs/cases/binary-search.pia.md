@@ -87,7 +87,7 @@ search.pia:12:26: failed: '+' does not overflow i32
   counterexample: len xs = 2147483647, key = 0, result = 2147483648
 ...
 search.pia:18:39: failed: '+' does not overflow i32
-  counterexample: len xs = 2147483647, key = 49350592, result = 2147483648
+  counterexample: len xs = 2147483647, key = 2131628096, result = 2147483648
 ...
 13 proved, 2 failed, 0 skipped
 ```
