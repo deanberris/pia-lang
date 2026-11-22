@@ -47,5 +47,13 @@ let pick (o : option u8) (xs : [u8; 4]) : u8
   | None -> 0
 
 (* Expected report, in order.
-// CHECK: 0 failed, 0 skipped
+// CHECK: type_match.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:46:12: proved: the assertion holds [smt]
+// CHECK: type_match.pia:46:54: proved: the index is within bounds [smt]
+// CHECK: type_match.pia:46:27: proved: the assertion holds [smt]
+// CHECK: type_match.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: type_match.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: 8 proved, 0 failed, 0 skipped
 *)
