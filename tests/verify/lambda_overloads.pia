@@ -1,0 +1,109 @@
+(* Overloading on a value or a function (ADR 0044, section 4): `find`
+   takes a value to compare with or a function to test with. A parameter
+   of function type takes only a lambda, a named function or a function
+   object, and a value parameter never takes a lambda or a named
+   function, so each call has one candidate, and --explain-overloads says
+   why.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --verify --explain-overloads=lambda_overloads.pia:44 %s 2>&1 | FileCheck %s --check-prefix=VALUE
+// RUN: piac --verify --explain-overloads=lambda_overloads.pia:51 %s 2>&1 | FileCheck %s --check-prefix=LAMBDA
+// RUN: piac --verify --explain-overloads=lambda_overloads.pia:62 %s 2>&1 | FileCheck %s --check-prefix=OBJECT
+*)
+
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let find (t : type where Eq t) (xs : [t]) (v : t) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> same xs.[result] v
+= let i : mutable usize = 0 in
+  while i < len xs && same xs.[i] v = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+(* VALUE: note:   the generic 'find' at line 19: viable, and chosen
+// VALUE: note:   removed: the higher-order 'find' at line 29: 'p' takes a function, and argument 2 is not one
+*)
+let where3 (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] = 3
+= find xs 3
+
+(* LAMBDA: note:   the higher-order 'find' at line 29: viable, and chosen
+// LAMBDA: note:   removed: the generic 'find' at line 19: 'v' takes a value, and argument 2 is a function
+*)
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+= find xs (let (x : u8) => x > 3)
+
+let below = type { lim : u8 }
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+(* OBJECT: note:   the higher-order 'find' at line 29: viable, and chosen
+// OBJECT: note:   removed: the generic 'find' at line 19: argument 2 has type below, which does not fit 'v'
+*)
+let first_small (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= let b : below = { lim = lim } in
+  find xs b
+
+(* A function parameter passed on to another higher-order function. *)
+let find_from (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+= find xs p
+
+let first_zero (xs : [u8]) : usize
+  ensures result <= len xs
+= find_from xs (let (x : u8) => x = 0)
+
+(* Expected report, in order.
+// CHECK: lambda_overloads.pia:24:5: proved: the loop invariant holds on entry [generic]
+// CHECK: lambda_overloads.pia:23:28: proved: the index is within bounds [generic]
+// CHECK: lambda_overloads.pia:26:13: proved: '+' does not overflow usize [generic]
+// CHECK: lambda_overloads.pia:24:5: proved: the loop invariant holds after each iteration [generic]
+// CHECK: lambda_overloads.pia:25:5: proved: the measure decreases [generic]
+// CHECK: lambda_overloads.pia:20:3: proved: the postcondition holds [generic]
+// CHECK: lambda_overloads.pia:21:3: proved: the postcondition holds [generic]
+// CHECK: lambda_overloads.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:19:1: proved: 'find<u8>' is an instance of the generic proof of 'find' [generic]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_overloads.pia:33:25: proved: the index is within bounds [smt]
+// CHECK: lambda_overloads.pia:36:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_overloads.pia:35:5: proved: the measure decreases [smt]
+// CHECK: lambda_overloads.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_overloads.pia:33:25: proved: the index is within bounds [smt]
+// CHECK: lambda_overloads.pia:36:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_overloads.pia:35:5: proved: the measure decreases [smt]
+// CHECK: lambda_overloads.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:66:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_overloads.pia:33:25: proved: the index is within bounds [smt]
+// CHECK: lambda_overloads.pia:36:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_overloads.pia:34:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_overloads.pia:35:5: proved: the measure decreases [smt]
+// CHECK: lambda_overloads.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: lambda_overloads.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: 34 proved, 0 failed, 0 skipped
+*)

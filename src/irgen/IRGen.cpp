@@ -247,12 +247,11 @@ class Gen {
         ++it;
         continue;
       }
-      if (it->second.overloaded || !it->second.adapter.empty())
+      if (!it->second.adapter.empty())
         diags_.error(it->second.item->loc,
                      "'" + it->second.source() + "' takes a function, and "
-                     "overloading such a function comes later (ADR 0044, "
-                     "step 2)");
-      hofs_.emplace(it->second.source(), std::move(it->second));
+                     "an adapter's function cannot yet (ADR 0044)");
+      hofs_[it->second.source()].push_back(std::move(it->second));
       it = sigs_.erase(it);
     }
     if (diags_.hasErrors()) return nullptr;
@@ -260,6 +259,16 @@ class Gen {
     for (auto &[symbol, sig] : sigs_) {
       symbolOf[sig.item] = symbol;
       if (sig.adapter.empty()) overloads_[sig.source()].push_back(symbol);
+    }
+    // `Function`, the concept of function values (ADR 0044, section 4),
+    // comes with the language, unless the program brings its own.
+    if (mentions(program, "Function") && !definesItem(program, "Function")) {
+      syntax::Diagnostics ignored;
+      functionConcept_ = syntax::parseProgram(
+          "let meta Function (f : type) (a : type) (r : type) : concept = sig\n"
+          "  let apply : (g : f) -> (x : a) -> r\n"
+          "end\n",
+          ignored);
     }
     collectConcepts(program);
     if (diags_.hasErrors()) return nullptr;
@@ -2570,12 +2579,21 @@ class Gen {
     // A name a quote made resolves where the metaprogram was defined, never
     // to a local at the expansion site (docs/meta.md, "Hygiene").
     bool local = fn.flags.empty() && lookup(fn.text);
+    // `g x` for a function object `g` is `apply g x` (ADR 0044, section 4).
+    if (local && !targs)
+      if (BindingPtr g = lookup(fn.text);
+          mlir::isa<RecordType>(g->type) && !overloadSet("apply").empty()) {
+        auto call = syntax::makeNode(NodeKind::Apply, n.loc);
+        call->add(syntax::makeNode(NodeKind::Name, fn.loc, "apply"));
+        for (const NodePtr &k : n.kids) call->add(syntax::clone(*k));
+        return genApply(*keep(std::move(call)), expected);
+      }
     if (!local && fn.flags != "prelude")
       if (auto h = hofs_.find(fn.text); h != hofs_.end()) {
         std::vector<const Node *> args;
         for (size_t i = 1; i < n.kids.size(); ++i)
           args.push_back(n.kids[i].get());
-        return genHigherOrderCall(n, h->second, targs, args, expected);
+        return genMixedCall(n, fn.text, h->second, targs, args, expected);
       }
     if (!local && fn.flags != "prelude") {
       auto set = overloadSet(fn.text);
@@ -3155,6 +3173,210 @@ class Gen {
     return symbol;
   }
 
+  // The `apply` that makes a value of type `t` a function object of
+  // `arity` arguments (ADR 0044, section 4): a function in scope whose
+  // first parameter has type `t`. Any record or variant with one qualifies.
+  const sema::FuncSig *applyFor(Type t, size_t arity) {
+    if (!mlir::isa<RecordType>(t)) return nullptr;
+    const sema::FuncSig *found = nullptr;
+    for (const sema::FuncSig *s : overloadSet("apply")) {
+      if (s->isGeneric() || s->params.size() != arity + 1 ||
+          s->params[0].type != t)
+        continue;
+      if (found) return nullptr;
+      found = s;
+    }
+    return found;
+  }
+
+  // What a function object passed as `arrow` is applied through: `apply`,
+  // or, when the arrow has a contract, a wrapper with it whose first
+  // parameter is the object, so `apply`'s contract is checked against it.
+  std::optional<std::string> objectApply(const Node &at_, const sema::FuncSig &ap,
+                                         const Arrow &arrow) {
+    if (!arrow.contracts || arrow.contracts->kids.empty()) return "apply";
+    std::string symbol = "apply@" + placeOf(at_);
+    if (sigs_.count(symbol)) return symbol;
+    const Node *ret = retAnnotOf(ap);
+    if (!ret) {
+      fail(at_, "'apply' needs its return type written for its object to be "
+                "passed as a function with a contract");
+      return std::nullopt;
+    }
+    syntax::SourceLoc at = at_.loc;
+    std::vector<const Node *> apParams = valueParamsOf(ap);
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, "apply"));
+    for (size_t i = 0; i < apParams.size(); ++i) {
+      std::string pname = i == 0 ? ap.params[0].name
+                          : arrow.domains[i - 1]->text.empty()
+                              ? ap.params[i].name
+                              : arrow.domains[i - 1]->text;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, pname));
+      p->add(syntax::clone(*apParams[i]->kids[0]));
+      call->add(syntax::makeNode(NodeKind::Name, at, pname));
+    }
+    item->add(retAnnotNode(syntax::clone(*ret), at));
+    Node *cs = item->add(syntax::makeNode(NodeKind::Contracts, at));
+    arrowContracts(arrow, NodeKind::Requires, {}, *cs);
+    arrowContracts(arrow, NodeKind::Ensures, {}, *cs, at);
+    item->add(std::move(call));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return std::nullopt;
+    sigs_.emplace(symbol, std::move(sig));
+    overloads_[symbol].push_back(symbol);
+    pendingInstances_.push_back(symbol);
+    return symbol;
+  }
+
+  // Makes each application `p x` in `n` call `via p x`.
+  static void applyThrough(Node &n, const std::string &p, const std::string &via) {
+    for (NodePtr &k : n.kids) applyThrough(*k, p, via);
+    if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+        n.kids[0]->kind == NodeKind::Name && n.kids[0]->text == p &&
+        n.kids[0]->flags.empty())
+      n.kids.insert(n.kids.begin(),
+                    syntax::makeNode(NodeKind::Name, n.kids[0]->loc, via));
+  }
+
+  // A call of a name with higher-order overloads (ADR 0044, section 4): a
+  // parameter of function type takes only a lambda, a named function or a
+  // function object, and a value parameter never takes a lambda or a named
+  // function, so `find xs 3` and `find xs (let (x : u8) => x > 3)` each
+  // have one candidate.
+  R genMixedCall(const Node &n, const std::string &name,
+                 std::vector<sema::FuncSig> &hofs, const Node *targs,
+                 const std::vector<const Node *> &args, Type expected) {
+    // A lone higher-order function explains a wrong argument itself.
+    if (hofs.size() == 1 && overloadSet(name).empty())
+      return genHigherOrderCall(n, hofs[0], targs, args, expected);
+    auto isFunction = [&](const Node &a) {
+      if (a.kind == NodeKind::Lambda) return true;
+      if (a.kind != NodeKind::Name || !a.flags.empty() || lookup(a.text))
+        return false;
+      return !overloadSet(a.text).empty() || hofs_.count(a.text) > 0;
+    };
+    auto known = [&](const Node &a) -> Type {
+      if (a.kind == NodeKind::Name && a.flags.empty())
+        if (BindingPtr b = lookup(a.text)) return b->type;
+      return Type();
+    };
+    std::vector<std::pair<std::string, bool>> notes;  // label, chosen
+    std::vector<std::string> rejected;
+    std::vector<sema::FuncSig *> viableHofs;
+    for (sema::FuncSig &h : hofs) {
+      std::string label = "the higher-order '" + name + "' at line " +
+                          std::to_string(h.item->loc.line);
+      std::vector<const Node *> vps = valueParamsOf(h);
+      if (vps.size() != args.size()) {
+        rejected.push_back(label + " takes " + plural(vps.size(), "argument"));
+        continue;
+      }
+      std::string why;
+      for (size_t i = 0; i < args.size() && why.empty(); ++i) {
+        const Node &p = *vps[i];
+        if (sema::isFunctionParam(p)) {
+          size_t arity = arrowOf(*p.kids[0]->kids[1]).domains.size();
+          Type t = known(*args[i]);
+          if (!isFunction(*args[i]) && !(t && applyFor(t, arity)))
+            why = "'" + p.text + "' takes a function, and argument " +
+                  std::to_string(i + 1) + " is not one";
+        } else if (isFunction(*args[i])) {
+          why = "'" + p.text + "' takes a value, and argument " +
+                std::to_string(i + 1) + " is a function";
+        }
+      }
+      if (!why.empty()) {
+        rejected.push_back(label + ": " + why);
+        continue;
+      }
+      viableHofs.push_back(&h);
+      notes.push_back({label, false});
+    }
+    // The other overloads take values only. A candidate whose parameter
+    // types clash with the types of the named arguments does not fit.
+    std::vector<sema::FuncSig *> values;
+    for (sema::FuncSig *sig : overloadSet(name)) {
+      std::string label = sig->isGeneric()
+                              ? "the generic '" + name + "' at line " +
+                                    std::to_string(sig->item->loc.line)
+                              : "'" + sig->name + "'";
+      std::vector<const Node *> vps = valueParamsOf(*sig);
+      std::string why;
+      if (vps.size() != args.size())
+        why = "takes " + plural(vps.size(), "argument");
+      std::map<std::string, Type> bound;
+      for (size_t i = 0; i < args.size() && why.empty(); ++i) {
+        if (isFunction(*args[i])) {
+          why = "'" + vps[i]->text + "' takes a value, and argument " +
+                std::to_string(i + 1) + " is a function";
+          break;
+        }
+        Type t = known(*args[i]);
+        if (!t) continue;
+        if (sig->isGeneric()) {
+          const Node &q = *vps[i];
+          if (!q.kids.empty() && q.kids[0]->kind == NodeKind::Annot &&
+              !types_.unify(*q.kids[0], t, sig->typeParams, bound))
+            why = "argument " + std::to_string(i + 1) + " has type " +
+                  typeName(t) + ", which does not fit '" + q.text + "'";
+        } else if (t != sig->params[i].type &&
+                   !converts(t, sig->params[i].type)) {
+          why = "argument " + std::to_string(i + 1) + " has type " +
+                typeName(t);
+        }
+      }
+      if (!why.empty()) {
+        rejected.push_back(label + ": " + why);
+        continue;
+      }
+      values.push_back(sig);
+      notes.push_back({label, false});
+    }
+    size_t viable = viableHofs.size() + values.size();
+    std::string outcome;
+    if (viable == 1)
+      notes.back().second = true;
+    else
+      outcome = viable ? "it is ambiguous" : "no candidate is left";
+    if (options_.explanations && !checking_ &&
+        n.loc.line == options_.explainLine) {
+      auto note = [&](std::string m) {
+        options_.explanations->push_back({n.loc, std::move(m)});
+      };
+      note("the call of '" + name + "' has " +
+           plural(viable + rejected.size(), "candidate"));
+      for (auto &[label, chosen] : notes)
+        note("  " + label + (chosen ? ": viable, and chosen" : ": viable"));
+      for (const std::string &r : rejected) note("  removed: " + r);
+      if (!outcome.empty()) note("  " + outcome);
+    }
+    if (viable == 0) {
+      std::string list;
+      for (const std::string &r : rejected) list += "\n  " + r;
+      return fail(n, "no '" + name + "' takes these arguments:" + list);
+    }
+    if (viable > 1) {
+      std::string list;
+      for (auto &[label, chosen] : notes) list += "\n  " + label;
+      return fail(n, "the call of '" + name + "' is ambiguous; these all "
+                     "fit:" + list);
+    }
+    if (!viableHofs.empty())
+      return genHigherOrderCall(n, *viableHofs[0], targs, args, expected);
+    sema::FuncSig &sig = *values[0];
+    if (sig.isGeneric()) return genGenericCall(n, sig, targs, args, expected);
+    if (targs)
+      return fail(*targs, "'" + name + "' is not generic, so it takes no "
+                          "type arguments");
+    return genCall(n, sig, args);
+  }
+
   // A call of a higher-order function: to its specialisation at these
   // function arguments, `find[lambda@f.pia:12:9]`, made on first use, with
   // the other arguments.
@@ -3172,6 +3394,9 @@ class Gen {
                          "; partial application is not supported yet");
     std::vector<std::string> symbols;
     std::map<std::string, std::string> rename;
+    // Function objects: each parameter's type, and what its applications
+    // call, `apply` or a wrapper with the arrow's contract.
+    std::map<std::string, std::pair<Type, std::string>> objects;
     std::vector<const Node *> rest;
     for (size_t i = 0; i < args.size(); ++i) {
       const Node &p = *valueParams[i];
@@ -3183,12 +3408,35 @@ class Gen {
       std::string what = "'" + p.text + "' of '" + hof.source() + "'";
       const Node &a = *args[i];
       std::optional<std::string> symbol;
+      BindingPtr g = a.kind == NodeKind::Name && a.flags.empty()
+                         ? lookup(a.text)
+                         : nullptr;
+      if (g && mlir::isa<RecordType>(g->type)) {
+        const sema::FuncSig *ap = applyFor(g->type, arrow.domains.size());
+        if (!ap)
+          return fail(a, what + " is a function, and '" + a.text + "' has "
+                         "type " + typeName(g->type) + ", which has no "
+                         "'apply' taking " +
+                         plural(arrow.domains.size(), "argument") +
+                         " after it, so it is not a function object");
+        std::string tname = typeName(g->type);
+        if (types_.named(tname) != g->type)
+          return fail(a, "a function object of the generic type " + tname +
+                         " cannot be passed yet");
+        std::optional<std::string> via = objectApply(a, *ap, arrow);
+        if (!via) return std::nullopt;
+        objects[p.text] = {g->type, *via};
+        symbols.push_back(tname);
+        rest.push_back(args[i]);
+        continue;
+      }
       if (a.kind == NodeKind::Lambda) {
         symbol = liftLambda(a, &arrow, hof.typeParams, what);
       } else if (a.kind == NodeKind::Name && a.flags.empty() &&
-                 !lookup(a.text) && !overloadSet(a.text).empty()) {
+                 !overloadSet(a.text).empty()) {
         symbol = functionArgument(a, arrow, what);
-      } else if (a.kind == NodeKind::Name && hofs_.count(a.text)) {
+      } else if (a.kind == NodeKind::Name && a.flags.empty() &&
+                 hofs_.count(a.text)) {
         return fail(a, "'" + a.text + "' is a higher-order function, and "
                        "passing one comes later (ADR 0044)");
       } else {
@@ -3207,6 +3455,15 @@ class Gen {
       NodePtr item = syntax::clone(*hof.item);
       item->text = key;
       std::vector<NodePtr> &ps = item->kids[0]->kids;
+      // A function object stays a parameter, of its own type, and each
+      // application of it calls its `apply`.
+      for (NodePtr &q : ps)
+        if (auto o = objects.find(q->text);
+            sema::isFunctionParam(*q) && o != objects.end())
+          q->kids[0]->kids[1] = syntax::makeNode(
+              NodeKind::TypeName, q->loc, typeName(o->second.first));
+      for (auto &[name, object] : objects)
+        applyThrough(*item, name, object.second);
       ps.erase(std::remove_if(ps.begin(), ps.end(),
                               [](const NodePtr &q) {
                                 return sema::isFunctionParam(*q);
@@ -3969,7 +4226,13 @@ class Gen {
     auto error = [&](syntax::SourceLoc at, std::string message) {
       errors.emplace_back(at, std::move(message));
     };
-    for (const syntax::NodePtr &item : program.kids) {
+    std::vector<const syntax::NodePtr *> items;
+    if (functionConcept_)
+      for (const syntax::NodePtr &item : functionConcept_->kids)
+        items.push_back(&item);
+    for (const syntax::NodePtr &item : program.kids) items.push_back(&item);
+    for (const syntax::NodePtr *itemPtr : items) {
+      const syntax::NodePtr &item = *itemPtr;
       if (!syntax::isConceptItem(*item)) continue;
       const std::string &name = item->text;
       if (overloads_.count(name) || types_.named(name) ||
@@ -7903,6 +8166,7 @@ class Gen {
   // The prelude's types (`result`, `arena`), when the program does not
   // define them.
   syntax::NodePtr prelude_;
+  syntax::NodePtr functionConcept_;
   bool usesArenas_ = false;  // the program has a `with_arena`
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
@@ -7952,7 +8216,7 @@ class Gen {
   std::map<std::string, std::vector<std::string>> overloads_;
   // Higher-order functions by their written name (ADR 0044): called only
   // through their specialisations.
-  std::map<std::string, sema::FuncSig> hofs_;
+  std::map<std::string, std::vector<sema::FuncSig>> hofs_;
   // Type-level metaprograms (ADR 0035): those that return a type, and
   // those that return a bool, by name; the interpreter that runs them; and
   // each type a metaprogram has seen, by its spelling.
