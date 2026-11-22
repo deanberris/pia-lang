@@ -1,0 +1,64 @@
+(* `--check-vacuity` (ADR 0036, step 7): a goal proved with a trusted
+   axiom or an `assume` is solved again from its hypotheses alone. If they
+   contradict each other, the goal was proved from a contradiction, which
+   is an error that names the trusted items in the unsat core. Without the
+   flag, the same goals are simply proved.
+// RUN: not piac --verify --check-vacuity --verify-stats %s 2>&1 | FileCheck %s
+// RUN: piac --verify %s | FileCheck %s --check-prefix=PLAIN
+*)
+@trusted
+
+let theory Good = sig
+  let sort s
+  let spec f : (x : s) -> u8
+  let axiom f_small (x : s) ensures f x < 10
+end
+
+import Good trusting
+
+(* Proved from the axiom, and its hypotheses are satisfiable. *)
+let lemma normal (x : Good.s) : unit ensures Good.f x < 11 = ()
+
+(* The precondition contradicts the axiom, so anything follows. *)
+let lemma vacuous (x : Good.s) : unit
+  requires Good.f x > 20
+  ensures Good.f x = 0
+= ()
+
+(* An `assume` that cannot hold. *)
+let given (x : u8) : u8
+  ensures result = 0
+= assume x < 3 && x > 5;
+  x
+
+(* An `assume` that can. *)
+let fine (x : u8) : u8
+  ensures result < 3
+= assume x < 3;
+  x
+
+(* A goal that used nothing trusted is not checked, even if its
+   hypotheses contradict each other: that is its own contracts' business.
+*)
+let lemma untrusted (x : u8) : unit
+  requires x > 5 && x < 3
+  ensures x = 0
+= ()
+
+(* Expected report.
+// CHECK: verify-stats-vacuity: checks=4 vacuous=2 unknown=0 cost={{[0-9]+}}
+// CHECK: vacuity.pia:20:38: proved: the postcondition holds [smt]
+// CHECK-NOT: vacuity.pia:20:38: failed
+// CHECK: vacuity.pia:25:3: proved: the postcondition holds [smt]
+// CHECK-NEXT: vacuity.pia:25:3: failed: the proof is not vacuous [its hypotheses contradict each other, so 'the postcondition holds' was proved from a contradiction: Good.f_small]
+// CHECK: vacuity.pia:30:3: proved: the postcondition holds [smt]
+// CHECK-NEXT: vacuity.pia:30:3: failed: the proof is not vacuous [its hypotheses contradict each other, so 'the postcondition holds' was proved from a contradiction: the 'assume' at {{.*}}vacuity.pia:31:3]
+// CHECK: vacuity.pia:36:3: proved: the postcondition holds [smt]
+// CHECK-NOT: vacuity.pia:36:3: failed
+// CHECK: vacuity.pia:45:3: proved: the postcondition holds [smt]
+// CHECK-NOT: failed: the proof is not vacuous
+// CHECK: 5 proved, 2 failed, 0 skipped
+*)
+
+(* PLAIN: 5 proved, 0 failed, 0 skipped
+*)

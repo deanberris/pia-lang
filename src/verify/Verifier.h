@@ -78,6 +78,10 @@ struct Options {
   // "file:line:col". Empty selects every goal. Unselected goals are left out
   // of the outcomes; earlier goals are still assumed, as in a full run.
   std::vector<std::string> only;
+  // `--check-vacuity` (ADR 0036, step 7): solve each goal proved with a
+  // trusted axiom or an `assume` again, without its negation, and fail it
+  // if its hypotheses alone are unsatisfiable.
+  bool checkVacuity = false;
 };
 
 // What one verifyModule call did, for --verify-stats and the build-time
@@ -97,6 +101,10 @@ struct Stats {
   unsigned skipped = 0;
   unsigned solved = 0;       // queries sent to Z3
   unsigned cached = 0;       // goals the proof cache answered
+  // --check-vacuity: the goals checked, those proved from a contradiction,
+  // those the check's budget could not decide, and Z3's resource count.
+  unsigned vacuityChecks = 0, vacuous = 0, vacuityUnknown = 0;
+  unsigned long long vacuityCost = 0;
   unsigned sliced = 0;       // queries slicing made smaller
   unsigned unsliced = 0;     // sliced queries solved again in full
   unsigned threads = 0;

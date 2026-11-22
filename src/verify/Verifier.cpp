@@ -4,6 +4,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <climits>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -263,6 +264,7 @@ class Encoder {
   bool reachedTarget() const { return done_; }
   // Whether a recursive spec function was left uninterpreted at its fuel.
   bool truncated() const { return truncated_; }
+  void setVacuity(bool v) { vacuity_ = v; }
 
   // The consistency check of a trusted theory (ADR 0036): every axiom of
   // `theory`, and, by the relevance closure, the axioms of the theories
@@ -631,7 +633,11 @@ class Encoder {
                             label, sortKind(value.getType())});
       assertTerm(eq(w, value));
     }
-    goalAssert_ = create<mlir::smt::AssertOp>(andOf(pathCondition(), notOf(term)));
+    // The vacuity check (ADR 0036, step 7) asks whether the hypotheses
+    // hold at all, so it asserts them without the negated goal.
+    goalAssert_ = create<mlir::smt::AssertOp>(
+        vacuity_ ? andOf(pathCondition(), boolConst(true))
+                 : andOf(pathCondition(), notOf(term)));
     done_ = true;
   }
 
@@ -2377,6 +2383,7 @@ class Encoder {
   std::vector<std::string> sentAssumes_;
   unsigned minFuel_ = 0;  // a lemma's @fuel (ADR 0036, tactics)
   bool truncated_ = false;  // an unfolding stopped at the fuel (#188)
+  bool vacuity_ = false;  // the target's hypotheses, without its negation
 };
 
 // Values in the bit-vector encoding are signed and wide enough for every
@@ -2560,7 +2567,8 @@ std::string nameAxioms(const std::string &smtlib,
 }
 
 Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
-                 int target, std::vector<Goal> &goals, bool allAxioms = false) {
+                 int target, std::vector<Goal> &goals, bool allAxioms = false,
+                 bool vacuity = false) {
   mlir::MLIRContext *ctx = module.getContext();
   OpBuilder b(ctx);
   mlir::OwningOpRef<mlir::ModuleOp> scratch =
@@ -2576,6 +2584,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   mlir::Block *block = b.createBlock(&solver.getBodyRegion());
   b.setInsertionPointToEnd(block);
   Encoder enc(module, fn, width, target, b, goals);
+  enc.setVacuity(vacuity);
   enc.run();
   if (target >= 0) enc.addAxioms(allAxioms);
   b.setInsertionPointToEnd(block);
@@ -3272,6 +3281,99 @@ mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
   return mlir::success();
 }
 
+// `--check-vacuity` (ADR 0036, step 7): a goal proved with a trusted
+// axiom or an `assume` is solved again with its hypotheses only, without
+// the negated goal. If they are unsatisfiable on their own, the goal was
+// proved from a contradiction, and that is an error that names the
+// trusted items in the unsat core. A goal whose proof used nothing
+// trusted is not checked: its hypotheses are its own contracts and code.
+constexpr unsigned long long kVacuityMinBudget = 1'000'000;
+constexpr unsigned long long kVacuityFactor = 10;
+
+template <typename Proof>
+void checkVacuity(mlir::ModuleOp module, const std::vector<Proof> &proofs,
+                  std::vector<Outcome> &outcomes, std::vector<Operation *> &opOf,
+                  const Options &options, Stats &st) {
+  std::set<std::string> trusted;
+  for (auto fn : module.getOps<mlir::func::FuncOp>())
+    if (fn->hasAttr(PiaDialect::getAxiomAttrName()) && !fn->hasAttr("pia.modelled"))
+      trusted.insert(fn.getSymName().str());
+  auto isTrusted = [&](const std::string &item) {
+    return trusted.count(item) || llvm::StringRef(item).starts_with("assume ");
+  };
+  std::map<size_t, Outcome> failures;  // after the outcome they check
+  for (const Proof &pr : proofs) {
+    const Outcome &o = outcomes[pr.outcome];
+    if (o.status != Status::Proved) continue;
+    if (std::none_of(o.axiomsUsed.begin(), o.axiomsUsed.end(), isTrusted)) continue;
+    std::vector<Goal> unused;
+    Query q = buildQuery(module, pr.fn, pr.width, static_cast<int>(pr.goal),
+                         unused, /*allAxioms=*/false, /*vacuity=*/true);
+    if (q.smtlib.empty() || !q.reached) continue;
+    ++st.vacuityChecks;
+    // A contradiction is usually found fast, while showing the hypotheses
+    // satisfiable can mean a long search for a model of quantified axioms.
+    // So the check gets a budget of its own, from the goal's cost:
+    // `unknown` within it leaves the goal proved, counted as unchecked.
+    unsigned long long budget = std::max<unsigned long long>(
+        kVacuityMinBudget, kVacuityFactor * o.cost);
+    if (options.rlimit) budget = std::min<unsigned long long>(budget, options.rlimit);
+    z3::context ctx;
+    z3::params p(ctx);
+    p.set("timeout", options.timeoutMs);
+    p.set("rlimit", static_cast<unsigned>(std::min<unsigned long long>(budget, UINT_MAX)));
+    z3::solver plain(ctx);
+    plain.set(p);
+    std::vector<std::string> core;
+    try {
+      plain.from_string(scriptOf(q.smtlib).c_str());
+      std::unique_ptr<z3::solver> t = tracked(ctx, plain, q, p);
+      z3::solver &s = t ? *t : plain;
+      unsigned long long before = rlimitCount(s);
+      z3::check_result r = s.check();
+      st.vacuityCost += rlimitCount(s) - before;
+      if (r == z3::unknown) ++st.vacuityUnknown;
+      if (r != z3::unsat) continue;
+      if (t) core = coreAxioms(*t);
+    } catch (const z3::exception &) {
+      ++st.vacuityUnknown;
+      continue;
+    }
+    ++st.vacuous;
+    Outcome f;
+    f.status = Status::Failed;
+    f.kind = o.kind;
+    f.where = o.where;
+    f.function = o.function;
+    f.claim = "the proof is not vacuous";
+    std::string named;
+    for (const std::string &c : core)
+      if (isTrusted(c))
+        named += (named.empty() ? "" : ", ") +
+                 (llvm::StringRef(c).starts_with("assume ")
+                      ? "the 'assume' at " + c.substr(7)
+                      : c);
+    f.method = "its hypotheses contradict each other, so '" + o.claim +
+               "' was proved from a contradiction" +
+               (named.empty() ? std::string(", with no trusted item in the core")
+                              : ": " + named);
+    failures.emplace(pr.outcome, std::move(f));
+  }
+  if (failures.empty()) return;
+  std::vector<Outcome> out;
+  std::vector<Operation *> ops;
+  for (size_t i = 0; i < outcomes.size(); ++i) {
+    out.push_back(std::move(outcomes[i]));
+    ops.push_back(opOf[i]);
+    if (auto it = failures.find(i); it != failures.end()) {
+      out.push_back(std::move(it->second));
+      ops.push_back(opOf[i]);
+    }
+  }
+  outcomes = std::move(out);
+  opOf = std::move(ops);
+}
+
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options, Stats *stats) {
   auto start = std::chrono::steady_clock::now();
@@ -3285,6 +3387,14 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   std::vector<Operation *> opOf;  // the op that raised each outcome
   llvm::DenseSet<Operation *> partial;  // ops with an unselected goal
   std::vector<Job> jobs;
+  // The SMT goals, for the vacuity check: outcome, function, goal, width.
+  struct Proof {
+    size_t outcome;
+    mlir::func::FuncOp fn;
+    size_t goal;
+    unsigned width;
+  };
+  std::vector<Proof> proofs;
   // Each function's witness copy in a model (ADR 0036), and its goals.
   std::map<std::string, mlir::func::FuncOp> witnessOf;
   for (auto fn : module.getOps<mlir::func::FuncOp>())
@@ -3450,6 +3560,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
             job.fallback = std::move(all);
           }
         }
+        if (options.checkVacuity)
+          proofs.push_back({outcomes.size(), fn, i, width});
         jobs.push_back(std::move(job));
       }
       opOf.push_back(g.op);
@@ -3472,6 +3584,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.typeCost += o.cost;
     }
   }
+  if (options.checkVacuity) checkVacuity(module, proofs, outcomes, opOf, options, st);
   // Per op: whether every goal it raises holds, and how.
   llvm::DenseMap<Operation *, std::pair<bool, bool>> proved;  // all, smt
   llvm::SmallVector<Operation *> order;

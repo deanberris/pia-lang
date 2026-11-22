@@ -331,6 +331,16 @@ trust_checks.pia:17:3: trusted: the axiom 'Good.g_small', since the theory 'Good
 2 of 3 proved goals rest on a trusted axiom; the other 1 are fully proved
 ```
 
+**Vacuity, opt-in.** A consistent theory can still contradict a goal's own hypotheses: with the axiom `f x < 10`, a lemma that `requires f x > 20` proves anything. So can an `assume` that cannot hold. `piac --verify --check-vacuity` ([ADR 0036](adr/0036-library-theories.md), step 7) finds such proofs. Each goal proved with a trusted axiom or an `assume` is solved again from its hypotheses alone, the same query without its negated goal. If they are unsatisfiable, the goal was proved from a contradiction, and that is an error naming the trusted items in the unsat core:
+
+```
+vacuity.pia:25:3: proved: the postcondition holds [smt]
+vacuity.pia:25:3: failed: the proof is not vacuous [its hypotheses contradict each other, so 'the postcondition holds' was proved from a contradiction: Good.f_small]
+vacuity.pia:30:3: failed: the proof is not vacuous [its hypotheses contradict each other, so 'the postcondition holds' was proved from a contradiction: the 'assume' at vacuity.pia:31:3]
+```
+
+A goal whose proof used nothing trusted is not checked: if its own preconditions contradict each other, that is the contract's business, and a goal in unreachable code is proved for the same reason. A vacuous goal is not proved, so its op is not marked proved and codegen refuses it like any failed goal. Finding a contradiction is usually quick, but showing that hypotheses with quantified axioms are satisfiable can mean a long search for a model. So each check has a budget of its own, ten times the resource count of the goal's proof and at least a million, within `--solver-rlimit`. A check the budget cannot decide leaves the goal proved, and piac prints a note with how many there were. The check costs one more query per goal it checks, which `--verify-stats` reports as `verify-stats-vacuity: checks=N vacuous=V unknown=U cost=C`. It is meant for CI and audits, not for every edit.
+
 **`import M trusting`.** An importer accepts a trusted theory as a whole with `import M trusting`. There is no list of axioms to grant, and it is written only in the source, so it works the same in a file and in the REPL. `trusting` is a keyword only at the end of an import. Interfaces do not carry theories yet, so today the only theory a module can name in an import is its own, where `import T trusting` changes nothing: T is trusted there already. The grant is recorded, and the trust report lists it (`trusting the theory 'Ideal'`). The check that an import of another module's trusted theory needs `trusting` comes when interfaces can export theories.
 
 **Encoding.** A sort is an uninterpreted SMT sort named after it (`(declare-sort Lip.layer 0)`), and an abstract function is a `declare-fun` under its qualified name (`Lip.lip`). The function's result is assumed to lie in its type's range. An axiom is an `smt.forall` over its parameters, `requires ==> ensures`, with each trigger as a pattern. The export cannot name an assertion, so the verifier adds the name afterwards as `(assert (! ... :named |Lip.seq_lip|))`. An axiom with several triggers is asserted once per trigger, under `|Lip.residual_lip#2|` and so on, since the export writes the terms of one quantifier as a single pattern.
