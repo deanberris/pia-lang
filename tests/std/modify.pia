@@ -1,0 +1,20 @@
+(* Pia.Core.Algo.Modify (ADR 0040, phase 1.6): every algorithm is proved
+   once, over its element type (ADR 0043), and its interface exports the
+   generic functions.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Modify.pia | FileCheck %s
+// RUN: mkdir -p %t/modify && piac --emit=interface -o %t/modify %S/../../lib/Pia/Core/Algo/Modify.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/modify/Pia.Core.Algo.Modify.Modify.piai
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK-DAG: Modify.pia:{{[0-9]+}}:{{[0-9]+}}: proved: the loop invariant holds after each iteration [generic]
+// CHECK: 130 proved, 0 failed, 0 skipped
+
+// IFACE:      {{^}}module Pia.Core.Algo.Modify{{$}}
+// IFACE-NEXT: {{^}}interface Modify = sig{{$}}
+// IFACE-NEXT: {{^}}  let fill : (t : type) -> (xs : out mutable [t]) -> (v : t) -> unit{{$}}
+// IFACE:      {{^}}  let replace : (t : type) -> (f : type where Function f t bool) -> (xs : borrowed inout mutable [t]) -> (p : f) -> (new_v : t) -> unit{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)
