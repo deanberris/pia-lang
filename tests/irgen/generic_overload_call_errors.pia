@@ -1,0 +1,10 @@
+(* A call that two generic overloads fit equally well (ADR 0034).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let mix (t : type) (x : t) (y : u8) : u8 = 0
+let mix (t : type) (x : u8) (y : t) : u8 = 1
+
+(* CHECK: generic_overload_call_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the call of 'mix' with (u8, u8) is ambiguous between generic 'mix' at line 5 and generic 'mix' at line 6; neither is more specific than the other
+*)
+let both (a : u8) (b : u8) : u8 = mix a b
