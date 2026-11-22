@@ -501,10 +501,32 @@ class Gen {
   void collectThreaded(const Node &n, std::set<std::string> &out) {
     if (n.kind == NodeKind::Apply && !n.kids.empty() &&
         n.kids[0]->kind == NodeKind::Name)
-      for (sema::FuncSig *sig : overloadSet(n.kids[0]->text))
-        for (size_t i : threaded(*sig))
+      for (sema::FuncSig *sig : overloadSet(n.kids[0]->text)) {
+        std::vector<size_t> through;
+        if (sig->isGeneric() && sig->item) {
+          // A generic's parameters are resolved per instance, so read the
+          // modifiers from its syntax. Type parameters are deduced, so a
+          // call passes no argument for them; `carried` drops buffers by
+          // the caller's types.
+          size_t arg = 0;
+          for (const syntax::NodePtr &p : sig->item->kids[0]->kids) {
+            if (p->kind != NodeKind::Param) continue;
+            if (llvm::is_contained(sig->typeParams, p->text)) continue;
+            const Node *annot = p->kids.empty() ? nullptr : p->kids[0].get();
+            const Node *mods =
+                annot && !annot->kids.empty() ? annot->kids[0].get() : nullptr;
+            if (mods && (sema::hasModifier(mods->text, "inout") ||
+                         sema::hasModifier(mods->text, "out")))
+              through.push_back(arg);
+            ++arg;
+          }
+        } else {
+          through = threaded(*sig);
+        }
+        for (size_t i : through)
           if (i + 1 < n.kids.size() && n.kids[i + 1]->kind == NodeKind::Name)
             out.insert(n.kids[i + 1]->text);
+      }
     for (const syntax::NodePtr &k : n.kids) collectThreaded(*k, out);
   }
 
