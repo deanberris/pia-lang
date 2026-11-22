@@ -38,3 +38,20 @@ let wrong (x : inout mutable u8) : unit
   requires x = 0
   ensures old x = 1
 = x <- 1
+
+(* Expected report, in order.
+// CHECK: inout_values.pia:13:14: proved: '+' does not overflow u8 [smt]
+// CHECK: inout_values.pia:12:3: proved: the postcondition holds [smt]
+// CHECK: inout_values.pia:18:36: proved: the precondition of 'inc' holds [smt]
+// CHECK: inout_values.pia:17:3: proved: the postcondition holds [smt]
+// CHECK: inout_values.pia:23:10: proved: '+' does not overflow u8 [smt]
+// CHECK: inout_values.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: inout_values.pia:28:29: proved: the precondition of 'step' holds [smt]
+// CHECK: inout_values.pia:28:37: proved: the precondition of 'step' holds [smt]
+// CHECK: inout_values.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: inout_values.pia:34:40: proved: the precondition of 'step' holds [smt]
+// CHECK: inout_values.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: inout_values.pia:39:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: 11 proved, 1 failed, 0 skipped
+*)

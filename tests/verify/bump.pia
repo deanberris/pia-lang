@@ -29,3 +29,20 @@ let pair (storage : borrowed [u8]) : result u8 oom =
   a.[0] <- 1;
   b.[0] <- 2;
   Ok (a.[0] + b.[0])
+
+(* Expected report, in order.
+// CHECK: bump.pia:18:21: proved: '-' does not overflow usize [smt]
+// CHECK: bump.pia:20:22: proved: '+' does not overflow usize [smt]
+// CHECK: bump.pia:21:31: proved: '+' does not overflow usize [smt]
+// CHECK: bump.pia:21:9: proved: the slice is within bounds [smt]
+// CHECK: bump.pia:14:3: proved: the postcondition holds [smt]
+// CHECK: bump.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: bump.pia:27:11: proved: the precondition of 'alloc' holds [smt]
+// CHECK: bump.pia:28:11: proved: the precondition of 'alloc' holds [smt]
+// CHECK: bump.pia:29:3: proved: the index is within bounds [smt]
+// CHECK: bump.pia:30:3: proved: the index is within bounds [smt]
+// CHECK: bump.pia:31:7: proved: the index is within bounds [smt]
+// CHECK: bump.pia:31:15: proved: the index is within bounds [smt]
+// CHECK: bump.pia:31:13: proved: '+' does not overflow u8 [smt]
+// CHECK: 13 proved, 0 failed, 0 skipped
+*)
