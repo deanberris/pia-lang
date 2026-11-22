@@ -1,8 +1,8 @@
-(* Captures (ADR 0044, section 6): a lambda's free variables are its
-   captures, inferred from use. Its type is a record of them that meets
-   `Function` through its `apply`. Scalars are copied when the lambda is
-   made, and buffers are borrowed. At the call the lambda unfolds with the
-   captured values, so the caller proves the result.
+(* Captures (ADR 0044, section 6): a lambda lists what it captures, each
+   copied (a bare name), borrowed or referenced (`inout`). Its type is a
+   record of them that meets `Function` through its `apply`. At the call
+   the lambda unfolds with the captured values, so the caller proves the
+   result.
 // RUN: piac --verify %s | FileCheck %s
 *)
 
@@ -19,13 +19,13 @@ let find (xs : [u8]) (p : u8 -> bool) : usize
 (* Two scalars, copied. *)
 let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
   ensures result < len xs ==> lo <= xs.[result] && xs.[result] <= hi
-= find xs (let (x : u8) => lo <= x && x <= hi)
+= find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 
 (* A copy: the lambda sees `lim` as it was when it was made. *)
 let later (x : u8) : bool
   ensures result <==> x < 10
 = let lim : mutable u8 = 10 in
-  let below = let (y : u8) : bool => y < lim in
+  let below = let [lim] (y : u8) : bool => y < lim in
   lim <- 20;
   below x
 
@@ -45,14 +45,46 @@ let count (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : usi
 let count_keys (xs : [u8]) (keys : borrowed inout mutable [u8]) : usize
   requires len keys > 0
   ensures result <= len xs
-= let is_key = let (x : u8) : bool => len keys > 0 && x = keys.[0] in
+= let is_key = let [borrowed keys] (x : u8) : bool => len keys > 0 && x = keys.[0] in
   let n = count xs is_key in
   keys.[0] <- 7;
   n
 
 let count_above (xs : [u8]) (lim : u8) : usize
   ensures result <= len xs
-= count xs (let (x : u8) : bool => x > lim)
+= count xs (let [lim] (x : u8) : bool => x > lim)
+
+(* A borrowed scalar: the same value as a copy, but `lim` cannot change
+   while the lambda is live. *)
+let under (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= find xs (let [borrowed lim] (x : u8) => x < lim)
+
+(* Referenced captures: the lambda writes `total`, and the enclosing code
+   sees the writes after the lambda's last use. *)
+let tally (x : u8) : u8
+  requires x < 100
+  ensures result = x + 2
+= let total : mutable u8 = 0 in
+  let put = let [inout total] (y : u8) : unit => total <- total +| y in
+  put x;
+  put 2;
+  total
+
+(* `for_each` takes an effectful function, written `inout` before its
+   arrow, and a lambda with a referenced capture counts in it. *)
+let for_each (xs : [u8]) (f : inout u8 -> unit) : unit =
+  for i in 0 .. len xs do f xs.[i] done
+
+let count_small (xs : [u8]) : usize =
+  let n : mutable usize = 0 in
+  for_each xs (let [inout n] (x : u8) : unit =>
+    if x < 10 && n < 65535 then n <- n + 1 else ());
+  n
+
+(* A pure lambda may go to an effectful arrow. *)
+let check_all (xs : [u8]) : unit =
+  for_each xs (let (x : u8) : unit => ())
 
 (* Expected report, in order.
 // CHECK: lambda_captures.pia:37:5: proved: the loop invariant holds on entry [generic]
@@ -65,6 +97,8 @@ let count_above (xs : [u8]) (lim : u8) : usize
 // CHECK: lambda_captures.pia:50:3: proved: the index is within bounds [smt]
 // CHECK: lambda_captures.pia:47:3: proved: the postcondition holds [smt]
 // CHECK: lambda_captures.pia:54:3: proved: the postcondition holds [smt]
+// CHECK: lambda_captures.pia:60:3: proved: the postcondition holds [smt]
+// CHECK: lambda_captures.pia:67:3: proved: the postcondition holds [smt]
 // CHECK: lambda_captures.pia:14:5: proved: the loop invariant holds on entry [smt]
 // CHECK: lambda_captures.pia:13:25: proved: the index is within bounds [smt]
 // CHECK: lambda_captures.pia:16:13: proved: '+' does not overflow usize [smt]
@@ -72,8 +106,18 @@ let count_above (xs : [u8]) (lim : u8) : usize
 // CHECK: lambda_captures.pia:15:5: proved: the measure decreases [smt]
 // CHECK: lambda_captures.pia:10:3: proved: the postcondition holds [smt]
 // CHECK: lambda_captures.pia:11:3: proved: the postcondition holds [smt]
-// CHECK: lambda_captures.pia:48:59: proved: the index is within bounds [smt]
+// CHECK: lambda_captures.pia:48:75: proved: the index is within bounds [smt]
 // CHECK: lambda_captures.pia:33:1: proved: 'count<u8, lambda@lambda_captures.pia:48:16>' is an instance of the generic proof of 'count' [generic]
 // CHECK: lambda_captures.pia:33:1: proved: 'count<u8, lambda@lambda_captures.pia:55:13>' is an instance of the generic proof of 'count' [generic]
-// CHECK: 20 proved, 0 failed, 0 skipped
+// CHECK: lambda_captures.pia:14:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_captures.pia:13:25: proved: the index is within bounds [smt]
+// CHECK: lambda_captures.pia:16:13: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_captures.pia:14:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_captures.pia:15:5: proved: the measure decreases [smt]
+// CHECK: lambda_captures.pia:10:3: proved: the postcondition holds [smt]
+// CHECK: lambda_captures.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: lambda_captures.pia:82:40: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_captures.pia:77:29: proved: the index is within bounds [smt]
+// CHECK: lambda_captures.pia:77:29: proved: the index is within bounds [smt]
+// CHECK: 32 proved, 0 failed, 0 skipped
 *)

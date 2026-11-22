@@ -22,7 +22,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<tuple>` | core tuple types `(u8, str)`, values `(a, b)`, `t.0` and tuple patterns; `apply`, `tuple_cat`, `tuple_size`, `tuple_element` as metaprograms over tuple types; structural `Eq`, `Ord`, `Hash` | Core (ADR 0040 section 9) | deferred: core tuples need their own ADR |
 | `<any>` | `dyn` | Out: no run-time type information (ADR 0003) | n/a |
 | `<bitset>` | `Pia.Core.Bit` over `[u64; n]` | Direct | deferred: value parameters in generic types |
-| `<functional>` | `Pia.Fn` | Deferred: function values | phase 6 |
+| `<functional>` | `Pia.Fn`: the laws of function arguments (`strict_weak_order`, `equivalence`, `associative`, `commutative`, `identity`, `sorted`, ...), generic spec functions exported with their definitions (ADR 0044, step 5) | Laws done; the rest of <functional> waits for the library | phase 6 |
 | `<type_traits>` | type-level metaprograms and type `match`; `Pia.Core.Traits` as needed | Idiom (ADR 0035) | phase 1 as needed |
 | `<typeinfo>`, `<typeindex>` | metaprogram builtins (`name`, `type_kind`) | Out: no RTTI | n/a |
 | `<source_location>` | the core's source locations in diagnostics; a metaprogram builtin if a program needs one | Core | n/a |

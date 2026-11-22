@@ -193,8 +193,26 @@ std::string smtSymbol(llvm::StringRef name) {
 // It always returns, with exactly the value its body computes. A lambda
 // passed to a higher-order function is usually one (ADR 0044), and so is
 // the wrapper that gives a named function an arrow's contract.
+// An imported function of scalars: to the solver, an uninterpreted
+// function with the interface's contract, wherever it is called.
+bool contractOnly(mlir::func::FuncOp f) {
+  if (!f || f.isExternal() || !f->hasAttr(PiaDialect::getImportAttrName()) ||
+      f.getNumResults() != 1)
+    return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  return true;
+}
+
 bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
+  // An imported function's body is in its module: here it is an
+  // arbitrary value with the interface's contract, which is not a
+  // definition (ADR 0039).
   if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getImportAttrName()) ||
+      f->hasAttr("pia.extern") ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
       f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
       f.getNumResults() != 1)
@@ -210,10 +228,9 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   bool ok = true;
   f.walk([&](Operation *op) {
     if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
-      if (!module ||
-          !pureScalar(module.lookupSymbol<mlir::func::FuncOp>(c.getCallee()),
-                      memo))
-        ok = false;
+      auto callee = module ? module.lookupSymbol<mlir::func::FuncOp>(c.getCallee())
+                           : mlir::func::FuncOp();
+      if (!contractOnly(callee) && !pureScalar(callee, memo)) ok = false;
     } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp, LoadOp,
                          StoreOp>(op)) {
       ok = false;
@@ -2129,7 +2146,7 @@ class Encoder {
     // and so is a pure function's, so a call in code and one in a contract
     // agree.
     if (hasBody && (isSpecFunction(callee) || definesValue(callee) ||
-                    importedScalar(callee)))
+                    contractOnly(callee)))
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
@@ -2214,25 +2231,7 @@ class Encoder {
   }
   bool hasSpecDecl(mlir::func::FuncOp f) {
     return isSpecFunction(f) || isAbstract(f) || definesValue(f) ||
-           importedScalar(f);
-  }
-
-  // A function of scalars imported from another module: its body here is
-  // its interface's contract, so in a spec body a call to it is an
-  // uninterpreted application that meets that contract. This is what lets
-  // an imported spec function, such as Pia.Core.Order's lex_from at u8,
-  // unfold at the importer through the module's `less`.
-  static bool importedScalar(mlir::func::FuncOp f) {
-    if (!f || f.isExternal() || !f->hasAttr(PiaDialect::getImportAttrName()) ||
-        f.getNumResults() != 1)
-      return false;
-    auto scalar = [](Type t) {
-      return mlir::isa<IntType>(t) || t.isInteger(1);
-    };
-    if (!scalar(f.getFunctionType().getResult(0))) return false;
-    for (Type t : f.getFunctionType().getInputs())
-      if (!scalar(t)) return false;
-    return true;
+           contractOnly(f);
   }
 
   // An ordinary function whose body is a definition: one scalar result,
@@ -2244,7 +2243,7 @@ class Encoder {
   // `ensures result = (if less b a then b else a)`, mean something at its
   // callers once `less` is a concrete function.
   bool definesValue(mlir::func::FuncOp f) {
-    // An imported function's body is only its contract (importedScalar).
+    // An imported function's body is only its contract (contractOnly).
     if (!f || f.isExternal() || isSpecFunction(f) || isAbstract(f) ||
         f->hasAttr("pia.lemma") || f.getNumResults() != 1 ||
         f->hasAttr(PiaDialect::getImportAttrName()))
@@ -2323,6 +2322,8 @@ class Encoder {
       if (ok && !funs.empty()) specFuns_[f.getOperation()] = std::move(funs);
     }
   }
+
+
 
   // A definition: asserted, or a hypothesis of the enclosing quantifier.
   void define(Value fact) {
@@ -2407,9 +2408,8 @@ class Encoder {
       ensuresStack_.pop_back();
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
-    // An imported function's body is its contract around an arbitrary
-    // result: the facts above are all there is to it.
-    if (importedScalar(callee)) return app;
+    // Its body is in its own module: the contract is all there is.
+    if (contractOnly(callee)) return app;
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
         std::max(fuelOf(callee), minFuel_)) {
       // Unfolded as far as the fuel allows: past here the function is
@@ -2521,7 +2521,7 @@ class Encoder {
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
                call && (isSpecFunction(calleeOf(call)) ||
                         definesValue(calleeOf(call)) ||
-                        importedScalar(calleeOf(call)))) {
+                        contractOnly(calleeOf(call)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
