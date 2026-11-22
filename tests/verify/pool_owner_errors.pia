@@ -1,0 +1,34 @@
+(* A block goes back only to the pool that handed it out (ADR 0041, step 4).
+   The owner is spec-only, so the check is a proof goal and costs nothing
+   at run time.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let pool = type { top : usize; id : int }
+let block = type { i : u16; owner : int } @linear
+
+let take (p : borrowed inout mutable pool) : block
+  ensures result.owner = p.id && p.id = old p.id
+= { i = 0; owner = p.id }
+
+let give (p : borrowed inout mutable pool) (b : moved block) : unit
+  requires b.owner = p.id
+  ensures p.id = old p.id
+= match b with
+  | { i } -> p.top <- p.top
+
+(* Right: each block back to its own pool. *)
+let own (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : unit
+  requires p.id <> q.id
+= let a = take p in
+  let b = take q in
+  give p a;
+  give q b
+
+(* Wrong: a came from p. *)
+let swapped (p : borrowed inout mutable pool) (q : borrowed inout mutable pool) : unit
+  requires p.id <> q.id
+= let a = take p in
+  let b = take q in
+  give q a;
+  give p b
