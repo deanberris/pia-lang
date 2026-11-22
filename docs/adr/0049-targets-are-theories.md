@@ -93,7 +93,7 @@ let huge_page_count (bytes : usize) : usize
 = (bytes + 4095) / 4096
 ```
 
-Inside `@target(m)`, the solver sees model `m`'s definitions as well as the axioms, and the item is compiled only for that target. An exported `@target` item appears only in that target's interface, and its importers must be `@target` of the same model, or reach it through a `when Target.is m` branch, which the meta engine folds at compile time ([ADR 0022](0022-metaprogramming-and-hygiene.md)). The certificate lists each module's `@target` items.
+Inside `@target(m)`, the solver sees model `m`'s definitions as well as the axioms, and the item is compiled only for that target. An exported `@target` item appears only in that target's interface, and its importers must be `@target` of the same model, or reach it through a `when Target.is m` branch, which the meta engine folds at compile time ([ADR 0022](0022-metaprogram-hygiene.md)). The certificate lists each module's `@target` items.
 
 Constants such as `cache_line` are values, not just facts: `Pia.Sync` pads a contended atomic to `Target.cache_line`, so it is 128 bytes on Apple silicon and 64 on x86_64, and the layout ([ADR 0030](0030-published-object-layouts.md)) published for each target says which.
 
