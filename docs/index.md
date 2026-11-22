@@ -64,4 +64,4 @@ average_fixed.pia:2:3: proved: the postcondition holds [smt]
 - [Language design](design.md): the whole language as designed
 - [Architecture Decision Records](adr/README.md): why Pia is the way it is
 
-Pia is open source under the Apache License 2.0, at [github.com/deanberris/pia-lang](https://github.com/deanberris/pia-lang).
+Pia is open source under the Apache License 2.0, at [github.com/deanberris/pia-lang](https://github.com/deanberris/pia-lang). If you would like to support the work, you can [sponsor it on GitHub](https://github.com/sponsors/deanberris).
