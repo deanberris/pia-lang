@@ -24,6 +24,10 @@
 module Pia.Core.Order : Ops, Compare
 
 interface Ops = sig
+  (** The concepts, for modules whose generic functions are over them,
+      such as Pia.Core.Algo.Search (ADR 0039, step 3). *)
+  let meta Eq : concept
+  let meta Ord : concept
   (** Eq: equality of integers. *)
   let same : (a : u8) -> (b : u8) -> bool
     ensures result <==> a = b

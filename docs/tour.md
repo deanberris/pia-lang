@@ -404,6 +404,123 @@ let below (xs : [u8]) (lim : u8) : bool
 = true
 ```
 
+## Function values
+
+A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
+
+A lambda's body is its definition: where it is passed, the verifier knows what it computes. So `find`'s contract, which mentions `p`, means `x > 3` at this call, and the lambda needs no contract of its own:
+
+<!-- example: find_big.pia -->
+```ocaml
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_big (xs : [u8]) : usize
+  ensures result < len xs ==> xs.[result] > 3
+= find xs (let (x : u8) => x > 3)
+```
+
+A function type can carry a contract that names its parameters and `result`. The function that takes it may call it wherever its `requires` holds and relies on its `ensures`, and every argument is proved to meet both. A lambda may also give a result type and contracts before its `=>`:
+
+```ocaml
+let apply_twice (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result > y) : u8
+  requires x < 100
+  ensures result > x
+= let a = f x in
+  if a < 200 then f a else a
+
+let plus2 (x : u8) : u8
+  requires x < 100
+  ensures result > x
+= apply_twice x (let (y : u8) : u8 requires y < 250 => y + 1)
+```
+
+A **function object** is any record or variant whose module defines `apply` for it. Applying it, `g x`, calls `apply g x`, and it can be passed wherever a function is expected, carrying state in its fields. `Function`, a standard concept, is what all of these meet, and a generic can say so itself, `(f : type where Function f t bool)`. A name may have one overload that takes a value and one that takes a function: a lambda, a named function or a function object only fits the second, and anything else only the first.
+
+<!-- example: find_either.pia -->
+```ocaml
+let meta Eq (t : type) : concept = sig
+  let same : (a : t) -> (b : t) -> bool
+end
+
+let same (a : u8) (b : u8) : bool = (a = b)
+
+let find (t : type where Eq t) (xs : [t]) (v : t) : usize
+  ensures result <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && same xs.[i] v = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let find (t : type) (xs : [t]) (p : t -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let below = type { lim : u8 }
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+let where3 (xs : [u8]) : usize = find xs 3
+
+let first_below (xs : [u8]) (lim : u8) : usize
+  ensures result < len xs ==> xs.[result] < lim
+= let b : below = { lim = lim } in
+  find xs b
+```
+
+A lambda **captures** the locals it uses, with no capture list. A scalar is copied when the lambda is made, so later changes to a `mutable` variable are not seen, and a lambda may not assign what it captures. A buffer is borrowed: it cannot be written while the lambda is still used. Each lambda has its own type, a record of its captures that meets `Function`, so passing one costs what passing its captures does, and its body is still known at the call:
+
+```ocaml
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  ensures result < len xs ==> p xs.[result]
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
+  ensures result < len xs ==> lo <= xs.[result] && xs.[result] <= hi
+= find xs (let (x : u8) => lo <= x && x <= hi)
+```
+
+A lambda's parameter types may be left out where it is passed: they come from the parameter's function type, once the other arguments have fixed its type parameters, so `find xs (let (x) => x > 3)` with `xs : [u8]` makes `x` a `u8`. A typed lambda fixes them itself. A `let` of a lambda with untyped parameters and no captures is **generic**, like a C++ `auto` lambda: each use is an instance, proved on its own. A lambda can also take type parameters with constraints, which is proved once over them. A lambda's result type, when not written, comes from its body:
+
+```ocaml
+let meta Ord (t : type) : concept = sig
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let less (a : u8) (b : u8) : bool = (a < b)
+
+let both_small (a : u8) (b : u16) : bool =
+  let small = let (v) => v < 100 in
+  small a && small b
+
+let smaller (a : u8) (b : u8) : u8 =
+  let min = let (t : type where Ord t) (x : t) (y : t) : t =>
+    if less y x then y else x in
+  min a b
+```
+
+Moving a value into a lambda, generic lambdas that capture, and functions stored in data or returned come in later steps of ADR 0044.
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.
@@ -467,11 +584,11 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 
 These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
 
-**Function values.** A nameless `let` is a function literal, and there is no `fun` keyword. Function literals are curried. Metaprograms use them today, as in the operator declarations above, but ordinary code cannot pass functions around yet.
+**More function values.** Lambdas work today ([Function values](#function-values)). Returning them, partial application and moved captures are designed in [ADR 0044](adr/0044-function-values-and-lambdas.md):
 
-<!-- untested: function values are not implemented yet -->
+<!-- untested: function results and partial application are not implemented yet -->
 ```ocaml
-let square = let (x : i32) => x * x
+let between (lo : u8) (hi : u8) = let (x : u8) => lo <= x && x <= hi
 let compose f g = let (x) => f (g x)
 ```
 

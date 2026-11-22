@@ -23,9 +23,10 @@ Pia is an experimental language under active development. The compiler works end
 
 - **Loops need invariants.** After a loop, only its invariant is known, so a goal after the loop that depends on what it did needs an invariant that says so.
 - **Termination is checked for loops and direct recursion only.** A `while` loop or a recursive call without `decreases` is a skipped goal, which `piac` refuses unless `--allow-unproved` accepts it. Mutual recursion is not checked.
-- **Calls inside contracts** are unknown values, so a contract cannot rely on what another function computes.
+- **Calls inside contracts** to functions other than spec functions and pure functions of scalars are unknown values, so a contract cannot rely on what such a function computes.
 - **Counterexamples do not show array contents** yet, only lengths and scalar values.
-- **Not compiled yet:** function values and lambdas outside metaprograms, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, imports, separate compilation and nested modules, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
+- **Function values are partly compiled.** Typed lambdas without captures, and top-level functions, can be passed to a parameter of function type, which may carry a contract, and a lambda can be bound by a `let` and applied ([ADR 0044](adr/0044-function-values-and-lambdas.md), steps 1 and 2). So can function objects, any record or variant with an `apply`, which `g x` calls. `Function` is a standard concept, and an overload set may mix functions that take values with functions that take functions. Lambdas capture the locals they use, copying scalars and borrowing buffers (step 3). Untyped lambdas take their parameter types from where they are passed, and a `let` of an untyped or explicitly generic lambda is generic (step 4). Each call with a function argument is proved and compiled as its own specialisation. Moving values into lambdas, generic lambdas that capture, and returning functions come later.
+- **Not compiled yet:** other function values, recursive types, `dyn`, floats, `vec<T, k>`, refinement types and `where` on values, imports, separate compilation and nested modules, `spread` and the concurrency runtime. `piac` reports these as "not supported yet" at their source location.
 - **One target.** Code generation targets arm64 macOS. The compiler itself builds on Linux and cross-compiles.
 
 ## Roadmap

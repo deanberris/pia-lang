@@ -1,0 +1,26 @@
+(* Pia.Core.Algo.Search (ADR 0040): every algorithm is proved once, over
+   its type parameter (ADR 0043), and its interface exports the generic
+   functions and the spec functions their contracts use.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Search.pia | FileCheck %s
+// RUN: mkdir -p %t/search && piac --emit=interface -o %t/search %S/../../lib/Pia/Core/Algo/Search.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/search/Pia.Core.Algo.Search.Search.piai
+*)
+
+(* Every goal is a generic one. minmax_element returns a record, so it is
+   proved at each instance, from min_element's and last_max_element's
+   contracts.
+// CHECK-NOT: failed
+// CHECK-DAG: proved: the postcondition holds [generic]
+// CHECK-DAG: not proved generically: 'minmax_element' is proved at each instance, since it returns a value of extremes [generic]
+// CHECK: 243 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:     {{^}}module Pia.Core.Algo.Search{{$}}
+// IFACE-NEXT: {{^}}interface Search = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec count_from : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> (i : usize) -> usize{{$}}
+// IFACE:     {{^}}  let find : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (v : t) -> usize{{$}}
+// IFACE:     {{^}}  let is_sorted : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> bool{{$}}
+// IFACE:     {{^}}end{{$}}
+*)

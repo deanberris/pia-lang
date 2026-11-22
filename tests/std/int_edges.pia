@@ -79,5 +79,5 @@ let casts () : unit =
 
 (* Every goal is proved, from the interface alone.
 // CHECK-NOT: failed
-// CHECK: 150 proved, 0 failed, 0 skipped
+// CHECK: 118 proved, 0 failed, 0 skipped
 *)

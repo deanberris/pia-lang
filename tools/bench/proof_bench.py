@@ -30,6 +30,7 @@ import json
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -38,6 +39,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 RLIMIT = 1200000000  # as pia_object passes (tools/piac/pia.bzl)
 TIMEOUT_MS = 600000
+IFACE_DIR = None  # the corpus's interfaces, for files that import (ADR 0039)
 
 
 def corpus(path):
@@ -53,18 +55,12 @@ def corpus(path):
     return files
 
 
-def interfaces(piac, files, out):
-    """Writes every module's interface artifacts into out, so a file that
-    imports another module of the corpus finds it (ADR 0039)."""
-    for rel in files:
-        subprocess.run([piac, "--emit=interface", "-o", out,
-                        os.path.join(ROOT, rel)], capture_output=True)
-
-
-def run(piac, rel, jobs, ifaces):
+def run(piac, rel, jobs):
     cmd = [piac, "--verify", "--verify-stats", "--jobs=%d" % jobs,
            "--solver-rlimit=%d" % RLIMIT, "--solver-timeout=%d" % TIMEOUT_MS,
-           "--iface-path=%s" % ifaces, os.path.basename(rel)]
+           os.path.basename(rel)]
+    if IFACE_DIR:
+        cmd[1:1] = ["--iface-path=%s" % IFACE_DIR]
     start = time.monotonic()
     p = subprocess.run(cmd, cwd=os.path.join(ROOT, os.path.dirname(rel)),
                        capture_output=True, text=True)
@@ -77,14 +73,25 @@ def run(piac, rel, jobs, ifaces):
     return stats, wall_ms, p.stdout
 
 
+def interfaces(piac, files):
+    """Emits every library module's interface into a scratch directory, so
+    a module that imports another, such as Pia.Core.Algo.Search importing
+    Pia.Core.Order, verifies as its pia_library rule does. Shallower paths
+    go first; a file with no interface is skipped."""
+    out = tempfile.mkdtemp(prefix="proof_bench_iface.")
+    libs = [f for f in files if f.startswith("lib/")]
+    for rel in sorted(libs, key=lambda f: (f.count("/"), f)):
+        subprocess.run([piac, "--emit=interface", "-o", out,
+                        os.path.join(ROOT, rel)], capture_output=True)
+    return out
+
+
 def measure(piac, files, cores):
     result = {}
     nondeterministic = []
-    ifaces = tempfile.mkdtemp(prefix="proof_bench_")
-    interfaces(piac, files, ifaces)
     for rel in files:
-        one, wall1, report1 = run(piac, rel, 1, ifaces)
-        many, walln, reportn = run(piac, rel, cores, ifaces)
+        one, wall1, report1 = run(piac, rel, 1)
+        many, walln, reportn = run(piac, rel, cores)
         # Z3's resource count varies by about 1% between runs, since some of
         # its hash tables depend on memory addresses; the report may not vary.
         if report1 != reportn or abs(one["cost"] - many["cost"]) > 0.05 * max(one["cost"], 1):
@@ -131,7 +138,13 @@ def main():
 
     piac = os.path.abspath(args.piac)
     cores = args.jobs or os.cpu_count() or 1
-    files, nondeterministic = measure(piac, corpus(args.corpus), cores)
+    global IFACE_DIR
+    listed = corpus(args.corpus)
+    IFACE_DIR = interfaces(piac, listed)
+    try:
+        files, nondeterministic = measure(piac, listed, cores)
+    finally:
+        shutil.rmtree(IFACE_DIR, ignore_errors=True)
     run_data = {"host": args.host, "cores": cores, "files": files,
                 "total": totals(files)}
     if args.out:

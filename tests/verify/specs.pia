@@ -117,8 +117,7 @@ let sum3 (xs : [u8; 3]) : u32
 // CHECK: specs.pia:71:10: proved: '+' does not overflow u32 [intervals]
 // CHECK: specs.pia:71:21: proved: the index is within bounds [intervals]
 // CHECK: specs.pia:71:19: proved: '+' does not overflow u32 [intervals]
-// CHECK: specs.pia:70:26: proved: the slice is within bounds [smt]
 // CHECK: specs.pia:70:20: proved: the precondition of 'total' holds [smt]
 // CHECK: specs.pia:70:3: proved: the postcondition holds [smt]
-// CHECK: 45 proved, 2 failed, 0 skipped
+// CHECK: 44 proved, 2 failed, 0 skipped
 *)

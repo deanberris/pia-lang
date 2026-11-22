@@ -1,0 +1,19 @@
+(* Errors in captures (ADR 0044, section 6).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let apply_to (x : u8) (f : u8 -> u8) : u8 = f x
+
+(* CHECK-DAG: capture_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: a lambda cannot assign 'n', which it captures
+*)
+let counts (x : u8) : u8 =
+  let n : mutable u8 = 0 in apply_to x (let (y : u8) => n <- y; y)
+
+(* While the lambda is live its buffer stays lent.
+// CHECK-DAG: capture_errors.pia:[[@LINE+5]]:{{[0-9]+}}: error: 'xs' is lent to 'at', so it cannot be assigned here
+*)
+let reads (xs : borrowed inout mutable [u8]) : bool
+  requires len xs > 1
+= let at = let (i : usize) : bool => i < len xs && xs.[i] = 0 in
+  xs.[0] <- 1;
+  at 1

@@ -175,12 +175,129 @@ bool insideQuantifier(Operation *op) {
          op->getParentOfType<contract::ExistsOp>();
 }
 
+// A symbol as an SMT-LIB simple symbol: a concept's requirement in a
+// generic proof is `Function<f, t, bool>.apply`, and a comma or a space
+// would end it.
+std::string smtSymbol(llvm::StringRef name) {
+  std::string out;
+  for (char c : name) {
+    if (c == ' ') continue;
+    out += c == ',' ? '.' : c;
+  }
+  return out;
+}
+
+// An ordinary function whose body is a definition: one scalar result,
+// scalar parameters, and a body of arithmetic, comparisons, pure `if`s and
+// calls of such functions, with no loop, buffer or abort and no recursion.
+// It always returns, with exactly the value its body computes. A lambda
+// passed to a higher-order function is usually one (ADR 0044), and so is
+// the wrapper that gives a named function an arrow's contract.
+bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
+  if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getAbstractAttrName()) ||
+      f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
+      f.getNumResults() != 1)
+    return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  if (auto it = memo.find(f.getOperation()); it != memo.end())
+    return it->second;
+  memo[f.getOperation()] = false;  // a cycle is recursion
+  auto module = f->getParentOfType<mlir::ModuleOp>();
+  bool ok = true;
+  f.walk([&](Operation *op) {
+    if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+      if (!module ||
+          !pureScalar(module.lookupSymbol<mlir::func::FuncOp>(c.getCallee()),
+                      memo))
+        ok = false;
+    } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp, LoadOp,
+                         StoreOp>(op)) {
+      ok = false;
+    }
+    for (Type t : op->getResultTypes())
+      if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+  });
+  memo[f.getOperation()] = ok;
+  return ok;
+}
+
+// A call in a contract of a pure function without a precondition raises
+// no goal, so it is specification like the arithmetic around it, and its
+// arguments may be guarded: `result < len xs ==> p xs.[result]`.
+bool specCall(mlir::func::CallOp call, mlir::func::FuncOp caller,
+              llvm::DenseMap<Operation *, bool> &memo) {
+  auto module = call->getParentOfType<mlir::ModuleOp>();
+  auto callee =
+      module ? module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())
+             : mlir::func::FuncOp();
+  if (!callee || callee == caller) return false;
+  // A theory's or a generic proof's abstract function is a term too.
+  bool abstract = callee->hasAttr(PiaDialect::getAbstractAttrName());
+  if (!abstract && !pureScalar(callee, memo)) return false;
+  if (!abstract &&
+      !callee.getBody().front().getOps<contract::RequiresOp>().empty())
+    return false;
+  // Arithmetic in an argument stays code, with its goals: exact, it could
+  // pass a value outside the parameter's type.
+  for (Value a : call.getOperands())
+    if (Operation *d = a.getDefiningOp())
+      if (!mlir::isa<LoadOp, mlir::func::CallOp>(d) &&
+          !d->hasTrait<mlir::OpTrait::ConstantLike>())
+        return false;
+  return true;
+}
+
 // Specification ops compute only what contracts read. They have exact
 // semantics and no obligations of their own: `ensures result <= a + b`
 // means the mathematical sum, and a guarded `xs.[i]` in a contract may
 // read past the end without failing.
+// Whether `op` calls a function that only computes a value: a spec
+// function, a theory's or a concept's uninterpreted function, or a pure
+// function of scalars (no loop, call, buffer or abort). In a contract such
+// a call is specification like any other op, so a guarded `less xs.[i] v`
+// reads xs.[i] only where the guard holds.
+static bool pureCallUncached(Operation *op) {
+  auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+  if (!call) return false;
+  auto module = op->getParentOfType<mlir::ModuleOp>();
+  auto f = module ? module.lookupSymbol<mlir::func::FuncOp>(call.getCallee())
+                  : mlir::func::FuncOp();
+  if (!f || f->hasAttr(PiaDialect::getLemmaAttrName())) return false;
+  if (f->hasAttr(PiaDialect::getSpecAttrName()) ||
+      f->hasAttr(PiaDialect::getAbstractAttrName()) ||
+      f->hasAttr("pia.generic_eq"))
+    return true;
+  if (f.isExternal() || f.getNumResults() != 1) return false;
+  auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
+  if (!scalar(f.getFunctionType().getResult(0))) return false;
+  for (Type t : f.getFunctionType().getInputs())
+    if (!scalar(t)) return false;
+  bool ok = true;
+  f.walk([&](Operation *inner) {
+    if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
+                  AbortOp, LoadOp, StoreOp>(inner))
+      ok = false;
+  });
+  return ok;
+}
+
+// specOps asks once per call per round, and a symbol lookup scans the
+// module, so the answer is kept per call.
+static bool pureCall(Operation *op, llvm::DenseMap<Operation *, bool> &memo) {
+  auto it = memo.find(op);
+  if (it != memo.end()) return it->second;
+  bool r = pureCallUncached(op);
+  memo[op] = r;
+  return r;
+}
+
 llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
   llvm::DenseSet<Operation *> spec;
+  llvm::DenseMap<Operation *, bool> pure, pureCalls;
   bool changed = true;
   while (changed) {
     changed = false;
@@ -193,8 +310,9 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
         isSpec = mlir::isa<mlir::scf::IfOp>(y->getParentOp()) &&
                  spec.contains(y->getParentOp());
       } else if (op->getNumResults() > 0 &&
-                 !mlir::isa<mlir::func::CallOp, mlir::scf::ForOp,
-                            mlir::scf::WhileOp>(op)) {
+                 !mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op) &&
+                 (!mlir::isa<mlir::func::CallOp>(op) || pureCall(op, pureCalls) ||
+                  specCall(mlir::cast<mlir::func::CallOp>(op), fn, pure))) {
         isSpec = true;
         bool anyUser = false;
         for (Value r : op->getResults())
@@ -304,13 +422,27 @@ class Encoder {
     std::vector<bool> sent(axioms.size(), false);
     for (size_t i = 0; i < axioms.size(); ++i)
       sent[i] = llvm::is_contained(sentAxioms_, axioms[i].getSymName().str());
+    // A generic's proof (ADR 0043) may use only the theories of the
+    // concepts its own constraints promise.
+    std::set<std::string> allowed;
+    if (fn_)
+      if (auto cs = fn_->getAttrOfType<mlir::ArrayAttr>("pia.concepts"))
+        for (mlir::Attribute a : cs)
+          allowed.insert(mlir::cast<mlir::StringAttr>(a).getValue().str());
     for (bool changed = true; changed;) {
       changed = false;
       std::set<std::string> theories;
-      for (const std::string &f : theoryFuns_)
+      for (const std::string &f : theoryFuns_) {
         theories.insert(llvm::StringRef(f).split('.').first.str());
+        if (auto g = module_.lookupSymbol<mlir::func::FuncOp>(f))
+          if (!theoryOf(g).empty()) theories.insert(theoryOf(g));
+      }
       for (size_t i = 0; i < axioms.size(); ++i) {
         if (sent[i]) continue;
+        if (fn_ && fn_->hasAttr("pia.generic_proof") &&
+            axioms[i]->hasAttr("pia.generic_proof") &&
+            !allowed.count(theoryOf(axioms[i])))
+          continue;
         bool fire = false;
         if (all) {
           fire = theories.count(theoryOf(axioms[i])) > 0;
@@ -2101,18 +2233,7 @@ class Encoder {
     if (!scalar(f.getFunctionType().getResult(0))) return false;
     for (Type t : f.getFunctionType().getInputs())
       if (!scalar(t)) return false;
-    auto it = definesValue_.find(f.getOperation());
-    if (it != definesValue_.end()) return it->second;
-    bool ok = true;
-    f.walk([&](Operation *op) {
-      if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                    AbortOp, LoadOp, StoreOp>(op))
-        ok = false;
-      for (Type t : op->getResultTypes())
-        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
-    });
-    definesValue_[f.getOperation()] = ok;
-    return ok;
+    return pureScalar(f, definesValue_);
   }
   llvm::DenseMap<Operation *, bool> definesValue_;
 
@@ -2173,7 +2294,7 @@ class Encoder {
         // that combine theories never confuse them (ADR 0036).
         if (!theoryOf(f).empty())
           funs.push_back(create<mlir::smt::DeclareFunOp>(
-              ft, b_.getStringAttr(f.getSymName())));
+              ft, b_.getStringAttr(smtSymbol(f.getSymName()))));
         else
           funs.push_back(declare(ft, "", false));
       }
@@ -2210,6 +2331,32 @@ class Encoder {
     Value app = flat.empty() ? fun
                              : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
                                                               mlir::ValueRange(flat));
+    // A pure function's call is its body, where its precondition holds:
+    // it has no recursion, so the body is a term, and a fact inside a
+    // quantifier about it needs no definition, which an assumed `forall`
+    // could not use (ADR 0044: a lambda's body at its caller).
+    if (!isSpecFunction(callee) && definesValue(callee)) {
+      unsigned before = unknowns_;
+      Demand body;
+      body.values = args.values;
+      Value def;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        if (k < ret.getNumOperands()) def = demand(ret.getOperand(k), body);
+      });
+      Value pre = boolConst(true);
+      bool guarded = false;
+      for (auto r : entry.getOps<contract::RequiresOp>()) {
+        Value p = demand(r.getPredicate(), body);
+        if (!p) def = Value();
+        else pre = andOf(pre, p);
+        guarded = true;
+      }
+      if (def && unknowns_ == before) {
+        if (!guarded) return def;
+        if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
+        return ite(pre, def, app);
+      }
+    }
     // The body was proved to return a value of the result type, and to
     // meet the postconditions where the precondition holds.
     if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
@@ -3914,6 +4061,8 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     if (fn->hasAttr("pia.spec_from")) continue;
     // A witness copy only explains another function's failures.
     if (fn->hasAttr("pia.witness_of")) continue;
+    // An imported generic's proof was made by its module (ADR 0043).
+    if (fn->hasAttr("pia.generic_imported")) continue;
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;

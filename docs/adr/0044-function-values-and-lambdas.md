@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed.
+Status: Proposed. Dean chose question 1 (2026-11-22): a function object is any type whose module defines `apply`.
 
 ## Context
 
@@ -175,7 +175,7 @@ A lambda's type is private to the module that defines it. A module can export a 
 
 ### 8. What this ADR does not decide
 
-- **Dynamic function values**, a value whose function is chosen at run time from different lambdas, such as a table of handlers. That needs a type-erased box, a code pointer and an environment, and with no garbage collector it must take an explicit allocator. It is a library type in `Pia.Fn`, the analogue of `std::function` and `std::move_only_function`, built on the `Function` concept once allocators can be stored ([ADR 0041](0041-allocator-semantics-as-a-theory.md), step 5). An `if` that picks between two lambdas of the same type is not dynamic and needs no box.
+- **Dynamic function values**, a value whose function is chosen at run time from different lambdas, such as a table of handlers. That needs a type-erased value, a code pointer and an environment, and with no garbage collector it must take an explicit allocator. It is the library's `box` over a concept, `box (Function a r)`, decided in [ADR 0046](0046-box-over-a-type-or-a-concept.md), so there is no separate `std::function` type. An arrow type in `box`'s position is sugar for `Function` at that arrow, contract included. A call through a box may appear in a contract only when the arrow is pure; otherwise it is code-only, with its facts from the arrow's contract (ADR 0046, section 5). An `if` that picks between two lambdas of the same type is not dynamic and needs no box.
 - **Effects through function values**: `inout` and `out` parameters in function types, and lambdas that write a capture.
 - **Recursion through function values**, such as a fixed-point combinator. A lambda cannot name itself; a recursive helper is a named `let rec`.
 
@@ -204,6 +204,6 @@ Steps 1 and 2 are what the standard library needs first, for `find`, `count`, `a
 
 ## Questions for Dean
 
-1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration?
+1. **Function objects.** Should a function object be any type with an `apply` function in its module, called with ordinary application syntax (recommended), or should it need an explicit `@derive(Function)`-style declaration? *Answered: any type with `apply`.*
 2. **Captures.** Should captures stay inferred from use, with no capture list (recommended, since it adds no syntax), or should a lambda list what it captures, as C++ does?
-3. **Dynamic function values.** Is a library box in `Pia.Fn` that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type?
+3. **Dynamic function values.** Is a library box in `Pia.Fn` that takes an allocator (recommended) the right home for run-time-chosen functions, or should the core have a built-in dynamic function type? *Settled by ADR 0046: `box (Function a r)`.*

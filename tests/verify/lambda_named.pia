@@ -1,0 +1,68 @@
+(* A top-level function passed as a function argument (ADR 0044). With no
+   contract on the arrow it is called directly; with one, a wrapper that
+   has the arrow's contract calls it, and the function's own contract must
+   meet the arrow's.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let count (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+= let n : mutable usize = 0 in
+  for i in 0 .. len xs
+    invariant n <= i
+  do if p xs.[i] then n <- n + 1 else () done;
+  n
+
+let is_digit (c : u8) : bool = (48 <= c && c <= 57)
+
+let digits (xs : [u8]) : usize
+  ensures result <= len xs
+= count xs is_digit
+
+let bump (x : u8) (f : (y : u8) -> u8 requires y < 200 ensures result > y) : u8
+  requires x < 100
+  ensures result > x
+= f x
+
+let succ (n : u8) : u8
+  requires n < 255
+  ensures result = n + 1
+= n + 1
+
+let next (x : u8) : u8
+  requires x < 100
+  ensures result > x
+= bump x succ
+
+(* `same`'s contract does not give the arrow's `ensures`.
+*)
+let same (n : u8) : u8
+  ensures result = n
+= n
+
+let stuck (x : u8) : u8 requires x < 100 =
+  bump x same
+
+(* Expected report, in order.
+// CHECK: lambda_named.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:30:5: proved: '+' does not overflow u8 [smt]
+// CHECK: lambda_named.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:35:3: proved: the precondition of 'bump[succ@lambda_named.pia:35:10]' holds [smt]
+// CHECK: lambda_named.pia:34:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:44:3: proved: the precondition of 'bump[same@lambda_named.pia:44:10]' holds [smt]
+// CHECK: lambda_named.pia:12:5: proved: the loop invariant holds on entry [smt]
+// CHECK: lambda_named.pia:13:11: proved: the index is within bounds [smt]
+// CHECK: lambda_named.pia:13:30: proved: '+' does not overflow usize [smt]
+// CHECK: lambda_named.pia:12:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: lambda_named.pia:9:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:35:10: proved: the precondition of 'succ' holds [smt]
+// CHECK: lambda_named.pia:35:10: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:25:3: proved: the precondition of 'succ@lambda_named.pia:35:10' holds [smt]
+// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: lambda_named.pia:44:10: failed: the postcondition holds
+// CHECK-NEXT: counterexample: y = {{-?[0-9]+}}
+// CHECK: lambda_named.pia:25:3: proved: the precondition of 'same@lambda_named.pia:44:10' holds [smt]
+// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: 18 proved, 1 failed, 0 skipped
+*)

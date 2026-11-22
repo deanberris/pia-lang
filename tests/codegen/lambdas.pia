@@ -1,0 +1,44 @@
+(* Function values (ADR 0044, step 1): a lambda passed to a higher-order
+   function costs what the loop costs. The specialisation of `count` at
+   the lambda calls it directly, and at -O2 the lambda is inlined into
+   the loop, which vectorises as a hand-written comparison would.
+   lambdas_test.c runs it.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$count_big"(
+// CHECK-NOT: call {{.*}}lambda@
+// CHECK: icmp ugt <16 x i8> {{.*}}, splat (i8 3)
+// CHECK-LABEL: define {{.*}}$count_between"(
+// CHECK-NOT: call {{.*}}apply
+// CHECK: <16 x i8>
+// CHECK-LABEL: define {{.*}}$count_digits"(
+// CHECK-NOT: call {{.*}}is_digit
+// CHECK: ret i64
+*)
+module Lambdas : Counts
+
+interface Counts @abi(c) = sig
+  let count_big : (xs : [u8]) -> usize
+  let count_between : (xs : [u8]) -> (lo : u8) -> (hi : u8) -> usize
+  let count_digits : (xs : [u8]) -> usize
+end
+
+let count (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+= let n : mutable usize = 0 in
+  for i in 0 .. len xs
+    invariant n <= i
+  do if p xs.[i] then n <- n + 1 else () done;
+  n
+
+let count_big (xs : [u8]) : usize = count xs (let (x : u8) => x > 3)
+
+(* A lambda that captures `lo` and `hi` (ADR 0044, step 3): its closure's
+   fields are passed to the specialisation, and still inline. *)
+let count_between (xs : [u8]) (lo : u8) (hi : u8) : usize =
+  count xs (let (x : u8) => lo <= x && x <= hi)
+
+let is_digit (c : u8) : bool = (48 <= c && c <= 57)
+
+let count_digits (xs : [u8]) : usize = count xs is_digit

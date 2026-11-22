@@ -728,6 +728,12 @@ bool isTypeParam(const Node &p) {
          p.kids[0]->kids[1]->kind == NodeKind::TypeKind;
 }
 
+bool isFunctionParam(const Node &p) {
+  return p.kind == NodeKind::Param && !p.kids.empty() &&
+         p.kids[0]->kind == NodeKind::Annot &&
+         p.kids[0]->kids[1]->kind == NodeKind::ArrowType;
+}
+
 bool resolveSignature(FuncSig &sig, TypeResolver &types,
                       syntax::Diagnostics &diags) {
   const Node &item = *sig.item;
@@ -879,8 +885,12 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
                                   "' is declared twice");
         sig.typeParams.push_back(p->text);
       }
-    // A generic function's types are resolved for each instance.
-    bool ok = sig.isGeneric() || resolveSignature(sig, types, diags);
+    for (const syntax::NodePtr &p : item->kids[0]->kids)
+      if (isFunctionParam(*p)) sig.fnParams.push_back(p->text);
+    // A generic function's types are resolved for each instance, and a
+    // higher-order function's for each specialisation (ADR 0044).
+    bool ok = sig.isGeneric() || sig.isHigherOrder() ||
+              resolveSignature(sig, types, diags);
     if (isCoreBuiltin(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is a core builtin; Pia does "
                              "not allow shadowing (ADR 0022), so rename it "
@@ -923,6 +933,12 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         drop[group[k]] = true;
         continue;
       }
+      // A higher-order overload is chosen by which arguments are functions
+      // (ADR 0044), and named after its line, `find#line12`.
+      if (sig.isHigherOrder()) {
+        sig.name = name + "#line" + std::to_string(item.loc.line);
+        continue;
+      }
       // Generic overloads are told apart by their parameter patterns and
       // constraints (ADR 0034); the first keeps the name, the others are
       // numbered, `sort#2`, and their instances are named after that.
@@ -936,7 +952,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       unsigned twins = 0;
       for (size_t j = 0; j < k; ++j) {
         const FuncSig &other = all[group[j]];
-        if (drop[group[j]] || other.isGeneric() ||
+        if (drop[group[j]] || other.isGeneric() || other.isHigherOrder() ||
             other.params.size() != sig.params.size())
           continue;
         bool same = true;

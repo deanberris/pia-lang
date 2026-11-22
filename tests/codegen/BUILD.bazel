@@ -228,3 +228,23 @@ cc_test(
     ],
     target_compatible_with = APPLE_SILICON,
 )
+
+# lambdas.pia, a higher-order function specialised at a lambda and at a
+# named function (ADR 0044), run against expected counts.
+genrule(
+    name = "lambdas_run_obj",
+    srcs = ["lambdas.pia"],
+    outs = ["lambdas_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lambdas_run_test",
+    srcs = [
+        "lambdas_test.c",
+        ":lambdas_run_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)

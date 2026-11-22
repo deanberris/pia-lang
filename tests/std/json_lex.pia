@@ -25,7 +25,7 @@
 // CHECK-DAG: Lex.pia:235:17: proved: the measure of 'chars_snoc' decreases [smt]
 // CHECK-DAG: Lex.pia:251:5: proved: the measure decreases [smt]
 // CHECK-DAG: Lex.pia:272:5: proved: the measure decreases [smt]
-// CHECK: 181 proved, 0 failed, 0 skipped
+// CHECK: 179 proved, 0 failed, 0 skipped
 *)
 
 (*

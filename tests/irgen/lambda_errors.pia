@@ -1,0 +1,22 @@
+(* Function values outside what ADR 0044 has built so far are reported.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let apply_to (x : u8) (f : u8 -> u8) : u8 = f x
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: expected u8, found lambda@lambda_errors.pia:9:35
+*)
+let stored (x : u8) : u8 = id_of (let (y : u8) => y)
+let id_of (v : u8) : u8 = v
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this lambda takes 2 parameters, but 'f' of 'apply_to' takes 1 argument
+*)
+let curried (x : u8) : u8 = apply_to x (let (a : u8) (b : u8) => a)
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f' of 'apply_to' is a function: pass a lambda
+*)
+let local (x : u8) : u8 = apply_to x x
+
+(* CHECK-DAG: lambda_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'apply_to' takes a function; passing it as a value comes later (ADR 0044)
+*)
+let value (x : u8) : u8 = id_of apply_to

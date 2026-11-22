@@ -94,6 +94,34 @@ void collectCtors(const Node &n, const std::string &module,
 }
 
 // `M.f` in the program becomes the Name `M.f` of the imported item.
+// In an imported definition, such as a generic function's body or a
+// concept's signature, `M.f` naming an item of another imported module,
+// such as the concept `Pia.Core.Order.Eq` that a generic of
+// Pia.Core.Algo.Search is constrained by, or a constructor of another
+// module's type. Nothing else is renamed: the
+// importer's own unqualified names must not capture the definition's.
+void resolveDotted(Node &n, const Imported &imp) {
+  if (n.kind == N::Field)
+    if (auto d = dotted(n)) {
+      std::string name = unalias(*d, imp);
+      if (imp.items.count(name)) {
+        n.kind = N::Name;
+        n.text = name;
+        n.kids.clear();
+        return;
+      }
+      // `M.C` is the constructor `C`, as in the program's own items: a
+      // contract copied from Pia.Text.Json.Lex names Pia.Text.Json.Spec.End.
+      if (imp.ctors.count(name)) {
+        n.kind = N::Name;
+        n.text = name.substr(name.rfind('.') + 1);
+        n.kids.clear();
+        return;
+      }
+    }
+  for (NodePtr &k : n.kids) resolveDotted(*k, imp);
+}
+
 void rewrite(Node &n, const Imported &imp, Diagnostics &diags) {
   if (n.kind == N::TypeName || n.kind == N::TypeInst ||
       n.kind == N::SigInclude) {
@@ -405,10 +433,6 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
   // The program's own items, which `as` and `{ }` apply to; imported
   // items name things as their own module does.
   std::set<const Node *> own;
-  // Items copied from interface artifacts (functions' contracts, spec
-  // functions, generic functions, concepts), which may name a third
-  // module's items by path.
-  std::set<const Node *> copied;
   std::set<std::string> binders;
   bindersIn(program, binders);
   for (NodePtr &item : program.kids) {
@@ -524,7 +548,6 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       NodePtr fn = importedFunction(*k, module, members, at, where, diags);
       if (!fn) continue;
       imp.items.insert(qualified);
-      copied.insert(fn.get());
       out.push_back(std::move(fn));
     }
     for (size_t i = 2; i < artifact->kids.size(); ++i) {
@@ -549,7 +572,6 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
         if (p->kind == N::Param) params.insert(p->text);
       qualify(*copy, module, typesAndConcepts, params, params);
       relocate(*copy, at);
-      copied.insert(copy.get());
       out.push_back(std::move(copy));
     }
     imp.modules.insert(module);
@@ -586,17 +608,13 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     }
   }
   program.kids = std::move(out);
-  if (!any) return;
-  // A copied item names other modules' items by their full paths,
-  // as its own module's interface artifact wrote them; this file's aliases
-  // and unqualified imports mean nothing there.
-  Imported byPath = imp;
-  byPath.aliases.clear();
-  byPath.unqualified.clear();
-  for (NodePtr &item : program.kids) {
-    if (own.count(item.get())) rewrite(*item, imp, diags);
-    else if (copied.count(item.get())) rewrite(*item, byPath, diags);
-  }
+  if (any)
+    for (NodePtr &item : program.kids) {
+      if (own.count(item.get()))
+        rewrite(*item, imp, diags);
+      else
+        resolveDotted(*item, imp);
+    }
 }
 
 }  // namespace pia::syntax

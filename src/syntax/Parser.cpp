@@ -531,6 +531,15 @@ class Parser {
         take();
         take();
         p->add(annot());
+        // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
+        // function type's contracts (ADR 0044), on its innermost arrow.
+        if (p->kids[0]->kids[1]->kind == N::ArrowType && atContract()) {
+          Node *arrow = p->kids[0]->kids[1].get();
+          while (arrow->kids[1]->kind == N::ArrowType)
+            arrow = arrow->kids[1].get();
+          Node *cs = arrow->add(makeNode(N::Contracts, loc()));
+          while (atContract()) cs->add(contract());
+        }
         expect(K::RParen, "')' after the parameter's type");
         ps->add(std::move(p));
       } else {
@@ -1153,6 +1162,20 @@ class Parser {
       n->add(std::move(p));
     }
     if (n->kids.empty()) fail("expected '(' and a parameter");
+    // `let (x : u8) : u8 requires x < 255 => x + 1` (ADR 0044): a result
+    // type and contracts, each present only when written.
+    if (at(K::Colon)) {
+      auto r = makeNode(N::RetAnnot, loc());
+      take();
+      r->add(annot());
+      r->add(makeNode(N::Attrs, loc()));
+      n->add(std::move(r));
+    }
+    if (atContract()) {
+      auto cs = makeNode(N::Contracts, loc());
+      while (atContract()) cs->add(contract());
+      n->add(std::move(cs));
+    }
     expect(K::FatArrow, "'=>' after the parameters");
     n->add(elemBody ? elem() : seq());
     return n;
