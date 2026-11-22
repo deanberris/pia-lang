@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-22), with his answers to the four questions, which changed sections 2, 5, 6 and 8; see "Dean's answers" at the end.
 
 ## Context
 
@@ -59,7 +59,6 @@ let point = type { x : i32; y : i32 } @derive(json)
 let shape = type
   | Circle of { r : u16 }
   | Rect of { w : u16; h : u16 }
-  | Empty
   @derive(json)
 ```
 
@@ -80,16 +79,21 @@ Defaults follow ADR 0004, strictest first, with attributes to relax them (attrib
 
 | Situation | Default | Attribute |
 | --- | --- | --- |
-| Member name | the field's name | `@json(name = "x")` |
+| Member name | the field's name, and nothing else: a constructor's or type's name never appears in the output | `@json(name = "x")` on the field, as serde's `rename` and Go's `json:"x"` tag |
 | Unknown member | error `Unknown` | `@json(ignore_unknown)` on the type |
 | Missing member | error `Missing`, unless the field is an `option` | `@json(default = v)` |
 | Duplicate member | error `Duplicate` (I-JSON) | none |
-| Variant | externally tagged: `{"Circle": {"r": 3}}`, and a constructor without payload as the string `"Empty"` | `@json(tag = "kind")` for internal tagging of record payloads |
+| Variant | untagged, told apart by structure: `{"r": 3}` is a `Circle` and `{"w": 2, "h": 1}` a `Rect`; the derive must prove that no document conforms to two constructors, or it is a compile error that suggests a tag | `@json(tag = "kind")` on the type, an explicit tag member whose value names the constructor (its name, or `@json(name = "c")` on the constructor) |
 | Record field with `where` | checked after the record is read; failure is `Invalid` | none |
+
+**Variants are disambiguated by structure or by an explicit tag, never by a name the type did not ask for.**
+
+- *By structure.* For each pair of constructors, the derive proves that their shapes are disjoint: `not (conforms A d i && conforms B d i)` for every document (section 6). Most pairs are settled without the solver, because their payloads have different JSON kinds (a number and an object), or both are objects and each has a required member the other does not allow (unknown members are rejected, so that member decides). Anything else goes to the solver, as one small goal per pair. If a pair cannot be proved disjoint, such as two constructors with the same payload, or two constructors without payload, the derive fails and names the pair, and the fix is a tag. The streaming reader does not backtrack: it reads an object's members into slots for the union of the constructors' fields, and picks the constructor at the closing brace from the members it saw, which the disjointness proof says determine it. A member whose type differs between constructors keeps its raw slice of the input until the constructor is known, then parses it, which costs nothing because every token is already a slice of the input.
+- *By tag.* `@json(tag = "kind")` writes `"kind": "Circle"` as the first member of the payload object, and the reader accepts the tag anywhere among the members. A constructor without payload is then `{"kind": "Empty"}`. The tag member's name and values are written in the type's source, as Dean asked, so nothing about the encoding is implicit.
 
 Each reader tracks which fields it has seen in a bit set and proves, at the closing brace, that every required field was set exactly once, so the record it returns is fully initialised by construction.
 
-**Error sets are exact per type.** `json_errors t` is a type-level metaprogram ([ADR 0035](0035-substitution-failure-and-total-constraints.md)) that computes the closed set a reader of `t` can raise, as an error set union ([#84](https://github.com/deanberris/pia-lang/issues/84)): every reader can raise `Syntax of pos`, but `Range` only if `t` contains an integer narrower than the literal allows, `Invalid` only if it contains a `where`, `OutOfMemory` only if it contains a `string` or a `vec`, and `Depth` never for a type that is not recursive, because the nesting a reader accepts is bounded by the type's own depth. A handler for `read point` therefore lists four errors, not twelve, and the compiler checks the list is exact.
+**Error sets are exact per type.** `json_errors t` is a type-level metaprogram ([ADR 0035](0035-substitution-failure-and-total-constraints.md)) that computes the closed set a reader of `t` can raise, as an error set union ([#84](https://github.com/deanberris/pia-lang/issues/84)): every reader can raise `Syntax of pos`, but `Range` only if `t` contains an integer narrower than the literal allows, `Invalid` only if it contains a `where`, `OutOfMemory` only if it contains a `string` or a `vec`, and `Depth` only for a recursive type ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)), because for any other type the nesting a reader accepts is bounded by the type's own depth. A handler for `read point` therefore lists four errors, not twelve, and the compiler checks the list is exact.
 
 ### 3. Typed construction: the type is an argument
 
@@ -129,20 +133,26 @@ end
 - `\uXXXX` escapes are decoded, surrogate pairs are joined, and a lone surrogate is a `Syntax` error (I-JSON). The writer escapes `"`, `\` and the control characters, and writes everything else as UTF-8, so its output is valid UTF-8 and valid I-JSON.
 - A `str` field borrows from the input when the literal has no escapes: its result type is `borrowed(s)` ([#70](https://github.com/deanberris/pia-lang/issues/70)), so the value cannot outlive the text. A literal with escapes needs somewhere to put the unescaped bytes, so a `str` field reads through an arena the caller passes, and a `string` field copies into its own allocator.
 
-### 5. The DOM is a tape, generic over its storage
+### 5. The DOM is a recursive sum type over slices of the input
 
-The untyped document is a flat tape in the style of simdjson, not a tree of boxes:
+The untyped document is an ordinary recursive variant, declared with the explicit recursion of [ADR 0047](0047-recursive-sum-types-and-shared-references.md), and every leaf is a slice of the input text:
 
 ```ocaml
-let kind = type | Null | False | True | Num | Str | Arr | Obj
-let node = type { kind : kind; a : u32; b : u32 }   (* Arr/Obj: index past the end, member count; Str/Num: byte range *)
-let dom = type { nodes : vec node; text : str }      (* text: the input, or an arena holding unescaped strings *)
+let rec json = type
+  | Null
+  | Bool of bool
+  | Num of str               (* the literal, as it appears in the input *)
+  | Str of str               (* the literal between the quotes, escapes intact *)
+  | Arr of vec json
+  | Obj of vec (str, json)   (* members in input order; keys as raw literals *)
 ```
 
-- **Why a tape.** A tree of variants needs recursive types, which Pia does not have yet, and, without a garbage collector, every box would be a separate allocation that the program must free. A tape is one `vec` (which stores its allocator), freed by one `drop`; a subtree is a range of indices, so skipping one is a jump and walking one is a loop. It is also the fastest layout known for this job.
-- **Its invariant is a spec function**, `well_formed d`, stated with quantifiers over indices: every container's end index is inside the tape and after the container, containers nest properly, member keys are `Str` nodes, and every `Str` and `Num` range lies in `text` and is valid there. `Json.Dom.parse` ensures `well_formed`, and the builder's functions (`push_null`, `begin_obj`, `key`, `end_obj` and so on) require and preserve it, so a program can also build a document by hand.
-- **Numbers are kept as their literal text**, proved to match the grammar, with their value given by the spec function `Json.Spec.number_value : str -> real`. Nothing is rounded until a typed conversion asks for an integer (exact) or, once floats exist, a float.
-- **"Generic"** means the DOM is the same for every document and every target type, and is parameterised only by where its memory comes from. **"Variadic"** content (arrays of mixed kinds, objects with any members) needs nothing more: it is just nodes.
+- **Backed by the input.** Parsing copies no text. A `Num` or `Str` is the exact range of the input it was read from, so a whole document is `borrowed(s)` from its text `s` ([#70](https://github.com/deanberris/pia-lang/issues/70), [ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md)) and cannot outlive it. `Json.Dom.text (v : str) (out : out [u8])` unescapes a string literal on demand into a buffer the caller supplies, and `Json.Dom.eq_key` compares a raw key with a name without unescaping when the key has no escapes (the common case).
+- **Recursion is explicit.** `let rec` marks the type recursive, and the recursive occurrences sit inside `vec`, an indirection that owns its elements, as ADR 0047 requires. The only allocations are the `vec`s of arrays and objects. A document is usually parsed into an arena ([ADR 0026](0026-memory-manager.md)), so it is freed by one release however many containers it holds, but any allocator works, since `vec` stores its own.
+- **Its invariant is a spec function.** Since `json` is a datatype, the verifier encodes it as a Z3 datatype, and `Json.Dom.parse` ensures `valid_dom v`, a spec function defined by structural recursion on `v`: every `Num` matches the number grammar, every `Str` is a well-formed literal (valid UTF-8, legal escapes, no lone surrogates), and no object has two equal keys. A program can also build a document by hand with the constructors, and `valid_dom` says what it must meet to be written out.
+- **Numbers keep their literal text**, with their value given by the spec function `Json.Spec.number_value : str -> real`. A typed conversion to an integer is exact; conversion to floats waits for floats (section 8).
+- **"Generic"** means one `json` type for every document and every target type. **"Variadic"** content (arrays of mixed kinds, objects with any members) needs nothing more: it is just constructors.
+- **Depth.** `Json.Dom.parse` takes a maximum depth as a range-typed argument, so its recursion is bounded and its stack use is proved, and `Depth` is in its error set.
 
 ### 6. A DOM proved to conform to a type
 
@@ -150,45 +160,45 @@ Since types are values, conformance is a function of a type and a document:
 
 ```ocaml
 (* Spec: the subtree at node i has the shape of t. *)
-let spec conforms (t : type) (d : dom) (i : u32) : bool
+let spec conforms (t : type) (v : json) : bool
 ```
 
-It is defined by a type-level `match` on `t`, one arm per kind of type, and recursion on the *type*, not on the document: `[e]` and `vec e` require every element of the array at `i` to conform to `e`; a record requires an object with exactly its required members, each conforming to its field's type, and its `where` to hold of the values they denote; a range type requires a `Num` whose `number_value` is an integer in the range; a tuple type requires an array of exactly that length whose elements conform position by position; `option e` allows `Null`. Types are finite trees, so `conforms` is total by the structural rule of ADR 0035 without a measure, and for a given `t` it unfolds into a fixed, finite formula.
+It is defined by a type-level `match` on `t`, one arm per kind of type: `[e]` and `vec e` require `v` to be an `Arr` whose every element conforms to `e`; a record requires an object with exactly its required members, each conforming to its field's type, and its `where` to hold of the values they denote; a range type requires a `Num` whose `number_value` is an integer in the range; a tuple type requires an array of exactly that length whose elements conform position by position; `option e` allows `Null`; a variant requires that `v` conform to one of its constructors (to exactly one, by the disjointness proof of section 2), with its tag member if it has one. For a non-recursive `t`, recursion is on the type, which is a finite tree, so `conforms` is total by the structural rule of ADR 0035 and unfolds into a fixed formula. For a recursive `t` (ADR 0047), the recursive arm recurses on a sub-value of `v` as well, so it is total by structural recursion on the document, which is a finite datatype value.
 
 Three functions use it, generated per type by `@derive(json)` and called through the concept:
 
 ```ocaml
-let check (t : type) (d : borrowed dom) (i : u32) : bool
-  requires well_formed d
-  ensures result <==> conforms t d i
+let check (t : type) (v : borrowed json) : bool
+  requires valid_dom v
+  ensures result <==> conforms t v
 
-let from_dom (t : type) (d : borrowed dom) (i : u32) : or_oom t   (* t, or result t oom if t allocates *)
-  requires well_formed d && conforms t d i
+let from_dom (t : type) (v : borrowed json) : or_oom t   (* t, or result t oom if t allocates *)
+  requires valid_dom v && conforms t v
 
-let to_dom (t : type) (v : t) (a : ...) : result dom oom
-  ensures (match result with | Ok d -> well_formed d && conforms t d 0 | Err _ -> true)
+let to_dom (t : type) (x : t) (a : ...) : result json oom
+  ensures (match result with | Ok v -> valid_dom v && conforms t v | Err _ -> true)
 ```
 
 - **`from_dom` cannot fail on shape.** Its precondition is the conformance, so the only error left is `OutOfMemory`, and only if `t` holds a `string` or a `vec`. Its result type is the type-level metaprogram `or_oom t`, which is `result t oom` for such a `t` and plain `t` otherwise, so for most types there is no error path to handle at all. A program proves `conforms` either by calling `check` and branching on it, or by having built the document with `to_dom`, or from any other fact that implies it:
 
 ```ocaml
-let get_point (d : borrowed dom) : option point
-  requires well_formed d
-= if Json.check point d 0 then Some (Json.from_dom point d 0) else None
+let get_point (v : borrowed json) : option point
+  requires valid_dom v
+= if Json.check point v then Some (Json.from_dom point v) else None
 ```
 
-- **The three paths agree**, as a law of the concept: reading `t` from text gives `Ok v` exactly when parsing the text gives a document `d` that conforms to `t` and `from_dom t d 0 = v`. So a program may stream, or parse once and convert several times, and get the same values and the same accepted inputs either way.
-- **Branded documents come later.** Once refinements on values work ([status.md](../status.md)), `conforming t` will be a type, `{ d : dom where well_formed d && conforms t d 0 }`, so the proof travels with the value across function and module boundaries instead of as a `requires` on each function. Until then the precondition form is the same proof with more writing.
+- **The three paths agree**, as a law of the concept: reading `t` from text gives `Ok v` exactly when parsing the text gives a document `d` that conforms to `t` and `from_dom t d = v`. So a program may stream, or parse once and convert several times, and get the same values and the same accepted inputs either way.
+- **Branded documents come later.** Once refinements on values work ([status.md](../status.md)), `conforming t` will be a type, `{ v : json where valid_dom v && conforms t v }`, so the proof travels with the value across function and module boundaries instead of as a `requires` on each function. Until then the precondition form is the same proof with more writing.
 
 ### 7. Streaming input, depth and speed
 
 - **The lexer is a state machine**, stated with the prelude's `machine` theory ([theories.md](../theories.md#state-machines)), and keeps no state outside its record. So it can stop at the end of one chunk and resume with the next, which is what streaming from a file or socket needs. The first version works over a complete slice; chunked input arrives with `Pia.Io`'s `reader` concept, and a pull reader as a coroutine with [ADR 0027](0027-coroutines-and-race-freedom.md).
-- **Depth.** Derived readers of non-recursive types need no depth limit (section 2). `Json.Dom.parse` takes a maximum depth as a range-typed argument and keeps its container stack in a fixed-size array, so it never recurses and its stack use is a proved constant.
+- **Depth.** Derived readers of non-recursive types need no depth limit (section 2). Readers of recursive types and `Json.Dom.parse` take a maximum depth as a range-typed argument, so their stack use is proved.
 - **SIMD.** The first lexer is scalar. A structural-character scanner in the style of simdjson's first stage comes with `vec<T, k>` (M10), proved against the same `Json.Spec`, so nothing above the lexer changes.
 
 ### 8. What this ADR does not decide
 
-- Floating-point numbers. Until floats exist (M11), numbers read into integer and range types (exactly) or stay as literal text. `f32` and `f64` fields then need a correctly rounded decimal conversion proved against real arithmetic ([ADR 0038](0038-float-kernels-against-real-theories.md)), which is its own piece of work.
+- Floating-point numbers wait for floats (M11), as Dean decided. Until then numbers read into integer and range types, exactly, and a DOM keeps every number as its literal. `f32` and `f64` fields then need a correctly rounded decimal conversion proved against real arithmetic ([ADR 0038](0038-float-kernels-against-real-theories.md)), which is its own piece of work.
 - JSON Schema import and export. A metaprogram could generate a schema from a type, or a type from a schema, but neither is needed here.
 - Other formats. The derive is JSON-specific. A serde-style format-independent data model can be factored out once a second format (CBOR, MessagePack, the PNG chunk readers of M13) exists to test it against.
 
@@ -199,13 +209,13 @@ These are listed, not worked around:
 | Gap | What waits on it |
 | --- | --- |
 | `str` and `Pia.Core.Utf8` (C++23 library thread, phase 1) | every string token, and the lexer's UTF-8 proof |
-| `string` and `vec` storing its allocator (`Pia.Mem` and Vec thread, #86, #72) | `string` and `vec t` fields, the DOM's node array |
+| `string` and `vec` storing its allocator (`Pia.Mem` and Vec thread, #86, #72) | `string` and `vec t` fields, the DOM's arrays and objects |
 | Metaprogram builtins `attrs`, `variants`, `int_bounds` and string bytes in metaprograms ([stdlib.md](../stdlib.md), section 11) | `@json(...)` attributes, variant codecs, fused range checks, key decision trees |
 | Generic types and concepts in interfaces ([ADR 0039](0039-module-and-interface-syntax.md) step 3, in progress) | importing `Json` from `lib/Pia/Text/Json` into other modules |
 | Core tuples (own ADR, per ADR 0040 section 9) | tuple codecs and mixed-kind arrays |
 | Value refinements (`where` on values) | branded `conforming t` documents (section 6) |
-| Lifetime markers on results ([ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md)) | zero-copy `str` fields borrowed from the input |
-| Recursive types | user types that contain themselves (trees, linked lists) cannot `@derive(json)`; a recursive spec view of the DOM, which would make some proofs shorter |
+| Lifetime markers on results ([ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md)) | zero-copy `str` fields, and a DOM borrowed from its input |
+| Recursive sum types ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)) | the DOM (sections 5 and 6), and `@derive(json)` on user types that contain themselves |
 | Floats (M11) | float fields (section 8) |
 | `Pia.Io` readers and writers | chunked streaming from files and sockets |
 | `vec<T, k>` (M10) | the SIMD scanner |
@@ -218,9 +228,9 @@ The order below starts with what needs none of them.
 2. **`Json.Write`** into a caller's `out [u8]` with a proved capacity, then into `vec u8`; escaping and integer formatting proved against `Json.Spec`.
 3. **The metaprogram builtins** the derive needs (`attrs`, `variants`, `int_bounds`, string bytes).
 4. **`@derive(json)` for records of integers, bools and fixed arrays**: readers with key decision trees, seen-field sets, fused range checks and exact error sets; writers; `Json.read t`.
-5. **Variants, `option`, `vec`, `str` and `string`**, then tuples once core tuples land.
-6. **`Json.Dom`**: the tape, `well_formed`, `parse` with a bounded stack, and the builder.
-7. **`Json.Shape`**: `conforms`, `check`, `from_dom` and `to_dom`, per type.
+5. **Variants (structural disambiguation and tags), `option`, `vec`, `str` and `string`**, then tuples once core tuples land.
+6. **`Json.Dom`**, once ADR 0047's recursive variants work: the `json` type, `valid_dom`, `parse` with a bounded depth, on-demand unescaping.
+7. **`Json.Shape`**: `conforms`, `check`, `from_dom` and `to_dom`, per type, and recursive user types.
 8. **The laws**: `round_trip`, and agreement between streaming and DOM paths, proved per derived type from per-field lemmas, with `proof_bench` watching their cost.
 9. **A literate page, `docs/json.pia.md`**, with every example doc-tested, and the C++ map updated (`nlohmann::json` and Boost.JSON have no `std` header, so it gets a row under "beyond the standard").
 10. **Chunked streaming** over `Pia.Io`, and the SIMD scanner with M10.
@@ -230,12 +240,13 @@ The order below starts with what needs none of them.
 - JSON is the first full use of derives beyond `eq`, so it exercises the metaprogram builtins, error-set unions, type-level metaprograms, concepts with laws and allocators together. Gaps it hits are fixed in the core, not in the library.
 - A program that reads JSON into a type gets, from the type alone, a reader that cannot index out of bounds, cannot accept malformed or non-UTF-8 input, returns only fully initialised values that meet the type's refinements, and reports exactly the errors that type can produce.
 - Strict defaults (unknown and duplicate members rejected) mean some real-world documents need `@json(ignore_unknown)`. That is the intended trade: the relaxation is visible in the type's source.
-- The tape DOM is less convenient to mutate than a tree. Edits that change a subtree's size rebuild that part of the tape. Convenience views over it are library functions, and a recursive tree can be added once recursive types exist.
+- The DOM waits on recursive sum types, a core feature (ADR 0047). The streaming codecs do not, so they come first.
+- Untagged variants make some types need a tag where serde would silently use the constructor's name. That is the intended trade: the encoding is always what the type's source says.
 - Proof cost grows with the number of derived types and their fields, linearly by construction. Derived proofs go in the benchmark corpus from step 4.
 
-## Questions for Dean
+## Dean's answers (2026-11-22)
 
-1. **DOM representation.** A flat tape now (recommended: one allocation, fast, no recursive types needed), or wait for recursive types and make the DOM a tree of variants?
-2. **Variant encoding.** Externally tagged by default, `{"Circle": {"r": 3}}`, with `@json(tag = "kind")` for internal tagging (recommended: it works for any payload, as serde's default does), or internally tagged by default?
-3. **Strictness.** Reject unknown and duplicate members by default, with `@json(ignore_unknown)` to relax the first (recommended, per ADR 0004), or accept unknown members by default as most libraries do?
-4. **Numbers before floats.** Integers and range types read exactly, and everything else stays as literal text with a `real` meaning, until M11 (recommended), or should float support move ahead of this library?
+1. **DOM.** Backed by the raw input as slices, and built with recursive types, not a tape. Dean wants algebraic sum types to support recursion explicitly, and, once there is a box type, a reference and a weak reference type that use a concept for recursive types. Section 5 now uses `let rec`; the core work is [ADR 0047](0047-recursive-sum-types-and-shared-references.md).
+2. **Names.** Only field names appear in the output, or the key a tag on the field gives, as in serde and Go. Variants are told apart by structure and type, or by a tag member that is also written explicitly. Section 2 now proves untagged variants disjoint and makes a tag the explicit alternative; there is no external tagging.
+3. **Strictness.** Yes: unknown and duplicate members are rejected by default.
+4. **Numbers.** Wait for floats: float fields arrive with M11, and there is no interim float representation beyond the DOM's literal text.

@@ -49,7 +49,7 @@ Names follow Pia's style: snake case, single words where they are clear (`find`,
     - A box is never null: an optional box is `option (box t)`, whose `None` is the null pointer in the layout. It has no deleter: dropping it drops the value (through the table, for a concept box) and returns the memory to the allocator it stores, so a custom deleter is a custom allocator. It is `Drop`, so it is freed at scope end, or `@linear` when the program must free it explicitly; moving it moves ownership and copying it does not exist.
     - `make_unique` is `box.make alloc v`, which can fail like any allocation. `get`, `operator*` and `operator->` are borrows (`borrowed(b)`), `release` is taking the value apart (`box.into`), and `reset` is a drop followed by a new box.
     - The core part, a concept used as a type argument, and the rules for calls through a box (only requirements with one receiver) are [ADR 0046](0046-box-over-a-type-or-a-concept.md).
-- `shared_ptr` and `weak_ptr` are deferred: shared ownership needs a reference count whose last release frees, which needs atomics for the shared case, and a proof that cycles cannot leak, which needs recursive types.
+- `shared_ptr` and `weak_ptr` are `Pia.Mem.Ref`'s `ref` and `weak` ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)): counted, with shared values immutable so that strong cycles cannot be built, one thread first, and an atomic `shared_ref` with M12.
 
 The allocators, `vec` and the containers built on them (issue #72) are owned by the `Pia.Mem` work (#59, #71, #86, #88). This ADR maps C++'s containers onto that work and adds the ones #72 does not list, but does not change `Pia.Mem`'s design.
 
@@ -162,7 +162,7 @@ Where the library needs something the language does not have, the library waits 
 | Value parameters in generic types (`[t; n]` for a parameter `n`; designed in [design.md](../design.md)) | `std::array` algorithms generic over `N`, `bitset<N>`, `inplace_vector<T, N>`, `mdspan` extents |
 | Core tuple types, values and patterns (section 9; an ADR of their own) | `<tuple>`, `pair` as a tuple, structured bindings, `apply`, argument packs for `format` and `make_unique`, multi-value returns in `<algorithm>` (`minmax`, `mismatch`) |
 | Anonymous sum types | `std::variant<Ts...>` beyond named variants, and `visit` over one |
-| Recursive types | proved `shared_ptr` cycle freedom, recursive values such as a JSON tree; the node containers use pool indices instead, which is their design rather than a workaround |
+| Recursive types ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)) | `ref` and `weak` for `shared_ptr` and `weak_ptr`, recursive values such as the JSON DOM ([ADR 0045](0045-json-derived-codecs-and-conforming-dom.md)); the node containers use pool indices instead, which is their design rather than a workaround |
 | Calls inside a callee's `ensures` are unconstrained at the caller | composing generic algorithms whose contracts name each other's spec functions |
 | Floats (M11), atomics and the concurrency runtime (M12) | phases 4 and 5 |
 | Cost proofs | proving C++'s complexity guarantees |
