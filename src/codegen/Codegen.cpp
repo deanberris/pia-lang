@@ -928,7 +928,7 @@ void eraseContracts(mlir::ModuleOp module) {
   // last first, until nothing changes.
   for (bool changed = true; changed;) {
     changed = false;
-    llvm::SmallVector<mlir::Operation *> dead;
+    llvm::SmallVector<mlir::Operation *> dead, deadRegions;
     module.walk<mlir::WalkOrder::PostOrder>([&](mlir::Operation *op) {
       if (isDead(op)) dead.push_back(op);
       // A spec function is pure, so an unused call to one, such as one
@@ -937,9 +937,44 @@ void eraseContracts(mlir::ModuleOp module) {
         if (call->use_empty() && call.getNumResults() > 0)
           if (auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
             if (f->hasAttr(PiaDialect::getSpecAttrName())) dead.push_back(op);
+      // An unused region op, such as the `scf.if` of a `match` in a
+      // contract, is dead when all it holds is: its nested spec calls
+      // still have uses, inside it, so the loop above never reaches them.
+      if (op->getNumRegions() > 0 && op->getNumResults() > 0 &&
+          op->use_empty() && !op->hasTrait<mlir::OpTrait::IsTerminator>() &&
+          !mlir::isa<mlir::func::FuncOp>(op)) {
+        bool pure = true;
+        op->walk([&](mlir::Operation *in) {
+          if (in == op || in->hasTrait<mlir::OpTrait::IsTerminator>() ||
+              in->getNumRegions() > 0)
+            return mlir::WalkResult::advance();
+          if (mlir::isa<contract::ContractDialect>(in->getDialect()) ||
+              mlir::isa<LoadOp, ErasedOp>(in) || mlir::isMemoryEffectFree(in))
+            return mlir::WalkResult::advance();
+          if (auto call = mlir::dyn_cast<mlir::func::CallOp>(in))
+            if (auto f =
+                    module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
+              if (f->hasAttr(PiaDialect::getSpecAttrName()))
+                return mlir::WalkResult::advance();
+          pure = false;
+          return mlir::WalkResult::interrupt();
+        });
+        if (pure) deadRegions.push_back(op);
+      }
     });
     for (mlir::Operation *op : llvm::reverse(dead)) {
       if (!op->use_empty()) continue;
+      op->erase();
+      changed = true;
+    }
+    // A dead region op goes once nothing inside it is about to be erased,
+    // outermost first, so no op is erased twice.
+    if (changed) continue;
+    for (mlir::Operation *op : deadRegions) {
+      bool outermost = llvm::none_of(deadRegions, [&](mlir::Operation *o) {
+        return o != op && o->isProperAncestor(op);
+      });
+      if (!outermost || !op->use_empty()) continue;
       op->erase();
       changed = true;
     }

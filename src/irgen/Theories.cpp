@@ -403,6 +403,28 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
         if (mentions(*k)) return true;
       return false;
     };
+    // Types that hold this theory's sorts, such as a record with a
+    // spec-only field (ADR 0041): the witness cannot replace the sort
+    // inside them, so their users get no copy.
+    std::set<std::string> holders;
+    std::function<bool(const Node &)> holds = [&](const Node &n) {
+      if (n.kind == NodeKind::TypeName && holders.count(n.text)) return true;
+      for (const NodePtr &k : n.kids)
+        if (holds(*k)) return true;
+      return false;
+    };
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (NodePtr &item : program.kids)
+        if (item->kind == NodeKind::LetItem && !item->text.empty() &&
+            item->kids.size() > 3 &&
+            item->kids[3]->kind == NodeKind::TypeValue &&
+            !holders.count(item->text) &&
+            (mentions(*item->kids[3]) || holds(*item->kids[3]))) {
+          holders.insert(item->text);
+          changed = true;
+        }
+    }
     for (NodePtr &item : program.kids) {
       if (item->kind != NodeKind::LetItem || item->text.empty() ||
           hasFlag(*item, "theory") || hasFlag(*item, "model") ||
@@ -427,6 +449,8 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
           if (n.kind == NodeKind::TypeName &&
               llvm::StringRef(n.text).starts_with(prefix) &&
               !t.sorts.count(n.text))
+            return false;
+          if (n.kind == NodeKind::TypeName && holders.count(n.text))
             return false;
           if (n.kind == NodeKind::Name && n.flags.empty() &&
               topLevel.count(n.text) && !ok.count(n.text)) {

@@ -4,7 +4,7 @@
    in the heap exactly when `pos` marks it live. Its contracts then state
    what users need with the theory's functions, `Alloc.live` and
    `Alloc.take`, and `reuse` proves from the axioms, with no quantifier
-   over the pool's arrays.
+   over the pool's arrays. The coupling invariant lives in the spec `ok`.
 // RUN: piac --verify %s | FileCheck %s
 *)
 
@@ -47,7 +47,7 @@ let spec ok (p : pool) : bool =
                                        && Alloc.live p.heap s = (p.pos.[s] >= p.top))
 
 (* Hands out a block that was not live, and the heap takes it. *)
-let take (p : borrowed inout mutable pool) : result block oom
+let take_slot (p : borrowed inout mutable pool) : result block oom
   requires ok p
   ensures ok p && p.cap = old p.cap
   ensures (match result with
@@ -64,7 +64,7 @@ let take (p : borrowed inout mutable pool) : result block oom
 
 (* Takes back a live block, and the heap gives it: the block swaps places
    with the slot at `top`, which is the lowest live one. *)
-let give (p : borrowed inout mutable pool) (b : moved block) : unit
+let give_slot (p : borrowed inout mutable pool) (b : moved block) : unit
   requires ok p && b.i < p.cap && Alloc.live p.heap b.i
   ensures ok p && p.cap = old p.cap
   ensures p.heap = Alloc.give (old p.heap) b.i
@@ -85,13 +85,53 @@ let give (p : borrowed inout mutable pool) (b : moved block) : unit
    after the take, from the axioms alone. *)
 let reuse (p : borrowed inout mutable pool) : result unit oom
   requires ok p
-= let h0 = p.heap in
-  let a = take p? in
+= let h0 : Alloc.heap = p.heap in
+  let a = take_slot p? in
   let i = a.i in
   assert Alloc.live p.heap i;
-  give p a;
+  give_slot p a;
   assert Alloc.live p.heap i = false;
-  let b = take p? in
+  let b = take_slot p? in
   assert Alloc.live p.heap b.i && Alloc.live h0 b.i = false;
-  give p b;
+  give_slot p b;
   Ok ()
+
+(* Expected report, in order.
+// CHECK: pool_alloc.pia:59:20: proved: '-' does not overflow usize [smt]
+// CHECK: pool_alloc.pia:60:14: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:62:34: proved: the value fits in int{0..63} [smt]
+// CHECK: pool_alloc.pia:63:15: proved: the value fits in int{0..63} [smt]
+// CHECK: pool_alloc.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:74:13: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:75:13: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:76:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:77:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:78:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:79:18: proved: the value fits in u16 [smt]
+// CHECK: pool_alloc.pia:79:5: proved: the index is within bounds [smt]
+// CHECK: pool_alloc.pia:80:16: proved: '+' does not overflow usize [smt]
+// CHECK: pool_alloc.pia:69:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: pool_alloc.pia:89:11: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:91:3: proved: the assertion holds [smt]
+// CHECK: pool_alloc.pia:92:3: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:93:3: proved: the assertion holds [smt]
+// CHECK: pool_alloc.pia:94:11: proved: the precondition of 'take_slot' holds [smt]
+// CHECK: pool_alloc.pia:95:3: proved: the assertion holds [smt]
+// CHECK: pool_alloc.pia:96:3: proved: the precondition of 'give_slot' holds [smt]
+// CHECK: pool_alloc.pia:32:50: proved: the shift amount is less than 64 [intervals]
+// CHECK: pool_alloc.pia:32:50: proved: '>>' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:32:56: proved: '&' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:33:53: proved: the shift amount is less than 64 [intervals]
+// CHECK: pool_alloc.pia:33:53: proved: '<<' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:33:48: proved: '|' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:34:53: proved: the shift amount is less than 64 [intervals]
+// CHECK: pool_alloc.pia:34:53: proved: '<<' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:34:49: proved: '^' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:34:47: proved: '&' does not overflow usize [intervals]
+// CHECK: pool_alloc.pia:21:33: proved: the model 'bits' meets the axiom 'Alloc.none_live' [smt]
+// CHECK: pool_alloc.pia:23:5: proved: the model 'bits' meets the axiom 'Alloc.take_live' [smt]
+// CHECK: pool_alloc.pia:25:5: proved: the model 'bits' meets the axiom 'Alloc.give_live' [smt]
+// CHECK: 36 proved, 0 failed, 0 skipped
+*)
