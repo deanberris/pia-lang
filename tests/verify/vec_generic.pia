@@ -1,0 +1,127 @@
+(* A growable vector of any element type over a typed bump allocator
+   (#86): vec_bump.pia made generic. Each instance, here `vec<u16>`, is
+   proved on its own, so every goal is about concrete types.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = let (t : type) => type { mem : [t]; used : usize }
+
+let alloc (t : type) (m : borrowed inout mutable bump t) (n : usize) : result (borrowed(m) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let vec = let (t : type) => type { buf : [t]; len : usize }
+
+let with_capacity (t : type) (m : borrowed inout mutable bump t) (n : usize) : result (borrowed(m) vec t) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok v -> v.len = 0 && len v.buf = n
+           | Err _ -> true)
+= let b = alloc m n? in
+  Ok { buf = b; len = 0 }
+
+(* Moves the elements into a loan twice as large, plus one. *)
+let grow (t : type) (m : borrowed inout mutable bump t) (v : borrowed(m) inout mutable vec t) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= let cap = len v.buf in
+  if cap > 1000000 then Err OutOfMemory
+  else
+    (let nb = alloc m (2 * cap + 1)? in
+     let old_buf = v.buf in
+     for i in 0 .. v.len
+       invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+     do nb.[i] <- old_buf.[i] done;
+     v.buf <- nb;
+     Ok ())
+
+(* Makes room for one more element, growing the vector if it is full. *)
+let reserve (t : type) (m : borrowed inout mutable bump t) (v : borrowed(m) inout mutable vec t) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len = old v.len && v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+  ensures forall (i in 0 .. v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then grow m v else Ok ()
+
+let push (t : type) (m : borrowed inout mutable bump t) (v : borrowed(m) inout mutable vec t) (x : t) : result unit oom
+  requires m.used <= len m.mem && v.len <= len v.buf
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= reserve m v?;
+  let b = v.buf in
+  b.[v.len] <- x;
+  v.len <- v.len + 1;
+  Ok ()
+
+(* Two pushes of u16 values, the second of which grows the vector. *)
+let demo (storage : borrowed [u16]) : result u16 oom =
+  let m : mutable bump u16 = { mem = storage; used = 0 } in
+  let v : mutable vec u16 = with_capacity m 1? in
+  push m v 700?;
+  push m v 900?;
+  let b = v.buf in
+  Ok (b.[0] + b.[1])
+
+(* Expected report, in order.
+// CHECK: vec_generic.pia:81:29: proved: the precondition of 'with_capacity<u16>' holds [smt]
+// CHECK: vec_generic.pia:82:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_generic.pia:83:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_generic.pia:85:7: proved: the index is within bounds [smt]
+// CHECK: vec_generic.pia:85:15: proved: the index is within bounds [smt]
+// CHECK: vec_generic.pia:85:13: proved: '+' does not overflow u16 [smt]
+// CHECK: vec_generic.pia:30:11: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: vec_generic.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:72:3: proved: the precondition of 'reserve<u16>' holds [smt]
+// CHECK: vec_generic.pia:74:3: proved: the index is within bounds [smt]
+// CHECK: vec_generic.pia:75:18: proved: '+' does not overflow usize [smt]
+// CHECK: vec_generic.pia:66:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:67:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:68:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:71:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:16:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_generic.pia:18:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_generic.pia:19:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_generic.pia:19:9: proved: the slice is within bounds [smt]
+// CHECK: vec_generic.pia:12:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:62:29: proved: the precondition of 'grow<u16>' holds [smt]
+// CHECK: vec_generic.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:61:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:45:26: proved: '*' does not overflow usize [smt]
+// CHECK: vec_generic.pia:45:32: proved: '+' does not overflow usize [smt]
+// CHECK: vec_generic.pia:45:15: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: vec_generic.pia:48:8: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_generic.pia:49:19: proved: the index is within bounds [smt]
+// CHECK: vec_generic.pia:49:9: proved: the index is within bounds [smt]
+// CHECK: vec_generic.pia:48:8: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_generic.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: vec_generic.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: 38 proved, 0 failed, 0 skipped
+*)
