@@ -1,11 +1,15 @@
 #include "meta/Expand.h"
 
+#include <functional>
 #include <iterator>
+#include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "meta/Interpreter.h"
+#include "meta/Totality.h"
 #include "syntax/Parser.h"
 
 namespace pia::meta {
@@ -123,6 +127,7 @@ class Expander {
         closures_.erase(item->text);
       } else if (isMetaItem(*item)) {
         interp_.define(*item);
+        metaItems_[item->text] = item.get();
       }
     }
   }
@@ -150,6 +155,17 @@ class Expander {
         // their operators expand like any other code's.
         if (syntax::isConceptItem(*item)) changed |= expandOperators(item);
         out.push_back(std::move(item));
+        continue;
+      }
+      // `let theory T = gen args` (ADR 0036, step 5).
+      if (item->kind == NodeKind::Theory && item->flags == "call") {
+        std::vector<NodePtr> generated;
+        if (runTheoryCall(*item, generated)) {
+          changed = true;
+          for (NodePtr &g : generated) out.push_back(std::move(g));
+        } else {
+          out.push_back(std::move(item));
+        }
         continue;
       }
       if (const Node *callee = metaCall(*item)) {
@@ -203,7 +219,8 @@ class Expander {
         for (const NodePtr &k : n.kids) out.push_back(clone(*k));
         return true;
       }
-      if (n.kind == NodeKind::LetItem) {
+      if (n.kind == NodeKind::LetItem || n.kind == NodeKind::Theory ||
+          n.kind == NodeKind::Model) {
         out.push_back(clone(n));
         return true;
       }
@@ -234,6 +251,117 @@ class Expander {
       diags_.error(e.loc, who + " failed: " + e.message);
     }
     return false;
+  }
+
+  // `let theory T = gen args`: runs the metaprogram `gen`, which must be
+  // total and pure, since what it returns becomes hypotheses of proofs
+  // (ADR 0035, ADR 0036). It returns one theory, under any name, and any
+  // number of models of it and other items. The theory is named T and
+  // the models' theory is T. One argument tuple builds one theory: a
+  // second `let theory U` with the same call names the same theory.
+  bool runTheoryCall(const Node &item, std::vector<NodePtr> &out) {
+    const Node &call = *item.kids[0];
+    const Node &head = call.kind == NodeKind::Apply ? *call.kids[0] : call;
+    if (head.kind != NodeKind::Name || !interp_.isMeta(head.text)) {
+      diags_.error(call.loc, "a theory is a 'sig ... end', or a call of a "
+                             "metaprogram that builds one");
+      return false;
+    }
+    std::string who = "the metaprogram '" + head.text + "'";
+    if (std::optional<std::string> why = notTotal(head.text)) {
+      diags_.error(call.loc, "'" + head.text + "' builds a theory, so it must "
+                             "terminate and be pure, but " + *why);
+      return false;
+    }
+    // The instance: the generator and its arguments, as written.
+    std::string key = instanceKey(call);
+    if (auto it = instances_.find(key); it != instances_.end()) {
+      auto alias = makeNode(NodeKind::Theory, item.loc, item.text);
+      alias->flags = "alias";
+      alias->add(makeNode(NodeKind::TypeName, item.loc, it->second));
+      out.push_back(std::move(alias));
+      produced(who, item.loc);
+      return true;
+    }
+    std::vector<NodePtr> items;
+    try {
+      interp_.setSite(item.loc);
+      ValuePtr v = interp_.eval(call);
+      produced(head.text, item.loc);
+      if (v->kind == Value::Kind::List) {
+        for (const ValuePtr &e : v->list)
+          if (!takeItems(e, item.loc, who, items)) return false;
+      } else if (!takeItems(v, item.loc, who, items)) {
+        return false;
+      }
+    } catch (const Deferred &d) {
+      waiting_.push_back({"the theory '" + item.text + "'", d.type, item.loc});
+      return false;
+    } catch (const MetaError &e) {
+      diags_.error(e.loc, who + " failed: " + e.message);
+      return false;
+    }
+    std::string built;
+    for (NodePtr &g : items)
+      if (g->kind == NodeKind::Theory) {
+        if (!built.empty()) {
+          diags_.error(item.loc, who + " must build one theory, and it "
+                                 "built '" + built + "' and '" + g->text + "'");
+          return false;
+        }
+        built = g->text;
+        g->text = item.text;
+        g->loc = item.loc;
+      }
+    if (built.empty()) {
+      diags_.error(item.loc, who + " must build a theory, a 'let theory ... "
+                             "= sig ... end'");
+      return false;
+    }
+    for (NodePtr &g : items)
+      if (g->kind == NodeKind::Model && !g->kids.empty() &&
+          g->kids[0]->text == built)
+        g->kids[0]->text = item.text;
+    instances_[key] = item.text;
+    for (NodePtr &g : items) out.push_back(std::move(g));
+    return true;
+  }
+
+  static std::string instanceKey(const Node &n) {
+    std::string out = syntax::nodeKindName(n.kind);
+    out += "(" + n.text;
+    for (const NodePtr &k : n.kids) out += " " + instanceKey(*k);
+    return out + ")";
+  }
+
+  // Why the metaprogram `name` may not terminate or is impure, through the
+  // metaprograms it calls; nothing when it is total.
+  std::optional<std::string> notTotal(const std::string &name) {
+    std::map<std::string, int> state;  // 1 visiting, 2 done
+    std::function<std::optional<std::string>(const std::string &)> visit =
+        [&](const std::string &n) -> std::optional<std::string> {
+      auto it = metaItems_.find(n);
+      if (it == metaItems_.end()) return std::nullopt;
+      state[n] = 1;
+      std::set<std::string> callees;
+      if (std::optional<std::string> why = checkOwnTotality(
+              *it->second,
+              [&](const std::string &c) { return metaItems_.count(c) > 0; },
+              callees)) {
+        if (n == name) return why;
+        return "it calls '" + n + "', which may not terminate: " + *why;
+      }
+      for (const std::string &c : callees) {
+        if (state[c] == 1)
+          return std::string("it is mutually recursive with '") + c +
+                 "', which is not supported yet";
+        if (state[c] == 0)
+          if (std::optional<std::string> why = visit(c)) return why;
+      }
+      state[n] = 2;
+      return std::nullopt;
+    };
+    return visit(name);
   }
 
   // Runs each `@derive(x)` on a type item through `derive_x`.
@@ -335,6 +463,10 @@ class Expander {
   std::set<std::string> producers_;
   SourceLoc producerLoc_;  // where the first of them ran in the last pass
   std::vector<Waiting> waiting_;
+  // Theory-building metaprograms (ADR 0036): every `let meta`, for the
+  // totality check, and each instance built, by its call.
+  std::map<std::string, const Node *> metaItems_;
+  std::map<std::string, std::string> instances_;
 };
 
 }  // namespace

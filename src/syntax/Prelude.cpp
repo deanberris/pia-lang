@@ -59,6 +59,62 @@ let meta derive_eq (t : type_decl) : item =
   let what = concat (name t) ", made by @derive(eq)." in
   with_doc (concat "Field-by-field equality for " what)
     `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
+
+(* State machines as theories (ADR 0036, step 5; docs/theories.md).
+   `let theory Conn = machine "conn" conn_state Closed [ edge Closed
+   "connect" Open; ... ]` builds a theory with a sort `conn`, `at c : conn
+   -> conn_state`, a `start` at the initial state, and for each event `e`
+   an abstract function `e`, a predicate `allowed_e` that holds exactly in
+   the states with an `e` edge, and one axiom per edge saying where it
+   leads; and a model `<sort>_states` in which a value of the sort is its
+   state. The
+   model proves every axiom, so nothing is trusted. Binders are named
+   `c#machine`, which no source can write, and member names are kept. It
+   uses only map and fold, so it is total. *)
+(* One transition: in state `from`, `event` leads to `to`. *)
+let meta edge (from : expr) (event : string) (to : expr) : expr =
+  let (k) => k from event to
+
+let meta machine (sort : string) (states : type_decl) (start : expr) (edges : list) : list =
+  let ev_of = let (e) => e (let (f) (ev) (t) => ev) in
+  let from_of = let (e) => e (let (f) (ev) (t) => f) in
+  let to_of = let (e) => e (let (f) (ev) (t) => t) in
+  let has = let (xs) (x) => fold (let (acc) (y) => acc || y = x) false xs in
+  let events = fold (let (acc) (e) => if has acc (ev_of e) then acc else concat acc [ev_of e]) [] edges in
+  let of_event = let (ev) => fold (let (acc) (e) => if ev_of e = ev then concat acc [e] else acc) [] edges in
+  let x = "c#machine" in
+  let allowed = let (ev) => concat "allowed_" ev in
+  let cond = let (ev) => fold (let (acc) (e) => `( $acc || at $x = $(from_of e) )) `( false ) (of_event ev) in
+  let mcond = let (ev) => fold (let (acc) (e) => `( $acc || $x = $(from_of e) )) `( false ) (of_event ev) in
+  let step = let (ev) => fold (let (acc) (e) => `( if $x = $(from_of e) then $(to_of e) else $acc )) `( $x ) (of_event ev) in
+  let per_event = let (ev) =>
+    let a = allowed ev in
+    let an = concat ev "_allowed" in
+    concat [ `( let spec $ev : (c : $sort) -> $sort )
+           ; `( let spec $a : (c : $sort) -> bool )
+           ; `( let axiom $an ($x : $sort) ensures $a $x = $(cond ev) ) ]
+           (map (let (e) =>
+                   let n = concat ev (concat "_from_" (name (from_of e))) in
+                   `( let axiom $n ($x : $sort) requires at $x = $(from_of e) ensures at ($ev $x) = $(to_of e) ))
+                (of_event ev)) in
+  let members = fold (let (acc) (ev) => concat acc (per_event ev))
+    [ `( let sort $sort )
+    ; `( let spec at : (c : $sort) -> $states )
+    ; `( let spec start : $sort )
+    ; `( let axiom start_at ensures at start = $start ) ]
+    events in
+  let model_event = let (ev) =>
+    let a = allowed ev in
+    [ `( let spec $ev ($x : $states) : $states = $(step ev) )
+    ; `( let spec $a ($x : $states) : bool = $(mcond ev) ) ] in
+  let model = fold (let (acc) (ev) => concat acc (model_event ev))
+    [ `( let sort $sort = $states )
+    ; `( let spec at ($x : $states) : $states = $x )
+    ; `( let spec start : $states = $start ) ]
+    events in
+  let mname = concat sort "_states" in
+  [ `( let theory machine_theory = sig $members end )
+  ; `( let model $mname : machine_theory = struct $model end ) ]
 )pia";
   return source;
 }

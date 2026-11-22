@@ -2203,7 +2203,12 @@ class Encoder {
       if (!so) return;
       sorts.push_back(so);
       auto n = mlir::dyn_cast<mlir::NameLoc>(a.getLoc());
-      names.push_back(n ? n.getName().str() : "x");
+      // A name a quote made fresh, `c#3`, or a primed one, `x'`, is not an
+      // SMT-LIB symbol: such characters become `_`.
+      std::string name = n ? n.getName().str() : "x";
+      for (char &ch : name)
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_') ch = '_';
+      names.push_back(name);
     }
     llvm::SmallVector<llvm::StringRef> nameRefs(names.begin(), names.end());
     for (size_t k = 0; k < triggers.triggers.size(); ++k) {

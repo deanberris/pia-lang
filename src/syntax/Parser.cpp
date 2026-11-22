@@ -266,13 +266,26 @@ class Parser {
     auto n = makeNode(N::Theory, loc());
     take();  // let
     take();  // theory
-    n->text = std::string(expect(K::Ident, "a theory name").text);
+    if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a theory name");
+    n->text = std::string(take().text);
     expect(K::Eq, "'='");
+    // `let theory Conn = machine ...`: a metaprogram builds it (step 5).
+    if (!at(K::Sig)) {
+      n->flags = "call";
+      n->add(application());
+      return n;
+    }
     expect(K::Sig, "'sig'");
     skipSeps();
     while (!at(K::End)) {
+      if (NodePtr sp = memberSplice()) {
+        n->add(std::move(sp));
+        skipSeps();
+        continue;
+      }
       if (!at(K::Let)) fail("expected 'let' or 'end' in a theory");
-      if (kind(1) == K::Ident && tok(1).text == "sort" && kind(2) == K::Ident) {
+      if (kind(1) == K::Ident && tok(1).text == "sort" &&
+                 (kind(2) == K::Ident || kind(2) == K::SpliceIdent)) {
         auto sort = makeNode(N::SortItem, loc());
         take();
         take();
@@ -280,7 +293,7 @@ class Parser {
         if (accept(K::Eq)) sort->add(type());
         n->add(std::move(sort));
       } else if (kind(1) == K::Ident && tok(1).text == "axiom" &&
-                 kind(2) == K::Ident) {
+                 (kind(2) == K::Ident || kind(2) == K::SpliceIdent)) {
         n->add(let(true, false, Bodyless::Axiom));
       } else if (kind(1) == K::Spec) {
         n->add(let(true, false, Bodyless::Abstract));
@@ -309,8 +322,14 @@ class Parser {
     expect(K::Struct, "'struct'");
     skipSeps();
     while (!at(K::End)) {
+      if (NodePtr sp = memberSplice()) {
+        n->add(std::move(sp));
+        skipSeps();
+        continue;
+      }
       if (!at(K::Let)) fail("expected 'let' or 'end' in a model");
-      if (kind(1) == K::Ident && tok(1).text == "sort" && kind(2) == K::Ident) {
+      if (kind(1) == K::Ident && tok(1).text == "sort" &&
+                 (kind(2) == K::Ident || kind(2) == K::SpliceIdent)) {
         auto sort = makeNode(N::SortItem, loc());
         take();
         take();
@@ -325,6 +344,58 @@ class Parser {
     }
     take();
     return n;
+  }
+
+  // In a quote, `$xs` or `$(e)` in a theory's or model's body splices a
+  // list of members.
+  NodePtr memberSplice() {
+    SourceLoc start = loc();
+    if (at(K::SpliceIdent)) {
+      auto n = makeNode(N::Splice, start, text());
+      take();
+      return n;
+    }
+    if (at(K::SpliceOpen)) {
+      take();
+      Bracket b(*this);
+      auto n = makeNode(N::Splice, start);
+      n->add(seq());
+      expect(K::RParen, "')'");
+      return n;
+    }
+    return nullptr;
+  }
+
+  // An item in a quote: a theory, a model, or a definition.
+  NodePtr quotedItem(bool allowIn) {
+    if (kind(1) == K::Ident && tok(1).text == "theory" &&
+        (kind(2) == K::Ident || kind(2) == K::SpliceIdent))
+      return theoryItem();
+    if (kind(1) == K::Ident && tok(1).text == "model" &&
+        (kind(2) == K::Ident || kind(2) == K::SpliceIdent) && kind(3) == K::Colon)
+      return modelItem();
+    if (kind(1) == K::Ident && (tok(1).text == "sort" || tok(1).text == "axiom") &&
+        (kind(2) == K::Ident || kind(2) == K::SpliceIdent))
+      return theoryMember();
+    if (kind(1) == K::Spec && (kind(2) == K::Ident || kind(2) == K::SpliceIdent) &&
+        kind(3) == K::Colon)
+      return theoryMember();
+    return let(/*allowItem=*/true, allowIn);
+  }
+
+  // One member of a theory, as in theoryItem.
+  NodePtr theoryMember() {
+    if (kind(1) == K::Ident && tok(1).text == "sort") {
+      auto sort = makeNode(N::SortItem, loc());
+      take();
+      take();
+      sort->text = std::string(take().text);
+      if (accept(K::Eq)) sort->add(type());
+      return sort;
+    }
+    if (kind(1) == K::Ident && tok(1).text == "axiom")
+      return let(true, false, Bodyless::Axiom);
+    return let(true, false, Bodyless::Abstract);
   }
 
   // A definition with no body: an abstract spec function, `let spec f :
@@ -1423,15 +1494,15 @@ class Parser {
         skipSeps();
       }
     } else if (at(K::Let) && kind(1) != K::LParen) {
-      NodePtr first = let(/*allowItem=*/true, /*allowIn=*/true);
-      bool isItem = first->kind == N::LetItem;
+      NodePtr first = quotedItem(/*allowIn=*/true);
+      bool isItem = first->kind != N::LetIn;
       q->add(std::move(first));
       if (isItem) {
         skipSeps();
         while (at(K::Let)) {
           q->add(kind(1) == K::Meta && kind(2) == K::Operator
                      ? metaOperator()
-                     : let(/*allowItem=*/true, /*allowIn=*/false));
+                     : quotedItem(/*allowIn=*/false));
           skipSeps();
         }
       }

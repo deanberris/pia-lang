@@ -72,9 +72,15 @@ void qualify(Node &n, const Theory &t, syntax::Diagnostics &diags) {
     diags.error(n.loc, shadowMessage(n.text, "'" + t.name + "." + n.text +
                                                  "' in the " + t.kind + " '" +
                                                  t.name + "'"));
-  if ((n.kind == NodeKind::Name && n.flags.empty()) ||
+  // A name a quote left free is marked `toplevel`; inside a theory a
+  // generator built, it still means the theory's member (ADR 0036).
+  if ((n.kind == NodeKind::Name &&
+       (n.flags.empty() || n.flags == "toplevel")) ||
       n.kind == NodeKind::TypeName)
-    if (t.members.count(n.text)) n.text = t.name + "." + n.text;
+    if (t.members.count(n.text)) {
+      n.text = t.name + "." + n.text;
+      n.flags.clear();
+    }
   for (NodePtr &k : n.kids) qualify(*k, t, diags);
 }
 
@@ -89,7 +95,7 @@ void resolveQualified(Node &n, const std::map<std::string, Theory> &theories,
         diags.error(n.loc, "the theory '" + it->first + "' has no '" +
                                n.text + "'");
       n.kind = NodeKind::Name;
-      n.text = it->first + "." + n.text;
+      n.text = it->second.name + "." + n.text;  // an alias's target
       n.kids.clear();
       return;
     }
@@ -102,6 +108,8 @@ void resolveQualified(Node &n, const std::map<std::string, Theory> &theories,
       if (it != theories.end() && !it->second.members.count(member))
         diags.error(n.loc, "the theory '" + it->first + "' has no '" +
                                member + "'");
+      else if (it != theories.end())
+        n.text = it->second.name + "." + member;  // an alias's target
     }
   }
   for (NodePtr &k : n.kids) resolveQualified(*k, theories, diags);
@@ -178,6 +186,7 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
                                "@" + item->text + " is not a file attribute");
       continue;
     }
+    if (item->kind == NodeKind::Theory && item->flags == "alias") continue;
     if (item->kind == NodeKind::Theory) {
       if (theories.count(item->text) || topLevel.count(item->text))
         diags.error(item->loc, "'" + item->text + "' is already defined");
@@ -194,6 +203,21 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
     if (!item->text.empty() && item->kind != NodeKind::Import)
       topLevel.insert(item->text);
   }
+  // `let theory U = gen args` with the arguments of an earlier `let theory
+  // T`: U is another name for T (ADR 0036, one theory per argument tuple).
+  for (const NodePtr &item : program.kids)
+    if (item->kind == NodeKind::Theory && item->flags == "alias") {
+      auto target = theories.find(item->kids[0]->text);
+      if (target == theories.end()) continue;
+      if (theories.count(item->text) || topLevel.count(item->text)) {
+        diags.error(item->loc, "'" + item->text + "' is already defined");
+        continue;
+      }
+      Theory alias;
+      alias.name = target->second.name;
+      alias.members = target->second.members;
+      theories[item->text] = std::move(alias);
+    }
   // A theory with a model in this program is proved consistent by it, so
   // its axioms are not trusted (ADR 0036, "Modelled").
   std::set<std::string> modelled;
@@ -211,7 +235,7 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
   // A member's name is visible inside its theory, so it may not shadow a
   // name visible there: another item, a builtin or a builtin type.
   for (const NodePtr &item : program.kids) {
-    if (item->kind != NodeKind::Theory) continue;
+    if (item->kind != NodeKind::Theory || item->flags == "alias") continue;
     const Theory &t = theories.at(item->text);
     for (const NodePtr &m : item->kids) {
       std::string what;
@@ -239,6 +263,7 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
   std::vector<NodePtr> models;
   for (NodePtr &item : program.kids) {
     if (item->kind == NodeKind::FileAttr) continue;
+    if (item->kind == NodeKind::Theory && item->flags == "alias") continue;
     // `import T` of a theory in this program needs nothing: there are no
     // modules yet, so its names are already here.
     if (item->kind == NodeKind::Import && theories.count(item->text)) {
