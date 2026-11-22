@@ -1,0 +1,27 @@
+(* Moved captures (ADR 0044, step 7): a closure that owns a value with a
+   `drop` is dropped like a record holding it, which drops the value once.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let token = type { id : u8 }
+let drop (t : moved token) : unit = match t with | { id } -> ()
+let make (x : u8) : token = { id = x }
+
+let owner (x : u8) : u8 =
+  let t = make x in
+  let get = let [moved t] (y : u8) : u8 => t.id in
+  get 0
+(*
+// CHECK-LABEL: @owner(
+// CHECK: call @make(
+// CHECK: call @"apply[lambda@moved_capture.pia:12:13]"(
+// CHECK: call @"drop[lambda@moved_capture.pia:12:13]"(
+// CHECK-NOT: call @drop(
+// CHECK: return
+*)
+
+(* The closure's drop drops what it owns.
+// CHECK-LABEL: func.func {{.*}}@"drop[lambda@moved_capture.pia:12:13]"(
+// CHECK: call @drop(
+*)
+
