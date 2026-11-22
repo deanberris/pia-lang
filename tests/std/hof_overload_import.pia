@@ -1,0 +1,21 @@
+(* #257: an imported definition that calls another function of its module
+   by its own name resolves it among that module's overloads, the
+   higher-order ones included. Before, the importer saw only the value
+   overload, and `pick xs p` was a call of the one-argument `pick`.
+// RUN: piac --emit=interface -o %t %S/Inputs/hof_overloads.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Over.Picks.Picks
+
+let calls (xs : [u8]) : unit =
+  let a = Over.Picks.first xs (let (x : u8) : bool => x > 1) in
+  assert a <= len xs;
+  let b = Over.Picks.either xs (let (x : u8) : bool => x > 1) in
+  assert b <= len xs;
+  ()
+
+(*
+// CHECK-NOT: error
+// CHECK-NOT: failed
+// CHECK: 7 proved, 0 failed, 0 skipped
+*)

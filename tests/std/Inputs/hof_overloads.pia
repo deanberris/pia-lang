@@ -1,0 +1,28 @@
+(* A module with a value overload and a higher-order overload of one
+   name, whose exported definitions call both (tests/std/hof_overload_import.pia). *)
+module Over.Picks : Picks
+
+interface Picks = sig
+  let pick : (t : type) -> (xs : [t]) -> usize
+  let pick : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
+  let first : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
+  let either : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
+end
+
+let pick (t : type) (xs : [t]) : usize
+  ensures result = len xs
+= len xs
+
+let pick (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
+  ensures result <= len xs
+= if len xs > 0 && p xs.[0] then 0 else len xs
+
+(* Calls the higher-order overload, by its own name. *)
+let first (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
+  ensures result <= len xs
+= pick xs p
+
+(* Calls both overloads, by their own names. *)
+let either (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
+  ensures result <= len xs
+= if pick xs p = 0 then pick xs else 0

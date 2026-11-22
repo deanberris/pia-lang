@@ -18,7 +18,7 @@
 // CHECK-DAG: proved: the postcondition holds [generic]
 // CHECK-DAG: not proved generically: 'minmax_element' is proved at each instance, since it returns a value of extremes [generic]
 // CHECK-DAG: proved: the loop invariant holds after each iteration [generic]
-// CHECK: 418 proved, 0 failed, 0 skipped
+// CHECK: 422 proved, 0 failed, 0 skipped
 *)
 
 (*

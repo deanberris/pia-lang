@@ -9,6 +9,7 @@ lit_tests(
     name = "std_tests",
     srcs = glob(["*.pia"]),
     data = [
+        "Inputs/hof_overloads.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
