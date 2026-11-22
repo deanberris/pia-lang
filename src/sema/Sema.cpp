@@ -498,8 +498,15 @@ static mlir::Type buildType(const std::string &name, const Node &value,
   if (body.kind != NodeKind::RecordType) return types.resolve(body);
   llvm::SmallVector<mlir::StringAttr> names;
   llvm::SmallVector<mlir::Type> fieldTypes;
+  std::vector<std::pair<std::string, const Node *>> refined;
   for (const syntax::NodePtr &f : body.kids) {
-    mlir::Type t = types.resolveAnnot(*f->kids[0]);
+    // `p : real where 0.0 <= p && p <= 1.0`: the predicate holds of every
+    // value of the record, with the field's name standing for the field.
+    const Node &annot = *f->kids[0];
+    bool where = annot.kids.size() > 2 && annot.kids[2]->kind != NodeKind::None;
+    if (where) refined.emplace_back(f->text, annot.kids[2].get());
+    mlir::Type t = where ? types.resolve(*annot.kids[1])
+                         : types.resolveAnnot(annot);
     if (!t) return {};
     if (!f->kids[0]->kids[0]->text.empty()) {
       diags.error(f->loc, "a field cannot have modifiers");
@@ -525,6 +532,7 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     diags.error(body.loc, "a record needs at least one field");
     return {};
   }
+  if (!refined.empty()) types.refine(name, std::move(refined));
   return RecordType::get(ctx, name, names, fieldTypes);
 }
 

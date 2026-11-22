@@ -1,6 +1,10 @@
 #ifndef PIA_IRGEN_THEORIES_H
 #define PIA_IRGEN_THEORIES_H
 
+#include <map>
+#include <string>
+#include <utility>
+
 #include "syntax/Diagnostics.h"
 #include "syntax/Syntax.h"
 
@@ -17,7 +21,20 @@ bool hasTheories(const syntax::Node &program);
 // `T.x` names them. Also checks the theory rules of step 2: no shadowing
 // (ADR 0022), axioms only in a file marked `@trusted`, and `import T` of a
 // theory in the same program, which is a no-op.
-void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags);
+//
+// A model `let model m : T = struct ... end` (step 3) becomes items named
+// `m.x`, and each axiom of T a lemma `m.a`, the axiom with the model's
+// sorts and functions in place of T's: the model check. A theory with a
+// model needs no @trusted. Clients still see only T's abstract functions
+// and axioms, so the model is sealed.
+struct TheoryInfo {
+  // `m.a` -> {model m, axiom T.a}: the lemmas of the model check.
+  std::map<std::string, std::pair<std::string, std::string>> obligations;
+  std::map<std::string, std::string> modelOf;   // a model's item -> model
+  std::map<std::string, std::string> modelled;  // theory -> its model
+};
+void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,
+                     TheoryInfo *info = nullptr);
 
 }  // namespace pia::irgen
 

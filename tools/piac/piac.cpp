@@ -274,11 +274,13 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 }
 
 // `--trust-report`: what the program's proofs rest on without proof. Today
-// that is the axioms of theories with no model (ADR 0036, step 2).
+// that is the axioms of theories with no model (ADR 0036).
 void printTrustReport(mlir::ModuleOp module, std::ostream &os) {
   unsigned n = 0;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
+    // A theory with a model is proved consistent by it: nothing trusted.
+    if (f->hasAttr("pia.modelled")) continue;
     std::string theory;
     if (auto t = f->getAttrOfType<mlir::StringAttr>("pia.theory"))
       theory = t.getValue().str();

@@ -874,7 +874,10 @@ class Encoder {
       return true;
     }
     if (auto e = mlir::dyn_cast<contract::EnsuresOp>(op)) {
-      goal(ObligationKind::ensures, op, "the postcondition holds",
+      // A lemma of a model check says which axiom it proves (ADR 0036).
+      auto claim = fn_->getAttrOfType<mlir::StringAttr>("pia.obligation");
+      goal(ObligationKind::ensures, op,
+           claim ? claim.getValue().str() : "the postcondition holds",
            term(e.getPredicate()), false);
       return true;
     }
@@ -1815,8 +1818,12 @@ class Encoder {
   }
 
   void declareSpecFunctions() {
+    auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
     for (auto f : module_.getOps<mlir::func::FuncOp>()) {
       if (!hasSpecDecl(f)) continue;
+      // A model is sealed: outside it, a query never sees its functions.
+      if (auto m = f->getAttrOfType<mlir::StringAttr>("pia.model"))
+        if (!here || here != m) continue;
       llvm::SmallVector<Type> domain;
       bool ok = true;
       for (Type t : f.getFunctionType().getInputs()) {

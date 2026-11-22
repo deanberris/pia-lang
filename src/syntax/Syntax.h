@@ -37,6 +37,7 @@ namespace pia::syntax {
   X(Adapter)       /* text=name; concept type, item* */                      \
   X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
   X(SortItem)      /* text=name; abbreviated type? */                        \
+  X(Model)         /* text=name; TypeName theory, SortItem|LetItem* */       \
   X(FileAttr)      /* text=name: `@trusted` on its own line, for the file */ \
   X(Paths)         /* Path* */                                               \
   X(Path)          /* text=A.B.C */                                          \
