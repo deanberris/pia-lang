@@ -2263,6 +2263,47 @@ class Gen {
     return TV{r, full};
   }
 
+  // `clz x`, `ctz x`, `popcount x`, `bswap x`, `rotl x n` and `rotr x n`
+  // work on the storage bits of an unsigned operand (docs/stdlib.md, group
+  // 2). Their result types are exact: [0, w] for the counts, and the whole
+  // w-bit unsigned type for the others.
+  R genBitBuiltin(const Node &n, const std::string &name) {
+    bool rotate = name == "rotl" || name == "rotr";
+    size_t argc = n.kids.size() - 1;
+    if (argc != (rotate ? 2u : 1u))
+      return fail(n, "'" + name + "' takes " +
+                         (rotate ? "two arguments" : "one argument"));
+    R v = genExpr(*n.kids[1], Type());
+    if (!v) return v;
+    auto t = mlir::dyn_cast<IntType>(v->type);
+    if (!t || t.getLo().isNegative())
+      return fail(*n.kids[1], "'" + name + "' needs an unsigned integer, "
+                                  "found " + typeName(v->type));
+    unsigned w = t.getStorageWidth();
+    Location l = loc(n);
+    llvm::APInt zero(kWidth, 0);
+    if (name == "clz" || name == "ctz" || name == "popcount") {
+      auto rt = IntType::get(&ctx_, zero, llvm::APInt(kWidth, w));
+      Value r;
+      if (name == "clz") r = create<ClzOp>(l, rt, v->value);
+      else if (name == "ctz") r = create<CtzOp>(l, rt, v->value);
+      else r = create<PopcountOp>(l, rt, v->value);
+      return TV{r, rt};
+    }
+    auto full = IntType::get(&ctx_, zero,
+                             llvm::APInt::getMaxValue(w).zext(kWidth));
+    if (name == "bswap") return TV{create<BSwapOp>(l, full, v->value), full};
+    R amount = genExpr(*n.kids[2], Type());
+    if (!amount) return amount;
+    if (!mlir::isa<IntType>(amount->type))
+      return fail(*n.kids[2], "'" + name + "' needs an integer amount, found " +
+                                  typeName(amount->type));
+    Value r = name == "rotl"
+                  ? Value(create<RotlOp>(l, full, v->value, amount->value))
+                  : Value(create<RotrOp>(l, full, v->value, amount->value));
+    return TV{r, full};
+  }
+
   // `&&`, `||` and `==>` short-circuit in code, so they lower to `scf.if`.
   // In contracts, which have no effects, they are plain `arith` logic.
   R genLogic(const Node &n, const std::string &op, const Node &lhsNode,
@@ -2457,6 +2498,9 @@ class Gen {
         if (argc != 1) return fail(n, "'bnot' takes one argument");
         return genBNot(n, *n.kids[1], expected);
       }
+      if (fn.text == "clz" || fn.text == "ctz" || fn.text == "popcount" ||
+          fn.text == "bswap" || fn.text == "rotl" || fn.text == "rotr")
+        return genBitBuiltin(n, fn.text);
       if (const char *op = builtinOperator(fn.text)) {
         if (argc != 2)
           return fail(n, "'" + fn.text + "' takes two arguments");

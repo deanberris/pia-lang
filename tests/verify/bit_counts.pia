@@ -1,0 +1,55 @@
+(* The bit builtins clz, ctz, popcount, bswap, rotl and rotr (ADR 0023
+   group 2, ADR 0040): exact results on the storage bits of an unsigned
+   operand, result types that bound the counts by intervals, and the
+   rotation amount goal.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A count is in [0, w] by its type, so this needs no proof. *)
+let bits_set (x : u64) : int{0..64} = popcount x
+
+(* Zero has no bits set, and only zero. *)
+let empty (x : u32) : bool
+  ensures result <==> x = 0
+= (popcount x = 0)
+
+(* C++'s bit_width: the number of bits needed to hold x. *)
+let width (x : u32) : int{0..32}
+  ensures result = 0 <==> x = 0
+  ensures x > 0 ==> x < 1u64 << result
+= 32 - clz x
+
+(* A u16 below 2^15 has its top bit clear. *)
+let top_clear (x : u16) : unit
+  requires x < 32768
+  ensures clz x >= 1
+= ()
+
+(* ctz finds the lowest set bit. *)
+let lowest (x : u8) : unit
+  requires x > 0
+  ensures ctz x < 8 && (x >> ctz x) & 1 = 1
+= ()
+
+(* Swapping the bytes twice gives the value back. *)
+let swap_twice (x : u32) : unit
+  ensures bswap (bswap x) = x
+= ()
+
+(* Rotating right undoes rotating left. *)
+let round_trip (x : u32) (n : int{0..31}) : unit
+  ensures rotr (rotl x n) n = x
+= ()
+
+(* A rotation keeps every bit. *)
+let rotate_keeps (x : u16) (n : int{0..15}) : unit
+  ensures popcount (rotl x n) = popcount x
+= ()
+
+(* Refuted: 255 has all eight bits set. *)
+let wrong (x : u8) : unit
+  ensures popcount x < 8
+= ()
+
+(* The amount is a goal: a u8 can be 32 or more. *)
+let too_far (x : u32) (n : u8) : u32 = rotl x n

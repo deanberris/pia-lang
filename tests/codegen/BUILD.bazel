@@ -4,7 +4,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -51,6 +51,26 @@ cc_test(
     srcs = [
         "bits_test.c",
         ":bits_obj",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# bit_counts.pia, the bit builtins (ADR 0040), against the C compiler's
+# builtins over every u8 and u16 input and a sweep of the wider types.
+genrule(
+    name = "bit_counts_obj",
+    srcs = ["bit_counts.pia"],
+    outs = ["bit_counts.o"],
+    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
+    target_compatible_with = APPLE_SILICON,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "bit_counts_test",
+    srcs = [
+        "bit_counts_test.c",
+        ":bit_counts_obj",
     ],
     target_compatible_with = APPLE_SILICON,
 )
