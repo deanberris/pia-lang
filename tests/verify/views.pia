@@ -1,0 +1,50 @@
+(* Foreign memory (#55, #59): `unsafe view addr n` is the n elements at
+   addr, such as pages a foreign mmap returned. The verifier sees a new
+   buffer of n elements it knows nothing about, so a read proves nothing
+   until the code writes it; the trust report lists every view.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let os_map (n : usize) : usize = extern "pages_map"
+let os_unmap (addr : usize) (n : usize) : unit = extern "pages_unmap"
+
+(* Written, then summed: the invariant bounds the sum. *)
+let fill_sum (n : usize) (v : u8) : u64
+  requires n <= 65536
+= let addr = unsafe os_map n in
+  if addr = 0 then 0
+  else
+    (let mem : [u8] = unsafe view addr n in
+     for i in 0..n do mem.[i] <- v done;
+     let s : mutable u64 = 0 in
+     for i in 0..n invariant s <= i * 255 do s <- s + mem.[i] done;
+     unsafe os_unmap addr n;
+     s)
+
+(* The view has the length asked for, and what is written is read back. *)
+let round_trip (addr : usize) (v : u8) : u8
+  ensures result = v
+= let mem : [u8] = unsafe view addr 16 in
+  mem.[15] <- v;
+  mem.[15]
+
+(* Fails: nothing is known about memory nothing wrote. *)
+let unwritten (addr : usize) : u8
+  ensures result = 0
+= let mem : [u8] = unsafe view addr 4 in
+  mem.[0]
+
+(* Expected report, in order.
+// CHECK: views.pia:18:23: proved: the index is within bounds [smt]
+// CHECK: views.pia:20:20: proved: the loop invariant holds on entry [smt]
+// CHECK: views.pia:20:55: proved: the index is within bounds [smt]
+// CHECK: views.pia:20:53: proved: '+' does not overflow usize [smt]
+// CHECK: views.pia:20:20: proved: the loop invariant holds after each iteration [smt]
+// CHECK: views.pia:28:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:29:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: views.pia:35:3: proved: the index is within bounds [smt]
+// CHECK: views.pia:33:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: addr = {{-?[0-9]+}}
+// CHECK: 9 proved, 1 failed, 0 skipped
+*)

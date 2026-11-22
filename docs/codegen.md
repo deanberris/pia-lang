@@ -108,6 +108,8 @@ A foreign function without a `requires` or `ensures` can be called only as `unsa
 
 Codegen declares `sym` once, as a private function with C types, and calls it. An integer keeps its width, extended to 32 bits as Apple's arm64 ABI expects (`llvm.zeroext` or `llvm.signext`), and a bool is a zero-extended `i1`. A buffer is passed as a pointer to its first element, which for a view (`xs.[a .. b]`) is part way into its storage; pass its length as a separate `usize` argument. If the Pia declaration has the same name as the symbol, it is renamed `pia$ffi$sym`. For now a foreign function takes integers, bools and buffers of integers, and returns an integer, a bool or unit. tests/codegen/ffi_run.pia runs against C in ffi_test.c.
 
+Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` makes it a slice (`pia.view`, marked `pia.unsafe`). Codegen builds the memref descriptor an LLVM lowering of a memref expects, with `addr` as its pointer, offset 0, `n` elements and stride 1, so loads, stores and slices of it lower as usual. tests/codegen/pages.pia fills and sums pages from mmap.
+
 ## Tests
 
 - `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed or unproved obligation, and `--allow-unproved`. They run on any host whose LLVM includes the AArch64 target, which the Bazel build always does.
