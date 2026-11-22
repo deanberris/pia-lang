@@ -9,6 +9,7 @@ DOCS = [
     "//docs:getting-started.md",
     "//docs:demo.md",
     "//docs:tour.md",
+    "//docs:idioms.md",
     "//docs:verification.md",
     "//docs:repl.md",
     "//docs:status.md",

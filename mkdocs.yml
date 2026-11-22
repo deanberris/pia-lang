@@ -68,6 +68,7 @@ nav:
   - "Demo: edge detection": demo.md
   - "Demo: stream delineation": streams.pia.md
   - A tour of Pia: tour.md
+  - Idiomatic Pia: idioms.md
   - How verification works: verification.md
   - The REPL: repl.md
   - Case studies:
@@ -131,3 +132,4 @@ nav:
       - adr/0033-module-initialisation-and-registries.md
       - adr/0034-concepts-and-overload-resolution.md
       - adr/0035-substitution-failure-and-total-constraints.md
+      - adr/0036-idiomatic-pia-and-lints.md

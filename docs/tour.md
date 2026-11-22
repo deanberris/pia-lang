@@ -65,12 +65,12 @@ A literal takes the type its context expects, and a suffix such as `42u8` fixes 
 ```ocaml
 let widen (x : u8) : u32 = x
 
-let narrow (x : u32) : u8
-  requires x < 256
-= x
+let clamp_byte (x : u32) : u8 = if x < 256 then x else 255
 ```
 
-Ranges carry facts the prover uses for free. Here the index can never be out of bounds, and the divisor can never be zero, because the parameter types say so:
+The narrowing in `clamp_byte` is proved by the branch it is on.
+
+Ranges carry facts the prover uses for free. Here the index can never be out of bounds, and the divisor can never be zero, because the parameter types say so. A bound on one value belongs in its type rather than in a `requires` clause, so that it travels with the value ([Idiomatic Pia](idioms.md)):
 
 ```ocaml
 let lookup (lut : [u8; 256]) (i : int{0..255}) : u8 = lut.[i]
@@ -363,15 +363,15 @@ A contract is a claim the compiler must prove. Pia has these today:
 Calls are checked against contracts, not bodies. A caller proves the callee's precondition and then knows its postcondition, so proofs stay local to each function:
 
 ```ocaml
-let inc (x : u8) : u8
-  requires x < 255
-  ensures result = x + 1
-= x + 1
+let add (a : u8) (b : u8) : u8
+  requires a + b <= 255
+  ensures result = a + b
+= a + b
 
-let twice (x : u8) : u8
-  requires x < 200
-  ensures result = x + 2
-= inc (inc x)
+let add3 (a : u8) (b : u8) (c : u8) : u8
+  requires a + b + c <= 255
+  ensures result = a + b + c
+= add (add a b) c
 ```
 
 Arithmetic inside a contract is exact mathematics, so a contract can say `a + b` without worrying that it overflows:
@@ -381,9 +381,9 @@ let avg (a : u8) (b : u8) : u8
   ensures 2 * result <= a + b
 = (a +| b) / 2
 
-let small (xs : [u8]) : bool
-  requires forall (i in 0..len xs). xs.[i] < 10
-  ensures len xs > 0 ==> xs.[0] < 10
+let below (xs : [u8]) (lim : u8) : bool
+  requires forall (i in 0..len xs). xs.[i] < lim
+  ensures len xs > 0 ==> xs.[0] < lim
 = true
 ```
 
@@ -396,9 +396,7 @@ Pia has no built-in operators. Each one is a metaprogram that gives a symbol a p
 ```ocaml
 let meta operator ( ** ) : prec 8 right = let (a) (b) => `( pow $a $b )
 
-let pow (a : u8) (b : u8) : u8
-  requires b <= 1
-= if b = 0 then 1 else a
+let pow (a : u8) (b : int{0..1}) : u8 = if b = 0 then 1 else a
 
 let times : u16 = 2 * 3 ** 1
 ```
@@ -425,9 +423,7 @@ let tile : u32 = 16  \ a NEON register holds 16 bytes
 
 \ Two `\` lines in a row are one comment.
 \ Neither is a doc comment.
-let tiles (n : u32) : u32
-  requires n <= 4096
-= (n + 15) / 16
+let tiles (n : int{0..4096}) : u32 = (n + 15) / 16
 ```
 
 A metaprogram sees the comments too. `listing ()` gives it the program's items, and `doc x` an item's documentation, so a project can insist on documenting everything:
