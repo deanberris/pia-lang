@@ -1,0 +1,32 @@
+(* An importer relies on the postconditions of imported functions that
+   write their parameters (ADR 0039, step 3).
+// RUN: piac --emit=interface -o %t %S/Inputs/swaps.pia
+// RUN: piac --verify %S/Inputs/swaps.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Bufs.Swap.Swaps
+
+let swapped (xs : borrowed inout mutable [u8]) : unit
+  requires len xs = 2
+  ensures xs.[0] = old (xs.[1]) && xs.[1] = old (xs.[0])
+= Bufs.Swap.swap xs 0 1
+
+let put (xs : borrowed inout mutable [u8]) (v : u8) : u8
+  requires len xs > 0
+  ensures result = old (xs.[0]) && xs.[0] = v
+= Bufs.Swap.exchange xs 0 v
+
+let twice (n : u8) : u8 @allow(range_requires)
+  requires n < 254
+  ensures result = n + 2
+= let m : mutable u8 = n in
+  Bufs.Swap.bump m;
+  Bufs.Swap.bump m;
+  m
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed, 0 skipped
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

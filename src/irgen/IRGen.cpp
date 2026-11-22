@@ -4005,6 +4005,10 @@ class Gen {
                           const sema::FuncSig &found,
                           const std::map<std::string, Type> &scope,
                           const AdapterInfo *via) {
+    if (writesParam(*req.kids[0]->kids[1])) {
+      queueContractCall(req, key, names, found, scope, via);
+      return;
+    }
     syntax::SourceLoc at = req.loc;
     std::map<std::string, std::string> rename;
     auto params = syntax::makeNode(NodeKind::Params, at);
@@ -4045,6 +4049,65 @@ class Gen {
     std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
     queueLemma(key + "." + what + ".contract", std::move(params),
                std::move(contracts), std::move(body), scope, at, via);
+  }
+
+  // A function that writes its parameters honours a requirement's contract
+  // when a call of it, under the requirement's precondition, meets the
+  // requirement's postcondition, which may name the parameters after the
+  // call and, with `old`, before it. A lemma cannot say that, so the proof
+  // is a function with the requirement's contract and the parameters'
+  // modifiers, whose body is the call. Nothing calls it.
+  void queueContractCall(const Node &req, const std::string &key,
+                         const std::vector<std::string> &names,
+                         const sema::FuncSig &found,
+                         const std::map<std::string, Type> &scope,
+                         const AdapterInfo *via) {
+    syntax::SourceLoc at = req.loc;
+    std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
+    std::string symbol = key + "." + what + ".contract";
+    if (sigs_.count(symbol)) return;
+    std::map<std::string, std::string> rename;
+    auto params = syntax::makeNode(NodeKind::Params, at);
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    call->add(syntax::makeNode(NodeKind::Name, at, req.text));
+    const Node *cur = req.kids[0]->kids[1].get();
+    for (size_t i = 0; i < names.size(); ++i, cur = cur->kids[1].get()) {
+      const std::string &mine = found.params[i].name;
+      rename[names[i]] = mine;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, mine));
+      Node *annot = p->add(syntax::makeNode(NodeKind::Annot, at));
+      annot->add(syntax::clone(*cur->kids[0]->kids[0]));
+      annot->add(syntax::clone(*cur->kids[0]->kids[1]));
+      annot->add(syntax::makeNode(NodeKind::None, at));
+      call->add(syntax::makeNode(NodeKind::Name, at, mine));
+    }
+    auto contracts = syntax::makeNode(NodeKind::Contracts, at);
+    for (const syntax::NodePtr &c : req.kids[2]->kids) {
+      NodePtr copy = syntax::clone(*c);
+      renameNames(*copy, rename, nullptr);
+      contracts->add(std::move(copy));
+    }
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    if (!adlModule_.empty()) item->flags = "from:" + adlModule_;
+    item->add(std::move(params));
+    Node *ret = item->add(syntax::makeNode(NodeKind::RetAnnot, at));
+    Node *annot = ret->add(syntax::makeNode(NodeKind::Annot, at));
+    annot->add(syntax::makeNode(NodeKind::Modifiers, at));
+    annot->add(syntax::clone(*cur));
+    annot->add(syntax::makeNode(NodeKind::None, at));
+    ret->add(syntax::makeNode(NodeKind::Attrs, at));
+    item->add(std::move(contracts));
+    item->add(std::move(call));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    sig.typeArgs = scope;
+    for (auto &[name, type] : scope) sig.typeParams.push_back(name);
+    if (via) sig.adapted = via->fns;
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_)) return;
+    sigs_.emplace(symbol, std::move(sig));
+    pendingInstances_.push_back(symbol);
   }
 
   // Renames free names in a contract; `result` becomes `call` when given.
@@ -4283,12 +4346,6 @@ class Gen {
         if (types_.resolve(type) != Type(c->second.type))
           diags_.error(r.loc, unmet + "'" + r.text + "' has type " +
                                   typeName(c->second.type));
-        continue;
-      }
-      if (hasEnsures(r) && writesParam(type)) {
-        diags_.error(r.loc, "an interface cannot yet state a postcondition "
-                            "of '" + r.text + "', which has out or inout "
-                            "parameters");
         continue;
       }
       if (std::optional<std::string> name = privateType(type, shown))
