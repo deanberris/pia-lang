@@ -69,7 +69,7 @@ Dean decided (2026-11-23) that the fixed terrain is for building and proving the
 
 - **Rainfall models** replace the uniform one unit of water per cell in `acc` with a rainfall field per time step (uniform, a storm moving across the map, or seasonal), so each step's flow is accumulated rainfall, not area.
 - **Evolution**: each step's erosion lowers `fill` and deposition raises it, in integer height units, and the fill and the directions are recomputed every few steps. The conservation law still holds across a recomputation, because it counts mass, not heights.
-- **Animated GIF**: one frame per few steps, through the proved GIF encoder of [ADR 0054](0054-proved-gif-and-jpeg-codecs.md) (multiple frames with a delay, and a palette shared across frames so colours stay stable between frames).
+- **Animated GIF**: one frame per few steps, through the proved GIF encoder of ADR 0054 (multiple frames with a delay, and a palette shared across frames so colours stay stable between frames).
 
 ### 6. The GPU form comes later and is proved against this one
 
