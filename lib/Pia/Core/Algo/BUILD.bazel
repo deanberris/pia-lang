@@ -1,4 +1,5 @@
 load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Core.Algo: C++'s <algorithm> on slices (ADR 0040), generic over
 # Pia.Core.Order's concepts and proved once over them (ADR 0043).
@@ -16,18 +17,13 @@ exports_files([
     "Search.pia",
 ])
 
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
 # The non-modifying sequence algorithms: tests/std/search.pia checks its
 # goals; tests/std/search_edges.pia and :search_run test it through its
 # interface.
 pia_library(
     name = "search",
     src = "Search.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -39,7 +35,7 @@ pia_library(
 pia_library(
     name = "modify",
     src = "Modify.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -48,7 +44,7 @@ pia_library(
 pia_library(
     name = "permutation",
     src = "Permutation.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -58,7 +54,7 @@ pia_library(
 pia_library(
     name = "remove",
     src = "Remove.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -68,7 +64,7 @@ pia_library(
 pia_library(
     name = "sort",
     src = "Sort.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         "//lib/Pia:fn",
@@ -82,7 +78,7 @@ pia_library(
 pia_library(
     name = "heap",
     src = "Heap.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         ":sort",

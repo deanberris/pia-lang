@@ -8,6 +8,10 @@
 #          (pia-opt, piac, FileCheck)
 #   not    inverts the exit status of the command after it
 #
+# piac compiles for Apple silicon here, whatever the host, so a test's
+# expected IR and assembly are the same on every machine. A RUN line that
+# passes its own --target (and --cpu) overrides it, since the last wins.
+#
 # Usage: run_lit.sh <test file> <tool>...
 #
 # A .pia test keeps its RUN and CHECK lines inside a `(* ... *)` comment.
@@ -19,7 +23,11 @@ not() { if "$@"; then return 1; else return 0; fi; }
 for tool in "$@"; do
   name="$(basename "$tool")"
   path="$(cd "$(dirname "$tool")" && pwd)/$name"
-  eval "$name() { \"$path\" \"\$@\"; }"
+  if [ "$name" = piac ]; then
+    eval "$name() { \"$path\" --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 \"\$@\"; }"
+  else
+    eval "$name() { \"$path\" \"\$@\"; }"
+  fi
 done
 
 DIR="$(dirname "$TEST")"

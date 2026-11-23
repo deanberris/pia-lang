@@ -1136,7 +1136,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
         if (c && mlir::isa<mlir::MemRefType>(c)) return ptr;
         return c;
       };
-      // C extends small integers at the call (Apple arm64).
+      // C extends small integers at the call (Apple arm64, and x86_64
+      // System V as clang and GCC compile it).
       auto ext = [&](Type t) -> std::optional<llvm::StringRef> {
         auto i = mlir::dyn_cast<IntType>(t);
         unsigned width = i ? reprOf(i).width : 0;
@@ -1252,7 +1253,7 @@ void cArgTypes(Type t, mlir::MLIRContext *ctx, llvm::SmallVectorImpl<Type> &out)
 }
 
 // Small integers are extended to 32 bits at the call boundary, as Apple's
-// arm64 ABI and C compilers expect.
+// arm64 ABI requires, and as clang and GCC do for x86_64 System V.
 std::optional<llvm::StringRef> extAttr(Type t, bool isSigned) {
   auto i = mlir::dyn_cast<mlir::IntegerType>(t);
   if (!i || i.getWidth() >= 32) return std::nullopt;

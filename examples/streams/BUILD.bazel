@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/piac:pia.bzl", "pia_object")
+load("//tools/piac:targets.bzl", "APPLE_SILICON", "PIA_TARGETS")
 
 # The stream delineation demo. The program is the literate page
 # docs/streams.pia.md, which is also its documentation; main.c reads and
@@ -9,25 +10,21 @@ load("//tools/piac:pia.bzl", "pia_object")
 #   bazel run //examples/streams                     # a synthetic terrain
 #   bazel run //examples/streams -- in.png out.png [threshold]
 #
-# Everything here runs only on Apple Silicon, the one target piac compiles
-# for so far.
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
+# The Pia program and its C test build on every platform piac compiles for
+# (ADR 0049). The demo binary needs ImageIO, so it is Apple silicon only.
 
 # Every goal in the page must be proved, or piac refuses to compile it.
 pia_object(
     name = "streams_obj",
     src = "//docs:streams.pia.md",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 cc_library(
     name = "streams_pia",
     srcs = [":streams_obj"],
     hdrs = ["pia_streams.h"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 cc_binary(
@@ -48,7 +45,7 @@ cc_binary(
 cc_test(
     name = "streams_test",
     srcs = ["streams_test.c"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [":streams_pia"],
 )
 

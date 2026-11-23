@@ -1,5 +1,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
@@ -8,13 +9,8 @@ lit_tests(
     tools = ["//tools/piac"],
 )
 
-# saturate.pia compiled for Apple Silicon and linked with a C harness that
-# compares it with C reference implementations. It runs only on arm64 macOS.
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
+# saturate.pia compiled for the platform being built for and linked with a
+# C harness that compares it with C reference implementations.
 genrule(
     name = "saturate_obj",
     srcs = ["saturate.pia"],
@@ -22,8 +18,8 @@ genrule(
     # add_rows's subscripts are inside a loop, which v0 does not verify yet
     # (docs/verifier.md, "Limits of v0"), so its three bounds goals are
     # accepted unproved. Every other goal in saturate.pia must be proved.
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -33,7 +29,7 @@ cc_test(
         "saturate_test.c",
         ":saturate_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # bits.pia, the bit operators (#48), against C over every u8 input.
@@ -41,8 +37,8 @@ genrule(
     name = "bits_obj",
     srcs = ["bits.pia"],
     outs = ["bits.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -52,7 +48,7 @@ cc_test(
         "bits_test.c",
         ":bits_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # bit_counts.pia, the bit builtins (ADR 0040), against the C compiler's
@@ -61,8 +57,8 @@ genrule(
     name = "bit_counts_obj",
     srcs = ["bit_counts.pia"],
     outs = ["bit_counts.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -72,7 +68,7 @@ cc_test(
         "bit_counts_test.c",
         ":bit_counts_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # slices.pia, slices and abort (#50), run against expected values.
@@ -80,8 +76,8 @@ genrule(
     name = "slices_obj",
     srcs = ["slices.pia"],
     outs = ["slices.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -91,7 +87,7 @@ cc_test(
         "slices_test.c",
         ":slices_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # consts.pia, constant arrays in read-only data (#50).
@@ -99,8 +95,8 @@ genrule(
     name = "consts_obj",
     srcs = ["consts.pia"],
     outs = ["consts.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -110,7 +106,7 @@ cc_test(
         "consts_test.c",
         ":consts_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # variants.pia, variants and match (#54).
@@ -118,8 +114,8 @@ genrule(
     name = "variants_obj",
     srcs = ["variants.pia"],
     outs = ["variants.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -129,7 +125,7 @@ cc_test(
         "variants_test.c",
         ":variants_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # record_buffers.pia, buffers of records as one buffer per field (#50).
@@ -137,8 +133,8 @@ genrule(
     name = "record_buffers_obj",
     srcs = ["record_buffers.pia"],
     outs = ["record_buffers.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -148,7 +144,7 @@ cc_test(
         "record_buffers_test.c",
         ":record_buffers_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # ffi_run.pia, foreign functions (#55), linked with the C functions it calls.
@@ -156,8 +152,8 @@ genrule(
     name = "ffi_obj",
     srcs = ["ffi_run.pia"],
     outs = ["ffi_run.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -167,7 +163,7 @@ cc_test(
         "ffi_test.c",
         ":ffi_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # arena.pia, scoped regions (#70): a with_arena's memory is new and zeroed
@@ -176,8 +172,8 @@ genrule(
     name = "arena_obj",
     srcs = ["arena.pia"],
     outs = ["arena.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -187,7 +183,7 @@ cc_test(
         "arena_test.c",
         ":arena_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # pages.pia, foreign memory from mmap seen through `unsafe view`.
@@ -195,8 +191,8 @@ genrule(
     name = "pages_obj",
     srcs = ["pages.pia"],
     outs = ["pages.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -206,7 +202,7 @@ cc_test(
         "pages_test.c",
         ":pages_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # spec_state.pia, spec-only parameters and fields (ADR 0041): the verifier
@@ -215,8 +211,8 @@ genrule(
     name = "spec_state_obj",
     srcs = ["spec_state.pia"],
     outs = ["spec_state.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -226,7 +222,7 @@ cc_test(
         "spec_state_test.c",
         ":spec_state_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # lambdas.pia, a higher-order function specialised at a lambda and at a
@@ -235,8 +231,8 @@ genrule(
     name = "lambdas_run_obj",
     srcs = ["lambdas.pia"],
     outs = ["lambdas_run.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -246,7 +242,7 @@ cc_test(
         "lambdas_test.c",
         ":lambdas_run_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # box_concept.pia, a box over a concept compiled to a tagged union and
@@ -255,8 +251,8 @@ genrule(
     name = "box_concept_obj",
     srcs = ["box_concept.pia"],
     outs = ["box_concept.o"],
-    cmd = "$(location //tools/piac) --emit=obj -o $@ $<",
-    target_compatible_with = APPLE_SILICON,
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
@@ -266,5 +262,5 @@ cc_test(
         "box_concept_test.c",
         ":box_concept_obj",
     ],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
