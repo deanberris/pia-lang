@@ -1189,7 +1189,10 @@ class Encoder {
       return true;
     }
     if (auto a = mlir::dyn_cast<contract::AssertOp>(op)) {
-      goal(ObligationKind::assert_, op, "the assertion holds",
+      // A contract lemma's assertion says whose precondition it checks.
+      auto claim = fn_->getAttrOfType<mlir::StringAttr>("pia.assert_claim");
+      goal(ObligationKind::assert_, op,
+           claim ? claim.getValue().str() : "the assertion holds",
            term(a.getPredicate()), false);
       return true;
     }
@@ -1212,6 +1215,18 @@ class Encoder {
     if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
       return stepCall(call);
 
+    // A copy makes dst's elements src's: arrays are values.
+    if (auto copy = mlir::dyn_cast<CopyOp>(op)) {
+      Value root = rootBuffer(copy.getDst());
+      if (chosen_.contains(root)) {
+        refuseChosenWrite(op);
+        return true;
+      }
+      Value src = arrays_.lookup(rootBuffer(copy.getSrc()));
+      if (src && arrays_.count(root)) setArray(root, src);
+      else if (arrays_.count(root)) havocArray(root);
+      return true;
+    }
     if (auto store = mlir::dyn_cast<StoreOp>(op)) {
       Value idx = term(store.getIndex());
       Value len = lengths_.lookup(store.getBuffer());
@@ -2041,6 +2056,8 @@ class Encoder {
     loop->walk([&](Operation *op) {
       if (auto st = mlir::dyn_cast<StoreOp>(op))
         out.insert(rootBuffer(st.getBuffer()));
+      if (auto cp = mlir::dyn_cast<CopyOp>(op))
+        out.insert(rootBuffer(cp.getDst()));
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
         for (unsigned i = 0; i < call.getNumOperands(); ++i)
           if (callWrites(call, i)) out.insert(rootBuffer(call.getOperand(i)));

@@ -32,3 +32,12 @@ let show (x : bool) : u8 = 1
 (* CHECK: concept_use_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: no overload of 'show' takes (u16); the generic 'show': u16 does not meet Same: no function 'same : u16 -> u16 -> bool'; 'show(bool)' does not take these types
 *)
 let s (x : u16) : u8 = show x
+
+(* A generic meets a requirement at the types its parameters deduce, but
+   not through its own constraint: this `same` would make every type meet
+   Same by asking that it already does.
+// CHECK: concept_use_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: no overload of 'show' takes (u32); the generic 'show': u32 does not meet Same: no function 'same : u32 -> u32 -> bool'; 'show(bool)' does not take these types
+*)
+let same (t : type where Same t) (a : t) (b : t) : bool = same a b
+
+let c (x : u32) : u8 = show x

@@ -1,0 +1,10 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# The litmus battery for Pia.Memory, RC11 (ADR 0052, section 4), one file
+# per family, and the theory's own model (theory.pia).
+lit_tests(
+    name = "memory_tests",
+    srcs = glob(["*.pia"]),
+    data = ["//src/irgen:Memory.pia"],
+    tools = ["//tools/piac"],
+)

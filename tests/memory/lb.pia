@@ -1,0 +1,28 @@
+(* Load buffering: each thread loads one location and then stores the
+   other. RC11 forbids both loads reading the other thread's store, even
+   relaxed, since po ∪ rf must be acyclic: no value comes out of thin air.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "lb_rlx"
+  [ thread [ load "relaxed" "x" "r1"; store "relaxed" "y" 1 ]
+  ; thread [ load "relaxed" "y" "r2"; store "relaxed" "x" 1 ] ]
+  "forbidden" [ is "r1" 1; is "r2" 1 ]
+
+litmus "lb_acq_rel"
+  [ thread [ load "acquire" "x" "r1"; store "release" "y" 1 ]
+  ; thread [ load "acquire" "y" "r2"; store "release" "x" 1 ] ]
+  "forbidden" [ is "r1" 1; is "r2" 1 ]
+
+litmus "lb_one_read"
+  [ thread [ load "relaxed" "x" "r1"; store "relaxed" "y" 1 ]
+  ; thread [ load "relaxed" "y" "r2"; store "relaxed" "x" 1 ] ]
+  "allowed" [ is "r1" 1; is "r2" 0 ]
+
+(* Expected report, in order.
+// CHECK: lb.pia:7:1: proved: the postcondition holds [smt]
+// CHECK: lb.pia:12:1: proved: the postcondition holds [smt]
+// CHECK: lb.pia:17:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: 2 proved, 1 failed, 0 skipped
+*)

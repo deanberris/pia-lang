@@ -43,7 +43,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 
 | Header | Pia | Kind | Status |
 | --- | --- | --- | --- |
-| `<memory>` | `Pia.Mem`: allocators (ADR 0026); no `unique_ptr`: one non-null `box t` or `box c` over a concept `c` (type-erased, contents proved to meet `c`; ADR 0040 section 4), freed through its stored allocator, `option (box t)` when it may be empty; `uninitialized_*` are `out` slices | Idiom | `box t` (ADR 0046 step 1) and `box c` for the verifier (steps 2 to 4: `widen` with the use check, calls through a box proved from the concept's contracts and one-value laws, `box c` meeting `c` by forwarding) done; code generation for `box c` within a module (a tagged union of the widened types, a switch on the tag, direct calls where it is known; step 5) done; function-pointer tables across modules (step 6), `remove`/`fill` on it, and `Pia.Mem`'s allocators phase 2 |
+| `<memory>` | `Pia.Mem`: allocators (ADR 0026); no `unique_ptr`: one non-null `box t` or `box c` over a concept `c` (type-erased, contents proved to meet `c`; ADR 0040 section 4), freed through its stored allocator, `option (box t)` when it may be empty; `uninitialized_*` are `out` slices | Idiom | `box t` (ADR 0046 step 1) and `box c` for the verifier (steps 2 to 4: `widen` with the use check, calls through a box proved from the concept's contracts and one-value laws, `box c` meeting `c` by forwarding) done; code generation for `box c` within a module (a tagged union of the widened types, a switch on the tag, direct calls where it is known; step 5) done; function-pointer tables across modules (step 6), `remove`/`fill` on it phase 2; `Pia.Mem.Alloc` (`oom`, the `Allocator` concept, a bump allocator) and `Pia.Mem.Box` (`box t r` over any allocator) done; pools and pages phase 2 |
 | `shared_ptr`, `weak_ptr` | `Pia.Mem.Ref`: `ref`, `weak` ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)) | Deferred: recursive types (ADR 0047); atomic `shared_ref` with M12 | later |
 | `<memory_resource>` | `arena` (`monotonic_buffer_resource`), `pool` (`unsynchronized_pool_resource`), `shared` (`synchronized_pool_resource`) | Direct: every Pia container is a `pmr` container | #59, #71 |
 | `<new>` | allocation is a `Pia.Mem` call returning `result`; there is no `new`, no placement `new` (`out` memory is written instead) and no `bad_alloc` (`OutOfMemory`) | Idiom (ADR 0026) | n/a |
@@ -73,7 +73,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | `<array>` | `[T; N]` and slice algorithms | Core | n/a |
 | `<span>` | `[T]` slices and `xs.[a .. b]` | Core | n/a |
 | `<mdspan>` | strided views over slices | Deferred: value parameters in generic types | later |
-| `<vector>` | `Pia.Mem.Vec` | Direct (#86) | in progress (#86) |
+| `<vector>` | `Pia.Mem.Vec`: `vec t a r` holds its allocator `a` (any `Pia.Mem.Alloc.Allocator`) and a buffer from the region `r`; `with_capacity`, `push` (fallible, doubling plus one), `get`, `set`, `pop` | Direct (#86) | `vec t a r` done (lib/Pia/Mem/Vec.pia); `vec (box t)` proved as a prototype (tests/verify/vec_boxes.pia), moving in with box drop; insert, erase, iterators phase 2 |
 | `<deque>` | `Pia.Mem.Deque`, a ring of blocks | Direct | phase 2 |
 | `<list>`, `<forward_list>` | `Pia.Mem.List`, nodes in a pool linked by index | Direct | phase 2 |
 | `<map>`, `<set>` | `Pia.Mem.Map`, `Pia.Mem.Set`: B-trees with nodes in a pool; the order is the key's `Ord` | Direct | phase 2 |

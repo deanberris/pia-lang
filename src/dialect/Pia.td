@@ -548,6 +548,18 @@ def Pia_RegionOp : Pia_Op<"region"> {
   let assemblyFormat = "attr-dict `:` type($result)";
 }
 
+def Pia_CopyOp : Pia_Op<"copy", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "copy every element of one array into another of its type";
+  let description = [{
+    Arrays are values: binding one to a `mutable` local copies it into
+    storage of its own, so a write through the local reaches nothing else.
+    The verifier sees `dst` become `src`'s elements.
+  }];
+  let arguments = (ins Pia_ArrayType:$src, Pia_ArrayType:$dst);
+  let assemblyFormat = "$src `,` $dst attr-dict `:` type($src) `,` type($dst)";
+  let hasVerifier = 1;
+}
+
 def Pia_ViewOp : Pia_Op<"view"> {
   let summary = "a slice of foreign memory: `unsafe view addr n`";
   let description = [{
@@ -561,6 +573,32 @@ def Pia_ViewOp : Pia_Op<"view"> {
   let results = (outs Pia_SliceType:$result);
   let assemblyFormat = [{
     $address `,` $length attr-dict `:` type($address) `->` type($result)
+  }];
+}
+
+def Pia_AddressOp : Pia_Op<"address", [Pure]> {
+  let summary = "the address of a slice's first element";
+  let description = [{
+    Codegen only: an element of a buffer of slices is stored as its
+    address and its length, each in a buffer of its own (ADR 0048,
+    section 4). The address of an empty slice is not read again.
+  }];
+  let arguments = (ins Pia_SliceType:$slice);
+  let results = (outs Index:$result);
+  let assemblyFormat = "$slice attr-dict `:` type($slice)";
+}
+
+def Pia_AtAddressOp : Pia_Op<"at_address", [Pure]> {
+  let summary = "the slice of `length` elements at `address`";
+  let description = [{
+    Codegen only: an element read from a buffer of slices, rebuilt from
+    the address and length `pia.address` and `pia.len` stored (ADR 0048,
+    section 4).
+  }];
+  let arguments = (ins Index:$address, Index:$length);
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = [{
+    $address `,` $length attr-dict `:` type($result)
   }];
 }
 

@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 #include "irgen/Boxes.h"
+#include "irgen/Memory.h"
 #include "irgen/Regions.h"
 #include "irgen/Target.h"
 #include "irgen/Theories.h"
@@ -712,6 +713,48 @@ class Gen {
     }
   }
 
+  // Whether every element of an array literal is an integer literal, so
+  // it can be constant data.
+  static bool constantElements(const Node &lit) {
+    for (const syntax::NodePtr &k : lit.kids) {
+      const Node *e = k.get();
+      if (e->kind == NodeKind::Neg && e->kids.size() == 1) e = e->kids[0].get();
+      if (e->kind != NodeKind::IntLit) return false;
+    }
+    return true;
+  }
+
+  // Fresh storage for a local array (`pia.region`), with the literal's
+  // elements stored into it one by one, or another array copied in.
+  R genLocalArray(const Node &value, ArrayType arr) {
+    Location l = loc(value);
+    Value storage = create<RegionOp>(l, arr);
+    Type elem = arr.getElementType();
+    if (value.kind == NodeKind::ListLit) {
+      if (value.kids.size() != arr.getLength())
+        return fail(value, "an array literal for " + typeName(arr) +
+                               " needs " + plural(arr.getLength(), "element") +
+                               ", found " + std::to_string(value.kids.size()));
+      for (size_t i = 0; i < value.kids.size(); ++i) {
+        const Node &k = *value.kids[i];
+        R e = genExpr(k, elem);
+        if (!e) return e;
+        R c = coerce(*e, elem, k);
+        if (!c) return c;
+        Value at = create<mlir::arith::ConstantIndexOp>(loc(k),
+                                                        static_cast<int64_t>(i));
+        create<StoreOp>(loc(k), c->value, storage, at);
+      }
+      return TV{storage, arr};
+    }
+    R src = genExpr(value, arr);
+    if (!src) return src;
+    R c = coerce(*src, arr, value);
+    if (!c) return c;
+    create<CopyOp>(l, c->value, storage);
+    return TV{storage, arr};
+  }
+
   // The values of an array literal of integer literals, checked against
   // the array type.
   std::optional<mlir::ArrayAttr> constValues(const Node &lit, ArrayType arr) {
@@ -736,8 +779,9 @@ class Gen {
         n = n->kids[0].get();
       }
       if (n->kind != NodeKind::IntLit) {
-        fail(*k, "an array literal's elements must be integer literals for "
-                 "now");
+        fail(*k, "an array literal with computed elements needs storage of "
+                 "its own: bind it to a local first, as in "
+                 "'let a : [u8; 2] = [x; y] in ...'");
         return std::nullopt;
       }
       auto v = sema::parseIntLiteral(n->text);
@@ -833,6 +877,8 @@ class Gen {
       if (std::string from = fromModule(item); !from.empty())
         fn->setAttr("pia.spec_from", b_.getStringAttr(from));
     // A law or requirement contract that the concept's module proved.
+    if (auto a = assertClaims_.find(sig.name); a != assertClaims_.end())
+      fn->setAttr("pia.assert_claim", b_.getStringAttr(a->second));
     if (auto c = certified_.find(sig.name); c != certified_.end())
       fn->setAttr("pia.certified", b_.getStringAttr(c->second));
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
@@ -6040,9 +6086,14 @@ class Gen {
         if (promised_.count(key)) return std::nullopt;
         return "it is not promised by " + constraintsText(t);
       }
+    // A generic that meets a requirement only if its own arguments already
+    // meet the concept would be circular (genericMeeting).
+    if (deciding_.count(key) && meetingGeneric_)
+      return "it would meet it only through itself";
     if (auto it = met_.find(key); it != met_.end()) return it->second;
     // An `include` that comes back to this concept adds nothing new.
     met_[key] = std::nullopt;
+    deciding_.insert(key);
     const Node &item = *concepts_.at(cname);
     // An imported concept's requirements are met by functions of its
     // module too, as `Pia.Core.Order.less` meets Ord's `less` (ADR 0039).
@@ -6054,8 +6105,11 @@ class Gen {
     std::vector<std::map<std::string, Type>> saved =
         types_.replaceTypeScopes({scope});
     size_t queued = queuedLog_.size(), matched = matchedLog_.size();
+    std::string outer = std::exchange(requirer_, "the concept '" + cname + "'");
     std::optional<std::string> why = requirementsUnmet(item, key, scope, via);
+    requirer_ = std::move(outer);
     types_.replaceTypeScopes(std::move(saved));
+    deciding_.erase(key);
     met_[key] = why;
     if (!why && !via) certify(fromModule(item), args, queued, matched);
     return why;
@@ -6194,6 +6248,16 @@ class Gen {
                cand->params[i].modifiers == mods[i];
       if (same) found = cand;
     }
+    // A generic function meets it at the type arguments its parameters
+    // deduce, as a generic `alloc` over `bump t` meets `Allocator (bump
+    // u16) u16` at t = u16.
+    for (sema::FuncSig *cand : cands) {
+      if (found)
+        break;
+      if (!cand->isGeneric())
+        continue;
+      found = genericMeeting(*cand, ptypes, mods, result);
+    }
     if (!found) return "no function '" + spelled + "'";
     if (matched) *matched = found->name;
     matchedLog_.push_back(found->name);
@@ -6206,6 +6270,43 @@ class Gen {
     if (!r->kids[2]->kids.empty() || (strict && ownRequires))
       queueContractLemma(*r, key, names, *found, scope, via);
     return std::nullopt;
+  }
+
+  // The instance of `generic` with exactly the parameter types `ptypes`,
+  // modifiers `mods` and result `result`, deduced from them, or null.
+  sema::FuncSig *genericMeeting(const sema::FuncSig &generic,
+                                const std::vector<Type> &ptypes,
+                                const std::vector<std::string> &mods,
+                                Type result) {
+    std::vector<const Node *> written = valueParamsOf(generic);
+    if (written.size() != ptypes.size())
+      return nullptr;
+    std::map<std::string, Type> bound;
+    for (size_t i = 0; i < written.size(); ++i) {
+      const Node &p = *written[i];
+      if (p.kids.empty() || p.kids[0]->kind != NodeKind::Annot ||
+          !types_.unify(*p.kids[0], ptypes[i], generic.typeParams, bound))
+        return nullptr;
+    }
+    if (const Node *ret = retAnnotOf(generic))
+      if (!types_.unify(*ret, result, generic.typeParams, bound))
+        return nullptr;
+    for (const std::string &t : generic.typeParams)
+      if (!bound.count(t))
+        return nullptr;
+    bool outer = std::exchange(meetingGeneric_, true);
+    bool unmetHere = constraintsUnmet(generic, bound).has_value();
+    meetingGeneric_ = outer;
+    if (unmetHere)
+      return nullptr;
+    sema::FuncSig *inst = genericInstance(generic, bound);
+    if (!inst || inst->result != result)
+      return nullptr;
+    for (size_t i = 0; i < ptypes.size(); ++i)
+      if (inst->params[i].type != ptypes[i] ||
+          inst->params[i].modifiers != mods[i])
+        return nullptr;
+    return inst;
   }
 
   // A requirement's contract is honoured by the function that meets it
@@ -6266,8 +6367,13 @@ class Gen {
     // named after the overload's symbol, as `eq(u8, u8)`: a lemma whose
     // symbol is already queued is not queued again.
     std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
-    queueLemma(key + "." + what + ".contract", std::move(params),
-               std::move(contracts), std::move(body), scope, at, via);
+    std::string symbol = key + "." + what + ".contract";
+    // Its assertions say whose precondition they check, and what gives it.
+    if (!requirer_.empty())
+      assertClaims_.emplace(symbol, requirer_ + " gives the precondition of '" +
+                                        req.text + "'");
+    queueLemma(symbol, std::move(params), std::move(contracts), std::move(body),
+               scope, at, via);
   }
 
   // A function that writes its parameters honours a requirement's contract
@@ -6495,6 +6601,12 @@ class Gen {
   void checkInterface(const Node &header, const Node &iface,
                       const std::set<std::string> &shown) {
     const std::string key = header.text + "." + iface.text;
+    std::string outer =
+        std::exchange(requirer_, "the interface '" + iface.text + "'");
+    struct Restore {
+      std::string &to, from;
+      ~Restore() { to = std::move(from); }
+    } restore{requirer_, std::move(outer)};
     std::string unmet =
         "the module '" + header.text + "' does not meet '" + iface.text + "': ";
     for (const syntax::NodePtr &item : iface.kids) {
@@ -8276,8 +8388,9 @@ class Gen {
         return fail(obj, "only arrays and slices can be indexed, found " +
                              typeName(b->type));
       if (!writableBuffer(*b))
-        return fail(obj, "cannot write to '" + obj.text +
-                             "': declare the parameter 'out' or 'inout'");
+        return fail(obj, "cannot write to '" + obj.text + "': " +
+                             (b->isParam ? "declare the parameter 'out' or 'inout'"
+                                         : "declare the local 'mutable'"));
       // A lambda that captures the buffer reads it until its last use.
       if (!contract_ && !ghost_)
         for (const auto &scope : scopes_)
@@ -9892,7 +10005,24 @@ class Gen {
                     "attributes on a local 'let' are not supported yet");
     }
     const Node &valueNode = *n.kids[3];
-    R v = genExpr(valueNode, declared);
+    // A local array that is `mutable`, or whose literal computes its
+    // elements, has storage of its own: a fresh array, filled from the
+    // literal's elements or copied from the value. Arrays are values, so
+    // a write through it reaches nothing else.
+    auto localArray = mlir::dyn_cast_or_null<ArrayType>(declared);
+    bool ownStorage = false;
+    if (localArray && !contract_ && !ghost_) {
+      bool isMut = sema::hasModifier(modifiers, "mutable");
+      bool computed = valueNode.kind == NodeKind::ListLit &&
+                      !constantElements(valueNode);
+      ownStorage = isMut || computed;
+    }
+    R v;
+    if (ownStorage) {
+      v = genLocalArray(valueNode, localArray);
+    } else {
+      v = genExpr(valueNode, declared);
+    }
     if (!v) return v;
     if (declared) {
       v = coerce(*v, declared, valueNode);
@@ -9927,6 +10057,13 @@ class Gen {
       b->isMutable = true;
     }
     b->scope = n.kids[4].get();
+    // A local array's storage is on the stack, so it lends itself: it can
+    // be read, written when `mutable`, and passed on, but nothing holding
+    // it outlives the `let`.
+    if (ownStorage) {
+      b->lenders = {b};
+      b->writable = sema::hasModifier(modifiers, "mutable");
+    }
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
     // `let` (#70).
@@ -10079,6 +10216,10 @@ class Gen {
   std::vector<std::string> queuedLog_, matchedLog_;
   // Lemma symbol -> the module whose proof it is (ADR 0039, step 6).
   std::map<std::string, std::string> certified_;
+  // Who requires a contract lemma's checks (`requirer_`, as "the interface
+  // 'I'"), and the claim each lemma's assertions make (pia.assert_claim).
+  std::string requirer_;
+  std::map<std::string, std::string> assertClaims_;
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
   std::map<std::string, const Node *> concepts_;
@@ -10115,6 +10256,10 @@ class Gen {
   std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
+  // The concepts and arguments being decided (unmet), and whether a
+  // generic's constraints are being checked for meeting a requirement.
+  std::set<std::string> deciding_;
+  bool meetingGeneric_ = false;
   // Higher-order functions by their written name (ADR 0044): called only
   // through their specialisations.
   std::map<std::string, std::vector<sema::FuncSig>> hofs_;
@@ -10237,6 +10382,13 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
   if (usesTargetTheory(erased ? *erased : program)) {
     targeted = syntax::clone(erased ? *erased : program);
     if (!addTargetTheory(*targeted, options.triple, diags, &targetOf))
+      return nullptr;
+  }
+  // And one that names `Memory` gets RC11 (ADR 0052, section 4).
+  if (usesMemoryTheory(targeted ? *targeted : erased ? *erased : program)) {
+    if (!targeted)
+      targeted = syntax::clone(erased ? *erased : program);
+    if (!addMemoryTheory(*targeted, diags))
       return nullptr;
   }
   const syntax::Node &source = targeted ? *targeted

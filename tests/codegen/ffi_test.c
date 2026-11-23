@@ -12,6 +12,7 @@ int32_t twice_raw(int32_t x);
 int64_t va_two(int64_t a, int64_t b);
 int64_t va_three(int64_t a, int64_t b, int64_t c);
 uint64_t va_mix(uint32_t a, const uint8_t *xs, uint64_t n);
+int32_t plus_answer(int32_t x);
 
 uint32_t sum_bytes(const uint8_t *xs, uint64_t n) {
   uint32_t s = 0;
@@ -20,6 +21,7 @@ uint32_t sum_bytes(const uint8_t *xs, uint64_t n) {
 }
 int32_t clamp_c(int32_t x) { return x < 0 ? 0 : x > 100 ? 100 : x; }
 int32_t raw_c(int32_t x) { return x * 2; }
+int32_t answer(void) { return 42; }
 
 // Variadic: n int64_t arguments follow.
 int64_t sum_va(int32_t n, ...) {
@@ -64,6 +66,7 @@ int main(void) {
   EXPECT(va_two(40, 2), 42);
   EXPECT(va_three(1LL << 40, 2, -3), (1LL << 40) - 1);
   EXPECT(va_mix(1000, bytes, 4), 1256);
+  EXPECT(plus_answer(-2), 40);
   if (failures == 0) printf("ffi: all passed\n");
   return failures != 0;
 }

@@ -8,15 +8,27 @@ genrule(
     cmd = "(echo 'R\"pia('; cat $<; echo ')pia\"') > $@",
 )
 
+# The built-in theory `Memory`, RC11 (ADR 0052), compiled in the same way.
+genrule(
+    name = "memory_source",
+    srcs = ["Memory.pia"],
+    outs = ["MemorySource.inc"],
+    cmd = "(echo 'R\"pia('; cat $<; echo ')pia\"') > $@",
+)
+
+exports_files([
+    "Memory.pia",
+    "Target.pia",
+])
+
 # IRGen for the scalar subset (milestone M4): syntax tree to the pia and
 # pia_contract dialects, with control flow in scf.
-exports_files(["Target.pia"])
-
 cc_library(
     name = "irgen",
     srcs = [
         "Boxes.cpp",
         "IRGen.cpp",
+        "Memory.cpp",
         "Regions.cpp",
         "Target.cpp",
         "Theories.cpp",
@@ -24,11 +36,15 @@ cc_library(
     hdrs = [
         "Boxes.h",
         "IRGen.h",
+        "Memory.h",
         "Regions.h",
         "Target.h",
         "Theories.h",
     ],
-    textual_hdrs = ["TargetSource.inc"],
+    textual_hdrs = [
+        "MemorySource.inc",
+        "TargetSource.inc",
+    ],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

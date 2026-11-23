@@ -1,0 +1,63 @@
+(* Message passing (ADR 0052, section 4): a thread writes data and then a
+   flag, and another reads the flag and then the data. Reading the flag
+   set and the old data is forbidden only when the flag's store releases
+   and its load acquires, or fences do it for them. A forbidden outcome is
+   proved; an allowed one fails, with a witness execution as the
+   counterexample.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "mp_rel_acq"
+  [ thread [ store "relaxed" "data" 1; store "release" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_sc"
+  [ thread [ store "seq_cst" "data" 1; store "seq_cst" "flag" 1 ]
+  ; thread [ load "seq_cst" "flag" "r1"; load "seq_cst" "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_rlx"
+  [ thread [ store "relaxed" "data" 1; store "relaxed" "flag" 1 ]
+  ; thread [ load "relaxed" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "allowed" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_rel_rlx"
+  [ thread [ store "relaxed" "data" 1; store "release" "flag" 1 ]
+  ; thread [ load "relaxed" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "allowed" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_rlx_acq"
+  [ thread [ store "relaxed" "data" 1; store "relaxed" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "allowed" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_fences"
+  [ thread [ store "relaxed" "data" 1; barrier "release"; store "relaxed" "flag" 1 ]
+  ; thread [ load "relaxed" "flag" "r1"; barrier "acquire"; load "relaxed" "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_fence_acq"
+  [ thread [ store "relaxed" "data" 1; barrier "release"; store "relaxed" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_plain_data"
+  [ thread [ write "data" 1; store "release" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; read "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+(* Expected report, in order.
+// CHECK: mp.pia:10:1: proved: the postcondition holds [smt]
+// CHECK: mp.pia:15:1: proved: the postcondition holds [smt]
+// CHECK: mp.pia:20:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: mp.pia:25:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: mp.pia:30:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: mp.pia:35:1: proved: the postcondition holds [smt]
+// CHECK: mp.pia:40:1: proved: the postcondition holds [smt]
+// CHECK: mp.pia:45:1: proved: the postcondition holds [smt]
+// CHECK: 5 proved, 3 failed, 0 skipped
+*)

@@ -1,0 +1,25 @@
+(* A module whose interface carries regions (ADR 0042): a generic type
+   that borrows from a region, and a generic function whose result lives
+   in the region it was given. *)
+module Mem.Bump : Bumps
+
+interface Bumps = sig
+  let oom = type | OutOfMemory
+  let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+  let alloc : (t : type) -> (r : region) -> (m : inout mutable bump t r) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    requires m.used <= len m.mem
+    ensures m.used <= len m.mem
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+end
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem
+  ensures (match result with | Ok b -> len b = n | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
