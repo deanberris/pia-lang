@@ -698,14 +698,16 @@ class Parser {
         auto v = makeNode(N::SigVal, start, name);
         if (meta) v->flags = "meta";
         if (spec) v->flags = "spec";
-        if (lemma) v->flags = "lemma";
+        if (lemma)
+          v->flags = "lemma";
         v->add(annot());
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
         while (atContract()) cs->add(contract());
         // `let n : u32 = 4096` shows a value, which importers' proofs may
         // use (ADR 0039).
-        if (!isConcept && !meta && !spec && !lemma && accept(K::Eq)) v->add(seq());
+        if (!isConcept && !meta && !spec && !lemma && accept(K::Eq))
+          v->add(seq());
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);

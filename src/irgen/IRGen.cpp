@@ -6218,10 +6218,12 @@ class Gen {
       // has no code, so no link symbol (#305).
       if (r.flags == "lemma" || hasFlag(*sigs_.at(symbol).item, "lemma")) {
         if (r.flags != "lemma" || !hasFlag(*sigs_.at(symbol).item, "lemma"))
-          diags_.error(r.loc, unmet + "'" + r.text + "' is " +
-                                  (r.flags == "lemma"
-                                       ? "listed as a lemma but defined as a function"
-                                       : "a lemma, so the interface lists it as 'let lemma'"));
+          diags_.error(
+              r.loc,
+              unmet + "'" + r.text + "' is " +
+                  (r.flags == "lemma"
+                       ? "listed as a lemma but defined as a function"
+                       : "a lemma, so the interface lists it as 'let lemma'"));
         continue;
       }
       // `let n : u32 = 4096`: importers get the value from the interface,
