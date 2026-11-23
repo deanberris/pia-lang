@@ -1,0 +1,41 @@
+(* A constructor's payload may be a record written in place (ADR 0045,
+   step 5): `| Rect of { w : u16; h : u16 }` defines the record type
+   `shape_Rect` just before the variant, and the payload names it. Values
+   are built and matched as with any record payload, and the verifier sees
+   their fields.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=AST
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+
+(*
+// AST:      (LetItem "shape_Circle" [payload]
+// AST:          (FieldDecl "r"
+// AST:      (LetItem "shape_Rect" [payload]
+// AST:      (LetItem "shape"
+// AST:          (Ctor "Circle"
+// AST-NEXT:       (TypeName "shape_Circle")
+// AST:          (Ctor "Rect"
+// AST-NEXT:       (TypeName "shape_Rect")
+// AST:          (Ctor "Empty"
+// AST-NEXT:       (None)
+*)
+let shape = type
+  | Circle of { r : u16 }
+  | Rect of { w : u16; h : u16 }
+  | Empty
+
+let area (s : shape) : u64
+  ensures (match s with | Rect x -> result = x.w * x.h | Circle c -> result = c.r * c.r * 3 | Empty -> result = 0)
+= match s with
+  | Circle c -> (let r : u64 = c.r in r * r * 3)
+  | Rect x -> (let w : u64 = x.w in let h : u64 = x.h in w * h)
+  | Empty -> 0
+
+(* Built in place, or from a value of the named record type. *)
+let six () : u64 ensures result = 6 = area (Rect { w = 2; h = 3 })
+
+let twenty () : u64
+  ensures result = 20
+= let c : shape_Rect = { w = 4; h = 5 } in area (Rect c)
