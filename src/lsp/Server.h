@@ -25,7 +25,7 @@ void writeMessage(std::ostream &out, const std::string &body);
 std::string uriToPath(const std::string &uri);
 
 struct ServerOptions {
-  ProofChecker checker;       // empty in a build without MLIR
+  ProofChecker checker; // empty in a build without MLIR
   std::string version = "0.1.0";
 };
 
@@ -33,6 +33,6 @@ struct ServerOptions {
 // came first, else 1.
 int serve(std::istream &in, std::ostream &out, ServerOptions options);
 
-}  // namespace pia::lsp
+} // namespace pia::lsp
 
-#endif  // PIA_LSP_SERVER_H
+#endif // PIA_LSP_SERVER_H
