@@ -1,6 +1,8 @@
 #include "irgen/Target.h"
 
 #include <functional>
+#include <map>
+#include <set>
 #include <vector>
 
 #include "meta/Expand.h"
@@ -38,10 +40,51 @@ std::string targetModelFor(std::string_view triple) {
   return "";
 }
 
+namespace {
+
+// The `@target(...)` attribute of a function, or null.
+Node *targetAttr(Node &item) {
+  if (item.kind != NodeKind::LetItem || item.kids.size() < 2)
+    return nullptr;
+  Node &ret = *item.kids[1];
+  if (ret.kind != NodeKind::RetAnnot || ret.kids.size() < 2)
+    return nullptr;
+  for (NodePtr &a : ret.kids[1]->kids)
+    if (a->kind == NodeKind::Attribute && a->text == "target")
+      return a.get();
+  return nullptr;
+}
+
+void removeTargetAttr(Node &item) {
+  auto &attrs = item.kids[1]->kids[1]->kids;
+  for (auto it = attrs.begin(); it != attrs.end(); ++it)
+    if ((*it)->kind == NodeKind::Attribute && (*it)->text == "target") {
+      attrs.erase(it);
+      return;
+    }
+}
+
+// The first use in `n` of a top-level name in `names`, or null.
+const Node *firstUse(const Node &n,
+                     const std::map<std::string, std::string> &names) {
+  if (n.kind == NodeKind::Name && (n.flags.empty() || n.flags == "toplevel") &&
+      names.count(n.text))
+    return &n;
+  for (const NodePtr &k : n.kids)
+    if (const Node *u = firstUse(*k, names))
+      return u;
+  return nullptr;
+}
+
+} // namespace
+
 bool usesTargetTheory(const Node &program) {
   for (const NodePtr &item : program.kids)
     if (item->text == "Target" && item->kind != NodeKind::Import)
       return false;
+  for (const NodePtr &item : program.kids)
+    if (targetAttr(*item))
+      return true;
   std::function<bool(const Node &)> uses = [&](const Node &n) {
     if (n.kind == NodeKind::Field && n.kids.size() == 1 &&
         n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
@@ -58,7 +101,8 @@ bool usesTargetTheory(const Node &program) {
 }
 
 bool addTargetTheory(Node &program, std::string_view triple,
-                     syntax::Diagnostics &diags) {
+                     syntax::Diagnostics &diags,
+                     std::map<std::string, std::string> *targetOf) {
   std::string model = targetModelFor(triple);
   if (model.empty()) {
     diags.error(program.loc,
@@ -83,6 +127,48 @@ bool addTargetTheory(Node &program, std::string_view triple,
                                    d.message);
     return false;
   }
+  std::set<std::string> models;
+  for (const NodePtr &item : theory->kids)
+    if (item->kind == NodeKind::Model)
+      models.insert(item->text);
+
+  // Each `@target(m)` function, and the model it is for.
+  std::map<std::string, std::string> only;
+  for (NodePtr &item : program.kids) {
+    Node *attr = targetAttr(*item);
+    if (!attr)
+      continue;
+    std::string m;
+    if (attr->kids.size() == 1 && attr->kids[0]->kind == NodeKind::Name)
+      m = attr->kids[0]->text;
+    if (!models.count(m)) {
+      std::string known;
+      for (const std::string &k : models)
+        known += (known.empty() ? "'" : ", '") + k + "'";
+      diags.error(attr->loc,
+                  "'@target' names the model of one target: " + known);
+      continue;
+    }
+    only[item->text] = m;
+  }
+  // Only a function for the same target may use one, on every target, so
+  // a program that compiles for one target compiles for the others.
+  for (const NodePtr &item : program.kids) {
+    auto self = only.find(item->text);
+    std::map<std::string, std::string> others;
+    for (const auto &[f, m] : only)
+      if (f != item->text && (self == only.end() || self->second != m))
+        others[f] = m;
+    if (const Node *use = firstUse(*item, others))
+      diags.error(use->loc, "'" + use->text +
+                                "' is compiled only for the target '" +
+                                others.at(use->text) +
+                                "', so only a function marked '@target(" +
+                                others.at(use->text) + ")' may use it");
+  }
+  if (diags.hasErrors())
+    return false;
+
   std::vector<NodePtr> items;
   for (NodePtr &item : theory->kids) {
     bool keep = item->kind == NodeKind::Theory ||
@@ -92,8 +178,17 @@ bool addTargetTheory(Node &program, std::string_view triple,
     item->flags = "builtin";
     items.push_back(std::move(item));
   }
-  for (NodePtr &item : program.kids)
+  for (NodePtr &item : program.kids) {
+    if (auto t = only.find(item->text); t != only.end()) {
+      // Compiled, and proved, only for its own target.
+      if (t->second != model)
+        continue;
+      removeTargetAttr(*item);
+      if (targetOf)
+        (*targetOf)[item->text] = model;
+    }
     items.push_back(std::move(item));
+  }
   program.kids = std::move(items);
   return true;
 }

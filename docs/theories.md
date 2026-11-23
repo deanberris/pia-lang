@@ -655,8 +655,8 @@ The program sees only the axioms, which hold on every target, so it proves the s
    proof may use, as a theory with one model per target. piac adds the
    theory, and the model of the target it compiles for, to every program
    that names `Target`, so no import is needed. A program sees only the
-   axioms: what holds on every target. `@target(m)` code will also see its
-   own model's values (ADR 0049, step 3c).
+   axioms: what holds on every target. A function marked `@target(m)`
+   also sees its own model's values, and is compiled only for that target.
 
    Each axiom must hold on every build of the architectures Pia targets,
    not only on today's triples, so a later triple can never break a
@@ -706,7 +706,25 @@ let model x86_64_linux : Target = struct
 end
 ```
 
-Each model is proved to meet the axioms when the compiler is tested ([tests/verify/target_theory.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/target_theory.pia)), not again in every program that uses it. Code that needs one target's own values, such as a page size of exactly 4096, will say so with `@target(x86_64_linux)` (ADR 0049, step 3c).
+Each model is proved to meet the axioms when the compiler is tested ([tests/verify/target_theory.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/target_theory.pia)), not again in every program that uses it. Code that needs one target's own values says so with `@target(m)`, after the return type like `@overflow`:
+
+```ocaml
+let take_page (n : usize) : usize
+  requires n <= Target.page_size
+  ensures result = n
+= n
+
+let huge_page_count (bytes : usize) : usize @target(x86_64_linux)
+  requires bytes <= 1000000
+  ensures result * Target.page_size >= bytes
+= (bytes + 4095) / 4096
+
+let whole_page (x : u8) : usize @target(x86_64_linux)
+  ensures result = 4096
+= take_page 4096
+```
+
+A function marked `@target(m)` is compiled, and proved, only for the target whose model is `m`, and its proofs see `m`'s values as well as the axioms. So `huge_page_count` can use the page size of 4096, and `whole_page` meets `take_page`'s target-generic precondition with it. Only a function for the same target may use one, on every target: a target-generic function that called `whole_page` would be an error even on x86_64, so a program that compiles for one target compiles for the others. [tests/verify/target_items.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/target_items.pia) proves functions for both targets.
 
 ## Writing a theory
 

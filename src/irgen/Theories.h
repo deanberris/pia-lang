@@ -43,6 +43,9 @@ struct TheoryInfo {
   std::map<std::string, std::string> witnesses;
   // `import T trusting`: each theory a module trusts, and where.
   std::vector<std::pair<std::string, syntax::SourceLoc>> trusting;
+  // `@target(m)` functions -> m (ADR 0049): their proofs see the model's
+  // values of `Target`'s functions, not only its axioms.
+  std::map<std::string, std::string> targetOf;
 };
 void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,
                      TheoryInfo *info = nullptr);

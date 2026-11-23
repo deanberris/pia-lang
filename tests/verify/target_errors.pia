@@ -1,0 +1,22 @@
+(* Errors of `@target` (ADR 0049). A target-generic function may not use
+   an `@target(m)` one, on any target, so a program that compiles for one
+   target compiles for the others; nor may a function for another target.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+// RUN: not piac --verify --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s 2>&1 | FileCheck %s
+*)
+
+let page (x : u8) : usize @target(x86_64_linux) = 4096
+
+let generic (x : u8) : usize
+= page x
+
+let other (x : u8) : usize @target(arm64_macos)
+= page x
+
+let nowhere (x : u8) : u8 @target(riscv) = x
+
+(* Expected errors:
+// CHECK-DAG: target_errors.pia:11:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)' may use it
+// CHECK-DAG: target_errors.pia:14:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)' may use it
+// CHECK-DAG: target_errors.pia:16:{{[0-9]+}}: error: '@target' names the model of one target: 'arm64_macos', 'x86_64_linux'
+*)

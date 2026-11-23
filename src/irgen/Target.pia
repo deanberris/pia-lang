@@ -2,8 +2,8 @@
    proof may use, as a theory with one model per target. piac adds the
    theory, and the model of the target it compiles for, to every program
    that names `Target`, so no import is needed. A program sees only the
-   axioms: what holds on every target. `@target(m)` code will also see its
-   own model's values (ADR 0049, step 3c).
+   axioms: what holds on every target. A function marked `@target(m)`
+   also sees its own model's values, and is compiled only for that target.
 
    Each axiom must hold on every build of the architectures Pia targets,
    not only on today's triples, so a later triple can never break a
