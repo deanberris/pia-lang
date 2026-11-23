@@ -16,25 +16,30 @@ struct SourceLoc {
   uint32_t offset = 0; // byte offset into the buffer
 };
 
+// One row per group of token kinds; clang-format would reflow the table.
+// clang-format off
 #define PIA_TOKEN_KINDS(X)                                                     \
   /* keywords */                                                               \
-  X(Let)                                                                       \
-  X(Rec) X(Meta) X(In) X(Type) X(Of) X(Where) X(If) X(Then) X(Else) X(Match)   \
-      X(With) X(For) X(Spread) X(While) X(Step) X(Do) X(Done) X(Spec) X(Lemma) \
-          X(Requires) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume) \
-              X(Forall) X(Exists) X(Interface) X(Sig) X(Module) X(Struct)      \
-                  X(End) X(Import) X(Operator) X(True) X(False) X(Borrowed)    \
-                      X(Moved) X(Out) X(Inout) X(Fixed) X(Mutable) X(Handle)   \
-                          X(Defer) X(As) /* names and literals */              \
-      X(Ident) X(Int) X(Float) X(String) X(QIdent) X(SpliceIdent)              \
-          X(SpliceOpen) X(QuoteOpen) X(Attr) X(AttrOpen) X(TargsOpen)          \
-              X(TargsClose) X(LBraceAdj) X(Hole) /* punctuation */             \
-      X(LParen) X(RParen) X(LBracket) X(RBracket) X(LBrace) X(RBrace)          \
-          X(DotLBracket) X(Comma) X(Colon) X(Semi) X(Sep) X(Dot) X(QDot)       \
-              X(DotDot) /* operators with fixed meaning */                     \
-      X(Arrow) X(FatArrow) X(LArrow) X(Eq) X(                                  \
-          Bar) /* operators whose precedence comes from the operator table */  \
-      X(Op) X(Eof)
+  X(Let) X(Rec) X(Meta) X(In) X(Type) X(Of) X(Where) X(If) X(Then) X(Else)     \
+  X(Match) X(With) X(For) X(Spread) X(While) X(Step) X(Do) X(Done) X(Spec)     \
+  X(Lemma)                                                                     \
+  X(Requires) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume)         \
+  X(Forall) X(Exists) X(Interface) X(Sig) X(Module) X(Struct) X(End)           \
+  X(Import) X(Operator) X(True) X(False) X(Borrowed) X(Moved) X(Out)           \
+  X(Inout) X(Fixed) X(Mutable) X(Handle) X(Defer) X(As)                        \
+  /* names and literals */                                                     \
+  X(Ident) X(Int) X(Float) X(String) X(QIdent) X(SpliceIdent) X(SpliceOpen)    \
+  X(QuoteOpen) X(Attr) X(AttrOpen) X(TargsOpen) X(TargsClose) X(LBraceAdj)     \
+  X(Hole)                                                                      \
+  /* punctuation */                                                            \
+  X(LParen) X(RParen) X(LBracket) X(RBracket) X(LBrace) X(RBrace)              \
+  X(DotLBracket) X(Comma) X(Colon) X(Semi) X(Sep) X(Dot) X(QDot) X(DotDot)     \
+  /* operators with fixed meaning */                                           \
+  X(Arrow) X(FatArrow) X(LArrow) X(Eq) X(Bar)                                  \
+  /* operators whose precedence comes from the operator table */               \
+  X(Op)                                                                        \
+  X(Eof)
+// clang-format on
 
 enum class TokenKind : uint8_t {
 #define PIA_TOKEN_ENUM(name) name,
