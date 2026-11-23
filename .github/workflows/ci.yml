@@ -249,14 +249,15 @@ jobs:
           path: testlogs/
           if-no-files-found: ignore
 
-  # The one check the merge queue requires. In a queue group it passes only
-  # if the Linux job passed on the merged result. On a pull request it is
-  # skipped, which counts as passing, so a pull request can join the queue
-  # without first waiting for its own Linux run; that run still reports on
-  # the pull request. A skipped `needs` would also count as passing, hence
-  # always() and the explicit result check.
+  # `merge queue gate` is the one check the merge queue requires. In a queue
+  # group it passes only if the Linux job passed on the merged result. A
+  # skipped `needs` would count as passing, hence always() and the explicit
+  # result check.
   gate:
-    name: merge queue gate
+    # Outside the queue this job is skipped, but only once the Linux job is
+    # done, so it takes another name there and leaves the required check to
+    # gate-pr below.
+    name: ${{ github.event_name == 'merge_group' && 'merge queue gate' || 'merge queue gate (queue only)' }}
     if: always() && github.event_name == 'merge_group'
     needs: linux
     runs-on: ubuntu-latest
@@ -266,3 +267,14 @@ jobs:
         run: |
           echo "bazel test (Linux x86_64): ${{ needs.linux.result }}"
           test "${{ needs.linux.result }}" = success
+
+  # The required check on a pull request passes at once, so a pull request
+  # can join the queue without waiting for its own Linux run. That run still
+  # reports on the pull request; the queue's run is the one that gates main.
+  gate-pr:
+    name: merge queue gate
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo "Checked in the merge queue, not here."
