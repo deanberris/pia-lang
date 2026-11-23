@@ -58,3 +58,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0052](0052-atomics.md) | Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model | Accepted |
 | [0053](0053-protocols-checked-by-z3.md) | Protocols and deadlock are checked in Z3, as transition systems proved by constrained Horn clauses; explicit search stays for atomics, and TLA+ is an export format | Proposed |
 | [0054](0054-proved-gif-and-inflate-codecs.md) | GIF and inflate are proved total on every input, decode to a written specification, and GIF round-trips exactly; JPEG is deferred | Accepted |
+| [0055](0055-sediment-transport-in-fixed-point.md) | Sediment transport is integer mass moved downhill in height order, with conservation proved exactly | Accepted |
