@@ -1,0 +1,26 @@
+(* @derive(json) on option fields (ADR 0045, step 5): None writes `null`,
+   and `null` or a missing member reads as None. Each option field adds a
+   reader of its value and a reader that tries `null` first, and every
+   goal is proved.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+let cfg = type { port : u16; debug : O.option bool; limit : O.option i8 } @derive(json)
+
+(* A missing member is None, so a reader of only optional fields always
+   has every field. *)
+let maybe = type { a : O.option u8 } @derive(json)

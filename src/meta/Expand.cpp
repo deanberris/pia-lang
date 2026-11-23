@@ -68,7 +68,10 @@ class Expander {
         diags_(diags),
         options_(options),
         interp_([this](const std::string &t) {
-          return isBuiltinType(t) || types_.count(t);
+          // A qualified name is an imported type, which the import has
+          // already resolved: it is defined before expansion starts.
+          return isBuiltinType(t) || types_.count(t) ||
+                 t.find('.') != std::string::npos;
         }) {
     interp_.setLive(options.live);
   }

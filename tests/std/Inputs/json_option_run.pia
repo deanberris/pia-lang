@@ -1,0 +1,78 @@
+(* Runs the code @derive(json) makes for option fields (ADR 0045, step 5),
+   linked by pia_binary: None writes `null`, `null` and a missing member
+   read as None, and a value reads as Some. It exits 0 when all is as
+   expected, and otherwise with the number of the first check that is not. *)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+let cfg = type { port : u16; debug : O.option bool; limit : O.option u8 } @derive(json)
+
+(* The option's value, or a number no field holds. *)
+let flag (o : O.option bool) : u8 = match o with | Some b -> (if b then 1 else 0) | None -> 9
+let lim (o : O.option u8) : u16 = match o with | Some v -> v | None -> 999
+
+let doc (buf : borrowed inout mutable [u8]) : i32
+  requires len buf = 64
+=
+  let want : [u8; 39] = [
+    0x7B; 0x22; 0x70; 0x6F; 0x72; 0x74; 0x22; 0x3A; 0x38; 0x30;
+    0x38; 0x30; 0x2C; 0x22; 0x64; 0x65; 0x62; 0x75; 0x67; 0x22;
+    0x3A; 0x74; 0x72; 0x75; 0x65; 0x2C; 0x22; 0x6C; 0x69; 0x6D;
+    0x69; 0x74; 0x22; 0x3A; 0x6E; 0x75; 0x6C; 0x6C; 0x7D ] in
+  let bare : [u8; 11] = [
+    0x7B; 0x22; 0x70; 0x6F; 0x72; 0x74; 0x22; 0x3A; 0x38; 0x30;
+    0x7D ] in
+  let nulls : [u8; 34] = [
+    0x7B; 0x22; 0x6C; 0x69; 0x6D; 0x69; 0x74; 0x22; 0x3A; 0x37;
+    0x2C; 0x22; 0x64; 0x65; 0x62; 0x75; 0x67; 0x22; 0x3A; 0x6E;
+    0x75; 0x6C; 0x6C; 0x2C; 0x22; 0x70; 0x6F; 0x72; 0x74; 0x22;
+    0x3A; 0x38; 0x31; 0x7D ] in
+  let twice : [u8; 33] = [
+    0x7B; 0x22; 0x70; 0x6F; 0x72; 0x74; 0x22; 0x3A; 0x31; 0x2C;
+    0x22; 0x6C; 0x69; 0x6D; 0x69; 0x74; 0x22; 0x3A; 0x6E; 0x75;
+    0x6C; 0x6C; 0x2C; 0x22; 0x6C; 0x69; 0x6D; 0x69; 0x74; 0x22;
+    0x3A; 0x32; 0x7D ] in
+  let nop : [u8; 15] = [
+    0x7B; 0x22; 0x64; 0x65; 0x62; 0x75; 0x67; 0x22; 0x3A; 0x66;
+    0x61; 0x6C; 0x73; 0x65; 0x7D ] in
+  for k in 0 .. 64 do buf.[k] <- 0x20 done;
+  let c = { port = 8080; debug = Some true; limit = None } in
+  let e = write_json_cfg buf 0 c in
+  let bad : mutable i32 = 0 in
+  if e <> 39 then 1
+  else (
+    for k in 0 .. 39 do
+      if bad = 0 && buf.[k] <> want.[k] then bad <- 100 + k
+    done;
+    if bad <> 0 then bad
+    else
+      (match read_json_cfg buf 0 with
+       | Err _ -> 2
+       | Ok r ->
+           if r.value.port <> 8080 || flag r.value.debug <> 1 || lim r.value.limit <> 999 then 3
+           else
+             (match read_json_cfg bare 0 with
+              | Err _ -> 4
+              | Ok q ->
+                  if q.value.port <> 80 || flag q.value.debug <> 9 || lim q.value.limit <> 999 then 5
+                  else
+                    (match read_json_cfg nulls 0 with
+                     | Err _ -> 6
+                     | Ok n ->
+                         if n.value.port <> 81 || flag n.value.debug <> 9 || lim n.value.limit <> 7 then 7
+                         else
+                           (match read_json_cfg twice 0 with
+                            | Ok _ -> 8
+                            | Err d ->
+                                (match d with
+                                 | Duplicate_cfg p -> (if p <> 23 then 9 else
+                                     (match read_json_cfg nop 0 with
+                                      | Ok _ -> 10
+                                      | Err m -> (match m with | Missing_cfg _ -> 0 | _ -> 11)))
+                                 | _ -> 12))))))
+
+let main () : i32 = with_arena 64 (let (m) => doc m.mem)
