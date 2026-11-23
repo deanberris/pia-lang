@@ -92,16 +92,17 @@
 #include "syntax/Syntax.h"
 
 #ifndef PIA_NO_MLIR
+#include "cert/Certificate.h"
 #include "codegen/Codegen.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "verify/Verifier.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
-#include "verify/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/IR/MLIRContext.h"
 #endif
 
 namespace {
@@ -805,6 +806,19 @@ int main(int argc, char **argv) {
     for (const pia::syntax::InterfaceArtifact &a : imported)
       cg.requiredWitnesses.push_back(
           pia::codegen::witnessSymbol(a.module, a.name, a.text));
+    if (codegen) {
+      pia::cert::Certificate cert;
+      if (!tree->kids.empty() &&
+          tree->kids[0]->kind == pia::syntax::NodeKind::ModuleHeader)
+        cert.module = tree->kids[0]->text;
+      for (const pia::syntax::InterfaceArtifact &a : provided)
+        cert.provides.push_back(
+            {a.module + "." + a.name, pia::cert::interfaceHash(a.text)});
+      for (const pia::syntax::InterfaceArtifact &a : imported)
+        cert.requires_.push_back(
+            {a.module + "." + a.name, pia::cert::interfaceHash(a.text)});
+      cg.certificate = pia::cert::encode(cert);
+    }
 #endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)

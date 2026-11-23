@@ -49,6 +49,9 @@ struct Options {
   // it imports, so a link or load against a module whose interface hash
   // differs fails with an undefined `pia$w$...` symbol.
   std::vector<std::string> providedWitnesses, requiredWitnesses;
+  // The object's certificate (src/cert/Certificate.h), encoded, put in the
+  // target's certificate section. Empty writes none.
+  std::string certificate;
 };
 
 // The witness symbol of interface `iface` of `module`, whose canonical

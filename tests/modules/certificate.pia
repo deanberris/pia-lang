@@ -1,0 +1,33 @@
+(* Each object carries a certificate: the interfaces its module provides
+   and the ones it was proved against, with their hashes (docs/abi.md).
+   `pia-cert check` refuses objects proved against an interface that no
+   object provides, or that another object provides differently.
+// RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
+// RUN: piac --emit=obj -o %t/pixels.o %S/Inputs/pixels.pia
+// RUN: piac --emit=obj -o %t/blend.o --iface-path=%t %S/Inputs/blend.pia
+// RUN: pia-cert dump %t/blend.o | FileCheck --check-prefix=DUMP %s
+// RUN: pia-cert dump %t/pixels.o | FileCheck --check-prefix=LIB %s
+// RUN: pia-cert check %t/pixels.o %t/blend.o | FileCheck --check-prefix=OK %s
+// RUN: not pia-cert check %t/blend.o 2>&1 | FileCheck --check-prefix=MISSING %s
+
+   Image.Pixels again, with a stronger precondition on luma: Blend was
+   proved against the old interface, so it must be proved again.
+// RUN: mkdir %t/v2
+// RUN: sed 's/r <= 250/r <= 240/' %S/Inputs/pixels.pia > %t/v2/pixels.pia
+// RUN: piac --emit=obj -o %t/v2/pixels.o %t/v2/pixels.pia
+// RUN: not pia-cert check %t/v2/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=STALE %s
+
+// DUMP: module Blend
+// DUMP-NEXT: provides Blend.C [[C:[0-9a-f]{64}]]
+// DUMP-NEXT: requires Image.Pixels.Ops [[OPS:[0-9a-f]{64}]]
+
+// LIB: module Image.Pixels
+// LIB-DAG: provides Image.Pixels.Ops {{[0-9a-f]{64}}}
+// LIB-DAG: provides Image.Pixels.C {{[0-9a-f]{64}}}
+
+// OK: pia-cert: 2 objects link
+
+// MISSING: '{{.*}}blend.o' imports 'Image.Pixels.Ops', which no object provides
+
+// STALE: '{{.*}}blend.o' was proved against 'Image.Pixels.Ops' {{[0-9a-f]+}}..., but '{{.*}}v2/pixels.o' provides {{[0-9a-f]+}}...: the interface changed
+*)

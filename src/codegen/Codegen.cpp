@@ -2,6 +2,8 @@
 
 #include "codegen/Codegen.h"
 
+#include "cert/Certificate.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -1675,6 +1677,17 @@ void addWitnesses(llvm::Module &m, const Options &options) {
         m, llvm::PointerType::getUnqual(m.getContext()), /*isConstant=*/true,
         llvm::GlobalValue::PrivateLinkage, w, "pia$uses$" + name.substr(6));
     used.push_back(ref);
+  }
+  // The certificate, read by `pia-cert` from the object, never by code.
+  if (!options.certificate.empty()) {
+    llvm::Constant *bytes = llvm::ConstantDataArray::getString(
+        m.getContext(), options.certificate, /*AddNull=*/false);
+    auto *cert = new llvm::GlobalVariable(
+        m, bytes->getType(), /*isConstant=*/true,
+        llvm::GlobalValue::PrivateLinkage, bytes, "pia$cert");
+    cert->setSection(cert::sectionFor(options.triple));
+    cert->setAlignment(llvm::Align(4));
+    used.push_back(cert);
   }
   if (!used.empty())
     llvm::appendToUsed(m, used);

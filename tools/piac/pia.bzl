@@ -96,10 +96,27 @@ def _pia_library_impl(ctx):
         progress_message = "Proving and compiling %s" % src.short_path,
     )
     objects = depset([obj], transitive = [dep[PiaInfo].objects for dep in ctx.attr.deps])
+
+    # The link check (docs/abi.md): every interface an object of this
+    # module's closure was proved against is provided by another, with the
+    # same hash. A validation action, so it runs whenever this target builds
+    # but nothing waits for it.
+    checked = ctx.actions.declare_file(ctx.label.name + ".cert-check")
+    ctx.actions.run(
+        executable = ctx.executable._pia_cert,
+        arguments = ["check", "--stamp=" + checked.path] + [o.path for o in objects.to_list()],
+        inputs = objects,
+        outputs = [checked],
+        mnemonic = "PiaCertCheck",
+        progress_message = "Checking the certificates of %s" % src.short_path,
+    )
     return [
         DefaultInfo(files = objects),
         PiaInfo(interfaces = interfaces, objects = objects),
-        OutputGroupInfo(interfaces = depset([interfaces])),
+        OutputGroupInfo(
+            interfaces = depset([interfaces]),
+            _validation = depset([checked]),
+        ),
     ]
 
 pia_library = rule(
@@ -129,6 +146,11 @@ pia_object.
         "_x86_64": attr.label(default = "@platforms//cpu:x86_64"),
         "_piac": attr.label(
             default = "//tools/piac",
+            executable = True,
+            cfg = "exec",
+        ),
+        "_pia_cert": attr.label(
+            default = "//tools/pia-cert",
             executable = True,
             cfg = "exec",
         ),
