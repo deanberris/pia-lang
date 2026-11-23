@@ -634,6 +634,80 @@ alloc.pia:18:5: proved: the model 'bits' meets the axiom 'Alloc.apart' [smt]
 
 A running allocator follows the theory through spec-only state ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)): a field of a spec-only type, such as `heap : Alloc.heap`, which the verifier sees and codegen erases, with no new keyword. [tests/verify/pool_alloc.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/pool_alloc.pia) is the pool with such a field. Its `take_slot` sets `p.heap <- Alloc.take p.heap s` and ensures `p.heap = Alloc.take (old p.heap) b.i` and `Alloc.live (old p.heap) b.i = false`; its `give_slot` requires `Alloc.live p.heap b.i`. The pool proves once, in the spec `ok`, that its arrays match the heap: a slot is live in the heap exactly when it sits at or above the free stack's top. Its users prove from `Alloc`'s axioms alone, as `reuse` there does. Each pool also has a spec-only `id`, and each block a spec-only `owner`: `give_slot` requires `b.owner = p.id`, so a block goes back only to the pool that handed it out, at no run-time cost (tests/verify/pool_owner_errors.pia shows the failure). Size classes compose pools: in [tests/verify/size_classes.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/size_classes.pia), `general` holds a 16-byte and a 64-byte pool, `alloc n` takes from the smallest class that holds `n` bytes, and `free` gives the block back to the pool of its class. Generic code reaches an allocator through the `Allocator` concept, whose requirements are stated with the theory: in [tests/verify/vec_allocator.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/vec_allocator.pia), `Allocator a t r` requires `held : a -> Alloc.heap` and an `alloc` that leaves the heap unchanged when it fails, and a vector that stores an allocator of any such type proves that a failed `push` leaves the allocator's heap alone.
 
+## The target
+
+`Target` is a theory built into the compiler ([ADR 0049](adr/0049-targets-are-theories.md)). It names the facts about the machine a proof may use: pointer width, byte order, the alignment allocations get, page size, cache line and the widest native vector. Each target Pia compiles for is a model of it. A program that names `Target` gets the theory, and the model of the target it is compiled for, with no import:
+
+```ocaml
+let lemma big_pages : unit ensures Target.page_size >= 4096 = ()
+
+let fits_in_page (n : usize) : usize
+  requires n <= 4096
+  ensures result <= Target.page_size
+= n
+```
+
+The program sees only the axioms, which hold on every target, so it proves the same way for Apple silicon and for x86_64 Linux. `Target.page_size = 4096` does not prove, because the page is 16384 bytes on Apple silicon: the model is sealed, like any other. Each axiom must hold on every build of the architectures Pia targets, not just on today's two triples, which is why the pointer width is a value of each model rather than an axiom. The theory and its models, as compiled into `piac`:
+
+<!-- source: src/irgen/Target.pia -->
+```ocaml
+(* Pia.Target (ADR 0049, section 3): the facts about the machine that a
+   proof may use, as a theory with one model per target. piac adds the
+   theory, and the model of the target it compiles for, to every program
+   that names `Target`, so no import is needed. A program sees only the
+   axioms: what holds on every target. `@target(m)` code will also see its
+   own model's values (ADR 0049, step 3c).
+
+   Each axiom must hold on every build of the architectures Pia targets,
+   not only on today's triples, so a later triple can never break a
+   target-generic proof. That is why pointer width is a model value and
+   not an axiom: x86_64 runs 32-bit pointers in compatibility mode and
+   under the x32 ABI.
+
+   The models are proved to meet the axioms when the compiler is tested
+   (tests/verify/target_theory.pia), not in each program that uses them. *)
+
+let theory Target = sig
+  let spec ptr_bits : usize
+  let spec little_endian : bool
+  let spec max_align : usize    \ the alignment Pia.Mem.alloc guarantees
+  let spec page_size : usize
+  let spec cache_line : usize   \ the destructive interference size
+  let spec vector_bits : usize  \ the widest vector the CPU runs natively
+
+  let spec is_pow2 (n : usize) : bool = popcount n = 1
+
+  let axiom ptr_pow2 ensures is_pow2 ptr_bits && ptr_bits >= 32
+  let axiom little ensures little_endian
+  let axiom align_16 ensures max_align = 16
+  let axiom page_pow2 ensures is_pow2 page_size && page_size >= 4096
+  let axiom line_pow2 ensures is_pow2 cache_line && cache_line >= 64
+  let axiom vector_min ensures vector_bits >= 128
+end
+
+(* Apple silicon: 16 KiB pages, 128-byte cache lines, 128-bit NEON. *)
+let model arm64_macos : Target = struct
+  let spec ptr_bits : usize = 64
+  let spec little_endian : bool = true
+  let spec max_align : usize = 16
+  let spec page_size : usize = 16384
+  let spec cache_line : usize = 128
+  let spec vector_bits : usize = 128
+end
+
+(* x86_64 Linux at x86-64-v3: 4 KiB pages, 64-byte lines, 256-bit AVX2. *)
+let model x86_64_linux : Target = struct
+  let spec ptr_bits : usize = 64
+  let spec little_endian : bool = true
+  let spec max_align : usize = 16
+  let spec page_size : usize = 4096
+  let spec cache_line : usize = 64
+  let spec vector_bits : usize = 256
+end
+```
+
+Each model is proved to meet the axioms when the compiler is tested ([tests/verify/target_theory.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/target_theory.pia)), not again in every program that uses it. Code that needs one target's own values, such as a page size of exactly 4096, will say so with `@target(x86_64_linux)` (ADR 0049, step 3c).
+
 ## Writing a theory
 
 - **Write the model first.** If no model is easy to write, the axioms may say more than you mean. A theory without a model needs `@trusted`, and every user must import it with `trusting`. Keep trusted axioms in a theory of their own, as `Pia.Rand.Ideal` does, since trust covers a whole theory. A model can also live in another module, found by the ADL rule, which suits a theory with several implementations.

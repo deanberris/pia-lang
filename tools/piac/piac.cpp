@@ -792,6 +792,7 @@ int main(int argc, char **argv) {
       mlir::MLIRContext ctx;
       pia::irgen::Options irgenOptions;
       irgenOptions.source = source;
+      irgenOptions.triple = cg.triple;
       std::vector<pia::syntax::Diagnostic> explanations;
       auto sameFile = [&](const std::string &a, const std::string &b) {
         auto base = [](const std::string &p) {

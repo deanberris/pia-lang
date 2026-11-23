@@ -1,0 +1,34 @@
+(* The built-in theory Target (ADR 0049, section 3). A program that names
+   Target gets the theory and the model of the target it is compiled for,
+   with no import. It sees only the axioms, which hold on every target, so
+   these proofs and failures are the same on both.
+// RUN: not piac --verify %s | FileCheck %s
+// RUN: not piac --verify --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s
+// RUN: not piac --verify --target=riscv64-unknown-linux-gnu %s 2>&1 | FileCheck %s --check-prefix=NOMODEL
+*)
+
+(* From the axiom page_pow2. *)
+let lemma big_pages : unit ensures Target.page_size >= 4096 = ()
+
+(* The page size is 16384 on Apple silicon and 4096 on x86_64, so a
+   target-generic program cannot prove either: the model is sealed. *)
+let lemma small_pages : unit ensures Target.page_size = 4096 = ()
+
+(* The program's own names do not clash with the theory's members. *)
+let page_size (pages : u8) : u8 = pages
+
+(* Code can use the facts in its contracts. *)
+let fits_in_page (n : usize) : usize
+  requires n <= 4096
+  ensures result <= Target.page_size
+= n
+
+(* Expected report:
+// CHECK-DAG: target.pia:11:{{[0-9]+}}: proved: the postcondition holds
+// CHECK-DAG: target.pia:15:{{[0-9]+}}: failed: the postcondition holds
+// CHECK-DAG: target.pia:23:{{[0-9]+}}: proved: the postcondition holds
+// CHECK: {{[0-9]+}} proved, 1 failed, 0 skipped
+*)
+
+(* NOMODEL: Pia has no model of it for the target 'riscv64-unknown-linux-gnu'
+*)
