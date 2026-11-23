@@ -2,7 +2,7 @@
 
 Date: 2026-11-20
 
-Status: Accepted
+Status: Accepted. [ADR 0054](0054-proved-gif-and-jpeg-codecs.md) adds JPEG to its image formats.
 
 ## Context
 
