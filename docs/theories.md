@@ -22,6 +22,7 @@ An entry also says whether anything in it is **trusted**. A trusted theory has n
 | --- | --- | --- | --- |
 | [Lock levels](#lock-levels) | a lock discipline rules out lock-order deadlock | nothing | step 3 |
 | [Happens-before](#happens-before-and-memory-orders) | release/acquire publishes data, relaxed does not | nothing | step 3 |
+| [The memory model](#the-memory-model-rc11) | RC11's executions, and litmus tests of what they allow | nothing | built in |
 | [Probability](#probability) | union bounds on failure; independence as an explicit trust | `independent` only | steps 3 and 4 |
 | [Fail-safe control](#fail-safe-control) | a controller falls back to a safe command on a sensor fault | nothing | step 3 |
 | [State machines](#state-machines) | a protocol is followed, from a table of transitions | nothing | step 5 |
@@ -356,6 +357,53 @@ tank.pia:12:5: proved: the model 'levels' meets the axiom 'Tank.allowed_safe' [s
 The controller, `decide`, passes the operator's command through when the sensor is healthy and the command is allowed, and holds otherwise, so `fail_closed` proves. A controller that keeps doing what it was told when the sensor fails, `decide_open`, which is failing open for a tank, does not.
 
 The counterexample, found in the model, has `sensor_ok = false` and `want = Fill` (tag 0) at a level of 150, where filling would pass the safe limit and nothing says the plant allows it. The real controller in code reads integers from a sensor. It connects to the theory through an abstraction function from its readings to `Tank.plant`, defined in the model's module ([ADR 0036](adr/0036-library-theories.md#connecting-a-theory-to-code)), so its command function is proved with the same lemma.
+
+## The memory model: RC11
+
+`Memory` is the language's memory model, RC11 (Lahav, Vafeiadis, Kang, Hur and Dreyer, 2017), the repaired C11 model ([ADR 0052](adr/0052-atomics.md), section 4). It is built into `piac`, as `Target` is: a program that names `Memory` gets the theory, written in [src/irgen/Memory.pia](https://github.com/deanberris/pia-lang/blob/main/src/irgen/Memory.pia). It is the larger theory of the same shape that the happens-before entry above calls for. An execution is a sort of events with program order `po`, reads-from `rf`, the modification order `mo` and the read-modify-write pairs `rmw`. From-reads `fr`, the extended coherence order `eco`, release sequences `rs`, synchronises-with `sw`, happens-before `hb` and the SC order `psc` are given by lower bounds: each axiom says what makes them hold. RC11's own axioms only forbid: `hb` is irreflexive and `hb ; eco` is too (coherence), nothing comes between a read-modify-write's read and write in `mo` (atomicity), and `psc` and `po ∪ rf` are acyclic, which is said with a rank of each event (the SC order, and no values out of thin air). So whatever follows from the lower bounds holds of every consistent execution, and message passing proves from the axioms:
+
+<!-- example: memory.pia -->
+```ocaml
+let lemma publish (dw : Memory.event) (fw : Memory.event) (fr : Memory.event)
+                  (dr : Memory.event) : unit
+  requires Memory.po dw fw && Memory.is_write fw && Memory.releases fw
+  requires Memory.is_atomic fw && Memory.rf fw fr && Memory.is_read fr
+  requires Memory.is_atomic fr && Memory.acquires fr && Memory.po fr dr
+  ensures Memory.hb dw dr
+= ()
+```
+
+The model `timeline` gives every event a time and makes every relation follow it, which is a sequentially consistent execution, so the axioms are consistent. [tests/memory/theory.pia](https://github.com/deanberris/pia-lang/blob/main/tests/memory/theory.pia) proves it once, when the compiler is tested.
+
+**Litmus tests.** A litmus test is a small concurrent program, a few threads over a few locations, with an outcome that RC11 allows or forbids. The prelude's `litmus` turns one into a lemma. Threads are lists of events: `write loc v` and `read loc r` are plain accesses, `store o loc v`, `load o loc r`, `swap o loc v r` and `fetch_add o loc v r` are atomic, and `barrier o` is a fence, each with its order as a string. The outcome is a list of `is r v` (register `r` read `v`) and `final loc v` (the last write to `loc` in `mo` stored `v`):
+
+<!-- example: litmus.pia -->
+<!-- expect: fail -->
+```ocaml
+litmus "mp_rel_acq"
+  [ thread [ write "data" 1; store "release" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; read "data" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "mp_rlx"
+  [ thread [ store "relaxed" "data" 1; store "relaxed" "flag" 1 ]
+  ; thread [ load "relaxed" "flag" "r1"; load "relaxed" "data" "r2" ] ]
+  "allowed" [ is "r1" 1; is "r2" 0 ]
+```
+
+```console
+$ piac --verify litmus.pia
+litmus.pia:1:1: proved: the postcondition holds [smt]
+litmus.pia:6:1: failed: the postcondition holds
+  counterexample: r1 = 1, r2 = 0
+1 proved, 1 failed, 0 skipped
+```
+
+Both lemmas claim that no consistent execution ends with the outcome. A forbidden outcome is proved. An allowed one fails, and its counterexample is a witness: an execution that RC11 allows and that ends that way, with each register's value and each `<loc>_final`. A third verdict, `"race"`, claims that no execution has a data race: two accesses to one location, one of them a write and one of them plain, with neither happening before the other. It fails with a racy execution when there is one.
+
+A test has a handful of events, so the lemma is finite. `litmus` numbers the events, starting with an initial write of 0 to each location, and each relation becomes an array of booleans indexed by pairs of events: `rf` with each read reading exactly one write to its location, a rank per write for `mo`, and lower bounds for the derived relations, exactly as in the theory. Each acyclicity is a rank per event. The query is a few thousand clauses over booleans and integers, which Z3 decides in well under a second. Expanding the test takes longer than solving it: the expansion is the interpreter building those clauses.
+
+[tests/memory/](https://github.com/deanberris/pia-lang/tree/main/tests/memory) is the battery, one file per family: message passing with every pairing of orders and fences, store buffering, load buffering, the four coherence shapes, read-modify-write atomicity and release sequences, WRC, ISA2, IRIW, S, R and 2+2W, and races. Each expected result is RC11's. When tasks land, each test also becomes a program of spawned tasks with the same outcomes, for the model checker, and the hardware models of each target are checked against the same battery (ADR 0052, section 5).
 
 ## State machines
 

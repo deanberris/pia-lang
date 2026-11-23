@@ -1,5 +1,6 @@
 #include "irgen/IRGen.h"
 #include "irgen/Boxes.h"
+#include "irgen/Memory.h"
 #include "irgen/Regions.h"
 #include "irgen/Target.h"
 #include "irgen/Theories.h"
@@ -10115,6 +10116,13 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
   if (usesTargetTheory(erased ? *erased : program)) {
     targeted = syntax::clone(erased ? *erased : program);
     if (!addTargetTheory(*targeted, options.triple, diags, &targetOf))
+      return nullptr;
+  }
+  // And one that names `Memory` gets RC11 (ADR 0052, section 4).
+  if (usesMemoryTheory(targeted ? *targeted : erased ? *erased : program)) {
+    if (!targeted)
+      targeted = syntax::clone(erased ? *erased : program);
+    if (!addMemoryTheory(*targeted, diags))
       return nullptr;
   }
   const syntax::Node &source = targeted ? *targeted
