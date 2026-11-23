@@ -1,0 +1,4 @@
+# Pia's C++ follows the LLVM Coding Standards (docs/style.md). Format only the
+# lines you change, with `git clang-format origin/main`, so a diff stays about
+# what it changes; CI checks those lines and no others.
+BasedOnStyle: LLVM

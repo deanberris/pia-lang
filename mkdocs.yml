@@ -99,6 +99,7 @@ nav:
       - IRGen: irgen.md
       - Verifier: verifier.md
       - Codegen: codegen.md
+      - Style guide: style.md
   - Decision records:
       - Index: adr/README.md
       - adr/0001-record-architecture-decisions.md

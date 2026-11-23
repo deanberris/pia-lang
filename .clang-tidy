@@ -1,0 +1,28 @@
+# Checks that match docs/style.md. Advice for editors that use clangd; CI does
+# not run clang-tidy yet, because it needs the build's compile commands.
+Checks: >
+  -*,
+  llvm-namespace-comment,
+  readability-else-after-return,
+  readability-identifier-naming,
+  readability-inconsistent-declaration-parameter-name,
+  readability-redundant-control-flow,
+  modernize-use-nullptr,
+  modernize-use-override,
+  performance-unnecessary-copy-initialization,
+  performance-for-range-copy
+CheckOptions:
+  # MLIR's naming: the LLVM standard with lowerCamelCase variables.
+  - { key: readability-identifier-naming.ClassCase,            value: CamelCase }
+  - { key: readability-identifier-naming.StructCase,           value: CamelCase }
+  - { key: readability-identifier-naming.EnumCase,             value: CamelCase }
+  - { key: readability-identifier-naming.EnumConstantCase,     value: CamelCase }
+  - { key: readability-identifier-naming.FunctionCase,         value: camelBack }
+  - { key: readability-identifier-naming.MethodCase,           value: camelBack }
+  - { key: readability-identifier-naming.VariableCase,         value: camelBack }
+  - { key: readability-identifier-naming.ParameterCase,        value: camelBack }
+  - { key: readability-identifier-naming.MemberCase,           value: camelBack }
+  # Pia's own addition: private members end in an underscore.
+  - { key: readability-identifier-naming.PrivateMemberSuffix,  value: _ }
+  - { key: readability-identifier-naming.NamespaceCase,        value: lower_case }
+  - { key: readability-identifier-naming.MacroDefinitionCase,  value: UPPER_CASE }
