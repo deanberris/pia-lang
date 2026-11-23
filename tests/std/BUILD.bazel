@@ -20,6 +20,7 @@ lit_tests(
         "//lib/Pia/Core/Algo:Heap.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Numeric.pia",
+        "//lib/Pia/Core/Algo:PartialSort.pia",
         "//lib/Pia/Core/Algo:Partition.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
         "//lib/Pia/Core/Algo:Remove.pia",
@@ -244,5 +245,27 @@ sh_test(
     srcs = ["partition_run_test.sh"],
     args = ["$(rootpath :partition_run)"],
     data = [":partition_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "partial_sort_run",
+    src = "Inputs/partial_sort_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:heap",
+        "//lib/Pia/Core/Algo:partial_sort",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:sort",
+    ],
+)
+
+sh_test(
+    name = "partial_sort_run_test",
+    srcs = ["partial_sort_run_test.sh"],
+    args = ["$(rootpath :partial_sort_run)"],
+    data = [":partial_sort_run"],
     target_compatible_with = PIA_TARGETS,
 )

@@ -1,0 +1,32 @@
+(* Runs Pia.Core.Algo.PartialSort's compiled code on a buffer in an
+   arena, linked by pia_binary: 0 when every result is what C++'s
+   partial_sort and nth_element give, and otherwise the number of the
+   first wrong one. *)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Heap.Heap as H
+import Pia.Core.Algo.PartialSort.PartialSort as Q
+
+let fill (xs : borrowed inout mutable [u8]) : unit
+  requires len xs = 7
+= xs.[0] <- 9; xs.[1] <- 4; xs.[2] <- 7; xs.[3] <- 1; xs.[4] <- 8; xs.[5] <- 2; xs.[6] <- 6
+
+let checks (xs : borrowed inout mutable [u8]) : i32
+  requires len xs = 7
+= fill xs;
+  Q.partial_sort xs 3 (let (a : u8) (b : u8) : bool => a < b);
+  if xs.[0] <> 1 || xs.[1] <> 2 || xs.[2] <> 4 then 1
+  else if xs.[3] < 4 || xs.[4] < 4 || xs.[5] < 4 || xs.[6] < 4 then 2
+  else (
+    fill xs;
+    Q.nth_element xs 3 (let (a : u8) (b : u8) : bool => a < b);
+    if xs.[3] <> 6 then 3
+    else (
+      fill xs;
+      Q.partial_sort xs 7 (let (a : u8) (b : u8) : bool => a > b);
+      if xs.[0] <> 9 || xs.[6] <> 1 then 4
+      else 0))
+
+let main () : i32 = with_arena 7 (let (m) => checks m.mem)

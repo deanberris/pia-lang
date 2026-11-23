@@ -11,6 +11,7 @@ exports_files([
     "Heap.pia",
     "Modify.pia",
     "Numeric.pia",
+    "PartialSort.pia",
     "Partition.pia",
     "Permutation.pia",
     "Remove.pia",
@@ -119,6 +120,22 @@ pia_library(
     src = "Partition.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        ":permutation",
+        ":sort",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# partial_sort and nth_element, by a strict weak order:
+# tests/std/partial_sort.pia checks its goals; tests/std/partial_sort_edges.pia
+# and :partial_sort_run test it through its interface.
+pia_library(
+    name = "partial_sort",
+    src = "PartialSort.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":heap",
         ":permutation",
         ":sort",
         "//lib/Pia:fn",
