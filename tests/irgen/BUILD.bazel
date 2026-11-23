@@ -5,6 +5,7 @@ load("//tests/lit:lit.bzl", "lit_tests")
 lit_tests(
     name = "irgen_tests",
     srcs = glob(["*.pia"]),
+    data = ["//lib/Pia/Sys/Gen:x86_64_linux.pia"],
     tools = [
         "//tools/piac",
         "//tools/pia-opt",

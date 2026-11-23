@@ -1,0 +1,8 @@
+# Pia.Sys's declarations generated from each target's C headers by
+# tools/bindings/gen.py (ADR 0051, section 6). They are checked in, so a
+# build for a target needs no SDK; the bindings workflow regenerates each
+# on its own platform and fails on any difference.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.pia"]))

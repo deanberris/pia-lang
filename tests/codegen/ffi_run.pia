@@ -12,6 +12,8 @@ interface Calls @abi(c) = sig
   let va_two : (a : i64) -> (b : i64) -> i64
   let va_three : (a : i64) -> (b : i64) -> (c : i64) -> i64
   let va_mix : (a : u32) -> (xs : [u8]) -> u64
+  let plus_answer : (x : i32) -> i32
+    requires x <= 1000
 end
 
 let sum_bytes (xs : [u8]) (n : usize) : u32
@@ -56,3 +58,12 @@ let mix (n : i32) (a : u32) (xs : [u8]) (k : usize) : u64 @variadic(1)
 let va_two (a : i64) (b : i64) : i64 = sum2 2 a b
 let va_three (a : i64) (b : i64) (c : i64) : i64 = sum3 3 a b c
 let va_mix (a : u32) (xs : [u8]) : u64 = mix 3 a xs (len xs)
+
+(* A C function of no arguments, `int answer(void)`, takes a unit. *)
+let answer (u : unit) : i32
+  ensures result = 42
+= extern "answer"
+
+let plus_answer (x : i32) : i32
+  requires x <= 1000
+= x + answer ()
