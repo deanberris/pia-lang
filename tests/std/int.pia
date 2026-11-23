@@ -14,7 +14,7 @@
 // CHECK-DAG: proved: the precondition of 'quot_rem(i8, i8)' holds
 // CHECK-DAG: proved: the precondition of 'quot_rem({{i64|isize}}, {{i64|isize}})' holds
 // CHECK-DAG: proved: the precondition of 'div_sat({{u64|usize}}, {{u64|usize}})' holds
-// CHECK: 546 proved, 0 failed, 0 skipped
+// CHECK: 513 proved, 0 failed, 0 skipped
 *)
 
 (* Four functions at each unsigned width, five at each signed width, and
@@ -24,7 +24,7 @@
 // OPS-NEXT:  {{^}}  let spec euclid : (a : u64) -> (b : u64) -> u64{{$}}
 // OPS-NEXT:  {{^}}  let gcd : (a : u8) -> (b : u8) -> u8 ensures
 // OPS:       {{^}}  let abs : (x : i8) -> u8 ensures x >= 0 ==> result = x ensures x < 0 ==> result = 0 - x{{$}}
-// OPS:       {{^}}  let mul_sat : (a : i64) -> (b : i64) -> i64 ensures a * b > 9223372036854775807 ==> result = 9223372036854775807
+// OPS:       {{^}}  let mul_sat : (a : i64) -> (b : i64) -> i64 ensures a * b > max i64 ==> result = max i64
 // OPS:       {{^}}  let saturate_cast_u8 : (x : i64) -> u8 ensures
 // OPS:       {{^}}  let saturate_cast_i64 : (y : u64) -> i64 ensures
 // OPS-NEXT:  {{^}}end{{$}}
@@ -34,5 +34,5 @@
 // DIV:       {{^}}interface Div = sig{{$}}
 // DIV-NEXT:  {{^}}  let spec divides : (d : i64) -> (n : i64) -> bool{{$}}
 // DIV-NEXT:  {{^}}  let quot_rem_i8 = type { quot : i8; rem : i8 }{{$}}
-// DIV-NEXT:  {{^}}  let quot_rem : (n : i8) -> (d : i8) -> quot_rem_i8 requires d <> 0 && (n <> -128 || d <> -1) ensures
+// DIV-NEXT:  {{^}}  let quot_rem : (n : i8) -> (d : i8) -> quot_rem_i8 requires d <> 0 && (n <> min i8 || d <> -1) ensures
 *)
