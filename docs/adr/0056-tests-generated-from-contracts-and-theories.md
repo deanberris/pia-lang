@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-23), with his answers to the three questions, recorded at the end.
 
 ## Context
 
@@ -46,7 +46,7 @@ A generated case is an input together with an oracle, a fact that must hold of t
 - **Not decidable statically.** The answer depends on something outside the proof: an `extern`, a trusted axiom, the compiled code itself, a float on a device, a timing. The case is compiled into the test binary and run.
 - **Refuted.** The verifier shows the case fails. That is a bug found at compile time, reported like any failed goal, before anything runs.
 
-This is what makes the framework different from QuickCheck or a unit test runner: the generator produces many cases, and most of them never execute, because a fully proved unit decides them all. What is left to run is exactly the part the proof cannot vouch for. `--run-proved` runs every case anyway, which is the check on the compiler and the configuration the sanitizer jobs use.
+This is what makes the framework different from QuickCheck or a unit test runner: the generator produces many cases, and most of them never execute, because a fully proved unit decides them all. What is left to run is exactly the part the proof cannot vouch for. Proved cases stay available to test the compiler (Dean, 2026-11-23). `--run-proved` runs every case anyway, and the compiler's own test suite, the sanitizer jobs and both targets' CI run with it, so the cases generated for the standard library also check IRGen and codegen.
 
 ### 2. Where cases come from
 
@@ -76,7 +76,12 @@ Each source is a metaprogram in a new prelude module, `Pia.Test.Gen`, written in
 
 ### 4. The surface
 
-A test file is a module that imports the interface under test, as `tests/std/*_edges.pia` does, so it sees only what the module exports. Its cases are top-level calls of generator metaprograms, with no new keyword. A sketch, in proposed syntax:
+Tests can be written in two places, and both work the same way (Dean, 2026-11-23):
+
+- **In the module, in test mode**, as Rust does. A top-level generator call, or a hand-written test, carries `@test`. It is expanded, proved and compiled only by `piac --test` (and the REPL's `:test`), and an ordinary build drops it before expansion, so it adds nothing to the module's interface, its proofs or its object code. It sees the module's private functions.
+- **In a separate test module** that imports the interface under test, as `tests/std/*_edges.pia` does, so it sees only what the module exports. This is the black-box form, and the standard library uses it.
+
+Cases are top-level calls of generator metaprograms, with no new keyword. A sketch, in proposed syntax, of a separate test module:
 
 <!-- untested: proposed syntax; Pia.Test does not exist yet -->
 ```ocaml
@@ -97,13 +102,26 @@ cases Algo.sort [edges; against Cpp.std_sort; corpus "tests/std/cases/sort.piac"
 laws Ord Posix.timespec
 ```
 
+In the module itself, the same call is marked for test mode:
+
+<!-- untested: proposed syntax; Pia.Test does not exist yet -->
+```ocaml
+let clamp (v : u8) (lo : u8) (hi : u8) : u8
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+= if v < lo then lo else if v > hi then hi else v
+
+@test cases clamp [edges; paths]
+```
+
 In the REPL, `:test C.clamp` runs the same generators on a definition in the environment, and `pia mcp` gives agents the same command. `piac --test` builds and runs a test file, and a `pia_test` Bazel rule in `tools/piac/pia.bzl` does the same in the build.
 
 ### 5. Stages
 
 1. **Expansion.** Generators that read only syntax and types run with every other metaprogram, and produce the case items.
 2. **Verification.** Each case is a goal (section 1). The verifier's results decide which cases are compiled.
-3. **Witness generation.** `paths` and `errors` ask Z3 for models. Their answers are written to the module's case file, so a later build reads the cases from the file and does not ask the solver again. A build is then deterministic, a change of solver cannot change the tests silently, and the case file shows in review what was added.
+3. **Witness generation.** `paths` and `errors` ask Z3 for models. Whether the answers are kept is the user's choice (Dean, 2026-11-23): `piac --test --cases=DIR` writes them to a case file per module and reads them back on later builds, and without it they are found again on each build. A case file makes a build deterministic, keeps a change of solver from changing the tests silently, and shows in review what was added. This repository checks its case files in, so that what was generated can be inspected and debugged.
+   Either way, what was generated can always be seen: `piac --test --dump-cases` prints every case with its source (which generator, which parameter's boundary, which path or error constructor) and how it was decided, and `:source` in the REPL shows a generator call's expansion.
 4. **Run.** The undecided cases are compiled into one binary per test file, which reports each case. Under `--sanitize=address,undefined` it doubles as the sanitizer run.
 
 A metaprogram that calls the solver is not total in the sense of [ADR 0035](0035-substitution-failure-and-total-constraints.md): it depends on a solver's answers. So it may not be called from a type, a `where` predicate, a theory builder or a tactic, only from a test file.
@@ -241,8 +259,8 @@ Each step is one PR with its tests, and each replaces some hand-written test in 
 
 1. **What the prototype needed:** several items from one metaprogram, list operations, `param_types`, `return_type`, `range_of`, `constructors` and `subst`, one form for expanded contracts, and generated items located at their case, in `src/meta/Interpreter.cpp`, `Expand.cpp` and a prelude module, with tests in `tests/meta`. The verifier cost per cell in the REPL is a separate issue, filed with this step.
 2. **`Pia.Test.Gen` with `edges` and `combine`**, generating cases whose oracle is written out by `subst`, and the proved, refuted and run triage of section 1. The first user is one `tests/std` module whose `_run.pia` becomes generated.
-3. **Run-time `ensures` checks** in test builds, `piac --test` and the `pia_test` rule.
-4. **Case files and the regression corpus**, with every verifier counterexample offered to the corpus.
+3. **Test mode:** `@test` items dropped from ordinary builds, run-time `ensures` checks in test builds, `piac --test`, `--run-proved`, `--dump-cases` and the `pia_test` rule.
+4. **Case files (`--cases=DIR`) and the regression corpus**, with every verifier counterexample offered to the corpus.
 5. **`paths` and `errors`** through the solver, cached in the case file.
 6. **`laws` and `walks`**, for concept laws, trusted theories and `machine`s.
 7. **`against`**, differential tests against C++ through generated bindings, starting with the `tests/std` modules that map C++23 components.
@@ -260,9 +278,15 @@ Each step is one PR with its tests, and each replaces some hand-written test in 
 
 ## Questions for Dean
 
-1. **Surface.** Top-level generator calls in a separate test module that imports the interface (`cases C.clamp [edges; paths]`, recommended, since it tests only what is exported and needs no keyword), or an attribute on the definition itself (`@test(edges, paths)`), which also reaches private functions?
-2. **Proved cases.** Report a proved case and not run it by default, with `--run-proved` for CI and sanitizer jobs (recommended), or always run every case?
-3. **Solver-found cases.** Write them to a case file checked in beside the module (recommended, so builds are deterministic and the cases are reviewed), or find them again on each build?
+1. **Surface.** Top-level generator calls in a separate test module that imports the interface, or an attribute on the definition itself, which also reaches private functions?
+2. **Proved cases.** Report a proved case and not run it by default, with `--run-proved` for CI and sanitizer jobs, or always run every case?
+3. **Solver-found cases.** Write them to a case file checked in beside the module, or find them again on each build?
+
+## Answers (Dean, 2026-11-23)
+
+1. "It should be doable in either. I see value in having test cases in the module themselves, like what Rust does, in test mode." Section 4 now has both: `@test` items in the module, built only in test mode, and separate test modules over the interface.
+2. Yes, proved cases are not run by default, "but they should be available for the compiler testing cases." Section 1: `--run-proved` is what the compiler's own tests, the sanitizer jobs and CI use.
+3. "That should be up to the user. For us, I think it's worth seeing what it generates so that we can inspect and debug it." Section 5: `--cases=DIR` is the user's choice, this repository checks its case files in, and `--dump-cases` always shows what was generated.
 
 ## Prior art
 
