@@ -46,11 +46,11 @@ let double (x : u8) : u16 = x + x
 // CHECK: modules.pia:37:5: proved: the divisor is not zero [smt]
 // CHECK: modules.pia:37:5: proved: '/' does not overflow u8 [intervals]
 // CHECK: modules.pia:39:31: proved: '+' does not overflow u16 [intervals]
-// CHECK: modules.pia:27:3: proved: the assertion holds [smt]
+// CHECK: modules.pia:27:3: proved: the interface 'Clamping' gives the precondition of 'clamp' [smt]
 // CHECK: modules.pia:12:3: proved: the precondition of 'clamp' holds [smt]
 // CHECK: modules.pia:14:5: proved: the postcondition holds [smt]
 // CHECK: modules.pia:18:5: proved: the postcondition holds [smt]
-// CHECK: modules.pia:36:3: failed: the assertion holds
+// CHECK: modules.pia:36:3: failed: the interface 'Clamping' gives the precondition of 'ratio'
 // CHECK-NEXT: counterexample: a = {{-?[0-9]+}}, b = {{-?[0-9]+}}
 // CHECK: modules.pia:23:5: failed: the postcondition holds
 // CHECK-NEXT: counterexample: x = {{-?[0-9]+}}

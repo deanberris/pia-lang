@@ -22,10 +22,18 @@ using ValuePtr = std::shared_ptr<const Value>;
 struct Env;
 using EnvPtr = std::shared_ptr<Env>;
 
+// A metaprogram's integer. It holds every bound of every Pia integer type,
+// u64's and i64's included, with room to spare for arithmetic on them;
+// arithmetic that leaves its range is an error, not a wrap.
+using MetaInt = __int128;
+
+// The decimal spelling of an integer, with a minus when negative.
+std::string decimal(MetaInt v);
+
 struct Value {
   enum class Kind { Unit, Int, Bool, Str, Syntax, List, Closure, Builtin, Type };
   Kind kind = Kind::Unit;
-  int64_t i = 0;
+  MetaInt i = 0;
   bool b = false;
   std::string s;                          // Str; Builtin: its name; Type: its
                                           // spelling, `u8` or `option<u8>`

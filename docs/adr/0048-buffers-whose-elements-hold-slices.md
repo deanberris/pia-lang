@@ -42,12 +42,22 @@ The proofs do not change. The verifier still sees each element as owning a slice
 
 A box over a concept, `box c`, holds values of different sizes. Stored inline, each slot must fit the largest value it will hold. The compiler knows which those are: every `widen` into a `box c` names its type, so the types that reach a given buffer of `box c` are known statically from the specialisations the program makes (Dean, 2026-11-23). The slot size and alignment are the largest of that set, and the user writes no bound. The set is part of the buffer's layout, which the ABI advertises (ADR 0030): a module that widens a new type into it changes the layout, and dynamic loading against the old one fails and requires a relink. A `box c` outside a buffer of inline boxes is the fat pointer of ADR 0046.
 
+### 6. Moving an owned element out
+
+An owning element read as a value, `nb.[i] <- old_buf.[i]` or `push v xs.[i]`, moves out of its buffer, as growing a vector does. The element left behind must not still own the box's slot, or two boxes would share it while the verifier models them apart. So each element of a buffer of owning elements has a held state (Dean, 2026-11-23), and the held state is its slices' lengths: a move leaves every slice of the element behind empty. A box is held when its slot has length one, which `ok` already says, so contracts need no new spec state and no new word. Reading or writing through an element moved out is then out of bounds, and a second move gets a box with an empty slot, which owns nothing and fails `ok`.
+
+The element left behind keeps its contents: the moved value still reads them. The emptying is spec-only, and codegen erases it.
+
+A read through the element, `xs.[i].slot.[0]`, `len xs.[i].slot`, or an argument of a `borrowed` parameter, borrows it and moves nothing, as a field read of a linear local does. Moving out needs a buffer the function may write. Moving an element out of a borrowed buffer is an error, since the caller would still hold the box.
+
+Storing a whole owning element, `xs.[i] <- b`, needs the element written over to be empty, so that no box is lost by writing over it: the verifier proves that every slice of the old element has length zero. A buffer that is `out`, as a parameter or as the buffer a function lends, holds nothing yet, so all its elements are empty. A vector says the same of its spare capacity: `good v` states that the elements past `v.len` have empty slots.
+
 ## Implementation order
 
 1. Sema accepts buffers whose elements hold slices; IRGen stores them as buffers of slices, with the ownership rule for writes and the loan rule for slices taken out.
 2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Element lengths in callee and spec-function contracts are encoded too.)
 3. Codegen: pointer and length buffers, and C entry points; buffers of `box t` inline as buffers of `t` (section 5).
-4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Not yet: growing, which moves linear elements between buffers, and checking that an element written over is empty.)
+4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Growing, which moves the boxes into a larger buffer, is proved too, and so is that a box is stored only where no box is (section 6).)
 
 ## Consequences
 

@@ -9,6 +9,7 @@ cc_library(
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
+        "//src/cert",
         "//src/dialect",
         "@llvm-project//llvm:AllTargetsCodeGens",
         "@llvm-project//llvm:Core",
@@ -16,6 +17,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",

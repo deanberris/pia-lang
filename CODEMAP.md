@@ -58,7 +58,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | REPL or MCP | `src/repl/Session.cpp`, `Mcp.cpp` | `docs/repl.md`; `tests/repl` |
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
-| an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*` |
+| an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*` |
 | memory, allocators, `box`, `vec` | no module yet: they are prototyped as tests | `tests/verify/{bump,arena,pool,box,vec_*}.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
@@ -110,7 +110,8 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Verifier.{h,cpp}` (4.7k lines) holds the obligations, interval and Presburger discharge, the `Encoder` that builds the smt dialect, Z3 per goal (`--jobs`), the proof cache, slicing and counterexamples.
 - `src/verify/Triggers.{h,cpp}` picks the triggers for axiom instantiation (ADR 0036).
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
-- `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field).
+- `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -126,6 +127,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/piac/piac.cpp` is the compiler driver, where every flag is parsed.
 - `tools/piac/pia.bzl` defines `pia_library` and `pia_binary`. `tools/piac/targets.bzl` defines `PIA_TARGETS` and the flags for each platform.
 - `tools/pia/pia.cpp` is the `pia` tool (`pia repl`, `pia mcp`).
+- `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).
@@ -146,8 +148,9 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Set.pia` holds `includes`, `set_intersection` and `set_difference`. `lib/Pia/Core/Algo/SetUnion.pia` holds `set_union`.
 - `lib/Pia/Core/Algo/SetSymmetric.pia` holds `set_symmetric_difference`, in its own module so it proves in parallel with `set_union`.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
-- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it (ADR 0045).
+- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, and `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens (ADR 0045).
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
+- `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions, starting with the LZW dictionary. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it.
 
 ### Elsewhere
 

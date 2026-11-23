@@ -2,13 +2,13 @@
   "cores": 8,
   "files": {
     "docs/streams.pia.md": {
-      "cost": 269094119,
-      "goals": 243,
-      "solve_ms_1": 29923,
-      "solve_ms_n": 8425,
-      "solved": 222,
-      "wall_ms_1": 30872.6,
-      "wall_ms_n": 9398.0
+      "cost": 334141503,
+      "goals": 554,
+      "solve_ms_1": 171184,
+      "solve_ms_n": 23145,
+      "solved": 528,
+      "wall_ms_1": 230806.4,
+      "wall_ms_n": 45425.3
     },
     "examples/edges/edges.pia": {
       "cost": 61107851,
@@ -119,22 +119,31 @@
       "wall_ms_n": 14.0
     },
     "lib/Pia/Text/Json/Lex.pia": {
-      "cost": 97741107,
+      "cost": 105523484,
       "goals": 179,
-      "solve_ms_1": 9103,
-      "solve_ms_n": 4614,
+      "solve_ms_1": 6507,
+      "solve_ms_n": 1782,
       "solved": 179,
-      "wall_ms_1": 18541.1,
-      "wall_ms_n": 15723.9
+      "wall_ms_1": 15315.7,
+      "wall_ms_n": 10618.7
     },
     "lib/Pia/Text/Json/Spec.pia": {
-      "cost": 10404429,
-      "goals": 121,
-      "solve_ms_1": 1262,
-      "solve_ms_n": 466,
-      "solved": 121,
-      "wall_ms_1": 2966.3,
-      "wall_ms_n": 2143.8
+      "cost": 13158437,
+      "goals": 134,
+      "solve_ms_1": 1136,
+      "solve_ms_n": 348,
+      "solved": 134,
+      "wall_ms_1": 2621.5,
+      "wall_ms_n": 1742.0
+    },
+    "lib/Pia/Text/Json/Write.pia": {
+      "cost": 373362854,
+      "goals": 542,
+      "solve_ms_1": 33920,
+      "solve_ms_n": 10067,
+      "solved": 532,
+      "wall_ms_1": 73791.1,
+      "wall_ms_n": 49742.2
     },
     "tests/verify/bits.pia": {
       "cost": 10549,
@@ -256,10 +265,10 @@
   },
   "host": "BabyHouse-iMac",
   "total": {
-    "cost": 524238798,
-    "goals": 2379,
-    "solved": 2124,
-    "wall_ms_1": 110519.4,
-    "wall_ms_n": 71392.1
+    "cost": 1163721577,
+    "goals": 3847,
+    "solved": 3521,
+    "wall_ms_1": 456530.3,
+    "wall_ms_n": 214387.1
   }
 }

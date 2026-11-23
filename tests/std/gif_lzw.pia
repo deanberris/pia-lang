@@ -1,0 +1,49 @@
+(* Pia.Image.Gif.Spec and Pia.Image.Gif.Lzw (ADR 0054, step 2): every goal
+   of the LZW dictionary's spec and of the decoder is proved, with nothing
+   accepted unproved: the decoder's reads and writes are in bounds, its
+   loops end, each code's string is the spec's, and the table stays well
+   formed.
+// RUN: piac --verify %S/../../lib/Pia/Image/Gif/Spec.pia | FileCheck --check-prefix=SPEC %s
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: FileCheck --check-prefix=DICT %s < %t/Pia.Image.Gif.Spec.Lzw.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
+// RUN: FileCheck --check-prefix=LZW %s < %t/Pia.Image.Gif.Lzw.Lzw.piai
+*)
+
+(* The spec's own goals: its reads are in bounds and the prefix chains
+   it follows end.
+// SPEC-NOT: failed
+// SPEC: 29 proved, 0 failed, 0 skipped
+*)
+
+(* The decoder.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 175 proved, 0 failed, 0 skipped
+*)
+
+(*
+// DICT:      {{^}}module Pia.Image.Gif.Spec{{$}}
+// DICT-NEXT: {{^}}interface Lzw = sig{{$}}
+// DICT-NEXT: {{^}}  let spec pre : (t : [u8]) -> (k : usize) -> u16{{$}}
+// DICT-NEXT: {{^}}  let spec suf : (t : [u8]) -> (k : usize) -> u8{{$}}
+// DICT-NEXT: {{^}}  let spec elen : (t : [u8]) -> (clear : usize) -> (k : usize) -> usize{{$}}
+// DICT-NEXT: {{^}}  let spec sym : (t : [u8]) -> (clear : usize) -> (k : usize) -> (d : usize) -> usize{{$}}
+// DICT-NEXT: {{^}}  let spec entry_ok : (t : [u8]) -> (clear : int{4..256}) -> (k : usize) -> bool{{$}}
+// DICT-NEXT: {{^}}  let spec table_ok : (t : [u8]) -> (clear : int{4..256}) -> (nx : usize) -> bool{{$}}
+// DICT-NEXT: {{^}}  let spec valid : (clear : int{4..256}) -> (nx : usize) -> (k : usize) -> bool{{$}}
+// DICT-NEXT: {{^}}end{{$}}
+*)
+
+(*
+// LZW:      {{^}}module Pia.Image.Gif.Lzw{{$}}
+// LZW-NEXT: {{^}}interface Lzw = sig{{$}}
+// LZW-NEXT: {{^}}  let lzw_error = type | Truncated of usize | BadCode of usize | OutputFull of usize{{$}}
+// LZW-NEXT: {{^}}  let entry_len : (t : [u8]) -> (clear : usize) -> (k : int{0..4095}) -> usize requires len t = 12288 ensures result = S.elen t clear k{{$}}
+// LZW-NEXT: {{^}}  let put_entry : (t : [u8]) -> (clear : int{4..256}) -> (nx : int{0..4096}) -> (k : usize) -> (dst : borrowed inout mutable [u8]) -> (o : usize) -> (n : usize) -> unit requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k requires n = S.elen t clear k && o + n <= len dst requires forall (j in 0 .. o). dst.[j] < clear ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d ensures forall (j in 0 .. o + n). dst.[j] < clear ensures forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j]){{$}}
+// LZW-NEXT: {{^}}  let decode : (s : [u8]) -> (m : int{2..8}) -> (t : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> result usize lzw_error requires len t = 12288 ensures (match result with | Ok n -> n <= len dst | Err _ -> true) ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true) ensures (match result with | Ok n -> true | Err e -> (match e with | Truncated p -> p <= B.nbits s | BadCode p -> p < B.nbits s | OutputFull p -> p < B.nbits s)){{$}}
+// LZW-NEXT: {{^}}end{{$}}
+*)

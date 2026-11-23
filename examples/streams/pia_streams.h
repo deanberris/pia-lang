@@ -24,4 +24,16 @@ uint64_t delineate(const uint16_t *dem, uint64_t ndem, uint64_t w,
                    uint32_t *acc, uint64_t nacc, uint64_t *basin,
                    uint64_t nbasin, uint8_t *rgb, uint64_t nrgb);
 
+uint64_t sediment(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
+                  uint64_t ndown, const uint32_t *acc, uint64_t nacc,
+                  const uint64_t *order, uint64_t norder, uint32_t n,
+                  uint32_t *bed, uint64_t nbed, uint32_t *load, uint64_t nload,
+                  uint32_t *inflow, uint64_t ninflow, uint32_t *flux,
+                  uint64_t nflux);
+uint64_t render_load(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
+                     uint64_t nfill, const uint32_t *acc, uint64_t nacc,
+                     const uint64_t *basin, uint64_t nbasin,
+                     const uint32_t *flux, uint64_t nflux, uint32_t threshold,
+                     uint8_t *rgb, uint64_t nrgb);
+
 #endif
