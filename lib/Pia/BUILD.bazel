@@ -6,10 +6,23 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["Fn.pia"])
+exports_files([
+    "Fn.pia",
+    "Time.pia",
+])
 
 pia_library(
     name = "fn",
     src = "Fn.pia",
     target_compatible_with = PIA_TARGETS,
+)
+
+# <chrono>'s durations, as metaprograms over Pia.Core.Ratio that importers
+# run: tests/std/time.pia checks its interface; tests/std/time_edges.pia
+# and :time_run make and prove the standard durations in an importer.
+pia_library(
+    name = "time",
+    src = "Time.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:ratio"],
 )
