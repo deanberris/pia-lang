@@ -5890,8 +5890,8 @@ class Gen {
     if (!requirer_.empty())
       assertClaims_.emplace(symbol, requirer_ + " gives the precondition of '" +
                                         req.text + "'");
-    queueLemma(symbol, std::move(params), std::move(contracts),
-               std::move(body), scope, at, via);
+    queueLemma(symbol, std::move(params), std::move(contracts), std::move(body),
+               scope, at, via);
   }
 
   // A function that writes its parameters honours a requirement's contract
@@ -6119,7 +6119,8 @@ class Gen {
   void checkInterface(const Node &header, const Node &iface,
                       const std::set<std::string> &shown) {
     const std::string key = header.text + "." + iface.text;
-    std::string outer = std::exchange(requirer_, "the interface '" + iface.text + "'");
+    std::string outer =
+        std::exchange(requirer_, "the interface '" + iface.text + "'");
     struct Restore {
       std::string &to, from;
       ~Restore() { to = std::move(from); }
