@@ -54,3 +54,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0048](0048-buffers-whose-elements-hold-slices.md) | Buffers may hold slices: owned slices are written through, shared ones only read | Proposed |
 | [0049](0049-targets-are-theories.md) | Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in `Pia.Target` theory | Accepted |
 | [0050](0050-senders-and-receivers.md) | Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS | Proposed |
+| [0051](0051-variadic-generics-and-foreign-varargs.md) | Variadic generics are tuple types walked by type `match`, proved once by structural induction, and foreign varargs are typed per declaration | Proposed |

@@ -134,11 +134,11 @@ Each in-flight slot is a small state machine: free, submitted, cancel requested,
 
 ## Prerequisites, in order
 
-1. **FFI** (#55): variadic foreign calls (`syscall`, `open` and `fcntl` are variadic, and Apple arm64 passes variadic arguments on the stack), C structs passed as byte buffers (`sockaddr`, `kevent`, `epoll_event`, `io_uring_sqe`), and `errno` (`__error` on macOS, `__errno_location` on glibc).
+1. **FFI** (#55): variadic foreign calls, as [ADR 0051](0051-variadic-generics-and-foreign-varargs.md) section 6 designs them (`syscall`, `open` and `fcntl` are variadic, and Apple arm64 passes variadic arguments on the stack), C structs passed as byte buffers (`sockaddr`, `kevent`, `epoll_event`, `io_uring_sqe`), and `errno` (`__error` on macOS, `__errno_location` on glibc).
 2. **`@target` items and `when Target.is`** (ADR 0049, step 3c, PR #292).
 3. **`Pia.Sys.Posix`, `Pia.Sys.Fs` and `Pia.Sys.Net`** (#57), blocking and per target: constants, `sockaddr` (macOS has a `sin_len` byte, Linux does not), the packed `epoll_event` on x86_64, and `SO_NOSIGPIPE` versus `MSG_NOSIGNAL`.
 4. **`Pia.Mem` as a module** (#59), for buffers and the in-flight table.
-5. **Function values stored in data** (ADR 0044, a later step), because an operation state holds its receiver and `then`'s function, and **acquire and release atomics on foreign memory**, for the io_uring rings.
+5. **Tuples and variadic generics** (ADR 0051), for `when_all` over any number of senders. **Function values stored in data** (ADR 0044, a later step), because an operation state holds its receiver and `then`'s function, and **acquire and release atomics on foreign memory**, for the io_uring rings.
 6. **`Pia.Exec`**: the concepts and algorithms, with an inline scheduler and `sync_wait`. It is pure Pia with no system calls, so it can be proved and tested first.
 7. **`Pia.Io.Ready`, `Pia.Io.Kqueue` and `Pia.Io.Epoll`**, the run loop and the timer heap, with a proved echo server as the demo, tested on both CI jobs.
 8. **`Pia.Io.Uring`**, and the Linux run-time choice between the two backends.

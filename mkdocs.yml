@@ -152,3 +152,4 @@ nav:
       - adr/0048-buffers-whose-elements-hold-slices.md
       - adr/0049-targets-are-theories.md
       - adr/0050-senders-and-receivers.md
+      - adr/0051-variadic-generics-and-foreign-varargs.md
