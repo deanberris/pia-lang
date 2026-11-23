@@ -6,6 +6,7 @@ They live in [`skills/`](https://github.com/deanberris/pia-lang/tree/main/skills
 
 | Skill | When an agent uses it |
 | --- | --- |
+| [`pia-language`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-language/SKILL.md) | writing or porting Pia code: syntax at a glance, where each fact belongs (types before contracts), the usual shapes for loops, errors, generics, lambdas and modules, and the pitfalls |
 | [`pia-mcp`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-mcp/SKILL.md) | a `pia mcp` server is connected: how `execute` and `poll` behave, reading results, the working loop, long-running cells |
 | [`pia-repl`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-repl/SKILL.md) | no MCP connection: `pia repl` on a pipe or with JSON lines, `:redef`, state with invariants and `old`, tasks, saving a session as a test |
 | [`piac-verify`](https://github.com/deanberris/pia-lang/blob/main/skills/piac-verify/SKILL.md) | proving or compiling files: the goal report, counterexamples, `--allow-unproved`, solver limits |
@@ -35,5 +36,7 @@ claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp
 [The REPL](repl.md#claude-driving-a-session) page shows Claude driving a session over MCP, and [Debugging C++ with the REPL](repl-debugging.md) follows the proof-debugging loop from a literal port of a parser to a verdict and a fix.
 
 ## Contributing with an agent
+
+An agent working on the compiler itself should start from [`CLAUDE.md`](https://github.com/deanberris/pia-lang/blob/main/CLAUDE.md), which Claude Code loads by itself, and [`CODEMAP.md`](https://github.com/deanberris/pia-lang/blob/main/CODEMAP.md), a map of where everything lives and which file to open for each kind of change. `python3 tools/codemap/outline.py <file>` lists a large file's functions with their line numbers, so an agent can read only the part it needs.
 
 Contributions written with an agent are welcome, and they need no `Co-Authored-By` trailer or other attribution. The person who opens the pull request owns it, and it must pass the proofs and tests like any other change. [CONTRIBUTORS.md](https://github.com/deanberris/pia-lang/blob/main/CONTRIBUTORS.md) has the policy.
