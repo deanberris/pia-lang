@@ -21,7 +21,7 @@
 namespace pia::repl {
 
 class McpServer {
- public:
+public:
   explicit McpServer(Options options = {}) : kernel_(std::move(options)) {}
 
   // Answers one JSON-RPC message. Returns null for a notification.
@@ -30,13 +30,13 @@ class McpServer {
   // Reads messages until the input ends.
   void serve(std::istream &in, std::ostream &out);
 
- private:
+private:
   lsp::Json callTool(const std::string &name, const lsp::Json &args);
   lsp::Json jobResult(const Kernel::Status &s, bool json);
 
   Kernel kernel_;
 };
 
-}  // namespace pia::repl
+} // namespace pia::repl
 
-#endif  // PIA_REPL_MCP_H
+#endif // PIA_REPL_MCP_H

@@ -21,17 +21,17 @@
 namespace pia::repl {
 
 class Kernel {
- public:
+public:
   enum class State { Queued, Running, Done, Unknown };
 
   struct Status {
     uint64_t job = 0;
     State state = State::Unknown;
-    std::optional<CellResult> result;  // set once the job is Done
+    std::optional<CellResult> result; // set once the job is Done
   };
 
   explicit Kernel(Options options = {});
-  ~Kernel();  // finishes the running job, drops queued ones
+  ~Kernel(); // finishes the running job, drops queued ones
   Kernel(const Kernel &) = delete;
   Kernel &operator=(const Kernel &) = delete;
 
@@ -46,7 +46,7 @@ class Kernel {
   // Jobs that are queued or running.
   size_t pending() const;
 
- private:
+private:
   void work();
 
   Session session_;
@@ -62,6 +62,6 @@ class Kernel {
 
 const char *stateName(Kernel::State state);
 
-}  // namespace pia::repl
+} // namespace pia::repl
 
-#endif  // PIA_REPL_KERNEL_H
+#endif // PIA_REPL_KERNEL_H

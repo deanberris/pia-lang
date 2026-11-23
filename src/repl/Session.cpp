@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -17,14 +17,6 @@
 #include "codegen/Codegen.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
-#include "llvm/ExecutionEngine/Orc/Core.h"
-#include "llvm/ExecutionEngine/Orc/Mangling.h"
-#include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Module.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/TargetSelect.h"
-#include "llvm/Support/raw_ostream.h"
-#include "llvm/TargetParser/Host.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
@@ -36,6 +28,14 @@
 #include "syntax/Lexer.h"
 #include "syntax/Parser.h"
 #include "verify/Verifier.h"
+#include "llvm/ExecutionEngine/Orc/Core.h"
+#include "llvm/ExecutionEngine/Orc/Mangling.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/Host.h"
 
 namespace pia::repl {
 
@@ -74,10 +74,13 @@ static_assert(sizeof(std::atomic<int64_t>) == 8 && alignof(Gate) == 8,
 // gate, or null for a task's own expression.
 extern "C" void piaReplWait(Gate *g, Gate *from) {
   for (;;) {
-    if (!g->blocked.load(std::memory_order_seq_cst)) return;
-    if (from && from->blocked.load(std::memory_order_seq_cst)) return;
+    if (!g->blocked.load(std::memory_order_seq_cst))
+      return;
+    if (from && from->blocked.load(std::memory_order_seq_cst))
+      return;
     g->active.fetch_sub(1, std::memory_order_seq_cst);
-    while (g->blocked.load(std::memory_order_seq_cst)) std::this_thread::yield();
+    while (g->blocked.load(std::memory_order_seq_cst))
+      std::this_thread::yield();
     g->active.fetch_add(1, std::memory_order_seq_cst);
   }
 }
@@ -103,9 +106,11 @@ std::string shadowing(const std::string &n, unsigned cell) {
 // parameters. Their types are compared after lowering.
 bool sameParams(const Node &a, const Node &b) {
   const Node &pa = *a.kids[0], &pb = *b.kids[0];
-  if (pa.kids.size() != pb.kids.size()) return false;
+  if (pa.kids.size() != pb.kids.size())
+    return false;
   for (size_t i = 0; i < pa.kids.size(); ++i)
-    if (pa.kids[i]->kind != pb.kids[i]->kind) return false;
+    if (pa.kids[i]->kind != pb.kids[i]->kind)
+      return false;
   return true;
 }
 
@@ -114,9 +119,11 @@ bool sameParams(const Node &a, const Node &b) {
 void renameNames(Node &n, const std::map<std::string, std::string> &map) {
   if (n.kind == NodeKind::Name && n.flags.empty()) {
     auto it = map.find(n.text);
-    if (it != map.end()) n.text = it->second;
+    if (it != map.end())
+      n.text = it->second;
   }
-  for (NodePtr &k : n.kids) renameNames(*k, map);
+  for (NodePtr &k : n.kids)
+    renameNames(*k, map);
 }
 
 // The old definition's contract, with the new one's parameter names.
@@ -127,7 +134,8 @@ NodePtr contractFor(const Node &oldItem, const Node &newItem) {
   for (size_t i = 0; i < po.kids.size() && i < pn.kids.size(); ++i)
     if (po.kids[i]->text != pn.kids[i]->text)
       map[po.kids[i]->text] = pn.kids[i]->text;
-  if (!map.empty()) renameNames(*c, map);
+  if (!map.empty())
+    renameNames(*c, map);
   return c;
 }
 
@@ -155,11 +163,13 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
   auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
   size_t prefix = std::strlen(kInternalPrefix);
   auto voidTy = mlir::LLVM::LLVMVoidType::get(ctx);
-  auto i64 = mlir::IntegerType::get(ctx, 64), i32 = mlir::IntegerType::get(ctx, 32);
+  auto i64 = mlir::IntegerType::get(ctx, 64),
+       i32 = mlir::IntegerType::get(ctx, 32);
   auto i8 = mlir::IntegerType::get(ctx, 8);
   auto waitTy = mlir::LLVM::LLVMFunctionType::get(voidTy, {ptr, ptr});
   auto global = [&](const std::string &name) {
-    if (m.lookupSymbol(name)) return;
+    if (m.lookupSymbol(name))
+      return;
     b.setInsertionPointToStart(m.getBody());
     build<mlir::LLVM::GlobalOp>(b, m.getLoc(), ptr, /*isConstant=*/false,
                                 mlir::LLVM::Linkage::External, name,
@@ -191,7 +201,8 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
       auto caller = c->getParentOfType<mlir::LLVM::LLVMFuncOp>();
       llvm::StringRef cn = caller.getName();
       b.setInsertionPoint(c);
-      if (cn.starts_with(kInternalPrefix) && defs.count(cn.drop_front(prefix).str())) {
+      if (cn.starts_with(kInternalPrefix) &&
+          defs.count(cn.drop_front(prefix).str())) {
         std::string fg = kGatePrefix + cn.drop_front(prefix).str();
         global(fg);
         b.setInsertionPoint(c);
@@ -207,9 +218,10 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
                                          llvm::ArrayRef<mlir::LLVM::GEPArg>{8});
       auto blocked = build<mlir::LLVM::LoadOp>(b, l, i32, bp, /*alignment=*/4);
       blocked.setOrdering(mlir::LLVM::AtomicOrdering::seq_cst);
-      auto zero = build<mlir::LLVM::ConstantOp>(b, l, i32, b.getI32IntegerAttr(0));
-      auto isBlocked = build<mlir::LLVM::ICmpOp>(b, l, mlir::LLVM::ICmpPredicate::ne,
-                                                 blocked, zero);
+      auto zero =
+          build<mlir::LLVM::ConstantOp>(b, l, i32, b.getI32IntegerAttr(0));
+      auto isBlocked = build<mlir::LLVM::ICmpOp>(
+          b, l, mlir::LLVM::ICmpPredicate::ne, blocked, zero);
       mlir::Block *before = c->getBlock();
       mlir::Block *cont = before->splitBlock(c);
       mlir::Block *slow = b.createBlock(cont);
@@ -221,7 +233,8 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
     }
     b.setInsertionPoint(c);
     auto addr = build<mlir::LLVM::AddressOfOp>(b, c.getLoc(), ptr, slot);
-    auto fp = build<mlir::LLVM::LoadOp>(b, c.getLoc(), ptr, addr, /*alignment=*/8);
+    auto fp =
+        build<mlir::LLVM::LoadOp>(b, c.getLoc(), ptr, addr, /*alignment=*/8);
     fp.setOrdering(mlir::LLVM::AtomicOrdering::acquire);
     llvm::SmallVector<mlir::Value> operands{fp};
     operands.append(c.getArgOperands().begin(), c.getArgOperands().end());
@@ -236,7 +249,8 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
     }
   }
   for (const std::string &def : defs)
-    if (auto f = m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(kInternalPrefix + def)) {
+    if (auto f =
+            m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(kInternalPrefix + def)) {
       f.setLinkage(mlir::LLVM::Linkage::External);
     }
   return mlir::success();
@@ -244,20 +258,24 @@ mlir::LogicalResult callThroughSlots(mlir::ModuleOp m,
 
 std::string trim(std::string_view s) {
   size_t b = 0, e = s.size();
-  while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
-  while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+  while (b < e && std::isspace(static_cast<unsigned char>(s[b])))
+    ++b;
+  while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1])))
+    --e;
   return std::string(s.substr(b, e - b));
 }
 
 std::string trimRight(std::string_view s) {
   size_t e = s.size();
-  while (e > 0 && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+  while (e > 0 && std::isspace(static_cast<unsigned char>(s[e - 1])))
+    --e;
   return std::string(s.substr(0, e));
 }
 
 unsigned countLines(std::string_view s) {
   unsigned n = 0;
-  for (char c : s) n += c == '\n';
+  for (char c : s)
+    n += c == '\n';
   return n;
 }
 
@@ -265,7 +283,8 @@ unsigned countLines(std::string_view s) {
 std::string joinNames(const std::vector<std::string> &names, const char *last) {
   std::string out;
   for (size_t i = 0; i < names.size(); ++i) {
-    if (i) out += i + 1 == names.size() ? std::string(" ") + last + " " : ", ";
+    if (i)
+      out += i + 1 == names.size() ? std::string(" ") + last + " " : ", ";
     out += "'" + names[i] + "'";
   }
   return out;
@@ -277,17 +296,21 @@ std::string plural(size_t n, const char *word) {
 
 // "[3]:2:5", the way locations inside cells are written.
 std::string formatWhere(const Where &w) {
-  if (w.cell == 0) return "";
+  if (w.cell == 0)
+    return "";
   std::string out = "[" + std::to_string(w.cell) + "]";
-  if (w.line) out += ":" + std::to_string(w.line);
-  if (w.column) out += ":" + std::to_string(w.column);
+  if (w.line)
+    out += ":" + std::to_string(w.line);
+  if (w.column)
+    out += ":" + std::to_string(w.column);
   return out;
 }
 
 // The C name of a function's entry point (docs/codegen.md, "C ABI").
 std::string cName(const std::string &name) {
   std::string out;
-  for (char c : name) out += c == '\'' ? std::string("_prime") : std::string(1, c);
+  for (char c : name)
+    out += c == '\'' ? std::string("_prime") : std::string(1, c);
   return out;
 }
 
@@ -295,25 +318,26 @@ std::string cName(const std::string &name) {
 // the user wrote it so the environment can be parsed again with each cell.
 struct Entry {
   unsigned cell = 0;
-  unsigned line = 1;       // the item's first line within its cell
-  std::string source;      // the item, without trailing whitespace
-  std::string kind;        // "let", "type", "meta", "operator", "expansion"
-  std::string head;        // the name it was written with, if any
-  std::vector<std::string> names;  // what it defines, after expansion
+  unsigned line = 1;  // the item's first line within its cell
+  std::string source; // the item, without trailing whitespace
+  std::string kind;   // "let", "type", "meta", "operator", "expansion"
+  std::string head;   // the name it was written with, if any
+  std::vector<std::string> names; // what it defines, after expansion
 };
 
 // Where a stretch of the combined source came from.
 struct Segment {
-  uint32_t offset = 0, end = 0;  // byte range in the combined source
-  unsigned vline = 1;            // its first line there
-  unsigned cell = 0, line = 1;   // and in its cell
-  int entry = -1;                // index into the env, or -1 for the cell
+  uint32_t offset = 0, end = 0; // byte range in the combined source
+  unsigned vline = 1;           // its first line there
+  unsigned cell = 0, line = 1;  // and in its cell
+  int entry = -1;               // index into the env, or -1 for the cell
 };
 
 // A function's type as Pia writes it: `(a : u8) -> (b : u8) -> u8`, or the
 // result type alone for a constant.
 // The states a function takes are left out: they are not its arguments.
-std::string functionType(mlir::func::FuncOp fn, const std::set<std::string> &states = {},
+std::string functionType(mlir::func::FuncOp fn,
+                         const std::set<std::string> &states = {},
                          bool unit = false) {
   mlir::FunctionType t = fn.getFunctionType();
   std::string out = unit ? "() -> " : "";
@@ -323,8 +347,9 @@ std::string functionType(mlir::func::FuncOp fn, const std::set<std::string> &sta
     if (!fn.isExternal())
       if (auto nl = mlir::dyn_cast<mlir::NameLoc>(fn.getArgument(i).getLoc()))
         name = nl.getName().str();
-    name = name.substr(0, name.find('#'));  // a quote's renamed parameter
-    if (states.count(name)) continue;
+    name = name.substr(0, name.find('#')); // a quote's renamed parameter
+    if (states.count(name))
+      continue;
     std::string mods;
     if (auto a = fn.getArgAttrOfType<mlir::StringAttr>(
             i, PiaDialect::getModifiersAttrName()))
@@ -352,7 +377,8 @@ struct Layout {
 };
 
 std::optional<Layout> layoutOf(mlir::Type t) {
-  if (t.isInteger(1)) return Layout{1, 1};
+  if (t.isInteger(1))
+    return Layout{1, 1};
   if (auto it = mlir::dyn_cast<IntType>(t)) {
     size_t bytes = it.getStorageWidth() / 8;
     return Layout{bytes, bytes};
@@ -361,7 +387,8 @@ std::optional<Layout> layoutOf(mlir::Type t) {
     Layout l;
     for (mlir::Type f : r.getFieldTypes()) {
       std::optional<Layout> fl = layoutOf(f);
-      if (!fl) return std::nullopt;
+      if (!fl)
+        return std::nullopt;
       l.size = (l.size + fl->align - 1) / fl->align * fl->align + fl->size;
       l.align = std::max(l.align, fl->align);
     }
@@ -375,18 +402,22 @@ std::string formatInt(IntType it, const unsigned char *p) {
   unsigned bytes = it.getStorageWidth() / 8;
   bool isSigned = it.getLo().isNegative();
   uint64_t u = 0;
-  std::memcpy(&u, p, bytes);  // little endian, like every target Pia has
-  if (!isSigned) return std::to_string(u);
+  std::memcpy(&u, p, bytes); // little endian, like every target Pia has
+  if (!isSigned)
+    return std::to_string(u);
   unsigned bits = bytes * 8;
-  int64_t s = bits == 64 ? static_cast<int64_t>(u)
-                         : static_cast<int64_t>(u << (64 - bits)) >> (64 - bits);
+  int64_t s = bits == 64
+                  ? static_cast<int64_t>(u)
+                  : static_cast<int64_t>(u << (64 - bits)) >> (64 - bits);
   return std::to_string(s);
 }
 
 // Formats the value of type `t` stored at `p` in C layout.
 std::string formatValue(mlir::Type t, const unsigned char *p) {
-  if (t.isInteger(1)) return *p ? "true" : "false";
-  if (auto it = mlir::dyn_cast<IntType>(t)) return formatInt(it, p);
+  if (t.isInteger(1))
+    return *p ? "true" : "false";
+  if (auto it = mlir::dyn_cast<IntType>(t))
+    return formatInt(it, p);
   auto r = mlir::cast<RecordType>(t);
   std::string out = "{ ";
   size_t offset = 0;
@@ -394,7 +425,8 @@ std::string formatValue(mlir::Type t, const unsigned char *p) {
     mlir::Type f = r.getFieldTypes()[i];
     Layout fl = *layoutOf(f);
     offset = (offset + fl.align - 1) / fl.align * fl.align;
-    if (i) out += "; ";
+    if (i)
+      out += "; ";
     out += r.getFieldNames()[i].getValue().str() + " = " +
            formatValue(f, p + offset);
     offset += fl.size;
@@ -409,20 +441,29 @@ std::string callAndFormat(void *fp, mlir::Type t) {
     reinterpret_cast<void (*)()>(fp)();
     return "()";
   }
-  if (t.isInteger(1)) return reinterpret_cast<bool (*)()>(fp)() ? "true" : "false";
+  if (t.isInteger(1))
+    return reinterpret_cast<bool (*)()>(fp)() ? "true" : "false";
   if (auto it = mlir::dyn_cast<IntType>(t)) {
     unsigned char buf[8] = {0};
     bool s = it.getLo().isNegative();
     auto store = [&](auto v) { std::memcpy(buf, &v, sizeof v); };
     switch (it.getStorageWidth()) {
-      case 8: s ? store(reinterpret_cast<int8_t (*)()>(fp)())
-                : store(reinterpret_cast<uint8_t (*)()>(fp)()); break;
-      case 16: s ? store(reinterpret_cast<int16_t (*)()>(fp)())
-                 : store(reinterpret_cast<uint16_t (*)()>(fp)()); break;
-      case 32: s ? store(reinterpret_cast<int32_t (*)()>(fp)())
-                 : store(reinterpret_cast<uint32_t (*)()>(fp)()); break;
-      default: s ? store(reinterpret_cast<int64_t (*)()>(fp)())
-                 : store(reinterpret_cast<uint64_t (*)()>(fp)()); break;
+    case 8:
+      s ? store(reinterpret_cast<int8_t (*)()>(fp)())
+        : store(reinterpret_cast<uint8_t (*)()>(fp)());
+      break;
+    case 16:
+      s ? store(reinterpret_cast<int16_t (*)()>(fp)())
+        : store(reinterpret_cast<uint16_t (*)()>(fp)());
+      break;
+    case 32:
+      s ? store(reinterpret_cast<int32_t (*)()>(fp)())
+        : store(reinterpret_cast<uint32_t (*)()>(fp)());
+      break;
+    default:
+      s ? store(reinterpret_cast<int64_t (*)()>(fp)())
+        : store(reinterpret_cast<uint64_t (*)()>(fp)());
+      break;
     }
     return formatInt(it, buf);
   }
@@ -430,7 +471,8 @@ std::string callAndFormat(void *fp, mlir::Type t) {
   Layout l = *layoutOf(t);
   std::vector<uint64_t> storage(l.size / 8 + 1, 0);
   reinterpret_cast<void (*)(void *)>(fp)(storage.data());
-  return formatValue(t, reinterpret_cast<const unsigned char *>(storage.data()));
+  return formatValue(t,
+                     reinterpret_cast<const unsigned char *>(storage.data()));
 }
 
 bool showable(mlir::Type t) { return !t || layoutOf(t).has_value(); }
@@ -446,14 +488,22 @@ void callInto(void *fp, mlir::Type t, unsigned char *out) {
   auto it = mlir::cast<IntType>(t);
   bool s = it.getLo().isNegative();
   switch (it.getStorageWidth()) {
-    case 8: s ? store(reinterpret_cast<int8_t (*)()>(fp)())
-              : store(reinterpret_cast<uint8_t (*)()>(fp)()); break;
-    case 16: s ? store(reinterpret_cast<int16_t (*)()>(fp)())
-               : store(reinterpret_cast<uint16_t (*)()>(fp)()); break;
-    case 32: s ? store(reinterpret_cast<int32_t (*)()>(fp)())
-               : store(reinterpret_cast<uint32_t (*)()>(fp)()); break;
-    default: s ? store(reinterpret_cast<int64_t (*)()>(fp)())
-               : store(reinterpret_cast<uint64_t (*)()>(fp)()); break;
+  case 8:
+    s ? store(reinterpret_cast<int8_t (*)()>(fp)())
+      : store(reinterpret_cast<uint8_t (*)()>(fp)());
+    break;
+  case 16:
+    s ? store(reinterpret_cast<int16_t (*)()>(fp)())
+      : store(reinterpret_cast<uint16_t (*)()>(fp)());
+    break;
+  case 32:
+    s ? store(reinterpret_cast<int32_t (*)()>(fp)())
+      : store(reinterpret_cast<uint32_t (*)()>(fp)());
+    break;
+  default:
+    s ? store(reinterpret_cast<int64_t (*)()>(fp)())
+      : store(reinterpret_cast<uint64_t (*)()>(fp)());
+    break;
   }
 }
 
@@ -461,37 +511,44 @@ void callInto(void *fp, mlir::Type t, unsigned char *out) {
 // `e`'s entry point with the states' storage, which the session registers as
 // `__pia_state_<name>`, so the thunk has the signature of an expression
 // that takes nothing.
-mlir::LogicalResult addThunks(mlir::ModuleOp m,
-                              const std::map<std::string, std::vector<std::string>> &evals) {
+mlir::LogicalResult
+addThunks(mlir::ModuleOp m,
+          const std::map<std::string, std::vector<std::string>> &evals) {
   mlir::MLIRContext *ctx = m.getContext();
   mlir::OpBuilder b(ctx);
   auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
   for (const auto &[eval, states] : evals) {
     auto entry = m.lookupSymbol<mlir::LLVM::LLVMFuncOp>(cName(eval));
-    if (!entry) continue;
+    if (!entry)
+      continue;
     mlir::LLVM::LLVMFunctionType ty = entry.getFunctionType();
-    if (ty.getNumParams() < states.size()) return mlir::failure();
+    if (ty.getNumParams() < states.size())
+      return mlir::failure();
     for (size_t i = 0; i < states.size(); ++i)
       if (!mlir::isa<mlir::LLVM::LLVMPointerType>(ty.getParamType(i)))
         return mlir::failure();
     for (const std::string &st : states)
       if (!m.lookupSymbol(kStatePrefix + st)) {
         b.setInsertionPointToStart(m.getBody());
-        build<mlir::LLVM::GlobalOp>(b, m.getLoc(), b.getI64Type(), /*isConstant=*/false,
-                                    mlir::LLVM::Linkage::External, kStatePrefix + st,
-                                    mlir::Attribute());
+        build<mlir::LLVM::GlobalOp>(b, m.getLoc(), b.getI64Type(),
+                                    /*isConstant=*/false,
+                                    mlir::LLVM::Linkage::External,
+                                    kStatePrefix + st, mlir::Attribute());
       }
     llvm::SmallVector<mlir::Type> rest(ty.getParams().begin() + states.size(),
                                        ty.getParams().end());
     auto thunkTy = mlir::LLVM::LLVMFunctionType::get(ty.getReturnType(), rest);
     b.setInsertionPointToEnd(m.getBody());
-    auto thunk = build<mlir::LLVM::LLVMFuncOp>(b, m.getLoc(), kThunkPrefix + eval, thunkTy);
+    auto thunk = build<mlir::LLVM::LLVMFuncOp>(b, m.getLoc(),
+                                               kThunkPrefix + eval, thunkTy);
     mlir::Block *blk = thunk.addEntryBlock(b);
     b.setInsertionPointToStart(blk);
     llvm::SmallVector<mlir::Value> args;
     for (const std::string &st : states)
-      args.push_back(build<mlir::LLVM::AddressOfOp>(b, m.getLoc(), ptr, kStatePrefix + st));
-    for (mlir::BlockArgument a : blk->getArguments()) args.push_back(a);
+      args.push_back(build<mlir::LLVM::AddressOfOp>(b, m.getLoc(), ptr,
+                                                    kStatePrefix + st));
+    for (mlir::BlockArgument a : blk->getArguments())
+      args.push_back(a);
     auto call = build<mlir::LLVM::CallOp>(b, m.getLoc(), entry, args);
     if (mlir::isa<mlir::LLVM::LLVMVoidType>(ty.getReturnType()))
       build<mlir::LLVM::ReturnOp>(b, m.getLoc(), mlir::ValueRange{});
@@ -503,8 +560,10 @@ mlir::LogicalResult addThunks(mlir::ModuleOp m,
 
 // The names of the top-level functions that `n` refers to.
 void collectRefs(const Node &n, std::set<std::string> &out) {
-  if (n.kind == NodeKind::Name) out.insert(n.text);
-  for (const NodePtr &k : n.kids) collectRefs(*k, out);
+  if (n.kind == NodeKind::Name)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids)
+    collectRefs(*k, out);
 }
 
 const char *helpText =
@@ -525,13 +584,15 @@ const char *helpText =
     "  :help             this list\n"
     "  :quit             leave\n"
     "A definition joins the environment only if everything still verifies.\n"
-    "`let x : mutable T invariant p = v` is a state: it keeps its value, every\n"
+    "`let x : mutable T invariant p = v` is a state: it keeps its value, "
+    "every\n"
     "definition keeps p, and `:redef` of it can migrate `old x`.\n"
     "While a task runs, a definition it can reach is swapped into it live: at\n"
-    "once if the new body is proved against the old contract, or else together\n"
+    "once if the new body is proved against the old contract, or else "
+    "together\n"
     "with its callers, at a moment when no task is running any of them.\n";
 
-}  // namespace
+} // namespace
 
 struct Session::Impl {
   Options options;
@@ -541,7 +602,7 @@ struct Session::Impl {
   // The obligations of each function, from the last cell that committed.
   std::map<std::string, std::vector<Event>> proofs;
   std::map<std::string, std::string> types;  // name -> type, as shown
-  std::map<std::string, std::string> shapes;  // name -> type, unnamed
+  std::map<std::string, std::string> shapes; // name -> type, unnamed
   // What each definition refers to, for the reach of running tasks.
   std::map<std::string, std::set<std::string>> refs;
 
@@ -554,8 +615,8 @@ struct Session::Impl {
   struct Task;
   std::vector<std::unique_ptr<Task>> tasks;
   unsigned taskCount = 0;
-  std::string pendingSpawn;                 // the expression :spawn runs
-  std::set<std::string> pendingSpawnRefs;   // and what it refers to
+  std::string pendingSpawn;               // the expression :spawn runs
+  std::set<std::string> pendingSpawnRefs; // and what it refers to
 
   // State (ADR 0031, "State"): each state's storage, which compiled code
   // reaches as `__pia_state_<name>`, and the states each definition takes.
@@ -586,7 +647,8 @@ struct Session::Impl {
     // its code must not be freed under it.
     for (auto &t : tasks) {
       if (t->done.load(std::memory_order_acquire)) {
-        if (t->thread.joinable()) t->thread.join();
+        if (t->thread.joinable())
+          t->thread.join();
       } else {
         t->thread.detach();
         new std::shared_ptr<mlir::ExecutionEngine>(t->engine);
@@ -618,9 +680,11 @@ struct Session::Impl {
   Where whereOf(const Attempt &a, const std::string &loc) const {
     // "<repl>:line:col"
     size_t c = loc.rfind(':');
-    if (c == std::string::npos || c == 0) return Where{};
+    if (c == std::string::npos || c == 0)
+      return Where{};
     size_t l = loc.rfind(':', c - 1);
-    if (l == std::string::npos) return Where{};
+    if (l == std::string::npos)
+      return Where{};
     unsigned line = std::strtoul(loc.c_str() + l + 1, nullptr, 10);
     unsigned col = std::strtoul(loc.c_str() + c + 1, nullptr, 10);
     return where(a, line, col);
@@ -628,7 +692,8 @@ struct Session::Impl {
 
   const Segment *segmentAt(const Attempt &a, uint32_t offset) const {
     for (const Segment &s : a.segments)
-      if (offset >= s.offset && offset < s.end) return &s;
+      if (offset >= s.offset && offset < s.end)
+        return &s;
     return nullptr;
   }
 
@@ -696,21 +761,24 @@ struct Session::Impl {
     CellResult r;
     r.cell = cellNo;
     std::vector<Entry> base = env;
-    std::set<int> doomed;  // entries a redefinition replaces
+    std::set<int> doomed; // entries a redefinition replaces
 
     Attempt a = parse(base, text, cellNo);
     // A statement such as `count <- 7` is not a top-level item, but a cell
     // can be one: read it as an expression.
     if (!a.errors.empty() && trim(text).rfind("let", 0) != 0) {
       Attempt w = parse(base, text, cellNo, true);
-      if (w.errors.empty()) a = std::move(w);
+      if (w.errors.empty())
+        a = std::move(w);
     }
-    if (!a.errors.empty()) return fail(r, std::move(a.errors));
+    if (!a.errors.empty())
+      return fail(r, std::move(a.errors));
 
     std::vector<Item> items;
     for (size_t i = 0; i < a.tree->kids.size(); ++i) {
       const Node &k = *a.tree->kids[i];
-      if (k.loc.offset < a.cellOffset) continue;
+      if (k.loc.offset < a.cellOffset)
+        continue;
       uint32_t end = i + 1 < a.tree->kids.size()
                          ? a.tree->kids[i + 1]->loc.offset
                          : static_cast<uint32_t>(a.source.size());
@@ -719,9 +787,8 @@ struct Session::Impl {
       it.offset = k.loc.offset;
       it.entry.cell = cellNo;
       it.entry.line = where(a, k.loc.line, k.loc.column).line;
-      it.entry.source =
-          trimRight(std::string_view(a.source).substr(k.loc.offset,
-                                                       end - k.loc.offset));
+      it.entry.source = trimRight(
+          std::string_view(a.source).substr(k.loc.offset, end - k.loc.offset));
       if (k.kind == NodeKind::LetItem) {
         it.entry.head = k.text;
         it.entry.kind = k.flags.find("meta") != std::string::npos ? "meta"
@@ -732,14 +799,14 @@ struct Session::Impl {
         it.entry.head = "(" + k.text + ")";
         it.entry.kind = "operator";
       } else if (k.kind == NodeKind::ExprItem) {
-        it.entry.kind = "expansion";  // until we know it is an expression
+        it.entry.kind = "expansion"; // until we know it is an expression
       } else {
         it.entry.kind = "item";
       }
       items.push_back(std::move(it));
     }
     if (items.empty() && mode != Mode::Check && mode != Mode::Type)
-      return r;  // only comments
+      return r; // only comments
     if (mode == Mode::Spawn &&
         (items.size() != 1 || items[0].kind != NodeKind::ExprItem)) {
       error(r.events, ":spawn needs one expression");
@@ -749,7 +816,8 @@ struct Session::Impl {
 
     // What the cell's own definitions replace.
     for (const Item &it : items) {
-      if (it.entry.head.empty()) continue;
+      if (it.entry.head.empty())
+        continue;
       int owner = ownerOf(base, it.entry.head, doomed);
       if (owner < 0) {
         if (mode == Mode::Redefine) {
@@ -765,7 +833,8 @@ struct Session::Impl {
         r.ok = false;
       } else if (base[owner].kind == "expansion") {
         error(r.events,
-              "'" + it.entry.head + "' was generated by a metaprogram in cell [" +
+              "'" + it.entry.head +
+                  "' was generated by a metaprogram in cell [" +
                   std::to_string(base[owner].cell) + "]; redefine that instead",
               Where{cellNo, it.entry.line, 1});
         r.ok = false;
@@ -773,7 +842,8 @@ struct Session::Impl {
         doomed.insert(owner);
       }
     }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
 
     // Run the metaprograms, with the definitions being replaced still in
     // place, so the old and new versions can be compared.
@@ -782,21 +852,28 @@ struct Session::Impl {
     mo.live = true;
     meta::expand(*a.tree, d, mo);
     takeDiagnostics(a, d);
-    if (!a.errors.empty()) return fail(r, std::move(a.errors));
+    if (!a.errors.empty())
+      return fail(r, std::move(a.errors));
 
     // `redefine` (Pia.Live) marks generated definitions as replacements.
     for (const NodePtr &k : a.tree->kids) {
-      if (k->kind != NodeKind::LetItem) continue;
+      if (k->kind != NodeKind::LetItem)
+        continue;
       size_t at = k->flags.find("redef");
-      if (at == std::string::npos) continue;
+      if (at == std::string::npos)
+        continue;
       k->flags.erase(at, 5);
-      while (!k->flags.empty() && k->flags.back() == ' ') k->flags.pop_back();
-      while (!k->flags.empty() && k->flags.front() == ' ') k->flags.erase(0, 1);
+      while (!k->flags.empty() && k->flags.back() == ' ')
+        k->flags.pop_back();
+      while (!k->flags.empty() && k->flags.front() == ' ')
+        k->flags.erase(0, 1);
       for (const NodePtr &o : a.tree->kids) {
-        if (o.get() == k.get() || o->kind != NodeKind::LetItem || o->text != k->text)
+        if (o.get() == k.get() || o->kind != NodeKind::LetItem ||
+            o->text != k->text)
           continue;
         const Segment *s = segmentAt(a, o->loc.offset);
-        if (!s || s->entry < 0 || doomed.count(s->entry)) continue;
+        if (!s || s->entry < 0 || doomed.count(s->entry))
+          continue;
         if (base[s->entry].kind != "let" && base[s->entry].kind != "type" &&
             base[s->entry].kind != "meta") {
           error(r.events,
@@ -810,13 +887,15 @@ struct Session::Impl {
         doomed.insert(s->entry);
       }
     }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
 
     // Take the replaced definitions out, keeping a copy of each.
     std::vector<std::string> replaced;
     std::map<std::string, NodePtr> oldItems;
     for (int i : doomed)
-      for (const std::string &n : base[i].names) replaced.push_back(n);
+      for (const std::string &n : base[i].names)
+        replaced.push_back(n);
     for (auto it = a.tree->kids.begin(); it != a.tree->kids.end();) {
       const Segment *s = segmentAt(a, (*it)->loc.offset);
       if (s && s->entry >= 0 && doomed.count(s->entry) &&
@@ -829,19 +908,21 @@ struct Session::Impl {
       }
     }
 
-    std::map<int, std::vector<std::string>> envNames;  // entry -> names
+    std::map<int, std::vector<std::string>> envNames; // entry -> names
     std::vector<std::string> cellNames;
     std::set<uint32_t> exprOffsets;
     std::vector<std::pair<std::string, mlir::Type>> evals;
     unsigned evalCount = 0;
     for (Item &it : items)
-      if (!it.entry.head.empty()) it.entry.names = {it.entry.head};
+      if (!it.entry.head.empty())
+        it.entry.names = {it.entry.head};
     // The cell item a generated definition came from: the last one that
     // starts at or before its location (the expansion site).
     auto cellItemAt = [&](uint32_t offset) -> Item * {
       Item *best = nullptr;
       for (Item &it : items)
-        if (it.offset <= offset) best = &it;
+        if (it.offset <= offset)
+          best = &it;
       return best;
     };
     std::map<std::string, const Node *> newItems;
@@ -861,17 +942,19 @@ struct Session::Impl {
         k = std::move(let);
         continue;
       }
-      if (k->kind != NodeKind::LetItem || !s) continue;
+      if (k->kind != NodeKind::LetItem || !s)
+        continue;
       if (s->entry >= 0) {
         envNames[s->entry].push_back(k->text);
-        if (oldItems.count(k->text)) newItems[k->text] = k.get();
+        if (oldItems.count(k->text))
+          newItems[k->text] = k.get();
         continue;
       }
       cellNames.push_back(k->text);
       newItems[k->text] = k.get();
       if (Item *it = cellItemAt(k->loc.offset))
-        if (std::find(it->entry.names.begin(), it->entry.names.end(), k->text) ==
-            it->entry.names.end())
+        if (std::find(it->entry.names.begin(), it->entry.names.end(),
+                      k->text) == it->entry.names.end())
           it->entry.names.push_back(k->text);
     }
     for (Item &it : items)
@@ -880,9 +963,11 @@ struct Session::Impl {
     // What each older definition defines now: a metaprogram it calls may
     // generate different names than it did.
     for (size_t i = 0; i < base.size(); ++i) {
-      if (doomed.count(static_cast<int>(i))) continue;
+      if (doomed.count(static_cast<int>(i)))
+        continue;
       std::vector<std::string> names;
-      if (!base[i].head.empty()) names.push_back(base[i].head);
+      if (!base[i].head.empty())
+        names.push_back(base[i].head);
       for (const std::string &n : envNames[static_cast<int>(i)])
         if (std::find(names.begin(), names.end(), n) == names.end())
           names.push_back(n);
@@ -890,19 +975,24 @@ struct Session::Impl {
     }
     for (const Item &it : items)
       for (const std::string &n : it.entry.names) {
-        if (n == it.entry.head) continue;  // checked above
+        if (n == it.entry.head)
+          continue; // checked above
         int owner = ownerOf(base, n, doomed);
-        if (owner < 0) continue;
-        if (oldItems.count(n)) continue;  // a `redefine`
+        if (owner < 0)
+          continue;
+        if (oldItems.count(n))
+          continue; // a `redefine`
         error(r.events, shadowing(n, base[owner].cell),
               Where{cellNo, it.entry.line, 1});
         r.ok = false;
       }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
 
     // State: every definition that uses one takes it as a buffer.
     std::vector<Node *> oldList;
-    for (auto &[n, item] : oldItems) oldList.push_back(item.get());
+    for (auto &[n, item] : oldItems)
+      oldList.push_back(item.get());
     std::vector<std::pair<syntax::SourceLoc, std::string>> stateErrors;
     StateUse su = rewriteState(
         *a.tree, oldList,
@@ -911,42 +1001,53 @@ struct Session::Impl {
           return !seg || seg->entry < 0;
         },
         stateErrors);
-    for (auto &[loc, msg] : stateErrors) error(a.errors, msg, where(a, loc.line, loc.column));
-    if (!a.errors.empty()) return fail(r, std::move(a.errors));
+    for (auto &[loc, msg] : stateErrors)
+      error(a.errors, msg, where(a, loc.line, loc.column));
+    if (!a.errors.empty())
+      return fail(r, std::move(a.errors));
     std::set<std::string> stateNames;
     for (const StateDecl &d : su.states) {
       stateNames.insert(d.name);
-      newItems.erase(d.name);  // replaced by its initial value's function
+      newItems.erase(d.name); // replaced by its initial value's function
     }
-    std::set<std::string> cellStates;  // the states this cell defines
+    std::set<std::string> cellStates; // the states this cell defines
     for (const std::string &n : cellNames)
-      if (stateNames.count(n)) cellStates.insert(n);
+      if (stateNames.count(n))
+        cellStates.insert(n);
     // A state a running task uses is the task's alone: nothing else may
     // read, write, replace or remove it while the task runs.
     {
       std::set<std::string> touched(cellStates.begin(), cellStates.end());
       for (auto &[name, t] : evals) {
         auto u = su.uses.find(name);
-        if (u != su.uses.end()) touched.insert(u->second.begin(), u->second.end());
+        if (u != su.uses.end())
+          touched.insert(u->second.begin(), u->second.end());
       }
-      for (const std::string &n : forgotten) touched.insert(n);
-      for (const std::string &n : replaced) touched.insert(n);
+      for (const std::string &n : forgotten)
+        touched.insert(n);
+      for (const std::string &n : replaced)
+        touched.insert(n);
       for (const std::string &st : touched) {
         std::string owners = tasksUsingState(st);
-        if (owners.empty()) continue;
-        error(r.events, "the state '" + st + "' belongs to a running task (" + owners +
-                            ") until it finishes; wait for it with :wait",
+        if (owners.empty())
+          continue;
+        error(r.events,
+              "the state '" + st + "' belongs to a running task (" + owners +
+                  ") until it finishes; wait for it with :wait",
               Where{cellNo, 0, 0});
         r.ok = false;
       }
-      if (!r.ok) return r;
+      if (!r.ok)
+        return r;
     }
     pendingThunks.clear();
     for (auto &[name, t] : evals) {
       auto u = su.uses.find(name);
-      if (u != su.uses.end()) pendingThunks[name] = u->second;
+      if (u != su.uses.end())
+        pendingThunks[name] = u->second;
     }
-    std::set<std::string> migrating;  // states whose new value comes from the old
+    // The states whose new value comes from the old one.
+    std::set<std::string> migrating;
     for (const StateDecl &d : su.states)
       if (d.migrates) {
         migrating.insert(d.name);
@@ -957,18 +1058,21 @@ struct Session::Impl {
     // one they were proved against (ADR 0031): its new body is proved
     // against the old contract, as a hidden function.
     std::set<std::string> live = reachedByTasks();
-    std::map<std::string, std::string> users;  // name -> "task 1, 2"
-    for (const std::string &n : live) users[n] = tasksReaching(n);
+    std::map<std::string, std::string> users; // name -> "task 1, 2"
+    for (const std::string &n : live)
+      users[n] = tasksReaching(n);
     std::vector<std::string> mustRefine;
     for (const std::string &n : replaced)
-      if (live.count(n)) mustRefine.push_back(n);
+      if (live.count(n))
+        mustRefine.push_back(n);
     for (const std::string &n : forgotten)
       if (live.count(n)) {
         error(r.events, "'" + n + "' is in use by a running task (" +
                             tasksReaching(n) + "); wait for it with :wait");
         r.ok = false;
       }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
     // Why a definition a task can reach does not refine its old version.
     // Each such change is swapped together with its callers, at a moment
     // when no task is running any of them.
@@ -995,7 +1099,8 @@ struct Session::Impl {
       check->kids[2] = contractFor(*o->second, *nw->second);
       a.tree->add(std::move(check));
     }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
 
     // Lower the whole environment and the cell, capturing MLIR's own
     // diagnostics too.
@@ -1010,7 +1115,8 @@ struct Session::Impl {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         irgen::generate(*a.tree, kFile, ctx, gd);
     takeDiagnostics(a, gd);
-    for (Event &e : mlirErrors) a.errors.push_back(std::move(e));
+    for (Event &e : mlirErrors)
+      a.errors.push_back(std::move(e));
     mlirErrors.clear();
     if (!a.errors.empty()) {
       std::vector<std::string> changed = replaced;
@@ -1029,31 +1135,38 @@ struct Session::Impl {
     std::map<std::string, std::string> newTypes;
     std::map<std::string, mlir::Type> results;
     std::map<std::string, std::string> newShapes;
-    std::set<std::string> nullary;  // compiling replaces the func ops
+    std::set<std::string> nullary; // compiling replaces the func ops
     for (auto &[name, f] : fns) {
-      if (f.getFunctionType().getNumInputs() == 0) nullary.insert(name);
+      if (f.getFunctionType().getNumInputs() == 0)
+        nullary.insert(name);
       newTypes[name] = functionType(f, stateNames, su.unitFns.count(name) > 0);
       newShapes[name] = functionShape(f);
       mlir::FunctionType t = f.getFunctionType();
       results[name] = t.getNumResults() ? t.getResult(0) : mlir::Type();
     }
-    for (auto &[name, t] : evals) t = results[name];
+    for (auto &[name, t] : evals)
+      t = results[name];
     for (const StateDecl &d : su.states) {
-      if (!cellStates.count(d.name)) continue;
+      if (!cellStates.count(d.name))
+        continue;
       mlir::Type t = results[kInitPrefix + d.name];
       if (!t || !(t.isInteger(1) || mlir::isa<IntType>(t))) {
-        error(r.events, "the state '" + d.name + "' must be an integer or a bool, for now",
+        error(r.events,
+              "the state '" + d.name +
+                  "' must be an integer or a bool, for now",
               where(a, d.loc.line, d.loc.column));
         r.ok = false;
       }
     }
-    if (!r.ok) return r;
+    if (!r.ok)
+      return r;
     // A type that changed changes the shapes of the functions that use it,
     // whether or not they were redefined.
     for (const std::string &n : live)
       if (!refinesWhy.count(n) && shapes.count(n) && newShapes.count(n) &&
           newShapes[n] != shapes[n])
-        refinesWhy[n] = "its type changed from " + types[n] + " to " + newTypes[n];
+        refinesWhy[n] =
+            "its type changed from " + types[n] + " to " + newTypes[n];
 
     if (mode == Mode::Type) {
       for (auto &[name, t] : evals) {
@@ -1069,13 +1182,16 @@ struct Session::Impl {
     // Verify everything. The environment verified before, so whatever fails
     // now comes from this cell, or from a definition it replaced.
     std::set<std::string> mine(cellNames.begin(), cellNames.end());
-    for (auto &[name, t] : evals) mine.insert(name);
+    for (auto &[name, t] : evals)
+      mine.insert(name);
     verify::Options vo;
     vo.timeoutMs = options.timeoutMs;
     std::vector<verify::Outcome> outcomes = verify::verifyModule(*module, vo);
-    for (Event &e : mlirErrors) a.errors.push_back(std::move(e));
+    for (Event &e : mlirErrors)
+      a.errors.push_back(std::move(e));
     mlirErrors.clear();
-    if (!a.errors.empty()) return fail(r, std::move(a.errors));
+    if (!a.errors.empty())
+      return fail(r, std::move(a.errors));
 
     std::map<std::string, std::vector<Event>> proofs;
     size_t bad = 0, unproved = 0;
@@ -1093,19 +1209,23 @@ struct Session::Impl {
       if (o.function.rfind(kInitPrefix, 0) == 0)
         e.name = o.function.substr(std::strlen(kInitPrefix));
       switch (o.status) {
-        case verify::Status::Proved: e.status = "proved"; break;
-        case verify::Status::Failed: e.status = "failed"; break;
-        case verify::Status::Skipped:
-          e.status = allowed(e) ? "allowed" : "unproved";
-          break;
+      case verify::Status::Proved:
+        e.status = "proved";
+        break;
+      case verify::Status::Failed:
+        e.status = "failed";
+        break;
+      case verify::Status::Skipped:
+        e.status = allowed(e) ? "allowed" : "unproved";
+        break;
       }
       if (refinement) {
         std::string n = o.function.substr(std::strlen(kRefinesPrefix));
         if ((e.status == "failed" || e.status == "unproved") &&
             !refinesWhy.count(n))
-          refinesWhy[n] = "the new body does not meet the old contract: " +
-                          e.text + " (the old contract at " +
-                          formatWhere(e.where) + ")";
+          refinesWhy[n] =
+              "the new body does not meet the old contract: " + e.text +
+              " (the old contract at " + formatWhere(e.where) + ")";
         continue;
       }
       bad += e.status == "failed";
@@ -1115,15 +1235,18 @@ struct Session::Impl {
         proofEvents.push_back(std::move(e));
     }
     for (Event &e : proofEvents) {
-      if (e.name.rfind(kEvalPrefix, 0) == 0) e.name.clear();
+      if (e.name.rfind(kEvalPrefix, 0) == 0)
+        e.name.clear();
       r.events.push_back(std::move(e));
     }
     if (bad || unproved) {
       r.ok = false;
       std::string msg;
-      if (bad) msg = plural(bad, "obligation") + " failed";
+      if (bad)
+        msg = plural(bad, "obligation") + " failed";
       if (unproved)
-        msg += std::string(bad ? ", and " : "") + plural(unproved, "obligation") +
+        msg += std::string(bad ? ", and " : "") +
+               plural(unproved, "obligation") +
                " not proved (accept specific ones with :allow)";
       if (!replaced.empty())
         msg += "; the redefinition is not committed";
@@ -1141,23 +1264,29 @@ struct Session::Impl {
       if (k->kind == NodeKind::LetItem && !internalName(k->text))
         collectRefs(*k, newRefs[k->text]);
     std::set<std::string> quiet;
-    for (const auto &[n, why] : refinesWhy) quiet.insert(n);
+    for (const auto &[n, why] : refinesWhy)
+      quiet.insert(n);
     for (const std::string &m : live)
       for (const auto &[n, why] : refinesWhy) {
-        if (m == n) continue;
-        auto calls = [&](const std::map<std::string, std::set<std::string>> &rs) {
-          auto it = rs.find(m);
-          return it != rs.end() && it->second.count(n);
-        };
-        if (calls(refs) || calls(newRefs)) quiet.insert(m);
+        if (m == n)
+          continue;
+        auto calls =
+            [&](const std::map<std::string, std::set<std::string>> &rs) {
+              auto it = rs.find(m);
+              return it != rs.end() && it->second.count(n);
+            };
+        if (calls(refs) || calls(newRefs))
+          quiet.insert(m);
       }
 
     std::set<std::string> defs;
     for (const auto &[name, t] : newTypes)
-      if (!internalName(name)) defs.insert(name);
+      if (!internalName(name))
+        defs.insert(name);
     std::shared_ptr<mlir::ExecutionEngine> engine;
     if (!quiet.empty()) {
-      engine = options.run ? compile(*module, defs, r, mlirErrors, true) : nullptr;
+      engine =
+          options.run ? compile(*module, defs, r, mlirErrors, true) : nullptr;
       std::vector<std::string> busy;
       if (!engine || !install(engine, defs, quiet, busy)) {
         std::vector<std::string> changed, callers;
@@ -1168,14 +1297,18 @@ struct Session::Impl {
                  (refinesWhy.size() > 1 ? n + ": " : std::string()) + w;
         }
         for (const std::string &q : quiet)
-          if (!refinesWhy.count(q)) callers.push_back(q);
+          if (!refinesWhy.count(q))
+            callers.push_back(q);
         std::set<std::string> ts;
-        for (const std::string &q : quiet) ts.insert(users[q]);
+        for (const std::string &q : quiet)
+          ts.insert(users[q]);
         std::string tasksList;
-        for (const std::string &t : ts) tasksList += (tasksList.empty() ? "" : ", ") + t;
+        for (const std::string &t : ts)
+          tasksList += (tasksList.empty() ? "" : ", ") + t;
         std::string msg = joinNames(changed, "and") +
                           " no longer refines what running code was proved "
-                          "against (" + why + "), so it can only be swapped";
+                          "against (" +
+                          why + "), so it can only be swapped";
         if (!callers.empty())
           msg += " together with " + joinNames(callers, "and") + ", which " +
                  (callers.size() > 1 ? "call" : "calls") + " it,";
@@ -1196,20 +1329,25 @@ struct Session::Impl {
     // Commit the definitions; the expressions are not kept.
     std::vector<Entry> kept;
     for (size_t i = 0; i < base.size(); ++i)
-      if (!doomed.count(static_cast<int>(i))) kept.push_back(base[i]);
+      if (!doomed.count(static_cast<int>(i)))
+        kept.push_back(base[i]);
     // A state that keeps its value keeps the proofs of its initial value.
     for (const std::string &st : stateNames)
-      if (!cellStates.count(st) && this->proofs.count(st)) proofs[st] = this->proofs[st];
+      if (!cellStates.count(st) && this->proofs.count(st))
+        proofs[st] = this->proofs[st];
     commit(kept, items, proofs, newTypes, *a.tree);
     shapes.clear();
     for (auto &[name, sh] : newShapes)
-      if (!internalName(name)) shapes[name] = sh;
+      if (!internalName(name))
+        shapes[name] = sh;
     stateUses.clear();
     for (auto &[name, u] : su.uses)
-      if (!internalName(name)) stateUses[name] = u;
+      if (!internalName(name))
+        stateUses[name] = u;
     for (auto it = stateSlots.begin(); it != stateSlots.end();)
       if (!stateNames.count(it->first)) {
-        retiredStates.push_back(std::move(it->second.cell));  // code may still name it
+        // Code may still name the old cell, so it is kept, not freed.
+        retiredStates.push_back(std::move(it->second.cell));
         it = stateSlots.erase(it);
       } else {
         ++it;
@@ -1217,52 +1355,61 @@ struct Session::Impl {
     std::map<std::string, mlir::Type> oldStateTypes;
     for (const std::string &st : cellStates) {
       auto was = stateSlots.find(st);
-      if (was != stateSlots.end() && was->second.type) oldStateTypes[st] = was->second.type;
+      if (was != stateSlots.end() && was->second.type)
+        oldStateTypes[st] = was->second.type;
       stateSlots[st].type = results[kInitPrefix + st];
     }
     pendingSpawnStates.clear();
     for (auto &[name, u] : pendingThunks)
-      if (name.rfind(kEvalPrefix, 0) == 0) pendingSpawnStates.insert(u.begin(), u.end());
+      if (name.rfind(kEvalPrefix, 0) == 0)
+        pendingSpawnStates.insert(u.begin(), u.end());
 
     std::string quietList =
         joinNames(std::vector<std::string>(quiet.begin(), quiet.end()), "or");
     auto swapText = [&](const std::string &n) {
       std::string t = "swapped into running " + users[n];
-      if (quiet.count(n)) t += " at a moment when no task was running " + quietList;
+      if (quiet.count(n))
+        t += " at a moment when no task was running " + quietList;
       return t;
     };
-    auto finish = [&](const std::vector<std::pair<std::string, mlir::Type>> &toRun,
-                      bool spawn) {
-      if (!engine) {
-        // Code a task may run counts its calls, so a later swap can wait
-        // for the task to leave what it changes.
-        engine = compile(*module, defs, r, mlirErrors, spawn || anyTaskRunning());
-        std::vector<std::string> busy;
-        if (!engine) return;
-        install(engine, defs, {}, busy);
-      }
-      // A state this cell defines starts at its initial value.
-      for (const std::string &st : cellStates) {
-        llvm::Expected<void *> fp = engine->lookup(
-            migrating.count(st) ? kThunkPrefix + std::string(kInitPrefix) + st
-                                : cName(kInitPrefix + st));
-        if (!fp) {
-          error(r.events, "JIT: " + llvm::toString(fp.takeError()));
-          r.ok = false;
-          continue;
-        }
-        StateSlot &slot = stateSlots[st];
-        uint64_t v = 0;  // a migration reads the old value from the cell
-        callInto(*fp, slot.type, reinterpret_cast<unsigned char *>(&v));
-        *slot.cell = v;
-        for (Event &e : r.events)
-          if ((e.kind == Event::Kind::Defined || e.kind == Event::Kind::Redefined) &&
-              e.name == st)
-            e.value = formatValue(slot.type,
-                                  reinterpret_cast<const unsigned char *>(slot.cell.get()));
-      }
-      execute(engine, toRun, r, spawn);
-    };
+    auto finish =
+        [&](const std::vector<std::pair<std::string, mlir::Type>> &toRun,
+            bool spawn) {
+          if (!engine) {
+            // Code a task may run counts its calls, so a later swap can wait
+            // for the task to leave what it changes.
+            engine = compile(*module, defs, r, mlirErrors,
+                             spawn || anyTaskRunning());
+            std::vector<std::string> busy;
+            if (!engine)
+              return;
+            install(engine, defs, {}, busy);
+          }
+          // A state this cell defines starts at its initial value.
+          for (const std::string &st : cellStates) {
+            llvm::Expected<void *> fp = engine->lookup(
+                migrating.count(st)
+                    ? kThunkPrefix + std::string(kInitPrefix) + st
+                    : cName(kInitPrefix + st));
+            if (!fp) {
+              error(r.events, "JIT: " + llvm::toString(fp.takeError()));
+              r.ok = false;
+              continue;
+            }
+            StateSlot &slot = stateSlots[st];
+            uint64_t v = 0; // a migration reads the old value from the cell
+            callInto(*fp, slot.type, reinterpret_cast<unsigned char *>(&v));
+            *slot.cell = v;
+            for (Event &e : r.events)
+              if ((e.kind == Event::Kind::Defined ||
+                   e.kind == Event::Kind::Redefined) &&
+                  e.name == st)
+                e.value = formatValue(
+                    slot.type,
+                    reinterpret_cast<const unsigned char *>(slot.cell.get()));
+          }
+          execute(engine, toRun, r, spawn);
+        };
     if (mode == Mode::Check) {
       if (options.run && anyTaskRunning() && (!forgotten.empty() || engine))
         finish({}, false);
@@ -1270,16 +1417,19 @@ struct Session::Impl {
     }
     std::vector<std::pair<std::string, mlir::Type>> toRun;
     for (const Item &it : items) {
-      if (it.entry.kind == "expression") continue;
+      if (it.entry.kind == "expression")
+        continue;
       for (const std::string &n : it.entry.names) {
-        if (!types.count(n)) continue;  // a type, metaprogram or operator
+        if (!types.count(n))
+          continue; // a type, metaprogram or operator
         Event e;
         bool redefined =
             std::find(replaced.begin(), replaced.end(), n) != replaced.end();
         e.kind = redefined ? Event::Kind::Redefined : Event::Kind::Defined;
         e.name = n;
         e.type = types[n];
-        if (redefined && live.count(n)) e.text = swapText(n);
+        if (redefined && live.count(n))
+          e.text = swapText(n);
         r.events.push_back(std::move(e));
         if (nullary.count(n) && results[n] && showable(results[n]))
           toRun.emplace_back(n, results[n]);
@@ -1316,26 +1466,30 @@ struct Session::Impl {
     for (const std::string &n : replaced) {
       bool shown = false;
       for (const Event &e : r.events)
-        if (e.name == n && (e.kind == Event::Kind::Redefined)) shown = true;
-      if (shown || !types.count(n)) continue;
+        if (e.name == n && (e.kind == Event::Kind::Redefined))
+          shown = true;
+      if (shown || !types.count(n))
+        continue;
       Event e;
       e.kind = Event::Kind::Redefined;
       e.name = n;
       e.type = types[n];
-      if (live.count(n)) e.text = swapText(n);
+      if (live.count(n))
+        e.text = swapText(n);
       r.events.push_back(std::move(e));
     }
     for (auto &[name, t] : evals) {
       if (!showable(t)) {
-        error(r.events, "values of type " + sema::typeName(t) +
-                            " cannot be shown yet");
+        error(r.events,
+              "values of type " + sema::typeName(t) + " cannot be shown yet");
         r.ok = false;
         continue;
       }
       toRun.emplace_back(name, t);
     }
     bool swap = !replaced.empty() && !live.empty();
-    if (!options.run || (toRun.empty() && !swap && !engine && cellStates.empty()))
+    if (!options.run ||
+        (toRun.empty() && !swap && !engine && cellStates.empty()))
       return r;
     finish(toRun, mode == Mode::Spawn);
     return r;
@@ -1345,15 +1499,16 @@ struct Session::Impl {
 
   // Compiles the verified module into a new JIT engine whose calls between
   // `defs` go through their slots and gates. Null if it cannot be compiled.
-  std::shared_ptr<mlir::ExecutionEngine> compile(
-      mlir::ModuleOp module, const std::set<std::string> &defs, CellResult &r,
-      std::vector<Event> &mlirErrors, bool gated) {
+  std::shared_ptr<mlir::ExecutionEngine>
+  compile(mlir::ModuleOp module, const std::set<std::string> &defs,
+          CellResult &r, std::vector<Event> &mlirErrors, bool gated) {
     codegen::eraseContracts(module);
     if (mlir::failed(codegen::lowerToCore(module)) ||
         mlir::failed(codegen::lowerToLLVM(module)) ||
         mlir::failed(callThroughSlots(module, defs, gated)) ||
         mlir::failed(addThunks(module, pendingThunks))) {
-      for (Event &e : mlirErrors) r.events.push_back(std::move(e));
+      for (Event &e : mlirErrors)
+        r.events.push_back(std::move(e));
       error(r.events, "this cannot be compiled yet, so it was not run");
       r.ok = false;
       return nullptr;
@@ -1385,8 +1540,10 @@ struct Session::Impl {
     }
     std::shared_ptr<mlir::ExecutionEngine> engine = std::move(*created);
     for (const std::string &n : defs) {
-      if (!slots.count(n)) slots[n] = std::make_unique<std::atomic<void *>>(nullptr);
-      if (!gates.count(n)) gates[n] = std::make_unique<Gate>();
+      if (!slots.count(n))
+        slots[n] = std::make_unique<std::atomic<void *>>(nullptr);
+      if (!gates.count(n))
+        gates[n] = std::make_unique<Gate>();
     }
     engine->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
       llvm::orc::SymbolMap map;
@@ -1394,9 +1551,12 @@ struct Session::Impl {
         map[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(p),
                                llvm::JITSymbolFlags::Exported};
       };
-      for (const auto &[n, slot] : slots) add(kSlotPrefix + n, slot.get());
-      for (const auto &[n, gate] : gates) add(kGatePrefix + n, gate.get());
-      for (const auto &[n, st] : stateSlots) add(kStatePrefix + n, st.cell.get());
+      for (const auto &[n, slot] : slots)
+        add(kSlotPrefix + n, slot.get());
+      for (const auto &[n, gate] : gates)
+        add(kGatePrefix + n, gate.get());
+      for (const auto &[n, st] : stateSlots)
+        add(kStatePrefix + n, st.cell.get());
       add(kWait, reinterpret_cast<void *>(&piaReplWait));
       return map;
     });
@@ -1419,14 +1579,16 @@ struct Session::Impl {
       llvm::Expected<void *> fp = engine->lookup(kInternalPrefix + n);
       if (!fp) {
         llvm::consumeError(fp.takeError());
-        continue;  // folded away, or not a function
+        continue; // folded away, or not a function
       }
       code[n] = *fp;
     }
     std::vector<Gate *> held;
     for (const std::string &n : quiet)
-      if (gates.count(n)) held.push_back(gates[n].get());
-    for (Gate *g : held) g->blocked.store(1, std::memory_order_seq_cst);
+      if (gates.count(n))
+        held.push_back(gates[n].get());
+    for (Gate *g : held)
+      g->blocked.store(1, std::memory_order_seq_cst);
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(options.quiesceMs);
     std::set<std::string> neverIdle(quiet.begin(), quiet.end());
@@ -1434,23 +1596,28 @@ struct Session::Impl {
       bool idle = true;
       for (const std::string &n : quiet) {
         auto g = gates.find(n);
-        if (g == gates.end()) continue;
+        if (g == gates.end())
+          continue;
         if (g->second->active.load(std::memory_order_seq_cst) != 0)
           idle = false;
         else
           neverIdle.erase(n);
       }
-      if (idle) break;
+      if (idle)
+        break;
       if (std::chrono::steady_clock::now() >= deadline) {
         // The definitions a task never left: the ones keeping the set busy.
         busy.assign(neverIdle.begin(), neverIdle.end());
-        for (Gate *g : held) g->blocked.store(0, std::memory_order_seq_cst);
+        for (Gate *g : held)
+          g->blocked.store(0, std::memory_order_seq_cst);
         return false;
       }
       std::this_thread::yield();
     }
-    for (const auto &[n, fp] : code) slots[n]->store(fp, std::memory_order_release);
-    for (Gate *g : held) g->blocked.store(0, std::memory_order_seq_cst);
+    for (const auto &[n, fp] : code)
+      slots[n]->store(fp, std::memory_order_release);
+    for (Gate *g : held)
+      g->blocked.store(0, std::memory_order_seq_cst);
     reapEngines();
     engines.push_back(engine);
     return true;
@@ -1497,15 +1664,15 @@ struct Session::Impl {
     std::string expr;
     std::string type;
     std::set<std::string> reach;  // definitions its code can call
-    std::set<std::string> states;  // the states it uses, which are its alone
+    std::set<std::string> states; // the states it uses, which are its alone
     std::shared_ptr<mlir::ExecutionEngine> engine;
     std::thread thread;
     std::atomic<bool> done{false};
-    std::string value;  // set before done
+    std::string value; // set before done
   };
 
-  void startTask(void *fp, mlir::Type t, std::shared_ptr<mlir::ExecutionEngine> engine,
-                 CellResult &r) {
+  void startTask(void *fp, mlir::Type t,
+                 std::shared_ptr<mlir::ExecutionEngine> engine, CellResult &r) {
     auto task = std::make_unique<Task>();
     task->id = ++taskCount;
     task->cell = r.cell;
@@ -1515,7 +1682,8 @@ struct Session::Impl {
     task->states = pendingSpawnStates;
     for (const std::string &n : task->reach) {
       auto u = stateUses.find(n);
-      if (u != stateUses.end()) task->states.insert(u->second.begin(), u->second.end());
+      if (u != stateUses.end())
+        task->states.insert(u->second.begin(), u->second.end());
     }
     task->engine = std::move(engine);
     Task *raw = task.get();
@@ -1535,14 +1703,16 @@ struct Session::Impl {
     e.type = t.type;
     bool done = t.done.load(std::memory_order_acquire);
     e.status = done ? "done" : "running";
-    if (done) e.value = t.value;
+    if (done)
+      e.value = t.value;
     e.where = Where{t.cell, 0, 0};
     return e;
   }
 
   bool anyTaskRunning() const {
     for (const auto &t : tasks)
-      if (!t->done.load(std::memory_order_acquire)) return true;
+      if (!t->done.load(std::memory_order_acquire))
+        return true;
     return false;
   }
 
@@ -1578,10 +1748,12 @@ struct Session::Impl {
     while (!work.empty()) {
       std::string n = work.back();
       work.pop_back();
-      if (!types.count(n) || !out.insert(n).second) continue;
+      if (!types.count(n) || !out.insert(n).second)
+        continue;
       auto it = refs.find(n);
       if (it != refs.end())
-        for (const std::string &m : it->second) work.push_back(m);
+        for (const std::string &m : it->second)
+          work.push_back(m);
     }
     return out;
   }
@@ -1591,15 +1763,18 @@ struct Session::Impl {
   void reapEngines() {
     std::set<mlir::ExecutionEngine *> used;
     for (const auto &t : tasks)
-      if (!t->done.load(std::memory_order_acquire)) used.insert(t->engine.get());
+      if (!t->done.load(std::memory_order_acquire))
+        used.insert(t->engine.get());
     for (auto &t : tasks)
       if (t->done.load(std::memory_order_acquire) && t->thread.joinable())
         t->thread.join();
     for (auto &t : tasks)
-      if (t->done.load(std::memory_order_acquire)) t->engine.reset();
+      if (t->done.load(std::memory_order_acquire))
+        t->engine.reset();
     std::vector<std::shared_ptr<mlir::ExecutionEngine>> keep;
     for (auto &e : engines)
-      if (used.count(e.get())) keep.push_back(e);
+      if (used.count(e.get()))
+        keep.push_back(e);
     engines = std::move(keep);
   }
 
@@ -1608,19 +1783,25 @@ struct Session::Impl {
               std::map<std::string, std::vector<Event>> proofsNow,
               std::map<std::string, std::string> typesNow, const Node &tree) {
     for (const auto &it : items)
-      if (it.entry.kind != "expression") base.push_back(it.entry);
+      if (it.entry.kind != "expression")
+        base.push_back(it.entry);
     env = std::move(base);
     proofs.clear();
     types.clear();
     for (auto &[name, list] : proofsNow)
-      if (internalName(name)) continue;
-      else proofs[name] = std::move(list);
+      if (internalName(name))
+        continue;
+      else
+        proofs[name] = std::move(list);
     for (auto &[name, t] : typesNow)
-      if (internalName(name)) continue;
-      else types[name] = std::move(t);
+      if (internalName(name))
+        continue;
+      else
+        types[name] = std::move(t);
     refs.clear();
     for (const NodePtr &k : tree.kids) {
-      if (k->kind != NodeKind::LetItem) continue;
+      if (k->kind != NodeKind::LetItem)
+        continue;
       std::set<std::string> rs;
       collectRefs(*k, rs);
       if (k->text.rfind(kEvalPrefix, 0) == 0) {
@@ -1641,18 +1822,23 @@ struct Session::Impl {
   // definitions still use the names that changed.
   void noteDependents(const Attempt &a, CellResult &r,
                       const std::vector<std::string> &changed) {
-    if (changed.empty()) return;
+    if (changed.empty())
+      return;
     std::set<std::string> users;
     for (const NodePtr &k : a.tree->kids) {
-      if (k->kind != NodeKind::LetItem) continue;
+      if (k->kind != NodeKind::LetItem)
+        continue;
       std::set<std::string> refs;
       collectRefs(*k, refs);
       for (const std::string &c : changed)
-        if (refs.count(c) && k->text != c) users.insert(k->text);
+        if (refs.count(c) && k->text != c)
+          users.insert(k->text);
     }
-    if (users.empty()) return;
+    if (users.empty())
+      return;
     std::string list;
-    for (const std::string &u : users) list += (list.empty() ? "'" : ", '") + u + "'";
+    for (const std::string &u : users)
+      list += (list.empty() ? "'" : ", '") + u + "'";
     Event e;
     e.kind = Event::Kind::Info;
     e.text = "used by " + list;
@@ -1660,7 +1846,8 @@ struct Session::Impl {
   }
 
   CellResult fail(CellResult &r, std::vector<Event> errors) {
-    for (Event &e : errors) r.events.push_back(std::move(e));
+    for (Event &e : errors)
+      r.events.push_back(std::move(e));
     r.ok = false;
     return r;
   }
@@ -1668,9 +1855,11 @@ struct Session::Impl {
   int ownerOf(const std::vector<Entry> &entries, const std::string &name,
               const std::set<int> &skip = {}) const {
     for (size_t i = 0; i < entries.size(); ++i) {
-      if (skip.count(static_cast<int>(i))) continue;
+      if (skip.count(static_cast<int>(i)))
+        continue;
       for (const std::string &n : entries[i].names)
-        if (n == name) return static_cast<int>(i);
+        if (n == name)
+          return static_cast<int>(i);
     }
     return -1;
   }
@@ -1679,7 +1868,8 @@ struct Session::Impl {
     std::string w = formatWhere(e.where);
     for (const std::string &spec : options.allowUnproved) {
       if (spec.find(':') == std::string::npos) {
-        if (spec == e.name) return true;
+        if (spec == e.name)
+          return true;
       } else if (w == spec || w.rfind(spec + ":", 0) == 0) {
         return true;
       }
@@ -1702,7 +1892,8 @@ struct Session::Impl {
       r.events.push_back(std::move(e));
     };
     auto needArg = [&]() {
-      if (!arg.empty()) return true;
+      if (!arg.empty())
+        return true;
       error(r.events, ":" + word + " needs an argument; see :help");
       r.ok = false;
       return false;
@@ -1711,7 +1902,8 @@ struct Session::Impl {
     if (word == "help" || word == "h" || word == "?") {
       info(helpText);
     } else if (word == "type" || word == "t") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       if (types.count(arg)) {
         Event e;
         e.kind = Event::Kind::Type;
@@ -1731,7 +1923,8 @@ struct Session::Impl {
                (allowedN ? ", " + std::to_string(allowedN) + " allowed unproved"
                          : ""));
         }
-        if (proofs.empty()) info("no obligations yet");
+        if (proofs.empty())
+          info("no obligations yet");
         return r;
       }
       auto it = proofs.find(arg);
@@ -1744,19 +1937,23 @@ struct Session::Impl {
         }
         return r;
       }
-      for (const Event &e : it->second) r.events.push_back(e);
+      for (const Event &e : it->second)
+        r.events.push_back(e);
     } else if (word == "env" || word == "list") {
       for (const Entry &e : env) {
         std::string what = e.kind == "expansion" ? "expanded" : e.kind;
         std::string line = "[" + std::to_string(e.cell) + "] " + what;
         for (const std::string &n : e.names)
           line += " " + n + (types.count(n) ? " : " + types[n] : "");
-        if (e.names.empty()) line += " " + firstLine(e.source);
+        if (e.names.empty())
+          line += " " + firstLine(e.source);
         info(line);
       }
-      if (env.empty()) info("the environment is empty");
+      if (env.empty())
+        info("the environment is empty");
     } else if (word == "source" || word == "src") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       int i = ownerOf(env, arg);
       if (i < 0) {
         error(r.events, "nothing named '" + arg + "' is defined");
@@ -1765,10 +1962,12 @@ struct Session::Impl {
         info(env[i].source);
       }
     } else if (word == "redef") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       return code(arg, Mode::Redefine, cellNo);
     } else if (word == "forget") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       int i = ownerOf(env, arg);
       if (i < 0) {
         error(r.events, "nothing named '" + arg + "' is defined");
@@ -1776,8 +1975,9 @@ struct Session::Impl {
         return r;
       }
       if (env[i].names.size() > 1) {
-        error(r.events, "'" + arg + "' was defined together with other names; "
-                        "use :redef to change that cell's code");
+        error(r.events, "'" + arg +
+                            "' was defined together with other names; "
+                            "use :redef to change that cell's code");
         r.ok = false;
         return r;
       }
@@ -1796,7 +1996,8 @@ struct Session::Impl {
       return c;
     } else if (word == "allow") {
       if (arg.empty()) {
-        for (const std::string &s : options.allowUnproved) info(s);
+        for (const std::string &s : options.allowUnproved)
+          info(s);
         if (options.allowUnproved.empty())
           info("no unproved obligations are allowed");
         return r;
@@ -1804,7 +2005,8 @@ struct Session::Impl {
       options.allowUnproved.push_back(arg);
       info("unproved obligations in " + arg + " are accepted from now on");
     } else if (word == "load") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       std::ifstream in(arg, std::ios::binary);
       if (!in) {
         error(r.events, "cannot open " + arg);
@@ -1819,24 +2021,30 @@ struct Session::Impl {
         return code(syntax::literateCode(buf.str()), Mode::Define, cellNo);
       return code(buf.str(), Mode::Define, cellNo);
     } else if (word == "spawn") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       pendingSpawn = arg;
       return code(arg, Mode::Spawn, cellNo);
     } else if (word == "tasks") {
-      for (const auto &t : tasks) r.events.push_back(taskEvent(*t));
-      if (tasks.empty()) info("no tasks");
+      for (const auto &t : tasks)
+        r.events.push_back(taskEvent(*t));
+      if (tasks.empty())
+        info("no tasks");
     } else if (word == "wait") {
-      if (!needArg()) return r;
+      if (!needArg())
+        return r;
       unsigned id = std::strtoul(arg.c_str(), nullptr, 10);
       Task *task = nullptr;
       for (auto &t : tasks)
-        if (t->id == id) task = t.get();
+        if (t->id == id)
+          task = t.get();
       if (!task) {
         error(r.events, "there is no task " + arg);
         r.ok = false;
         return r;
       }
-      if (task->thread.joinable()) task->thread.join();
+      if (task->thread.joinable())
+        task->thread.join();
       r.events.push_back(taskEvent(*task));
       reapEngines();
     } else if (word == "reset") {
@@ -1849,7 +2057,8 @@ struct Session::Impl {
       refs.clear();
       shapes.clear();
       stateUses.clear();
-      for (auto &[n, st] : stateSlots) retiredStates.push_back(std::move(st.cell));
+      for (auto &[n, st] : stateSlots)
+        retiredStates.push_back(std::move(st.cell));
       stateSlots.clear();
       proofs.clear();
       types.clear();
@@ -1877,7 +2086,8 @@ Session::~Session() = default;
 CellResult Session::execute(std::string_view cell) {
   unsigned n = ++impl_->cells;
   std::string t = trim(cell);
-  if (!t.empty() && t[0] == ':') return impl_->command(t, n);
+  if (!t.empty() && t[0] == ':')
+    return impl_->command(t, n);
   return impl_->code(cell, Impl::Mode::Define, n);
 }
 
@@ -1886,13 +2096,15 @@ void Session::reset() { impl_->command(":reset", ++impl_->cells); }
 std::vector<std::string> Session::names() const {
   std::vector<std::string> out;
   for (const Entry &e : impl_->env)
-    for (const std::string &n : e.names) out.push_back(n);
+    for (const std::string &n : e.names)
+      out.push_back(n);
   return out;
 }
 
 bool Session::isComplete(std::string_view text) {
   std::string t = trim(text);
-  if (t.empty() || t[0] == ':') return true;
+  if (t.empty() || t[0] == ':')
+    return true;
   // A definition's contracts come before its `=`, so a last line that is a
   // contract clause needs the body still to come.
   size_t nl = t.rfind('\n');
@@ -1910,12 +2122,15 @@ bool Session::isComplete(std::string_view text) {
     if (e.message.find("never closed") != std::string::npos ||
         e.message.find("unterminated") != std::string::npos)
       return false;
-  if (d.hasErrors()) return true;  // let the parser report it
+  if (d.hasErrors())
+    return true; // let the parser report it
   const syntax::Token *last = nullptr;
   for (const syntax::Token &tok : tokens)
-    if (tok.kind != syntax::TokenKind::Eof && tok.kind != syntax::TokenKind::Sep)
+    if (tok.kind != syntax::TokenKind::Eof &&
+        tok.kind != syntax::TokenKind::Sep)
       last = &tok;
-  if (!last) return true;
+  if (!last)
+    return true;
   using K = syntax::TokenKind;
   // A definition goes on until its `=`, so a header can be followed by
   // contracts on the lines after it.
@@ -1924,53 +2139,103 @@ bool Session::isComplete(std::string_view text) {
     bool eq = false;
     for (const syntax::Token &tok : tokens) {
       switch (tok.kind) {
-        case K::LParen: case K::LBracket: case K::LBrace: case K::LBraceAdj:
-        case K::DotLBracket: case K::QuoteOpen: case K::SpliceOpen:
-        case K::AttrOpen: case K::TargsOpen:
-          ++depth;
-          break;
-        case K::RParen: case K::RBracket: case K::RBrace: case K::TargsClose:
-          --depth;
-          break;
-        case K::Eq:
-          if (depth == 0) eq = true;
-          break;
-        default:
-          break;
+      case K::LParen:
+      case K::LBracket:
+      case K::LBrace:
+      case K::LBraceAdj:
+      case K::DotLBracket:
+      case K::QuoteOpen:
+      case K::SpliceOpen:
+      case K::AttrOpen:
+      case K::TargsOpen:
+        ++depth;
+        break;
+      case K::RParen:
+      case K::RBracket:
+      case K::RBrace:
+      case K::TargsClose:
+        --depth;
+        break;
+      case K::Eq:
+        if (depth == 0)
+          eq = true;
+        break;
+      default:
+        break;
       }
     }
-    if (!eq) return false;
+    if (!eq)
+      return false;
   }
   switch (last->kind) {
-    case K::Eq: case K::Op: case K::Arrow: case K::FatArrow: case K::LArrow:
-    case K::Bar: case K::Comma: case K::Colon: case K::Semi: case K::Let:
-    case K::In: case K::If: case K::Then: case K::Else: case K::Do:
-    case K::Requires: case K::Ensures: case K::Invariant: case K::Decreases:
-    case K::Assert: case K::Assume: case K::Where: case K::Of: case K::With:
-    case K::Match: case K::For: case K::While: case K::Spread: case K::Step:
-    case K::Forall: case K::Exists: case K::Type: case K::Rec: case K::Meta:
-    case K::Operator: case K::DotDot: case K::Dot:
-      return false;
-    default:
-      return true;
+  case K::Eq:
+  case K::Op:
+  case K::Arrow:
+  case K::FatArrow:
+  case K::LArrow:
+  case K::Bar:
+  case K::Comma:
+  case K::Colon:
+  case K::Semi:
+  case K::Let:
+  case K::In:
+  case K::If:
+  case K::Then:
+  case K::Else:
+  case K::Do:
+  case K::Requires:
+  case K::Ensures:
+  case K::Invariant:
+  case K::Decreases:
+  case K::Assert:
+  case K::Assume:
+  case K::Where:
+  case K::Of:
+  case K::With:
+  case K::Match:
+  case K::For:
+  case K::While:
+  case K::Spread:
+  case K::Step:
+  case K::Forall:
+  case K::Exists:
+  case K::Type:
+  case K::Rec:
+  case K::Meta:
+  case K::Operator:
+  case K::DotDot:
+  case K::Dot:
+    return false;
+  default:
+    return true;
   }
 }
 
-// ---- rendering ---------------------------------------------------------------
+// ---- rendering
+// ---------------------------------------------------------------
 
 namespace {
 
 const char *kindName(Event::Kind k) {
   switch (k) {
-    case Event::Kind::Defined: return "defined";
-    case Event::Kind::Redefined: return "redefined";
-    case Event::Kind::Removed: return "removed";
-    case Event::Kind::Value: return "value";
-    case Event::Kind::Type: return "type";
-    case Event::Kind::Proof: return "proof";
-    case Event::Kind::Error: return "error";
-    case Event::Kind::Info: return "info";
-    case Event::Kind::Task: return "task";
+  case Event::Kind::Defined:
+    return "defined";
+  case Event::Kind::Redefined:
+    return "redefined";
+  case Event::Kind::Removed:
+    return "removed";
+  case Event::Kind::Value:
+    return "value";
+  case Event::Kind::Type:
+    return "type";
+  case Event::Kind::Proof:
+    return "proof";
+  case Event::Kind::Error:
+    return "error";
+  case Event::Kind::Info:
+    return "info";
+  case Event::Kind::Task:
+    return "task";
   }
   return "info";
 }
@@ -1982,73 +2247,79 @@ std::string counterexample(const Event &e) {
   return out;
 }
 
-}  // namespace
+} // namespace
 
 std::string render(const CellResult &result) {
   std::map<std::string, size_t> proved;
   for (const Event &e : result.events)
-    if (e.kind == Event::Kind::Proof && e.status == "proved") ++proved[e.name];
+    if (e.kind == Event::Kind::Proof && e.status == "proved")
+      ++proved[e.name];
   std::ostringstream os;
   for (const Event &e : result.events) {
     std::string at = formatWhere(e.where);
-    if (!at.empty()) at += ": ";
+    if (!at.empty())
+      at += ": ";
     switch (e.kind) {
-      case Event::Kind::Defined:
-      case Event::Kind::Redefined: {
-        if (e.type == "type" || e.type == "meta" || e.type == "operator") {
-          os << e.type << " " << e.name;
-        } else {
-          os << e.name << " : " << e.type;
-          if (!e.value.empty()) os << " = " << e.value;
-        }
-        if (e.kind == Event::Kind::Redefined)
-          os << "  (redefined" << (e.text.empty() ? "" : ", " + e.text) << ")";
-        if (proved[e.name])
-          os << "  (* " << proved[e.name] << " proved *)";
-        os << "\n";
+    case Event::Kind::Defined:
+    case Event::Kind::Redefined: {
+      if (e.type == "type" || e.type == "meta" || e.type == "operator") {
+        os << e.type << " " << e.name;
+      } else {
+        os << e.name << " : " << e.type;
+        if (!e.value.empty())
+          os << " = " << e.value;
+      }
+      if (e.kind == Event::Kind::Redefined)
+        os << "  (redefined" << (e.text.empty() ? "" : ", " + e.text) << ")";
+      if (proved[e.name])
+        os << "  (* " << proved[e.name] << " proved *)";
+      os << "\n";
+      break;
+    }
+    case Event::Kind::Removed:
+      os << "removed " << e.name << "\n";
+      break;
+    case Event::Kind::Value:
+      os << "- : " << e.type << " = " << e.value << "\n";
+      break;
+    case Event::Kind::Type:
+      os << e.text << " : " << e.type << "\n";
+      break;
+    case Event::Kind::Proof:
+      if (e.status == "proved") {
+        // Shown with the definition, unless the user asked for them.
+        bool listing = true;
+        for (const Event &x : result.events)
+          if (x.kind != Event::Kind::Proof)
+            listing = false;
+        if (listing)
+          os << at << "proved: " << e.text << " [" << e.method << "]\n";
         break;
       }
-      case Event::Kind::Removed:
-        os << "removed " << e.name << "\n";
-        break;
-      case Event::Kind::Value:
-        os << "- : " << e.type << " = " << e.value << "\n";
-        break;
-      case Event::Kind::Type:
-        os << e.text << " : " << e.type << "\n";
-        break;
-      case Event::Kind::Proof:
-        if (e.status == "proved") {
-          // Shown with the definition, unless the user asked for them.
-          bool listing = true;
-          for (const Event &x : result.events)
-            if (x.kind != Event::Kind::Proof) listing = false;
-          if (listing)
-            os << at << "proved: " << e.text << " [" << e.method << "]\n";
-          break;
-        }
-        os << at << e.status << ": " << e.text;
-        if (!e.method.empty() && e.method != "counterexample")
-          os << " [" << e.method << "]";
-        if (!e.name.empty() && e.status != "failed") os << " in '" << e.name << "'";
+      os << at << e.status << ": " << e.text;
+      if (!e.method.empty() && e.method != "counterexample")
+        os << " [" << e.method << "]";
+      if (!e.name.empty() && e.status != "failed")
+        os << " in '" << e.name << "'";
+      os << "\n";
+      if (!e.counterexample.empty())
+        os << "  counterexample: " << counterexample(e) << "\n";
+      break;
+    case Event::Kind::Error:
+      os << at << "error: " << e.text << "\n";
+      break;
+    case Event::Kind::Task:
+      os << "task " << e.name << " (" << e.text << ") ";
+      if (e.status == "done")
+        os << "done: " << e.type << " = " << e.value << "\n";
+      else
+        os << "running\n";
+      break;
+    case Event::Kind::Info:
+      os << e.text;
+      if (e.text.empty() || e.text.back() != '\n')
         os << "\n";
-        if (!e.counterexample.empty())
-          os << "  counterexample: " << counterexample(e) << "\n";
-        break;
-      case Event::Kind::Error:
-        os << at << "error: " << e.text << "\n";
-        break;
-      case Event::Kind::Task:
-        os << "task " << e.name << " (" << e.text << ") ";
-        if (e.status == "done")
-          os << "done: " << e.type << " = " << e.value << "\n";
-        else
-          os << "running\n";
-        break;
-      case Event::Kind::Info:
-        os << e.text;
-        if (e.text.empty() || e.text.back() != '\n') os << "\n";
-        break;
+      break;
     }
   }
   return os.str();
@@ -2057,15 +2328,22 @@ std::string render(const CellResult &result) {
 lsp::Json toJson(const Event &e) {
   lsp::Json j;
   j["kind"] = kindName(e.kind);
-  if (!e.name.empty()) j["name"] = e.name;
-  if (!e.type.empty()) j["type"] = e.type;
-  if (!e.value.empty()) j["value"] = e.value;
-  if (!e.text.empty()) j["text"] = e.text;
-  if (!e.status.empty()) j["status"] = e.status;
-  if (!e.method.empty()) j["method"] = e.method;
+  if (!e.name.empty())
+    j["name"] = e.name;
+  if (!e.type.empty())
+    j["type"] = e.type;
+  if (!e.value.empty())
+    j["value"] = e.value;
+  if (!e.text.empty())
+    j["text"] = e.text;
+  if (!e.status.empty())
+    j["status"] = e.status;
+  if (!e.method.empty())
+    j["method"] = e.method;
   if (!e.counterexample.empty()) {
     lsp::Json::Object ce;
-    for (const auto &[n, v] : e.counterexample) ce[n] = v;
+    for (const auto &[n, v] : e.counterexample)
+      ce[n] = v;
     j["counterexample"] = std::move(ce);
   }
   if (e.where.cell) {
@@ -2083,9 +2361,10 @@ lsp::Json toJson(const CellResult &r) {
   j["cell"] = r.cell;
   j["ok"] = r.ok;
   lsp::Json::Array events;
-  for (const Event &e : r.events) events.push_back(toJson(e));
+  for (const Event &e : r.events)
+    events.push_back(toJson(e));
   j["events"] = std::move(events);
   return j;
 }
 
-}  // namespace pia::repl
+} // namespace pia::repl
