@@ -2242,6 +2242,42 @@ class Encoder {
     return viewArray(lens, off, len);
   }
 
+  // Where the value of a call that only feeds contracts matters: the
+  // guards of the short-circuit operators it is the right operand of, on
+  // its way to the contract. `a ==> f x` is `not a || f x`, so f x is read
+  // only where a holds; `a && f x` likewise, and `a || f x` where a does
+  // not. The walk follows single uses only, and stops at a guard it cannot
+  // encode yet, which only leaves the goal stronger (#282).
+  Value contractGuard(Operation *op) {
+    Value acc;
+    for (Operation *cur = op; cur->getNumResults() == 1;) {
+      Value v = cur->getResult(0);
+      if (!v.hasOneUse()) break;
+      Operation *u = *v.getUsers().begin();
+      bool isOr = mlir::isa<mlir::arith::OrIOp>(u);
+      if ((isOr || mlir::isa<mlir::arith::AndIOp>(u)) && u->getOperand(1) == v &&
+          u->getOperand(0) != v) {
+        // `a ==> b` negates a after the call is walked, so `not a` is
+        // read through to a.
+        Value l = u->getOperand(0);
+        bool negated = false;
+        if (auto x = l.getDefiningOp<mlir::arith::XOrIOp>())
+          if (auto c = x.getRhs().getDefiningOp<mlir::arith::ConstantOp>())
+            if (auto b = mlir::dyn_cast<mlir::BoolAttr>(c.getValue()); b && b.getValue()) {
+              l = x.getLhs();
+              negated = true;
+            }
+        Value left = env_.lookup(l);
+        if (!left) break;
+        Value g = isOr != negated ? notOf(left) : left;
+        acc = acc ? andOf(acc, g) : g;
+      }
+      if (isContractSink(u)) break;
+      cur = u;
+    }
+    return acc;
+  }
+
   // A call is checked against the callee's contract, not its body: its
   // preconditions are goals, and its postconditions are assumed about a
   // fresh result.
@@ -2255,6 +2291,11 @@ class Encoder {
       return true;
     }
     bool hasBody = callee && !callee.isExternal();
+    // A call in a contract is needed only under its guard, so its
+    // precondition is a goal, and its postconditions facts, only there.
+    Value guard = spec_.contains(call.getOperation())
+                      ? contractGuard(call.getOperation())
+                      : Value();
     Demand pre;
     if (hasBody) {
       mlir::Block &entry = callee.getBody().front();
@@ -2274,6 +2315,7 @@ class Encoder {
         // the goal fails, and assuming it later assumes nothing.
         Value p = demand(r.getPredicate(), pre);
         if (!p) p = declare(boolType(), "", false);
+        if (guard) p = implies(guard, p);
         goal(ObligationKind::requires_, call,
              "the precondition of '" + call.getCallee().str() + "' holds", p,
              false);
@@ -2395,7 +2437,8 @@ class Encoder {
       }
     });
     callee.walk([&](contract::EnsuresOp e) {
-      if (Value p = demand(e.getPredicate(), post)) assume(p);
+      if (Value p = demand(e.getPredicate(), post))
+        assume(guard ? implies(guard, p) : p);
     });
     return true;
   }
