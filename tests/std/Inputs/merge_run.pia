@@ -1,0 +1,19 @@
+(* Runs Pia.Core.Algo.Merge's compiled code on buffers in arenas, linked
+   by pia_binary: 0 when the result is what C++'s merge gives, and
+   otherwise the number of the first wrong element. *)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Merge.Merge as M
+
+let checks (xs : borrowed inout mutable [u8]) (ys : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : i32
+  requires len xs = 3 && len ys = 3 && len dst = 6
+= xs.[0] <- 1; xs.[1] <- 4; xs.[2] <- 9;
+  ys.[0] <- 2; ys.[1] <- 4; ys.[2] <- 5;
+  M.merge dst xs ys (let (a : u8) (b : u8) : bool => a < b);
+  if dst.[0] <> 1 then 1 else if dst.[1] <> 2 then 2 else if dst.[2] <> 4 then 3
+  else if dst.[3] <> 4 then 4 else if dst.[4] <> 5 then 5 else if dst.[5] <> 9 then 6
+  else 0
+
+let main () : i32 =
+  with_arena 3 (let (a) => with_arena 3 (let (b) => with_arena 6 (let (c) => checks a.mem b.mem c.mem)))

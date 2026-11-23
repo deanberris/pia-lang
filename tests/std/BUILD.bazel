@@ -18,6 +18,7 @@ lit_tests(
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
         "//lib/Pia/Core/Algo:Heap.pia",
+        "//lib/Pia/Core/Algo:Merge.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Numeric.pia",
         "//lib/Pia/Core/Algo:PartialSort.pia",
@@ -267,5 +268,25 @@ sh_test(
     srcs = ["partial_sort_run_test.sh"],
     args = ["$(rootpath :partial_sort_run)"],
     data = [":partial_sort_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "merge_run",
+    src = "Inputs/merge_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:merge",
+        "//lib/Pia/Core/Algo:permutation",
+    ],
+)
+
+sh_test(
+    name = "merge_run_test",
+    srcs = ["merge_run_test.sh"],
+    args = ["$(rootpath :merge_run)"],
+    data = [":merge_run"],
     target_compatible_with = PIA_TARGETS,
 )

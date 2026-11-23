@@ -1,0 +1,75 @@
+(* Pia.Core.Algo.Merge: <algorithm>'s merge (ADR 0040, phase 1.7), by a
+   comparator that must be a strict weak order, proved once (ADR 0043,
+   ADR 0044).
+
+   merge dst xs ys less writes the elements of two sorted ranges into an
+   `out` slice of their combined length (ADR 0040, section 5): dst is
+   sorted, and holds each value as often as xs and ys together. It is
+   stable, as C++'s is: of equivalent elements, xs's come first.
+   inplace_merge needs a buffer (phase 2). *)
+module Pia.Core.Algo.Merge : Merge
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+
+interface Merge = sig
+  let spec not_less_trans : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (a : t) -> (b : t) -> (c : t) -> bool
+  let spec same_prefix : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> (v : t) -> (k : usize) -> bool
+  let put : (t : type where Pia.Core.Order.Eq t) -> (dst : borrowed inout mutable [t]) -> (k : usize) -> (x : t) -> unit
+  let merge : (t : type where Pia.Core.Order.Eq t) -> (dst : out mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+end
+
+(** Not less is transitive for a strict weak order. *)
+let spec not_less_trans (t : type) (less : (a : t) -> (b : t) -> bool) (a : t) (b : t) (c : t) : bool
+  requires Pia.Fn.strict_weak_order less
+  ensures less a b = false && less b c = false ==> less a c = false
+= true
+
+(** Two slices that agree on their first k elements hold each value as
+    often there. *)
+let spec same_prefix (t : type where Pia.Core.Order.Eq t) (xs : [t]) (ys : [t]) (v : t) (k : usize) : bool
+  requires k <= len xs && k <= len ys
+  requires forall (i in 0 .. k). xs.[i] = ys.[i]
+  ensures P.occurrences xs v k = P.occurrences ys v k
+  decreases k
+= if k = 0 then true else same_prefix xs ys v (k - 1)
+
+(** dst.[k] becomes x: the first k + 1 elements then hold each value as
+    often as the first k did, and x once more. *)
+let put (t : type where Pia.Core.Order.Eq t) (dst : borrowed inout mutable [t]) (k : usize) (x : t) : unit
+  requires k < len dst
+  ensures dst.[k] = x
+  ensures forall (d in 0 .. len dst). d <> k ==> dst.[d] = old (dst.[d])
+  ensures forall (v : t). P.occurrences dst v (k + 1) = P.occurrences (old dst) v k + (if same x v then 1 else 0)
+= dst.[k] <- x;
+  assert (forall (v : t). same_prefix (old dst) dst v k || true)
+
+(** C++: std::merge with a comparator, into an `out` slice. *)
+let merge (t : type where Pia.Core.Order.Eq t) (dst : out mutable [t]) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires Pia.Fn.sorted less xs && Pia.Fn.sorted less ys
+  requires len dst = len xs + len ys
+  ensures Pia.Fn.sorted less dst
+  ensures forall (v : t). P.occurrences dst v (len dst) = P.occurrences xs v (len xs) + P.occurrences ys v (len ys)
+= let i : mutable usize = 0 in
+  let j : mutable usize = 0 in
+  for k in 0 .. len dst
+    invariant i <= len xs && j <= len ys && i + j = k
+    invariant Pia.Fn.sorted_prefix less dst k
+    invariant forall (a in 0 .. len xs) (d in 0 .. len dst). i <= a && d < k ==> less xs.[a] dst.[d] = false
+    invariant forall (b in 0 .. len ys) (d in 0 .. len dst). j <= b && d < k ==> less ys.[b] dst.[d] = false
+    invariant forall (v : t). P.occurrences dst v k = P.occurrences xs v i + P.occurrences ys v j
+  do
+    if j = len ys || (i < len xs && less ys.[j] xs.[i] = false) then (
+      put dst k xs.[i];
+      assert (forall (b in 0 .. len ys). j <= b ==> not_less_trans less ys.[b] ys.[j] xs.[i] || true);
+      assert (forall (v : t). P.occurrences xs v (i + 1) = P.occurrences xs v i + (if same xs.[i] v then 1 else 0));
+      i <- i + 1)
+    else (
+      put dst k ys.[j];
+      assert (forall (a in 0 .. len xs). i <= a ==> not_less_trans less xs.[a] xs.[i] ys.[j] || true);
+      assert (forall (v : t). P.occurrences ys v (j + 1) = P.occurrences ys v j + (if same ys.[j] v then 1 else 0));
+      j <- j + 1)
+  done;
+  assert i = len xs && j = len ys
