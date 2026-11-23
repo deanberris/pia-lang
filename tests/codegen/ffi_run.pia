@@ -66,4 +66,4 @@ let answer () : i32
 
 let plus_answer (x : i32) : i32
   requires x <= 1000
-= x + answer ()
+= x + answer
