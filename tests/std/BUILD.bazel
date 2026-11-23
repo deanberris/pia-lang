@@ -194,7 +194,7 @@ sh_test(
 pia_binary(
     name = "numeric_run",
     src = "Inputs/numeric_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core/Algo:numeric"],
 )
 
@@ -203,13 +203,13 @@ sh_test(
     srcs = ["numeric_run_test.sh"],
     args = ["$(rootpath :numeric_run)"],
     data = [":numeric_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "binary_search_run",
     src = "Inputs/binary_search_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -222,5 +222,5 @@ sh_test(
     srcs = ["binary_search_run_test.sh"],
     args = ["$(rootpath :binary_search_run)"],
     data = [":binary_search_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
