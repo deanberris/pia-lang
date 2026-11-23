@@ -111,6 +111,9 @@ const std::map<std::string, size_t> &metaBuiltins() {
       // Tactics (ADR 0036, step 6): a goal and the syntax of its terms.
       {"hypotheses", 1}, {"conclusion", 1}, {"params", 1},
       {"children", 1},   {"op", 1},         {"make_call", 2},
+      // A parameter, for a quote to splice into a parameter list (the
+      // litmus metaprogram, ADR 0052).
+      {"param", 2},
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
@@ -199,7 +202,7 @@ bool hasBinderText(NodeKind k) {
     case NodeKind::LetItem: case NodeKind::LetIn: case NodeKind::Param:
     case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
     case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
-    case NodeKind::QuotedDecl:
+    case NodeKind::QuotedDecl: case NodeKind::Ctor: case NodeKind::PCtor:
     // A theory's, a model's and a sort's names (ADR 0036): `let sort $s`.
     case NodeKind::Theory: case NodeKind::Model: case NodeKind::SortItem:
       return true;
@@ -900,7 +903,8 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     return listValue(std::move(out));
   }
   if (name == "fields") {
-    const Node *item = typeItem(*args[0]);
+    // A type item, or its name, as the other type builtins take.
+    const Node *item = findTypeItem(args[0]);
     const Node *record =
         item ? item->kids[3]->kids[0].get() : nullptr;
     if (!record || record->kind != NodeKind::RecordType)
@@ -1139,8 +1143,11 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   }
   if (name == "style") return strValue(syntax::commentStyle(needComment(args[0])));
   if (name == "place") return strValue(syntax::commentPlace(needComment(args[0])));
-  if (name == "kind")
+  if (name == "kind") {
+    // Unit, as `variants` gives for a constructor with no payload.
+    if (args[0]->kind == K::Unit) return strValue("Unit");
     return strValue(syntax::nodeKindName(needSyntax(args[0]).kind));
+  }
   // A goal is the lemma it is the goal of (ADR 0036, step 6): its
   // hypotheses are its `requires`, its conclusion its `ensures`.
   auto needGoal = [&](const ValuePtr &v) -> const Node & {
@@ -1261,6 +1268,27 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     call->add(std::move(head));
     for (const ValuePtr &a : args[1]->list) call->add(code(a));
     return syntaxValue(std::move(call));
+  }
+  if (name == "param") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'param' needs a name, found ") +
+                                 kindName(args[0]->kind)};
+    NodePtr type;
+    if (args[1]->kind == K::Str)
+      type = makeNode(NodeKind::TypeName, site_, args[1]->s);
+    else if (args[1]->kind == K::Syntax && args[1]->syntax &&
+             args[1]->syntax->kind != NodeKind::Program)
+      type = clone(*args[1]->syntax);
+    else
+      throw MetaError{site_, std::string("'param' needs a type, found ") +
+                                 kindName(args[1]->kind)};
+    auto p = makeNode(NodeKind::Param, site_, args[0]->s);
+    auto annot = makeNode(NodeKind::Annot, site_);
+    annot->add(makeNode(NodeKind::Modifiers, site_));
+    annot->add(std::move(type));
+    annot->add(makeNode(NodeKind::None, site_));
+    p->add(std::move(annot));
+    return syntaxValue(std::move(p));
   }
   if (name == "with_doc") {
     if (args[0]->kind != K::Str)
@@ -1408,6 +1436,12 @@ class QuoteBuilder {
                        std::make_move_iterator(cs.end()));
   }
 
+  // `$ps` with no annotation, standing for parameters.
+  static bool splicesParams(const Node &p) {
+    return p.kind == NodeKind::Param && p.kids.empty() && p.text.size() > 1 &&
+           p.text[0] == '$' && p.text[1] != '!';
+  }
+
   NodePtr copy(const Node &n, bool typePos) {
     syntax::SourceLoc site = in_.site_;
     if (n.kind == NodeKind::Splice) {
@@ -1451,6 +1485,26 @@ class QuoteBuilder {
     }
     bool members = n.kind == NodeKind::Theory || n.kind == NodeKind::Model;
     for (size_t i = 0; i < n.kids.size(); ++i) {
+      // `$ps` alone in a parameter list splices a list of parameters,
+      // each made by `param`.
+      if (n.kind == NodeKind::Params && splicesParams(*n.kids[i])) {
+        ValuePtr v = var(n.kids[i]->text);
+        std::vector<ValuePtr> parts;
+        if (v->kind == K::List)
+          parts = v->list;
+        else
+          parts.push_back(v);
+        for (const ValuePtr &part : parts) {
+          if (part->kind != K::Syntax || !part->syntax ||
+              part->syntax->kind != NodeKind::Param)
+            throw MetaError{site, std::string("a spliced parameter list "
+                                              "holds parameters made by "
+                                              "'param', not ") +
+                                      kindName(part->kind)};
+          out->add(clone(*part->syntax));
+        }
+        continue;
+      }
       // `$xs` among a theory's or model's members splices a list of them.
       if (members && n.kids[i]->kind == NodeKind::Splice) {
         const Node &sp = *n.kids[i];
@@ -1472,6 +1526,64 @@ class QuoteBuilder {
           else
             out->add(clone(p));
         }
+        continue;
+      }
+      // `type { $fs }`: a record type's fields, a list of [name; type]
+      // pairs, the type as syntax or its name.
+      if (n.kind == NodeKind::RecordType && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        ValuePtr v = var(n.kids[i]->text);
+        auto bad = [&] {
+          return MetaError{site, "'type { $fields }' needs a list of [name; type] "
+                                 "pairs"};
+        };
+        if (v->kind != K::List) throw bad();
+        for (const ValuePtr &pair : v->list) {
+          if (pair->kind != K::List || pair->list.size() != 2 ||
+              pair->list[0]->kind != K::Str)
+            throw bad();
+          auto f = makeNode(NodeKind::FieldDecl, site, pair->list[0]->s);
+          auto annot = makeNode(NodeKind::Annot, site);
+          annot->add(makeNode(NodeKind::Modifiers, site));
+          annot->add(fromValue(pair->list[1], /*typePos=*/true));
+          annot->add(makeNode(NodeKind::None, site));
+          f->add(std::move(annot));
+          out->add(std::move(f));
+        }
+        continue;
+      }
+      // `{ $fs }`: a record literal's fields, a list of [name; value]
+      // pairs, so a derive can build a value of the type it was given.
+      if (n.kind == NodeKind::RecordLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        ValuePtr v = var(n.kids[i]->text);
+        if (v->kind != K::List)
+          throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                "pairs"};
+        for (const ValuePtr &pair : v->list) {
+          if (pair->kind != K::List || pair->list.size() != 2 ||
+              pair->list[0]->kind != K::Str)
+            throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                  "pairs"};
+          auto f = makeNode(NodeKind::FieldInit, site, pair->list[0]->s);
+          f->add(fromValue(pair->list[1], false));
+          out->add(std::move(f));
+        }
+        continue;
+      }
+      // `[ $xs ]`: a list spliced among a list literal's elements is
+      // its elements, so a derive can write a buffer of bytes it computed
+      // (ADR 0045, step 4).
+      if (n.kind == NodeKind::ListLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        const Node &sp = *n.kids[i];
+        ValuePtr v = sp.text.empty() ? in_.eval(*sp.kids[0], env_)
+                                     : var(sp.text);
+        if (v->kind == K::List) {
+          for (const ValuePtr &part : v->list) out->add(fromValue(part, false));
+          continue;
+        }
+        out->add(fromValue(v, false));
         continue;
       }
       out->add(copy(*n.kids[i], isTypePosition(n.kind, i)));

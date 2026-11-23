@@ -1,0 +1,40 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Mem: allocators, box and vec (ADR 0026, ADR 0041, ADR 0046). Each
+# module is proved and compiled on its own, and importers build against
+# its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files([
+    "Alloc.pia",
+    "Box.pia",
+    "Vec.pia",
+])
+
+# oom, the Allocator concept and the bump allocator: tests/std/mem.pia
+# checks its goals; tests/std/mem_edges.pia and :mem_run test it through
+# its interface.
+pia_library(
+    name = "alloc",
+    src = "Alloc.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# box t r, over any Allocator.
+pia_library(
+    name = "box",
+    src = "Box.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":alloc"],
+)
+
+# vec t a r, a growable vector that holds its Allocator.
+pia_library(
+    name = "vec",
+    src = "Vec.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":alloc"],
+)

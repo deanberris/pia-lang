@@ -1,0 +1,46 @@
+(* The built-in theory Memory (ADR 0052, section 4) is consistent: its
+   model `timeline` meets every axiom. Programs that use Memory do not
+   prove this again. The file it checks is the one compiled into piac,
+   src/irgen/Memory.pia.
+// RUN: piac --verify --trust-report %S/../../src/irgen/Memory.pia | FileCheck %s --check-prefix=MODEL
+// RUN: not piac --verify %s | FileCheck %s
+// MODEL: 0 trusted items
+// MODEL: 33 proved, 0 failed, 0 skipped
+*)
+
+(* Message passing, from the axioms: a release store read by an acquire
+   load makes the data store happen before the data load. *)
+let lemma publish (dw : Memory.event) (fw : Memory.event) (fr : Memory.event)
+                  (dr : Memory.event) : unit
+  requires Memory.po dw fw && Memory.is_write fw && Memory.releases fw
+  requires Memory.is_atomic fw && Memory.rf fw fr && Memory.is_read fr
+  requires Memory.is_atomic fr && Memory.acquires fr && Memory.po fr dr
+  ensures Memory.hb dw dr
+= ()
+
+(* So the data load cannot read a write that the data store overwrote. *)
+let lemma no_stale (dw : Memory.event) (fw : Memory.event) (fr : Memory.event)
+                   (dr : Memory.event) (stale : Memory.event) : unit
+  requires Memory.po dw fw && Memory.is_write fw && Memory.releases fw
+  requires Memory.is_atomic fw && Memory.rf fw fr && Memory.is_read fr
+  requires Memory.is_atomic fr && Memory.acquires fr && Memory.po fr dr
+  requires Memory.mo stale dw
+  ensures Memory.rf stale dr = false
+= ()
+
+(* With the flag stored relaxed, nothing orders the two. *)
+let lemma publish_relaxed (dw : Memory.event) (fw : Memory.event)
+                          (fr : Memory.event) (dr : Memory.event) : unit
+  requires Memory.po dw fw && Memory.is_write fw
+  requires Memory.is_atomic fw && Memory.rf fw fr && Memory.is_read fr
+  requires Memory.is_atomic fr && Memory.acquires fr && Memory.po fr dr
+  ensures Memory.hb dw dr
+= ()
+
+(* Expected report, in order.
+// CHECK: theory.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: theory.pia:28:3: proved: the postcondition holds [smt]
+// CHECK: theory.pia:37:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: dw = {{.*}}
+// CHECK: 2 proved, 1 failed, 0 skipped
+*)

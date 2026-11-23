@@ -1,4 +1,4 @@
-(* `min t` and `max t` (ADR 0057): an integer type's bounds, folded to
+(* `min t` and `max t` (ADR 0058): an integer type's bounds, folded to
    literals, so they read in contracts as the numbers did and prove the
    same way. A literal takes its context's type, and so does a bound.
 // RUN: piac --verify %s | FileCheck %s

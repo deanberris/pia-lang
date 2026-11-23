@@ -1,0 +1,48 @@
+# Regenerates lib/Pia/Sys/Gen/<target>.pia on each target from its own C
+# headers and fails if the checked-in file differs (ADR 0051, section 6), so
+# a header change on a runner image is a red build on that platform, not a
+# silent wrong constant. Plain Python and clang: about a minute, no Bazel.
+name: bindings
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bindings-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64_linux
+          - os: macos-15
+            target: arm64_macos
+    name: bindings (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Regenerate and compare
+        run: python3 tools/bindings/gen.py --check
+      # On a difference, the regenerated file is the fix: download it and
+      # check it in.
+      - name: Write the regenerated file
+        if: failure()
+        run: python3 tools/bindings/gen.py && cat lib/Pia/Sys/Gen/${{ matrix.target }}.pia
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: bindings-${{ matrix.target }}
+          path: lib/Pia/Sys/Gen/${{ matrix.target }}.pia

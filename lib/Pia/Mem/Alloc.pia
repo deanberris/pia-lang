@@ -1,0 +1,53 @@
+(* Pia.Mem.Alloc: allocators (ADR 0026, ADR 0041) and the region they lend
+   from (ADR 0042).
+
+   - `oom`, the one way an allocation fails. Every allocation is fallible.
+   - The concept `Allocator a t r`: `a` hands out buffers of `t` from the
+     region `r`, each of the length asked for.
+   - `bump t r`, a bump allocator over a buffer from `r`. It never gives
+     memory back: what it lent lasts as long as its region, such as a
+     `with_arena` or a caller's buffer. Its `alloc` is generic over `t`,
+     and meets Allocator for `bump t` at every `t` (ADR 0034).
+
+   Not here yet: a pool that frees blocks one by one (tests/verify/pool.pia),
+   which must hand blocks out as linear values, and allocators over pages. *)
+module Pia.Mem.Alloc : Allocators
+
+interface Allocators = sig
+  (** Out of memory: the allocator had no room. *)
+  let oom = type | OutOfMemory
+  (** `a` allocates buffers of `t` from the region `r`. *)
+  let meta Allocator : concept
+  (** A bump allocator over `mem`, of which the first `used` are lent. *)
+  let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+  (** A buffer of `n` fresh elements from `m`'s region, or OutOfMemory. *)
+  let alloc : (t : type) -> (r : region) -> (m : inout mutable bump t r) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures len m.mem = old (len m.mem)
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+end
+
+let oom = type | OutOfMemory
+
+let meta Allocator (a : type) (t : type) (r : region) : concept = sig
+  let alloc : (m : inout mutable a) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+end
+
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  ensures len m.mem = old (len m.mem)
+  ensures (match result with | Ok b -> len b = n | Err _ -> true)
+= if m.used <= len m.mem && n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+(* The instances this module proves: a generic over a record is proved at
+   each instance (ADR 0043), and importers prove their own. *)
+let checks (mem : borrowed mutable [u8]) : result usize oom =
+  let m : mutable bump u8 = { mem = mem; used = 0 } in
+  let a = alloc m 2? in
+  let b = alloc m 3? in
+  Ok (len a + len b)

@@ -1,5 +1,5 @@
 (* `min t` and `max t` need an integer type, and a bound is a literal, so
-   it must fit where it goes (ADR 0057).
+   it must fit where it goes (ADR 0058).
 // RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
 *)
 

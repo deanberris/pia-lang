@@ -44,6 +44,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | --- | --- | --- |
 | new syntax | `docs/grammar.md`, `grammar/pia.lark` | `src/syntax/Lexer.cpp`, `Parser.cpp`, `Syntax.h`; tests in `tests/parser`, `tests/grammar` |
 | an operator or a core builtin | `src/syntax/Prelude.cpp` (operators, `derive_eq`, `machine`) | `isCoreBuiltin` in `src/sema/Sema.cpp`, the lowering in `IRGen.cpp` (`genBinary`, `genBitBuiltin`) |
+| the memory model, litmus tests (ADR 0052) | `src/irgen/Memory.pia`, `litmus` in `src/syntax/Prelude.cpp` | `tests/memory`; docs/theories.md, "The memory model" |
 | atomics: cells, orders, overflow modes (ADR 0052) | `genAtomic` in `src/irgen/IRGen.cpp`, the `pia.atomic.*` ops in `src/dialect/Pia.td` | the `Atomic*Lowering` patterns in `src/codegen/Codegen.cpp`; tests in `tests/verify/atomics.pia`, `tests/irgen/atomic_errors.pia`, `tests/codegen/atomics.pia` |
 | a metaprogram builtin or expansion | `src/meta/Interpreter.cpp`, `Expand.cpp` | `docs/meta.md`; tests in `tests/meta` |
 | type checking, overloads, concepts, deduction | `src/sema/Sema.{h,cpp}` | `IRGen.cpp`: `genCall`, `genGenericCall`, `--explain-overloads` |
@@ -59,7 +60,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
 | an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*` |
-| memory, allocators, `box`, `vec` | no module yet: they are prototyped as tests | `tests/verify/{bump,arena,pool,box,vec_*}.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
+| memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
 
@@ -95,6 +96,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/irgen/IRGen.{h,cpp}` (9.7k lines, one class `Gen`). Its main entry points are `run`, `genFunction`, `genExprOf`, `genBinary`, `genCall`, `genGenericCall`, `genMatch`, `liftLambda`, `coerce` and `checkFresh` (no shadowing). Run `python3 tools/codemap/outline.py --grep <word> src/irgen/IRGen.cpp` to find the rest.
 - `src/irgen/Theories.{h,cpp}` flattens theories and models (ADR 0036) and detects `@trusted`.
 - `src/irgen/Target.{h,cpp}` adds the built-in theory `Target` (ADR 0049), written in `src/irgen/Target.pia` and compiled in, with the model of the target being compiled for. `tests/verify/target_theory.pia` proves its models.
+- `src/irgen/Memory.{h,cpp}` adds the built-in theory `Memory`, RC11 (ADR 0052), written in `src/irgen/Memory.pia` and compiled in, to a program that names it. `tests/memory/theory.pia` proves its model.
 - `src/irgen/Boxes.{h,cpp}` expands `box` over a concept (ADR 0046).
 - `src/irgen/Regions.{h,cpp}` erases region parameters (ADR 0042).
 
@@ -111,6 +113,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Triggers.{h,cpp}` picks the triggers for axiom instantiation (ADR 0036).
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
+- `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
 - `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
@@ -133,6 +136,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
+- `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` (ADR 0051, section 6). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
 
 ### lib: the standard library, written in Pia (ADR 0023, ADR 0040)
 
@@ -145,10 +149,12 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Sort.pia`, `lib/Pia/Core/Algo/Heap.pia` and `lib/Pia/Core/Algo/BinarySearch.pia` hold sorting, the heap operations and the binary search family. `lib/Pia/Core/Algo/Permutation.pia` holds the multiset spec functions the sorts use.
 - `lib/Pia/Core/Algo/PartialSort.pia` holds `partial_sort` and `nth_element`. `lib/Pia/Core/Algo/Partition.pia` holds `is_partitioned`, `partition_point` and `partition`.
 - `lib/Pia/Core/Algo/Merge.pia` holds `merge`, from two sorted ranges into an out slice.
+- `lib/Pia/Mem/Alloc.pia` holds `oom`, the `Allocator` concept and the bump allocator. `lib/Pia/Mem/Box.pia` is `box t r` over any allocator, and `lib/Pia/Mem/Vec.pia` is `vec t a r`, a growable vector that holds its allocator.
 - `lib/Pia/Core/Algo/Set.pia` holds `includes`, `set_intersection` and `set_difference`. `lib/Pia/Core/Algo/SetUnion.pia` holds `set_union`.
 - `lib/Pia/Core/Algo/SetSymmetric.pia` holds `set_symmetric_difference`, in its own module so it proves in parallel with `set_union`.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
-- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, and `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens (ADR 0045).
+- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens, and `lib/Pia/Text/Json/Read.pia` the token readers `@derive(json)` builds on (ADR 0045); the derive itself is in `src/syntax/Prelude.cpp`.
+- `lib/Pia/Sys/Gen/arm64_macos.pia` and `lib/Pia/Sys/Gen/x86_64_linux.pia` are generated by `tools/bindings/gen.py`: POSIX constants, struct layouts and contract-free `extern` declarations, all `@target`. Never edit them by hand. `tests/irgen/sys_gen.pia` proves they compile.
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
 - `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions, starting with the LZW dictionary. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it.
 
@@ -170,6 +176,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/codegen` | lowering lit tests and C harnesses | the run tests need arm64 macOS or a matching host |
 | `tests/meta` | `--dump-expanded` and proofs of expanded code | |
 | `tests/modules` | interfaces and imports across files | inputs in `tests/modules/Inputs` |
+| `tests/memory` | the litmus battery for `Pia.Memory`, one file per family (MP, SB, LB, coherence, rmw, races, multi) | `theory.pia` proves the theory's model |
 | `tests/std` | the `lib/` modules | build the `.piai` files first in local runs |
 | `tests/lint` | lint text and fixes | |
 | `tests/parser`, `tests/grammar` | AST goldens and the shared grammar corpus | |
@@ -185,8 +192,8 @@ User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour
 
 ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topic:
 
-- **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0057 (digit separators, `min t`/`max t`), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
-- **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings).
+- **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0058 (digit separators, `min t`/`max t`), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
+- **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings), 0057 (`Pia.Sys.Posix` per target behind one interface).
 - **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).

@@ -1,0 +1,105 @@
+(* A generic function meets a concept's requirement at the type arguments
+   its parameters deduce (ADR 0034): `alloc` over `bump t r` meets
+   Allocator's `alloc` for `bump u16` and `u16`, at t = u16, and its
+   contract is checked against the requirement's at that instance. So an
+   allocator generic over what it holds serves a vector generic over its
+   allocator.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+
+let meta Allocator (a : type) (t : type) (r : region) : concept = sig
+  let alloc : (m : inout mutable a) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+end
+
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  ensures (match result with | Ok b -> len b = n | Err _ -> true)
+= if m.used <= len m.mem && n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+
+let push (t : type) (r : region) (a : type where Allocator a t r) (v : inout mutable vec t a r) (x : t) : result unit oom
+  requires v.len <= len v.buf
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+= if v.len = len v.buf then
+    (let cap = len v.buf in
+     if cap > 1000000 then Err OutOfMemory
+     else
+       (let nb = alloc v.alloc (2 * cap + 1)? in
+        let old_buf = v.buf in
+        for i in 0 .. v.len do nb.[i] <- old_buf.[i] done;
+        nb.[v.len] <- x;
+        v.buf <- nb;
+        v.len <- v.len + 1;
+        Ok ()))
+  else
+    (let b = v.buf in
+     b.[v.len] <- x;
+     v.len <- v.len + 1;
+     Ok ())
+
+(* The same bump serves vectors of u16 and of u32. *)
+let two (small : borrowed mutable [u16]) (wide : borrowed mutable [u32]) : result usize oom =
+  let ms : bump u16 = { mem = small; used = 0 } in
+  let vs : mutable vec u16 (bump u16) = { alloc = ms; buf = small.[0 .. 0]; len = 0 } in
+  let mw : bump u32 = { mem = wide; used = 0 } in
+  let vw : mutable vec u32 (bump u32) = { alloc = mw; buf = wide.[0 .. 0]; len = 0 } in
+  push vs 700?;
+  push vw 70000?;
+  push vw 90000?;
+  Ok (vs.len + vw.len)
+
+(* Expected report, in order.
+// CHECK: generic_meets_concept.pia:55:61: proved: the slice is within bounds [smt]
+// CHECK: generic_meets_concept.pia:57:61: proved: the slice is within bounds [smt]
+// CHECK: generic_meets_concept.pia:58:3: proved: the precondition of 'push<u16, bump<u16>>' holds [smt]
+// CHECK: generic_meets_concept.pia:59:3: proved: the precondition of 'push<u32, bump<u32>>' holds [smt]
+// CHECK: generic_meets_concept.pia:60:3: proved: the precondition of 'push<u32, bump<u32>>' holds [smt]
+// CHECK: generic_meets_concept.pia:61:14: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:21:44: proved: '-' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:23:22: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:24:31: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:24:9: proved: the slice is within bounds [smt]
+// CHECK: generic_meets_concept.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:14:5: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:39:35: proved: '*' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:39:41: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:41:42: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:41:32: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:42:9: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:44:24: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:48:6: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:49:21: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:21:44: proved: '-' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:23:22: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:24:31: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:24:9: proved: the slice is within bounds [smt]
+// CHECK: generic_meets_concept.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:14:5: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:39:35: proved: '*' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:39:41: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:41:42: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:41:32: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:42:9: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:44:24: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:48:6: proved: the index is within bounds [smt]
+// CHECK: generic_meets_concept.pia:49:21: proved: '+' does not overflow usize [smt]
+// CHECK: generic_meets_concept.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: generic_meets_concept.pia:19:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: generic_meets_concept.pia:29:1: not proved generically: 'push' is proved at each instance, since the requirement 'Allocator<a, t>.alloc' returns a record [generic]
+// CHECK: 38 proved, 0 failed, 0 skipped
+*)

@@ -1,4 +1,4 @@
-# 57. Digits group with `'` or `_`; `min t` and `max t` are an integer type's bounds, folded to literals
+# 58. Digits group with `'` or `_`; `min t` and `max t` are an integer type's bounds, folded to literals
 
 Date: 2026-11-23
 

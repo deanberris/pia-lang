@@ -11,7 +11,7 @@
      Pia compares integers of any two types exactly, so `a < b` between
      an i32 and a u32 already means cmp_less a b.
    - in_range, numeric_limits: `min t` and `max t` give a named type's
-     bounds (ADR 0057), but not yet a type argument's, which a generic
+     bounds (ADR 0058), but not yet a type argument's, which a generic
      body sees only as a stand-in. A range type states them, and
      `let y : u8 = x` proves x fits.
    - lcm, and a gcd contract that says the result divides both and every

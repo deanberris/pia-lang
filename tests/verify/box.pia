@@ -5,7 +5,7 @@
    `fill` requires an empty one. So a use after `release` is a failed
    goal, not a run-time check (tests/verify/box_errors.pia). This bump
    allocator frees with its region, so a box needs no `free` of its own
-   here; it lives in Pia.Mem.Box once interfaces carry regions.
+   here. The library's box is Pia.Mem.Box (lib/Pia/Mem/Box.pia).
 // RUN: piac --verify %s | FileCheck %s
 *)
 
