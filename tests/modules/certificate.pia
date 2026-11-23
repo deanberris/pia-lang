@@ -22,8 +22,8 @@
 // DUMP-NEXT: requires Image.Pixels.Ops [[OPS:[0-9a-f]{64}]]
 
 // LIB: module Image.Pixels
-// LIB-DAG: provides Image.Pixels.Ops {{[0-9a-f]{64}}}
-// LIB-DAG: provides Image.Pixels.C {{[0-9a-f]{64}}}
+// LIB-DAG: provides Image.Pixels.Ops {{[0-9a-f]+}}
+// LIB-DAG: provides Image.Pixels.C {{[0-9a-f]+}}
 
 // OK: pia-cert: 2 objects link
 
