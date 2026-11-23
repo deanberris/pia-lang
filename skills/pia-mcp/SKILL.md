@@ -30,6 +30,10 @@ claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp
 - **A slow cell returns a job.** The text is `job N is running; call poll with this job number`. Call `poll {"job": N}` until the state is `done`. Jobs run one at a time, in order, so a slow cell holds up every later `execute`. For a long-running expression use `:spawn` (below) instead.
 - **Leave `json` off.** Some clients, Claude Code among them, show you the structured content in place of the text, and the JSON events are several times longer. Turn it on only when you need machine-readable fields, such as a counterexample as an object.
 
+## The built-in guide
+
+The server teaches the language too. Its instructions are a short primer, `:help <topic>` returns one section of the `pia-language`, `pia-contracts` or this skill (`:help` lists the topics, and `pia://guide/<topic>` serves them as resources), and a failed cell ends with `hint:` lines that name the topic with the fix. If you have these skills loaded, you already have the guide; read a hint's topic when you do not.
+
 ## Reading a result
 
 ```text

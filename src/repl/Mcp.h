@@ -8,6 +8,9 @@
 //
 // It speaks JSON-RPC 2.0 over newline-delimited stdio, as MCP's stdio
 // transport does.
+//
+// It teaches the language through its instructions, the pia://guide/
+// resources and hints on failed cells (repl/Guide.h).
 
 #ifndef PIA_REPL_MCP_H
 #define PIA_REPL_MCP_H
