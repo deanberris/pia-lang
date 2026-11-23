@@ -1,0 +1,52 @@
+(* Importers of Pia.Mem instantiate its allocator, box and vec at their own
+   types, and prove those instances (ADR 0043): a vector of u16 grown
+   past its first capacity, a box of u32 emptied and filled again, and a
+   bump that runs out.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Box.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Vec.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Mem.Alloc.Allocators
+import Pia.Mem.Box.Boxes
+import Pia.Mem.Vec.Vectors
+
+(* Three pushes from a capacity of 1: the second grows to 3, the third
+   fits. Every element stays. *)
+let grows (mem : borrowed mutable [u16]) : result unit Pia.Mem.Alloc.oom =
+  let m : Pia.Mem.Alloc.bump u16 = { mem = mem; used = 0 } in
+  let v : mutable Pia.Mem.Vec.vec u16 (Pia.Mem.Alloc.bump u16) = Pia.Mem.Vec.with_capacity<u16> m 1? in
+  Pia.Mem.Vec.push v 65535?;
+  Pia.Mem.Vec.push v 0?;
+  Pia.Mem.Vec.push v 7?;
+  assert v.len = 3;
+  assert Pia.Mem.Vec.get v 0 = 65535;
+  assert Pia.Mem.Vec.get v 1 = 0;
+  assert Pia.Mem.Vec.get v 2 = 7;
+  Pia.Mem.Vec.set v 1 9;
+  assert Pia.Mem.Vec.get v 0 = 65535;
+  Pia.Mem.Vec.pop v;
+  assert v.len = 2 && Pia.Mem.Vec.get v 1 = 9;
+  Ok ()
+
+(* A box is full after make and fill, and empty after release. *)
+let boxes (mem : borrowed mutable [u32]) : result u32 Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump u32 = { mem = mem; used = 0 } in
+  let b : mutable Pia.Mem.Box.box u32 = Pia.Mem.Box.make<u32> m 4294967295? in
+  let x = Pia.Mem.Box.release b in
+  assert x = 4294967295;
+  assert Pia.Mem.Box.full b = false;
+  Pia.Mem.Box.fill b 0;
+  Ok (Pia.Mem.Box.get b)
+
+(* A bump over nothing has no room, so its first allocation fails. *)
+let empty (mem : borrowed mutable [u8]) : bool =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem.[0 .. 0]; used = 0 } in
+  match Pia.Mem.Alloc.alloc m 1 with
+  | Ok _ -> false
+  | Err _ -> true
+
+(*
+// CHECK-NOT: failed
+// CHECK: 71 proved, 0 failed, 0 skipped
+*)

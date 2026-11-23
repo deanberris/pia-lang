@@ -38,6 +38,9 @@ lit_tests(
         "//lib/Pia/Image:Raster.pia",
         "//lib/Pia/Image/Gif:Lzw.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
+        "//lib/Pia/Mem:Alloc.pia",
+        "//lib/Pia/Mem:Box.pia",
+        "//lib/Pia/Mem:Vec.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -484,5 +487,24 @@ sh_test(
     srcs = ["gif_lzw_run_test.sh"],
     args = ["$(rootpath :gif_lzw_run)"],
     data = [":gif_lzw_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "mem_run",
+    src = "Inputs/mem_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Mem:box",
+        "//lib/Pia/Mem:vec",
+    ],
+)
+
+sh_test(
+    name = "mem_run_test",
+    srcs = ["mem_run_test.sh"],
+    args = ["$(rootpath :mem_run)"],
+    data = [":mem_run"],
     target_compatible_with = PIA_TARGETS,
 )
