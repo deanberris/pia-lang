@@ -98,22 +98,30 @@ let meta derive_json (t : type_decl) : list =
   let plain = let (k) =>
     fold (let (ok) (b) => and ok (and (ge b 32) (and (le b 126) (and (ne b 34) (ne b 92))))) (gt (length (bytes k)) 0) (bytes k) in
   let checked = map (let (k) => if plain k then k else fail (concat "@derive(json): the member name '" (concat k "' needs printable ASCII with no quote or backslash"))) keys in
-  (* What a field is: "bool", or an integer with its bounds. *)
+  (* An `option t` field holds a t or nothing (ADR 0045, step 5): its
+     value's type is t, and the rest of the derive works on that. *)
+  let is_opt = let (f) =>
+    let ft = field_type t f in
+    if eq (kind ft) "TypeApp" then
+      (let h = name (nth (children ft) 0) in or (eq h "option") (eq h "Pia.Core.Option.option"))
+    else false in
+  let base = let (f) => if is_opt f then nth (children (field_type t f)) 1 else field_type t f in
+  (* What a field's value is: "bool", or an integer with its bounds. *)
   let is_bool = let (f) =>
-    let ft = field_type t f in if eq (kind ft) "TypeName" then eq (name ft) "bool" else false in
+    let ft = base f in if eq (kind ft) "TypeName" then eq (name ft) "bool" else false in
   (* Integer and range types have bounds; any other type is not supported
      yet, which is an error that names the field. *)
   let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
   let supported = map (let (f) =>
-      let ft = field_type t f in
+      let ft = base f in
       if is_bool f then true
       else if eq (kind ft) "RangeType" then true
       else if eq (kind ft) "TypeName" then
         (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
-         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types and bool")))
-      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types and bool")))
+         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one")))
+      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one")))
     fs in
-  let bounds = let (f) => range_of (field_type t f) in
+  let bounds = let (f) => range_of (base f) in
   (* The writer of a field's value, and the room it needs. *)
   let writer = let (f) =>
     if is_bool f then [ "write_bool"; 5 ]
@@ -128,7 +136,10 @@ let meta derive_json (t : type_decl) : list =
         (if and (ge lo (-128)) (le hi 127) then [ "write_i8"; 4 ] else if and (ge lo (-32768)) (le hi 32767) then [ "write_i16"; 6 ]
          else if and (ge lo (-2147483648)) (le hi 2147483647) then [ "write_i32"; 11 ] else [ "write_i64"; 20 ])) in
   (* A member's room: its key with quotes, the colon and its value. *)
-  let member_room = let (i) => add (add (length (bytes (nth checked i))) 3) (nth (writer (nth fs i)) 1) in
+  (* None writes `null`, four bytes. *)
+  let value_room = let (f) =>
+    let r = nth (writer f) 1 in if and (is_opt f) (lt r 4) then 4 else r in
+  let member_room = let (i) => add (add (length (bytes (nth checked i))) 3) (value_room (nth fs i)) in
   let room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
   let wname = concat "write_json_" tn in
   let wfield = let (i) => concat (concat (concat "write_json_" tn) "_") (nth fs i) in
@@ -147,7 +158,11 @@ let meta derive_json (t : type_decl) : list =
        = let $!key : [u8; $kn] = [ $kb ] in
          let $!p1 = $(json_write "write_key") $!dst $!pos $!key in
          let $!p2 = $(json_write "write_colon") $!dst $!p1 in
-         $w $!dst $!p2 $!v ) in
+         $(if is_opt f then
+             `( match $!v with
+                | $!None -> $(json_write "write_null") $!dst $!p2
+                | Some $!x -> $w $!dst $!p2 $!x )
+           else `( $w $!dst $!p2 $!v )) ) in
   (* The object: `{`, the members with commas between, `}`. *)
   let body = fold (let (acc) (i) =>
       let fn = wfield i in
@@ -182,9 +197,10 @@ let meta derive_json (t : type_decl) : list =
   (* One reader per field's value, with its range checked as it reads. *)
   let field_reader = let (i) =>
     let f = nth fs i in
-    let fn = fread i in
-    let rt = ftype i in
-    let ft = field_type t f in
+    let opt = is_opt f in
+    let fn = if opt then concat (fread i) "_value" else fread i in
+    let rt = if opt then concat (ftype i) "_value" else ftype i in
+    let ft = base f in
     let rtype = `( let $rt = type { value : $ft; stop : usize } ) in
     let body =
       if is_bool f then
@@ -211,13 +227,31 @@ let meta derive_json (t : type_decl) : list =
                  (match $!e with
                   | NotNumber $!p -> Err ($esyn $!p)
                   | OutOfRange $!p -> Err ($erng $!p)) )) in
-    [ rtype;
+    concat [ rtype;
       `( let $fn ($!s : [u8]) ($!pos : usize) : result $rt $ename
            requires $!pos <= len $!s
            ensures (match $!result with
              | Ok $!q -> $!pos < $!q.stop && $!q.stop <= len $!s
              | Err _ -> true)
-         = $body ) ] in
+         = $body ) ]
+      (if opt then (
+         (* `null` is None; anything else is the value, as Some. *)
+         let ofn = fread i in
+         let ort = ftype i in
+         let full = field_type t f in
+         [ `( let $ort = type { value : $full; stop : usize } );
+           `( let $ofn ($!s : [u8]) ($!pos : usize) : result $ort $ename
+                requires $!pos <= len $!s
+                ensures (match $!result with
+                  | Ok $!q -> $!pos < $!q.stop && $!q.stop <= len $!s
+                  | Err _ -> true)
+              = match $(json_read "read_null") $!s $!pos with
+                | Ok $!e -> Ok { value = None; stop = $!e }
+                | Err _ ->
+                    (match $fn $!s $!pos with
+                     | Ok $!r -> Ok { value = Some $!r.value; stop = $!r.stop }
+                     | Err $!e -> Err $!e) ) ])
+       else []) in
   (* The key decision tree: on the name's length, then on the first byte
      where the candidates differ, then one full compare. It returns the
      field's number from 1, or 0 for no field. *)
@@ -269,7 +303,8 @@ let meta derive_json (t : type_decl) : list =
   let actions = fold (let (acc) (i) =>
       `( if $!which = $(add i 1) then $(action i) else $acc ))
     `( ($!err <- $eunk $!k.start; 0) ) idx in
-  let all_seen = fold (let (acc) (i) => `( $acc && $(seen i) )) `( true ) idx in
+  (* A missing option member is None, so only the others must be seen. *)
+  let all_seen = fold (let (acc) (i) => if is_opt (nth fs i) then acc else `( $acc && $(seen i) )) `( true ) idx in
   let record = fold (let (acc) (i) => concat acc [ [ nth fs i; val i ] ]) [] idx in
   let loop =
     `( let $!at : mutable usize = $!o.next in
@@ -298,7 +333,8 @@ let meta derive_json (t : type_decl) : list =
       let sn = seen i in
       let vn = val i in
       let ft = field_type t (nth fs i) in
-      let init = if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
+      let init = if is_opt (nth fs i) then `( None )
+                 else if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
       `( let $sn : mutable bool = false in let $vn : mutable $ft = $init in $acc ))
     loop (reverse idx) in
   let rfn = concat "read_json_" tn in

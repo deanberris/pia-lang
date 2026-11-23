@@ -18,7 +18,8 @@
      it. The name's bytes are compared as written: a name with escapes
      only matches a field whose name has the same escapes (unescaping
      comes with Json.Dom).
-   - `after_member` reads the `,` or `}` after a member's value. *)
+   - `after_member` reads the `,` or `}` after a member's value.
+   - `read_null` reads `null`, which an `option` field reads as None. *)
 module Pia.Text.Json.Read : Reader
 
 import Pia.Text.Json.Spec.Grammar as Spec
@@ -81,6 +82,13 @@ interface Reader = sig
     ensures (match result with
       | Ok k -> pos <= k.start && k.start + 2 <= k.stop && k.stop < k.next && k.next <= len s
                 && Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String k.start k.stop
+      | Err p -> p <= len s)
+  (** `null` at or after pos: the position after it, or Err where some
+      other token, or an error, is. *)
+  let read_null : (s : [u8]) -> (pos : usize) -> result usize usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok e -> pos < e && e <= len s
       | Err p -> p <= len s)
   (** `,` or `}` at or after pos. *)
   let after_member : (s : [u8]) -> (pos : usize) -> result sep usize
@@ -277,4 +285,16 @@ let after_member (s : [u8]) (pos : usize) : result sep usize
       (match t.kind with
        | Comma -> Ok { next = t.stop; more = true }
        | RBrace -> Ok { next = t.stop; more = false }
+       | _ -> Err t.start)
+
+let read_null (s : [u8]) (pos : usize) : result usize usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok e -> pos < e && e <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | Null -> Ok t.stop
        | _ -> Err t.start)
