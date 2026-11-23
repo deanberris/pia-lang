@@ -23,6 +23,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<any>` | `dyn` | Out: no run-time type information (ADR 0003) | n/a |
 | `<bitset>` | `Pia.Core.Bit` over `[u64; n]` | Direct | deferred: value parameters in generic types |
 | `<functional>` | `Pia.Fn`: the laws of function arguments (`strict_weak_order`, `equivalence`, `associative`, `commutative`, `identity`, `sorted`, ...), generic spec functions exported with their definitions (ADR 0044, step 5) | Laws done; the rest of <functional> waits for the library | phase 6 |
+| `std::hash` (`<functional>`) | `Pia.Core.Hash`: the `Hash` concept over `Eq`, whose law `agrees` says `same a b ==> hash a = hash b`; `hash` for the eight integer types, `bytes` (FNV-1a, 64 bits), `combine` and `hash_all` over any Hash type | Direct; the function is fixed, so a hash is the same on every target and every run, where C++ leaves it unspecified | done: integers hash their 64-bit two's complement encoding with SplitMix64's finaliser, and each instance's law is proved where a generic function uses it, as for `Eq` and `Ord` (81 goals); tuples and records wait for structural instances (ADR 0040 section 9) |
 | `<type_traits>` | type-level metaprograms and type `match`; `Pia.Core.Traits` as needed | Idiom (ADR 0035) | phase 1 as needed |
 | `<typeinfo>`, `<typeindex>` | metaprogram builtins (`name`, `type_kind`) | Out: no RTTI | n/a |
 | `<source_location>` | the core's source locations in diagnostics; a metaprogram builtin if a program needs one | Core | n/a |

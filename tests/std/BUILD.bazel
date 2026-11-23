@@ -15,6 +15,7 @@ lit_tests(
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
         "//lib/Pia/Core:Digits.pia",
+        "//lib/Pia/Core:Hash.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
@@ -448,6 +449,24 @@ sh_test(
     srcs = ["digits_run_test.sh"],
     args = ["$(rootpath :digits_run)"],
     data = [":digits_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "hash_run",
+    src = "Inputs/hash_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:hash",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+sh_test(
+    name = "hash_run_test",
+    srcs = ["hash_run_test.sh"],
+    args = ["$(rootpath :hash_run)"],
+    data = [":hash_run"],
     target_compatible_with = PIA_TARGETS,
 )
 
