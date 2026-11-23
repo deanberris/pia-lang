@@ -10,8 +10,9 @@
    - cmp_equal, cmp_less and the rest of <utility>'s safe comparisons:
      Pia compares integers of any two types exactly, so `a < b` between
      an i32 and a u32 already means cmp_less a b.
-   - in_range, numeric_limits: a type's bounds are not values that code
-     can take from a type argument. A range type states them, and
+   - in_range, numeric_limits: `min t` and `max t` give a named type's
+     bounds (ADR 0057), but not yet a type argument's, which a generic
+     body sees only as a stand-in. A range type states them, and
      `let y : u8 = x` proves x fits.
    - lcm, and a gcd contract that says the result divides both and every
      common divisor divides it: both need nonlinear facts the verifier
@@ -42,8 +43,8 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : u8) -> (b : u8) -> u8
-    ensures a * b <= 255 ==> result = a * b
-    ensures a * b > 255 ==> result = 255
+    ensures a * b <= max u8 ==> result = a * b
+    ensures a * b > max u8 ==> result = max u8
   (** C++26: std::div_sat. Unsigned division cannot overflow. *)
   let div_sat : (a : u8) -> (b : u8) -> u8
     requires b <> 0
@@ -60,8 +61,8 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : u16) -> (b : u16) -> u16
-    ensures a * b <= 65535 ==> result = a * b
-    ensures a * b > 65535 ==> result = 65535
+    ensures a * b <= max u16 ==> result = a * b
+    ensures a * b > max u16 ==> result = max u16
   (** C++26: std::div_sat. Unsigned division cannot overflow. *)
   let div_sat : (a : u16) -> (b : u16) -> u16
     requires b <> 0
@@ -78,8 +79,8 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : u32) -> (b : u32) -> u32
-    ensures a * b <= 4294967295 ==> result = a * b
-    ensures a * b > 4294967295 ==> result = 4294967295
+    ensures a * b <= max u32 ==> result = a * b
+    ensures a * b > max u32 ==> result = max u32
   (** C++26: std::div_sat. Unsigned division cannot overflow. *)
   let div_sat : (a : u32) -> (b : u32) -> u32
     requires b <> 0
@@ -96,13 +97,13 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : u64) -> (b : u64) -> u64
-    ensures a * b <= 18446744073709551615 ==> result = a * b
-    ensures a * b > 18446744073709551615 ==> result = 18446744073709551615
+    ensures a * b <= max u64 ==> result = a * b
+    ensures a * b > max u64 ==> result = max u64
   (** C++26: std::div_sat. Unsigned division cannot overflow. *)
   let div_sat : (a : u64) -> (b : u64) -> u64
     requires b <> 0
     ensures result = a / b
-  (** C++: std::gcd, of the magnitudes. The result is u8, so gcd of -128 has no overflow, where C++'s is undefined. *)
+  (** C++: std::gcd, of the magnitudes. The result is u8, so gcd of min i8 has no overflow, where C++'s is undefined. *)
   let gcd : (a : i8) -> (b : i8) -> u8
     ensures result = euclid (abs a) (abs b)
     ensures result = 0 <==> a = 0 && b = 0
@@ -116,19 +117,19 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : i8) -> (b : i8) -> i8
-    ensures a * b > 127 ==> result = 127
-    ensures a * b < -128 ==> result = -128
-    ensures -128 <= a * b && a * b <= 127 ==> result = a * b
-  (** C++26: std::div_sat. Only -128 / -1 overflows, and gives 127. *)
+    ensures a * b > max i8 ==> result = max i8
+    ensures a * b < min i8 ==> result = min i8
+    ensures min i8 <= a * b && a * b <= max i8 ==> result = a * b
+  (** C++26: std::div_sat. Only min i8 / -1 overflows, and gives max i8. *)
   let div_sat : (a : i8) -> (b : i8) -> i8
     requires b <> 0
-    ensures a = -128 && b = -1 ==> result = 127
-    ensures a <> -128 || b <> -1 ==> result = a / b
-  (** C++: std::abs, as u8, so abs -128 is defined, where C++'s is undefined. *)
+    ensures a = min i8 && b = -1 ==> result = max i8
+    ensures a <> min i8 || b <> -1 ==> result = a / b
+  (** C++: std::abs, as u8, so abs min i8 is defined, where C++'s is undefined. *)
   let abs : (x : i8) -> u8
     ensures x >= 0 ==> result = x
     ensures x < 0 ==> result = 0 - x
-  (** C++: std::gcd, of the magnitudes. The result is u16, so gcd of -32768 has no overflow, where C++'s is undefined. *)
+  (** C++: std::gcd, of the magnitudes. The result is u16, so gcd of min i16 has no overflow, where C++'s is undefined. *)
   let gcd : (a : i16) -> (b : i16) -> u16
     ensures result = euclid (abs a) (abs b)
     ensures result = 0 <==> a = 0 && b = 0
@@ -142,19 +143,19 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : i16) -> (b : i16) -> i16
-    ensures a * b > 32767 ==> result = 32767
-    ensures a * b < -32768 ==> result = -32768
-    ensures -32768 <= a * b && a * b <= 32767 ==> result = a * b
-  (** C++26: std::div_sat. Only -32768 / -1 overflows, and gives 32767. *)
+    ensures a * b > max i16 ==> result = max i16
+    ensures a * b < min i16 ==> result = min i16
+    ensures min i16 <= a * b && a * b <= max i16 ==> result = a * b
+  (** C++26: std::div_sat. Only min i16 / -1 overflows, and gives max i16. *)
   let div_sat : (a : i16) -> (b : i16) -> i16
     requires b <> 0
-    ensures a = -32768 && b = -1 ==> result = 32767
-    ensures a <> -32768 || b <> -1 ==> result = a / b
-  (** C++: std::abs, as u16, so abs -32768 is defined, where C++'s is undefined. *)
+    ensures a = min i16 && b = -1 ==> result = max i16
+    ensures a <> min i16 || b <> -1 ==> result = a / b
+  (** C++: std::abs, as u16, so abs min i16 is defined, where C++'s is undefined. *)
   let abs : (x : i16) -> u16
     ensures x >= 0 ==> result = x
     ensures x < 0 ==> result = 0 - x
-  (** C++: std::gcd, of the magnitudes. The result is u32, so gcd of -2147483648 has no overflow, where C++'s is undefined. *)
+  (** C++: std::gcd, of the magnitudes. The result is u32, so gcd of min i32 has no overflow, where C++'s is undefined. *)
   let gcd : (a : i32) -> (b : i32) -> u32
     ensures result = euclid (abs a) (abs b)
     ensures result = 0 <==> a = 0 && b = 0
@@ -168,19 +169,19 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : i32) -> (b : i32) -> i32
-    ensures a * b > 2147483647 ==> result = 2147483647
-    ensures a * b < -2147483648 ==> result = -2147483648
-    ensures -2147483648 <= a * b && a * b <= 2147483647 ==> result = a * b
-  (** C++26: std::div_sat. Only -2147483648 / -1 overflows, and gives 2147483647. *)
+    ensures a * b > max i32 ==> result = max i32
+    ensures a * b < min i32 ==> result = min i32
+    ensures min i32 <= a * b && a * b <= max i32 ==> result = a * b
+  (** C++26: std::div_sat. Only min i32 / -1 overflows, and gives max i32. *)
   let div_sat : (a : i32) -> (b : i32) -> i32
     requires b <> 0
-    ensures a = -2147483648 && b = -1 ==> result = 2147483647
-    ensures a <> -2147483648 || b <> -1 ==> result = a / b
-  (** C++: std::abs, as u32, so abs -2147483648 is defined, where C++'s is undefined. *)
+    ensures a = min i32 && b = -1 ==> result = max i32
+    ensures a <> min i32 || b <> -1 ==> result = a / b
+  (** C++: std::abs, as u32, so abs min i32 is defined, where C++'s is undefined. *)
   let abs : (x : i32) -> u32
     ensures x >= 0 ==> result = x
     ensures x < 0 ==> result = 0 - x
-  (** C++: std::gcd, of the magnitudes. The result is u64, so gcd of -9223372036854775808 has no overflow, where C++'s is undefined. *)
+  (** C++: std::gcd, of the magnitudes. The result is u64, so gcd of min i64 has no overflow, where C++'s is undefined. *)
   let gcd : (a : i64) -> (b : i64) -> u64
     ensures result = euclid (abs a) (abs b)
     ensures result = 0 <==> a = 0 && b = 0
@@ -194,80 +195,80 @@ interface Ops = sig
     ensures a > b ==> 2 * result = a + b || 2 * result = a + b + 1
   (** C++26: std::mul_sat. The product, clamped to the type. *)
   let mul_sat : (a : i64) -> (b : i64) -> i64
-    ensures a * b > 9223372036854775807 ==> result = 9223372036854775807
-    ensures a * b < -9223372036854775808 ==> result = -9223372036854775808
-    ensures -9223372036854775808 <= a * b && a * b <= 9223372036854775807 ==> result = a * b
-  (** C++26: std::div_sat. Only -9223372036854775808 / -1 overflows, and gives 9223372036854775807. *)
+    ensures a * b > max i64 ==> result = max i64
+    ensures a * b < min i64 ==> result = min i64
+    ensures min i64 <= a * b && a * b <= max i64 ==> result = a * b
+  (** C++26: std::div_sat. Only min i64 / -1 overflows, and gives max i64. *)
   let div_sat : (a : i64) -> (b : i64) -> i64
     requires b <> 0
-    ensures a = -9223372036854775808 && b = -1 ==> result = 9223372036854775807
-    ensures a <> -9223372036854775808 || b <> -1 ==> result = a / b
-  (** C++: std::abs, as u64, so abs -9223372036854775808 is defined, where C++'s is undefined. *)
+    ensures a = min i64 && b = -1 ==> result = max i64
+    ensures a <> min i64 || b <> -1 ==> result = a / b
+  (** C++: std::abs, as u64, so abs min i64 is defined, where C++'s is undefined. *)
   let abs : (x : i64) -> u64
     ensures x >= 0 ==> result = x
     ensures x < 0 ==> result = 0 - x
   (** C++26: std::saturate_cast<u8>. *)
   let saturate_cast_u8 : (x : i64) -> u8
     ensures x < 0 ==> result = 0
-    ensures x > 255 ==> result = 255
-    ensures 0 <= x && x <= 255 ==> result = x
+    ensures x > max u8 ==> result = max u8
+    ensures 0 <= x && x <= max u8 ==> result = x
   (** C++26: std::saturate_cast<u8>. *)
   let saturate_cast_u8 : (y : u64) -> u8
-    ensures y > 255 ==> result = 255
-    ensures 0 <= y && y <= 255 ==> result = y
+    ensures y > max u8 ==> result = max u8
+    ensures 0 <= y && y <= max u8 ==> result = y
   (** C++26: std::saturate_cast<u16>. *)
   let saturate_cast_u16 : (x : i64) -> u16
     ensures x < 0 ==> result = 0
-    ensures x > 65535 ==> result = 65535
-    ensures 0 <= x && x <= 65535 ==> result = x
+    ensures x > max u16 ==> result = max u16
+    ensures 0 <= x && x <= max u16 ==> result = x
   (** C++26: std::saturate_cast<u16>. *)
   let saturate_cast_u16 : (y : u64) -> u16
-    ensures y > 65535 ==> result = 65535
-    ensures 0 <= y && y <= 65535 ==> result = y
+    ensures y > max u16 ==> result = max u16
+    ensures 0 <= y && y <= max u16 ==> result = y
   (** C++26: std::saturate_cast<u32>. *)
   let saturate_cast_u32 : (x : i64) -> u32
     ensures x < 0 ==> result = 0
-    ensures x > 4294967295 ==> result = 4294967295
-    ensures 0 <= x && x <= 4294967295 ==> result = x
+    ensures x > max u32 ==> result = max u32
+    ensures 0 <= x && x <= max u32 ==> result = x
   (** C++26: std::saturate_cast<u32>. *)
   let saturate_cast_u32 : (y : u64) -> u32
-    ensures y > 4294967295 ==> result = 4294967295
-    ensures 0 <= y && y <= 4294967295 ==> result = y
+    ensures y > max u32 ==> result = max u32
+    ensures 0 <= y && y <= max u32 ==> result = y
   (** C++26: std::saturate_cast<u64>. *)
   let saturate_cast_u64 : (x : i64) -> u64
     ensures x < 0 ==> result = 0
     ensures x >= 0 ==> result = x
   (** C++26: std::saturate_cast<i8>. *)
   let saturate_cast_i8 : (x : i64) -> i8
-    ensures x < -128 ==> result = -128
-    ensures x > 127 ==> result = 127
-    ensures -128 <= x && x <= 127 ==> result = x
+    ensures x < min i8 ==> result = min i8
+    ensures x > max i8 ==> result = max i8
+    ensures min i8 <= x && x <= max i8 ==> result = x
   (** C++26: std::saturate_cast<i8>. *)
   let saturate_cast_i8 : (y : u64) -> i8
-    ensures y > 127 ==> result = 127
-    ensures y <= 127 ==> result = y
+    ensures y > max i8 ==> result = max i8
+    ensures y <= max i8 ==> result = y
   (** C++26: std::saturate_cast<i16>. *)
   let saturate_cast_i16 : (x : i64) -> i16
-    ensures x < -32768 ==> result = -32768
-    ensures x > 32767 ==> result = 32767
-    ensures -32768 <= x && x <= 32767 ==> result = x
+    ensures x < min i16 ==> result = min i16
+    ensures x > max i16 ==> result = max i16
+    ensures min i16 <= x && x <= max i16 ==> result = x
   (** C++26: std::saturate_cast<i16>. *)
   let saturate_cast_i16 : (y : u64) -> i16
-    ensures y > 32767 ==> result = 32767
-    ensures y <= 32767 ==> result = y
+    ensures y > max i16 ==> result = max i16
+    ensures y <= max i16 ==> result = y
   (** C++26: std::saturate_cast<i32>. *)
   let saturate_cast_i32 : (x : i64) -> i32
-    ensures x < -2147483648 ==> result = -2147483648
-    ensures x > 2147483647 ==> result = 2147483647
-    ensures -2147483648 <= x && x <= 2147483647 ==> result = x
+    ensures x < min i32 ==> result = min i32
+    ensures x > max i32 ==> result = max i32
+    ensures min i32 <= x && x <= max i32 ==> result = x
   (** C++26: std::saturate_cast<i32>. *)
   let saturate_cast_i32 : (y : u64) -> i32
-    ensures y > 2147483647 ==> result = 2147483647
-    ensures y <= 2147483647 ==> result = y
+    ensures y > max i32 ==> result = max i32
+    ensures y <= max i32 ==> result = y
   (** C++26: std::saturate_cast<i64>. *)
   let saturate_cast_i64 : (y : u64) -> i64
-    ensures y > 9223372036854775807 ==> result = 9223372036854775807
-    ensures y <= 9223372036854775807 ==> result = y
+    ensures y > max i64 ==> result = max i64
+    ensures y <= max i64 ==> result = y
 end
 
 interface Div = sig
@@ -279,7 +280,7 @@ interface Div = sig
       Truncating: the quotient rounds towards zero, and the remainder has
       the dividend's sign and is smaller than the divisor. *)
   let quot_rem : (n : i8) -> (d : i8) -> quot_rem_i8
-    requires d <> 0 && (n <> -128 || d <> -1)
+    requires d <> 0 && (n <> min i8 || d <> -1)
     ensures result.quot = n / d && result.rem = n % d
     ensures result.quot * d + result.rem = n
     ensures d > 0 ==> 0 - d < result.rem && result.rem < d
@@ -292,7 +293,7 @@ interface Div = sig
       Truncating: the quotient rounds towards zero, and the remainder has
       the dividend's sign and is smaller than the divisor. *)
   let quot_rem : (n : i16) -> (d : i16) -> quot_rem_i16
-    requires d <> 0 && (n <> -32768 || d <> -1)
+    requires d <> 0 && (n <> min i16 || d <> -1)
     ensures result.quot = n / d && result.rem = n % d
     ensures result.quot * d + result.rem = n
     ensures d > 0 ==> 0 - d < result.rem && result.rem < d
@@ -305,7 +306,7 @@ interface Div = sig
       Truncating: the quotient rounds towards zero, and the remainder has
       the dividend's sign and is smaller than the divisor. *)
   let quot_rem : (n : i32) -> (d : i32) -> quot_rem_i32
-    requires d <> 0 && (n <> -2147483648 || d <> -1)
+    requires d <> 0 && (n <> min i32 || d <> -1)
     ensures result.quot = n / d && result.rem = n % d
     ensures result.quot * d + result.rem = n
     ensures d > 0 ==> 0 - d < result.rem && result.rem < d
@@ -318,7 +319,7 @@ interface Div = sig
       Truncating: the quotient rounds towards zero, and the remainder has
       the dividend's sign and is smaller than the divisor. *)
   let quot_rem : (n : i64) -> (d : i64) -> quot_rem_i64
-    requires d <> 0 && (n <> -9223372036854775808 || d <> -1)
+    requires d <> 0 && (n <> min i64 || d <> -1)
     ensures result.quot = n / d && result.rem = n % d
     ensures result.quot * d + result.rem = n
     ensures d > 0 ==> 0 - d < result.rem && result.rem < d
@@ -338,7 +339,7 @@ let spec divides (d : i64) (n : i64) : bool
 = if d = 0 then n = 0 else if d = -1 then true else n % d = 0
 
 (* gcd, midpoint, mul_sat and div_sat for the unsigned type `t`. *)
-let meta unsigned_family (t : string) (w : int) : item =
+let meta unsigned_family (t : string) : item =
   `( let gcd ($!a : $t) ($!b : $t) : $t
        decreases $!b
        ensures $!result = 0 <==> $!a = 0 && $!b = 0
@@ -353,8 +354,8 @@ let meta unsigned_family (t : string) (w : int) : item =
      = if $!a <= $!b then $!a + (($!b - $!a) >> 1) else $!a - (($!a - $!b) >> 1)
 
      let mul_sat ($!a : $t) ($!b : $t) : $t @overflow(saturate)
-       ensures $!a * $!b <= (1 << $w) - 1 ==> $!result = $!a * $!b
-       ensures $!a * $!b > (1 << $w) - 1 ==> $!result = (1 << $w) - 1
+       ensures $!a * $!b <= max $t ==> $!result = $!a * $!b
+       ensures $!a * $!b > max $t ==> $!result = max $t
      = $!a * $!b
 
      let div_sat ($!a : $t) ($!b : $t) : $t
@@ -362,14 +363,14 @@ let meta unsigned_family (t : string) (w : int) : item =
        ensures $!result = $!a / $!b
      = $!a / $!b )
 
-unsigned_family "u8" 8
-unsigned_family "u16" 16
-unsigned_family "u32" 32
-unsigned_family "u64" 64
+unsigned_family "u8"
+unsigned_family "u16"
+unsigned_family "u32"
+unsigned_family "u64"
 
 (* gcd, midpoint, mul_sat, div_sat, abs and quot_rem for the signed type
-   `t` of `w` bits, whose unsigned type of the same width is `u`. *)
-let meta signed_family (t : string) (u : string) (w : int) : item =
+   `t`, whose unsigned type of the same width is `u`. *)
+let meta signed_family (t : string) (u : string) : item =
   let qr = concat "quot_rem_" t in
   `( let abs ($!x : $t) : $u
        ensures $!x >= 0 ==> $!result = $!x
@@ -392,21 +393,21 @@ let meta signed_family (t : string) (u : string) (w : int) : item =
        else (let $!e : $u = $!a - $!b in $!a - ($!e >> 1))
 
      let mul_sat ($!a : $t) ($!b : $t) : $t @overflow(saturate)
-       ensures $!a * $!b > (1 << $(w - 1)) - 1 ==> $!result = (1 << $(w - 1)) - 1
-       ensures $!a * $!b < 0 - (1 << $(w - 1)) ==> $!result = 0 - (1 << $(w - 1))
-       ensures 0 - (1 << $(w - 1)) <= $!a * $!b && $!a * $!b <= (1 << $(w - 1)) - 1 ==> $!result = $!a * $!b
+       ensures $!a * $!b > max $t ==> $!result = max $t
+       ensures $!a * $!b < min $t ==> $!result = min $t
+       ensures min $t <= $!a * $!b && $!a * $!b <= max $t ==> $!result = $!a * $!b
      = $!a * $!b
 
      let div_sat ($!a : $t) ($!b : $t) : $t @overflow(saturate)
        requires $!b <> 0
-       ensures $!a = 0 - (1 << $(w - 1)) && $!b = -1 ==> $!result = (1 << $(w - 1)) - 1
-       ensures $!a <> 0 - (1 << $(w - 1)) || $!b <> -1 ==> $!result = $!a / $!b
+       ensures $!a = min $t && $!b = -1 ==> $!result = max $t
+       ensures $!a <> min $t || $!b <> -1 ==> $!result = $!a / $!b
      = $!a / $!b
 
      let $qr = type { quot : $t; rem : $t }
 
      let quot_rem ($!n : $t) ($!d : $t) : $qr
-       requires $!d <> 0 && ($!n <> 0 - (1 << $(w - 1)) || $!d <> -1)
+       requires $!d <> 0 && ($!n <> min $t || $!d <> -1)
        ensures $!result.quot = $!n / $!d && $!result.rem = $!n % $!d
        ensures $!result.quot * $!d + $!result.rem = $!n
        ensures $!d > 0 ==> 0 - $!d < $!result.rem && $!result.rem < $!d
@@ -415,56 +416,47 @@ let meta signed_family (t : string) (u : string) (w : int) : item =
        ensures $!result.rem = 0 <==> divides $!d $!n
      = { quot = $!n / $!d; rem = $!n % $!d } )
 
-signed_family "i8" "u8" 8
-signed_family "i16" "u16" 16
-signed_family "i32" "u32" 32
-signed_family "i64" "u64" 64
+signed_family "i8" "u8"
+signed_family "i16" "u16"
+signed_family "i32" "u32"
+signed_family "i64" "u64"
 
-(* saturate_cast to the unsigned type `t` of `w` bits, from i64 and, but
+(* saturate_cast to the unsigned type `t`, from i64 and, but
    for u64 itself, from u64. *)
-let meta saturate_unsigned (t : string) (w : int) : item =
+let meta saturate_unsigned (t : string) : item =
   let n = concat "saturate_cast_" t in
   `( let $n ($!x : i64) : $t
        ensures $!x < 0 ==> $!result = 0
-       ensures $!x > (1 << $w) - 1 ==> $!result = (1 << $w) - 1
-       ensures 0 <= $!x && $!x <= (1 << $w) - 1 ==> $!result = $!x
-     = let $!z : $t = 0 in
-       let $!m : $t = ~$!z in
-       if $!x < 0 then 0 else if $!x > $!m then $!m else $!x
+       ensures $!x > max $t ==> $!result = max $t
+       ensures 0 <= $!x && $!x <= max $t ==> $!result = $!x
+     = if $!x < 0 then 0 else if $!x > max $t then max $t else $!x
 
      let $n ($!y : u64) : $t
-       ensures $!y > (1 << $w) - 1 ==> $!result = (1 << $w) - 1
-       ensures $!y <= (1 << $w) - 1 ==> $!result = $!y
-     = let $!z : $t = 0 in
-       let $!m : $t = ~$!z in
-       if $!y > $!m then $!m else $!y )
+       ensures $!y > max $t ==> $!result = max $t
+       ensures $!y <= max $t ==> $!result = $!y
+     = if $!y > max $t then max $t else $!y )
 
-(* saturate_cast to the signed type `t` of `w` bits, from u64 and, but for
+(* saturate_cast to the signed type `t`, from u64 and, but for
    i64 itself, from i64. *)
-let meta saturate_signed (t : string) (w : int) : item =
+let meta saturate_signed (t : string) : item =
   let n = concat "saturate_cast_" t in
   `( let $n ($!x : i64) : $t
-       ensures $!x < 0 - (1 << $(w - 1)) ==> $!result = 0 - (1 << $(w - 1))
-       ensures $!x > (1 << $(w - 1)) - 1 ==> $!result = (1 << $(w - 1)) - 1
-       ensures 0 - (1 << $(w - 1)) <= $!x && $!x <= (1 << $(w - 1)) - 1 ==> $!result = $!x
-     = let $!h : u64 = (1 << $(w - 1)) - 1 in
-       let $!hi : $t = $!h in
-       let $!lo : $t = -1 - $!hi in
-       if $!x < $!lo then $!lo else if $!x > $!hi then $!hi else $!x
+       ensures $!x < min $t ==> $!result = min $t
+       ensures $!x > max $t ==> $!result = max $t
+       ensures min $t <= $!x && $!x <= max $t ==> $!result = $!x
+     = if $!x < min $t then min $t else if $!x > max $t then max $t else $!x
 
      let $n ($!y : u64) : $t
-       ensures $!y > (1 << $(w - 1)) - 1 ==> $!result = (1 << $(w - 1)) - 1
-       ensures $!y <= (1 << $(w - 1)) - 1 ==> $!result = $!y
-     = let $!h : u64 = (1 << $(w - 1)) - 1 in
-       let $!hi : $t = $!h in
-       if $!y > $!hi then $!hi else $!y )
+       ensures $!y > max $t ==> $!result = max $t
+       ensures $!y <= max $t ==> $!result = $!y
+     = if $!y > max $t then max $t else $!y )
 
-saturate_unsigned "u8" 8
-saturate_unsigned "u16" 16
-saturate_unsigned "u32" 32
-saturate_signed "i8" 8
-saturate_signed "i16" 16
-saturate_signed "i32" 32
+saturate_unsigned "u8"
+saturate_unsigned "u16"
+saturate_unsigned "u32"
+saturate_signed "i8"
+saturate_signed "i16"
+saturate_signed "i32"
 
 (* The widest targets have one source each: the other is the identity. *)
 (** C++26: std::saturate_cast<u64>. *)
@@ -475,6 +467,6 @@ let saturate_cast_u64 (x : i64) : u64
 
 (** C++26: std::saturate_cast<i64>. *)
 let saturate_cast_i64 (y : u64) : i64
-  ensures y > 9223372036854775807 ==> result = 9223372036854775807
-  ensures y <= 9223372036854775807 ==> result = y
-= if y > 9223372036854775807 then 9223372036854775807 else y
+  ensures y > max i64 ==> result = max i64
+  ensures y <= max i64 ==> result = y
+= if y > max i64 then max i64 else y
