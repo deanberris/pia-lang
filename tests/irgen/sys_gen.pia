@@ -1,8 +1,12 @@
-(* The declarations generated from the target's headers (ADR 0051,
-   section 6, lib/Pia/Sys/Gen) compile and prove for their own target:
-   every C type has a Pia type, every variadic declaration is well formed,
-   and every constant fits its type.
+(* Pia.Sys.Posix as generated for each target (ADR 0057, lib/Pia/Sys/Gen)
+   compiles and meets its interface on its own target: every C type has a
+   Pia type, every variadic declaration is well formed, and every constant
+   fits its type. Both targets' modules write the same interface.
 // RUN: piac --verify --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %S/../../lib/Pia/Sys/Gen/x86_64_linux.pia | FileCheck %s
 // RUN: piac --verify %S/../../lib/Pia/Sys/Gen/arm64_macos.pia | FileCheck %s
+// RUN: mkdir -p %t/linux %t/macos
+// RUN: piac --emit=interface --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 -o %t/linux %S/../../lib/Pia/Sys/Gen/x86_64_linux.pia
+// RUN: piac --emit=interface -o %t/macos %S/../../lib/Pia/Sys/Gen/arm64_macos.pia
+// RUN: diff %t/linux/Pia.Sys.Posix.Posix.piai %t/macos/Pia.Sys.Posix.Posix.piai
 // CHECK: 0 failed, 0 skipped
 *)
