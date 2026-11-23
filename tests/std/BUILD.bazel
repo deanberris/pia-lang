@@ -12,6 +12,8 @@ lit_tests(
     data = [
         "Inputs/hof_overloads.pia",
         "Inputs/ratio_errors.pia",
+        "Inputs/time_errors.pia",
+        "Inputs/time_overflow.pia",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
@@ -21,6 +23,7 @@ lit_tests(
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Ratio.pia",
+        "//lib/Pia:Time.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core:Utf8.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
@@ -484,6 +487,24 @@ sh_test(
     srcs = ["ratio_run_test.sh"],
     args = ["$(rootpath :ratio_run)"],
     data = [":ratio_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "time_run",
+    src = "Inputs/time_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "time_run_test",
+    srcs = ["time_run_test.sh"],
+    args = ["$(rootpath :time_run)"],
+    data = [":time_run"],
     target_compatible_with = PIA_TARGETS,
 )
 
