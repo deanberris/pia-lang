@@ -83,6 +83,9 @@ class Parser {
     return prog;
   }
 
+  // REPL cells: a top-level expression may be any expression.
+  void allowExpressionItems() { expressionItems_ = true; }
+
   NodePtr contractFragment() {
     auto out = makeNode(N::Contracts, loc());
     try {
@@ -266,7 +269,9 @@ class Parser {
         break;
     }
     auto n = makeNode(N::ExprItem, loc());
-    n->add(application());
+    // In a file, a top-level expression can only be a metaprogram's
+    // invocation. A REPL cell can be any expression, such as `1 + 2`.
+    n->add(expressionItems_ ? seq() : application());
     return n;
   }
 
@@ -1744,6 +1749,7 @@ class Parser {
   // Whether the item being parsed is the file's first, where a module
   // header may stand.
   bool firstItem_ = false;
+  bool expressionItems_ = false; // a top-level expression may be any (REPL)
   bool contractMode_ = false;  // parsing a requires/ensures predicate
   bool clauseEnded_ = false;   // the predicate has ended at a body `=`
   bool bitOr_ = false;         // `|` is bitwise or here (binaryInfo)
@@ -1751,28 +1757,34 @@ class Parser {
 
 }  // namespace
 
-NodePtr parseProgram(std::string_view source, Diagnostics &diags,
-                     const OperatorTable &operators, bool literate) {
+namespace {
+
+NodePtr parseWith(std::string_view source, Diagnostics &diags,
+                  const OperatorTable &operators, bool literate,
+                  bool expressionItems) {
   std::vector<RawComment> comments;
   LexOptions options;
   options.literate = literate;
   options.comments = &comments;
   std::vector<Token> toks = tokenize(source, diags, options);
   if (diags.hasErrors()) return makeNode(NodeKind::Program, SourceLoc{});
-  NodePtr tree = Parser(toks, diags, operators).program();
+  Parser parser(toks, diags, operators);
+  if (expressionItems)
+    parser.allowExpressionItems();
+  NodePtr tree = parser.program();
   attachComments(*tree, toks, comments, source);
   return tree;
 }
 
-NodePtr parseProgram(std::string_view source, Diagnostics &diags,
-                     bool literate) {
-  // A program's own `let meta operator` declarations change how it parses,
-  // so parse again with them until the table stops changing. Only the last
-  // parse reports its errors.
+// A program's own `let meta operator` declarations change how it parses,
+// so parse again with them until the table stops changing. Only the last
+// parse reports its errors.
+NodePtr parseToFixedPoint(std::string_view source, Diagnostics &diags,
+                          bool literate, bool expressionItems) {
   OperatorTable table = preludeOperators();
   for (int round = 0;; ++round) {
     Diagnostics local;
-    NodePtr tree = parseProgram(source, local, table, literate);
+    NodePtr tree = parseWith(source, local, table, literate, expressionItems);
     OperatorTable next = preludeOperators();
     collectOperators(*tree, next);
     if (next == table || round == 3 || local.hasErrors()) {
@@ -1781,6 +1793,25 @@ NodePtr parseProgram(std::string_view source, Diagnostics &diags,
     }
     table = std::move(next);
   }
+}
+
+} // namespace
+
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     const OperatorTable &operators, bool literate) {
+  return parseWith(source, diags, operators, literate,
+                   /*expressionItems=*/false);
+}
+
+NodePtr parseProgram(std::string_view source, Diagnostics &diags,
+                     bool literate) {
+  return parseToFixedPoint(source, diags, literate,
+                           /*expressionItems=*/false);
+}
+
+NodePtr parseCells(std::string_view source, Diagnostics &diags) {
+  return parseToFixedPoint(source, diags, /*literate=*/false,
+                           /*expressionItems=*/true);
 }
 
 NodePtr parseContractFragment(std::string_view source, Diagnostics &diags) {

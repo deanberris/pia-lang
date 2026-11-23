@@ -68,6 +68,14 @@ class McpTest(unittest.TestCase):
         self.assertEqual(events[-1]["value"], "42")
         self.assertIn("- : u16 = 42", r["content"][0]["text"])
 
+    def test_execute_a_bare_expression(self):
+        r = self.server.call("execute", code="1 + 2")
+        self.assertFalse(r["isError"], r)
+        self.assertIn("- : i32 = 3", r["content"][0]["text"])
+        r = self.server.call("execute", code="let three : u8 = 3\nthree + 1")
+        self.assertFalse(r["isError"], r)
+        self.assertIn("- : u8 = 4", r["content"][0]["text"])
+
     def test_failures_are_errors_with_counterexamples(self):
         r = self.server.call("execute", code="let bad (a : u8) : u8 = a + 1")
         self.assertTrue(r["isError"])

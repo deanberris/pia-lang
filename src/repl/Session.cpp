@@ -710,11 +710,11 @@ struct Session::Impl {
       error(a.errors, x.message, where(a, x.loc.line, x.loc.column));
   }
 
-  // Joins `entries` and `cell` into one program and parses it. With `wrap`,
-  // the cell is read as one parenthesised expression, on lines of its own so
-  // that locations inside it stay the same.
+  // Joins `entries` and `cell` into one program and parses it. A cell's
+  // top-level expressions may be any expression, such as `1 + 2` after a
+  // definition in the same cell, not only a metaprogram's invocation.
   Attempt parse(const std::vector<Entry> &entries, std::string_view cell,
-                unsigned cellNo, bool wrap = false) {
+                unsigned cellNo) {
     Attempt a;
     for (size_t i = 0; i < entries.size(); ++i) {
       Segment s;
@@ -732,17 +732,13 @@ struct Session::Impl {
     s.offset = a.cellOffset = a.source.size();
     s.vline = countLines(a.source) + 1;
     s.cell = cellNo;
-    if (wrap) {
-      s.line = 0;
-      a.source += "(\n";
-    }
     a.source += cell;
-    a.source += wrap ? "\n)\n" : "\n";
+    a.source += "\n";
     s.end = a.source.size();
     a.segments.push_back(s);
 
     syntax::Diagnostics d;
-    a.tree = syntax::parseProgram(a.source, d);
+    a.tree = syntax::parseCells(a.source, d);
     takeDiagnostics(a, d);
     return a;
   }
@@ -764,13 +760,6 @@ struct Session::Impl {
     std::set<int> doomed; // entries a redefinition replaces
 
     Attempt a = parse(base, text, cellNo);
-    // A statement such as `count <- 7` is not a top-level item, but a cell
-    // can be one: read it as an expression.
-    if (!a.errors.empty() && trim(text).rfind("let", 0) != 0) {
-      Attempt w = parse(base, text, cellNo, true);
-      if (w.errors.empty())
-        a = std::move(w);
-    }
     if (!a.errors.empty())
       return fail(r, std::move(a.errors));
 
