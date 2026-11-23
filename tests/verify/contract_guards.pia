@@ -1,0 +1,46 @@
+(* A call in a contract to a spec function with a precondition is needed
+   only where its value matters, so its precondition is checked under the
+   short-circuit guard it sits behind, as an index read already is: the
+   right operand of `==>` where the left holds, of `&&` where the left
+   holds, and of `||` where the left does not (#282). A call outside any
+   guard, or behind a guard that does not imply its precondition, still
+   fails.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+let spec ok (xs : [u8]) (k : usize) : bool
+  requires k < len xs
+= true
+
+let implied (xs : [u8]) (r : usize) : unit
+  ensures r < len xs ==> ok xs r
+= ()
+
+let either (xs : [u8]) (r : usize) : unit
+  ensures r >= len xs || ok xs r
+= ()
+
+let both (xs : [u8]) (r : usize) : unit
+  ensures r < len xs && ok xs r || r >= len xs
+= ()
+
+let found (xs : [u8]) : usize
+  ensures result < len xs ==> ok xs result
+= 0
+
+let unguarded (xs : [u8]) (r : usize) : unit
+  ensures ok xs r || r < len xs
+= ()
+
+let wrong_guard (xs : [u8]) (r : usize) : unit
+  ensures r >= len xs ==> ok xs r
+= ()
+
+(*
+// CHECK-DAG: contract_guards.pia:15:26: proved: the precondition of 'ok' holds
+// CHECK-DAG: contract_guards.pia:19:26: proved: the precondition of 'ok' holds
+// CHECK-DAG: contract_guards.pia:23:25: proved: the precondition of 'ok' holds
+// CHECK-DAG: contract_guards.pia:27:31: proved: the precondition of 'ok' holds
+// CHECK-DAG: contract_guards.pia:31:11: failed: the precondition of 'ok' holds
+// CHECK-DAG: contract_guards.pia:35:27: failed: the precondition of 'ok' holds
+// CHECK: 10 proved, 2 failed, 0 skipped
+*)
