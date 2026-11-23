@@ -46,10 +46,12 @@ lit_tests(
         "//lib/Pia/Text/Json:Spec.pia",
         "//lib/Pia/Text/Json:Write.pia",
     ],
-    # These two prove alone in about 190 s, so under a full parallel
-    # `bazel test //tests/...` they went past the 300 s of a medium test.
+    # These prove alone in 60-190 s on the iMac, so under a full parallel
+    # `bazel test //tests/...` (and on the slower Linux CI runner) they went
+    # past the 300 s of a medium test.
     sizes = {
         "heap.pia": "large",
+        "json_derive_variant.pia": "large",
         "json_write.pia": "large",
         "partial_sort.pia": "large",
     },
