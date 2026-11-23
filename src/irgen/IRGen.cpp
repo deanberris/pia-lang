@@ -6042,9 +6042,14 @@ class Gen {
         if (promised_.count(key)) return std::nullopt;
         return "it is not promised by " + constraintsText(t);
       }
+    // A generic that meets a requirement only if its own arguments already
+    // meet the concept would be circular (genericMeeting).
+    if (deciding_.count(key) && meetingGeneric_)
+      return "it would meet it only through itself";
     if (auto it = met_.find(key); it != met_.end()) return it->second;
     // An `include` that comes back to this concept adds nothing new.
     met_[key] = std::nullopt;
+    deciding_.insert(key);
     const Node &item = *concepts_.at(cname);
     // An imported concept's requirements are met by functions of its
     // module too, as `Pia.Core.Order.less` meets Ord's `less` (ADR 0039).
@@ -6060,6 +6065,7 @@ class Gen {
     std::optional<std::string> why = requirementsUnmet(item, key, scope, via);
     requirer_ = std::move(outer);
     types_.replaceTypeScopes(std::move(saved));
+    deciding_.erase(key);
     met_[key] = why;
     if (!why && !via) certify(fromModule(item), args, queued, matched);
     return why;
@@ -6198,6 +6204,16 @@ class Gen {
                cand->params[i].modifiers == mods[i];
       if (same) found = cand;
     }
+    // A generic function meets it at the type arguments its parameters
+    // deduce, as a generic `alloc` over `bump t` meets `Allocator (bump
+    // u16) u16` at t = u16.
+    for (sema::FuncSig *cand : cands) {
+      if (found)
+        break;
+      if (!cand->isGeneric())
+        continue;
+      found = genericMeeting(*cand, ptypes, mods, result);
+    }
     if (!found) return "no function '" + spelled + "'";
     if (matched) *matched = found->name;
     matchedLog_.push_back(found->name);
@@ -6210,6 +6226,43 @@ class Gen {
     if (!r->kids[2]->kids.empty() || (strict && ownRequires))
       queueContractLemma(*r, key, names, *found, scope, via);
     return std::nullopt;
+  }
+
+  // The instance of `generic` with exactly the parameter types `ptypes`,
+  // modifiers `mods` and result `result`, deduced from them, or null.
+  sema::FuncSig *genericMeeting(const sema::FuncSig &generic,
+                                const std::vector<Type> &ptypes,
+                                const std::vector<std::string> &mods,
+                                Type result) {
+    std::vector<const Node *> written = valueParamsOf(generic);
+    if (written.size() != ptypes.size())
+      return nullptr;
+    std::map<std::string, Type> bound;
+    for (size_t i = 0; i < written.size(); ++i) {
+      const Node &p = *written[i];
+      if (p.kids.empty() || p.kids[0]->kind != NodeKind::Annot ||
+          !types_.unify(*p.kids[0], ptypes[i], generic.typeParams, bound))
+        return nullptr;
+    }
+    if (const Node *ret = retAnnotOf(generic))
+      if (!types_.unify(*ret, result, generic.typeParams, bound))
+        return nullptr;
+    for (const std::string &t : generic.typeParams)
+      if (!bound.count(t))
+        return nullptr;
+    bool outer = std::exchange(meetingGeneric_, true);
+    bool unmetHere = constraintsUnmet(generic, bound).has_value();
+    meetingGeneric_ = outer;
+    if (unmetHere)
+      return nullptr;
+    sema::FuncSig *inst = genericInstance(generic, bound);
+    if (!inst || inst->result != result)
+      return nullptr;
+    for (size_t i = 0; i < ptypes.size(); ++i)
+      if (inst->params[i].type != ptypes[i] ||
+          inst->params[i].modifiers != mods[i])
+        return nullptr;
+    return inst;
   }
 
   // A requirement's contract is honoured by the function that meets it
@@ -10130,6 +10183,10 @@ class Gen {
   std::deque<sema::FuncSig> promisedSigs_;
   // Each written function name and the symbols it may call (ADR 0034).
   std::map<std::string, std::vector<std::string>> overloads_;
+  // The concepts and arguments being decided (unmet), and whether a
+  // generic's constraints are being checked for meeting a requirement.
+  std::set<std::string> deciding_;
+  bool meetingGeneric_ = false;
   // Higher-order functions by their written name (ADR 0044): called only
   // through their specialisations.
   std::map<std::string, std::vector<sema::FuncSig>> hofs_;
