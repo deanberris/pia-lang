@@ -56,6 +56,19 @@ A definition joined the environment, with its type and the number of obligations
 
 An expression's value. Expressions are proved, then compiled and run. They never join the environment.
 
+Every result that reached the verifier then says what the proof took:
+
+```text
+took 86 ms: verifying 84 ms (preparing 74 ms, solving 10 ms on 2 threads), parsing and compiling 2.1 ms
+goals: 1 from this cell (0 by intervals, 1 by the solver) and 2 re-proved from the environment: 2 proved, 1 failed
+slowest solver goals in this cell:
+  4.0 ms  [4]:1:27 bad: '+' does not overflow u8 (failed, cost 357)
+slowest solver goals re-proved from the environment:
+  10 ms  [2]:1:53 diff: '-' does not overflow u8 (proved, cost 3289)
+```
+
+Times are wall clock and vary; `cost` is Z3's resource count, which does not. Goals are solved in parallel, so their times can add up to more than the solving time. Preparing is everything else in verifying: lowering, interval reasoning and building the solver queries. Only goals that needed the solver are listed. Watch the re-proofs: every cell proves the whole environment again, so one costly old goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
+
 ## The working loop
 
 1. **Send the smallest piece that can be proved alone**, usually one function. Callers come later, since they are proved against the callee's contract, not its body.

@@ -63,6 +63,21 @@ class ReplTest(unittest.TestCase):
         [v] = kinds(r, "value")
         self.assertEqual((v["type"], v["value"]), ("u16", "300"))
 
+    def test_bare_expressions_evaluate(self):
+        # An expression at column 1 is any expression, not only a
+        # metaprogram's invocation as in a file: on its own, after a
+        # definition in the same cell, and several to a cell.
+        r = self.repl.run("1 + 2")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([(v["type"], v["value"]) for v in kinds(r, "value")],
+                         [("i32", "3")])
+        r = self.repl.run("let three : u8 = 3\nthree + 1")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([v["value"] for v in kinds(r, "value")], ["4"])
+        r = self.repl.run("three * 2\nif three < 5 then 1 else 0")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([v["value"] for v in kinds(r, "value")], ["6", "1"])
+
     def test_environment_builds_up(self):
         self.repl.run("let double (x : u8) : u16 = x + x")
         self.repl.run("let quad (x : u8) : u32 = double x + double x")

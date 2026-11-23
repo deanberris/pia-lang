@@ -1,0 +1,39 @@
+(* Importers of Pia.Image.Bits see only its interface, and that is enough
+   for the round trip: a field read back after write_bits is the value
+   written, fields written side by side read back each, and bytes outside
+   a field's bytes keep their values.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+
+let round_trip (buf : borrowed inout mutable [u8]) (pos : usize) (n : int{0..16}) (v : u32) : u32
+  requires v < B.pow2 n && pos + n <= B.nbits buf
+  ensures result = v
+= B.write_bits buf pos n v;
+  B.read_bits buf pos n
+
+(* A 12-bit LZW code at a byte boundary leaves the byte two on alone. *)
+let keeps_later_bytes (buf : borrowed inout mutable [u8]) (v : int{0..4095}) : unit
+  requires len buf = 4
+  ensures buf.[2] = old (buf.[2]) && buf.[3] = old (buf.[3])
+  ensures B.bits_at buf 0 12 = v
+= B.write_bits buf 0 12 v
+
+(* The widest field, at the last bit offset of a byte. *)
+let widest (buf : borrowed inout mutable [u8]) : u32
+  requires len buf = 3
+  ensures result = 65535
+= B.write_bits buf 7 16 65535;
+  B.read_bits buf 7 16
+
+(* An empty field reads 0 anywhere, the end included. *)
+let empty (s : [u8]) : u32
+  requires len s = 2
+  ensures result = 0
+= B.read_bits s 16 0
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 15 proved, 0 failed, 0 skipped
+*)

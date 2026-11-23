@@ -59,7 +59,7 @@ A cell is one input: Pia code, or a command that starts with `:`. Code can hold 
 Each cell is checked together with the environment, as one program:
 
 - **Definitions** (`let`, types, `let meta` metaprograms and operators) join the environment if everything verifies. A constant's value is shown with its type.
-- **Expressions** are evaluated. Each one becomes a hidden constant that is verified like any definition, so a call outside a precondition fails before anything runs. It is then compiled for the host with the ORC JIT and run, and its value is shown as `- : type = value`. Expressions do not join the environment.
+- **Expressions** are evaluated. Any expression can start at column 1, such as `1 + 2`, on its own or after a definition in the same cell; in a file only a metaprogram's call can. Each one becomes a hidden constant that is verified like any definition, so a call outside a precondition fails before anything runs. It is then compiled for the host with the ORC JIT and run, and its value is shown as `- : type = value`. Expressions do not join the environment.
 - **Metaprograms run** as they do in a file: operators declared in earlier cells apply to later ones, `@derive(eq)` adds its functions, and a top-level call of a `let meta` function adds the items it returns.
 
 A cell is a transaction. If any obligation fails, or is not proved and not accepted with `:allow`, nothing in the cell is committed, and the failures are shown with their counterexamples. So the environment is always a program that verifies.
@@ -251,6 +251,8 @@ Each event has a `kind`:
 
 `where` is `{"cell", "line", "column"}`. The exit status is 1 if any cell failed.
 
+A cell that reached the verifier also has `stats`, what its proof took: `cell_ms`, `verify_ms`, `solve_ms` (wall clock, over `threads` solver threads) and `run_ms` (milliseconds); `cell_goals`, `cell_intervals` and `cell_smt` for the cell's own goals; `goals`, `proved`, `failed`, `unproved`, `allowed` and `smt` for the whole environment, which every cell proves again; `cost`, Z3's resource count; and `costliest`, the slowest solver goals: up to three of the cell's own, then up to three the environment re-proved, each with `name`, `text`, `status`, `ms`, `cost`, `where` and `cell` (true for the cell's own). The text output leaves them out, since times differ from run to run.
+
 ## MCP server
 
 `pia mcp` serves a persistent REPL session over the Model Context Protocol (stdio transport), so an agent such as Claude can use Pia interactively. It has exactly two tools, in the style of Code Mode:
@@ -266,6 +268,7 @@ The server also teaches the language itself, for agents that have no skills load
 
 - **Its `instructions`** (which clients put in the agent's context when it connects) are a primer of under 2 KB: the binding form, bounded integers, where contracts go, no shadowing, comments, and the list of guide topics.
 - **`:help <topic>`**, sent through `execute`, returns one section of the guide: `syntax`, `facts`, `shapes`, `pitfalls`, `contracts`, `loops`, `termination`, `specs` and more (`:help` lists them). The same text is served as MCP resources, `pia://guide/<topic>`.
+- **Every result says what its proof took**, after the REPL's text: the time for the cell, split into verifying (and the solver), running, and parsing and compiling; how many goals the cell raised and how each was proved, and how many the environment re-proved; and the slowest solver goals, the cell's own and the environment's apart, with their locations and Z3 resource counts.
 - **A failed cell ends with hints**, one line per kind of failure, such as `hint: arithmetic is checked at the operands' width: ... (:help facts)`. They are only in the server's results, not in `pia repl`'s output.
 
 The guide is cut from the `pia-language`, `pia-contracts` and `pia-mcp` skills when the server is built (`src/repl/embed_guide.py`), so it says what the skills say, and their examples are proved by the skills test. To use it from Claude Code:

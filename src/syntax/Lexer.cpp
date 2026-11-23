@@ -125,6 +125,28 @@ bool isItemStarter(TokenKind k) {
   }
 }
 
+// What else starts a REPL cell's line at column 1: the statements a cell can
+// be, beside the items a file allows there.
+bool isCellStarter(TokenKind k) {
+  switch (k) {
+  case TokenKind::If:
+  case TokenKind::Match:
+  case TokenKind::For:
+  case TokenKind::Spread:
+  case TokenKind::While:
+  case TokenKind::Assert:
+  case TokenKind::Assume:
+  case TokenKind::Defer:
+  case TokenKind::Forall:
+  case TokenKind::Exists:
+  case TokenKind::True:
+  case TokenKind::False:
+    return true;
+  default:
+    return false;
+  }
+}
+
 bool isOpener(TokenKind k) {
   switch (k) {
   case TokenKind::LParen:
@@ -163,7 +185,7 @@ class Lexer {
 public:
   Lexer(std::string_view src, Diagnostics &diags, const LexOptions &options)
       : src_(src), diags_(diags), literate_(options.literate),
-        comments_(options.comments) {}
+        cells_(options.cells), comments_(options.comments) {}
 
   std::vector<Token> run() {
     if (literate_)
@@ -439,7 +461,8 @@ private:
     t.loc = start;
     t.text = src_.substr(start.offset, pos_ - start.offset);
     if (kind != TokenKind::Sep && start.column == 1 && depth_ == 0 &&
-        !out_.empty() && isItemStarter(kind) &&
+        !out_.empty() &&
+        (isItemStarter(kind) || (cells_ && isCellStarter(kind))) &&
         out_.back().kind != TokenKind::Sep) {
       Token sep;
       sep.kind = TokenKind::Sep;
@@ -751,6 +774,7 @@ private:
   std::string_view src_;
   Diagnostics &diags_;
   bool literate_ = false;
+  bool cells_ = false;
   bool inCode_ = false; // literate: inside a ```pia block
   SourceLoc fence_;     // literate: where that block opened
   std::vector<RawComment> *comments_ = nullptr;
