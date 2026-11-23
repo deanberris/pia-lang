@@ -11,7 +11,7 @@ Status: implemented in M6 ([#7](https://github.com/deanberris/pia-lang/issues/7)
 | `--emit=asm` | assembly |
 | `--emit=obj` | an object file, written to `-o` |
 
-`--target=<triple>` and `--cpu=<name>` choose the machine: `arm64-apple-macosx14.0.0` with `apple-m1`, or `x86_64-unknown-linux-gnu` with `x86-64-v3`. The default is the host `piac` was built for. Bazel always passes both, for the platform it builds for ([tools/piac/targets.bzl](https://github.com/deanberris/pia-lang/blob/main/tools/piac/targets.bzl)). `-O0` to `-O3` set the optimisation level, which defaults to `-O2`.
+`--target=<triple>` and `--cpu=<name>` choose the machine: `arm64-apple-macosx14.0.0` with `apple-m1`, or `x86_64-unknown-linux-gnu` with `x86-64-v3`. The default is the host `piac` was built for. `x86-64-v3` is also the oldest x86_64 CPU `piac` accepts: a `--cpu` without AVX2, BMI1, BMI2, F16C, FMA, LZCNT and MOVBE is an error ([ADR 0049](adr/0049-targets-are-theories.md)). Bazel always passes both, for the platform it builds for ([tools/piac/targets.bzl](https://github.com/deanberris/pia-lang/blob/main/tools/piac/targets.bzl)). `-O0` to `-O3` set the optimisation level, which defaults to `-O2`.
 
 ## Verification comes first
 
