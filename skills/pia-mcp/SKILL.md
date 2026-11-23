@@ -67,7 +67,7 @@ slowest solver goals re-proved from the environment:
   5.3 ms  [2]:1:53 diff: '-' does not overflow u8 (proved, cost 3289)
 ```
 
-Times are wall clock and vary; `cost` is Z3's resource count, which does not. Goals are solved in parallel, so their times can add up to more than the solving time. Encoding includes the search for a counterexample's witness. Only goals that needed the solver are listed. Watch the re-proofs: every cell proves the whole environment again, so one costly old goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
+Times are wall clock and vary; `cost` is Z3's resource count, which does not. Goals are solved in parallel, so their times can add up to more than the solving time. Only goals that needed the solver are listed. Watch the re-proofs: every cell proves the whole environment again, so one costly old goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
 
 ## The working loop
 

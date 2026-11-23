@@ -2541,7 +2541,7 @@ std::string renderStats(const ProofStats &s) {
     return "";
   // Goals are solved in parallel, so the solver's time is wall clock and
   // can be less than the goals' times added up; the rest of verifying is
-  // building the queries, the counterexample search included.
+  // lowering the module and building the queries.
   std::string out = "took " + formatMs(s.cellMs) + ": verifying " +
                     formatMs(s.verifyMs) + " (encoding " +
                     formatMs(std::max(0.0, s.verifyMs - s.solveMs)) +
