@@ -132,7 +132,8 @@ std::optional<std::string> realLiteral(llvm::StringRef text, bool negate) {
   bool point = false;
   for (; i < text.size(); ++i) {
     char c = text[i];
-    if (syntax::isDigitSeparator(c)) continue;
+    if (syntax::isDigitSeparator(c))
+      continue;
     if (c == '.') {
       if (point) return std::nullopt;
       point = true;
@@ -3096,8 +3097,10 @@ class Gen {
   // "toplevel" or "prelude" and never resolve to a local at the expansion
   // site (docs/meta.md, "Hygiene"), so only a written name can be one.
   bool boundName(const Node &n) {
-    if (n.kind != NodeKind::Name) return false;
-    if (n.flags.empty()) return !lookup(n.text);
+    if (n.kind != NodeKind::Name)
+      return false;
+    if (n.flags.empty())
+      return !lookup(n.text);
     return n.flags == "toplevel" || n.flags == "prelude";
   }
 
@@ -3120,23 +3123,28 @@ class Gen {
   // Each bound comes from the type as Sema resolved it, so `max usize`
   // follows the pointer width that the target's model gives usize.
   std::optional<R> genTypeBound(const Node &n, Type expected) {
-    if (n.kids.size() != 2) return std::nullopt;
+    if (n.kids.size() != 2)
+      return std::nullopt;
     const Node &f = *n.kids[0];
     if (!boundName(f) || (f.text != "min" && f.text != "max"))
       return std::nullopt;
     const Node &a = *n.kids[1];
     Type t = boundOperandType(a);
-    if (!t) return std::nullopt;
+    if (!t)
+      return std::nullopt;
     auto it = mlir::dyn_cast<IntType>(t);
     if (!it)
-      return fail(a, "'" + f.text + " " + a.text + "' needs an integer type, "
-                         "and '" + a.text + "' is not one");
+      return fail(a, "'" + f.text + " " + a.text +
+                         "' needs an integer type, "
+                         "and '" +
+                         a.text + "' is not one");
     llvm::APInt bound = f.text == "min" ? it.getLo() : it.getHi();
     bool negative = bound.isNegative();
     llvm::APInt magnitude = negative ? -bound : bound;
     auto lit = syntax::makeNode(NodeKind::IntLit, n.loc,
                                 llvm::toString(magnitude, 10, false));
-    if (!negative) return genExpr(*keep(std::move(lit)), expected);
+    if (!negative)
+      return genExpr(*keep(std::move(lit)), expected);
     auto neg = syntax::makeNode(NodeKind::Neg, n.loc);
     neg->add(std::move(lit));
     return genExpr(*keep(std::move(neg)), expected);
@@ -3145,7 +3153,8 @@ class Gen {
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
     if (n.flags == "region") return genRegion(n, expected);
-    if (std::optional<R> b = genTypeBound(n, expected)) return *b;
+    if (std::optional<R> b = genTypeBound(n, expected))
+      return *b;
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
