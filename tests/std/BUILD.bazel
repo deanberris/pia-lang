@@ -17,6 +17,7 @@ lit_tests(
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Result.pia",
+        "//lib/Pia/Core:Utf8.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
         "//lib/Pia/Core/Algo:Heap.pia",
         "//lib/Pia/Core/Algo:Merge.pia",
@@ -329,5 +330,20 @@ sh_test(
     srcs = ["ascii_run_test.sh"],
     args = ["$(rootpath :ascii_run)"],
     data = [":ascii_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "utf8_run",
+    src = "Inputs/utf8_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:utf8"],
+)
+
+sh_test(
+    name = "utf8_run_test",
+    srcs = ["utf8_run_test.sh"],
+    args = ["$(rootpath :utf8_run)"],
+    data = [":utf8_run"],
     target_compatible_with = PIA_TARGETS,
 )

@@ -1,0 +1,219 @@
+(* Pia.Core.Utf8: UTF-8, C++'s <cuchar> and the validity a `str` needs
+   (ADR 0040, phase 1.9, docs/cpp-std.md). sequence_length, decode,
+   encode and valid, with both round trips proved: decoding what encode
+   wrote gives the scalar value back, and the bytes of a valid sequence
+   are what encode writes for the value decode reads from them, byte
+   by byte (`byte cp k`).
+
+   Validity is the Unicode standard's (table 3-7): no overlong forms, no
+   surrogates, nothing above U+10FFFF. `seq_len s i` is the length of the
+   valid sequence at s.[i], or 0 when there is none; `value s i` is the
+   scalar it encodes. A scalar is a u32 that is not a surrogate and is at
+   most 0x10FFFF. *)
+module Pia.Core.Utf8 : Utf8
+
+interface Utf8 = sig
+  let spec cont : (b : u8) -> bool
+  let spec scalar : (cp : u32) -> bool
+  let spec encoded_len : (cp : u32) -> int{1..4}
+  let spec byte : (cp : u32) -> (k : usize) -> u8
+  let spec bytes_of : (s : [u8]) -> (i : usize) -> (cp : u32) -> bool
+  let spec seq_len : (s : [u8]) -> (i : usize) -> int{0..4}
+  let spec value : (s : [u8]) -> (i : usize) -> u32
+  let spec valid_from : (s : [u8]) -> (i : usize) -> bool
+  let sequence_length : (s : [u8]) -> (i : usize) -> int{0..4}
+    requires i < len s
+    ensures result = seq_len s i
+  let decode : (s : [u8]) -> (i : usize) -> u32
+    requires i < len s && seq_len s i > 0
+    ensures result = value s i
+    ensures scalar result
+    ensures encoded_len result = seq_len s i
+    ensures bytes_of s i result
+  let encode : (dst : borrowed inout mutable [u8]) -> (i : usize) -> (cp : u32) -> int{1..4}
+    requires scalar cp
+    requires i < len dst && encoded_len cp <= len dst - i
+    ensures result = encoded_len cp
+    ensures seq_len dst i = result && value dst i = cp
+    ensures bytes_of dst i cp
+    ensures forall (k in 0 .. len dst). (k < i || i + result <= k) ==> dst.[k] = old (dst.[k])
+  let valid : (s : [u8]) -> bool
+    ensures result <==> valid_from s 0
+end
+
+(** A continuation byte, 10xxxxxx. *)
+let spec cont (b : u8) : bool = 0x80 <= b && b <= 0xBF
+
+(** A Unicode scalar value: at most U+10FFFF, and not a surrogate. *)
+let spec scalar (cp : u32) : bool = cp <= 0x10FFFF && (cp < 0xD800 || 0xDFFF < cp)
+
+(** How many bytes UTF-8 takes for cp. *)
+let spec encoded_len (cp : u32) : int{1..4} =
+  if cp <= 0x7F then 1 else if cp <= 0x7FF then 2 else if cp <= 0xFFFF then 3 else 4
+
+(** The k-th byte of cp's UTF-8 encoding: the lead byte, then six bits a
+    byte from the top. *)
+let spec byte (cp : u32) (k : usize) : u8
+  requires k < encoded_len cp
+= let n = encoded_len cp in
+  let low : u8 = (0x80 | (cp & 0x3F)) in
+  let mid : u8 = (0x80 | ((cp >> 6) & 0x3F)) in
+  let high : u8 = (0x80 | ((cp >> 12) & 0x3F)) in
+  if n = 1 then (let b : u8 = cp & 0x7F in b)
+  else if n = 2 then (if k = 0 then (let b : u8 = 0xC0 | ((cp >> 6) & 0x1F) in b) else low)
+  else if n = 3 then
+    (if k = 0 then (let b : u8 = 0xE0 | ((cp >> 12) & 0x0F) in b)
+     else if k = 1 then mid else low)
+  else
+    (if k = 0 then (let b : u8 = 0xF0 | ((cp >> 18) & 0x07) in b)
+     else if k = 1 then high else if k = 2 then mid else low)
+
+(** s.[i ..] begins with cp's UTF-8 bytes. *)
+let spec bytes_of (s : [u8]) (i : usize) (cp : u32) : bool =
+  forall (k in 0 .. len s). i <= k && k - i < encoded_len cp ==> s.[k] = byte cp (k - i)
+
+(** The length of the valid UTF-8 sequence at s.[i], or 0 when there is
+    none: table 3-7 of the Unicode standard. *)
+let spec seq_len (s : [u8]) (i : usize) : int{0..4}
+  requires i < len s
+= let b = s.[i] in
+  if b <= 0x7F then 1
+  else if len s - i < 2 then 0
+  else if 0xC2 <= b && b <= 0xDF then (if cont s.[i + 1] then 2 else 0)
+  else if 0xE0 <= b && b <= 0xEF then
+    (if len s - i < 3 then 0
+     else if cont s.[i + 2]
+        && (if b = 0xE0 then 0xA0 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xED then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x9F
+            else cont s.[i + 1])
+     then 3 else 0)
+  else if 0xF0 <= b && b <= 0xF4 then
+    (if len s - i < 4 then 0
+     else if cont s.[i + 2] && cont s.[i + 3]
+        && (if b = 0xF0 then 0x90 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xF4 then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x8F
+            else cont s.[i + 1])
+     then 4 else 0)
+  else 0
+
+(** The scalar the sequence at s.[i] encodes, read by its length. *)
+let spec value (s : [u8]) (i : usize) : u32
+  requires i < len s && seq_len s i > 0
+= let n = seq_len s i in
+  let b0 : u32 = s.[i] in
+  if n = 1 then b0
+  else (
+    let b1 : u32 = s.[i + 1] in
+    if n = 2 then ((b0 & 0x1F) << 6) | (b1 & 0x3F)
+    else (
+      let b2 : u32 = s.[i + 2] in
+      if n = 3 then ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+      else (
+        let b3 : u32 = s.[i + 3] in
+        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F))))
+
+(** s.[i ..] is a sequence of valid UTF-8 sequences. *)
+let spec valid_from (s : [u8]) (i : usize) : bool
+  requires i <= len s
+  decreases len s - i
+= if i = len s then true
+  else if seq_len s i = 0 then false
+  else if seq_len s i > len s - i then false
+  else valid_from s (i + seq_len s i)
+
+(** The length of the valid sequence at s.[i], or 0. *)
+let sequence_length (s : [u8]) (i : usize) : int{0..4}
+  requires i < len s
+  ensures result = seq_len s i
+= let b = s.[i] in
+  if b <= 0x7F then 1
+  else if len s - i < 2 then 0
+  else if 0xC2 <= b && b <= 0xDF then (if 0x80 <= s.[i + 1] && s.[i + 1] <= 0xBF then 2 else 0)
+  else if 0xE0 <= b && b <= 0xEF then
+    (if len s - i < 3 then 0
+     else if 0x80 <= s.[i + 2] && s.[i + 2] <= 0xBF
+        && (if b = 0xE0 then 0xA0 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xED then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x9F
+            else 0x80 <= s.[i + 1] && s.[i + 1] <= 0xBF)
+     then 3 else 0)
+  else if 0xF0 <= b && b <= 0xF4 then
+    (if len s - i < 4 then 0
+     else if 0x80 <= s.[i + 2] && s.[i + 2] <= 0xBF && 0x80 <= s.[i + 3] && s.[i + 3] <= 0xBF
+        && (if b = 0xF0 then 0x90 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xF4 then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x8F
+            else 0x80 <= s.[i + 1] && s.[i + 1] <= 0xBF)
+     then 4 else 0)
+  else 0
+
+(** The scalar the valid sequence at s.[i] encodes. *)
+let decode (s : [u8]) (i : usize) : u32
+  requires i < len s && seq_len s i > 0
+  ensures result = value s i
+  ensures scalar result
+  ensures encoded_len result = seq_len s i
+  ensures bytes_of s i result
+= let n = sequence_length s i in
+  let b0 : u32 = s.[i] in
+  if n = 1 then b0
+  else (
+    let b1 : u32 = s.[i + 1] in
+    if n = 2 then ((b0 & 0x1F) << 6) | (b1 & 0x3F)
+    else (
+      let b2 : u32 = s.[i + 2] in
+      if n = 3 then ((b0 & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F)
+      else (
+        let b3 : u32 = s.[i + 3] in
+        ((b0 & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F))))
+
+(** Writes cp's UTF-8 bytes at dst.[i ..] and returns how many. *)
+let encode (dst : borrowed inout mutable [u8]) (i : usize) (cp : u32) : int{1..4}
+  requires scalar cp
+  requires i < len dst && encoded_len cp <= len dst - i
+  ensures result = encoded_len cp
+  ensures seq_len dst i = result && value dst i = cp
+  ensures bytes_of dst i cp
+  ensures forall (k in 0 .. len dst). (k < i || i + result <= k) ==> dst.[k] = old (dst.[k])
+= if cp <= 0x7F then (
+    let b : u8 = cp in
+    dst.[i] <- b;
+    1)
+  else if cp <= 0x7FF then (
+    let b0 : u8 = 0xC0 | (cp >> 6) in
+    let b1 : u8 = 0x80 | (cp & 0x3F) in
+    dst.[i] <- b0;
+    dst.[i + 1] <- b1;
+    2)
+  else if cp <= 0xFFFF then (
+    let b0 : u8 = 0xE0 | (cp >> 12) in
+    let b1 : u8 = 0x80 | ((cp >> 6) & 0x3F) in
+    let b2 : u8 = 0x80 | (cp & 0x3F) in
+    dst.[i] <- b0;
+    dst.[i + 1] <- b1;
+    dst.[i + 2] <- b2;
+    3)
+  else (
+    let b0 : u8 = 0xF0 | (cp >> 18) in
+    let b1 : u8 = 0x80 | ((cp >> 12) & 0x3F) in
+    let b2 : u8 = 0x80 | ((cp >> 6) & 0x3F) in
+    let b3 : u8 = 0x80 | (cp & 0x3F) in
+    dst.[i] <- b0;
+    dst.[i + 1] <- b1;
+    dst.[i + 2] <- b2;
+    dst.[i + 3] <- b3;
+    4)
+
+(** The whole of s is valid UTF-8. *)
+let valid (s : [u8]) : bool
+  ensures result <==> valid_from s 0
+= let i : mutable usize = 0 in
+  let ok : mutable bool = true in
+  while ok && i < len s
+    invariant i <= len s
+    invariant ok ==> (valid_from s 0 <==> valid_from s i)
+    invariant ok = false ==> valid_from s 0 = false
+    decreases len s - i + (if ok then 1 else 0)
+  do
+    let n = sequence_length s i in
+    if n = 0 || n > len s - i then ok <- false else i <- i + n
+  done;
+  ok
