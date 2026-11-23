@@ -77,6 +77,12 @@ class ReplTest(unittest.TestCase):
         r = self.repl.run("three * 2\nif three < 5 then 1 else 0")
         self.assertTrue(r["ok"], r)
         self.assertEqual([v["value"] for v in kinds(r, "value")], ["6", "1"])
+        # A `-` at column 1 starts a new expression; an indented one carries
+        # the subtraction on.
+        r = self.repl.run("three\n-1")
+        self.assertEqual([v["value"] for v in kinds(r, "value")], ["3", "-1"])
+        r = self.repl.run("three\n  - 1")
+        self.assertEqual([v["value"] for v in kinds(r, "value")], ["2"])
 
     def test_environment_builds_up(self):
         self.repl.run("let double (x : u8) : u16 = x + x")
