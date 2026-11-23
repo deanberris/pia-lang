@@ -1,0 +1,26 @@
+(* Pia.Image.Raster (ADR 0054, step 1): image dimensions, the index of a
+   sample, and the rows of a rectangle, each proved to lie inside the
+   image's samples.
+// RUN: piac --verify %S/../../lib/Pia/Image/Raster.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Image.Raster.Raster.piai
+*)
+
+(* Every goal is proved, with no warning.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 50 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Image.Raster{{$}}
+// IFACE-NEXT: {{^}}interface Raster = sig{{$}}
+// IFACE-NEXT: {{^}}  let dims = type { w : int{1..65535}; h : int{1..65535}; c : int{1..4} }{{$}}
+// IFACE-NEXT: {{^}}  let rect = type { x0 : u16; y0 : u16; rw : int{1..65535}; rh : int{1..65535} }{{$}}
+// IFACE-NEXT: {{^}}  let spec size : (w : int{1..65535}) -> (h : int{1..65535}) -> (c : int{1..4}) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let spec inside : (d : dims) -> (r : rect) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let index : (d : dims) -> (x : u16) -> (y : u16) -> (k : int{0..3}) -> usize requires x < d.w && y < d.h && k < d.c ensures result < size d.w d.h d.c ensures result = (y * d.w + x) * d.c + k{{$}}
+// IFACE-NEXT: {{^}}  let contains : (d : dims) -> (r : rect) -> bool ensures result <==> inside d r{{$}}
+// IFACE-NEXT: {{^}}  let row_start : (d : dims) -> (r : rect) -> (j : u16) -> usize requires inside d r && j < r.rh ensures result = ((r.y0 + j) * d.w + r.x0) * d.c ensures result + r.rw * d.c <= size d.w d.h d.c{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)
