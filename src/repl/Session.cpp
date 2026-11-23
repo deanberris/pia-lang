@@ -1268,6 +1268,7 @@ struct Session::Impl {
     r.stats.verified = true;
     r.stats.verifyMs = msSince(verifyBegin);
     r.stats.solveMs = vst.solveMs;
+    r.stats.threads = vst.threads;
     for (Event &e : mlirErrors)
       a.errors.push_back(std::move(e));
     mlirErrors.clear();
@@ -2475,6 +2476,7 @@ lsp::Json toJson(const ProofStats &s) {
   j["cell_ms"] = s.cellMs;
   j["verify_ms"] = s.verifyMs;
   j["solve_ms"] = s.solveMs;
+  j["threads"] = s.threads;
   j["run_ms"] = s.runMs;
   j["goals"] = s.goals;
   j["cell_goals"] = s.cellGoals;
@@ -2519,8 +2521,8 @@ void renderGoals(std::string &out, const ProofStats &s, bool mine) {
     if (g.mine != mine)
       continue;
     if (first)
-      out += mine ? "slowest in this cell:\n"
-                  : "slowest re-proofs from the environment:\n";
+      out += mine ? "slowest solver goals in this cell:\n"
+                  : "slowest solver goals re-proved from the environment:\n";
     first = false;
     out += "  " + formatMs(g.ms) + "  ";
     if (g.where.cell)
@@ -2537,9 +2539,16 @@ void renderGoals(std::string &out, const ProofStats &s, bool mine) {
 std::string renderStats(const ProofStats &s) {
   if (!s.verified)
     return "";
+  // Goals are solved in parallel, so the solver's time is wall clock and
+  // can be less than the goals' times added up; the rest of verifying is
+  // building the queries, the counterexample search included.
   std::string out = "took " + formatMs(s.cellMs) + ": verifying " +
-                    formatMs(s.verifyMs) + " (solver " + formatMs(s.solveMs) +
-                    ")";
+                    formatMs(s.verifyMs) + " (encoding " +
+                    formatMs(std::max(0.0, s.verifyMs - s.solveMs)) +
+                    ", solving " + formatMs(s.solveMs);
+  if (s.threads > 1)
+    out += " on " + std::to_string(s.threads) + " threads";
+  out += ")";
   if (s.runMs > 0)
     out += ", running " + formatMs(s.runMs);
   // The rest is parsing, expansion, IR generation and, for expressions,

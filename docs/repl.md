@@ -251,7 +251,7 @@ Each event has a `kind`:
 
 `where` is `{"cell", "line", "column"}`. The exit status is 1 if any cell failed.
 
-A cell that reached the verifier also has `stats`, what its proof took: `cell_ms`, `verify_ms`, `solve_ms` and `run_ms` (milliseconds); `cell_goals`, `cell_intervals` and `cell_smt` for the cell's own goals; `goals`, `proved`, `failed`, `unproved`, `allowed` and `smt` for the whole environment, which every cell proves again; `cost`, Z3's resource count; and `costliest`, the slowest solver goals: up to three of the cell's own, then up to three the environment re-proved, each with `name`, `text`, `status`, `ms`, `cost`, `where` and `cell` (true for the cell's own). The text output leaves them out, since times differ from run to run.
+A cell that reached the verifier also has `stats`, what its proof took: `cell_ms`, `verify_ms`, `solve_ms` (wall clock, over `threads` solver threads) and `run_ms` (milliseconds); `cell_goals`, `cell_intervals` and `cell_smt` for the cell's own goals; `goals`, `proved`, `failed`, `unproved`, `allowed` and `smt` for the whole environment, which every cell proves again; `cost`, Z3's resource count; and `costliest`, the slowest solver goals: up to three of the cell's own, then up to three the environment re-proved, each with `name`, `text`, `status`, `ms`, `cost`, `where` and `cell` (true for the cell's own). The text output leaves them out, since times differ from run to run.
 
 ## MCP server
 

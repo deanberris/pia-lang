@@ -79,9 +79,10 @@ struct ProofStats {
                          // the verifier
   double cellMs = 0;     // the whole cell, from parse to printed value
   double verifyMs = 0;   // encoding and solving
-  double solveMs = 0;
-  double runMs = 0;   // compiling and running expressions
-  unsigned goals = 0; // every goal in the environment
+  double solveMs = 0;    // wall clock, with goals solved in parallel
+  unsigned threads = 0;  // solver threads
+  double runMs = 0;      // compiling and running expressions
+  unsigned goals = 0;    // every goal in the environment
   unsigned cellGoals = 0, cellIntervals = 0, cellSmt = 0;     // this cell's
   unsigned proved = 0, failed = 0, unproved = 0, allowed = 0; // every goal
   unsigned smt = 0;            // goals that needed the solver

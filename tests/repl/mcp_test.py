@@ -193,7 +193,7 @@ class McpTest(unittest.TestCase):
                              code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a")
         text = r["content"][0]["text"]
         self.assertIn("1 by the solver) and 1 re-proved from the environment", text)
-        self.assertIn("slowest in this cell:", text)
+        self.assertIn("slowest solver goals in this cell:", text)
         self.assertIn("diff: '-' does not overflow u8 (proved, cost ", text)
         # A failed goal is the cell's own, listed before the environment's
         # re-proofs, and has the cost of finding its counterexample.
@@ -201,8 +201,8 @@ class McpTest(unittest.TestCase):
         text = r["content"][0]["text"]
         self.assertIn("1 from this cell", text)
         self.assertIn("2 re-proved from the environment: 2 proved, 1 failed", text)
-        own = text.index("slowest in this cell:")
-        env = text.index("slowest re-proofs from the environment:")
+        own = text.index("slowest solver goals in this cell:")
+        env = text.index("slowest solver goals re-proved from the environment:")
         self.assertLess(own, env)
         self.assertIn("bad: '+' does not overflow u8 (failed, cost ", text)
         self.assertNotIn("(failed, cost 0)", text)
