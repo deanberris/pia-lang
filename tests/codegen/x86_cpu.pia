@@ -1,0 +1,19 @@
+(* x86-64-v3 is the oldest x86_64 CPU piac compiles for (ADR 0049): an
+   older one is refused, and v3 or newer, or a named CPU that has its
+   features, is accepted.
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=V3
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=znver4 %s | FileCheck %s --check-prefix=V3
+// RUN: not piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v2 %s 2>&1 | FileCheck %s --check-prefix=OLD
+// RUN: not piac --emit=obj -o %t/old.o --target=x86_64-unknown-linux-gnu --cpu=x86-64 %s 2>&1 | FileCheck %s --check-prefix=OLD
+*)
+
+(* V3: add_one:
+   OLD: piac: the x86_64 CPU '{{x86-64(-v2)?}}' is older than x86-64-v3, the oldest Pia supports
+*)
+module X86Cpu : Ops
+
+interface Ops @abi(c) = sig
+  let add_one : (x : u8) -> u16
+end
+
+let add_one (x : u8) : u16 = let x' : u16 = x in x' + 1
