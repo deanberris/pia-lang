@@ -1,6 +1,6 @@
-// The C entry points of docs/streams.pia.md and docs/sediment.pia.md, compiled by piac --emit=obj
-// (docs/codegen.md, "C ABI"): a slice is a pointer and a length, and
-// `usize` is uint64_t.
+// The C entry points of docs/streams.pia.md and docs/sediment.pia.md, compiled
+// by piac --emit=obj (docs/codegen.md, "C ABI"): a slice is a pointer and a
+// length, and `usize` is uint64_t.
 
 #ifndef PIA_EXAMPLES_STREAMS_H
 #define PIA_EXAMPLES_STREAMS_H
