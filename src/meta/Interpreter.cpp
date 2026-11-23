@@ -1,5 +1,7 @@
 #include "meta/Interpreter.h"
 
+#include <algorithm>
+#include <cstdint>
 #include <iterator>
 #include <set>
 
@@ -68,9 +70,17 @@ const char *kindName(K k) {
 
 // The builtins metaprograms can call, with their arity (docs/meta.md).
 const std::map<std::string, size_t> &metaBuiltins() {
+  // A table laid out by hand, in groups.
+  // clang-format off
   static const std::map<std::string, size_t> table = {
       {"map", 2},   {"fold", 3},   {"fields", 1},
       {"name", 1},  {"concat", 2}, {"length", 1},
+      // Lists, for generators (ADR 0056).
+      {"nth", 2},     {"zip", 2},    {"range", 1},
+      {"reverse", 1}, {"filter", 2}, {"product", 1},
+      // Signatures and substitution, for generators (ADR 0056).
+      {"param_types", 1}, {"return_type", 1}, {"range_of", 1},
+      {"constructors", 1}, {"subst", 3},
       // Comments and literate programs (ADR 0029).
       {"listing", 1}, {"comments", 1}, {"doc", 1},   {"text", 1},
       {"style", 1},   {"place", 1},    {"kind", 1},  {"with_doc", 2},
@@ -89,6 +99,7 @@ const std::map<std::string, size_t> &metaBuiltins() {
       {"add", 2}, {"sub", 2}, {"mul", 2}, {"div", 2}, {"rem", 2},
       {"and", 2}, {"or", 2}, {"implies", 2}, {"iff", 2},
   };
+  // clang-format on
   return table;
 }
 
@@ -119,6 +130,27 @@ const Node *typeItem(const Value &v) {
 void collectTypeNames(const Node &n, std::vector<std::string> &out) {
   if (n.kind == NodeKind::TypeName) out.push_back(n.text);
   for (const NodePtr &k : n.kids) collectTypeNames(*k, out);
+}
+
+// Whether `n` holds an operator not yet expanded to a builtin call.
+bool hasBinary(const Node &n) {
+  if (n.kind == NodeKind::Binary)
+    return true;
+  for (const NodePtr &k : n.kids)
+    if (hasBinary(*k))
+      return true;
+  return false;
+}
+
+// Whether `n` holds a call of a core builtin that an operator expanded to.
+bool hasPreludeCall(const Node &n) {
+  if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+      n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags == "prelude")
+    return true;
+  for (const NodePtr &k : n.kids)
+    if (hasPreludeCall(*k))
+      return true;
+  return false;
 }
 
 // Whether the child at `index` of a node of kind `parent` is in a type
@@ -621,6 +653,105 @@ ValuePtr Interpreter::apply(const ValuePtr &fnIn, std::vector<ValuePtr> args) {
   return fn;
 }
 
+NodePtr Interpreter::toCode(const ValuePtr &v, const std::string &who) {
+  switch (v->kind) {
+  case K::Syntax:
+    if (v->syntax && v->syntax->kind != NodeKind::Program)
+      return clone(*v->syntax);
+    break;
+  case K::Str:
+    return makeNode(NodeKind::Name, site_, v->s);
+  case K::Int:
+    if (v->i >= 0)
+      return makeNode(NodeKind::IntLit, site_, std::to_string(v->i));
+    // A negative integer is the negation of its magnitude, as the
+    // parser reads `-5`.
+    if (v->i != INT64_MIN) {
+      auto neg = makeNode(NodeKind::Neg, site_);
+      neg->add(makeNode(NodeKind::IntLit, site_, std::to_string(-v->i)));
+      return neg;
+    }
+    break;
+  case K::Bool:
+    return makeNode(NodeKind::BoolLit, site_, v->b ? "true" : "false");
+  default:
+    break;
+  }
+  throw MetaError{site_,
+                  "'" + who + "' cannot make code of " + kindName(v->kind)};
+}
+
+const Node *Interpreter::findTypeItem(const ValuePtr &t) {
+  if (const Node *item = typeItem(*t))
+    return item;
+  std::string wanted;
+  if (t->kind == K::Str || t->kind == K::Type)
+    wanted = t->s;
+  else if (t->kind == K::Syntax && t->syntax &&
+           (t->syntax->kind == NodeKind::TypeName ||
+            t->syntax->kind == NodeKind::Name))
+    wanted = t->syntax->text;
+  if (wanted.empty())
+    return nullptr;
+  for (const Node *item : listing_)
+    if (item->kind == NodeKind::LetItem && item->text == wanted &&
+        item->kids.size() > 3 && item->kids[3]->kind == NodeKind::TypeValue)
+      return item;
+  return nullptr;
+}
+
+ValuePtr Interpreter::rangeOf(const ValuePtr &t) {
+  auto bounds = [&](int64_t lo, int64_t hi) {
+    return listValue({intValue(lo), intValue(hi)});
+  };
+  auto ofName = [&](const std::string &n) -> ValuePtr {
+    static const std::map<std::string, std::pair<int64_t, int64_t>> ints = {
+        {"u8", {0, UINT8_MAX}},          {"u16", {0, UINT16_MAX}},
+        {"u32", {0, UINT32_MAX}},        {"i8", {INT8_MIN, INT8_MAX}},
+        {"i16", {INT16_MIN, INT16_MAX}}, {"i32", {INT32_MIN, INT32_MAX}},
+        {"i64", {INT64_MIN, INT64_MAX}}, {"isize", {INT64_MIN, INT64_MAX}},
+    };
+    if (auto it = ints.find(n); it != ints.end())
+      return bounds(it->second.first, it->second.second);
+    // Metaprogram integers are 64-bit and signed (docs/meta.md).
+    if (n == "u64" || n == "usize")
+      throw MetaError{site_, "'range_of': the upper bound of " + n +
+                                 " does not fit a metaprogram integer"};
+    return nullptr;
+  };
+  // A range type's bound, as written: a literal, or a negated one.
+  auto bound = [&](const Node &b) -> int64_t {
+    ValuePtr v = eval(b, nullptr);
+    if (v->kind != K::Int)
+      throw MetaError{site_, "'range_of' needs a range with integer bounds"};
+    return v->i;
+  };
+  if (t->kind == K::Syntax && t->syntax) {
+    const Node &n = *t->syntax;
+    if (n.kind == NodeKind::RangeType && n.kids.size() == 2)
+      return bounds(bound(*n.kids[0]), bound(*n.kids[1]));
+    if (n.kind == NodeKind::TypeName || n.kind == NodeKind::Name)
+      if (ValuePtr v = ofName(n.text))
+        return v;
+  }
+  if (t->kind == K::Str || t->kind == K::Type) {
+    if (ValuePtr v = ofName(t->s))
+      return v;
+    // A type value spells a range as `int{lo..hi}`.
+    size_t open = t->s.find('{'), dots = t->s.find(".."),
+           close = t->s.rfind('}');
+    if (open != std::string::npos && dots != std::string::npos &&
+        close == t->s.size() - 1 && open < dots) {
+      try {
+        return bounds(std::stoll(t->s.substr(open + 1, dots - open - 1)),
+                      std::stoll(t->s.substr(dots + 2, close - dots - 2)));
+      } catch (...) {
+      }
+    }
+  }
+  throw MetaError{site_, "'range_of' needs an integer type with bounds"};
+}
+
 ValuePtr Interpreter::callBuiltin(const std::string &name,
                                   const std::vector<ValuePtr> &args,
                                   const Node *) {
@@ -643,6 +774,79 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   }
   if (name == "length")
     return intValue(static_cast<int64_t>(needList(args[0]).size()));
+  if (name == "nth") {
+    const std::vector<ValuePtr> &xs = needList(args[0]);
+    if (args[1]->kind != K::Int)
+      throw MetaError{site_, std::string("'nth' needs an integer index, "
+                                         "found ") +
+                                 kindName(args[1]->kind)};
+    if (args[1]->i < 0 || static_cast<size_t>(args[1]->i) >= xs.size())
+      throw MetaError{site_, "'nth' index " + std::to_string(args[1]->i) +
+                                 " is outside a list of " +
+                                 std::to_string(xs.size())};
+    return xs[static_cast<size_t>(args[1]->i)];
+  }
+  if (name == "zip") {
+    const std::vector<ValuePtr> &xs = needList(args[0]);
+    const std::vector<ValuePtr> &ys = needList(args[1]);
+    // Unequal lengths are a mistake in a generator, such as a domain list
+    // with one entry too few, so they are an error rather than truncated.
+    if (xs.size() != ys.size())
+      throw MetaError{site_, "'zip' needs lists of one length, found " +
+                                 std::to_string(xs.size()) + " and " +
+                                 std::to_string(ys.size())};
+    std::vector<ValuePtr> out;
+    for (size_t i = 0; i < xs.size(); ++i)
+      out.push_back(listValue({xs[i], ys[i]}));
+    return listValue(std::move(out));
+  }
+  if (name == "range") {
+    if (args[0]->kind != K::Int || args[0]->i < 0)
+      throw MetaError{site_, "'range' needs a non-negative integer"};
+    std::vector<ValuePtr> out;
+    for (int64_t i = 0; i < args[0]->i; ++i) {
+      tick(Node{});
+      out.push_back(intValue(i));
+    }
+    return listValue(std::move(out));
+  }
+  if (name == "reverse") {
+    std::vector<ValuePtr> out = needList(args[0]);
+    std::reverse(out.begin(), out.end());
+    return listValue(std::move(out));
+  }
+  if (name == "filter") {
+    std::vector<ValuePtr> out;
+    for (const ValuePtr &x : needList(args[1])) {
+      ValuePtr keep = apply(args[0], {x});
+      if (keep->kind != K::Bool)
+        throw MetaError{site_, std::string("'filter' needs a function that "
+                                           "returns a bool, found ") +
+                                   kindName(keep->kind)};
+      if (keep->b)
+        out.push_back(x);
+    }
+    return listValue(std::move(out));
+  }
+  if (name == "product") {
+    // The cartesian product of a list of lists, the first list varying
+    // slowest: every combination of one element from each.
+    std::vector<std::vector<ValuePtr>> rows = {{}};
+    for (const ValuePtr &d : needList(args[0])) {
+      std::vector<std::vector<ValuePtr>> next;
+      for (const std::vector<ValuePtr> &row : rows)
+        for (const ValuePtr &x : needList(d)) {
+          tick(Node{});
+          next.push_back(row);
+          next.back().push_back(x);
+        }
+      rows = std::move(next);
+    }
+    std::vector<ValuePtr> out;
+    for (std::vector<ValuePtr> &row : rows)
+      out.push_back(listValue(std::move(row)));
+    return listValue(std::move(out));
+  }
   if (name == "fields") {
     const Node *item = typeItem(*args[0]);
     const Node *record =
@@ -657,6 +861,20 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
       if (!isTypeDefined_(t)) throw Deferred{t};
     std::vector<ValuePtr> out;
     for (const NodePtr &f : record->kids) out.push_back(strValue(f->text));
+    return listValue(std::move(out));
+  }
+  if (name == "range_of")
+    return rangeOf(args[0]);
+  if (name == "constructors") {
+    const Node *item = findTypeItem(args[0]);
+    const Node *variants = item && !item->kids[3]->kids.empty()
+                               ? item->kids[3]->kids[0].get()
+                               : nullptr;
+    if (!variants || variants->kind != NodeKind::Variants)
+      throw MetaError{site_, "'constructors' needs a variant type"};
+    std::vector<ValuePtr> out;
+    for (const NodePtr &c : variants->kids)
+      out.push_back(strValue(c->text));
     return listValue(std::move(out));
   }
   // A core builtin, as a `where` predicate's operators expand to.
@@ -780,11 +998,22 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     NodeKind want = name == "hypotheses" ? NodeKind::Requires : NodeKind::Ensures;
     std::vector<ValuePtr> out;
     NodePtr all;
+    // Clauses joined in the form they are written in. Before expansion
+    // (a tactic's goal) that is the operator `&&`; once operators have
+    // expanded (an item from `listing`) it is a call of `and`, so code
+    // that walks the conclusion sees one form throughout.
+    bool expanded = !hasBinary(*g.kids[2]) && hasPreludeCall(*g.kids[2]);
     for (const NodePtr &c : g.kids[2]->kids) {
       if (c->kind != want || c->kids.empty()) continue;
       out.push_back(syntaxValue(clone(*c->kids[0])));
       if (!all) {
         all = clone(*c->kids[0]);
+      } else if (expanded) {
+        auto both = makeNode(NodeKind::Apply, c->loc);
+        both->add(makeNode(NodeKind::Name, c->loc, "and"))->flags = "prelude";
+        both->add(std::move(all));
+        both->add(clone(*c->kids[0]));
+        all = std::move(both);
       } else {
         auto both = makeNode(NodeKind::Binary, c->loc, "&&");
         both->add(std::move(all));
@@ -802,6 +1031,52 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
       if (p->kind == NodeKind::Param) out.push_back(strValue(p->text));
     return listValue(std::move(out));
   }
+  // A function's signature (ADR 0056): the type of each parameter, and
+  // the return type, as written.
+  if (name == "param_types") {
+    std::vector<ValuePtr> out;
+    for (const NodePtr &p : needGoal(args[0]).kids[0]->kids) {
+      if (p->kind != NodeKind::Param)
+        continue;
+      const Node *annot = p->kids.empty() ? nullptr : p->kids[0].get();
+      if (!annot || annot->kind != NodeKind::Annot || annot->kids.size() < 2)
+        throw MetaError{site_, "'param_types': the parameter '" + p->text +
+                                   "' has no type"};
+      out.push_back(syntaxValue(clone(*annot->kids[1])));
+    }
+    return listValue(std::move(out));
+  }
+  if (name == "return_type") {
+    const Node &g = needGoal(args[0]);
+    const Node &ret = *g.kids[1];
+    if (ret.kind != NodeKind::RetAnnot || ret.kids.empty() ||
+        ret.kids[0]->kind != NodeKind::Annot || ret.kids[0]->kids.size() < 2)
+      throw MetaError{site_, "'return_type': '" + g.text +
+                                 "' has no return type written"};
+    return syntaxValue(clone(*ret.kids[0]->kids[1]));
+  }
+  if (name == "subst") {
+    // No shadowing in Pia (ADR 0022), so every free occurrence of the
+    // name is the one meant, and a plain replacement is capture-free.
+    const Node &e = needSyntax(args[0]);
+    if (args[1]->kind != K::Str)
+      throw MetaError{site_, std::string("'subst' needs a name as a string, "
+                                         "found ") +
+                                 kindName(args[1]->kind)};
+    const std::string &from = args[1]->s;
+    NodePtr to = toCode(args[2], "subst");
+    NodePtr out = clone(e);
+    std::function<void(NodePtr &)> walk = [&](NodePtr &n) {
+      if (n->kind == NodeKind::Name && n->text == from) {
+        n = clone(*to);
+        return;
+      }
+      for (NodePtr &k : n->kids)
+        walk(k);
+    };
+    walk(out);
+    return syntaxValue(std::move(out));
+  }
   if (name == "children") {
     std::vector<ValuePtr> out;
     for (const NodePtr &k : needSyntax(args[0]).kids)
@@ -818,22 +1093,7 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     return strValue("");
   }
   if (name == "make_call") {
-    auto code = [&](const ValuePtr &v) -> NodePtr {
-      switch (v->kind) {
-        case K::Syntax:
-          if (v->syntax && v->syntax->kind != NodeKind::Program)
-            return clone(*v->syntax);
-          break;
-        case K::Str: return makeNode(NodeKind::Name, site_, v->s);
-        case K::Int:
-          if (v->i >= 0) return makeNode(NodeKind::IntLit, site_, std::to_string(v->i));
-          break;
-        case K::Bool: return makeNode(NodeKind::BoolLit, site_, v->b ? "true" : "false");
-        default: break;
-      }
-      throw MetaError{site_, std::string("'make_call' cannot make code of ") +
-                                 kindName(v->kind)};
-    };
+    auto code = [&](const ValuePtr &v) { return toCode(v, "make_call"); };
     if (args[1]->kind != K::List)
       throw MetaError{site_, std::string("'make_call' needs a list of "
                                          "arguments, found ") +
