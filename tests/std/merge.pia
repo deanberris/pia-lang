@@ -1,0 +1,26 @@
+(* Pia.Core.Algo.Merge (ADR 0040, phase 1.7): merge into an out slice by
+   a strict weak order, proved once (ADR 0043, ADR 0044).
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Merge.pia | FileCheck %s
+// RUN: mkdir -p %t/m && piac --emit=interface -o %t/m %S/../../lib/Pia/Core/Algo/Merge.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/m/Pia.Core.Algo.Merge.Merge.piai
+*)
+
+(* No function of the module is left unproved. (Pia.Core.Order's compare
+   and lex_compare_three_way, imported, are proved at each instance.)
+// CHECK-NOT: not proved generically: '{{[a-z_]+}}'
+// CHECK-NOT: failed
+// CHECK: 57 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.Merge{{$}}
+// IFACE-NEXT: {{^}}interface Merge = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec not_less_trans : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (a : t) -> (b : t) -> (c : t) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec same_prefix : (t : type where Pia.Core.Order.Eq t) -> (xs : [t]) -> (ys : [t]) -> (v : t) -> (k : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let put : (t : type where Pia.Core.Order.Eq t) -> (dst : borrowed inout mutable [t]) -> (k : usize) -> (x : t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let merge : (t : type where Pia.Core.Order.Eq t) -> (dst : out mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

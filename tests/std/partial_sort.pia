@@ -1,0 +1,26 @@
+(* Pia.Core.Algo.PartialSort (ADR 0040, phase 1.7): partial_sort and
+   nth_element by a strict weak order, proved once (ADR 0043, ADR 0044).
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Heap.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/PartialSort.pia | FileCheck %s
+// RUN: mkdir -p %t/q && piac --emit=interface -o %t/q %S/../../lib/Pia/Core/Algo/PartialSort.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/q/Pia.Core.Algo.PartialSort.PartialSort.piai
+*)
+
+(* No function of the module is left unproved. (Pia.Core.Order's compare
+   and lex_compare_three_way, imported, are proved at each instance.)
+// CHECK-NOT: not proved generically: '{{[a-z_]+}}'
+// CHECK-NOT: failed
+// CHECK: 82 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.PartialSort{{$}}
+// IFACE-NEXT: {{^}}interface PartialSort = sig{{$}}
+// IFACE-NEXT: {{^}}  let partial_sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (m : usize) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let nth_element : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> (less : (a : t) -> (b : t) -> bool) -> unit{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

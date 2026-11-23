@@ -1,0 +1,87 @@
+(* Pia.Core.Algo.PartialSort: <algorithm>'s partial_sort and nth_element
+   (ADR 0040, phase 1.7), by a comparator that must be a strict weak
+   order, proved once (ADR 0043, ADR 0044).
+
+   partial_sort xs m less puts the m smallest elements, sorted, in
+   xs.[0 .. m], and leaves the rest after them in no stated order: every
+   element after the first m is not less than any of them. It keeps a
+   heap of the first m (Pia.Core.Algo.Heap's sift_down), lets each later
+   element smaller than its top replace it, and sorts the heap with
+   pop_heap. Each step is an exchange, so the result is a permutation of
+   the input.
+
+   nth_element xs n less is partial_sort of the first n + 1: xs.[n] is
+   what it would be if xs were sorted, nothing before it is greater and
+   nothing after it is less. C++'s is linear on average; this one is
+   O(len xs log n), and its contract is the stronger one: everything
+   before xs.[n] is sorted too. *)
+module Pia.Core.Algo.PartialSort : PartialSort
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Heap.Heap as H
+
+interface PartialSort = sig
+  let partial_sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (m : usize) -> (less : (a : t) -> (b : t) -> bool) -> unit
+  let nth_element : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (n : usize) -> (less : (a : t) -> (b : t) -> bool) -> unit
+end
+
+(** C++: std::partial_sort with a comparator. *)
+let partial_sort (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (m : usize) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires m <= len xs
+  ensures Pia.Fn.sorted_prefix less xs m
+  ensures forall (a in 0 .. m) (p in 0 .. len xs). m <= p ==> less xs.[p] xs.[a] = false
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= if m > 0 then (
+    (* A heap of the first m. *)
+    let i : mutable usize = m >> 1 in
+    while i > 0
+      invariant i <= m >> 1
+      invariant forall (k in 1 .. m). (k - 1) >> 1 >= i ==> less xs.[(k - 1) >> 1] xs.[k] = false
+      invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+      decreases i
+    do
+      i <- i - 1;
+      H.sift_down xs less i m
+    done;
+    (* Each later element smaller than the heap's top takes its place. *)
+    for j in m .. len xs
+      invariant H.heap less xs m
+      invariant forall (a in 0 .. m) (p in 0 .. len xs). m <= p && p < j ==> less xs.[p] xs.[a] = false
+      invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+    do
+      assert (H.heap_top xs less m || true);
+      if less xs.[j] xs.[0] then (
+        S.exchange xs 0 j;
+        H.sift_down xs less 0 m)
+      else
+        assert (forall (a in 0 .. m). H.not_less_trans less xs.[j] xs.[0] xs.[a] || true)
+    done;
+    (* Sort the heap. *)
+    let k : mutable usize = m in
+    while k > 1
+      invariant k <= m
+      invariant H.heap less xs k
+      invariant forall (p in 0 .. m) (q in 0 .. m). k <= p && p < q ==> less xs.[q] xs.[p] = false
+      invariant forall (a in 0 .. m) (q in 0 .. m). a < k && k <= q ==> less xs.[q] xs.[a] = false
+      invariant forall (a in 0 .. m) (p in 0 .. len xs). m <= p ==> less xs.[p] xs.[a] = false
+      invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+      decreases k
+    do
+      H.pop_heap xs less k;
+      k <- k - 1
+    done)
+
+(** C++: std::nth_element with a comparator: xs.[n] is the element a
+    sort would put there, nothing before it is greater, and nothing after
+    it is less. *)
+let nth_element (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (n : usize) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires n < len xs
+  ensures forall (a in 0 .. n). less xs.[n] xs.[a] = false
+  ensures forall (p in 0 .. len xs). n < p ==> less xs.[p] xs.[n] = false
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= partial_sort xs (n + 1) less

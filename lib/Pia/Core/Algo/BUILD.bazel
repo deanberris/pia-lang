@@ -9,8 +9,11 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "BinarySearch.pia",
     "Heap.pia",
+    "Merge.pia",
     "Modify.pia",
     "Numeric.pia",
+    "PartialSort.pia",
+    "Partition.pia",
     "Permutation.pia",
     "Remove.pia",
     "Sort.pia",
@@ -93,7 +96,7 @@ pia_library(
 pia_library(
     name = "numeric",
     src = "Numeric.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # The binary search family, by a comparator and by Ord:
@@ -103,8 +106,53 @@ pia_library(
 pia_library(
     name = "binary_search",
     src = "BinarySearch.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# is_partitioned, partition_point and partition, with a predicate:
+# tests/std/partition.pia checks its goals; tests/std/partition_edges.pia
+# and :partition_run test it through its interface.
+pia_library(
+    name = "partition",
+    src = "Partition.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":permutation",
+        ":sort",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# partial_sort and nth_element, by a strict weak order:
+# tests/std/partial_sort.pia checks its goals; tests/std/partial_sort_edges.pia
+# and :partial_sort_run test it through its interface.
+pia_library(
+    name = "partial_sort",
+    src = "PartialSort.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":heap",
+        ":permutation",
+        ":sort",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# merge into an out slice, by a strict weak order: tests/std/merge.pia
+# checks its goals; tests/std/merge_edges.pia and :merge_run test it
+# through its interface.
+pia_library(
+    name = "merge",
+    src = "Merge.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":permutation",
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],

@@ -18,8 +18,11 @@ lit_tests(
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
         "//lib/Pia/Core/Algo:Heap.pia",
+        "//lib/Pia/Core/Algo:Merge.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Numeric.pia",
+        "//lib/Pia/Core/Algo:PartialSort.pia",
+        "//lib/Pia/Core/Algo:Partition.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
         "//lib/Pia/Core/Algo:Remove.pia",
         "//lib/Pia/Core/Algo:Sort.pia",
@@ -194,7 +197,7 @@ sh_test(
 pia_binary(
     name = "numeric_run",
     src = "Inputs/numeric_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core/Algo:numeric"],
 )
 
@@ -203,13 +206,13 @@ sh_test(
     srcs = ["numeric_run_test.sh"],
     args = ["$(rootpath :numeric_run)"],
     data = [":numeric_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "binary_search_run",
     src = "Inputs/binary_search_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -222,5 +225,68 @@ sh_test(
     srcs = ["binary_search_run_test.sh"],
     args = ["$(rootpath :binary_search_run)"],
     data = [":binary_search_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "partition_run",
+    src = "Inputs/partition_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:partition",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:sort",
+    ],
+)
+
+sh_test(
+    name = "partition_run_test",
+    srcs = ["partition_run_test.sh"],
+    args = ["$(rootpath :partition_run)"],
+    data = [":partition_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "partial_sort_run",
+    src = "Inputs/partial_sort_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:heap",
+        "//lib/Pia/Core/Algo:partial_sort",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:sort",
+    ],
+)
+
+sh_test(
+    name = "partial_sort_run_test",
+    srcs = ["partial_sort_run_test.sh"],
+    args = ["$(rootpath :partial_sort_run)"],
+    data = [":partial_sort_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "merge_run",
+    src = "Inputs/merge_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:merge",
+        "//lib/Pia/Core/Algo:permutation",
+    ],
+)
+
+sh_test(
+    name = "merge_run_test",
+    srcs = ["merge_run_test.sh"],
+    args = ["$(rootpath :merge_run)"],
+    data = [":merge_run"],
+    target_compatible_with = PIA_TARGETS,
 )
