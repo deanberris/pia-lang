@@ -327,14 +327,17 @@ int main(int argc, char **argv) {
   uint32_t *bed = malloc(n * sizeof *bed), *load = malloc(n * sizeof *load);
   uint32_t *inflow = malloc(n * sizeof *inflow), *flux = malloc(n * sizeof *flux);
   uint32_t *cnt = malloc(HEIGHTS * sizeof *cnt);
-  uint64_t *first = malloc(HEIGHTS * sizeof *first), *next = malloc(HEIGHTS * sizeof *next);
+  uint64_t *first = malloc(HEIGHTS * sizeof *first),
+           *next = malloc(HEIGHTS * sizeof *next);
   uint64_t *last = malloc(HEIGHTS * sizeof *last);
   uint16_t *owner = malloc(n * sizeof *owner);
-  for (uint64_t i = 0; i < n; ++i) bed[i] = seed;
+  for (uint64_t i = 0; i < n; ++i)
+    bed[i] = seed;
   double t6 = seconds();
-  uint64_t gone = sediment(fill, n, down, n, acc, n, nsteps, bed, n, load, n,
-                           inflow, n, flux, n, order, n, pos, n, cnt, HEIGHTS,
-                           first, HEIGHTS, next, HEIGHTS, last, HEIGHTS, owner, n);
+  uint64_t gone =
+      sediment(fill, n, down, n, acc, n, nsteps, bed, n, load, n, inflow, n,
+               flux, n, order, n, pos, n, cnt, HEIGHTS, first, HEIGHTS, next,
+               HEIGHTS, last, HEIGHTS, owner, n);
   double t7 = seconds();
   uint64_t total = 0, carried = 0, moving = 0;
   for (uint64_t i = 0; i < n; ++i) {
@@ -343,8 +346,9 @@ int main(int argc, char **argv) {
     moving += flux[i] > 0 && acc[i] >= threshold;
   }
   render_load(dem, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb, 3 * n);
-  printf("sediment: %u steps over %llu cells, sorted by height in Pia (%.1f ms)\n",
-         nsteps, (unsigned long long)n, (t7 - t6) * 1e3);
+  printf(
+      "sediment: %u steps over %llu cells, sorted by height in Pia (%.1f ms)\n",
+      nsteps, (unsigned long long)n, (t7 - t6) * 1e3);
   printf("sediment: %llu units in the beds and the water, %llu out, %llu in all;"
          " %llu at the start\n",
          (unsigned long long)total, (unsigned long long)gone,
@@ -357,12 +361,14 @@ int main(int argc, char **argv) {
   for (uint64_t i = 0; i < n; ++i)
     if (acc[i] >= threshold) {
       int b = 0;
-      for (uint32_t f = flux[i]; f; f >>= 1) ++b;
+      for (uint32_t f = flux[i]; f; f >>= 1)
+        ++b;
       ++bits[b];
     }
   printf("sediment: stream load by bits:");
   for (int b = 0; b <= 32; ++b)
-    if (bits[b]) printf(" %d:%llu", b, (unsigned long long)bits[b]);
+    if (bits[b])
+      printf(" %d:%llu", b, (unsigned long long)bits[b]);
   printf("\n");
   if (total + gone != n * seed) {
     fprintf(stderr, "sediment: the total changed\n");
