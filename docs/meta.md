@@ -52,7 +52,7 @@ Values are integers (128-bit, so every bound of every Pia integer type fits, `u6
 | `map f xs` | apply `f` to each element |
 | `fold f init xs` | `f (... (f init x0) ...) xn` |
 | `length xs` | the number of elements |
-| `fields t` | the field names of the record type item `t`, as strings |
+| `fields t` | the field names of the record type item `t`, or of the record type it names, as strings |
 | `name t` | the name of an item or a name, as a string |
 | `concat a b` | two strings joined (an integer counts as its digits), or two lists |
 | `nth xs i` | the element at index `i`, counting from 0; outside the list is an error |
@@ -138,7 +138,7 @@ Running out of steps in such a metaprogram is an internal compiler error.
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
 - `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
-- `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, and `| $c of t` a string as a constructor's name, so a derive can write bytes it computed, build a value of the type it was given, and name its own errors (`tests/meta/list_splices.pia`).
+- `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, `type { $fs }` a list of `[name; type]` pairs into a record type's, `| $c of t` a string as a constructor's name, and `| $c x -> ...` one as the constructor a pattern matches, so a derive can write bytes it computed, build a value of the type it was given, declare the records it needs, and name and match its own constructors (`tests/meta/list_splices.pia`). A nullary constructor in a quoted pattern is written `$!None`, since a bare name there is a variable that hygiene renames.
 
 The code a quote builds takes the location of the expansion site: the operator, the `@derive` attribute, or the top-level call. Spliced code keeps its own locations.
 
@@ -244,7 +244,7 @@ Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md)
 | `text c` | a comment's text (also a string literal's value) |
 | `style c` | `"line"`, `"block"`, `"doc"` or `"prose"` |
 | `place c` | `"leading"`, `"trailing"` or `"detached"` |
-| `kind x` | the kind of a syntax value, such as `"LetItem"`, `"Apply"` or `"Comment"` |
+| `kind x` | the kind of a syntax value, such as `"LetItem"`, `"Apply"` or `"Comment"`, or `"Unit"` for unit, as `variants` gives for a constructor with no payload |
 | `with_doc s x` | a copy of the syntax `x` (or the first of a list of items) with a leading doc comment `s` |
 | `fail s` | stop with the error `s`, reported at the expansion site |
 
@@ -285,6 +285,8 @@ The prelude also defines `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-
 - `read_json_<t> (s) (pos) : result <t>_json_read <t>_json_error`, which reads one with `Pia.Text.Json.Read`. It finds a member by a decision tree built at compile time, on the name's length, then on the first byte where the names left differ, then one full compare. It keeps a flag per field, so a member given twice is `Duplicate_<t>` and one never given is `Missing_<t>`, and it checks each integer's range as its digits are read (`Range_<t>`). An unknown member is `Unknown_<t>`, and anything else `Syntax_<t>`, each with its position. The error type has exactly the constructors its type can raise: no `Range_<t>` without an integer field. The value is built only once every field has been read, so it is fully initialised.
 
 An `option` field writes `null` for None, and reads `null`, or a missing member, as None (`tests/std/json_derive_option.pia`, `tests/std/Inputs/json_option_run.pia`). A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read` and `Write`. The derive is in the prelude until interfaces can export metaprograms ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 3), when it moves to `Pia.Text.Json.Derive`. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
+
+On a variant, `derive_json` follows ADR 0045, section 2. Untagged, the default, each constructor must be told apart from every other by its JSON: a record payload is an object, a number or `bool` payload is that, and a constructor with no payload is `null`; two objects are apart when one requires a member the other cannot have, and two numbers when their ranges do not meet. Any other pair is an error that names the two and suggests a tag. The reader scans an object's members into slots for every object constructor's members, by position, in a function of its own, then picks the one constructor they fit and reads each value with that payload's field readers, so a member whose type differs between constructors is read only once the constructor is known. `@json(tag = "kind")` on the type writes `"kind": "<name>"` first and accepts it anywhere among the members; each payload must then be a record, or none. A constructor's name is its own, or `@json(name = "...")` on it. A record payload, in place or named, derives json too, and the variant's codec calls it (`tests/std/json_derive_variant.pia`, `tests/std/Inputs/json_variant_run.pia`).
 
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
 

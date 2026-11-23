@@ -19,7 +19,10 @@
      only matches a field whose name has the same escapes (unescaping
      comes with Json.Dom).
    - `after_member` reads the `,` or `}` after a member's value.
-   - `read_null` reads `null`, which an `option` field reads as None. *)
+   - `read_null` reads `null`, which an `option` field reads as None.
+   - `read_str` reads a string token, a variant's tag, and `skip_scalar`
+     passes over one value token, a variant's member to be read once its
+     constructor is known. *)
 module Pia.Text.Json.Read : Reader
 
 import Pia.Text.Json.Spec.Grammar as Spec
@@ -43,6 +46,7 @@ interface Reader = sig
   let opened = type { next : usize; empty : bool }
   (** After a member's value: the position after `,` (more) or `}`. *)
   let sep = type { next : usize; more : bool }
+let span = type { start : usize; stop : usize }
   (** The unsigned integer at or after pos, at most max. *)
   let read_uint : (s : [u8]) -> (pos : usize) -> (max : u64) -> result uint_read num_error
     requires pos <= len s
@@ -90,6 +94,23 @@ interface Reader = sig
     ensures (match result with
       | Ok e -> pos < e && e <= len s
       | Err p -> p <= len s)
+  (** A string token's bytes, quotes included. *)
+  let span = type { start : usize; stop : usize }
+  (** The string token at or after pos: a variant's tag. *)
+  let read_str : (s : [u8]) -> (pos : usize) -> result span usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok t -> pos <= t.start && t.start + 2 <= t.stop && t.stop <= len s
+                && Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String t.start t.stop
+      | Err p -> p <= len s)
+  (** One value token at or after pos, a number, a string, `true`,
+      `false` or `null`, passed over: a variant's member, read once its
+      constructor is known. *)
+  let skip_scalar : (s : [u8]) -> (pos : usize) -> result usize usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok e -> pos < e && e <= len s
+      | Err p -> p <= len s)
   (** `,` or `}` at or after pos. *)
   let after_member : (s : [u8]) -> (pos : usize) -> result sep usize
     requires pos <= len s
@@ -105,6 +126,7 @@ let bool_read = type { value : bool; stop : usize }
 let key = type { start : usize; stop : usize; next : usize }
 let opened = type { next : usize; empty : bool }
 let sep = type { next : usize; more : bool }
+let span = type { start : usize; stop : usize }
 
 (* Where a lex error is, as code. *)
 let lex_pos (e : Lex.lex_error) : usize
@@ -296,5 +318,34 @@ let read_null (s : [u8]) (pos : usize) : result usize usize
   | Err e -> Err (lex_pos e)
   | Ok t ->
       (match t.kind with
+       | Null -> Ok t.stop
+       | _ -> Err t.start)
+
+let read_str (s : [u8]) (pos : usize) : result span usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok t -> pos <= t.start && t.start + 2 <= t.stop && t.stop <= len s
+              && Spec.token_at s Spec.String t.start t.stop
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | String -> Ok { start = t.start; stop = t.stop }
+       | _ -> Err t.start)
+
+let skip_scalar (s : [u8]) (pos : usize) : result usize usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok e -> pos < e && e <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | Number -> Ok t.stop
+       | String -> Ok t.stop
+       | True -> Ok t.stop
+       | False -> Ok t.stop
        | Null -> Ok t.stop
        | _ -> Err t.start)

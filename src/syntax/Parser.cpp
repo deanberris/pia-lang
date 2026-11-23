@@ -1043,6 +1043,14 @@ class Parser {
       if (refinement) return refinement;
     }
     auto rec = makeNode(N::RecordType, start);
+    // `type { $fs }` in a quote: fields a metaprogram computed, as
+    // [name; type] pairs (docs/meta.md).
+    if (at(K::SpliceIdent) && kind(1) == K::RBrace) {
+      rec->add(makeNode(N::Splice, loc(), text()));
+      take();
+      expect(K::RBrace, "'}' after the spliced fields");
+      return rec;
+    }
     while (!at(K::RBrace)) {
       auto f = makeNode(N::FieldDecl, loc(), std::string(expect(K::Ident, "a field name").text));
       expect(K::Colon, "':' after the field name");
@@ -1710,7 +1718,9 @@ class Parser {
   // at `x`, the name it binds.
   NodePtr pattern() {
     NodePtr p;
-    if (at(K::Ident) && canStartPatternAtom(kind(1))) {
+    // `$c x` in a quote: a constructor a metaprogram names, applied.
+    bool spliced = at(K::SpliceIdent) && text().rfind("$!", 0) != 0;
+    if ((at(K::Ident) || spliced) && canStartPatternAtom(kind(1))) {
       auto c = makeNode(N::PCtor, loc(), text());
       take();
       while (canStartPatternAtom(kind())) c->add(patternAtom());

@@ -12,8 +12,8 @@
 
 (*
 // CHECK-NOT: failed
-// CHECK-DAG: Read.pia:149:5: proved: the measure decreases [smt]
-// CHECK: 78 proved, 0 failed, 0 skipped
+// CHECK-DAG: Read.pia:171:5: proved: the measure decreases [smt]
+// CHECK: 90 proved, 0 failed, 0 skipped
 *)
 
 (*

@@ -196,6 +196,28 @@ sh_test(
 )
 
 pia_binary(
+    name = "json_variant_run",
+    src = "Inputs/json_variant_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+sh_test(
+    name = "json_variant_run_test",
+    srcs = ["json_variant_run_test.sh"],
+    args = ["$(rootpath :json_variant_run)"],
+    data = [":json_variant_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
     name = "json_write_run",
     src = "Inputs/json_write_run.pia",
     target_compatible_with = PIA_TARGETS,
