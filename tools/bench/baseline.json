@@ -2,13 +2,13 @@
   "cores": 8,
   "files": {
     "docs/streams.pia.md": {
-      "cost": 269094119,
-      "goals": 243,
-      "solve_ms_1": 29923,
-      "solve_ms_n": 8425,
-      "solved": 222,
-      "wall_ms_1": 30872.6,
-      "wall_ms_n": 9398.0
+      "cost": 334141503,
+      "goals": 554,
+      "solve_ms_1": 171184,
+      "solve_ms_n": 23145,
+      "solved": 528,
+      "wall_ms_1": 230806.4,
+      "wall_ms_n": 45425.3
     },
     "examples/edges/edges.pia": {
       "cost": 61107851,
@@ -256,10 +256,10 @@
   },
   "host": "BabyHouse-iMac",
   "total": {
-    "cost": 524238798,
-    "goals": 2379,
-    "solved": 2124,
-    "wall_ms_1": 110519.4,
-    "wall_ms_n": 71392.1
+    "cost": 779822338,
+    "goals": 3292,
+    "solved": 2976,
+    "wall_ms_1": 386309.4,
+    "wall_ms_n": 170151.9
   }
 }
