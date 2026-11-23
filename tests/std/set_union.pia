@@ -1,6 +1,5 @@
-(* Pia.Core.Algo.SetUnion (ADR 0040, phase 1.8): set_union and
-   set_symmetric_difference by a strict weak order, on sets, proved once
-   (ADR 0043, ADR 0044).
+(* Pia.Core.Algo.SetUnion (ADR 0040, phase 1.8): set_union by a strict
+   weak order, on sets, proved once (ADR 0043, ADR 0044).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/BinarySearch.pia
@@ -14,13 +13,12 @@
    and lex_compare_three_way, imported, are proved at each instance.)
 // CHECK-NOT: not proved generically: '{{[a-z_]+}}'
 // CHECK-NOT: failed
-// CHECK: 116 proved, 0 failed, 0 skipped
+// CHECK: 65 proved, 0 failed, 0 skipped
 *)
 
 (*
 // IFACE:      {{^}}module Pia.Core.Algo.SetUnion{{$}}
 // IFACE-NEXT: {{^}}interface SetUnion = sig{{$}}
 // IFACE-NEXT: {{^}}  let set_union : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
-// IFACE-NEXT: {{^}}  let set_symmetric_difference : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
 // IFACE-NEXT: {{^}}end{{$}}
 *)

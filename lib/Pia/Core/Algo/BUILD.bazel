@@ -19,6 +19,7 @@ exports_files([
     "Sort.pia",
     "Search.pia",
     "Set.pia",
+    "SetSymmetric.pia",
     "SetUnion.pia",
 ])
 
@@ -174,11 +175,25 @@ pia_library(
     ],
 )
 
-# set_union and set_symmetric_difference, in their own module because
-# they cost most to prove: tests/std/set_union.pia checks its goals.
+# set_union, in its own module because it costs most to prove:
+# tests/std/set_union.pia checks its goals.
 pia_library(
     name = "set_union",
     src = "SetUnion.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":binary_search",
+        ":set",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# set_symmetric_difference, in its own module so it proves in parallel
+# with set_union: tests/std/set_symmetric.pia checks its goals.
+pia_library(
+    name = "set_symmetric",
+    src = "SetSymmetric.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
         ":binary_search",

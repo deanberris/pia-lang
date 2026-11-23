@@ -1,4 +1,4 @@
-(* Importers of Pia.Core.Algo.Set and Pia.Core.Algo.SetUnion work on
+(* Importers of Pia.Core.Algo.Set, SetUnion and SetSymmetric work on
    strictly increasing u8 sets by `<`, and know each result from the
    interfaces alone: includes says every element is there, and the four
    operations count what they write, write it strictly increasing, and
@@ -8,6 +8,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/BinarySearch.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Set.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/SetUnion.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/SetSymmetric.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
 import Pia.Fn.Laws
@@ -15,6 +16,7 @@ import Pia.Core.Order.Ops
 import Pia.Core.Algo.BinarySearch.BinarySearch as B
 import Pia.Core.Algo.Set.Set as S
 import Pia.Core.Algo.SetUnion.SetUnion as U
+import Pia.Core.Algo.SetSymmetric.SetSymmetric as Y
 
 let has_all (xs : [u8]) (ys : [u8]) : bool
   requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] < xs.[j]
@@ -49,7 +51,7 @@ let one_of (dst : borrowed inout mutable [u8]) (xs : [u8]) (ys : [u8]) : usize
   requires forall (i in 0 .. len ys) (j in 0 .. len ys). i < j ==> ys.[i] < ys.[j]
   requires len dst >= len xs + len ys
   ensures result <= len xs + len ys
-= U.set_symmetric_difference dst xs ys (let (a : u8) (b : u8) : bool => a < b)
+= Y.set_symmetric_difference dst xs ys (let (a : u8) (b : u8) : bool => a < b)
 
 (* Every goal is proved, and each call is an instance of its proof.
 // CHECK-NOT: failed
