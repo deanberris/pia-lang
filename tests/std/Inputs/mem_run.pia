@@ -1,0 +1,48 @@
+(* Runs Pia.Mem's compiled code, linked by pia_binary: a vector of u8
+   grown twice over a bump in an arena, and a box of u8. It exits 0
+   when every result is right, and otherwise with the number of the
+   first wrong one. *)
+import Pia.Mem.Alloc.Allocators
+import Pia.Mem.Box.Boxes
+import Pia.Mem.Vec.Vectors
+
+let vectors (mem : borrowed mutable [u8]) : i32 =
+  let m : Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  match Pia.Mem.Vec.with_capacity<u8> m 1 with
+  | Err _ -> 1
+  | Ok w ->
+    let v : mutable Pia.Mem.Vec.vec u8 (Pia.Mem.Alloc.bump u8) = w in
+    match Pia.Mem.Vec.push v 50 with
+    | Err _ -> 2
+    | Ok () ->
+      match Pia.Mem.Vec.push v 60 with
+      | Err _ -> 3
+      | Ok () ->
+        match Pia.Mem.Vec.push v 70 with
+        | Err _ -> 4
+        | Ok () ->
+          match Pia.Mem.Vec.push v 80 with
+          | Err _ -> 5
+          | Ok () ->
+            if v.len <> 4 then 6
+            else if len v.buf <> 7 then 7
+            else if Pia.Mem.Vec.get v 0 <> 50 then 8
+            else if Pia.Mem.Vec.get v 3 <> 80 then 9
+            else 0
+
+let boxes (mem : borrowed mutable [u8]) : i32 =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  match Pia.Mem.Box.make<u8> m 200 with
+  | Err _ -> 10
+  | Ok made ->
+    let b : mutable Pia.Mem.Box.box u8 = made in
+    let x = Pia.Mem.Box.release b in
+    Pia.Mem.Box.fill b (x + 1);
+    if Pia.Mem.Box.get b <> 201 then 11
+    else if m.used <> 1 then 12
+    else 0
+
+let main () : i32 =
+  with_arena 32 (let (a) =>
+    let r = vectors a.mem.[0 .. 16] in
+    if r <> 0 then r else boxes a.mem.[16 .. 32])

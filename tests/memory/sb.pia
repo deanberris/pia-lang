@@ -1,0 +1,42 @@
+(* Store buffering: each thread stores to one location and loads the
+   other. Both loads reading 0 is allowed unless the accesses, or fences
+   between them, are seq_cst.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "sb_rlx"
+  [ thread [ store "relaxed" "x" 1; load "relaxed" "y" "r1" ]
+  ; thread [ store "relaxed" "y" 1; load "relaxed" "x" "r2" ] ]
+  "allowed" [ is "r1" 0; is "r2" 0 ]
+
+litmus "sb_rel_acq"
+  [ thread [ store "release" "x" 1; load "acquire" "y" "r1" ]
+  ; thread [ store "release" "y" 1; load "acquire" "x" "r2" ] ]
+  "allowed" [ is "r1" 0; is "r2" 0 ]
+
+litmus "sb_sc"
+  [ thread [ store "seq_cst" "x" 1; load "seq_cst" "y" "r1" ]
+  ; thread [ store "seq_cst" "y" 1; load "seq_cst" "x" "r2" ] ]
+  "forbidden" [ is "r1" 0; is "r2" 0 ]
+
+litmus "sb_sc_fences"
+  [ thread [ store "relaxed" "x" 1; barrier "seq_cst"; load "relaxed" "y" "r1" ]
+  ; thread [ store "relaxed" "y" 1; barrier "seq_cst"; load "relaxed" "x" "r2" ] ]
+  "forbidden" [ is "r1" 0; is "r2" 0 ]
+
+litmus "sb_one_fence"
+  [ thread [ store "relaxed" "x" 1; barrier "seq_cst"; load "relaxed" "y" "r1" ]
+  ; thread [ store "relaxed" "y" 1; load "relaxed" "x" "r2" ] ]
+  "allowed" [ is "r1" 0; is "r2" 0 ]
+
+(* Expected report, in order.
+// CHECK: sb.pia:7:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:12:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:17:1: proved: the postcondition holds [smt]
+// CHECK: sb.pia:22:1: proved: the postcondition holds [smt]
+// CHECK: sb.pia:27:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: 2 proved, 3 failed, 0 skipped
+*)

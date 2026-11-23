@@ -1,0 +1,46 @@
+(* Arrays are values with storage of their own (docs/irgen.md): a
+   `mutable` local array, or one whose literal computes its elements, is a
+   fresh array on the stack, filled from the literal or copied from
+   another array, so a write through it reaches nothing else. A record
+   may hold an array field. The verifier sees every element.
+// RUN: piac --verify %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+
+let sum3 (a : [u8; 3]) : u16
+  ensures result = a.[0] + a.[1] + a.[2]
+= a.[0] + a.[1] + a.[2]
+
+(* Written in a loop. *)
+let fill (v : u8) : u16
+  ensures result = 3 * v
+= let a : mutable [u8; 3] = [0; 0; 0] in
+  for i in 0 .. 3 invariant forall (k in 0 .. i). a.[k] = v do a.[i] <- v done;
+  sum3 a
+
+(* A literal of computed elements. *)
+let pair (x : u8) (y : u8) : u16
+  ensures result = x + y + y
+= let a : [u8; 3] = [x; y; y] in sum3 a
+
+(* A copy: writing it leaves the original as it was. *)
+let copied () : u16
+  ensures result = 9
+= let a : [u8; 3] = [7; 1; 1] in
+  let b : mutable [u8; 3] = a in
+  b.[0] <- 0;
+  a.[0] + b.[1] + b.[2]
+
+(* An array field, built from a local array and written in place. *)
+let rgb = type { c : [u8; 3]; alpha : u8 }
+
+let grey (v : u8) : u16
+  ensures result = 3 * v + 1
+= let a : [u8; 3] = [v; v; v] in
+  let p : rgb = { c = a; alpha = 1 } in
+  sum3 p.c + p.alpha
+
+let paint (p : borrowed inout mutable rgb) (v : u8) : unit
+  ensures p.c.[0] = v && p.c.[1] = old (p.c.[1]) && p.alpha = old (p.alpha)
+= p.c.[0] <- v

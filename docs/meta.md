@@ -45,16 +45,17 @@ Expansion replaces each binary node with the operator's result, innermost first.
 
 ## The interpreter
 
-Values are integers (64-bit), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
+Values are integers (128-bit, so every bound of every Pia integer type fits, `u64`'s included; arithmetic that leaves that range is an error, not a wrap), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
 
 | Builtin | Meaning |
 | --- | --- |
 | `map f xs` | apply `f` to each element |
 | `fold f init xs` | `f (... (f init x0) ...) xn` |
 | `length xs` | the number of elements |
-| `fields t` | the field names of the record type item `t`, as strings |
+| `fields t` | the field names of the record type item `t`, or of the record type it names, as strings |
 | `name t` | the name of an item or a name, as a string |
 | `concat a b` | two strings joined (an integer counts as its digits), or two lists |
+| `param name type` | a parameter `(name : type)`, for a quote's parameter list; `type` is a type's name or its syntax |
 | `nth xs i` | the element at index `i`, counting from 0; outside the list is an error |
 | `zip xs ys` | the pairs `[x; y]` of two lists of one length; different lengths are an error |
 | `range n` | `[0; 1; ...; n - 1]` |
@@ -138,6 +139,8 @@ Running out of steps in such a metaprogram is an internal compiler error.
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
 - `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
+- `$ps` alone in a parameter list, as in `let lemma $n $ps : unit = ()`, splices a list of parameters made by `param`, so a metaprogram can make a function with as many parameters as it needs. The prelude's `litmus` uses it for a test's registers.
+- `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, `type { $fs }` a list of `[name; type]` pairs into a record type's, `| $c of t` a string as a constructor's name, and `| $c x -> ...` one as the constructor a pattern matches, so a derive can write bytes it computed, build a value of the type it was given, declare the records it needs, and name and match its own constructors (`tests/meta/list_splices.pia`). A nullary constructor in a quoted pattern is written `$!None`, since a bare name there is a variable that hygiene renames.
 
 The code a quote builds takes the location of the expansion site: the operator, the `@derive` attribute, or the top-level call. Spliced code keeps its own locations.
 
@@ -178,6 +181,8 @@ let theory Conn = machine "conn" conn_state Closed
 - **One theory per argument tuple.** A second `let theory U = gen args` with the same call, written the same way, does not build again: `U` is another name for the first theory, so `U.x` is `T.x`.
 
 The prelude's `machine` builds a state machine's theory and its model from a table of `edge`s ([theories.md](theories.md#state-machines)). It is written in Pia with `map` and `fold`, so it is total.
+
+The prelude's `litmus` is a top-level call that builds a lemma from a litmus test, a small concurrent program given as data: threads of `write`, `read`, `store`, `load`, `swap`, `fetch_add` and `barrier` events, and an outcome of `is` and `final` conditions ([theories.md](theories.md#the-memory-model-rc11)). It writes the test's RC11 consistency as boolean matrices over its events, so the lemma is a finite query.
 
 ## Tactics
 
@@ -243,7 +248,7 @@ Comments are syntax ([ADR 0029](adr/0029-comments-as-syntax-and-literate-pia.md)
 | `text c` | a comment's text (also a string literal's value) |
 | `style c` | `"line"`, `"block"`, `"doc"` or `"prose"` |
 | `place c` | `"leading"`, `"trailing"` or `"detached"` |
-| `kind x` | the kind of a syntax value, such as `"LetItem"`, `"Apply"` or `"Comment"` |
+| `kind x` | the kind of a syntax value, such as `"LetItem"`, `"Apply"` or `"Comment"`, or `"Unit"` for unit, as `variants` gives for a constructor with no payload |
 | `with_doc s x` | a copy of the syntax `x` (or the first of a list of items) with a leading doc comment `s` |
 | `fail s` | stop with the error `s`, reported at the expansion site |
 
@@ -278,7 +283,31 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 
 `=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records in code is an error that suggests `@derive(eq)`; in a contract they compare as values ([irgen.md](irgen.md#records)). Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
 
+The prelude also defines `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 4 and 5). For a record of integers, range types, `bool` and `option`s of them (`Pia.Core.Option`), it makes:
+
+- `write_json_<t> (dst) (pos) (v : t) : usize`, which writes `v` as a JSON object with `Pia.Text.Json.Write`, one function per member, into room its precondition states as a constant;
+- `read_json_<t> (s) (pos) : result <t>_json_read <t>_json_error`, which reads one with `Pia.Text.Json.Read`. It finds a member by a decision tree built at compile time, on the name's length, then on the first byte where the names left differ, then one full compare. It keeps a flag per field, so a member given twice is `Duplicate_<t>` and one never given is `Missing_<t>`, and it checks each integer's range as its digits are read (`Range_<t>`). An unknown member is `Unknown_<t>`, and anything else `Syntax_<t>`, each with its position. The error type has exactly the constructors its type can raise: no `Range_<t>` without an integer field. The value is built only once every field has been read, so it is fully initialised.
+
+An `option` field writes `null` for None, and reads `null`, or a missing member, as None (`tests/std/json_derive_option.pia`, `tests/std/Inputs/json_option_run.pia`). A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read` and `Write`. The derive is in the prelude until interfaces can export metaprograms ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 3), when it moves to `Pia.Text.Json.Derive`. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
+
+On a variant, `derive_json` follows ADR 0045, section 2. Untagged, the default, each constructor must be told apart from every other by its JSON: a record payload is an object, a number or `bool` payload is that, and a constructor with no payload is `null`; two objects are apart when one requires a member the other cannot have, and two numbers when their ranges do not meet. Any other pair is an error that names the two and suggests a tag. The reader scans an object's members into slots for every object constructor's members, by position, in a function of its own, then picks the one constructor they fit and reads each value with that payload's field readers, so a member whose type differs between constructors is read only once the constructor is known. `@json(tag = "kind")` on the type writes `"kind": "<name>"` first and accepts it anywhere among the members; each payload must then be a record, or none. A constructor's name is its own, or `@json(name = "...")` on it. A record payload, in place or named, derives json too, and the variant's codec calls it (`tests/std/json_derive_variant.pia`, `tests/std/Inputs/json_variant_run.pia`).
+
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
+
+A derive reads the type it is given with these builtins, besides `fields`, `constructors` and `range_of` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), step 3). `t` is a type item, or its name as a string:
+
+| Builtin | Meaning |
+| --- | --- |
+| `field_type t f` | the type of the field `f` of the record `t`, as written, as syntax |
+| `variants t` | the constructors of the variant `t`, each `[name; payload]`, with its payload type as syntax, or unit when it has none |
+| `attrs t` | the attributes on a type item, or on a function's return annotation, as written, `@derive` included |
+| `field_attrs t f` | the attributes on the field `f` of the record `t` |
+| `ctor_attrs t c` | the attributes on the constructor `c` of the variant `t` |
+| `bytes s` | the UTF-8 bytes of the string `s`, as integers |
+
+An attribute is `[name; args]`, and each argument `[key; value]`, with `""` as the key of a positional one. A literal argument is its value and a name its spelling as a string, so `@json(name = "x", ignore_unknown)` is `["json"; [["name"; "x"]; [""; "ignore_unknown"]]]`; any other argument is syntax.
+
+A derive's own attributes are its options: `@json(name = "x")` on a field, `| Rect @json(name = "r") of rect` on a constructor ([grammar.md](grammar.md)), or `@json(tag = "kind")` on the type. Once every derive of the type has run, the attributes named after one leave the type, its fields and its constructors, so the rest of the compiler never sees them. An attribute on a field or a constructor that no derive of its type reads is an error that names the derive to add, rather than one that is ignored (`tests/meta/derive_builtins.pia`, `tests/meta/derive_builtin_errors.pia`).
 
 ## Generators
 
@@ -288,7 +317,7 @@ A generator is a metaprogram that reads a function's signature and contract and 
 | --- | --- |
 | `param_types f` | the type of each parameter of the function `f`, as written, as a list of syntax |
 | `return_type f` | `f`'s return type, as written; a function without one is an error |
-| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `i16`, a range `int{-2..2}`, or a type value. `u64` and `usize` are an error, since their upper bound does not fit a metaprogram integer |
+| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `u64`, `i16`, a range `int{-2..2}`, or a type value |
 | `constructors t` | the constructor names of the variant type `t` (an item, or its name), as strings |
 | `subst e n v` | the syntax `e` with every name `n` replaced by `v`: syntax, a string (a name), an integer or a bool. Pia has no shadowing, so this cannot capture |
 

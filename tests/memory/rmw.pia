@@ -1,0 +1,49 @@
+(* Read-modify-writes: each is atomic, so two increments never both read
+   the same value, and a release sequence carries a release store's
+   synchronisation through the read-modify-writes that read it, and
+   through later stores of the same thread to the same location.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "inc_inc"
+  [ thread [ fetch_add "relaxed" "x" 1 "r1" ]
+  ; thread [ fetch_add "relaxed" "x" 1 "r2" ] ]
+  "forbidden" [ is "r1" 0; is "r2" 0 ]
+
+litmus "inc_inc_final"
+  [ thread [ fetch_add "relaxed" "x" 1 "r1" ]
+  ; thread [ fetch_add "relaxed" "x" 1 "r2" ] ]
+  "forbidden" [ final "x" 1 ]
+
+litmus "swap_swap"
+  [ thread [ swap "relaxed" "x" 1 "r1" ]
+  ; thread [ swap "relaxed" "x" 2 "r2" ] ]
+  "forbidden" [ is "r1" 0; is "r2" 0 ]
+
+litmus "release_rmw"
+  [ thread [ write "data" 1; store "release" "x" 1 ]
+  ; thread [ fetch_add "relaxed" "x" 1 "r0" ]
+  ; thread [ load "acquire" "x" "r1"; read "data" "r2" ] ]
+  "forbidden" [ is "r1" 2; is "r2" 0 ]
+
+litmus "release_po"
+  [ thread [ store "relaxed" "data" 1; store "release" "x" 1; store "relaxed" "x" 2 ]
+  ; thread [ load "acquire" "x" "r1"; load "relaxed" "data" "r2" ] ]
+  "forbidden" [ is "r1" 2; is "r2" 0 ]
+
+litmus "release_broken"
+  [ thread [ store "relaxed" "data" 1; store "release" "x" 1 ]
+  ; thread [ store "relaxed" "x" 2 ]
+  ; thread [ load "acquire" "x" "r1"; load "relaxed" "data" "r2" ] ]
+  "allowed" [ is "r1" 2; is "r2" 0 ]
+
+(* Expected report, in order.
+// CHECK: rmw.pia:8:1: proved: the postcondition holds [smt]
+// CHECK: rmw.pia:13:1: proved: the postcondition holds [smt]
+// CHECK: rmw.pia:18:1: proved: the postcondition holds [smt]
+// CHECK: rmw.pia:23:1: proved: the postcondition holds [smt]
+// CHECK: rmw.pia:29:1: proved: the postcondition holds [smt]
+// CHECK: rmw.pia:34:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 2, r2 = 0
+// CHECK: 5 proved, 1 failed, 0 skipped
+*)

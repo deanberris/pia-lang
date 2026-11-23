@@ -158,3 +158,5 @@ nav:
       - adr/0054-proved-gif-and-inflate-codecs.md
       - adr/0055-sediment-transport-in-fixed-point.md
       - adr/0056-tests-generated-from-contracts-and-theories.md
+      - adr/0057-posix-module-per-target-behind-one-interface.md
+      - adr/0058-ghost-buffers.md

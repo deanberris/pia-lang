@@ -10,7 +10,10 @@ lit_tests(
     name = "modules_tests",
     srcs = glob(["*.pia"]),
     data = glob(["Inputs/*.pia"]),
-    tools = ["//tools/piac"],
+    tools = [
+        "//tools/pia-cert",
+        "//tools/piac",
+    ],
 )
 
 # Separate compilation end to end, on each target: Blend imports

@@ -1,0 +1,20 @@
+(* A type parameter constrained by a concept with regions is in them
+   (ADR 0042, step 2): a buffer `m` lends is borrowed from `r`, so a
+   result that holds it must say `borrowed(r)`.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+
+let meta Lender (a : type) (r : region) : concept = sig
+  let lend : (m : inout mutable a) -> result (borrowed(r) mutable [u8]) oom
+end
+
+(* Said, it is fine. *)
+let said (r : region) (a : type where Lender a r) (m : inout mutable a) : result (borrowed(r) mutable [u8]) oom =
+  lend m
+
+(* CHECK: region_concept_errors.pia:[[@LINE+3]]:{{[0-9]+}}: error: 'definition of unsaid' returns a value borrowed from the region 'r'; say so in its result type, as in ': borrowed(r) result<[u8], oom>'
+*)
+let unsaid (r : region) (a : type where Lender a r) (m : inout mutable a) : result [u8] oom =
+  lend m

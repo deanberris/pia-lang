@@ -1,0 +1,51 @@
+(* @derive(json) on variants (ADR 0045, section 2, step 5): untagged, told
+   apart by their JSON, and tagged with @json(tag = "kind"). Each
+   constructor's record payload derives json itself, and the variant's
+   reader scans members into slots in a function of its own, then picks the
+   constructor; every goal is proved.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --dump-expanded --iface-path=%t %s | FileCheck %s --check-prefix=AST
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+(* A record, a number, a bool and `null`: kinds that differ, and two
+   records that each require a member the other cannot have.
+// AST:      (LetItem "shape_Circle" [payload]
+// AST:      (LetItem "write_json_shape"
+// AST:      (LetItem "shape_json_members"
+// AST:          (FieldDecl "at"
+// AST:          (FieldDecl "seen_0"
+// AST:      (LetItem "scan_json_shape"
+// AST:      (LetItem "read_json_shape"
+*)
+let shape = type
+  | Circle of { r : u16 }
+  | Rect of { w : u16; h : u16 }
+  | Level of int{0..9}
+  | Flag of bool
+  | Empty
+  @derive(json)
+
+(* Tagged: one writer per constructor, and a decision tree over the tag's
+   values as over member names.
+// AST:      (LetItem "write_json_tagged_event_Click"
+// AST:      (LetItem "json_ctor_event"
+*)
+let event = type
+  | Click @json(name = "click") of { x : u16; y : u16; button : O.option u8 }
+  | Key of { code : u8 }
+  | Quit
+  @derive(json) @json(tag = "kind")

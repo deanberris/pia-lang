@@ -1,0 +1,155 @@
+(* Pia.Memory (ADR 0052, section 4): the language's memory model, RC11
+   (Lahav, Vafeiadis, Kang, Hur and Dreyer, 2017), as a theory of
+   executions. piac adds it to every program that names `Memory`.
+
+   An execution is a set of events with program order `po`, reads-from
+   `rf`, the modification order `mo` and the pairs `rmw` of a
+   read-modify-write's read and write. The derived relations, from-reads
+   `fr`, the extended coherence order `eco`, release sequences `rs`,
+   synchronises-with `sw`, happens-before `hb` and the SC order `psc`, are
+   given by lower bounds: what makes each one hold. A consistent execution
+   is one where the least relations meeting those bounds also meet the
+   axioms below, each of which only forbids, so a proof from the lower
+   bounds is sound. The `litmus` metaprogram in the prelude states the
+   same model for the finite events of one test. The model `timeline`
+   proves the axioms consistent (tests/memory/theory.pia). *)
+
+let theory Memory = sig
+  let sort event
+
+  let spec is_read : (e : event) -> bool
+  let spec is_write : (e : event) -> bool
+  let spec is_fence : (e : event) -> bool
+  let spec is_atomic : (e : event) -> bool  \ not a plain access
+  let spec releases : (e : event) -> bool   \ release, acq_rel or seq_cst
+  let spec acquires : (e : event) -> bool   \ acquire, acq_rel or seq_cst
+  let spec is_sc : (e : event) -> bool      \ seq_cst
+  let spec same_loc : (a : event) -> (b : event) -> bool
+
+  let spec po : (a : event) -> (b : event) -> bool
+  let spec rf : (w : event) -> (r : event) -> bool
+  let spec mo : (a : event) -> (b : event) -> bool
+  let spec rmw : (r : event) -> (w : event) -> bool
+
+  let spec fr : (r : event) -> (w : event) -> bool
+  let spec eco : (a : event) -> (b : event) -> bool
+  let spec rs : (w : event) -> (x : event) -> bool
+  let spec relw : (a : event) -> (w : event) -> bool  \ a releases, at w or by a fence before it
+  let spec acqr : (r : event) -> (b : event) -> bool  \ b acquires, at r or by a fence after it
+  let spec sw : (a : event) -> (b : event) -> bool
+  let spec hb : (a : event) -> (b : event) -> bool
+  let spec scb : (a : event) -> (b : event) -> bool
+  let spec lsc : (a : event) -> (y : event) -> bool  \ psc's left half and scb
+  let spec psc : (a : event) -> (b : event) -> bool
+  let spec air : (e : event) -> int      \ a rank: po ∪ rf is acyclic
+  let spec sc_rank : (e : event) -> int  \ a rank: psc is acyclic
+
+  (* From-reads, and the extended coherence order. *)
+  let axiom fr_def (w : event) (r : event) (x : event) @trigger(rf w r, mo w x)
+    requires rf w r && mo w x ensures fr r x
+  let axiom eco_rf (a : event) (b : event) requires rf a b ensures eco a b
+  let axiom eco_mo (a : event) (b : event) requires mo a b ensures eco a b
+  let axiom eco_fr (a : event) (b : event) requires fr a b ensures eco a b
+  let axiom eco_trans (a : event) (b : event) (c : event) @trigger(eco a b, eco b c)
+    requires eco a b && eco b c ensures eco a c
+
+  (* Release sequences and synchronises-with. *)
+  let axiom rs_self (w : event) requires is_write w && is_atomic w ensures rs w w
+  let axiom rs_po (w : event) (x : event)
+    requires is_write w && is_write x && same_loc w x && is_atomic x && po w x
+    ensures rs w x
+  let axiom rs_rmw (w : event) (x : event) (r : event) (y : event)
+      @trigger(rs w x, rf x r, rmw r y)
+    requires rs w x && rf x r && rmw r y ensures rs w y
+  let axiom relw_self (w : event) requires is_write w && releases w ensures relw w w
+  let axiom relw_fence (f : event) (w : event)
+    requires is_fence f && releases f && po f w && is_write w && is_atomic w
+    ensures relw f w
+  let axiom acqr_self (r : event) requires is_read r && acquires r ensures acqr r r
+  let axiom acqr_fence (r : event) (f : event)
+    requires is_read r && is_atomic r && po r f && is_fence f && acquires f
+    ensures acqr r f
+  let axiom sw_def (a : event) (w : event) (x : event) (r : event) (b : event)
+      @trigger(relw a w, rs w x, rf x r, acqr r b)
+    requires relw a w && rs w x && rf x r && is_atomic r && acqr r b
+    ensures sw a b
+
+  (* Happens-before. *)
+  let axiom hb_po (a : event) (b : event) requires po a b ensures hb a b
+  let axiom hb_sw (a : event) (b : event) requires sw a b ensures hb a b
+  let axiom hb_trans (a : event) (b : event) (c : event) @trigger(hb a b, hb b c)
+    requires hb a b && hb b c ensures hb a c
+
+  (* Coherence: hb ; eco? is irreflexive. *)
+  let axiom hb_irrefl (a : event) ensures hb a a = false
+  let axiom coherence (a : event) (b : event) requires hb a b ensures eco b a = false
+
+  (* Atomicity: nothing is between a read-modify-write's read and write
+     in mo. *)
+  let axiom atomicity (r : event) (w : event) (x : event) @trigger(rmw r w, fr r x)
+    requires rmw r w && fr r x ensures mo x w = false
+
+  (* SC: psc is acyclic. *)
+  let axiom scb_po (a : event) (b : event) requires po a b ensures scb a b
+  let axiom scb_hb (a : event) (b : event) requires hb a b && same_loc a b ensures scb a b
+  let axiom scb_mo (a : event) (b : event) requires mo a b ensures scb a b
+  let axiom scb_fr (a : event) (b : event) requires fr a b ensures scb a b
+  let axiom scb_far (a : event) (c : event) (d : event) (b : event)
+      @trigger(po a c, hb c d, po d b)
+    requires po a c && same_loc a c = false && hb c d && po d b && same_loc d b = false
+    ensures scb a b
+  let axiom lsc_self (a : event) (y : event) requires is_sc a && scb a y ensures lsc a y
+  let axiom lsc_fence (a : event) (x : event) (y : event) @trigger(hb a x, scb x y)
+    requires is_fence a && is_sc a && hb a x && scb x y ensures lsc a y
+  let axiom psc_self (a : event) (b : event) requires is_sc b && lsc a b ensures psc a b
+  let axiom psc_fence (a : event) (y : event) (b : event) @trigger(lsc a y, hb y b)
+    requires lsc a y && hb y b && is_fence b && is_sc b ensures psc a b
+  let axiom psc_fences (a : event) (b : event)
+    requires is_fence a && is_sc a && is_fence b && is_sc b && hb a b ensures psc a b
+  let axiom psc_fences_eco (a : event) (x : event) (y : event) (b : event)
+      @trigger(hb a x, eco x y, hb y b)
+    requires is_fence a && is_sc a && is_fence b && is_sc b && hb a x && eco x y && hb y b
+    ensures psc a b
+  let axiom psc_acyclic (a : event) (b : event) requires psc a b ensures sc_rank a < sc_rank b
+
+  (* No thin air: po ∪ rf is acyclic. *)
+  let axiom air_po (a : event) (b : event) requires po a b ensures air a < air b
+  let axiom air_rf (a : event) (b : event) requires rf a b ensures air a < air b
+end
+
+(* A sequentially consistent execution: every event has a time, writes at
+   even times and reads at odd ones (`half` says which), and a read reads the write just before
+   it. Every relation follows time, so each axiom holds. *)
+let stamp = type { time : int; half : int; thread : int; loc : int; kind : int; ord : int }
+
+let model timeline : Memory = struct
+  let sort event = stamp
+  let spec is_read (e : stamp) : bool = e.kind = 0 && e.time = 2 * e.half + 1
+  let spec is_write (e : stamp) : bool = e.kind = 1 && e.time = 2 * e.half
+  let spec is_fence (e : stamp) : bool = e.kind = 2
+  let spec is_atomic (e : stamp) : bool = e.ord > 0
+  let spec releases (e : stamp) : bool = e.ord = 3 || e.ord = 4 || e.ord = 5
+  let spec acquires (e : stamp) : bool = e.ord = 2 || e.ord = 4 || e.ord = 5
+  let spec is_sc (e : stamp) : bool = e.ord = 5
+  let spec same_loc (a : stamp) (b : stamp) : bool = a.loc = b.loc && a.kind < 2 && b.kind < 2
+  let spec po (a : stamp) (b : stamp) : bool = a.thread = b.thread && a.time < b.time
+  let spec rf (w : stamp) (r : stamp) : bool =
+    is_write w && is_read r && same_loc w r && w.time + 1 = r.time
+  let spec mo (a : stamp) (b : stamp) : bool =
+    is_write a && is_write b && same_loc a b && a.time < b.time
+  let spec rmw (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.thread = w.thread && r.time + 1 = w.time
+  let spec fr (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.time < w.time
+  let spec eco (a : stamp) (b : stamp) : bool = same_loc a b && a.time < b.time
+  let spec rs (w : stamp) (x : stamp) : bool = w.time <= x.time
+  let spec relw (a : stamp) (w : stamp) : bool = a.time <= w.time
+  let spec acqr (r : stamp) (b : stamp) : bool = r.time <= b.time
+  let spec sw (a : stamp) (b : stamp) : bool = a.time < b.time
+  let spec hb (a : stamp) (b : stamp) : bool = a.time < b.time
+  let spec scb (a : stamp) (b : stamp) : bool = a.time < b.time
+  let spec lsc (a : stamp) (y : stamp) : bool = a.time < y.time
+  let spec psc (a : stamp) (b : stamp) : bool = a.time < b.time
+  let spec air (e : stamp) : int = e.time
+  let spec sc_rank (e : stamp) : int = e.time
+end

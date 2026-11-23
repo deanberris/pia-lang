@@ -1,0 +1,16 @@
+(* An imported type with a region keeps its loans in that region, and an
+   imported function's result stays in the region it names (ADR 0042).
+// RUN: piac --emit=interface -o %t %S/Inputs/bump.pia
+// RUN: not piac --emit=mlir --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+import Mem.Bump.Bumps
+
+(* CHECK: region_import_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'leak' returns a value borrowed from the region 'r'; say so in its result type, as in ': borrowed(r) [u8]'
+*)
+let leak (r : region) (m : borrowed Mem.Bump.bump u8 r) : [u8] = m.mem
+
+(* CHECK: region_import_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: 'take' returns a value borrowed from the region 'r'; say so in its result type
+*)
+let take (r : region) (m : inout mutable Mem.Bump.bump u8 r) : result [u8] Mem.Bump.oom
+  requires m.used <= len m.mem
+= Mem.Bump.alloc m 3

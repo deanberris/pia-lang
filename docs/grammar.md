@@ -220,7 +220,7 @@ type_atom  = IDENT
            | "(" type ")" | "(" ")"
            | SPLICE_IDENT | "$(" expr ")" ;
 targ       = type | elem | IDENT "=" elem ;
-field_decl = IDENT ":" annot ;
+field_decl = IDENT ":" annot { attribute } ;   (* attributes a derive reads *)
 ```
 
 Modifiers come in a fixed order: ownership, then access, then mutability. Each one is optional. Before a function type they belong to its first parameter: `borrowed in [pixel] -> [u8]` takes a borrowed input slice.
@@ -232,12 +232,14 @@ A type value is an expression:
 ```ebnf
 type_value = "type" ( variants | type ) { attribute } [ "where" stmt ] { attribute } ;
 variants   = "|" ctor { "|" ctor } ;
-ctor       = IDENT [ "of" app_type ] ;
+ctor       = IDENT { attribute } [ "of" app_type ] ;
 attribute  = "@" IDENT [ "(" attr_arg { "," attr_arg } ")" ] ;
 attr_arg   = stmt | IDENT "=" stmt ;
 ```
 
-A constructor's payload is one type application. A union or function payload needs parentheses, since `| A of t | B` already means two constructors.
+A constructor's payload is one type application. A union or function payload needs parentheses, since `| A of t | B` already means two constructors. A record type written in place, `| Rect of { w : u16; h : u16 }`, is a type of its own named `<variant>_<Ctor>`, here `shape_Rect` ([irgen.md](irgen.md)).
+
+Attributes on a field, `x : i32 @json(name = "x")`, and on a constructor, between its name and `of` or the next `|`, as in `| Rect @json(name = "r") of rect`, are for a derive to read ([meta.md](meta.md#derives)). Attributes after the last constructor's name, when it has no payload, are the type's, so `| A | B @derive(eq)` derives `eq` for the type as it always did.
 
 ### Expressions
 

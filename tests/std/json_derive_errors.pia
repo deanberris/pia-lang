@@ -1,0 +1,42 @@
+(* @derive(json) says which field it cannot handle, and why.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: not piac --dump-expanded --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+(* A slice field.
+// CHECK: json_derive_errors.pia:[[@LINE+2]]:41: error: @derive(json) on 'blob' failed: @derive(json): the field 'data' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one
+*)
+let blob = type { data : [u8]; n : u8 } @derive(json)
+
+(* A member name that would need an escape.
+// CHECK: json_derive_errors.pia:[[@LINE+2]]:51: error: @derive(json) on 'quoted' failed: @derive(json): the member name 'a"b' needs printable ASCII with no quote or backslash
+*)
+let quoted = type { x : u8 @json(name = "a\"b") } @derive(json)
+
+(* Two fields with one member name.
+// CHECK: json_derive_errors.pia:[[@LINE+2]]:55: error: @derive(json) on 'twice' failed: @derive(json): two fields have the member name x
+*)
+let twice = type { x : u8; y : u8 @json(name = "x") } @derive(json)
+
+(* Two constructors whose JSON can be the same, untagged.
+// CHECK: json_derive_errors.pia:[[@LINE+5]]:3: error: @derive(json) on 'reading' failed: @derive(json): the constructors 'Low' and 'High' of 'reading' can have the same JSON; add @json(tag = "kind") to the type to tell them apart
+*)
+let reading = type
+  | Low of int{0..10}
+  | High of int{5..20}
+  @derive(json)
+
+(* With a tag, a payload must be a record.
+// CHECK: json_derive_errors.pia:[[@LINE+5]]:3: error: @derive(json) on 'tagged' failed: @derive(json): with a tag, each payload must be a record, but 'Count' has another type
+*)
+let tagged = type
+  | Count of u8
+  | Nothing
+  @derive(json) @json(tag = "kind")

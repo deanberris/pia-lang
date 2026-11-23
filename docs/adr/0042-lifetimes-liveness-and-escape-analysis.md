@@ -106,7 +106,7 @@ Prior art: Mojo's ASAP destruction, and Scheme's and Zig's guaranteed tail calls
 ## Implementation order
 
 1. Liveness-based loan ends in place of the lexical borrow check, with moves and `@linear` in the same pass, and the new error notes. (Loan ends: implemented, tests/irgen/borrow_liveness.pia.)
-2. `region` parameters on records and variants, with `borrowed(r)` fields. With this, Vec can store its allocator (ADR 0041, step 5). (Records and functions: implemented, tests/verify/vec_region.pia and tests/irgen/region_errors.pia; variants and interfaces later.)
+2. `region` parameters on records and variants, with `borrowed(r)` fields. With this, Vec can store its allocator (ADR 0041, step 5). (Records, functions and interfaces: implemented, tests/verify/vec_region.pia, tests/irgen/region_errors.pia and tests/modules/regions.pia; variants later.)
 3. Markers at task, channel and coroutine boundaries.
 4. Stack slot lifetimes in codegen, with a stack-size test of `with_arena`s in sequence.
 5. The generational arena in `Pia.Mem`, with its spec-only generations and its `Alloc` refinement.
