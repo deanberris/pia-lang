@@ -834,6 +834,8 @@ class Gen {
       if (std::string from = fromModule(item); !from.empty())
         fn->setAttr("pia.spec_from", b_.getStringAttr(from));
     // A law or requirement contract that the concept's module proved.
+    if (auto a = assertClaims_.find(sig.name); a != assertClaims_.end())
+      fn->setAttr("pia.assert_claim", b_.getStringAttr(a->second));
     if (auto c = certified_.find(sig.name); c != certified_.end())
       fn->setAttr("pia.certified", b_.getStringAttr(c->second));
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
@@ -6055,7 +6057,9 @@ class Gen {
     std::vector<std::map<std::string, Type>> saved =
         types_.replaceTypeScopes({scope});
     size_t queued = queuedLog_.size(), matched = matchedLog_.size();
+    std::string outer = std::exchange(requirer_, "the concept '" + cname + "'");
     std::optional<std::string> why = requirementsUnmet(item, key, scope, via);
+    requirer_ = std::move(outer);
     types_.replaceTypeScopes(std::move(saved));
     met_[key] = why;
     if (!why && !via) certify(fromModule(item), args, queued, matched);
@@ -6263,8 +6267,13 @@ class Gen {
     // named after the overload's symbol, as `eq(u8, u8)`: a lemma whose
     // symbol is already queued is not queued again.
     std::string what = overloadSet(req.text).size() > 1 ? found.name : req.text;
-    queueLemma(key + "." + what + ".contract", std::move(params),
-               std::move(contracts), std::move(body), scope, at, via);
+    std::string symbol = key + "." + what + ".contract";
+    // Its assertions say whose precondition they check, and what gives it.
+    if (!requirer_.empty())
+      assertClaims_.emplace(symbol, requirer_ + " gives the precondition of '" +
+                                        req.text + "'");
+    queueLemma(symbol, std::move(params), std::move(contracts), std::move(body),
+               scope, at, via);
   }
 
   // A function that writes its parameters honours a requirement's contract
@@ -6492,6 +6501,12 @@ class Gen {
   void checkInterface(const Node &header, const Node &iface,
                       const std::set<std::string> &shown) {
     const std::string key = header.text + "." + iface.text;
+    std::string outer =
+        std::exchange(requirer_, "the interface '" + iface.text + "'");
+    struct Restore {
+      std::string &to, from;
+      ~Restore() { to = std::move(from); }
+    } restore{requirer_, std::move(outer)};
     std::string unmet =
         "the module '" + header.text + "' does not meet '" + iface.text + "': ";
     for (const syntax::NodePtr &item : iface.kids) {
@@ -10076,6 +10091,10 @@ class Gen {
   std::vector<std::string> queuedLog_, matchedLog_;
   // Lemma symbol -> the module whose proof it is (ADR 0039, step 6).
   std::map<std::string, std::string> certified_;
+  // Who requires a contract lemma's checks (`requirer_`, as "the interface
+  // 'I'"), and the claim each lemma's assertions make (pia.assert_claim).
+  std::string requirer_;
+  std::map<std::string, std::string> assertClaims_;
   // Concepts by name, and whether each (concept, arguments) is met: the
   // reason when it is not (ADR 0034).
   std::map<std::string, const Node *> concepts_;

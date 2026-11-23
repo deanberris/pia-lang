@@ -1,0 +1,19 @@
+(* A buffer whose elements hold slices is compiled as two buffers, its
+   elements' addresses and their lengths (ADR 0048, step 3). The lengths
+   share the addresses' length, so C passes one n for both. Reading
+   xs.[0].[0] loads both and rebuilds the slice.
+// RUN: piac --emit=core %s | FileCheck %s
+*)
+
+let first (xs : borrowed [[u16]]) : u16
+  requires len xs > 0 && len xs.[0] > 0
+= xs.[0].[0]
+(* CHECK-LABEL: func.func @first(
+// CHECK-SAME: %arg0: memref<?xindex, strided<[1], offset: ?>>
+// CHECK-SAME: %arg1: memref<?xindex, strided<[1], offset: ?>> {pia.length_of = 0 : i64
+// CHECK: memref.load %arg0[%c0]
+// CHECK: memref.load %arg1[%c0]
+// CHECK: llvm.inttoptr
+// CHECK: builtin.unrealized_conversion_cast
+// CHECK: memref.load %{{.*}}[%c0] : memref<?xi16
+*)

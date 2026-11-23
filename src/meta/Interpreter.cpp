@@ -26,7 +26,27 @@ ValuePtr make(Value v) { return std::make_shared<const Value>(std::move(v)); }
 
 ValuePtr unitValue() { return make({}); }
 
-ValuePtr intValue(int64_t i) {
+}  // namespace
+
+std::string decimal(MetaInt v) {
+  if (v == 0) return "0";
+  bool neg = v < 0;
+  // The magnitude, unsigned, so the most negative value has one too.
+  unsigned __int128 m = neg ? static_cast<unsigned __int128>(0) - static_cast<unsigned __int128>(v)
+                            : static_cast<unsigned __int128>(v);
+  std::string s;
+  while (m) {
+    s.push_back(static_cast<char>('0' + static_cast<int>(m % 10)));
+    m /= 10;
+  }
+  if (neg) s.push_back('-');
+  std::reverse(s.begin(), s.end());
+  return s;
+}
+
+namespace {
+
+ValuePtr intValue(MetaInt i) {
   Value v;
   v.kind = K::Int;
   v.i = i;
@@ -81,6 +101,9 @@ const std::map<std::string, size_t> &metaBuiltins() {
       // Signatures and substitution, for generators (ADR 0056).
       {"param_types", 1}, {"return_type", 1}, {"range_of", 1},
       {"constructors", 1}, {"subst", 3},
+      // Type items, for derives (ADR 0045, step 3).
+      {"field_type", 2}, {"variants", 1}, {"attrs", 1},
+      {"field_attrs", 2}, {"ctor_attrs", 2}, {"bytes", 1},
       // Comments and literate programs (ADR 0029).
       {"listing", 1}, {"comments", 1}, {"doc", 1},   {"text", 1},
       {"style", 1},   {"place", 1},    {"kind", 1},  {"with_doc", 2},
@@ -179,7 +202,7 @@ bool hasBinderText(NodeKind k) {
     case NodeKind::LetItem: case NodeKind::LetIn: case NodeKind::Param:
     case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
     case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
-    case NodeKind::QuotedDecl:
+    case NodeKind::QuotedDecl: case NodeKind::Ctor:
     // A theory's, a model's and a sort's names (ADR 0036): `let sort $s`.
     case NodeKind::Theory: case NodeKind::Model: case NodeKind::SortItem:
       return true;
@@ -334,18 +357,30 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
   tick(n);
   switch (n.kind) {
     case NodeKind::IntLit: {
-      std::string digits;
-      for (char c : n.text) {
+      // Decimal, or 0x, 0o or 0b, with `_` between digits; a suffix such
+      // as u8 ends the digits.
+      std::string_view t = n.text;
+      unsigned radix = 10;
+      if (t.size() > 2 && t[0] == '0' &&
+          (t[1] == 'x' || t[1] == 'X' || t[1] == 'o' || t[1] == 'b')) {
+        radix = t[1] == 'o' ? 8 : t[1] == 'b' ? 2 : 16;
+        t.remove_prefix(2);
+      }
+      MetaInt v = 0;
+      for (char c : t) {
         if (c == '_') continue;
-        if (c < '0' || c > '9') break;
-        digits += c;
+        unsigned d;
+        if (c >= '0' && c <= '9') d = static_cast<unsigned>(c - '0');
+        else if (radix == 16 && c >= 'a' && c <= 'f') d = static_cast<unsigned>(c - 'a' + 10);
+        else if (radix == 16 && c >= 'A' && c <= 'F') d = static_cast<unsigned>(c - 'A' + 10);
+        else break;
+        if (d >= radix) break;
+        if (__builtin_mul_overflow(v, static_cast<MetaInt>(radix), &v) ||
+            __builtin_add_overflow(v, static_cast<MetaInt>(d), &v))
+          throw MetaError{site_, "the integer " + n.text +
+                                     " is too large for a metaprogram"};
       }
-      try {
-        return intValue(std::stoll(digits));
-      } catch (...) {
-        throw MetaError{site_, "the integer " + n.text +
-                                   " is too large for a metaprogram"};
-      }
+      return intValue(v);
     }
     case NodeKind::BoolLit:
       return boolValue(n.text == "true");
@@ -409,7 +444,10 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
       if (v->kind != K::Int)
         throw MetaError{site_, std::string("'-' needs an integer, found ") +
                                    kindName(v->kind)};
-      return intValue(-v->i);
+      MetaInt r = 0;
+      if (__builtin_sub_overflow(static_cast<MetaInt>(0), v->i, &r))
+        throw MetaError{site_, "'-' overflows a metaprogram integer"};
+      return intValue(r);
     }
     case NodeKind::Match:
       return match(n, env);
@@ -434,7 +472,7 @@ ValuePtr Interpreter::match(const Node &n, const EnvPtr &env) {
   auto describe = [](const ValuePtr &x) -> std::string {
     switch (x->kind) {
       case K::Type: return x->s;
-      case K::Int: return std::to_string(x->i);
+      case K::Int: return decimal(x->i);
       case K::Bool: return x->b ? "true" : "false";
       case K::Str: return "\"" + x->s + "\"";
       default: return std::string("a ") + kindName(x->kind);
@@ -604,10 +642,15 @@ ValuePtr Interpreter::binop(const std::string &op, const ValuePtr &a,
   }
   if (a->kind != K::Int || b->kind != K::Int)
     throw MetaError{site_, "'" + op + "' needs integers in a metaprogram"};
-  int64_t x = a->i, y = b->i;
-  if (op == "+") return intValue(x + y);
-  if (op == "-") return intValue(x - y);
-  if (op == "*") return intValue(x * y);
+  MetaInt x = a->i, y = b->i, r = 0;
+  auto checked = [&](bool overflow) {
+    if (overflow)
+      throw MetaError{site_, "'" + op + "' overflows a metaprogram integer"};
+    return intValue(r);
+  };
+  if (op == "+") return checked(__builtin_add_overflow(x, y, &r));
+  if (op == "-") return checked(__builtin_sub_overflow(x, y, &r));
+  if (op == "*") return checked(__builtin_mul_overflow(x, y, &r));
   if (op == "/" || op == "%" || op == "mod") {
     if (y == 0) throw MetaError{site_, "division by zero in a metaprogram"};
     return intValue(op == "/" ? x / y : x % y);
@@ -666,12 +709,12 @@ NodePtr Interpreter::toCode(const ValuePtr &v, const std::string &who) {
     return makeNode(NodeKind::Name, site_, v->s);
   case K::Int:
     if (v->i >= 0)
-      return makeNode(NodeKind::IntLit, site_, std::to_string(v->i));
+      return makeNode(NodeKind::IntLit, site_, decimal(v->i));
     // A negative integer is the negation of its magnitude, as the
     // parser reads `-5`.
-    if (v->i != INT64_MIN) {
+    {
       auto neg = makeNode(NodeKind::Neg, site_);
-      neg->add(makeNode(NodeKind::IntLit, site_, std::to_string(-v->i)));
+      neg->add(makeNode(NodeKind::IntLit, site_, decimal(-v->i)));
       return neg;
     }
     break;
@@ -704,26 +747,23 @@ const Node *Interpreter::findTypeItem(const ValuePtr &t) {
 }
 
 ValuePtr Interpreter::rangeOf(const ValuePtr &t) {
-  auto bounds = [&](int64_t lo, int64_t hi) {
+  auto bounds = [&](MetaInt lo, MetaInt hi) {
     return listValue({intValue(lo), intValue(hi)});
   };
   auto ofName = [&](const std::string &n) -> ValuePtr {
-    static const std::map<std::string, std::pair<int64_t, int64_t>> ints = {
+    static const std::map<std::string, std::pair<MetaInt, MetaInt>> ints = {
         {"u8", {0, UINT8_MAX}},          {"u16", {0, UINT16_MAX}},
-        {"u32", {0, UINT32_MAX}},        {"i8", {INT8_MIN, INT8_MAX}},
+        {"u32", {0, UINT32_MAX}},        {"u64", {0, UINT64_MAX}},
+        {"usize", {0, UINT64_MAX}},      {"i8", {INT8_MIN, INT8_MAX}},
         {"i16", {INT16_MIN, INT16_MAX}}, {"i32", {INT32_MIN, INT32_MAX}},
         {"i64", {INT64_MIN, INT64_MAX}}, {"isize", {INT64_MIN, INT64_MAX}},
     };
     if (auto it = ints.find(n); it != ints.end())
       return bounds(it->second.first, it->second.second);
-    // Metaprogram integers are 64-bit and signed (docs/meta.md).
-    if (n == "u64" || n == "usize")
-      throw MetaError{site_, "'range_of': the upper bound of " + n +
-                                 " does not fit a metaprogram integer"};
     return nullptr;
   };
   // A range type's bound, as written: a literal, or a negated one.
-  auto bound = [&](const Node &b) -> int64_t {
+  auto bound = [&](const Node &b) -> MetaInt {
     ValuePtr v = eval(b, nullptr);
     if (v->kind != K::Int)
       throw MetaError{site_, "'range_of' needs a range with integer bounds"};
@@ -745,11 +785,22 @@ ValuePtr Interpreter::rangeOf(const ValuePtr &t) {
            close = t->s.rfind('}');
     if (open != std::string::npos && dots != std::string::npos &&
         close == t->s.size() - 1 && open < dots) {
-      try {
-        return bounds(std::stoll(t->s.substr(open + 1, dots - open - 1)),
-                      std::stoll(t->s.substr(dots + 2, close - dots - 2)));
-      } catch (...) {
-      }
+      auto parse = [](const std::string &d) -> std::optional<MetaInt> {
+        size_t k = 0;
+        bool neg = !d.empty() && d[0] == '-';
+        if (neg) k = 1;
+        if (k == d.size()) return std::nullopt;
+        MetaInt v = 0;
+        for (; k < d.size(); ++k) {
+          if (d[k] < '0' || d[k] > '9') return std::nullopt;
+          v = v * 10 + (d[k] - '0');
+          if (v > (static_cast<MetaInt>(1) << 100)) return std::nullopt;
+        }
+        return neg ? -v : v;
+      };
+      auto lo = parse(t->s.substr(open + 1, dots - open - 1));
+      auto hi = parse(t->s.substr(dots + 2, close - dots - 2));
+      if (lo && hi) return bounds(*lo, *hi);
     }
   }
   throw MetaError{site_, "'range_of' needs an integer type with bounds"};
@@ -784,7 +835,7 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
                                          "found ") +
                                  kindName(args[1]->kind)};
     if (args[1]->i < 0 || static_cast<size_t>(args[1]->i) >= xs.size())
-      throw MetaError{site_, "'nth' index " + std::to_string(args[1]->i) +
+      throw MetaError{site_, "'nth' index " + decimal(args[1]->i) +
                                  " is outside a list of " +
                                  std::to_string(xs.size())};
     return xs[static_cast<size_t>(args[1]->i)];
@@ -807,7 +858,7 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     if (args[0]->kind != K::Int || args[0]->i < 0)
       throw MetaError{site_, "'range' needs a non-negative integer"};
     std::vector<ValuePtr> out;
-    for (int64_t i = 0; i < args[0]->i; ++i) {
+    for (MetaInt i = 0; i < args[0]->i; ++i) {
       tick(Node{});
       out.push_back(intValue(i));
     }
@@ -880,6 +931,111 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
       out.push_back(strValue(c->text));
     return listValue(std::move(out));
   }
+  // The record body of a type item, or an error naming the builtin.
+  auto needRecord = [&](const ValuePtr &t) -> const Node & {
+    const Node *item = findTypeItem(t);
+    const Node *record = item && !item->kids[3]->kids.empty()
+                             ? item->kids[3]->kids[0].get()
+                             : nullptr;
+    if (!record || record->kind != NodeKind::RecordType)
+      throw MetaError{site_, "'" + name + "' needs a record type"};
+    return *record;
+  };
+  auto needVariants = [&](const ValuePtr &t) -> const Node & {
+    const Node *item = findTypeItem(t);
+    const Node *variants = item && !item->kids[3]->kids.empty()
+                               ? item->kids[3]->kids[0].get()
+                               : nullptr;
+    if (!variants || variants->kind != NodeKind::Variants)
+      throw MetaError{site_, "'" + name + "' needs a variant type"};
+    return *variants;
+  };
+  auto needName = [&](const ValuePtr &v, const char *what) -> const std::string & {
+    if (v->kind != K::Str)
+      throw MetaError{site_, "'" + name + "' needs " + what +
+                                 " as a string, found " + kindName(v->kind)};
+    return v->s;
+  };
+  // The child of `parent` named n: a field or a constructor.
+  auto child = [&](const Node &parent, const std::string &n,
+                   const char *what) -> const Node & {
+    for (const NodePtr &k : parent.kids)
+      if (k->text == n) return *k;
+    throw MetaError{site_, "'" + name + "': there is no " + what + " '" + n +
+                               "'"};
+  };
+  // Attributes as values: each is [name; args], and each argument
+  // [key; value], with "" as the key of a positional one. A literal is its
+  // value and a name its spelling as a string; anything else is syntax.
+  auto attrList = [&](const Node *as) {
+    std::vector<ValuePtr> out;
+    if (!as || as->kind != NodeKind::Attrs) return listValue({});
+    for (const NodePtr &a : as->kids) {
+      std::vector<ValuePtr> args;
+      for (const NodePtr &arg : a->kids) {
+        bool named = arg->kind == NodeKind::NamedArg && !arg->kids.empty();
+        const Node &v = named ? *arg->kids[0] : *arg;
+        ValuePtr value;
+        if (v.kind == NodeKind::StringLit) value = strValue(unescape(v.text));
+        else if (v.kind == NodeKind::IntLit || v.kind == NodeKind::BoolLit ||
+                 (v.kind == NodeKind::Neg && !v.kids.empty() &&
+                  v.kids[0]->kind == NodeKind::IntLit))
+          value = eval(v, nullptr);
+        else if (v.kind == NodeKind::Name) value = strValue(v.text);
+        else value = syntaxValue(clone(v));
+        args.push_back(listValue({strValue(named ? arg->text : ""), value}));
+      }
+      out.push_back(listValue({strValue(a->text), listValue(std::move(args))}));
+    }
+    return listValue(std::move(out));
+  };
+  auto attrsOf = [](const Node &n) -> const Node * {
+    for (const NodePtr &k : n.kids)
+      if (k->kind == NodeKind::Attrs) return k.get();
+    return nullptr;
+  };
+  if (name == "field_type") {
+    const Node &f = child(needRecord(args[0]), needName(args[1], "a field name"),
+                          "field");
+    const Node &annot = *f.kids[0];
+    return syntaxValue(clone(*annot.kids[1]));
+  }
+  if (name == "field_attrs")
+    return attrList(attrsOf(child(needRecord(args[0]),
+                                  needName(args[1], "a field name"), "field")));
+  if (name == "variants") {
+    std::vector<ValuePtr> out;
+    for (const NodePtr &c : needVariants(args[0]).kids) {
+      const Node &payload = *c->kids[0];
+      out.push_back(listValue(
+          {strValue(c->text), payload.kind == NodeKind::None
+                                  ? unitValue()
+                                  : syntaxValue(clone(payload))}));
+    }
+    return listValue(std::move(out));
+  }
+  if (name == "ctor_attrs")
+    return attrList(attrsOf(child(needVariants(args[0]),
+                                  needName(args[1], "a constructor name"),
+                                  "constructor")));
+  if (name == "attrs") {
+    const Node *item = findTypeItem(args[0]);
+    if (item) return attrList(item->kids[3]->kids[1].get());
+    if (args[0]->kind == K::Syntax && args[0]->syntax &&
+        args[0]->syntax->kind == NodeKind::LetItem &&
+        args[0]->syntax->kids.size() > 1 &&
+        args[0]->syntax->kids[1]->kind == NodeKind::RetAnnot)
+      return attrList(attrsOf(*args[0]->syntax->kids[1]));
+    throw MetaError{site_, "'attrs' needs a type item or a function"};
+  }
+  if (name == "bytes") {
+    // A string's UTF-8 bytes, as integers: what a derive matches a key
+    // against, byte by byte.
+    std::vector<ValuePtr> out;
+    for (unsigned char c : needName(args[0], "text"))
+      out.push_back(intValue(c));
+    return listValue(std::move(out));
+  }
   // A core builtin, as a `where` predicate's operators expand to.
   static const std::map<std::string, std::string> ops = {
       {"eq", "="},  {"ne", "<>"},  {"lt", "<"},  {"gt", ">"},
@@ -942,7 +1098,7 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     }
     auto str = [&](const Value &v) {
       if (v.kind == K::Str) return v.s;
-      if (v.kind == K::Int) return std::to_string(v.i);
+      if (v.kind == K::Int) return decimal(v.i);
       throw MetaError{site_, std::string("'concat' needs strings or lists, "
                                          "found ") +
                                  kindName(v.kind)};
@@ -1248,9 +1404,9 @@ class QuoteBuilder {
                         v->s);
       case K::Int: {
         if (v->i >= 0)
-          return makeNode(NodeKind::IntLit, site, std::to_string(v->i));
+          return makeNode(NodeKind::IntLit, site, decimal(v->i));
         auto neg = makeNode(NodeKind::Neg, site);
-        neg->add(makeNode(NodeKind::IntLit, site, std::to_string(-v->i)));
+        neg->add(makeNode(NodeKind::IntLit, site, decimal(-v->i)));
         return neg;
       }
       case K::Bool:
@@ -1365,6 +1521,40 @@ class QuoteBuilder {
           else
             out->add(clone(p));
         }
+        continue;
+      }
+      // `{ $fs }`: a record literal's fields, a list of [name; value]
+      // pairs, so a derive can build a value of the type it was given.
+      if (n.kind == NodeKind::RecordLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        ValuePtr v = var(n.kids[i]->text);
+        if (v->kind != K::List)
+          throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                "pairs"};
+        for (const ValuePtr &pair : v->list) {
+          if (pair->kind != K::List || pair->list.size() != 2 ||
+              pair->list[0]->kind != K::Str)
+            throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                  "pairs"};
+          auto f = makeNode(NodeKind::FieldInit, site, pair->list[0]->s);
+          f->add(fromValue(pair->list[1], false));
+          out->add(std::move(f));
+        }
+        continue;
+      }
+      // `[ $xs ]`: a list spliced among a list literal's elements is
+      // its elements, so a derive can write a buffer of bytes it computed
+      // (ADR 0045, step 4).
+      if (n.kind == NodeKind::ListLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        const Node &sp = *n.kids[i];
+        ValuePtr v = sp.text.empty() ? in_.eval(*sp.kids[0], env_)
+                                     : var(sp.text);
+        if (v->kind == K::List) {
+          for (const ValuePtr &part : v->list) out->add(fromValue(part, false));
+          continue;
+        }
+        out->add(fromValue(v, false));
         continue;
       }
       out->add(copy(*n.kids[i], isTypePosition(n.kind, i)));

@@ -3,7 +3,9 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Text.Json (ADR 0045): JSON, proved against one grammar. Step 1 is the
 # grammar of RFC 8259's tokens (Spec) and a tokenizer proved sound against
-# it (Lex). Each module is proved and compiled on its own, and importers
+# it (Lex); step 2 is a writer proved to produce those tokens (Write);
+# step 4 is the token readers @derive(json) builds on (Read).
+# Each module is proved and compiled on its own, and importers
 # build against its interface artifacts.
 
 package(default_visibility = ["//visibility:public"])
@@ -11,7 +13,9 @@ package(default_visibility = ["//visibility:public"])
 # Its tests read the source, to prove it and to write its interfaces.
 exports_files([
     "Lex.pia",
+    "Read.pia",
     "Spec.pia",
+    "Write.pia",
 ])
 
 # The token grammar as spec functions: tests/std/json_lex.pia checks its
@@ -30,4 +34,27 @@ pia_library(
     src = "Lex.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [":spec"],
+)
+
+# The writer: tests/std/json_write.pia checks its goals;
+# tests/std/json_write_edges.pia and :json_write_run test it through its
+# interface.
+pia_library(
+    name = "write",
+    src = "Write.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":spec"],
+)
+
+# The token readers derived JSON readers are built from: tests/std/
+# json_read.pia checks its goals; tests/std/json_derive.pia and
+# :json_derive_run test them through @derive(json).
+pia_library(
+    name = "read",
+    src = "Read.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":lex",
+        ":spec",
+    ],
 )

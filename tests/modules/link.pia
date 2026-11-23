@@ -4,6 +4,14 @@
 // RUN: piac --emit=llvm %S/Inputs/pixels.pia | FileCheck --check-prefix=LIB %s
 // RUN: piac --emit=interface -o %t %S/Inputs/pixels.pia
 // RUN: piac --emit=llvm --iface-path=%t %s | FileCheck %s
+
+   Each interface a module provides has a witness symbol named with its
+   hash, and an importer references the witness of the interface it was
+   proved against, so linking against a different interface fails
+   (docs/abi.md, Layer 1).
+// RUN: piac --emit=llvm %S/Inputs/pixels.pia > %t/lib.ll
+// RUN: piac --emit=llvm --iface-path=%t %s > %t/use.ll
+// RUN: cat %t/lib.ll %t/use.ll | FileCheck --check-prefix=WIT %s
 *)
 module Blend : C
 
@@ -27,4 +35,9 @@ let grey (v : u8) : u8
 // CHECK-DAG: declare {{.*}}i8 @"__pia$Image$Pixels$luma"(i8, i8, i8)
 // CHECK-DAG: define {{.*}} @grey(
 // CHECK-NOT: Image.Pixels.luma
+
+// WIT: @"pia$w$Image$Pixels$Ops$[[OPS:[a-z2-7]+]]" = constant i8 0
+// WIT: @"pia$w$Blend$C${{[a-z2-7]+}}" = constant i8 0
+// WIT: @"pia$w$Image$Pixels$Ops$[[OPS]]" = external constant i8
+// WIT: private constant ptr @"pia$w$Image$Pixels$Ops$[[OPS]]"
 *)
