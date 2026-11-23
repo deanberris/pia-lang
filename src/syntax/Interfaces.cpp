@@ -516,7 +516,8 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
 }
 
 void resolveImports(Node &program, const std::vector<std::string> &paths,
-                    Diagnostics &diags) {
+                    Diagnostics &diags,
+                    std::vector<InterfaceArtifact> *loaded) {
   std::set<std::string> theories;
   for (const NodePtr &item : program.kids)
     if (item->kind == N::Theory) theories.insert(item->text);
@@ -578,6 +579,8 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       diags.error(at, "'" + found + "' is not an interface artifact" + why);
       continue;
     }
+    if (loaded)
+      loaded->push_back({module, name, *text});
     if (header->text != module || iface->text != name) {
       diags.error(at, "'" + found + "' holds '" + header->text + "." +
                       iface->text + "', not '" + path + "'");

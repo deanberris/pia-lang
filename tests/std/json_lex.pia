@@ -15,7 +15,7 @@
 // SPEC-NOT: failed
 // SPEC-DAG: proved: the measure of 'num_run' decreases [smt]
 // SPEC-DAG: proved: the measure of 'chars' decreases [smt]
-// SPEC: 121 proved, 0 failed, 0 skipped
+// SPEC: 134 proved, 0 failed, 0 skipped
 *)
 
 (* The tokenizer: whitespace and both scanning loops end, a character

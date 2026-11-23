@@ -44,8 +44,11 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
 // first directory of `paths` that has it, and rewrites `M.f` in the
 // program to name them. An `import T` of a theory the program declares is
 // left for the theories (ADR 0036).
+// `loaded`, if given, gets each artifact imported, for its witness symbol
+// (docs/abi.md).
 void resolveImports(Node &program, const std::vector<std::string> &paths,
-                    Diagnostics &diags);
+                    Diagnostics &diags,
+                    std::vector<InterfaceArtifact> *loaded = nullptr);
 
 }  // namespace pia::syntax
 

@@ -1,0 +1,366 @@
+(* Sediment transport in fixed point (ADR 0055), steps 1 and 2.
+
+   Step 1 is the sum of a buffer of u32 masses and its point-update lemma.
+   Sediment transport proves conservation by writing cells one at a time,
+   and each write changes the sum by the new value less the old.
+
+   Step 2, below the sum, is one cell: erosion or deposition, and the
+   moves of mass between the buffers, each with a contract that conserves
+   the total mass exactly. `bed` is the sediment resting in each cell,
+   `load` what the water leaving it carries, `inflow` what drains into it,
+   and `gone` what has left the map through outlets. The law is that
+   sum bed + sum load + sum inflow + gone never changes. Every total is
+   bounded by 2^32 - 1, the ADR's precondition that the initial total fits
+   in a u32; through `elt_le` that bound proves that no cell overflows
+   when mass arrives.
+
+   `sum` is a u64, not an `int`: with an `int` sum, a goal that turns a
+   fact about the sum into a bound on u32 code arithmetic does not settle
+   (`int m + int w <= 4294967295` does not prove `m + w <= 4294967295`
+   within the time limit), and a u64 keeps every goal in bit-vectors. The
+   buffer length is bounded by 2^32 so that the sum fits.
+
+   Each inductive lemma does its step through a small lemma with no
+   quantifier (`step`, `step_after`, `step_at`): with the frame `forall` in
+   the context, the solver does not find the one-step unfolding by itself.
+   An element is read through the spec function `elt`, whose u32 result
+   type gives the solver the element's range at each unfolding.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let spec elt (xs : [u32]) (i : usize) : u32
+  requires i < len xs
+= xs.[i]
+
+(** The sum of xs.[0 .. n]. *)
+let spec sum (xs : [u32]) (n : usize) : u64
+  requires n <= len xs && n <= 4294967296
+  ensures result <= 4294967296 * n
+  decreases n
+= if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
+
+(* One step of each induction below, with no quantifier in sight. *)
+let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
+  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n = sum xs n
+= ()
+
+let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+= ()
+
+let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
+  requires i < len xs && i < len ys && i < 4294967296
+  requires sum ys i = sum xs i
+  ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
+= ()
+
+(** ys is xs except at i: the prefixes before i have the same sum. *)
+let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n = sum xs n
+  decreases n
+= if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
+
+(** The point update: writing ys.[i] in place of xs.[i] changes the sum of
+    every prefix that holds i by ys.[i] - xs.[i]. *)
+let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+  decreases n
+= if n > i + 1 then (update xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step_after xs ys i n)
+  else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
+
+let lemma at_le (xs : [u32]) (i : usize) : unit
+  requires i < len xs && i < 4294967296
+  ensures xs.[i] <= sum xs (i + 1)
+= ()
+
+(** A longer prefix has a larger sum. *)
+let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
+  requires m <= n && n <= len xs && n <= 4294967296
+  ensures sum xs m <= sum xs n
+  decreases n
+= if n > m then mono xs m (n - 1)
+
+(** Each element is bounded by the sum, so a bound on the total bounds
+    every cell. *)
+let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
+  requires i < n && n <= len xs && n <= 4294967296
+  ensures xs.[i] <= sum xs n
+= at_le xs i; mono xs (i + 1) n
+
+(** An all-zero prefix sums to zero. *)
+let lemma zero (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] = 0
+  ensures sum xs n = 0
+  decreases n
+= if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
+
+(** A write whose contract is the point update, for the whole buffer. The
+    element is loaded before it is overwritten: the load is what tells the
+    solver that `old (xs.[i])` is a u32. *)
+let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
+  requires i < len xs && len xs <= 4294967296
+  ensures xs.[i] = v
+  ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
+= let w = xs.[i] in
+  xs.[i] <- v;
+  update (old xs) xs i (len xs);
+  assert w = old (xs.[i])
+
+(* Step 2: one cell. *)
+
+let cell = type { bed : u32; load : u32 }
+
+(** The water erodes when it carries less than its capacity, at most the
+    whole bed, and deposits the excess otherwise. Mass moves between bed
+    and load and none is created. *)
+let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
+  requires bed + inflow <= 4294967295
+  ensures result.bed + result.load = bed + inflow
+  ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
+  ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
+= if inflow < capacity then
+    (let room = capacity - inflow in
+     let e = if room < bed then room else bed in
+     { bed = bed - e; load = inflow + e })
+  else { bed = bed + (inflow - capacity); load = capacity }
+
+(** The load of cell a moves into the inflow of cell b, downhill. *)
+let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) : unit
+  requires a < len load && b < len inflow && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum load (len load) + sum inflow (len inflow) <= 4294967295
+  ensures load.[a] = 0
+  ensures sum load (len load) + sum inflow (len inflow) = sum (old load) (len load) + sum (old inflow) (len inflow)
+= let m = load.[a] in
+  let w = inflow.[b] in
+  elt_le load a (len load);
+  elt_le inflow b (len inflow);
+  set load a 0;
+  set inflow b (w + m)
+
+(** The load of an outlet leaves the map. *)
+let drain (load : borrowed inout mutable [u32]) (a : usize) (gone : u64) : u64
+  requires a < len load && len load <= 4294967296
+  requires sum load (len load) + gone <= 4294967295
+  ensures load.[a] = 0
+  ensures sum load (len load) + result = sum (old load) (len load) + gone
+= let m = load.[a] in
+  elt_le load a (len load);
+  set load a 0;
+  gone + m
+
+(* The arithmetic that adds settle's three writes up. On its own it is a
+   small goal; inline, the solver times out on it among the sums. *)
+let lemma balance (a : u64) (b : u64) (c : u64) (a0 : u64) (b0 : u64) (c0 : u64) (d : u32) (i : u32) (rb : u32) (rl : u32) : unit
+  requires a + d = a0 + rb && b = b0 + rl && c + i = c0 && rb + rl = d + i
+  ensures a + b + c = a0 + b0 + c0
+= ()
+
+(** A cell takes its inflow and erodes or deposits: its bed and load are
+    rewritten and its inflow is spent. *)
+let settle (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) (capacity : u32) : unit
+  requires c < len bed && c < len load && c < len inflow
+  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum bed (len bed) + sum inflow (len inflow) <= 4294967295
+  requires load.[c] = 0
+  ensures inflow.[c] = 0
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+= let i = inflow.[c] in
+  let d = bed.[c] in
+  elt_le bed c (len bed);
+  elt_le inflow c (len inflow);
+  let r = erode_or_deposit i capacity d in
+  set bed c r.bed;
+  assert sum bed (len bed) + d = sum (old bed) (len bed) + r.bed;
+  set load c r.load;
+  assert sum load (len load) = sum (old load) (len load) + r.load;
+  set inflow c 0;
+  assert sum inflow (len inflow) + i = sum (old inflow) (len inflow);
+  balance (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow))
+    (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
+    d i r.bed r.load
+
+(** One transfer of a step: the load of cell a goes to the cell it drains
+    into, b, or out of the map at an outlet. The total is conserved, which
+    is the loop invariant of the step to come (ADR 0055, step 4). *)
+let transfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64
+  requires a < len load && b < len inflow
+  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  ensures load.[a] = 0
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum bed (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+= if outlet then drain load a gone
+  else (push load inflow a b; gone)
+
+(* Expected report, in order.
+// CHECK: sediment.pia:33:3: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:40:34: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:40:24: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:40:24: proved: the measure of 'sum' decreases [smt]
+// CHECK: sediment.pia:40:51: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:40:41: proved: the precondition of 'elt' holds [smt]
+// CHECK: sediment.pia:40:39: proved: '+' does not overflow usize [smt]
+// CHECK: sediment.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:45:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:45:29: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:46:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:46:22: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:51:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:51:38: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:52:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:52:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:57:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:57:23: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:58:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:58:37: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:67:35: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:67:18: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment.pia:67:18: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment.pia:67:18: proved: the measure of 'frame' decreases [smt]
+// CHECK: sediment.pia:67:41: proved: the assertion holds [smt]
+// CHECK: sediment.pia:67:73: proved: the precondition of 'step' holds [smt]
+// CHECK: sediment.pia:67:73: proved: the precondition of 'step' holds [smt]
+// CHECK: sediment.pia:65:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:65:22: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:76:12: proved: '+' does not overflow usize [smt]
+// CHECK: sediment.pia:76:40: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:76:22: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment.pia:76:22: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment.pia:76:22: proved: the measure of 'update' decreases [smt]
+// CHECK: sediment.pia:76:46: proved: the assertion holds [smt]
+// CHECK: sediment.pia:76:78: proved: the precondition of 'step_after' holds [smt]
+// CHECK: sediment.pia:76:78: proved: the precondition of 'step_after' holds [smt]
+// CHECK: sediment.pia:77:9: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment.pia:77:9: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment.pia:77:26: proved: the precondition of 'step_at' holds [smt]
+// CHECK: sediment.pia:77:26: proved: the precondition of 'step_at' holds [smt]
+// CHECK: sediment.pia:77:43: proved: the assertion holds [smt]
+// CHECK: sediment.pia:74:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:74:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:74:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:81:21: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:81:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:89:30: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:89:17: proved: the precondition of 'mono' holds [smt]
+// CHECK: sediment.pia:89:17: proved: the measure of 'mono' decreases [smt]
+// CHECK: sediment.pia:87:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:87:23: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:87:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:96:3: proved: the precondition of 'at_le' holds [smt]
+// CHECK: sediment.pia:96:26: proved: '+' does not overflow usize [smt]
+// CHECK: sediment.pia:96:15: proved: the precondition of 'mono' holds [smt]
+// CHECK: sediment.pia:95:21: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:95:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:104:29: proved: '-' does not overflow usize [smt]
+// CHECK: sediment.pia:104:18: proved: the precondition of 'zero' holds [smt]
+// CHECK: sediment.pia:104:18: proved: the precondition of 'zero' holds [smt]
+// CHECK: sediment.pia:104:18: proved: the measure of 'zero' decreases [smt]
+// CHECK: sediment.pia:104:35: proved: the assertion holds [smt]
+// CHECK: sediment.pia:102:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:102:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:114:3: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:115:3: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment.pia:115:3: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment.pia:116:3: proved: the assertion holds [smt]
+// CHECK: sediment.pia:111:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:112:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:112:44: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:112:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:131:26: proved: '-' does not overflow u32 [smt]
+// CHECK: sediment.pia:133:18: proved: '-' does not overflow u32 [smt]
+// CHECK: sediment.pia:133:37: proved: '+' does not overflow u32 [smt]
+// CHECK: sediment.pia:134:30: proved: '-' does not overflow u32 [smt]
+// CHECK: sediment.pia:134:20: proved: '+' does not overflow u32 [smt]
+// CHECK: sediment.pia:127:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:128:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:129:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:139:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:139:34: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:142:11: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:143:11: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:144:3: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment.pia:145:3: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment.pia:146:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:147:19: proved: '+' does not overflow u32 [smt]
+// CHECK: sediment.pia:147:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:140:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:141:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:141:33: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:141:59: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:141:87: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:141:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:152:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:155:11: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:156:3: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment.pia:157:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:158:8: proved: '+' does not overflow usize [smt]
+// CHECK: sediment.pia:153:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:154:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:154:42: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:154:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:164:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:172:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:172:32: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:177:11: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:178:11: proved: the index is within bounds [smt]
+// CHECK: sediment.pia:179:3: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment.pia:180:3: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment.pia:181:11: proved: the precondition of 'erode_or_deposit' holds [smt]
+// CHECK: sediment.pia:182:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:183:10: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:183:34: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:183:3: proved: the assertion holds [smt]
+// CHECK: sediment.pia:184:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:185:10: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:185:32: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:185:3: proved: the assertion holds [smt]
+// CHECK: sediment.pia:186:3: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment.pia:187:10: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:187:40: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:187:3: proved: the assertion holds [smt]
+// CHECK: sediment.pia:188:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:188:32: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:188:54: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:189:6: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:189:32: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:189:60: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:188:3: proved: the precondition of 'balance' holds [smt]
+// CHECK: sediment.pia:174:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:175:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:175:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:175:53: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:176:5: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:176:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:176:59: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:175:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:198:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:198:32: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:198:54: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:202:18: proved: the precondition of 'drain' holds [smt]
+// CHECK: sediment.pia:202:18: proved: the precondition of 'drain' holds [smt]
+// CHECK: sediment.pia:203:9: proved: the precondition of 'push' holds [smt]
+// CHECK: sediment.pia:203:9: proved: the precondition of 'push' holds [smt]
+// CHECK: sediment.pia:199:3: proved: the postcondition holds [smt]
+// CHECK: sediment.pia:200:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:200:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:200:53: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:201:5: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:201:25: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:201:53: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment.pia:200:3: proved: the postcondition holds [smt]
+// CHECK: 159 proved, 0 failed, 0 skipped
+*)

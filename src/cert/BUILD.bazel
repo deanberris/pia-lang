@@ -1,0 +1,15 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Proof certificates in Pia objects: the format, reading them from object
+# files, and the link check (docs/abi.md, ADR 0039 step 6).
+cc_library(
+    name = "cert",
+    srcs = ["Certificate.cpp"],
+    hdrs = ["Certificate.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Object",
+        "@llvm-project//llvm:Support",
+    ],
+)

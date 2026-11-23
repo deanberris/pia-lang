@@ -1,0 +1,387 @@
+(* The height order and the topological flow accumulation (ADR 0055,
+   step 3).
+
+   `height_order` sorts the cells by decreasing fill. It writes `order`,
+   the cells from highest to lowest, and `pos`, its inverse: pos.[c] is
+   where cell c is in order. The two inverse buffers are the proof that
+   order is a permutation, each cell exactly once, with no counting: every
+   swap keeps both directions of the inverse. The sort is a selection
+   sort, so it is O(n^2); it proves in one pass of the solver, which a
+   counting sort's prefix sums do not. A faster sort can replace it later
+   behind the same contract.
+
+   `accumulate_topo` is the flow accumulation in one pass over `order`.
+   Every cell starts with one unit of water in `pend`; taking cell c, its
+   pending water is its accumulation, and moves on to down.[c] unless c is
+   an outlet. The pending water is mass moved as in sediment transport, so
+   the bound acc.[k] <= len fill comes from the same sum and point-update
+   lemmas, copied here from sediment.pia (an interface cannot export them
+   yet, #327). That every cell's count is at least 1 comes from `pos`:
+   only the cell at the current position is taken, and only once.
+
+   Workarounds:
+   - An element of a [usize] compared inside a quantifier, as in
+     `forall (k in 0 .. n). 0 <= pos.[k]`, is not known to be a usize
+     there, and the goal fails with a counterexample. Reading it through
+     the spec function `at`, whose result type is usize, gives it its
+     range.
+   - The initial fill of acc and pend is its own function, `start`; inline,
+     its quantified postconditions and the sum make the main loop's goals
+     time out.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* Copied from sediment.pia: the sum and its lemmas. *)
+
+let spec elt (xs : [u32]) (i : usize) : u32
+  requires i < len xs
+= xs.[i]
+
+(** The sum of xs.[0 .. n]. *)
+let spec sum (xs : [u32]) (n : usize) : u64
+  requires n <= len xs && n <= 4294967296
+  ensures result <= 4294967296 * n
+  decreases n
+= if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
+
+(* One step of each induction below, with no quantifier in sight. *)
+let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
+  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n = sum xs n
+= ()
+
+let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+= ()
+
+let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
+  requires i < len xs && i < len ys && i < 4294967296
+  requires sum ys i = sum xs i
+  ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
+= ()
+
+(** ys is xs except at i: the prefixes before i have the same sum. *)
+let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n = sum xs n
+  decreases n
+= if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
+
+(** The point update: writing ys.[i] in place of xs.[i] changes the sum of
+    every prefix that holds i by ys.[i] - xs.[i]. *)
+let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+  decreases n
+= if n > i + 1 then (update xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step_after xs ys i n)
+  else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
+
+let lemma at_le (xs : [u32]) (i : usize) : unit
+  requires i < len xs && i < 4294967296
+  ensures xs.[i] <= sum xs (i + 1)
+= ()
+
+(** A longer prefix has a larger sum. *)
+let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
+  requires m <= n && n <= len xs && n <= 4294967296
+  ensures sum xs m <= sum xs n
+  decreases n
+= if n > m then mono xs m (n - 1)
+
+(** Each element is bounded by the sum, so a bound on the total bounds
+    every cell. *)
+let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
+  requires i < n && n <= len xs && n <= 4294967296
+  ensures xs.[i] <= sum xs n
+= at_le xs i; mono xs (i + 1) n
+
+(** An all-zero prefix sums to zero. *)
+let lemma zero (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] = 0
+  ensures sum xs n = 0
+  decreases n
+= if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
+
+(** A write whose contract is the point update, for the whole buffer. The
+    element is loaded before it is overwritten: the load is what tells the
+    solver that `old (xs.[i])` is a u32. *)
+let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
+  requires i < len xs && len xs <= 4294967296
+  ensures xs.[i] = v
+  ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
+  ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
+= let w = xs.[i] in
+  xs.[i] <- v;
+  update (old xs) xs i (len xs);
+  assert w = old (xs.[i])
+
+
+(** An all-one prefix sums to its length. *)
+let lemma ones (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] = 1
+  ensures sum xs n = n
+  decreases n
+= if n > 0 then (ones xs (n - 1); assert xs.[n - 1] = 1)
+
+(* The height order. *)
+
+(** Exchanges order.[p] and order.[m], and keeps pos the inverse of order. *)
+let swap_at (order : borrowed inout mutable [usize]) (pos : borrowed inout mutable [usize]) (p : usize) (m : usize) : unit
+  requires len order = len pos && p < len order && m < len order
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures order.[p] = old (order.[m]) && order.[m] = old (order.[p])
+  ensures forall (q in 0 .. len order). q <> p && q <> m ==> order.[q] = old (order.[q])
+= let a = order.[p] in
+  let b = order.[m] in
+  order.[p] <- b;
+  order.[m] <- a;
+  pos.[b] <- p;
+  pos.[a] <- m
+(** The cells by decreasing fill: order is a permutation with inverse pos,
+    and a cell comes after every cell higher than it. *)
+let height_order (fill : [u16]) (order : out mutable [usize]) (pos : out mutable [usize]) : unit
+  requires len order = len fill && len pos = len fill
+  ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+= for i in 0 .. len order
+    invariant forall (k in 0 .. i). order.[k] = k && pos.[k] = k
+  do
+    order.[i] <- i;
+    pos.[i] <- i
+  done;
+  for p in 0 .. len order
+    invariant forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+    invariant forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+    invariant forall (a in 0 .. p) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  do
+    let m : mutable usize = p in
+    for j in p + 1 .. len order
+      invariant p <= m && m < len order
+      invariant forall (b in p .. j). fill.[order.[b]] <= fill.[order.[m]]
+    do
+      if fill.[order.[m]] < fill.[order.[j]] then m <- j else ()
+    done;
+    swap_at order pos p m
+  done
+
+(* The accumulation. *)
+
+(** An index read through a spec function, whose result type tells the
+    solver the index is a usize inside quantifiers. *)
+let spec at (xs : [usize]) (k : usize) : usize
+  requires k < len xs
+= xs.[k]
+
+(** acc starts at zero, and every cell holds one unit of water. *)
+let start (acc : out mutable [u32]) (pend : out mutable [u32]) : unit
+  requires len acc = len pend && len pend <= 4294967295
+  ensures forall (k in 0 .. len acc). acc.[k] = 0
+  ensures forall (k in 0 .. len pend). pend.[k] = 1
+  ensures sum pend (len pend) = len pend
+= for i in 0 .. len acc
+    invariant forall (k in 0 .. i). acc.[k] = 0 && pend.[k] = 1
+  do
+    acc.[i] <- 0;
+    pend.[i] <- 1
+  done;
+  ones pend (len pend)
+
+(** The flow accumulation over the height order: acc.[k] counts the cells
+    whose water passes through k. pend is scratch, one unit per cell. *)
+let accumulate_topo (fill : [u16]) (down : [usize]) (order : [usize]) (pos : [usize]) (acc : out mutable [u32]) (pend : out mutable [u32]) : unit
+  requires len down = len fill && len order = len fill && len pos = len fill
+  requires len acc = len fill && len pend = len fill
+  requires len fill <= 4294967295
+  requires forall (k in 0 .. len down).
+             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (k in 0 .. len acc). 1 <= acc.[k] && acc.[k] <= len fill
+= start acc pend;
+  let gone : mutable u64 = 0 in
+  for p in 0 .. len order
+    invariant sum pend (len pend) + gone = len fill
+    invariant forall (k in 0 .. len acc). acc.[k] <= len fill
+    invariant forall (k in 0 .. len pend). p <= at pos k ==> 1 <= pend.[k]
+    invariant forall (k in 0 .. len acc). p <= at pos k || 1 <= acc.[k]
+  do
+    let c = order.[p] in
+    let v = pend.[c] in
+    elt_le pend c (len pend);
+    acc.[c] <- v;
+    set pend c 0;
+    let d = down.[c] in
+    if d <> c then
+      (let w = pend.[d] in
+       elt_le pend d (len pend);
+       set pend d (w + v))
+    else gone <- gone + v
+  done
+
+(* Expected report, in order.
+// CHECK: sediment_order.pia:38:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:45:34: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:45:24: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:45:24: proved: the measure of 'sum' decreases [smt]
+// CHECK: sediment_order.pia:45:51: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:45:41: proved: the precondition of 'elt' holds [smt]
+// CHECK: sediment_order.pia:45:39: proved: '+' does not overflow usize [smt]
+// CHECK: sediment_order.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:50:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:50:29: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:51:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:51:22: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:51:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:56:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:56:38: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:57:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:57:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:62:12: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:62:23: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:63:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:63:37: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:63:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:72:35: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:72:18: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment_order.pia:72:18: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment_order.pia:72:18: proved: the measure of 'frame' decreases [smt]
+// CHECK: sediment_order.pia:72:41: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:72:73: proved: the precondition of 'step' holds [smt]
+// CHECK: sediment_order.pia:72:73: proved: the precondition of 'step' holds [smt]
+// CHECK: sediment_order.pia:70:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:70:22: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:81:12: proved: '+' does not overflow usize [smt]
+// CHECK: sediment_order.pia:81:40: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:81:22: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment_order.pia:81:22: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment_order.pia:81:22: proved: the measure of 'update' decreases [smt]
+// CHECK: sediment_order.pia:81:46: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:81:78: proved: the precondition of 'step_after' holds [smt]
+// CHECK: sediment_order.pia:81:78: proved: the precondition of 'step_after' holds [smt]
+// CHECK: sediment_order.pia:82:9: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment_order.pia:82:9: proved: the precondition of 'frame' holds [smt]
+// CHECK: sediment_order.pia:82:26: proved: the precondition of 'step_at' holds [smt]
+// CHECK: sediment_order.pia:82:26: proved: the precondition of 'step_at' holds [smt]
+// CHECK: sediment_order.pia:82:43: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:79:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:79:31: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:79:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:86:21: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:86:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:94:30: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:94:17: proved: the precondition of 'mono' holds [smt]
+// CHECK: sediment_order.pia:94:17: proved: the measure of 'mono' decreases [smt]
+// CHECK: sediment_order.pia:92:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:92:23: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:92:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:101:3: proved: the precondition of 'at_le' holds [smt]
+// CHECK: sediment_order.pia:101:26: proved: '+' does not overflow usize [smt]
+// CHECK: sediment_order.pia:101:15: proved: the precondition of 'mono' holds [smt]
+// CHECK: sediment_order.pia:100:21: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:100:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:109:29: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:109:18: proved: the precondition of 'zero' holds [smt]
+// CHECK: sediment_order.pia:109:18: proved: the precondition of 'zero' holds [smt]
+// CHECK: sediment_order.pia:109:18: proved: the measure of 'zero' decreases [smt]
+// CHECK: sediment_order.pia:109:35: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:107:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:107:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:120:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:121:3: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment_order.pia:121:3: proved: the precondition of 'update' holds [smt]
+// CHECK: sediment_order.pia:122:3: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:116:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:117:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:118:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:118:44: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:118:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:131:29: proved: '-' does not overflow usize [smt]
+// CHECK: sediment_order.pia:131:18: proved: the precondition of 'ones' holds [smt]
+// CHECK: sediment_order.pia:131:18: proved: the precondition of 'ones' holds [smt]
+// CHECK: sediment_order.pia:131:18: proved: the measure of 'ones' decreases [smt]
+// CHECK: sediment_order.pia:131:35: proved: the assertion holds [smt]
+// CHECK: sediment_order.pia:129:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:129:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:144:11: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:145:11: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:146:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:147:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:148:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:149:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:140:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:141:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:142:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:143:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:158:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:160:5: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:161:5: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:158:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:164:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:165:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:166:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:169:16: proved: '+' does not overflow usize [smt]
+// CHECK: sediment_order.pia:170:7: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:171:7: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:173:16: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:173:10: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:173:35: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:173:29: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:170:7: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:171:7: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:175:5: proved: the precondition of 'swap_at' holds [smt]
+// CHECK: sediment_order.pia:175:5: proved: the precondition of 'swap_at' holds [smt]
+// CHECK: sediment_order.pia:175:5: proved: the precondition of 'swap_at' holds [smt]
+// CHECK: sediment_order.pia:164:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:165:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:166:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:154:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:155:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:156:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:184:3: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:193:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:195:5: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:196:5: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:193:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:198:3: proved: the precondition of 'ones' holds [smt]
+// CHECK: sediment_order.pia:198:3: proved: the precondition of 'ones' holds [smt]
+// CHECK: sediment_order.pia:189:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:190:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:191:11: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:191:3: proved: the postcondition holds [smt]
+// CHECK: sediment_order.pia:211:3: proved: the precondition of 'start' holds [smt]
+// CHECK: sediment_order.pia:214:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:215:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:216:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:217:5: proved: the loop invariant holds on entry [smt]
+// CHECK: sediment_order.pia:214:15: proved: the precondition of 'sum' holds [smt]
+// CHECK: sediment_order.pia:219:13: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:220:13: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:221:5: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment_order.pia:222:5: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:223:5: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment_order.pia:224:13: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:226:16: proved: the index is within bounds [smt]
+// CHECK: sediment_order.pia:227:8: proved: the precondition of 'elt_le' holds [smt]
+// CHECK: sediment_order.pia:228:22: proved: '+' does not overflow u32 [smt]
+// CHECK: sediment_order.pia:228:8: proved: the precondition of 'set' holds [smt]
+// CHECK: sediment_order.pia:229:23: proved: '+' does not overflow usize [smt]
+// CHECK: sediment_order.pia:214:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:215:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:216:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:217:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: sediment_order.pia:210:3: proved: the postcondition holds [smt]
+// CHECK: 153 proved, 0 failed, 0 skipped
+*)
