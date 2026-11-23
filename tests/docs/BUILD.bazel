@@ -29,6 +29,7 @@ py_test(
     data = DOCS + [
         "//examples/edges:edges.pia",
         "//examples/edges:edges_buggy.pia",
+        "//src/irgen:Target.pia",
         "//tools/pia",
         "//tools/piac",
     ],

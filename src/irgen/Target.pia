@@ -1,0 +1,53 @@
+(* Pia.Target (ADR 0049, section 3): the facts about the machine that a
+   proof may use, as a theory with one model per target. piac adds the
+   theory, and the model of the target it compiles for, to every program
+   that names `Target`, so no import is needed. A program sees only the
+   axioms: what holds on every target. `@target(m)` code will also see its
+   own model's values (ADR 0049, step 3c).
+
+   Each axiom must hold on every build of the architectures Pia targets,
+   not only on today's triples, so a later triple can never break a
+   target-generic proof. That is why pointer width is a model value and
+   not an axiom: x86_64 runs 32-bit pointers in compatibility mode and
+   under the x32 ABI.
+
+   The models are proved to meet the axioms when the compiler is tested
+   (tests/verify/target_theory.pia), not in each program that uses them. *)
+
+let theory Target = sig
+  let spec ptr_bits : usize
+  let spec little_endian : bool
+  let spec max_align : usize    \ the alignment Pia.Mem.alloc guarantees
+  let spec page_size : usize
+  let spec cache_line : usize   \ the destructive interference size
+  let spec vector_bits : usize  \ the widest vector the CPU runs natively
+
+  let spec is_pow2 (n : usize) : bool = n > 0 && n & (n - 1) = 0
+
+  let axiom ptr_pow2 ensures is_pow2 ptr_bits && ptr_bits >= 32
+  let axiom little ensures little_endian
+  let axiom align_16 ensures max_align = 16
+  let axiom page_pow2 ensures is_pow2 page_size && page_size >= 4096
+  let axiom line_pow2 ensures is_pow2 cache_line && cache_line >= 64
+  let axiom vector_min ensures vector_bits >= 128
+end
+
+(* Apple silicon: 16 KiB pages, 128-byte cache lines, 128-bit NEON. *)
+let model arm64_macos : Target = struct
+  let spec ptr_bits : usize = 64
+  let spec little_endian : bool = true
+  let spec max_align : usize = 16
+  let spec page_size : usize = 16384
+  let spec cache_line : usize = 128
+  let spec vector_bits : usize = 128
+end
+
+(* x86_64 Linux at x86-64-v3: 4 KiB pages, 64-byte lines, 256-bit AVX2. *)
+let model x86_64_linux : Target = struct
+  let spec ptr_bits : usize = 64
+  let spec little_endian : bool = true
+  let spec max_align : usize = 16
+  let spec page_size : usize = 4096
+  let spec cache_line : usize = 64
+  let spec vector_bits : usize = 256
+end

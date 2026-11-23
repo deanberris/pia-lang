@@ -6,4 +6,6 @@ lit_tests(
     name = "verify_tests",
     srcs = glob(["*.pia"]),
     tools = ["//tools/piac"],
+    # target_theory.pia proves the built-in theory piac compiles in.
+    data = ["//src/irgen:Target.pia"],
 )
