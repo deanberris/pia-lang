@@ -1,0 +1,39 @@
+(* Importers of Pia.Core.Algo.PartialSort take the smallest elements of a
+   u8 buffer with their own comparators and know the result from the
+   interface alone: the first m sorted, none after them smaller, and a
+   permutation of the input; nth_element's element is in its sorted
+   place.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Heap.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/PartialSort.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Heap.Heap as H
+import Pia.Core.Algo.PartialSort.PartialSort as Q
+
+let smallest_three (xs : borrowed inout mutable [u8]) : unit
+  requires len xs >= 3
+  ensures xs.[0] <= xs.[1] && xs.[1] <= xs.[2]
+  ensures forall (p in 3 .. len xs). xs.[p] >= xs.[2]
+  ensures forall (v : u8). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= Q.partial_sort xs 3 (let (a : u8) (b : u8) : bool => a < b)
+
+let median (xs : borrowed inout mutable [u8]) : u8
+  requires len xs > 0
+  ensures forall (a in 0 .. len xs >> 1). xs.[a] <= result
+  ensures forall (p in 0 .. len xs). len xs >> 1 < p ==> xs.[p] >= result
+= Q.nth_element xs (len xs >> 1) (let (a : u8) (b : u8) : bool => a < b);
+  xs.[len xs >> 1]
+
+(* Every goal is proved, and each call is an instance of its proof.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.PartialSort.partial_sort[lambda@partial_sort_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.PartialSort.partial_sort#proof' [generic]
+// CHECK: 50 proved, 0 failed, 0 skipped
+*)
