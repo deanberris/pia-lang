@@ -1,6 +1,7 @@
-(* Pia.Core.Charconv: <charconv>'s from_chars for integers (ADR 0040,
-   phase 1.9, docs/cpp-std.md), in any base from 2 to 36, for u8, u16,
-   u32, i8, i16 and i32.
+(* Pia.Core.Charconv: <charconv>'s from_chars and to_chars for integers
+   (ADR 0040, phase 1.9, docs/cpp-std.md), in any base from 2 to 36:
+   from_chars for u8, u16, u32, i8, i16 and i32, to_chars for those and
+   u64 and i64.
 
    from_chars s base value reads the digits s begins with (0-9, then a-z
    or A-Z for 10 to 35; a signed type takes one leading '-'), as C++'s
@@ -13,10 +14,17 @@
    every type, and a signed type's contract is the one spec
    signed_parse, which keeps the interface's check of it cheap.
 
-   Not here yet: u64 and i64, whose overflow check needs a division by
-   the base; and to_chars, whose round trip with from_chars needs the
-   value of written digits proved, which the solver does not do in
-   reasonable time for more than a few digits (docs/cpp-std.md). *)
+   to_chars dst v base writes v's digits, lower-case, with a '-' first
+   for a negative value, and says how many it wrote: ok when they fit in
+   dst, and otherwise nothing is written, as C++'s value_too_large. Its
+   contract says each byte is a digit of the base and how many there are
+   (`ndig`, the digits v has), but not yet that they are v's: that
+   round trip with from_chars waits on a proved library of digit
+   arithmetic, since the solver does not prove v = q * base^k + r in
+   reasonable time for more than a few digits (docs/cpp-std.md).
+
+   Not here yet: from_chars for u64 and i64, whose overflow check divides
+   by the base. *)
 module Pia.Core.Charconv : Charconv
 
 interface Charconv = sig
@@ -68,6 +76,66 @@ interface Charconv = sig
   let parsed_i32 = type { value : i32; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32
     ensures signed_parse s base ((1 << 31) - 1) (1 << 31) value result.used result.ec result.value
+  let spec ndig : (t : u64) -> (base : int{2..36}) -> (n : usize) -> usize
+  let digit_char : (d : u64) -> (base : int{2..36}) -> u8
+    requires d < base
+    ensures digit_of result base = d
+  let chars = type { used : usize; ok : bool }
+  let write_digits : (dst : borrowed inout mutable [u8]) -> (start : usize) -> (v : u64) -> (base : int{2..36}) -> chars
+    requires start <= len dst
+    ensures result.ok <==> ndig v base 1 <= len dst - start
+    ensures result.ok ==> result.used = ndig v base 1
+    ensures result.ok = false ==> result.used = 0
+    ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
+    ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u8) -> (base : int{2..36}) -> chars
+    ensures result.ok <==> ndig v base 1 <= len dst
+    ensures result.ok ==> result.used = ndig v base 1
+    ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u16) -> (base : int{2..36}) -> chars
+    ensures result.ok <==> ndig v base 1 <= len dst
+    ensures result.ok ==> result.used = ndig v base 1
+    ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u32) -> (base : int{2..36}) -> chars
+    ensures result.ok <==> ndig v base 1 <= len dst
+    ensures result.ok ==> result.used = ndig v base 1
+    ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u64) -> (base : int{2..36}) -> chars
+    ensures result.ok <==> ndig v base 1 <= len dst
+    ensures result.ok ==> result.used = ndig v base 1
+    ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i8) -> (base : int{2..36}) -> chars
+    ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
+    ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
+    ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i16) -> (base : int{2..36}) -> chars
+    ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
+    ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
+    ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i32) -> (base : int{2..36}) -> chars
+    ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
+    ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
+    ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
+  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i64) -> (base : int{2..36}) -> chars
+    ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
+    ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
+    ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
+    ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
 end
 
 (** C++'s std::errc for from_chars: Ok, Invalid (invalid_argument: no
@@ -243,3 +311,99 @@ unsigned_from_chars "u32" "parsed_u32" 4294967295
 signed_from_chars "i8" "parsed_i8" 8
 signed_from_chars "i16" "parsed_i16" 16
 signed_from_chars "i32" "parsed_i32" 32
+
+(** n plus how many more digits t has in base `base` past its last: the
+    digit count of v is ndig v base 1. Capped at 64, which no u64
+    reaches. *)
+let spec ndig (t : u64) (base : int{2..36}) (n : usize) : usize
+  requires 1 <= n && n <= 64
+  ensures 1 <= result && result <= 64
+  decreases 64 - n
+= let b : u64 = base in
+  if t < b || n = 64 then n else ndig (t / b) base (n + 1)
+
+(** The lower-case digit for d. *)
+let digit_char (d : u64) (base : int{2..36}) : u8
+  requires d < base
+  ensures digit_of result base = d
+= let c : u8 = if d < 10 then 48 + d else 87 + d in c
+
+(** What to_chars wrote: `used` bytes from the start, when ok. *)
+let chars = type { used : usize; ok : bool }
+
+(** Writes v's digits in base `base` at dst.[start ..], most significant
+    first, and says how many: ok when they fit. Every byte it writes is a
+    digit of the base, and the rest of dst is as it was. That the digits
+    are v's, so that from_chars reads v back, waits on a proved library
+    of digit arithmetic (docs/cpp-std.md). *)
+let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (base : int{2..36}) : chars
+  requires start <= len dst
+  ensures result.ok <==> ndig v base 1 <= len dst - start
+  ensures result.ok ==> result.used = ndig v base 1
+  ensures result.ok = false ==> result.used = 0
+  ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
+  ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
+= let b : u64 = base in
+  let n : mutable usize = 1 in
+  let t : mutable u64 = v in
+  while t >= b && n < 64
+    invariant 1 <= n && n <= 64
+    invariant ndig v base 1 = ndig t base n
+    decreases 64 - n
+  do
+    t <- t / b;
+    n <- n + 1
+  done;
+  if n > len dst - start then { used = 0; ok = false }
+  else (
+    let q : mutable u64 = v in
+    let p : mutable usize = n in
+    while p > 0
+      invariant p <= n && n <= len dst - start
+      invariant forall (k in 0 .. len dst). start + p <= k && k < start + n ==> digit_of dst.[k] base < base
+      invariant forall (k in 0 .. len dst). k < start || start + n <= k ==> dst.[k] = old (dst.[k])
+      decreases p
+    do
+      p <- p - 1;
+      dst.[start + p] <- digit_char (q % b) base;
+      q <- q / b
+    done;
+    { used = n; ok = true })
+
+(* to_chars for the unsigned type `t`: its digits, widened to a u64. *)
+let meta unsigned_to_chars (t : string) : item =
+  `( let to_chars ($!dst : borrowed inout mutable [u8]) ($!v : $t) ($!base : int{2..36}) : chars
+       ensures $!result.ok <==> ndig $!v $!base 1 <= len $!dst
+       ensures $!result.ok ==> $!result.used = ndig $!v $!base 1
+       ensures forall (k in 0 .. len $!dst). k < $!result.used ==> digit_of $!dst.[k] $!base < $!base
+       ensures forall (k in 0 .. len $!dst). $!result.used <= k ==> $!dst.[k] = old ($!dst.[k])
+     = let $!w : u64 = $!v in
+       write_digits $!dst 0 $!w $!base )
+
+(* to_chars for the signed type `t`: a '-' first when v is negative, then
+   the digits of its magnitude. *)
+let meta signed_to_chars (t : string) : item =
+  `( let to_chars ($!dst : borrowed inout mutable [u8]) ($!v : $t) ($!base : int{2..36}) : chars
+       ensures $!v >= 0 ==> ($!result.ok <==> ndig $!v $!base 1 <= len $!dst)
+       ensures $!v >= 0 && $!result.ok ==> $!result.used = ndig $!v $!base 1
+       ensures $!v < 0 && $!result.ok ==> $!dst.[0] = 45 && $!result.used = 1 + ndig (0 - $!v) $!base 1
+       ensures $!v >= 0 ==> (forall (k in 0 .. len $!dst). k < $!result.used ==> digit_of $!dst.[k] $!base < $!base)
+       ensures $!v < 0 ==> (forall (k in 0 .. len $!dst). 0 < k && k < $!result.used ==> digit_of $!dst.[k] $!base < $!base)
+       ensures forall (k in 0 .. len $!dst). $!result.used <= k ==> $!dst.[k] = old ($!dst.[k])
+     = let $!w : i64 = $!v in
+       if $!w >= 0 then (let $!m : u64 = $!w in write_digits $!dst 0 $!m $!base)
+       else if len $!dst = 0 then { used = 0; ok = false }
+       else (
+         let $!m : u64 = if $!w = -9223372036854775808 then 9223372036854775808 else (let $!p : i64 = 0 - $!w in $!p) in
+         let $!r = write_digits $!dst 1 $!m $!base in
+         if $!r.ok then ($!dst.[0] <- 45; { used = $!r.used + 1; ok = true })
+         else { used = 0; ok = false }) )
+
+unsigned_to_chars "u8"
+unsigned_to_chars "u16"
+unsigned_to_chars "u32"
+unsigned_to_chars "u64"
+signed_to_chars "i8"
+signed_to_chars "i16"
+signed_to_chars "i32"
+signed_to_chars "i64"

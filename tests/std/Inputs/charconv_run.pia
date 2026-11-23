@@ -1,6 +1,6 @@
 (* Runs Pia.Core.Charconv's compiled code on buffers in an arena, linked by
-   pia_binary: 0 when every from_chars result is what C++'s gives, and
-   otherwise the number of the first wrong one. *)
+   pia_binary: 0 when every from_chars and to_chars result is what C++'s
+   gives, and otherwise the number of the first wrong one. *)
 import Pia.Core.Charconv.Charconv as C
 
 let checks (s : borrowed inout mutable [u8]) : i32
@@ -34,6 +34,26 @@ let checks (s : borrowed inout mutable [u8]) : i32
             let f : u16 = 0 in
             let t = C.from_chars s 2 f in
             if t.used <> 3 || t.value <> 5 then 6
-            else 0)))))
+            else (
+              let x : u32 = 42 in
+              let w = C.to_chars s x 10 in
+              if w.ok = false || w.used <> 2 || s.[0] <> 52 || s.[1] <> 50 then 7
+              else (
+                let y : u8 = 255 in
+                let h2 = C.to_chars s y 16 in
+                if h2.ok = false || h2.used <> 2 || s.[0] <> 102 || s.[1] <> 102 then 8
+                else (
+                  let z : i8 = -128 in
+                  let n2 = C.to_chars s z 10 in
+                  if n2.ok = false || n2.used <> 4 || s.[0] <> 45 || s.[1] <> 49 || s.[2] <> 50 || s.[3] <> 56 then 9
+                  else (
+                    let big : u64 = 100000 in
+                    let f2 = C.to_chars s big 10 in
+                    if f2.ok then 10
+                    else (
+                      let zero : u16 = 0 in
+                      let z2 = C.to_chars s zero 2 in
+                      if z2.ok = false || z2.used <> 1 || s.[0] <> 48 then 11
+                      else 0))))))))))
 
 let main () : i32 = with_arena 4 (let (m) => checks m.mem)

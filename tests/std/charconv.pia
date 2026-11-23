@@ -1,5 +1,6 @@
 (* Pia.Core.Charconv (ADR 0040, phase 1.9): from_chars for u8, u16, u32,
-   i8, i16 and i32 in any base from 2 to 36, each value exact.
+   i8, i16 and i32 in any base from 2 to 36, each value exact, and
+   to_chars for those and u64 and i64, with valid digits and their count.
 // RUN: piac --verify %S/../../lib/Pia/Core/Charconv.pia | FileCheck %s
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Charconv.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Charconv.Charconv.piai
@@ -7,7 +8,7 @@
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 223 proved, 0 failed, 0 skipped
+// CHECK: 428 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -36,5 +37,17 @@
 // IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i16) -> parsed_i16 ensures signed_parse s base ((1 << 15) - 1) (1 << 15) value result.used result.ec result.value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_i32 = type { value : i32; used : usize; ec : errc }{{$}}
 // IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32 ensures signed_parse s base ((1 << 31) - 1) (1 << 31) value result.used result.ec result.value{{$}}
+// IFACE-NEXT: {{^}}  let spec ndig : (t : u64) -> (base : int{2..36}) -> (n : usize) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let digit_char : (d : u64) -> (base : int{2..36}) -> u8 requires d < base ensures digit_of result base = d{{$}}
+// IFACE-NEXT: {{^}}  let chars = type { used : usize; ok : bool }{{$}}
+// IFACE-NEXT: {{^}}  let write_digits : (dst : borrowed inout mutable [u8]) -> (start : usize) -> (v : u64) -> (base : int{2..36}) -> chars requires start <= len dst ensures result.ok <==> ndig v base 1 <= len dst - start ensures result.ok ==> result.used = ndig v base 1 ensures result.ok = false ==> result.used = 0 ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u8) -> (base : int{2..36}) -> chars ensures result.ok <==> ndig v base 1 <= len dst ensures result.ok ==> result.used = ndig v base 1 ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u16) -> (base : int{2..36}) -> chars ensures result.ok <==> ndig v base 1 <= len dst ensures result.ok ==> result.used = ndig v base 1 ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u32) -> (base : int{2..36}) -> chars ensures result.ok <==> ndig v base 1 <= len dst ensures result.ok ==> result.used = ndig v base 1 ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u64) -> (base : int{2..36}) -> chars ensures result.ok <==> ndig v base 1 <= len dst ensures result.ok ==> result.used = ndig v base 1 ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i8) -> (base : int{2..36}) -> chars ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst) ensures v >= 0 && result.ok ==> result.used = ndig v base 1 ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1 ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base) ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base) ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i16) -> (base : int{2..36}) -> chars ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst) ensures v >= 0 && result.ok ==> result.used = ndig v base 1 ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1 ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base) ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base) ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i32) -> (base : int{2..36}) -> chars ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst) ensures v >= 0 && result.ok ==> result.used = ndig v base 1 ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1 ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base) ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base) ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i64) -> (base : int{2..36}) -> chars ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst) ensures v >= 0 && result.ok ==> result.used = ndig v base 1 ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1 ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base) ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base) ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k]){{$}}
 // IFACE-NEXT: {{^}}end{{$}}
 *)

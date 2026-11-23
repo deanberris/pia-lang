@@ -1,0 +1,26 @@
+(* A goal costs the same whatever else the process holds. Z3's QF_BV
+   tactic once ran its simplify and AIG pass only while the process held
+   less than 300 MB, so these goals, which that pass settles, cost less in
+   a large process (391 for the first instead of 522), such as eight
+   threads proving at once (third_party/z3/qfbv_memory_independent.patch).
+   --memory-ballast makes the process hold 400 MB first.
+// RUN: piac --verify --solver-cost --jobs=1 %s > "$TEST_TMPDIR/small"
+// RUN: piac --verify --solver-cost --jobs=1 --memory-ballast=400 %s | diff "$TEST_TMPDIR/small" -
+// RUN: FileCheck %s < "$TEST_TMPDIR/small"
+*)
+
+(** The value of b as a digit in base `base`, or base when it is none. *)
+let spec digit_of (b : u8) (base : int{2..36}) : u32
+= let v : u32 =
+    if 48 <= b && b <= 57 then b - 48
+    else if 97 <= b && b <= 122 then b - 87
+    else if 65 <= b && b <= 90 then b - 55
+    else 36 in
+  if v < base then v else base
+
+(*
+// CHECK: memory_independent_cost.pia:15:34: proved: '-' does not overflow u32 [smt] (cost 522)
+// CHECK: memory_independent_cost.pia:16:40: proved: '-' does not overflow u32 [smt] (cost 885)
+// CHECK: memory_independent_cost.pia:17:39: proved: '-' does not overflow u32 [smt] (cost 992)
+// CHECK: 3 proved, 0 failed, 0 skipped
+*)

@@ -4087,6 +4087,17 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
   std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
     return jobs[a].script.size() > jobs[b].script.size();
   });
+  // Test only (Options::memoryBallastMb): Z3 terms that make the process
+  // large before any goal is solved, kept until the process ends.
+  if (options.memoryBallastMb) {
+    static z3::context ballastCtx;
+    static z3::expr_vector ballast(ballastCtx);
+    for (unsigned k = 0; Z3_get_estimated_alloc_size() <
+                         static_cast<uint64_t>(options.memoryBallastMb) << 20;
+         ++k)
+      ballast.push_back(ballastCtx.bv_const(("ballast" + std::to_string(k)).c_str(), 64) +
+                        ballastCtx.bv_val(k, 64));
+  }
   std::vector<JobStats> js(jobs.size());
   std::atomic<size_t> next{0};
   auto worker = [&] {

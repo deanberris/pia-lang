@@ -552,6 +552,7 @@ int main(int argc, char **argv) {
   // pia_object, and the timeout is only a safety net (ADR 0032).
   unsigned solverTimeoutMs = 600000;
   unsigned solverRlimit = 1200000000;
+  unsigned memoryBallastMb = 0;
   bool solverCost = false;
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
@@ -608,6 +609,14 @@ int main(int argc, char **argv) {
       if (arg.size() == 16 || *end != '\0' || n == 0 || n > 4000000000UL)
         return usage();
       solverRlimit = static_cast<unsigned>(n);
+    }
+    else if (arg.rfind("--memory-ballast=", 0) == 0) {
+      // Test only: hold this many megabytes of Z3 terms before solving.
+      char *end = nullptr;
+      unsigned long n = std::strtoul(arg.c_str() + 17, &end, 10);
+      if (arg.size() == 17 || *end != '\0' || n == 0 || n > 65536)
+        return usage();
+      memoryBallastMb = static_cast<unsigned>(n);
     }
     else if (arg.rfind("--jobs=", 0) == 0) {
       char *end = nullptr;
@@ -821,6 +830,7 @@ int main(int argc, char **argv) {
       // report shows it only with --solver-cost.
       options.reportCost = true;
       options.jobs = jobs;
+      options.memoryBallastMb = memoryBallastMb;
       options.slice = slice > 0   ? pia::verify::Options::Slice::On
                       : slice < 0 ? pia::verify::Options::Slice::Off
                                   : pia::verify::Options::Slice::Auto;
