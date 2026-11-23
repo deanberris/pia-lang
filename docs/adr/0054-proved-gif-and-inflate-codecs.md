@@ -51,8 +51,8 @@ Each codec function has up to four levels of guarantee. The first two hold for e
 
 | Codec | In scope | Out of scope |
 | --- | --- | --- |
-| GIF decode | GIF87a and GIF89a; global and local colour tables; LZW code sizes 2 to 12; interlacing; transparency and disposal from the Graphic Control Extension; every frame of an animation; other extensions, skipped by their length | nothing: every valid GIF decodes |
-| GIF encode | indexed images with a palette of up to 256 colours, as one frame or an animation, interlaced or not, with a dictionary reset when it fills | colour quantisation from RGB, which is a separate function (section 5) |
+| GIF decode | GIF87a and GIF89a; global and local colour tables; LZW code sizes 2 to 12; interlacing; transparency and disposal from the Graphic Control Extension; every frame of an animation, with its delay; the NETSCAPE2.0 application extension's loop count; other extensions, skipped by their length | nothing: every valid GIF decodes |
+| GIF encode | indexed images with a palette of up to 256 colours, interlaced or not, with a dictionary reset when it fills; animations with a delay, disposal method and transparent index per frame, a loop count (the NETSCAPE2.0 extension), and frames that cover only the changed rectangle of the screen | colour quantisation from RGB, which is a separate function (section 5) |
 | Inflate | every RFC 1951 stream (stored, fixed Huffman and dynamic Huffman blocks) into a caller's buffer whose length bounds the output; zlib (RFC 1950) framing, checked with its Adler-32 | deflate (compression), which comes with PNG encode in a later ADR; gzip framing until something needs it |
 | JPEG | none | all of it, deferred to [#313](https://github.com/deanberris/pia-lang/issues/313) |
 
@@ -105,7 +105,7 @@ Each step is one issue and one pull request, prototyped in the REPL first:
 
 1. `Image.Bits` and `Image.Raster`. Any verifier fix that #45 needs is a pull request of its own.
 2. GIF LZW decode against `Gif.Spec`, then the container decode. After this step, every GIF decodes.
-3. GIF LZW encode and the round-trip theorem, then the container encode. After this step, the streams demo can write its output as a GIF.
+3. GIF LZW encode and the round-trip theorem, then the container encode, animations included. After this step, the streams demo can write its output as a GIF. Dean's next demo renders terrain evolving under rainfall models as an animated GIF (2026-11-23), so the encoder writes each frame as the rectangle that changed since the last one, and the round trip is proved over the composited frames that a viewer shows.
 4. `Image.Gif.Quantise`.
 5. `Compress.Huffman`, then inflate against `Inflate.Spec`, then zlib framing.
 6. The case studies.
