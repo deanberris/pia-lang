@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-23), with his answers to both questions, recorded at the end.
 
 ## Context
 
@@ -114,6 +114,16 @@ Each step is one issue and one pull request, prototyped in the REPL first:
 
 1. **Should decoders allocate?** I recommend two-step decoding into a caller's buffer (section 4). That way the codecs work before `Pia.Mem` exists, and they run anywhere `Pia.Core` runs. The alternative is to take an allocator now, which means waiting for `Pia.Mem`.
 2. **Is colour quantisation (RGB to a 256-colour palette) part of this work?** I recommend yes, proved safe but not proved good, because the streams demo renders in RGB. The alternative leaves GIF encoding to callers that already have indexed images.
+
+### 8. An image theory where the proofs need one
+
+Image code proves the same facts over and over: that `y * w + x < w * h` given `x < w` and `y < h`, that a rectangle inside a raster keeps its rows and columns inside it, that an interlaced pass visits each row once, and that compositing a frame writes each pixel of its rectangle. Where lemmas in each module stop being enough, the facts go into a library theory, `Image.Theory` ([ADR 0036](0036-library-theories.md)), with a model that proves it consistent, so nothing is trusted. Its sorts and spec functions cover rasters, rectangles, pixel indices and row orders, and its axioms carry triggers so they only fire on image goals. The first candidates are the 2D index facts behind #45 and the interlace permutation. The theory is added when a step needs it, not ahead of time, and each axiom names the step that first needed it.
+
+## Answers (Dean, 2026-11-23)
+
+1. **Decoders write into a caller's buffer** (section 4): "Yes, that's good design anyway."
+2. **Colour quantisation is part of this work** (section 5): yes, proved safe.
+3. Dean added that image processing is special enough to warrant a theory of its own if the proofs need one, so section 8 records that.
 
 ## Consequences
 
