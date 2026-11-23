@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed (revised 2026-11-23: files through the same senders, `|>` pipelines with error handling proved complete, and pipelines as dataflow graphs across CPU and GPU schedulers)
+Status: Accepted (2026-11-23, with Dean's answers to its five questions, recorded under "Answers" below and folded into the decision)
 
 ## Context
 
@@ -49,12 +49,12 @@ macOS has no equivalent of io_uring. The candidates are kqueue with a completion
 `Pia.Exec` is Pia's `<execution>` ([ADR 0040](0040-cpp23-standard-library-in-pia.md)). It defines `Receiver`, `Sender`, `Operation` and `Scheduler` as concepts ([ADR 0034](0034-concepts-and-overload-resolution.md)). Each P2300 rule that C++ only documents becomes a type rule or a law:
 
 ```ocaml
-(* Designed syntax. `v` is what the work produces, `e` its closed error set. *)
+(* Designed syntax. `v` is what the work produces, `e` its closed error set,
+   which includes `Stopped` when the work can be cancelled. *)
 let meta Receiver (r : type) (v : type) (e : type) : concept = sig
   @linear r                                       (* consumed exactly once *)
   let value   : (self : moved r) -> (x : moved v) -> unit
   let error   : (self : moved r) -> (x : moved e) -> unit
-  let stopped : (self : moved r) -> unit
   let env     : (self : borrowed r) -> env        (* stop token, scheduler, allocator *)
 end
 
@@ -70,25 +70,26 @@ let meta Sender (s : type) : concept = sig
 end
 ```
 
-- **Exactly once is a type rule.** A receiver is `@linear`, and each of its three channels takes it `moved`. An operation that holds a receiver must consume it on every path, by calling exactly one channel. A path that calls two channels is a use-after-move, and one that calls none fails the `@linear` check. Both are compile errors in the operation's own module. The rule holds for every receiver, including the ones the algorithms build.
+- **Exactly once is a type rule.** A receiver is `@linear`, and each of its two channels takes it `moved`. An operation that holds a receiver must consume it on every path, by calling exactly one channel. A path that calls two channels is a use-after-move, and one that calls none fails the `@linear` check. Both are compile errors in the operation's own module. The rule holds for every receiver, including the ones the algorithms build.
 - **Completion signatures are type-level metaprograms.** `value_of s`, `error_of s` and `op_of s r` are type-level metaprograms over the sender's type ([ADR 0035](0035-substitution-failure-and-total-constraints.md)), which plays the role of P2300's `completion_signatures_of_t`. `error_of s` is a closed error set, so the union in `when_all a b` is `error_of a | error_of b` ([ADR 0028](0028-error-propagation-and-cleanup.md)), and a `match` on it must be exhaustive.
 - **Values carry their facts.** A value type is an ordinary Pia type, so its facts live in the type ([ADR 0037](0037-idiomatic-pia-and-lints.md)). A read completes with `{ n : usize; buf : moved [u8] } where n <= len buf`, and the bytes it wrote are `written buf 0 n`. A receiver is proved under those facts. `then s f` completes with `f`'s result and `f`'s `ensures`, proved once for every `s` and `f` (ADR 0043 and ADR 0044).
 - **Operation states move freely.** Pia never gives the kernel the address of a Pia value, other than buffers, whose memory does not move when their slice value moves. A backend that needs a stable token, such as io_uring's `user_data`, uses an index into its own table of in-flight slots (section 3). C++'s immovable operation states need no counterpart.
+- **Cancellation is an error.** P2300 has a third channel, `set_stopped`. In Pia a sender that can be cancelled has `Stopped` in its error set, so a stop arrives on the error channel like any other outcome that is not a value (Dean, 2026-11-23). It is a closed-set member, so a handler must cover it, `recover` can remove it (section 6), and `error_of s` says whether `s` can be stopped at all. Algorithms that treat a stop specially, such as `when_all` cancelling its siblings when one fails, match on `Stopped` explicitly.
 - **No detached work.** `Pia.Exec` has no `ensure_started` and no `start_detached`. Work that must run alongside other work is spawned into a `scope` (ADR 0027), which also serves as P3149's `async_scope`: `spawn s sender`. A scope cannot end until each operation it holds has completed, because each one is `@linear`.
 
 The first algorithms are `just`, `just_error`, `then`, `upon_error`, `let_value`, `when_all`, `continues_on`, `starts_on` and `sync_wait`. `bulk` waits for the `spread` work. `split` waits until sharing an operation's result, which needs `ref` from [ADR 0047](0047-recursive-sum-types-and-shared-references.md), comes up in practice.
 
 ### 2. I/O senders own their buffers, and cancellation is proved
 
-`Pia.Io` offers I/O as senders: `read_some`, `write_some`, `accept`, `connect`, `recv`, `send`, `after` (a timer) and `close`. A buffer is passed `moved` into the sender, and every completion gives it back: `value` returns it with the byte count, `error` returns it with the error, and `stopped` returns it unchanged.
+`Pia.Io` offers I/O as senders: `read_some`, `write_some`, `accept`, `connect`, `recv`, `send`, `after` (a timer) and `close`. A buffer is passed `moved` into the sender, and every completion gives it back: `value` returns it with the byte count, and `error` returns it with the error, unchanged when the error is `Stopped`.
 
 - **Nobody touches a buffer while the kernel owns it.** Between `start` and the completion, the buffer belongs to the backend's in-flight slot. No Pia code can read or write it, so there is no race with the kernel. This is ADR 0027's race rule with the kernel treated as one more task.
 - **A buffer returns only when the kernel's completion arrives.** A stop request does not complete the operation. It asks the backend to cancel (`IORING_OP_ASYNC_CANCEL`, or deregistration on a readiness backend), and the receiver is called only when the target operation's own completion arrives. The buffer lives in the slot, and only the completion handler can take it back out, so a handler that returns it early does not type-check. That closes hole 3.
-- **`stopped` means nothing happened.** When an operation was cancelled after it transferred data, such as a read that completed in the same instant, its receiver gets `value`, never `stopped`, so no data is lost. This is a law of every I/O sender. A readiness backend proves it. On io_uring it is the trusted meaning of `-ECANCELED` from io_uring_enter(2).
+- **`Stopped` means nothing happened.** When an operation was cancelled after it transferred data, such as a read that completed in the same instant, its receiver gets `value`, never `Err Stopped`, so no data is lost. This is a law of every I/O sender. A readiness backend proves it. On io_uring it is the trusted meaning of `-ECANCELED` from io_uring_enter(2).
 - **At most one read and one write in flight per stream.** A connected stream splits into a `@linear` read half and a `@linear` write half. A pending read consumes the read half, and the completion gives it back. So the type system rules out two concurrent reads on one socket, and a readiness backend needs at most one registration per direction.
 - **Borrowed buffers come later.** A buffer could instead be `borrowed`, with a region that encloses the operation (ADR 0042). That is sound, because a `@linear` operation cannot be dropped before it completes. It is left for later because moving the buffer and getting it back is simpler to prove and to explain.
 
-Inside a `@suspends` function, `wait s` connects the coroutine's frame as the receiver, as `co_await` does in C++. `value` resumes the coroutine with `Ok`, `error` with `Err`, and `stopped` with `Err Stopped` (question 1). So the read loop in [docs/concurrency.md](../concurrency.md#syntax) is unchanged. `read` is now a sender, and `wait` is how a coroutine consumes one. Senders also work without coroutines, through `then` chains and `sync_wait`. That matters because the coroutines (#77) are not built yet.
+Inside a `@suspends` function, `wait s` connects the coroutine's frame as the receiver, as `co_await` does in C++. `value` resumes the coroutine with `Ok`, and `error` with `Err`, which includes `Err Stopped` for a cancelled operation. So the read loop in [docs/concurrency.md](../concurrency.md#syntax) is unchanged. `read` is now a sender, and `wait` is how a coroutine consumes one. Senders also work without coroutines, through `then` chains and `sync_wait`. That matters because the coroutines (#77) are not built yet.
 
 ### 3. Backends: io_uring on Linux, and one proved completion adapter over kqueue and epoll
 
@@ -133,7 +134,7 @@ Nothing in sections 1 to 4 is specific to sockets. `Pia.Io`'s senders cover ever
 - **Streams and files alike.** `read_some` and `write_some` work on any descriptor: a file, a pipe, a socket or a terminal. Files also get positional `read_at` and `write_at` (`pread` and `pwrite`), whose footprints are byte ranges, so tasks that write disjoint ranges of one file are proved race-free by FPL ([docs/concurrency.md](../concurrency.md#resources-other-than-memory)). The flagship demo's parallel tile writes need exactly that.
 - **File operations are senders too.** `open` (`openat`), `close`, `fsync`, `stat`, `rename` and `unlink` are senders. `read_all` and `write_all` are senders composed from the others, proved to transfer exactly the buffer's length or to fail.
 - **The backend chooses how, per descriptor kind.** `open` returns a `file`, and `accept`, `connect` and `pipe` return a `stream`, so the choice is static. io_uring runs all of them natively (`IORING_OP_READ`, `WRITE`, `OPENAT`, `STATX`, `FSYNC` and `CLOSE`). The readiness adapter runs streams through kqueue or epoll and sends file operations to the blocking pool, since readiness says nothing useful about regular files. It is the same sender with the same laws either way, so the caller cannot tell the difference.
-- **Cancelling a file operation on the blocking pool** completes it as `stopped` only if it had not started. A `pread` that is already running cannot be interrupted, so it completes with its value, and the law that `stopped` means nothing happened still holds.
+- **Cancelling a file operation on the blocking pool** completes it with `Err Stopped` only if it had not started. A `pread` that is already running cannot be interrupted, so it completes with its value, and the law that `Stopped` means nothing happened still holds.
 - **Blocking I/O is the same layer.** The `reader` and `writer` concepts of `Pia.Io` ([docs/stdlib.md](../stdlib.md), [docs/cpp-std.md](../cpp-std.md)) are implemented over these senders, and the blocking forms are `sync_wait` of them. There is one I/O layer, not a blocking one beside an asynchronous one.
 
 ### 6. Pipelines: `|>`, with every error case proved handled
@@ -215,19 +216,21 @@ This is the generic form of the flagship demo's CPU and GPU pipeline ([ADR 0016]
 - The I/O stack is larger than a bare poller. Its lower layers are still needed (`Pia.Sys`), and the poller survives as `Readiness` inside the adapter.
 - `wait` gets a precise meaning: it connects a coroutine frame to a sender.
 
-## Questions for Dean
+## Answers
 
-1. **Is `stopped` its own channel, or a member of the error set?** The recommendation is to keep it separate in `Receiver`, as P2300 does, because a stop is not a failure and generic algorithms treat it differently. `wait` and `?` map it to `Err Stopped`, so handlers must cover it explicitly.
-2. **Should Linux fall back to epoll at run time?** The recommendation is yes. io_uring is disabled on some kernels and in some containers, and the fallback costs one `match` per submission. The alternative is io_uring only, with a clear error when it is missing.
-3. **On macOS, do regular files go to the blocking pool, or through POSIX AIO with `SIGEV_KEVENT`?** The recommendation is the blocking pool first. AIO is a true completion API for files, but its default limits are small and it does not cover sockets.
-4. **When do streams of completions arrive?** io_uring's multishot `accept` and `recv`, and repeating timers, complete many times, which is not a sender. The recommendation is to loop over single-shot senders in v1, and to add sequence senders, in the style of [P2849](https://wg21.link/p2849), in their own ADR.
-5. **Module name.** `Pia.Exec` follows `std::execution`. `Pia.Async` would be the alternative.
+Dean's answers (2026-11-23):
+
+1. **`Stopped` is a member of the error set**, not a third channel. Receivers have `value` and `error` only (section 1).
+2. **Linux probes io_uring and falls back to epoll** at run time, and CI tests both backends (section 3).
+3. **On macOS, regular files go to the blocking pool first.** POSIX AIO with `SIGEV_KEVENT` can come later as an optimisation behind the same senders (sections 3 and 5).
+4. **Multishot completions wait for their own ADR**, on sequence senders in the style of [P2849](https://wg21.link/p2849). Version 1 loops over single-shot senders.
+5. **The module is `Pia.Exec`**, after `std::execution`.
 
 ## Prior art
 
 | Source | What Pia takes |
 | --- | --- |
-| P2300 `std::execution`, stdexec, libunifex | senders, receivers, operation states, three completion channels, schedulers, environments, stop tokens |
+| P2300 `std::execution`, stdexec, libunifex | senders, receivers, operation states, completion channels, schedulers, environments, stop tokens |
 | P3149 `async_scope`, P3187 | scoped spawning instead of detached work |
 | tokio-uring, glommio, monoio | buffers moved into the operation and returned with the completion |
 | libuv, Tokio | completion over readiness, and file I/O on a blocking pool |

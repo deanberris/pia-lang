@@ -53,6 +53,6 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0047](0047-recursive-sum-types-and-shared-references.md) | Recursive sum types are explicit (`let rec`), recurse through an `Indirect` owning type, and share through `ref` and `weak`, mutated only under leases proved exclusive across threads | Accepted |
 | [0048](0048-buffers-whose-elements-hold-slices.md) | Buffers may hold slices: owned slices are written through, shared ones only read | Proposed |
 | [0049](0049-targets-are-theories.md) | Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in `Pia.Target` theory | Accepted |
-| [0050](0050-senders-and-receivers.md) | Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS | Proposed |
+| [0050](0050-senders-and-receivers.md) | Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS | Accepted |
 | [0051](0051-variadic-generics-and-foreign-varargs.md) | Variadic functions and types take a pack that is called and partially applied like any argument list, walked by metaprograms and proved once; sums over a pack are matched by type; foreign bindings are generated from headers | Accepted |
 | [0052](0052-atomics.md) | Atomics are a core cell type with checked memory orders, proved as if any task may write between two accesses, and lowered per target by a proved table | Proposed |
