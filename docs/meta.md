@@ -45,7 +45,7 @@ Expansion replaces each binary node with the operator's result, innermost first.
 
 ## The interpreter
 
-Values are integers (64-bit), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
+Values are integers (128-bit, so every bound of every Pia integer type fits, `u64`'s included; arithmetic that leaves that range is an error, not a wrap), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
 
 | Builtin | Meaning |
 | --- | --- |
@@ -280,6 +280,21 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
 
+A derive reads the type it is given with these builtins, besides `fields`, `constructors` and `range_of` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), step 3). `t` is a type item, or its name as a string:
+
+| Builtin | Meaning |
+| --- | --- |
+| `field_type t f` | the type of the field `f` of the record `t`, as written, as syntax |
+| `variants t` | the constructors of the variant `t`, each `[name; payload]`, with its payload type as syntax, or unit when it has none |
+| `attrs t` | the attributes on a type item, or on a function's return annotation, as written, `@derive` included |
+| `field_attrs t f` | the attributes on the field `f` of the record `t` |
+| `ctor_attrs t c` | the attributes on the constructor `c` of the variant `t` |
+| `bytes s` | the UTF-8 bytes of the string `s`, as integers |
+
+An attribute is `[name; args]`, and each argument `[key; value]`, with `""` as the key of a positional one. A literal argument is its value and a name its spelling as a string, so `@json(name = "x", ignore_unknown)` is `["json"; [["name"; "x"]; [""; "ignore_unknown"]]]`; any other argument is syntax.
+
+A derive's own attributes are its options: `@json(name = "x")` on a field, `| Rect @json(name = "r") of rect` on a constructor ([grammar.md](grammar.md)), or `@json(tag = "kind")` on the type. Once every derive of the type has run, the attributes named after one leave the type, its fields and its constructors, so the rest of the compiler never sees them. An attribute on a field or a constructor that no derive of its type reads is an error that names the derive to add, rather than one that is ignored (`tests/meta/derive_builtins.pia`, `tests/meta/derive_builtin_errors.pia`).
+
 ## Generators
 
 A generator is a metaprogram that reads a function's signature and contract and writes tests for it ([ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md)). Besides `params`, `hypotheses` and `conclusion` (see [Tactics](#tactics)), which work on any function item, it has:
@@ -288,7 +303,7 @@ A generator is a metaprogram that reads a function's signature and contract and 
 | --- | --- |
 | `param_types f` | the type of each parameter of the function `f`, as written, as a list of syntax |
 | `return_type f` | `f`'s return type, as written; a function without one is an error |
-| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `i16`, a range `int{-2..2}`, or a type value. `u64` and `usize` are an error, since their upper bound does not fit a metaprogram integer |
+| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `u64`, `i16`, a range `int{-2..2}`, or a type value |
 | `constructors t` | the constructor names of the variant type `t` (an item, or its name), as strings |
 | `subst e n v` | the syntax `e` with every name `n` replaced by `v`: syntax, a string (a name), an integer or a bool. Pia has no shadowing, so this cannot capture |
 

@@ -18,10 +18,14 @@ past ()
 let meta uneven () : list = map (let (p) => nth p 0) (zip [ `( let c : u8 = 1 ); `( let d : u8 = 2 ) ] [ 1 ])
 uneven ()
 
-(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'bounds' failed: 'range_of': the upper bound of u64 does not fit a metaprogram integer
+(* u64's bounds fit a metaprogram integer, which is 128 bits, but its
+   arithmetic is checked: past the range is an error, not a wrap.
+// CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'past_top' failed: '*' overflows a metaprogram integer
 *)
+let meta past_top () : list = [ `( let h : u8 = $(nth (range_of "u64") 1 * nth (range_of "u64") 1 * 2) ) ]
+past_top ()
+
 let meta bounds (f : syntax) : list = map (let (t) => `( let e : u8 = $(nth (range_of t) 0) )) (param_types f)
-bounds wide
 
 (* CHECK: generator_errors.pia:[[@LINE+2]]:1: error: the metaprogram 'bounds' failed: 'range_of' needs an integer type with bounds
 *)
