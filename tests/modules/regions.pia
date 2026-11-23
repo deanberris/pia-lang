@@ -1,0 +1,27 @@
+(* An importer uses a type and a function whose interface names regions
+   (ADR 0042): `take3`'s result lives in the region of the bump it was
+   given, and `use` writes through it.
+// RUN: piac --emit=interface -o %t %S/Inputs/bump.pia
+// RUN: piac --verify %S/Inputs/bump.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Mem.Bump.Bumps
+
+let take3 (r : region) (m : inout mutable Mem.Bump.bump u8 r) : result (borrowed(r) out mutable [u8]) Mem.Bump.oom
+  requires m.used <= len m.mem
+  ensures (match result with | Ok b -> len b = 3 | Err _ -> true)
+= Mem.Bump.alloc m 3
+
+let use (xs : borrowed mutable [u8]) : u8
+  requires len xs >= 3
+= let m : mutable Mem.Bump.bump u8 = { mem = xs; used = 0 } in
+  match take3 m with
+  | Err _ -> 0
+  | Ok s -> s.[0] <- 5; s.[2] <- 6; s.[2]
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed
+// CHECK-NOT: failed
+// CHECK: 0 failed
+*)

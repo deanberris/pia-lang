@@ -92,13 +92,22 @@ class Eraser {
       }
       items.push_back(item.get());
     }
-    // First the generic types, whose shapes the rest need.
-    for (Node *item : items)
-      if (isGenericType(*item)) shapeOf(*item);
-      else if (isConcept(*item)) conceptShapeOf(*item);
+    // First the generic types, whose shapes the rest need, including
+    // those an interface shows.
     for (Node *item : items) {
-      if (isGenericType(*item)) {
-        eraseInType(*item);
+      if (isGenericType(*item))
+        shapeOf(item->text, *item->kids[3]);
+      else if (isConcept(*item)) conceptShapeOf(*item);
+      else if (item->kind == NodeKind::Interface)
+        for (NodePtr &r : item->kids)
+          if (isGenericSigType(*r))
+            shapeOf(r->text, *r->kids[0]);
+    }
+    for (Node *item : items) {
+      if (item->kind == NodeKind::Interface) {
+        eraseInInterface(*item);
+      } else if (isGenericType(*item)) {
+        eraseInType(item->text, item->kids[3], *item);
       } else if (isConcept(*item)) {
         eraseInConcept(*item);
       } else if (isFunction(*item)) {
@@ -110,13 +119,85 @@ class Eraser {
   }
 
  private:
-  void shapeOf(Node &item) {
-    Node &value = *item.kids[3];
-    Shape s;
-    for (size_t i = 0; i + 1 < value.kids.size(); ++i)
-      s.region.push_back(isRegionParam(*value.kids[i]));
-    if (s.regions()) shapes_[item.text] = std::move(s);
-  }
+   void shapeOf(const std::string &name, const Node &value) {
+     Shape s;
+     for (size_t i = 0; i + 1 < value.kids.size(); ++i)
+       s.region.push_back(isRegionParam(*value.kids[i]));
+     if (s.regions())
+       shapes_[name] = std::move(s);
+   }
+
+   // `let t = let (u : type) (r : region) => type ...` in an interface.
+   static bool isGenericSigType(const Node &r) {
+     if (r.kind != NodeKind::SigType || r.kids.empty())
+       return false;
+     const Node &v = *r.kids[0];
+     return v.kind == NodeKind::Lambda && !v.kids.empty() &&
+            v.kids.back()->kind == NodeKind::TypeValue;
+   }
+
+   // An interface shows types and signatures as the module defines them,
+   // so they lose their regions the same way, and an interface's copy
+   // still matches the definition's (ADR 0042, step 2).
+   void eraseInInterface(Node &iface) {
+     for (NodePtr &r : iface.kids) {
+       if (isGenericSigType(*r)) {
+         eraseInType(r->text, r->kids[0], *r);
+       } else if (r->kind == NodeKind::SigVal && !r->kids.empty() &&
+                  r->kids[0]->kids.size() > 1) {
+         eraseInSignature(*r);
+       } else {
+         strip(*r, {});
+       }
+     }
+   }
+
+   // `let f : (t : type) -> (r : region) -> (m : inout bump t r) -> ...`:
+   // the region domains go, a domain whose type mentions a region is
+   // flagged with it, and `borrowed(r)` naming one is flagged "region", as
+   // a function's own parameters are.
+   void eraseInSignature(Node &sigVal) {
+     std::vector<std::string> regions;
+     NodePtr *slot = &sigVal.kids[0]->kids[1];
+     while ((*slot)->kind == NodeKind::ArrowType && (*slot)->kids.size() == 2) {
+       Node &dom = *(*slot)->kids[0];
+       if (dom.kids.size() > 1 && dom.kids[1]->kind == NodeKind::TypeName &&
+           dom.kids[1]->text == "region") {
+         addUnique(regions, dom.text);
+         NodePtr rest = std::move((*slot)->kids[1]);
+         *slot = std::move(rest);
+         continue;
+       }
+       slot = &(*slot)->kids[1];
+     }
+     if (regions.empty()) {
+       strip(sigVal, {});
+       return;
+     }
+     auto isRegion = [&](const std::string &n) {
+       return std::find(regions.begin(), regions.end(), n) != regions.end();
+     };
+     Node *cur = sigVal.kids[0]->kids[1].get();
+     for (; cur->kind == NodeKind::ArrowType; cur = cur->kids[1].get()) {
+       Node &dom = *cur->kids[0];
+       std::vector<std::string> m;
+       if (dom.kids.size() > 1)
+         mentionsOf(*dom.kids[1], m);
+       forEachLender(dom, [&](Node &lender) {
+         if (!isRegion(lender.text))
+           return;
+         lender.flags = "region";
+         addUnique(m, lender.text);
+       });
+       if (!m.empty())
+         dom.flags = "regions:" + join(m);
+     }
+     forEachLender(*cur, [&](Node &lender) {
+       if (isRegion(lender.text))
+         lender.flags = "region";
+     });
+     strip(sigVal, regions);
+   }
 
   void conceptShapeOf(Node &item) {
     Shape s;
@@ -213,8 +294,10 @@ class Eraser {
     return names;
   }
 
-  void eraseInType(Node &item) {
-    Node &value = *item.kids[3];
+  // A generic type's definition, `slot` in `item`: a type item's value,
+  // or an interface's copy of it.
+  void eraseInType(const std::string &name, NodePtr &slot, Node &item) {
+    Node &value = *slot;
     std::vector<std::string> regions =
         takeRegions(value, 0, value.kids.size() - 1);
     if (regions.empty()) {
@@ -232,10 +315,11 @@ class Eraser {
         const std::string &lender = mods.kids[0]->text;
         if (std::find(regions.begin(), regions.end(), lender) ==
             regions.end()) {
-          diags_.error(mods.kids[0]->loc,
-                       "'borrowed(" + lender + ")' on a field names a region "
-                       "parameter of its type, and '" + item.text +
-                       "' has no region '" + lender + "'");
+          diags_.error(mods.kids[0]->loc, "'borrowed(" + lender +
+                                              ")' on a field names a region "
+                                              "parameter of its type, and '" +
+                                              name + "' has no region '" +
+                                              lender + "'");
           continue;
         }
         llvm::SmallVector<llvm::StringRef> words;
@@ -249,14 +333,14 @@ class Eraser {
                                lender + ") mutable', and nothing else");
           continue;
         }
-        info_.lentFields.insert(item.text + "." + f->text);
+        info_.lentFields.insert(name + "." + f->text);
         mods.text.clear();
         mods.kids.clear();
       }
     // A type of regions only is a plain type.
     if (value.kids.size() == 1) {
       NodePtr tvp = std::move(value.kids.back());
-      item.kids[3] = std::move(tvp);
+      slot = std::move(tvp);
     }
     strip(item, regions);
   }
