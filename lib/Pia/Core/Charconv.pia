@@ -1,0 +1,245 @@
+(* Pia.Core.Charconv: <charconv>'s from_chars for integers (ADR 0040,
+   phase 1.9, docs/cpp-std.md), in any base from 2 to 36, for u8, u16,
+   u32, i8, i16 and i32.
+
+   from_chars s base value reads the digits s begins with (0-9, then a-z
+   or A-Z for 10 to 35; a signed type takes one leading '-'), as C++'s
+   does, and says how many it used. Its contract states the value
+   exactly, as the spec function `num`: the digits' value in the base,
+   saturated at one past the largest so that it stays a u64. An error
+   leaves `value` as it was, as C++'s does: Invalid when there are no
+   digits, OutOfRange when their value does not fit, with `used` then
+   counting every digit. One proof, parse_digits, scans the digits for
+   every type, and a signed type's contract is the one spec
+   signed_parse, which keeps the interface's check of it cheap.
+
+   Not here yet: u64 and i64, whose overflow check needs a division by
+   the base; and to_chars, whose round trip with from_chars needs the
+   value of written digits proved, which the solver does not do in
+   reasonable time for more than a few digits (docs/cpp-std.md). *)
+module Pia.Core.Charconv : Charconv
+
+interface Charconv = sig
+  let errc = type | Ok | Invalid | OutOfRange
+  let is_ok : (e : errc) -> bool
+    ensures result <==> (match e with | Ok -> true | Invalid -> false | OutOfRange -> false)
+  let is_invalid : (e : errc) -> bool
+    ensures result <==> (match e with | Ok -> false | Invalid -> true | OutOfRange -> false)
+  let is_out_of_range : (e : errc) -> bool
+    ensures result <==> (match e with | Ok -> false | Invalid -> false | OutOfRange -> true)
+  let spec digit_of : (b : u8) -> (base : int{2..36}) -> u32
+  let spec num : (s : [u8]) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> (cap : u64) -> u64
+  let spec run : (s : [u8]) -> (i : usize) -> (base : int{2..36}) -> usize
+  let spec signed_parse : (s : [u8]) -> (base : int{2..36}) -> (pos : u64) -> (neg : u64) -> (value : i64) -> (count : usize) -> (ec : errc) -> (got : i64) -> bool
+  let digit_value : (b : u8) -> (base : int{2..36}) -> u32
+    ensures result = digit_of b base
+  let digits = type { mag : u64; used : usize; ec : errc }
+  let parse_digits : (s : [u8]) -> (start : usize) -> (base : int{2..36}) -> (max : u64) -> digits
+    requires start <= len s && max <= 4294967295
+    ensures result.used = run s start base
+    ensures result.used = 0 ==> is_invalid (result.ec)
+    ensures result.used > 0 && num s start (start + result.used) base (max + 1) <= max ==> is_ok (result.ec) && result.mag = num s start (start + result.used) base (max + 1)
+    ensures result.used > 0 && num s start (start + result.used) base (max + 1) > max ==> is_out_of_range (result.ec)
+    ensures is_ok (result.ec) ==> result.mag <= max
+  let parsed_u8 = type { value : u8; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u8) -> parsed_u8
+    ensures result.used = run s 0 base
+    ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (255 + 1) <= 255 ==> is_ok (result.ec) && result.value = num s 0 result.used base (255 + 1)
+    ensures result.used > 0 && num s 0 result.used base (255 + 1) > 255 ==> is_out_of_range (result.ec) && result.value = value
+  let parsed_u16 = type { value : u16; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u16) -> parsed_u16
+    ensures result.used = run s 0 base
+    ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (65535 + 1) <= 65535 ==> is_ok (result.ec) && result.value = num s 0 result.used base (65535 + 1)
+    ensures result.used > 0 && num s 0 result.used base (65535 + 1) > 65535 ==> is_out_of_range (result.ec) && result.value = value
+  let parsed_u32 = type { value : u32; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u32) -> parsed_u32
+    ensures result.used = run s 0 base
+    ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) <= 4294967295 ==> is_ok (result.ec) && result.value = num s 0 result.used base (4294967295 + 1)
+    ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) > 4294967295 ==> is_out_of_range (result.ec) && result.value = value
+  let parsed_i8 = type { value : i8; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i8) -> parsed_i8
+    ensures signed_parse s base ((1 << 7) - 1) (1 << 7) value result.used result.ec result.value
+  let parsed_i16 = type { value : i16; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i16) -> parsed_i16
+    ensures signed_parse s base ((1 << 15) - 1) (1 << 15) value result.used result.ec result.value
+  let parsed_i32 = type { value : i32; used : usize; ec : errc }
+  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32
+    ensures signed_parse s base ((1 << 31) - 1) (1 << 31) value result.used result.ec result.value
+end
+
+(** C++'s std::errc for from_chars: Ok, Invalid (invalid_argument: no
+    digits) or OutOfRange (result_out_of_range). *)
+let errc = type | Ok | Invalid | OutOfRange
+
+let is_ok (e : errc) : bool
+  ensures result <==> (match e with | Ok -> true | Invalid -> false | OutOfRange -> false)
+= match e with | Ok -> true | Invalid -> false | OutOfRange -> false
+let is_invalid (e : errc) : bool
+  ensures result <==> (match e with | Ok -> false | Invalid -> true | OutOfRange -> false)
+= match e with | Ok -> false | Invalid -> true | OutOfRange -> false
+let is_out_of_range (e : errc) : bool
+  ensures result <==> (match e with | Ok -> false | Invalid -> false | OutOfRange -> true)
+= match e with | Ok -> false | Invalid -> false | OutOfRange -> true
+
+(** The value of b as a digit in base `base`, or base when it is none:
+    0-9, then a-z or A-Z for 10 to 35. *)
+let spec digit_of (b : u8) (base : int{2..36}) : u32
+= let v : u32 =
+    if 48 <= b && b <= 57 then b - 48
+    else if 97 <= b && b <= 122 then b - 87
+    else if 65 <= b && b <= 90 then b - 55
+    else 36 in
+  if v < base then v else base
+
+(** The value of s.[i .. j] in base `base`, saturated at cap: every
+    value from cap up means "too big". *)
+let spec num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) : u64
+  requires i <= j && j <= len s && cap <= 4294967296
+  ensures result <= cap
+  decreases j - i
+= if i = j then 0
+  else (
+    let p = num s i (j - 1) base cap in
+    let d : u64 = if digit_of s.[j - 1] base < base then digit_of s.[j - 1] base else 0 in
+    let b : u64 = base in
+    let x = p * b + d in
+    if x > cap then cap else x)
+
+(** How many digits of base `base` s.[i ..] begins with. *)
+let spec run (s : [u8]) (i : usize) (base : int{2..36}) : usize
+  requires i <= len s
+  ensures i + result <= len s
+  decreases len s - i
+= if i = len s then 0 else if digit_of s.[i] base < base then run s (i + 1) base + 1 else 0
+
+let digit_value (b : u8) (base : int{2..36}) : u32
+  ensures result = digit_of b base
+= let v : u32 =
+    if 48 <= b && b <= 57 then b - 48
+    else if 97 <= b && b <= 122 then b - 87
+    else if 65 <= b && b <= 90 then b - 55
+    else 36 in
+  if v < base then v else base
+
+(** The digits are those s.[start ..] begins with, the magnitude their
+    value, and ec says whether there were any and whether the value is
+    at most max. *)
+let digits = type { mag : u64; used : usize; ec : errc }
+
+(** Scans the digits of base `base` at s.[start ..]: how many there are,
+    their value when it is at most max, and the error otherwise. *)
+let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (max : u64) : digits
+  requires start <= len s && max <= 4294967295
+  ensures result.used = run s start base
+  ensures result.used = 0 ==> is_invalid (result.ec)
+  ensures result.used > 0 && num s start (start + result.used) base (max + 1) <= max ==>
+    is_ok (result.ec) && result.mag = num s start (start + result.used) base (max + 1)
+  ensures result.used > 0 && num s start (start + result.used) base (max + 1) > max ==> is_out_of_range (result.ec)
+  ensures is_ok (result.ec) ==> result.mag <= max
+= let acc : mutable u64 = 0 in
+  let over : mutable bool = false in
+  let i : mutable usize = start in
+  let going : mutable bool = true in
+  let b : u64 = base in
+  while going && i < len s
+    invariant start <= i && i <= len s
+    invariant run s start base + start = i + run s i base
+    invariant going = false ==> run s i base = 0
+    invariant over = false ==> acc = num s start i base (max + 1) && acc <= max
+    invariant over ==> num s start i base (max + 1) > max
+    decreases len s - i + (if going then 1 else 0)
+  do
+    let dv = digit_value s.[i] base in
+    if dv < base then (
+      let d : u64 = dv in
+      assert run s i base = run s (i + 1) base + 1;
+      if over then (
+        assert num s start (i + 1) base (max + 1) > max;
+        i <- i + 1)
+      else (
+        let next = acc * b + d in
+        assert d = (if digit_of s.[i] base < base then digit_of s.[i] base else 0);
+        assert next = num s start i base (max + 1) * b + d;
+        assert next <= max ==> num s start (i + 1) base (max + 1) = next;
+        if next > max then (
+          assert num s start (i + 1) base (max + 1) > max;
+          over <- true)
+        else acc <- next;
+        i <- i + 1))
+    else going <- false
+  done;
+  assert run s i base = 0;
+  if i = start then { mag = 0; used = 0; ec = Invalid }
+  else if over then { mag = 0; used = i - start; ec = OutOfRange }
+  else { mag = acc; used = i - start; ec = Ok }
+
+(* from_chars for the unsigned type `t`, whose largest value is `max`,
+   returning the record `r`. As C++'s, it leaves `value` as it was on an
+   error. *)
+let meta unsigned_from_chars (t : string) (r : string) (max : int) : item =
+  `( let $r = type { value : $t; used : usize; ec : errc }
+
+     let from_chars ($!s : [u8]) ($!base : int{2..36}) ($!value : $t) : $r
+       ensures $!result.used = run $!s 0 $!base
+       ensures $!result.used = 0 ==> is_invalid ($!result.ec) && $!result.value = $!value
+       ensures $!result.used > 0 && num $!s 0 $!result.used $!base ($max + 1) <= $max ==>
+         is_ok ($!result.ec) && $!result.value = num $!s 0 $!result.used $!base ($max + 1)
+       ensures $!result.used > 0 && num $!s 0 $!result.used $!base ($max + 1) > $max ==>
+         is_out_of_range ($!result.ec) && $!result.value = $!value
+     = let $!d = parse_digits $!s 0 $!base $max in
+       if is_ok ($!d.ec) then (let $!v : $t = $!d.mag in { value = $!v; used = $!d.used; ec = Ok })
+       else { value = $!value; used = $!d.used; ec = $!d.ec } )
+
+(** What from_chars returns for a signed type whose largest value is pos
+    and whose smallest is -neg, from s, base and the value it was given:
+    an optional '-', then digits, a '-' alone being Invalid with nothing
+    used, and value kept on any error. *)
+let spec signed_parse (s : [u8]) (base : int{2..36}) (pos : u64) (neg : u64) (value : i64) (count : usize) (ec : errc) (got : i64) : bool
+  requires pos <= 4294967295 && neg <= 4294967295
+= if count > len s then false
+  else if count = 0 && (is_invalid ec = false || got <> value) then false
+  else if len s > 0 then (
+    if s.[0] = 45 then (
+      (if run s 1 base = 0 then count = 0 else count = 1 + run s 1 base) &&
+      (if count > 1 then (
+         if num s 1 count base (neg + 1) <= neg then is_ok ec && got = 0 - num s 1 count base (neg + 1)
+         else is_out_of_range ec && got = value)
+       else true))
+    else (
+      count = run s 0 base &&
+      (if count > 0 then (
+         if num s 0 count base (pos + 1) <= pos then is_ok ec && got = num s 0 count base (pos + 1)
+         else is_out_of_range ec && got = value)
+       else true)))
+  else count = 0
+
+(* from_chars for the signed type `t` of `w` bits, returning the record
+   `r`: an optional '-', then digits. A '-' with no digits after it is
+   Invalid, with nothing used, as C++'s. *)
+let meta signed_from_chars (t : string) (r : string) (w : int) : item =
+  `( let $r = type { value : $t; used : usize; ec : errc }
+
+     let from_chars ($!s : [u8]) ($!base : int{2..36}) ($!value : $t) : $r
+       ensures signed_parse $!s $!base ((1 << $(w - 1)) - 1) (1 << $(w - 1)) $!value $!result.used $!result.ec $!result.value
+     = if len $!s > 0 && $!s.[0] = 45 then (
+         let $!d = parse_digits $!s 1 $!base (1 << $(w - 1)) in
+         if $!d.used = 0 then { value = $!value; used = 0; ec = Invalid }
+         else if is_ok ($!d.ec) then (
+           let $!m : i64 = $!d.mag in
+           let $!v : $t = 0 - $!m in
+           { value = $!v; used = $!d.used + 1; ec = Ok })
+         else { value = $!value; used = $!d.used + 1; ec = $!d.ec })
+       else (
+         let $!d = parse_digits $!s 0 $!base ((1 << $(w - 1)) - 1) in
+         if is_ok ($!d.ec) then (let $!v : $t = $!d.mag in { value = $!v; used = $!d.used; ec = Ok })
+         else { value = $!value; used = $!d.used; ec = $!d.ec }) )
+
+unsigned_from_chars "u8" "parsed_u8" 255
+unsigned_from_chars "u16" "parsed_u16" 65535
+unsigned_from_chars "u32" "parsed_u32" 4294967295
+signed_from_chars "i8" "parsed_i8" 8
+signed_from_chars "i16" "parsed_i16" 16
+signed_from_chars "i32" "parsed_i32" 32
