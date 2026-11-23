@@ -19,21 +19,26 @@ using N = syntax::NodeKind;
 TextIndex::TextIndex(std::string_view text) : text_(text) {
   lineStarts_.push_back(0);
   for (uint32_t i = 0; i < text.size(); ++i)
-    if (text[i] == '\n') lineStarts_.push_back(i + 1);
+    if (text[i] == '\n')
+      lineStarts_.push_back(i + 1);
 }
 
 namespace {
 
 // Bytes in the UTF-8 sequence that starts with `lead`.
 uint32_t utf8Length(unsigned char lead) {
-  if (lead < 0x80) return 1;
-  if ((lead >> 5) == 0x6) return 2;
-  if ((lead >> 4) == 0xE) return 3;
-  if ((lead >> 3) == 0x1E) return 4;
-  return 1;  // a stray continuation byte counts as one
+  if (lead < 0x80)
+    return 1;
+  if ((lead >> 5) == 0x6)
+    return 2;
+  if ((lead >> 4) == 0xE)
+    return 3;
+  if ((lead >> 3) == 0x1E)
+    return 4;
+  return 1; // a stray continuation byte counts as one
 }
 
-}  // namespace
+} // namespace
 
 Position TextIndex::position(uint32_t offset) const {
   offset = std::min<uint32_t>(offset, text_.size());
@@ -49,7 +54,8 @@ Position TextIndex::position(uint32_t offset) const {
 }
 
 uint32_t TextIndex::offset(Position pos) const {
-  if (pos.line >= lineStarts_.size()) return size();
+  if (pos.line >= lineStarts_.size())
+    return size();
   uint32_t i = lineStarts_[pos.line];
   uint32_t units = 0;
   while (i < text_.size() && text_[i] != '\n' && units < pos.character) {
@@ -61,8 +67,10 @@ uint32_t TextIndex::offset(Position pos) const {
 }
 
 uint32_t TextIndex::offsetOfLineColumn(uint32_t line, uint32_t column) const {
-  if (line == 0) return 0;
-  if (line > lineStarts_.size()) return size();
+  if (line == 0)
+    return 0;
+  if (line > lineStarts_.size())
+    return size();
   uint32_t start = lineStarts_[line - 1];
   uint32_t end = line < lineStarts_.size() ? lineStarts_[line] : size();
   return std::min(start + (column > 0 ? column - 1 : 0), end);
@@ -84,32 +92,41 @@ bool opChar(char c) {
          std::string_view::npos;
 }
 
-}  // namespace
+} // namespace
 
 Range tokenAt(std::string_view text, uint32_t offset) {
   uint32_t n = static_cast<uint32_t>(text.size());
   offset = std::min(offset, n);
   auto grow = [&](auto pred) {
     uint32_t b = offset, e = offset;
-    while (b > 0 && pred(text[b - 1])) --b;
-    while (e < n && pred(text[e])) ++e;
+    while (b > 0 && pred(text[b - 1]))
+      --b;
+    while (e < n && pred(text[e]))
+      ++e;
     return Range{b, e};
   };
-  if (offset < n && identChar(text[offset])) return grow(identChar);
-  if (offset > 0 && identChar(text[offset - 1])) return grow(identChar);
-  if (offset < n && opChar(text[offset])) return grow(opChar);
-  if (offset > 0 && opChar(text[offset - 1])) return grow(opChar);
+  if (offset < n && identChar(text[offset]))
+    return grow(identChar);
+  if (offset > 0 && identChar(text[offset - 1]))
+    return grow(identChar);
+  if (offset < n && opChar(text[offset]))
+    return grow(opChar);
+  if (offset > 0 && opChar(text[offset - 1]))
+    return grow(opChar);
   return {offset, offset};
 }
 
 Range tokenFrom(std::string_view text, uint32_t offset) {
   uint32_t n = static_cast<uint32_t>(text.size());
-  if (offset >= n) return {n, n};
+  if (offset >= n)
+    return {n, n};
   uint32_t e = offset;
   if (identChar(text[e])) {
-    while (e < n && identChar(text[e])) ++e;
+    while (e < n && identChar(text[e]))
+      ++e;
   } else if (opChar(text[e])) {
-    while (e < n && opChar(text[e])) ++e;
+    while (e < n && opChar(text[e]))
+      ++e;
   } else if (text[e] != '\n') {
     e += utf8Length(static_cast<unsigned char>(text[e]));
   }
@@ -118,14 +135,14 @@ Range tokenFrom(std::string_view text, uint32_t offset) {
 
 const std::vector<std::string_view> &keywords() {
   static const std::vector<std::string_view> words = {
-      "let",      "rec",      "meta",     "in",        "type",     "of",
-      "where",    "if",       "then",     "else",      "match",    "with",
-      "for",      "spread",   "while",    "do",        "done",     "requires",
-      "ensures",  "invariant", "decreases", "assert",  "assume",   "forall",
-      "exists",   "interface", "sig",     "module",    "struct",   "end",
-      "import",   "operator", "true",     "false",     "borrowed", "moved",
-      "out",      "inout",    "fixed",    "mutable",   "mod",      "step",
-      "handle",   "defer",    "as"};
+      "let",     "rec",       "meta",      "in",      "type",     "of",
+      "where",   "if",        "then",      "else",    "match",    "with",
+      "for",     "spread",    "while",     "do",      "done",     "requires",
+      "ensures", "invariant", "decreases", "assert",  "assume",   "forall",
+      "exists",  "interface", "sig",       "module",  "struct",   "end",
+      "import",  "operator",  "true",      "false",   "borrowed", "moved",
+      "out",     "inout",     "fixed",     "mutable", "mod",      "step",
+      "handle",  "defer",     "as"};
   return words;
 }
 
@@ -135,13 +152,15 @@ namespace {
 
 // The first occurrence of `name` as a whole word at or after `from`.
 uint32_t findWord(std::string_view text, uint32_t from, std::string_view name) {
-  if (name.empty()) return from;
+  if (name.empty())
+    return from;
   size_t pos = from;
   while ((pos = text.find(name, pos)) != std::string_view::npos) {
     bool before = pos == 0 || !identChar(text[pos - 1]);
     size_t end = pos + name.size();
     bool after = end >= text.size() || !identChar(text[end]);
-    if (before && after) return static_cast<uint32_t>(pos);
+    if (before && after)
+      return static_cast<uint32_t>(pos);
     pos = end;
   }
   return from;
@@ -176,9 +195,11 @@ uint32_t startOf(const Node &n) {
   uint32_t best = n.loc.offset;
   bool any = n.loc.line != 0;
   for (const auto &k : n.kids) {
-    if (!k || k->kind == N::None) continue;
+    if (!k || k->kind == N::None)
+      continue;
     uint32_t s = startOf(*k);
-    if (!any || s < best) best = s;
+    if (!any || s < best)
+      best = s;
     any = true;
   }
   return best;
@@ -204,25 +225,31 @@ std::string letHeader(std::string_view text, const Node &let) {
   const Node *body = kid(let, 3);
   uint32_t begin = let.loc.offset;
   uint32_t end = body ? startOf(*body) : begin;
-  if (end <= begin || end > text.size()) return "let " + let.text;
+  if (end <= begin || end > text.size())
+    return "let " + let.text;
   std::string_view s = rtrim(text.substr(begin, end - begin));
-  if (!s.empty() && s.back() == '=') s = rtrim(s.substr(0, s.size() - 1));
+  if (!s.empty() && s.back() == '=')
+    s = rtrim(s.substr(0, s.size() - 1));
   return capLines(s, 12);
 }
 
 // A parameter as written: from its name to the `)` that closes its group.
 std::string paramText(std::string_view text, const Node &p) {
-  if (p.kids.empty()) return p.text;
+  if (p.kids.empty())
+    return p.text;
   uint32_t i = p.loc.offset;
   int depth = 0;
   for (; i < text.size(); ++i) {
     char c = text[i];
-    if (c == '(' || c == '[' || c == '{') ++depth;
+    if (c == '(' || c == '[' || c == '{')
+      ++depth;
     if (c == ')' || c == ']' || c == '}') {
-      if (depth == 0) break;
+      if (depth == 0)
+        break;
       --depth;
     }
-    if (c == '\n' && depth == 0) break;
+    if (c == '\n' && depth == 0)
+      break;
   }
   return std::string(rtrim(text.substr(p.loc.offset, i - p.loc.offset)));
 }
@@ -234,16 +261,18 @@ std::string fence(std::string_view code) {
 // ------------------------------------------------------------ resolution
 
 class Resolver {
- public:
+public:
   Resolver(std::string_view text, uint32_t target)
       : text_(text), target_(target) {}
 
   std::optional<Binding> run(const Node &program) {
     scopes_.emplace_back();
     for (const auto &item : program.kids)
-      if (item && item->kind == N::LetItem) bindLet(*item);
+      if (item && item->kind == N::LetItem)
+        bindLet(*item);
     for (const auto &item : program.kids)
-      if (item) walk(*item);
+      if (item)
+        walk(*item);
     return found_;
   }
 
@@ -264,17 +293,21 @@ class Resolver {
     Resolver r(text, target);
     const Node *around = nullptr;
     for (const auto &item : program.kids) {
-      if (!item || item->kind != N::LetItem) continue;
+      if (!item || item->kind != N::LetItem)
+        continue;
       out.push_back(r.letBinding(*item));
-      if (item->loc.offset <= target) around = item.get();
+      if (item->loc.offset <= target)
+        around = item.get();
     }
-    if (!around) return;
+    if (!around)
+      return;
     if (const Node *ps = kid(*around, 0))
       for (const auto &p : ps->kids)
-        if (p->kind == N::Param) out.push_back(r.paramBinding(*p));
+        if (p->kind == N::Param)
+          out.push_back(r.paramBinding(*p));
   }
 
- private:
+private:
   using Scope = std::vector<Binding>;
 
   Binding letBinding(const Node &let) {
@@ -294,14 +327,16 @@ class Resolver {
       uint32_t begin = let.loc.offset;
       uint32_t end = static_cast<uint32_t>(text_.size());
       size_t next = text_.find("\nlet ", begin);
-      if (next != std::string_view::npos) end = static_cast<uint32_t>(next);
+      if (next != std::string_view::npos)
+        end = static_cast<uint32_t>(next);
       b.snippet = fence(capLines(rtrim(text_.substr(begin, end - begin)), 15));
     } else {
       b.snippet = fence(letHeader(text_, let));
     }
     // Its doc comment, or the literate prose before it (ADR 0029).
     std::string doc = syntax::docText(let);
-    if (!doc.empty()) b.snippet += "\n" + doc;
+    if (!doc.empty())
+      b.snippet += "\n" + doc;
     return b;
   }
 
@@ -315,6 +350,20 @@ class Resolver {
     return b;
   }
 
+  // `result`, the name a function's contracts use for its return value.
+  // It has no name in the source, so its range is empty.
+  Binding resultBinding(const Node &ret, const Node &contracts) {
+    Binding r;
+    r.name = "result";
+    r.role = "result";
+    r.nameRange = {ret.loc.offset, ret.loc.offset};
+    uint32_t end = std::max(contracts.loc.offset, ret.loc.offset);
+    r.snippet = fence(
+        "(result) result " +
+        std::string(rtrim(text_.substr(ret.loc.offset, end - ret.loc.offset))));
+    return r;
+  }
+
   Binding simple(const Node &n, std::string role) {
     Binding b;
     b.name = n.text;
@@ -326,36 +375,38 @@ class Resolver {
   }
 
   void bind(Binding b) {
-    if (!found_ && b.nameRange.begin == target_ && b.nameRange.end > target_)
-      found_ = b;
-    else if (!found_ && b.nameRange.begin < target_ &&
-             target_ < b.nameRange.end)
+    if (!found_ && b.nameRange.begin <= target_ && target_ < b.nameRange.end)
       found_ = b;
     scopes_.back().push_back(std::move(b));
   }
 
   void bindLet(const Node &let) { bind(letBinding(let)); }
 
-  void lookup(const Node &name) {
-    if (found_) return;
-    uint32_t b = name.loc.offset;
-    uint32_t e = b + static_cast<uint32_t>(name.text.size());
-    if (uses_) {
-      for (auto s = scopes_.rbegin(); s != scopes_.rend(); ++s)
-        for (auto it = s->rbegin(); it != s->rend(); ++it)
-          if (it->name == name.text) {
-            uses_->emplace_back(Range{b, e}, *it);
-            return;
-          }
-      return;
-    }
-    if (target_ < b || target_ >= e) return;
+  // The innermost binding of `name`, searching from the latest scope
+  // outwards so that a local hides a top-level name.
+  const Binding *innermost(const std::string &name) const {
     for (auto s = scopes_.rbegin(); s != scopes_.rend(); ++s)
       for (auto it = s->rbegin(); it != s->rend(); ++it)
-        if (it->name == name.text) {
-          found_ = *it;
-          return;
-        }
+        if (it->name == name)
+          return &*it;
+    return nullptr;
+  }
+
+  void lookup(const Node &name) {
+    if (found_)
+      return;
+    uint32_t b = name.loc.offset;
+    uint32_t e = b + static_cast<uint32_t>(name.text.size());
+    // Collecting every use ignores the target.
+    if (!uses_ && (target_ < b || target_ >= e))
+      return;
+    const Binding *binding = innermost(name.text);
+    if (!binding)
+      return;
+    if (uses_)
+      uses_->emplace_back(Range{b, e}, *binding);
+    else
+      found_ = *binding;
   }
 
   // Binds the variables of a pattern in the current scope.
@@ -368,12 +419,17 @@ class Resolver {
       bind(simple(p, role));
       return;
     }
-    if (p.kind == N::PAs) bind(simple(p, role));
-    for (const auto &k : p.kids)
-      if (k) {
-        if (p.kind == N::PTyped && k.get() != p.kids[0].get()) walk(*k);
-        else bindPattern(*k, role);
-      }
+    if (p.kind == N::PAs)
+      bind(simple(p, role));
+    for (const auto &k : p.kids) {
+      if (!k)
+        continue;
+      // In `(x : t)` only `x` binds; the type is an ordinary expression.
+      if (p.kind == N::PTyped && k.get() != p.kids[0].get())
+        walk(*k);
+      else
+        bindPattern(*k, role);
+    }
   }
 
   void push() { scopes_.emplace_back(); }
@@ -381,113 +437,123 @@ class Resolver {
 
   void walkLet(const Node &let, bool topLevel) {
     bool rec = let.flags.find("rec") != std::string::npos;
-    if (!topLevel && rec) bindLet(let);
-    push();  // the parameters
+    if (!topLevel && rec)
+      bindLet(let);
+    push(); // the parameters
     if (const Node *ps = kid(let, 0))
       for (const auto &p : ps->kids) {
-        if (p->kind != N::Param) continue;
-        for (const auto &k : p->kids) walk(*k);  // the annotation
+        if (p->kind != N::Param)
+          continue;
+        for (const auto &k : p->kids)
+          walk(*k); // the annotation
         bind(paramBinding(*p));
       }
     const Node *ret = kid(let, 1);
-    if (ret && ret->kind == N::RetAnnot) walk(*ret);
+    if (ret && ret->kind == N::RetAnnot)
+      walk(*ret);
     if (const Node *cs = kid(let, 2)) {
+      // `result` is in scope in the contracts only.
       push();
-      if (ret && ret->kind == N::RetAnnot) {
-        Binding r;
-        r.name = "result";
-        r.role = "result";
-        r.nameRange = {ret->loc.offset, ret->loc.offset};
-        uint32_t end = cs->loc.offset > ret->loc.offset ? cs->loc.offset
-                                                        : ret->loc.offset;
-        r.snippet = fence(
-            "(result) result " +
-            std::string(rtrim(text_.substr(ret->loc.offset,
-                                           end - ret->loc.offset))));
-        scopes_.back().push_back(r);
-      }
+      if (ret && ret->kind == N::RetAnnot)
+        scopes_.back().push_back(resultBinding(*ret, *cs));
       walk(*cs);
       pop();
     }
-    if (const Node *value = kid(let, 3)) walk(*value);
+    if (const Node *value = kid(let, 3))
+      walk(*value);
     pop();
-    if (!topLevel && !rec) bindLet(let);
+    if (!topLevel && !rec)
+      bindLet(let);
     if (let.kind == N::LetIn)
-      if (const Node *body = kid(let, 4)) walk(*body);
+      if (const Node *body = kid(let, 4))
+        walk(*body);
   }
 
   void walk(const Node &n) {
-    if (found_) return;
+    if (found_)
+      return;
     switch (n.kind) {
-      case N::LetItem:
-        walkLet(n, /*topLevel=*/scopes_.size() == 1);
-        return;
-      case N::LetIn: {
-        push();
-        walkLet(n, false);
-        pop();
-        return;
-      }
-      case N::Name:
-        lookup(n);
-        return;
-      case N::Lambda: {
-        push();
-        for (const auto &k : n.kids) {
-          if (k->kind == N::LParam) {
-            for (size_t i = 1; i < k->kids.size(); ++i) walk(*k->kids[i]);
-            if (!k->kids.empty()) bindPattern(*k->kids[0], "parameter");
-          } else {
-            walk(*k);
-          }
+    case N::LetItem:
+      walkLet(n, /*topLevel=*/scopes_.size() == 1);
+      return;
+    case N::LetIn: {
+      push();
+      walkLet(n, false);
+      pop();
+      return;
+    }
+    case N::Name:
+      lookup(n);
+      return;
+    case N::Lambda: {
+      push();
+      for (const auto &k : n.kids) {
+        if (k->kind == N::LParam) {
+          for (size_t i = 1; i < k->kids.size(); ++i)
+            walk(*k->kids[i]);
+          if (!k->kids.empty())
+            bindPattern(*k->kids[0], "parameter");
+        } else {
+          walk(*k);
         }
-        pop();
-        return;
       }
-      case N::For:
-      case N::Spread: {
-        if (const Node *it = kid(n, 1)) walk(*it);
-        push();
-        if (const Node *pat = kid(n, 0)) bindPattern(*pat, "loop variable");
-        for (size_t i = 2; i < n.kids.size(); ++i) walk(*n.kids[i]);
-        pop();
-        return;
-      }
-      case N::Quantifier: {
-        push();
-        for (const auto &k : n.kids) {
-          if (k->kind == N::Binder || k->kind == N::RangeBinder) {
-            for (const auto &t : k->kids) walk(*t);
-            bind(simple(*k, "bound variable"));
-          } else {
-            walk(*k);
-          }
+      pop();
+      return;
+    }
+    case N::For:
+    case N::Spread: {
+      if (const Node *it = kid(n, 1))
+        walk(*it);
+      push();
+      if (const Node *pat = kid(n, 0))
+        bindPattern(*pat, "loop variable");
+      for (size_t i = 2; i < n.kids.size(); ++i)
+        walk(*n.kids[i]);
+      pop();
+      return;
+    }
+    case N::Quantifier: {
+      push();
+      for (const auto &k : n.kids) {
+        if (k->kind == N::Binder || k->kind == N::RangeBinder) {
+          for (const auto &t : k->kids)
+            walk(*t);
+          bind(simple(*k, "bound variable"));
+        } else {
+          walk(*k);
         }
-        pop();
-        return;
       }
-      case N::Arm: {
-        push();
-        if (const Node *pat = kid(n, 0)) bindPattern(*pat, "pattern variable");
-        for (size_t i = 1; i < n.kids.size(); ++i) walk(*n.kids[i]);
-        pop();
-        return;
+      pop();
+      return;
+    }
+    case N::Arm: {
+      push();
+      if (const Node *pat = kid(n, 0))
+        bindPattern(*pat, "pattern variable");
+      for (size_t i = 1; i < n.kids.size(); ++i)
+        walk(*n.kids[i]);
+      pop();
+      return;
+    }
+    case N::Module:
+    case N::Interface: {
+      push();
+      for (const auto &k : n.kids)
+        if (k->kind == N::LetItem)
+          bindLet(*k);
+      for (const auto &k : n.kids) {
+        if (k->kind == N::LetItem)
+          walkLet(*k, /*topLevel=*/true);
+        else
+          walk(*k);
       }
-      case N::Module:
-      case N::Interface: {
-        push();
-        for (const auto &k : n.kids)
-          if (k->kind == N::LetItem) bindLet(*k);
-        for (const auto &k : n.kids) {
-          if (k->kind == N::LetItem) walkLet(*k, /*topLevel=*/true);
-          else walk(*k);
-        }
-        pop();
-        return;
-      }
-      default:
-        for (const auto &k : n.kids)
-          if (k) walk(*k);
+      pop();
+      return;
+    }
+    default:
+      for (const auto &k : n.kids)
+        if (k)
+          walk(*k);
     }
   }
 
@@ -502,7 +568,8 @@ class Resolver {
 
 Range itemRange(std::string_view text, const Node &n, uint32_t end) {
   uint32_t begin = n.loc.offset;
-  if (end < begin) end = begin;
+  if (end < begin)
+    end = begin;
   std::string_view s = rtrim(text.substr(begin, end - begin));
   return {begin, begin + static_cast<uint32_t>(s.size())};
 }
@@ -523,50 +590,52 @@ void collectSymbols(std::string_view text, const Node &parent, uint32_t end,
     uint32_t at = nameOffset(text, n);
     s.selection = {at, at + static_cast<uint32_t>(n.text.size())};
     switch (n.kind) {
-      case N::LetItem: {
-        const Node *body = kid(n, 3);
-        if (hasParams(n))
-          s.kind = SymbolKind::Function;
-        else if (body && body->kind == N::TypeValue)
-          s.kind = SymbolKind::Class;
-        else
-          s.kind = SymbolKind::Constant;
-        s.detail = firstLine(letHeader(text, n));
-        if (s.detail.rfind("let ", 0) == 0) s.detail = s.detail.substr(4);
-        break;
-      }
-      case N::Interface:
-        s.kind = SymbolKind::Interface;
-        collectSymbols(text, n, next, s.children);
-        break;
-      case N::Module:
-        s.kind = SymbolKind::Module;
-        collectSymbols(text, n, next, s.children);
-        break;
-      case N::SigVal:
-        s.kind = SymbolKind::Method;
-        s.detail = firstLine(text.substr(s.range.begin,
-                                         s.range.end - s.range.begin));
-        break;
-      case N::SigType:
+    case N::LetItem: {
+      const Node *body = kid(n, 3);
+      if (hasParams(n))
+        s.kind = SymbolKind::Function;
+      else if (body && body->kind == N::TypeValue)
         s.kind = SymbolKind::Class;
-        break;
-      case N::MetaOperator:
-        s.kind = SymbolKind::Operator;
-        if (size_t at = text.find(n.text, n.loc.offset);
-            at != std::string_view::npos)
-          s.selection = {static_cast<uint32_t>(at),
-                         static_cast<uint32_t>(at + n.text.size())};
-        break;
-      default:
-        continue;
+      else
+        s.kind = SymbolKind::Constant;
+      s.detail = firstLine(letHeader(text, n));
+      if (s.detail.rfind("let ", 0) == 0)
+        s.detail = s.detail.substr(4);
+      break;
     }
-    if (s.name.empty()) continue;
+    case N::Interface:
+      s.kind = SymbolKind::Interface;
+      collectSymbols(text, n, next, s.children);
+      break;
+    case N::Module:
+      s.kind = SymbolKind::Module;
+      collectSymbols(text, n, next, s.children);
+      break;
+    case N::SigVal:
+      s.kind = SymbolKind::Method;
+      s.detail =
+          firstLine(text.substr(s.range.begin, s.range.end - s.range.begin));
+      break;
+    case N::SigType:
+      s.kind = SymbolKind::Class;
+      break;
+    case N::MetaOperator:
+      s.kind = SymbolKind::Operator;
+      if (size_t at = text.find(n.text, n.loc.offset);
+          at != std::string_view::npos)
+        s.selection = {static_cast<uint32_t>(at),
+                       static_cast<uint32_t>(at + n.text.size())};
+      break;
+    default:
+      continue;
+    }
+    if (s.name.empty())
+      continue;
     out.push_back(std::move(s));
   }
 }
 
-}  // namespace
+} // namespace
 
 // ------------------------------------------------------------ Analysis
 
@@ -587,12 +656,15 @@ std::vector<uint32_t> itemStarts(std::string_view text) {
     lineStart = c == '\n';
     if (comment == 0 && !string && c == '\\') {
       // A line comment: skip to its end (ADR 0029).
-      while (i + 1 < text.size() && text[i + 1] != '\n') ++i;
+      while (i + 1 < text.size() && text[i + 1] != '\n')
+        ++i;
       continue;
     }
     if (string) {
-      if (c == '\\') ++i;
-      else if (c == '"') string = false;
+      if (c == '\\')
+        ++i;
+      else if (c == '"')
+        string = false;
     } else if (c == '(' && i + 1 < text.size() && text[i + 1] == '*') {
       ++comment;
       ++i;
@@ -614,23 +686,27 @@ std::vector<uint32_t> itemStarts(std::string_view text) {
 syntax::NodePtr parseItemByItem(std::string_view text) {
   auto program = syntax::makeNode(N::Program, syntax::SourceLoc{1, 1, 0});
   std::vector<uint32_t> starts = itemStarts(text);
-  if (starts.size() > 2000) return program;  // too costly; give up
+  if (starts.size() > 2000)
+    return program; // too costly; give up
   for (size_t i = 0; i < starts.size(); ++i) {
     uint32_t b = starts[i];
     uint32_t e = i + 1 < starts.size() ? starts[i + 1]
                                        : static_cast<uint32_t>(text.size());
     std::string masked(text);
     for (uint32_t j = 0; j < masked.size(); ++j)
-      if ((j < b || j >= e) && masked[j] != '\n') masked[j] = ' ';
+      if ((j < b || j >= e) && masked[j] != '\n')
+        masked[j] = ' ';
     syntax::Diagnostics diags;
     syntax::NodePtr part = syntax::parseProgram(masked, diags);
-    if (diags.hasErrors() || !part) continue;
-    for (auto &item : part->kids) program->add(std::move(item));
+    if (diags.hasErrors() || !part)
+      continue;
+    for (auto &item : part->kids)
+      program->add(std::move(item));
   }
   return program;
 }
 
-}  // namespace
+} // namespace
 
 Analysis::Analysis(std::string text, bool literate)
     : text_(std::move(text)), index_(text_) {
@@ -640,7 +716,6 @@ Analysis::Analysis(std::string text, bool literate)
   else
     lints_ = syntax::lint(*tree_, text_);
 }
-
 
 std::vector<Diag> Analysis::diagnostics() const {
   std::vector<Diag> out;
@@ -672,24 +747,26 @@ std::vector<Symbol> Analysis::symbols() const {
 }
 
 std::optional<Binding> Analysis::resolve(uint32_t offset) const {
-  if (!tree_) return std::nullopt;
+  if (!tree_)
+    return std::nullopt;
   Range tok = tokenAt(text_, offset);
-  if (tok.begin == tok.end) return std::nullopt;
+  if (tok.begin == tok.end)
+    return std::nullopt;
   return Resolver(text_, tok.begin).run(*tree_);
 }
 
 std::vector<Range> Analysis::references(uint32_t offset) const {
   std::vector<Range> out;
   std::optional<Binding> b = resolve(offset);
-  if (!b || b->nameRange.end == b->nameRange.begin) return out;
+  if (!b || b->nameRange.end == b->nameRange.begin)
+    return out;
   out.push_back(b->nameRange);
   for (const auto &[use, binding] : Resolver::uses(text_, *tree_))
     if (binding.nameRange.begin == b->nameRange.begin &&
         binding.name == b->name)
       out.push_back(use);
-  std::sort(out.begin(), out.end(), [](Range x, Range y) {
-    return x.begin < y.begin;
-  });
+  std::sort(out.begin(), out.end(),
+            [](Range x, Range y) { return x.begin < y.begin; });
   out.erase(std::unique(out.begin(), out.end(),
                         [](Range x, Range y) { return x.begin == y.begin; }),
             out.end());
@@ -698,8 +775,9 @@ std::vector<Range> Analysis::references(uint32_t offset) const {
 
 std::vector<Binding> Analysis::completions(uint32_t offset) const {
   std::vector<Binding> out;
-  if (tree_) Resolver::visible(text_, *tree_, offset, out);
+  if (tree_)
+    Resolver::visible(text_, *tree_, offset, out);
   return out;
 }
 
-}  // namespace pia::lsp
+} // namespace pia::lsp

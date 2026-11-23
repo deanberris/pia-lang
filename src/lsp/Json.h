@@ -15,7 +15,7 @@
 namespace pia::lsp {
 
 class Json {
- public:
+public:
   enum class Kind { Null, Bool, Number, String, Array, Object };
   using Array = std::vector<Json>;
   using Object = std::map<std::string, Json>;
@@ -27,7 +27,8 @@ class Json {
   Json(unsigned n) : kind_(Kind::Number), number_(n) {}
   Json(long n) : kind_(Kind::Number), number_(static_cast<double>(n)) {}
   Json(long long n) : kind_(Kind::Number), number_(static_cast<double>(n)) {}
-  Json(unsigned long n) : kind_(Kind::Number), number_(static_cast<double>(n)) {}
+  Json(unsigned long n)
+      : kind_(Kind::Number), number_(static_cast<double>(n)) {}
   Json(unsigned long long n)
       : kind_(Kind::Number), number_(static_cast<double>(n)) {}
   Json(double n) : kind_(Kind::Number), number_(n) {}
@@ -54,8 +55,8 @@ class Json {
   const std::string &asString() const;
   const Array &asArray() const;
   const Object &asObject() const;
-  Array &array();    // makes this an empty array if it is not one
-  Object &object();  // makes this an empty object if it is not one
+  Array &array();   // makes this an empty array if it is not one
+  Object &object(); // makes this an empty object if it is not one
 
   // Object member, or a null value when absent or not an object.
   const Json &operator[](std::string_view key) const;
@@ -69,7 +70,7 @@ class Json {
   // Parses a whole document. Returns nullopt on malformed input.
   static std::optional<Json> parse(std::string_view text);
 
- private:
+private:
   Kind kind_ = Kind::Null;
   bool bool_ = false;
   double number_ = 0;
@@ -78,6 +79,6 @@ class Json {
   Object object_;
 };
 
-}  // namespace pia::lsp
+} // namespace pia::lsp
 
-#endif  // PIA_LSP_JSON_H
+#endif // PIA_LSP_JSON_H

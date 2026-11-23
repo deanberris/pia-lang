@@ -19,20 +19,25 @@ int main(int argc, char **argv) {
   pia::lsp::ServerOptions options;
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
+    const std::string timeoutFlag = "--timeout-ms=";
     if (arg == "--version") {
       std::cout << "pia-lsp " << options.version << "\n";
       return 0;
-    } else if (arg.rfind("--timeout-ms=", 0) == 0) {
-      timeoutMs = static_cast<unsigned>(std::strtoul(arg.c_str() + 13, nullptr, 10));
-    } else if (arg == "--stdio") {
-      // what VS Code passes; stdio is the only transport
-    } else {
-      std::cerr << "usage: pia-lsp [--stdio] [--timeout-ms=<n>] [--version]\n";
-      return 2;
     }
+    if (arg.rfind(timeoutFlag, 0) == 0) {
+      timeoutMs = static_cast<unsigned>(
+          std::strtoul(arg.c_str() + timeoutFlag.size(), nullptr, 10));
+      continue;
+    }
+    // VS Code passes --stdio. It is the only transport, so it changes nothing.
+    if (arg == "--stdio")
+      continue;
+    std::cerr << "usage: pia-lsp [--stdio] [--timeout-ms=<n>] [--version]\n";
+    return 2;
   }
 #ifndef PIA_NO_MLIR
-  options.checker = [timeoutMs](std::string_view source, const std::string &path) {
+  options.checker = [timeoutMs](std::string_view source,
+                                const std::string &path) {
     return pia::lsp::checkProofs(source, path, timeoutMs);
   };
 #else
