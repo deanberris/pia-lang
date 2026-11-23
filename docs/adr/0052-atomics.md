@@ -179,6 +179,11 @@ Building step 1 changed four details, none of which changes the design:
 - **Derived relations are lower bounds,** in the theory and in each test. Every RC11 axiom only forbids, so the least relations that meet the bounds decide every verdict, including races, and no relation needs to be computed as a closure.
 - **The battery is a first family of tests,** 43 of them, not yet every combination of orders, and the expected results are RC11's published ones, not yet checked against `herd7`. `cas`, which writes only when it succeeds, is not in the litmus vocabulary yet.
 
+## Notes from step 4 (2026-11-23)
+
+- **The axioms are model values.** A target model holds values, not axioms, so `store_releases` and `load_acquires` are `Target` spec constants, true in `x86_64_linux` and false in `arm64_macos`, with no axiom; like every model value, only a `@target(x86_64_linux)` item sees that they hold. In the battery, the x86-TSO lemma of each relaxed test (such as `mp_rlx`) is the `publish_relaxed` that proves on x86_64.
+- **The tags reach LLVM by order.** The `pia.tso` tag is an attribute on each LLVM-dialect atomic op, and translation emits atomic instructions in the same order, so `piac` pairs them and sets `!pia.tso` after translation, before the optimiser runs.
+
 ## Answers (Dean, 2026-11-23)
 
 1. **`relaxed` as acquire and release on x86_64:** yes, only inside `@target(x86_64_linux)` items (section 6). Elsewhere it stays LLVM `monotonic`.

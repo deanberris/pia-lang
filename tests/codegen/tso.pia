@@ -1,0 +1,44 @@
+(* Inside a @target(x86_64_linux) item, code may rely on TSO (ADR 0052,
+   section 6): relaxed loads are emitted as acquire, relaxed stores as
+   release and relaxed read-modify-writes as acq_rel, each tagged with
+   !pia.tso, which is checked after optimisation. On x86_64 they are the
+   same instructions. Outside such items, relaxed stays monotonic. The
+   items are compiled only for x86_64, so this file is too.
+// RUN: piac --emit=llvm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=ASM
+*)
+module Tso : Ops
+
+interface Ops @abi(c) = sig
+  let peek : (c : borrowed atomic u32) -> u32
+  let poke : (c : borrowed atomic u32) -> (v : u32) -> unit
+  let bump : (c : borrowed atomic u32) -> u32
+  let claim : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let plain_peek : (c : borrowed atomic u32) -> u32
+end
+
+let peek (c : borrowed atomic u32) : u32 @target(x86_64_linux) = atomic_load relaxed c
+let poke (c : borrowed atomic u32) (v : u32) : unit @target(x86_64_linux) = atomic_store relaxed c v
+let bump (c : borrowed atomic u32) : u32 @target(x86_64_linux) = @wrap (atomic_add relaxed c 1)
+let claim (c : borrowed atomic u32) (v : u32) : u32 @target(x86_64_linux) = atomic_cas relaxed relaxed c 0 v
+let plain_peek (c : borrowed atomic u32) : u32 = atomic_load relaxed c
+
+(*
+// CHECK-LABEL: define {{.*}}@peek(
+// CHECK: load atomic i32, ptr %{{.*}} acquire, align 4, !pia.tso ![[PEEK:[0-9]+]]
+// CHECK-LABEL: define {{.*}}@poke(
+// CHECK: store atomic i32 %{{.*}}, ptr %{{.*}} release, align 4, !pia.tso
+// CHECK-LABEL: define {{.*}}@bump(
+// CHECK: atomicrmw add ptr %{{.*}}, i32 1 acq_rel, align 4, !pia.tso
+// CHECK-LABEL: define {{.*}}@claim(
+// CHECK: cmpxchg ptr %{{.*}}, i32 0, i32 %{{.*}} acq_rel acquire, align 4, !pia.tso
+// CHECK-LABEL: define {{.*}}@plain_peek(
+// CHECK: load atomic i32, ptr %{{.*}} monotonic, align 4
+// CHECK-NOT: !pia.tso
+// CHECK: ![[PEEK]] = !{!"{{.*}}tso.pia:20:66"}
+
+// ASM-LABEL: peek:
+// ASM: movl (%rdi), %eax
+// ASM-LABEL: poke:
+// ASM: movl %esi, (%rdi)
+*)
