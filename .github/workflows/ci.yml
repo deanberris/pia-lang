@@ -3,20 +3,31 @@
 # run builds LLVM/MLIR and Z3 from source, which can take two to three
 # hours on a hosted runner. The Bazel disk cache below makes later runs
 # incremental.
+#
+# main only changes through the merge queue. Each queue group runs the Linux
+# job on the merged result, and the `merge queue gate` job is the check the
+# queue requires. The macOS job runs on pull requests and on main, but not in
+# the queue, because macOS runners wait a long time for a machine.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
+  merge_group:
 
+# A new push to a pull request makes its older run worthless, so that run is
+# cancelled. Runs on main are not: each one checks a commit that landed and
+# saves the cache that later runs start from. Queue groups each have their
+# own ref, so they never cancel one another.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
     name: bazel test (macOS arm64)
+    if: github.event_name != 'merge_group'
     runs-on: macos-15
     timeout-minutes: 350
     steps:
@@ -210,15 +221,17 @@ jobs:
           path: bench.json
           if-no-files-found: ignore
 
+      # A queue group's ref is deleted once the group is done, and nothing
+      # can restore a cache saved under it, so the queue does not save one.
       - name: Save the Bazel disk cache
-        if: steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
+        if: github.event_name != 'merge_group' && steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/pia-bazel-disk
           key: ${{ steps.key.outputs.key }}
 
       - name: Save a partial Bazel disk cache
-        if: always() && steps.test.outcome != 'success' && steps.restore.outputs.cache-hit != 'true'
+        if: always() && github.event_name != 'merge_group' && steps.test.outcome != 'success' && steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ~/.cache/pia-bazel-disk
@@ -235,3 +248,21 @@ jobs:
           name: test-logs-linux
           path: testlogs/
           if-no-files-found: ignore
+
+  # The one check the merge queue requires. In a queue group it passes only
+  # if the Linux job passed on the merged result. On a pull request it is
+  # skipped, which counts as passing, so a pull request can join the queue
+  # without first waiting for its own Linux run; that run still reports on
+  # the pull request. A skipped `needs` would also count as passing, hence
+  # always() and the explicit result check.
+  gate:
+    name: merge queue gate
+    if: always() && github.event_name == 'merge_group'
+    needs: linux
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the Linux job
+        run: |
+          echo "bazel test (Linux x86_64): ${{ needs.linux.result }}"
+          test "${{ needs.linux.result }}" = success
