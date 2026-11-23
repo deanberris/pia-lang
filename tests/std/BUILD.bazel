@@ -171,7 +171,7 @@ sh_test(
 pia_binary(
     name = "heap_run",
     src = "Inputs/heap_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -186,5 +186,5 @@ sh_test(
     srcs = ["heap_run_test.sh"],
     args = ["$(rootpath :heap_run)"],
     data = [":heap_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )

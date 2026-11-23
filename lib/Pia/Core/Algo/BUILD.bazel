@@ -76,7 +76,7 @@ pia_library(
 pia_library(
     name = "heap",
     src = "Heap.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         ":sort",
