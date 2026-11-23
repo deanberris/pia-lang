@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed (revised twice on 2026-11-23 after Dean's reviews: plain call syntax, metaprograms instead of recursive `match`, foreign bindings generated from headers, partial application through the expected type, `...` for packs, and sums over a pack matched by type)
+Status: Accepted (2026-11-23, after two revisions with Dean's answers, recorded under "Answers" below and folded into the decision)
 
 ## Context
 
@@ -45,7 +45,7 @@ print w                          (* ts = (), an empty pack *)
 - **The call site is ordinary application.** A pack takes every argument that follows the fixed ones in that application. An application ends where it always ends: at a closing parenthesis, an operator, `;`, `then`, `in` and so on. So `print w x name 42u8` is one call with three pack arguments, and `print w (f x) y` is one call with two. Nothing about the call says the function is variadic.
 - **Inside the body, the pack is a tuple.** `xs` has the tuple type `ts`. Its elements are `xs.0`, `xs.1` and so on, or `xs.[u8]` by type, which is the one element of type `u8` and a type error when there is not exactly one (C++'s `std::get<T>`; types are values, so a type is an index like any other). The pack can be passed on whole, so ADR 0040's tuple decision still holds: a pack is a tuple, and only the parameter is marked.
 - **Passing a tuple as a pack** is `...t` at the call: `print w ...pair`. This is how one variadic function forwards its pack to another, as C++'s `f(xs...)` does.
-- **Partial application goes through the expected type.** When a variadic call is in a place that expects a function, such as an argument whose parameter type is `u32 -> unit`, the call is partial, and the expected function's parameters close the pack. So `map (print w) xs` passes `print w` as a function of one argument, with `ts` deduced as `(t)` from `map`'s parameter, and `for_each (print w prefix) xs` fixes the first element too. When nothing expects a function, the call is complete, and `print w` prints nothing. This is the same deduction from the expected type that generic results already use ([docs/irgen.md](../irgen.md)).
+- **Partial application goes through the expected type.** When a variadic call is in a place that expects a function, such as an argument whose parameter type is `u32 -> unit`, the call is partial, and the expected function's parameters close the pack. So `map (print w) xs` passes `print w` as a function of one argument, with `ts` deduced as `(t)` from `map`'s parameter, and `for_each (print w prefix) xs` fixes the first element too. When nothing expects a function, the call is complete, and `print w` prints nothing. Binding that `unit` result to a name is warned about by the `variadic_unit_binding` lint ([ADR 0037](0037-idiomatic-pia-and-lints.md)), because it is probably a partial application that was meant. This is the same deduction from the expected type that generic results already use ([docs/irgen.md](../irgen.md)).
 - **Variadic function values.** `bind_front print w` keeps the pack open: it is a function object whose `apply` is itself variadic, so a later call can pass any number of arguments. `Pia.Fn` has the usual combinators over packs: `bind_front`, `bind_back`, `compose`, `flip`, `apply` (a function and a tuple, as `std::apply`) and `unpack` (a function of a tuple, turned into a variadic one). The `Function` concept ([ADR 0044](0044-function-values-and-lambdas.md)) takes a pack of argument types, `Function f (...args) r`, so higher-order functions can accept variadic function values and be proved once over them.
 - **`All c ts`** is a prelude concept over pack types: every element type meets `c`. Concepts are already values that type-level metaprograms take ([ADR 0046](0046-box-over-a-type-or-a-concept.md)).
 
@@ -116,7 +116,7 @@ let show (ts : type where All Format ts) (w : borrowed inout writer) (v : one_of
 ```
 
 - **`match` on the active element's type** is how a `one_of` is read. Arms are type patterns, and the `match` must cover every element type, or end in an arm that binds the rest generically. That one generic arm is `visit`, with no library function needed.
-- **Element types must be distinct**, which `one_of` checks with a type-level `distinct ts`, so a type always names exactly one alternative. A variant whose alternatives share a type, such as two `u32`s that mean different things, is a named variant (`type | Celsius of u32 | Kelvin of u32`), which says what each one means.
+- **Element types must be distinct** (answer 5), which `one_of` checks with a type-level `distinct ts`, so a type always names exactly one alternative. A variant whose alternatives share a type, such as two `u32`s that mean different things, is a named variant (`type | Celsius of u32 | Kelvin of u32`), which says what each one means.
 - **`v.[u32]`** is the element when it is a `u32`, with the precondition `holds v u32`, a spec function that a `match` arm or an `if holds v u32` establishes. `index v` is the position of the active type in the pack.
 - **Layout** is a tag and the largest element, as for named variants, and `Eq`, `Ord` and `Hash` come from the elements, as for tuples.
 
@@ -178,10 +178,10 @@ Dean's answers to the first revision's questions (2026-11-23):
 3. **Index by type, and `match` on the alternatives.** `xs.[u8]` indexes a pack by type, since types are values. `one_of` is read by a `match` on the active element's type (section 5), not through positional constructors.
 4. **Generate the bindings from the headers** to avoid drift, with contracts in a hand-written overlay (section 6).
 
-## Questions for Dean
+Dean's answers to the second revision's questions (2026-11-23):
 
-1. **Distinct element types in `one_of`.** The recommendation is to require them, so that a type names exactly one alternative, and to use a named variant when two alternatives share a type. The alternative is to allow duplicates and add positional arms (`| at 0 x`) for them.
-2. **`let g = print w` with no expected type** is a complete call that prints nothing. The recommendation is to keep that rule, with a lint when a variadic call's `unit` result is bound to a name, since that is probably a mistake. The alternative is to make such a binding an error.
+5. **`one_of` requires distinct element types**, so a type names exactly one alternative. Two alternatives that share a type are a named variant.
+6. **`let g = print w` with no expected type is a complete call.** A lint, `variadic_unit_binding`, warns when the `unit` result of a variadic call is bound to a name, since that is probably a partial application that was meant.
 
 ## Prior art
 
