@@ -1,8 +1,8 @@
-# 51. Variadic generics are tuple types walked by type `match`, proved once by structural induction, and foreign varargs are typed per declaration
+# 51. Variadic functions and types take a pack that is called like any argument list, walked by metaprograms and proved once; foreign bindings are generated from tables
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Proposed (revised 2026-11-23 after Dean's first review: plain call syntax, metaprograms instead of recursive `match`, and foreign bindings from tables)
 
 ## Context
 
@@ -29,135 +29,142 @@ This section builds what ADR 0040 section 9 specifies, unchanged:
 - A tuple is an anonymous record with fields `0`, `1`, ... It has the same layout, ownership, `moved`, `@linear`, borrow and contract rules as a record, and struct-of-arrays buffers. Two tuple types with the same element types are the same type.
 - `Eq`, `Ord` and `Hash` are structural, proved once (ADR 0043).
 
-### 2. A pack is a tuple: variadic functions take one tuple parameter
 
-A variadic function takes a tuple whose type is a deduced type parameter:
+### 2. A variadic function is called like any other function
+
+The last parameter of a function may be a **pack**, written `..`, with its type a deduced type parameter:
 
 ```ocaml
 (* Designed syntax. *)
-let print (ts : type where All Format ts) (w : borrowed inout writer) (xs : ts) : unit = ...
+let print (ts : type where All Format ts) (w : borrowed inout writer) (xs : ..ts) : unit = ...
 
-print w (x, name, 42u8)          (* ts = (u32, str, u8), deduced *)
+print w x name 42u8              (* ts = (u32, str, u8), deduced *)
+print w                          (* ts = (), an empty pack *)
 ```
 
-There is no new call syntax. `f (a, b, c)` reads as C++'s `f(a, b, c)`, and it fits curried application: since a call always takes exactly one tuple, `print w` is still a partial application with nothing ambiguous about where the arguments stop. `All c ts` is a prelude concept over tuple types: every element type meets `c`, and `ts` is a tuple. Concepts are already values that type-level metaprograms take ([ADR 0046](0046-box-over-a-type-or-a-concept.md)). `Tuple ts` alone says only that `ts` is a tuple type.
+- **The call site is ordinary application.** A pack takes every argument that follows the fixed ones in that application. An application ends where it always ends: at a closing parenthesis, an operator, `;`, `then`, `in` and so on. So `print w x name 42u8` is one call with three pack arguments, and `print w (f x) y` is one call with two. Nothing about the call says the function is variadic.
+- **Inside the body, the pack is a tuple.** `xs` has the tuple type `ts`. Its elements are `xs.0`, `xs.1` and so on, and it can be passed on whole, so ADR 0040's tuple decision still holds: a pack is a tuple, and only the parameter is marked.
+- **Passing a tuple as a pack** is `..t` at the call: `print w ..pair`. This is how one variadic function forwards its pack to another, as C++'s `f(xs...)` does.
+- **No partial application of a pack.** A call of a variadic function always supplies its whole pack, which is what lets the arguments end where the application ends. `print w` is a call with an empty pack, not a function waiting for more. To pass a variadic function as a value, wrap it in a lambda with the arity you want, `let (x) => print w x` (question 1).
+- **`All c ts`** is a prelude concept over pack types: every element type meets `c`. Concepts are already values that type-level metaprograms take ([ADR 0046](0046-box-over-a-type-or-a-concept.md)).
 
-### 3. Walking a pack: tuple patterns in type and value `match`
+### 3. Packs are walked by metaprograms, not by recursion
 
-[ADR 0035](0035-substitution-failure-and-total-constraints.md)'s type `match` gains two tuple patterns: `()` and `(h, ..rest)`, which binds the first element type and the tuple of the rest. Type-level metaprograms over packs are then ordinary structural recursion, total without a `decreases`:
+Code never recurses over a pack. Two kinds of metaprogram do the walking instead.
+
+**Type-level metaprograms over a list of types.** The builtin `elements ts` gives a pack type's element types as a metaprogram list, and `tuple_of xs` builds a pack type from a list. Everything else is the list functions metaprograms already have, `map`, `fold` and `length` ([docs/meta.md](../meta.md#the-interpreter)):
 
 ```ocaml
-let meta size (ts : type where Tuple ts) : usize =
-  match ts with
-  | () -> 0
-  | (h, ..rest) -> 1 + size rest
+let meta size (ts : type) : usize = length (elements ts)
 
-let meta map_types (f : type -> type) (ts : type where Tuple ts) : type =
-  match ts with
-  | () -> ()
-  | (h, ..rest) -> (f h, ..map_types f rest)
-
-let meta union_all (es : type where Tuple es) : type =   (* error sets: e1 | e2 | ... *)
-  match es with
-  | () -> never
-  | (e, ..rest) -> e | union_all rest
+(* when_all's value and error types (ADR 0050). *)
+let meta values_of (ss : type) : type = tuple_of (map value_of (elements ss))
+let meta errors_of (ss : type) : type = fold (let (a) (e) => a | e) never (map error_of (elements ss))
 ```
 
-The same patterns work on values. A `match` on a value whose type is a generic tuple is **type-directed**: which arm applies is decided by the tuple's type at each instance, not at run time. Such a `match` is exhaustive with `()` and `(x, ..rest)`, and an arm that cannot apply to some instance is not an "unreachable arm" error:
+These are total by the rule tactics already follow ([docs/meta.md](../meta.md#tactics)): the only recursion is `map` and `fold` over the components of a parameter.
+
+**A loop over a pack, unrolled by expansion.** In code, a `for` over a pack runs its body once for each element, and the expansion stamps out one copy of the body per element, as Zig's `inline for` does. `x` has each element's own type in its copy:
 
 ```ocaml
-let rec print (ts : type where All Format ts) (w : borrowed inout writer) (xs : ts) : unit
+let print (ts : type where All Format ts) (w : borrowed inout writer) (xs : ..ts) : unit
   ensures written_count w = old (written_count w) + size ts
-= match xs with
-  | () -> ()
-  | (x, ..rest) -> format w x; print w rest
+= for i, x in xs
+    invariant written_count w = old (written_count w) + i
+  do format w x done
 ```
 
-`(x, ..rest)` in an expression builds a tuple, which is `tuple_cat`'s base case. `..` before a name inside tuple parentheses is the rest of a tuple. A range always has a left operand (`a..b`) inside a tuple, so the two cannot be confused (question 2).
+The library's `Pia.Core.Pack` is written the same way: `map`, `fold`, `apply`, `cat`, `get` by type and `zip`. C++'s fold expressions become `fold`, `sizeof...` becomes `size`, and pack indexing becomes `xs.i` with a constant `i`.
 
-The library's `Pia.Core.Tuple` gives the usual operations as generic functions over this one mechanism: `map` and `fold` with a generic lambda ([ADR 0044](0044-function-values-and-lambdas.md), step 4), `apply f xs`, `cat`, `get` by index or by type, and `zip`. C++'s fold expressions become `fold`. `sizeof...` becomes `size`, and pack indexing becomes `xs.i` with a constant `i`, or `element i ts`.
+### 4. Proved once, though compiled per element
 
-### 4. Proved once, by structural induction on the tuple
+The loop above is proved once, as an ordinary loop. Its body is proved for an abstract position `i` and an abstract element type `element i ts`, which is an abstract sort constrained only by `Format`, because `All Format ts` says that much of every element ([ADR 0043](0043-generic-definitions-proved-once.md)). The invariant is the induction over positions, exactly as for `for i in 0 .. n`. Each unrolled copy is then discharged by that one proof, as an instance of a generic is.
 
-A recursive function over a generic tuple is proved once, for every tuple type, not once per instance. Pia already proves a `let rec` by assuming its own contract at each recursive call and proving that a measure decreases. Here the recursive call is at the tail's type, and the measure is `size ts`, which the `(x, ..rest)` arm decreases by construction, so termination needs no `decreases`. The `()` arm is the base case, and the `(x, ..rest)` arm is the step, with the contract for `rest` as the induction hypothesis. Inside the step, `x` has the head type `h`, constrained by `Format h` because `All Format ts` unfolds to `Format h && All Format rest`. This is ADR 0043's generic proof, with induction supplied by the shape of the type.
-
-Codegen still specialises each instance, as for every generic. The recursion unrolls at compile time, so `print w (a, b, c)` compiles to three calls with no loop and no run-time dispatch.
-
-Errors are reported once, at the definition, for every tuple type, because the body is checked against `All Format ts` and not against each instance (ADR 0034's definition check). That closes C++'s gap, where a pack expansion fails at instantiation.
+So a variadic function is proved and checked once, at its definition, for every pack, and errors are reported there rather than at an instantiation (ADR 0034's definition check). That closes C++'s gap, where a pack expansion fails only when instantiated. Codegen still compiles straight-line code: `print w a b c` becomes three calls of `format`, with no loop and no run-time dispatch.
 
 ### 5. Variadic types
 
-A generic type may take a tuple type parameter, and its fields may use type-level metaprograms over it:
+A generic type's last type parameter may be a pack too, and an instance is written like any other generic application, `when_all_sender a b c`. Its fields use type-level metaprograms over the pack:
 
 ```ocaml
 (* when_all's operation state: one child operation per sender (ADR 0050). *)
-let when_all_op (ss : type where All Sender ss) (r : type) = type {
-  children : map_types (let (s) => op_of s (child_receiver r)) ss;
-  results  : map_types (let (s) => option (value_of s)) ss;
+let when_all_op (r : type) (ss : ..type where All Sender ss) = type {
+  children : tuple_of (map (let (s) => op_of s (child_receiver r)) (elements ss));
+  results  : tuple_of (map (let (s) => option (value_of s)) (elements ss));
   rcv      : r;
 }
-
-let when_all (ss : type where All Sender ss) (xs : moved ss) : when_all_sender ss = ...
-(* value_of (when_all_sender ss) = map_types value_of ss
-   error_of (when_all_sender ss) = union_all (map_types error_of ss) *)
 ```
 
-A sum over a type list, C++'s `std::variant<Ts...>`, is `one_of ts`. This is a type-level metaprogram that builds a variant with one constructor per position, `At0 of t0 | At1 of t1 | ...`. It comes with `index`, `get` and a type-directed `visit`, and with exhaustive `match` on its constructors. A core anonymous sum type with nicer constructor names stays a separate decision, as ADR 0040 left it (question 3).
+A sum over a pack, C++'s `std::variant<Ts...>`, is `one_of ts`, a type-level metaprogram that builds a variant with one constructor per position, `At0 of t0 | At1 of t1 | ...`. It comes with `index`, `get`, a `visit` that is a `for` over the alternatives, and exhaustive `match` on its constructors. A core anonymous sum type stays a separate decision, as ADR 0040 left it (question 3).
 
-### 6. Foreign varargs are typed per declaration
+### 6. Foreign bindings: variadic C calls, and declarations generated from tables
 
-A C variadic function is declared once for each way Pia calls it, with `@variadic(n)`, where `n` is the number of named C parameters. The parameters after the first `n` are the variadic ones, each with a fixed Pia type:
+**A C variadic function is declared once, with a pack.** A pack in a foreign declaration is restricted to C-promoted types, and each call passes whatever its arguments are, with the ABI emitted for that call:
 
 ```ocaml
-(* Pia.Sys.Posix, @trusted. open(2): the mode is read only when O_CREAT is set. *)
-let open (path : cstr) (flags : i32) : i32 @variadic(2)
-  requires flags & o_creat = 0
+(* open(2): the mode is read only when O_CREAT or O_TMPFILE is set. *)
+let open (ts : type where All CPromoted ts) (path : cstr) (flags : i32) (mode : ..ts) : i32
+  requires (flags & o_creat <> 0) = (size ts = 1)
+  requires size ts = 1 ==> element 0 ts = u32
   ensures result >= -1
 = extern "open"
 
-let open_create (path : cstr) (flags : i32) (mode : u32) : i32 @variadic(2)
-  requires flags & o_creat <> 0
-  ensures result >= -1
-= extern "open"
-
-(* syscall(2), one declaration per system call the library makes. *)
-let io_uring_enter (fd : i64) (to_submit : u32) (min_complete : u32) (flags : u32) : i64
-  @variadic(1) @syscall(426)
-  ensures result >= -1
-= extern "syscall"
+open path o_rdonly                         (* 2 arguments *)
+open path (o_creat | o_wronly) 420u32      (* 3 arguments; 420 is 0644 *)
 ```
 
-- **Calls use the variadic ABI.** Codegen emits the call as a variadic LLVM call, so Apple arm64 puts the variadic arguments on the stack and x86_64 sets `%al`. A declaration that names a variadic C function without `@variadic` is wrong on Apple arm64, and the trust report lists every foreign symbol with the arity it was called at.
-- **`cstr`** above is a `[u8]` refined to end in a NUL byte, which `Pia.Sys` builds and proves. It is not a new core type.
-- **Variadic parameters are C-promoted types only:** `i32`, `u32`, `i64`, `u64`, `isize`, `usize`, buffers (passed as pointers) and, once floats land, `f64`. A narrower integer or a `bool` is a compile error that says to widen it, because C would promote it and the callee would read an `int`. A record is an error, because C cannot pass a struct through `...` portably.
-- **The count and the types are fixed by the declaration,** so a call can never pass the wrong number or the wrong types. What the C function reads depends on its other arguments, as `open` reads a mode only with `O_CREAT`, and that becomes a `requires` that ties the two together, proved at every call. This is the "provably safe" part: the `va_arg` reads that C trusts become goals.
-- **`@syscall(n)`** is sugar for a first fixed argument that is the system-call number, taken from the target model (`Target` on Linux, [ADR 0049](0049-targets-are-theories.md)), so a wrong number cannot be written by hand. It is `@target(x86_64_linux)`: macOS has no stable system-call numbers, and the library goes through libSystem there.
-- **Pia functions are never C-variadic.** Pia code takes tuples instead. Exporting a variadic function to C, or taking a `va_list`, is not supported. C callbacks that need one are wrapped in C, outside Pia.
+- **Calls use the variadic ABI.** Codegen emits each call as a variadic LLVM call with the argument types of that call, so Apple arm64 puts the pack on the stack and x86_64 sets `%al`.
+- **`CPromoted`** holds for `i32`, `u32`, `i64`, `u64`, `isize`, `usize`, buffers (passed as pointers) and, once floats land, `f64`. A narrower integer or a `bool` fails the constraint with a message that says to widen it, because C would promote it and the callee would read an `int`. A record fails it, because C cannot pass a struct through `...` portably.
+- **The contract decides what a call may pass.** What the C function reads depends on its other arguments, as `open` reads a mode only with `O_CREAT`. So the declaration's `requires` relates the pack's size and element types (`size ts`, `element i ts`) and values (`mode.0`) to the other arguments, and every call proves it. This is the "provably safe" part: the `va_arg` reads that C trusts become goals.
+- **`cstr`** is a `[u8]` refined to end in a NUL byte, which `Pia.Sys` builds and proves. It is not a new core type.
+- **Pia functions are never C-variadic.** Pia's own variadic functions take packs, which are tuples, and nothing in Pia makes or reads a `va_list`. Exporting a variadic function to C is not supported.
 - **Format strings stay in Pia.** `printf` and its family are not declared. `Pia.Text.Format` uses section 2, with `requires placeholders fmt = size ts`, which the verifier folds when `fmt` is a literal. So a format string with the wrong number of arguments is a failed goal, not a crash.
+
+**Declarations come from tables, not from hand-written items.** POSIX alone needs a few hundred declarations, most of them per target, so `Pia.Sys.Posix` writes none by hand. Each area (files, memory, processes, time, threads, sockets, io_uring's system calls) is a table, a list literal of rows passed to a binding metaprogram. The metaprogram stamps out the declarations, as `bit_family` already stamps out `Pia.Core.Bit` ([lib/Pia/Core/Bit.pia](../../lib/Pia/Core/Bit.pia)):
+
+```ocaml
+posix [
+  call "read"  "read(2)"  [fd "fd"; out_buf "buf" "n"; size "n"] (ret isize)
+       [ensures "result <= n"; ensures "result >= 0 ==> written buf 0 result"] [blocking];
+  call "open"  "open(2)"  [cstr "path"; flag "flags"] (ret i32)
+       [pack_if "flags & o_creat <> 0" [mode "mode"]] [];
+  ...
+]
+
+constants x86_64_linux [ "o_creat" 0o100; "eagain" 11; "sys_io_uring_enter" 426; ... ]
+constants arm64_macos  [ "o_creat" 0x200; "eagain" 35; ... ]
+```
+
+- **A row says what C says.** Its columns are the symbol, the manual page it cites, the parameters with their modifiers, the result, the contract clauses, any pack and the condition that decides it, and the attributes (`@blocking`, `@threadsafe`). The metaprogram turns the column kinds into Pia types and contracts: `fd` becomes an `i32` with `requires fd >= 0`, and `out_buf "buf" "n"` becomes an `out mutable [u8]` with `requires n <= len buf`.
+- **What differs per target is data.** Constants, `errno` values, system-call numbers, and struct sizes and offsets live in one table per target, which `@target` selects ([ADR 0049](0049-targets-are-theories.md)). The binding table is shared. A system call is a row whose symbol is `syscall` and whose number comes from the Linux constants table, so no number is written by hand. On macOS there are no system-call rows, because the library goes through libSystem there.
+- **The tables are checked against the real headers.** For each target, the metaprogram also writes a C file that `static_assert`s every constant, `sizeof` and `offsetof` in the tables against the platform's own headers, and CI compiles it on both jobs. A wrong constant is then a build failure on that platform, not a trusted lie.
+- **The trust report lists rows, not items.** Every generated declaration is a trusted foreign contract. The report names the table and row each came from, with the manual page, so an audit reads the tables.
+- **Headers are not parsed.** Generating the tables from C headers would get the types but not the contracts, which say what the manual page promises. The tables are written by hand, and only their constants and layouts are checked against the headers.
 
 ## Implementation steps
 
-1. **Foreign varargs** (section 6): `@variadic(n)` and the promoted-type check, emitted as variadic calls. This needs no tuples, so it comes first, because ADR 0050's I/O stack and `Pia.Sys` (#55, #57) need it. `@syscall` waits for `@target` (ADR 0049, step 3c).
+1. **Foreign bindings first** (section 6), since ADR 0050's I/O stack and `Pia.Sys` (#55, #57) need them: the `posix` and `constants` binding metaprograms, variadic calls, and the generated header check. Until packs exist (step 3), a pack row is stamped out as one fixed declaration per arity (`open` and `open_mode`), with the variadic ABI. That restriction is internal to the tables and goes away in step 4.
 2. **Core tuples** (section 1): syntax, sema as anonymous records, IRGen, codegen and the verifier through the record paths, patterns, `t.0`, and the structural instances.
-3. **Tuple type patterns** (section 3): `()` and `(h, ..rest)` in type `match`, then `size`, `map_types`, `union_all`, `All` and `Tuple` in the prelude.
-4. **Generic functions over tuples** (sections 3 and 4): type-directed value `match`, structural termination, the induction proof, and unrolled specialisation.
-5. **`Pia.Core.Tuple`**: `map`, `fold`, `apply`, `cat`, `get` and `zip`, and `Pia.Text.Format` on top.
-6. **Variadic types** (section 5): fields typed by metaprograms over a tuple parameter, then `one_of`.
+3. **Pack parameters and calls** (section 2): `..ts` parameters, deduction, the argument-collection rule, `..t` spreading, and `All` and `CPromoted`.
+4. **Walking packs** (sections 3 and 4): `elements` and `tuple_of`, `for` over a pack with its expansion, the proof against an abstract element, and unrolled codegen. Foreign packs replace the per-arity declarations.
+5. **`Pia.Core.Pack`**: `map`, `fold`, `apply`, `cat`, `get` and `zip`, and `Pia.Text.Format` on top.
+6. **Variadic types** (section 5): pack type parameters, then `one_of`.
 
 ## Consequences
 
-- One feature serves three purposes, with no separate pack syntax: tuples are the values, tuple types are the type lists, and type `match` is the recursion.
-- Generic variadic code is proved and checked once, at its definition. Each instance still compiles to straight-line code.
-- Calls to C varargs carry their count and types in the declaration and their dependencies in contracts. The ABI is right on both targets, and C's promotion rules are enforced rather than assumed.
-- Pia cannot call a C variadic function with an arity it did not declare, and cannot be called as one. Both restrictions are deliberate.
-- The `..rest` form is new syntax in tuple patterns and tuple expressions, and the grammar must keep it apart from ranges.
+- A variadic call looks like any other call, and a variadic definition looks like an ordinary loop. The only new syntax is `..` on the pack parameter and on a spread argument.
+- There is no recursion over packs, in types or in code. Type-level work is list metaprogramming, and code-level work is a loop that expansion unrolls.
+- Variadic code is proved and checked once, at its definition. Each call still compiles to straight-line code.
+- Calls to C varargs are typed by their arguments, checked against C's promotion rules, and constrained by contracts, with the ABI right on both targets.
+- Foreign bindings grow by adding table rows. The constants and layouts in the tables are checked against each platform's headers in CI, and the trust report audits the rows.
+- A variadic function cannot be partially applied, and it is named as a value only through a lambda.
 
 ## Questions for Dean
 
-1. **Should a variadic call take one explicit tuple, `f (a, b, c)`?** The recommendation is yes. Curried application cannot tell where a bare `f a b c` ends, and the tuple form is what C++ readers expect. The alternative is a trailing-arguments marker on the declaration, which would end partial application for those functions.
-2. **Spelling of the rest pattern.** The recommendation is `(h, ..rest)`, which reuses `..` from ranges, unambiguous inside tuple parentheses because a range there always has a left operand. The alternative is `(h, ...rest)`, which is closer to C++ and JavaScript and costs a new token.
-3. **Sums over type lists.** Should `one_of ts` with positional constructors (`At0`, `At1`) be enough for now, or should core anonymous sum types come with this ADR? The recommendation is `one_of` now, and anonymous sums in their own ADR when `<variant>` needs them.
-4. **One declaration per C arity.** The recommendation is to keep `@variadic(n)` declarations fixed. The alternative is a single declaration whose variadic part is a tuple constrained by a metaprogram, which would allow arbitrary calls but would make the ABI and the contracts harder to audit in a `@trusted` module.
+1. **Is no partial application for variadic functions acceptable?** It is what lets `f a b c` collect the pack without any marker at the call. The alternative is to allow partial application of the fixed parameters only, so that `print w` would be a function waiting for its pack, at the cost of an empty pack needing `print w ..()`. The recommendation is no partial application.
+2. **Is the pack spelled `..ts`, in the parameter and in a spread argument?** It reuses `..` from ranges, and it cannot be confused with one, because a range always has a left operand. The alternative is `...`, which is closer to C++ and JavaScript and costs a new token.
+3. **Is `one_of ts` with positional constructors (`At0`, `At1`) enough for sums over a pack for now?** The recommendation is yes, with core anonymous sums in their own ADR when `<variant>` needs them.
+4. **Should binding tables be written by hand and checked against headers?** The recommendation is yes, because the tables carry contracts and headers do not. The alternative is generating them from headers with a tool, and adding contracts as a separate overlay.
 
 ## Prior art
 
@@ -165,7 +172,7 @@ let io_uring_enter (fd : i64) (to_submit : u32) (min_complete : u32) (flags : u3
 | --- | --- |
 | C++11 parameter packs, C++17 fold expressions, C++26 pack indexing | the capabilities: variadic functions and types, folds, size and indexing |
 | C++ `std::tuple`, `std::apply`, `std::variant` | tuples as the pack value, `apply`, sums over a type list |
-| Rust's tuples and its macro-generated tuple trait impls | tuples as anonymous records, with traits implemented for each arity |
-| Haskell's and Idris's heterogeneous lists (`HList`), and induction over their type index | recursion over a type-level list, proved by induction |
-| Zig's `anytype` tuples and `inline for` | a variadic call as one tuple argument, and the loop unrolled per instance |
+| Zig's `inline for` over tuples and `comptime` type lists | a loop over a pack unrolled per element, and types computed by ordinary compile-time code |
+| Rust's `libc` crate and `bindgen` | per-target binding tables, and why types from headers are not contracts |
+| Go's `zerrors_*` and `zsysnum_*` tables, generated per platform | constants and system-call numbers as per-target data, checked against the platform |
 | GCC's `format` attribute | argument checking for format strings, here as a proved `requires` |
