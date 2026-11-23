@@ -1,4 +1,5 @@
 load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Text.Json (ADR 0045): JSON, proved against one grammar. Step 1 is the
 # grammar of RFC 8259's tokens (Spec) and a tokenizer proved sound against
@@ -13,17 +14,12 @@ exports_files([
     "Spec.pia",
 ])
 
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
 # The token grammar as spec functions: tests/std/json_lex.pia checks its
 # goals and its interface.
 pia_library(
     name = "spec",
     src = "Spec.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # The tokenizer: tests/std/json_lex.pia checks its goals;
@@ -32,6 +28,6 @@ pia_library(
 pia_library(
     name = "lex",
     src = "Lex.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [":spec"],
 )

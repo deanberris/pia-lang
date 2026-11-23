@@ -1,4 +1,5 @@
 load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Core: the parts of the C++23 standard library that need no allocation
 # (ADR 0040, docs/cpp-std.md). Each module is proved and compiled on its own,
@@ -15,17 +16,12 @@ exports_files([
     "Result.pia",
 ])
 
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
 # <bit>: tests/std/bit.pia checks its goals; tests/std/bit_edges.pia and
 # :bit_run test it through its interface.
 pia_library(
     name = "bit",
     src = "Bit.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # <numeric>'s gcd and midpoint, <cstdlib>'s abs and div, and C++26's
@@ -34,7 +30,7 @@ pia_library(
 pia_library(
     name = "int",
     src = "Int.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # <compare>, the comparison concepts, swap and exchange, and min, max,
@@ -43,7 +39,7 @@ pia_library(
 pia_library(
     name = "order",
     src = "Order.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # <optional>, exported as a generic type and generic functions:
@@ -52,7 +48,7 @@ pia_library(
 pia_library(
     name = "option",
     src = "Option.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [":order"],
 )
 
@@ -62,6 +58,6 @@ pia_library(
 pia_library(
     name = "result",
     src = "Result.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [":order"],
 )

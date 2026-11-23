@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed.
+Status: Accepted (2026-11-23, with Dean's answers to its three questions, recorded under "Answers" below and folded into the decision).
 
 ## Context
 
@@ -39,7 +39,7 @@ For day-to-day work, slow proofs move to Linux: a cloud session can prove, compi
 | Apple silicon (product) | `arm64-apple-macosx14.0.0` | `apple-m1` | Mach-O |
 | Linux x86_64 | `x86_64-unknown-linux-gnu` | `x86-64-v3` | ELF |
 
-`x86-64-v3` is AVX2, FMA and BMI2, which every x86_64 server sold since about 2015 has, and which gives the vectoriser 256-bit vectors. `--cpu=x86-64-v2` is there for older machines.
+`x86-64-v3` is AVX2, FMA and BMI2, which every x86_64 server sold since about 2015 has, and which gives the vectoriser 256-bit vectors. It is the minimum, not just the default: `piac` refuses an x86_64 `--cpu` that lacks any v3 feature, so older machines are not supported.
 
 `piac`'s default target is the host it runs on, chosen when `piac` is built, and `--target` overrides it. Bazel never relies on the default: `pia_object` and `pia_library` pass `--target` and `--cpu` from the platform being built for, through a `select`, so cross-compiling is a platform flag, and the object always matches the code it is linked with.
 
@@ -60,7 +60,7 @@ let theory Target = sig
   let spec cache_line : usize         \ destructive interference size
   let spec vector_bits : usize        \ widest vector the CPU executes natively
 
-  let axiom ptr_64 ensures ptr_bits = 64
+  let axiom ptr_pow2 ensures is_pow2 ptr_bits && ptr_bits >= 32
   let axiom little ensures little_endian
   let axiom align_16 ensures max_align = 16
   let axiom page_pow2 ensures is_pow2 page_size && page_size >= 4096
@@ -69,7 +69,12 @@ let theory Target = sig
 end
 ```
 
-The axioms are what both targets have in common, and they are all a target-generic program may assume. A program proved against them holds on both targets, and on any later target whose model meets them. `ptr_64` and `little` are axioms for now, because every target Pia has is 64-bit and little-endian. A 32-bit or big-endian target would remove them, and every proof that used them would then fail, which is the point: they are listed in the certificate ([ADR 0024](0024-published-proof-certificates.md)) of each module whose proof used them.
+The axioms are what both targets have in common, and they are all a target-generic program may assume. A program proved against them holds on both targets, and on any later target whose model meets them. Each axiom must be true of every build of the architectures Pia targets, not just of the two triples it has today, so a later triple on the same architecture can never break a target-generic proof:
+
+- **Little-endian is an axiom.** x86_64 is little-endian in every mode, on Intel and AMD alike: AMD64 and Intel 64 are one architecture, and nothing in it is byte-order configurable. arm64 *can* run big-endian (the `aarch64_be` triples), but Apple's platforms never do, and a big-endian arm64 target would be a new architecture variant for Pia, with this axiom reconsidered then.
+- **64-bit pointers are not an axiom.** Pointer width is a property of the ABI, not of x86_64. The same 64-bit CPU runs 32-bit code with 32-bit pointers in compatibility mode (the i386 ABI under a 64-bit OS), and Linux's x32 ABI (`x86_64-unknown-linux-gnux32`) runs in 64-bit mode with 32-bit pointers. So `ptr_bits` is a value of each model, 64 for both of Pia's triples, and the theory only says it is a power of two of at least 32. `usize` is then as wide as the model says, and target-generic code that needs 64-bit pointers proves it under `when Target.ptr_bits = 64`, which folds to one branch per target. Even on 64-bit ABIs, only 48 bits of a virtual address are in use with 4-level paging and 57 with 5-level paging (LA57), which is one more reason [ADR 0030](0030-published-object-layouts.md) never tags a pointer's high bits.
+
+Every axiom a module's proof used is listed in its certificate ([ADR 0024](0024-published-proof-certificates.md)).
 
 Each target is a model of the theory, with each spec given its value:
 
@@ -106,7 +111,7 @@ Each target's model also includes its hardware memory model, as a theory of the 
 The hardware models are used in two ways:
 
 1. **The lowering is proved.** For each memory order and each target, codegen picks instructions: on arm64, `ldar`/`stlr` for acquire and release, and `dmb ish` where a fence is needed; on x86_64, plain `mov` for acquire loads and release stores, and `xchg` (or `mov` and `mfence`) for sequentially consistent stores. A lemma per target proves that the hardware order of the chosen instructions gives every happens-before edge the language model promises. These are compiler lemmas, proved when the compiler is built, and a mistake in the instruction table is a failed lemma rather than a miscompiled program.
-2. **Code may rely on TSO, but only inside `@target(x86_64_linux)`, and only for atomics.** Under TSO every atomic store is a release and every atomic load an acquire at no cost, but only if the compiler does not reorder them either: LLVM may move a `monotonic` access past another. So on x86_64 Pia lowers `relaxed` atomics to LLVM `release` stores and `acquire` loads. They compile to the same `mov` instructions, and they forbid only the compiler's own reorderings. The target model then adds two axioms, `every atomic store releases` and `every atomic load acquires`, which are true of the code Pia emits. With them, the message-passing idiom with a `relaxed` flag (`publish_relaxed` in [docs/theories.md](../theories.md#happens-before-and-memory-orders)) proves on x86_64 and fails everywhere else, which is exactly the hardware's behaviour.
+2. **Code may rely on TSO, but only inside `@target(x86_64_linux)`, only for atomics, and only as far as it is proved at compile time.** Under TSO every atomic store is a release and every atomic load an acquire at no cost, but only if the compiler does not reorder them either: LLVM may move a `monotonic` access past another. So on x86_64 Pia lowers `relaxed` atomics to LLVM `release` stores and `acquire` loads. They compile to the same `mov` instructions, and they forbid only the compiler's own reorderings. The target model then adds two axioms, `every atomic store releases` and `every atomic load acquires`, which are true of the code Pia emits. They are not trusted: after LLVM's optimisation, `piac` checks every atomic access in each `@target(x86_64_linux)` item that relied on them, and each must still be an acquire or release (or stronger) access in the final IR, with no fence or ordering removed. A check that fails is a compile error, like a failed goal, so the axioms are proved of each program rather than assumed. With them, the message-passing idiom with a `relaxed` flag (`publish_relaxed` in [docs/theories.md](../theories.md#happens-before-and-memory-orders)) proves on x86_64 and fails everywhere else, which is exactly the hardware's behaviour.
 
 Plain, non-atomic accesses are never ordered by either model. A data race on them is a race on both targets, and stays a compile error ([ADR 0027](0027-coroutines-and-race-freedom.md)).
 
@@ -116,7 +121,13 @@ Plain, non-atomic accesses are never ordered by either model. A data race on the
 2. The x86_64 target (section 2): `piac` default target from the host, `--target` from the Bazel platform, C harness tests on Linux.
 3. `Pia.Target` and the hardware memory models (sections 3 and 4), after Dean has reviewed this ADR.
 
-## Open questions for Dean
+## Answers (Dean, 2026-11-23)
+
+1. **TSO-reliant code:** yes, and it must be proved at compile time. Section 4.2 now checks, for each program, that the emitted atomics really are acquire and release after optimisation, on top of the per-target lowering lemmas.
+2. **The x86_64 CPU:** `x86-64-v3`, and no older. It is the minimum, and `piac` refuses a CPU without its features (section 2).
+3. **Axioms for pointer width and byte order:** only if true of every x86_64 build. Little-endian is, on Intel and AMD alike, since they implement one architecture. 64-bit pointers are not: compatibility mode and the x32 ABI both run 32-bit pointers on a 64-bit CPU, so the width is per ABI, not per vendor or architecture. Section 3 keeps `little` as an axiom and makes `ptr_bits` a model value.
+
+The questions, as they were asked:
 
 1. **TSO-reliant code (section 4.2).** Allowing `@target(x86_64_linux)` code to rely on TSO for `relaxed` atomics costs nothing at run time, but it makes such code non-portable by design. The alternative is to prove every program only against the language model and use the hardware models only for the lowering lemmas. The recommendation is to allow it: it is opt-in, it is visible in the certificate, and a port to arm64 then fails to prove rather than failing at run time.
 2. **The default x86_64 CPU.** `x86-64-v3` (AVX2) or `x86-64-v2` (SSE4.2 only)? The recommendation is v3, since Pia is aimed at SIMD pipelines and every current cloud and desktop x86_64 machine has it.
@@ -125,6 +136,7 @@ Plain, non-atomic accesses are never ordered by either model. A data race on the
 ## Consequences
 
 - Proof work, the whole x86_64 build and its tests run in a cloud session and in Linux CI. The iMac is needed only for arm64 runs.
+- `usize` is as wide as the target model says. Today it is 64 bits on both targets, and code that relies on that proves it under `when Target.ptr_bits = 64`.
 - Every proof that used a machine fact now names it, through the `Pia.Target` axioms or a model under `@target`, and the certificate lists it.
 - Two targets means two published layouts per type and two interfaces where `@target` items differ.
 - On x86_64, `relaxed` atomics lose some compiler reorderings, which costs nothing in the instructions emitted.

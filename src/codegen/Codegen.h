@@ -26,9 +26,22 @@ class raw_pwrite_stream;
 
 namespace pia::codegen {
 
+// The targets piac compiles for (ADR 0049). The default is the host piac
+// was built for, and `--target` and `--cpu` choose another. Bazel always
+// passes both, from the platform it builds for (tools/piac/targets.bzl).
+inline constexpr const char *kAppleSiliconTriple = "arm64-apple-macosx14.0.0";
+inline constexpr const char *kAppleSiliconCpu = "apple-m1";
+inline constexpr const char *kLinuxX86Triple = "x86_64-unknown-linux-gnu";
+inline constexpr const char *kLinuxX86Cpu = "x86-64-v3";
+
 struct Options {
-  std::string triple = "arm64-apple-macosx14.0.0";
-  std::string cpu = "apple-m1";
+#if defined(__x86_64__) && defined(__linux__)
+  std::string triple = kLinuxX86Triple;
+  std::string cpu = kLinuxX86Cpu;
+#else
+  std::string triple = kAppleSiliconTriple;
+  std::string cpu = kAppleSiliconCpu;
+#endif
   unsigned optLevel = 2;
 };
 

@@ -8,7 +8,7 @@ This page builds `piac`, proves a first program, compiles it, and sets up VS Cod
 - **A C++17 compiler.** On macOS, Xcode or its command line tools. On Linux, Clang or GCC.
 - **Network access** to the Bazel Central Registry and GitHub for the first build, which fetches LLVM, MLIR and Z3.
 
-Pia is developed on Apple Silicon Macs. Everything except running the compiled code builds on Linux as well, since `piac` cross-compiles to arm64.
+Pia is developed on Apple silicon Macs, and builds, proves, compiles and runs on Linux x86_64 too ([ADR 0049](adr/0049-targets-are-theories.md)).
 
 ## Build
 
@@ -78,7 +78,7 @@ The counterexample is an input that breaks the claim. Here `x` is below `lo`, so
 
 ## Compile a program
 
-`piac --emit=obj` proves the program, then compiles it to an object file for Apple Silicon. Code is generated only when no goal fails.
+`piac --emit=obj` proves the program, then compiles it to an object file for the machine it runs on. Code is generated only when no goal fails.
 
 A file is a module, and everything in it is private unless an interface the module claims lists it ([ADR 0039](adr/0039-module-and-interface-syntax.md)). A file with no `module` header exports nothing. To call `clamp` from C, give the file a header and list `clamp` in an interface marked `@abi(c)`, which keeps C names:
 
@@ -153,8 +153,8 @@ The call is checked against the interface's contract, never against the body of 
 | Command | What it does |
 | --- | --- |
 | `piac --verify f.pia` | prove every goal and print a report |
-| `piac --emit=obj -o f.o f.pia` | prove, then compile to an arm64 object file |
-| `piac --emit=asm f.pia` | prove, then print arm64 assembly (also `llvm`, `core`) |
+| `piac --emit=obj -o f.o f.pia` | prove, then compile to an object file |
+| `piac --emit=asm f.pia` | prove, then print assembly (also `llvm`, `core`) |
 | `piac --emit=interface -o dir f.pia` | write the module's interface artifacts to `dir` |
 | `piac --verify --iface-path=dir f.pia` | prove a program that imports interfaces found in `dir` |
 | `piac --emit=mlir f.pia` | print the program in Pia's MLIR dialects |
@@ -164,7 +164,7 @@ The call is checked against the interface's contract, never against the body of 
 | `piac --dump-expanded f.pia` | print the syntax tree after metaprograms run |
 | `piac --check f.pia` | parse only |
 
-`--target=<triple>` and `--cpu=<name>` choose the machine (default `arm64-apple-macosx14.0.0` and `apple-m1`), and `-O0` to `-O3` the optimisation level (default `-O2`). `--meta-cycles=N` caps metaprogram expansion (default 32).
+`--target=<triple>` and `--cpu=<name>` choose the machine (`arm64-apple-macosx14.0.0` with `apple-m1`, or `x86_64-unknown-linux-gnu` with `x86-64-v3`; the default is the host), and `-O0` to `-O3` the optimisation level (default `-O2`). `--meta-cycles=N` caps metaprogram expansion (default 32).
 
 The exit status is 0 on success, 1 when the program has an error or a goal fails, and 2 for a usage error.
 

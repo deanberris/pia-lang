@@ -1,0 +1,36 @@
+(* Pia.Core.Algo.BinarySearch (ADR 0040, phase 1.7): lower_bound,
+   upper_bound, equal_range and binary_search by a comparator and by Ord,
+   proved once (ADR 0043, ADR 0044); equal_range returns a span, so it is
+   proved at its instances (tests/std/binary_search_edges.pia).
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/BinarySearch.pia | FileCheck %s
+// RUN: mkdir -p %t/b && piac --emit=interface -o %t/b %S/../../lib/Pia/Core/Algo/BinarySearch.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/b/Pia.Core.Algo.BinarySearch.BinarySearch.piai
+*)
+
+(* No function of the module is left unproved but equal_range, which
+   returns a record and is proved at its instances.
+// CHECK-NOT: failed
+// CHECK-DAG: not proved generically: 'equal_range' is proved at each instance, since it returns a value of span [generic]
+// CHECK: 99 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.BinarySearch{{$}}
+// IFACE-NEXT: {{^}}interface BinarySearch = sig{{$}}
+// IFACE-NEXT: {{^}}  let span = type { first : usize; last : usize }{{$}}
+// IFACE-NEXT: {{^}}  let spec below : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec above : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let lower_bound : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let upper_bound : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let equal_range : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> span{{$}}
+// IFACE-NEXT: {{^}}  let binary_search : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec below_ord : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec above_ord : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let lower_bound : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let upper_bound : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let equal_range : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> span{{$}}
+// IFACE-NEXT: {{^}}  let binary_search : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

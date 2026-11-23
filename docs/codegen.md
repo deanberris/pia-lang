@@ -2,7 +2,7 @@
 
 Status: implemented in M6 ([#7](https://github.com/deanberris/pia-lang/issues/7)).
 
-`piac --emit=obj -o file.o file.pia` verifies a program ([verifier.md](verifier.md)) and compiles it to an object file for Apple Silicon. The result links with C. The other outputs stop earlier in the pipeline:
+`piac --emit=obj -o file.o file.pia` verifies a program ([verifier.md](verifier.md)) and compiles it to an object file for Apple silicon (Mach-O) or Linux x86_64 (ELF) ([ADR 0049](adr/0049-targets-are-theories.md)). The result links with C. The other outputs stop earlier in the pipeline:
 
 | Flag | Output |
 | --- | --- |
@@ -11,7 +11,7 @@ Status: implemented in M6 ([#7](https://github.com/deanberris/pia-lang/issues/7)
 | `--emit=asm` | assembly |
 | `--emit=obj` | an object file, written to `-o` |
 
-`--target=<triple>` and `--cpu=<name>` choose the machine. The defaults are `arm64-apple-macosx14.0.0` and `apple-m1`. `-O0` to `-O3` set the optimisation level, which defaults to `-O2`.
+`--target=<triple>` and `--cpu=<name>` choose the machine: `arm64-apple-macosx14.0.0` with `apple-m1`, or `x86_64-unknown-linux-gnu` with `x86-64-v3`. The default is the host `piac` was built for. Bazel always passes both, for the platform it builds for ([tools/piac/targets.bzl](https://github.com/deanberris/pia-lang/blob/main/tools/piac/targets.bzl)). `-O0` to `-O3` set the optimisation level, which defaults to `-O2`.
 
 ## Verification comes first
 
@@ -91,7 +91,7 @@ void opaque_all(uint8_t *r, uint64_t n, uint8_t *g, uint8_t *b, uint8_t *a,
                 uint8_t v);
 ```
 
-Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. A prime cannot appear in a C name, so each `'` in a function's name becomes `_prime` in its entry point: `step'` is called as `step_prime`. Two functions whose C names would be the same are an error. Returning a buffer is not supported yet.
+Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires and as clang and GCC do for x86_64 System V. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. A prime cannot appear in a C name, so each `'` in a function's name becomes `_prime` in its entry point: `step'` is called as `step_prime`. Two functions whose C names would be the same are an error. Returning a buffer is not supported yet.
 
 For example, `add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit` is called from C as:
 
@@ -110,14 +110,14 @@ A parameter, local or record field whose type is spec-only (`int`, `real` or a t
 
 A foreign function without a `requires` or `ensures` can be called only as `unsafe f x`. The call is marked `pia.unsafe`: the verifier assumes nothing about its result beyond its type, and treats every buffer passed to it as written. `--trust-report` lists each such call site.
 
-Codegen declares `sym` once, as a private function with C types, and calls it. An integer keeps its width, extended to 32 bits as Apple's arm64 ABI expects (`llvm.zeroext` or `llvm.signext`), and a bool is a zero-extended `i1`. A buffer is passed as a pointer to its first element, which for a view (`xs.[a .. b]`) is part way into its storage; pass its length as a separate `usize` argument. If the Pia declaration has the same name as the symbol, it is renamed `pia$ffi$sym`. For now a foreign function takes integers, bools and buffers of integers, and returns an integer, a bool or unit. tests/codegen/ffi_run.pia runs against C in ffi_test.c.
+Codegen declares `sym` once, as a private function with C types, and calls it. An integer keeps its width, extended to 32 bits as Apple's arm64 ABI and x86_64 System V expect (`llvm.zeroext` or `llvm.signext`), and a bool is a zero-extended `i1`. A buffer is passed as a pointer to its first element, which for a view (`xs.[a .. b]`) is part way into its storage; pass its length as a separate `usize` argument. If the Pia declaration has the same name as the symbol, it is renamed `pia$ffi$sym`. For now a foreign function takes integers, bools and buffers of integers, and returns an integer, a bool or unit. tests/codegen/ffi_run.pia runs against C in ffi_test.c.
 
 Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` makes it a slice (`pia.view`, marked `pia.unsafe`). Codegen builds the memref descriptor an LLVM lowering of a memref expects, with `addr` as its pointer, offset 0, `n` elements and stride 1, so loads, stores and slices of it lower as usual. tests/codegen/pages.pia fills and sums pages from mmap.
 
 ## Tests
 
-- `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed or unproved obligation, and `--allow-unproved`. They run on any host whose LLVM includes the AArch64 target, which the Bazel build always does.
-- `//tests/codegen:saturate_test` compiles `saturate.pia` to an object file and links it with `saturate_test.c`. The harness compares saturating, wrapping and proof-mode arithmetic, a slice loop and a fixed array against C reference implementations. The 8-bit cases cover every input. The test runs on arm64 macOS only. On other hosts Bazel skips it as incompatible.
+- `tests/codegen/*.pia` are lit tests. They check `--emit=core` and `--emit=llvm`, the refusal to compile a program with a failed or unproved obligation, and `--allow-unproved`. They run on any host: the lit runner compiles for `arm64-apple-macosx14.0.0` unless a RUN line passes its own `--target`, so the expected IR is the same everywhere.
+- `//tests/codegen:saturate_test` compiles `saturate.pia` to an object file and links it with `saturate_test.c`. The harness compares saturating, wrapping and proof-mode arithmetic, a slice loop and a fixed array against C reference implementations. The 8-bit cases cover every input. The test runs on arm64 macOS and on x86_64 Linux. On other platforms Bazel skips it as incompatible.
 
 ## Limits of v0
 

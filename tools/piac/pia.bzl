@@ -1,6 +1,7 @@
 """Bazel rules for compiling Pia programs with piac."""
 
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load(":targets.bzl", "PIAC_TARGET_FLAGS")
 
 def pia_object(
         name,
@@ -9,7 +10,8 @@ def pia_object(
         solver_rlimit = 1200000000,
         solver_timeout_ms = 600000,
         **kwargs):
-    """Proves a Pia file and compiles it to an arm64 object file, `<name>.o`.
+    """Proves a Pia file and compiles it to an object file, `<name>.o`, for
+    the platform being built for (tools/piac/targets.bzl).
 
     piac refuses to compile a program with a failed or unproved goal, so the
     build fails unless every goal is proved, or accepted by one of
@@ -35,10 +37,19 @@ def pia_object(
         name = name,
         srcs = [src],
         outs = [name + ".o"],
-        cmd = "$(location //tools/piac) --emit=obj %s -o $@ $<" % flags,
+        cmd = "$(location //tools/piac) --emit=obj %s " % flags + PIAC_TARGET_FLAGS + " -o $@ $<",
         tools = ["//tools/piac"],
         **kwargs
     )
+
+def _target_args(ctx):
+    """piac's --target and --cpu for the platform being built for, as in
+    PIAC_TARGET_FLAGS (a rule cannot read a select from a .bzl constant)."""
+    linux = ctx.attr._linux[platform_common.ConstraintValueInfo]
+    x86_64 = ctx.attr._x86_64[platform_common.ConstraintValueInfo]
+    if ctx.target_platform_has_constraint(linux) and ctx.target_platform_has_constraint(x86_64):
+        return ["--target=x86_64-unknown-linux-gnu", "--cpu=x86-64-v3"]
+    return ["--target=arm64-apple-macosx14.0.0", "--cpu=apple-m1"]
 
 PiaInfo = provider(
     doc = "A Pia module built by pia_library (ADR 0039).",
@@ -68,7 +79,7 @@ def _pia_library_impl(ctx):
     # declares, never those they import in turn, nor any object file.
     imported = [dep[PiaInfo].interfaces for dep in ctx.attr.deps]
     obj = ctx.actions.declare_file(ctx.label.name + ".o")
-    args = ["--emit=obj", "-o", obj.path]
+    args = ["--emit=obj", "-o", obj.path] + _target_args(ctx)
     args += ["--iface-path=" + d.path for d in imported]
     args += ["--allow-unproved=" + spec for spec in ctx.attr.allow_unproved]
     args += [
@@ -114,6 +125,8 @@ pia_object.
         "allow_unproved": attr.string_list(),
         "solver_rlimit": attr.int(default = 1200000000),
         "solver_timeout_ms": attr.int(default = 600000),
+        "_linux": attr.label(default = "@platforms//os:linux"),
+        "_x86_64": attr.label(default = "@platforms//cpu:x86_64"),
         "_piac": attr.label(
             default = "//tools/piac",
             executable = True,

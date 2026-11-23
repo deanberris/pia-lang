@@ -1,4 +1,5 @@
 load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Core.Algo: C++'s <algorithm> on slices (ADR 0040), generic over
 # Pia.Core.Order's concepts and proved once over them (ADR 0043).
@@ -6,6 +7,7 @@ load("//tools/piac:pia.bzl", "pia_library")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "BinarySearch.pia",
     "Heap.pia",
     "Modify.pia",
     "Numeric.pia",
@@ -15,18 +17,13 @@ exports_files([
     "Search.pia",
 ])
 
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
 # The non-modifying sequence algorithms: tests/std/search.pia checks its
 # goals; tests/std/search_edges.pia and :search_run test it through its
 # interface.
 pia_library(
     name = "search",
     src = "Search.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -38,7 +35,7 @@ pia_library(
 pia_library(
     name = "modify",
     src = "Modify.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -47,7 +44,7 @@ pia_library(
 pia_library(
     name = "permutation",
     src = "Permutation.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -57,7 +54,7 @@ pia_library(
 pia_library(
     name = "remove",
     src = "Remove.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -67,7 +64,7 @@ pia_library(
 pia_library(
     name = "sort",
     src = "Sort.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         "//lib/Pia:fn",
@@ -81,7 +78,7 @@ pia_library(
 pia_library(
     name = "heap",
     src = "Heap.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         ":sort",
@@ -97,4 +94,18 @@ pia_library(
     name = "numeric",
     src = "Numeric.pia",
     target_compatible_with = APPLE_SILICON,
+)
+
+# The binary search family, by a comparator and by Ord:
+# tests/std/binary_search.pia checks its goals;
+# tests/std/binary_search_edges.pia and :binary_search_run test it through
+# its interface.
+pia_library(
+    name = "binary_search",
+    src = "BinarySearch.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
 )
