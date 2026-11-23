@@ -155,3 +155,4 @@ nav:
       - adr/0051-variadic-generics-and-foreign-varargs.md
       - adr/0052-atomics.md
       - adr/0053-protocols-checked-by-z3.md
+      - adr/0054-proved-gif-and-jpeg-codecs.md
