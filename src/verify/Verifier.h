@@ -61,6 +61,10 @@ struct Options {
   // Z3 context, and outcomes keep the walk order, so the report does not
   // depend on the number of threads (ADR 0032).
   unsigned jobs = 0;
+  // Test only: megabytes of Z3 terms to hold before solving, so a test can
+  // check that a goal costs the same in a large process as in a small one
+  // (third_party/z3/qfbv_memory_independent.patch). 0 for none.
+  unsigned memoryBallastMb = 0;
   // Goal slicing: drop the assertions that share no symbol with the goal,
   // directly or transitively, before solving. A sliced query that is not
   // unsat is solved again in full, so slicing changes only how fast a goal

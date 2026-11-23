@@ -1,8 +1,0 @@
-(* A proof's cost does not depend on how many threads prove it: Charconv,
-   whose small goals Z3 once searched differently when the process held
-   more than 300 MB, as eight threads at once do, reports the same goals at
-   the same rlimit cost on one thread and on eight
-   (third_party/z3/qfbv_memory_independent.patch).
-// RUN: piac --verify --solver-cost --jobs=1 %S/../../lib/Pia/Core/Charconv.pia > "$TEST_TMPDIR/one"
-// RUN: piac --verify --solver-cost --jobs=8 %S/../../lib/Pia/Core/Charconv.pia | diff "$TEST_TMPDIR/one" -
-*)

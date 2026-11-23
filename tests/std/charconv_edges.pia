@@ -1,5 +1,7 @@
 (* Importers of Pia.Core.Charconv know from the interface alone what
-   from_chars returns for any input: how many digits it used, their value
+   from_chars returns for any input, and what to_chars writes: its
+   digit count, valid digits, and a '-' for a negative value. For
+   from_chars: how many digits it used, their value
    in the base when it fits, and the value kept on an error, for an
    unsigned and a signed type and two bases. Concrete inputs are checked
    at run time by :charconv_run.
@@ -32,7 +34,23 @@ let a_minus_alone (s : [u8]) (fallback : i32) : unit
 = let r = C.from_chars s 10 fallback in
   assert r.used = 0 && C.is_invalid (r.ec) && r.value = fallback
 
+let write_u32 (dst : borrowed inout mutable [u8]) (v : u32) : unit
+  requires len dst >= 10
+= let r = C.to_chars dst v 10 in
+  assert r.ok ==> r.used = C.ndig v 10 1;
+  assert r.ok ==> (forall (k in 0 .. len dst). k < r.used ==> C.digit_of dst.[k] 10 < 10)
+
+let too_small (dst : borrowed inout mutable [u8]) (v : u64) : unit
+  requires len dst = 0
+= let r = C.to_chars dst v 16 in
+  assert r.ok = false
+
+let negative (dst : borrowed inout mutable [u8]) (v : i16) : unit
+  requires v < 0
+= let r = C.to_chars dst v 10 in
+  assert r.ok ==> dst.[0] = 45
+
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 16 proved, 0 failed, 0 skipped
+// CHECK: 21 proved, 0 failed, 0 skipped
 *)
