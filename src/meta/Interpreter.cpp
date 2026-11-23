@@ -357,7 +357,7 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
   tick(n);
   switch (n.kind) {
     case NodeKind::IntLit: {
-      // Decimal, or 0x, 0o or 0b, with `_` between digits; a suffix such
+      // Decimal, or 0x, 0o or 0b, with `_` or `'` between digits; a suffix such
       // as u8 ends the digits.
       std::string_view t = n.text;
       unsigned radix = 10;
@@ -368,7 +368,8 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
       }
       MetaInt v = 0;
       for (char c : t) {
-        if (c == '_') continue;
+        if (syntax::isDigitSeparator(c))
+          continue;
         unsigned d;
         if (c >= '0' && c <= '9') d = static_cast<unsigned>(c - '0');
         else if (radix == 16 && c >= 'a' && c <= 'f') d = static_cast<unsigned>(c - 'a' + 10);
