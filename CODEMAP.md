@@ -146,7 +146,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Set.pia` holds `includes`, `set_intersection` and `set_difference`. `lib/Pia/Core/Algo/SetUnion.pia` holds `set_union`.
 - `lib/Pia/Core/Algo/SetSymmetric.pia` holds `set_symmetric_difference`, in its own module so it proves in parallel with `set_union`.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
-- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it (ADR 0045).
+- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, and `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens (ADR 0045).
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
 - `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions, starting with the LZW dictionary. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it.
 

@@ -63,6 +63,18 @@ interface Grammar = sig
   let spec is_cont : (b : u8) -> bool
   (** The length of the UTF-8 encoded scalar value at i, or 0. *)
   let spec utf8_len : (s : [u8]) -> (i : usize) -> int{0..4}
+  (** acc followed by the decimal digit b, saturated at the largest u64. *)
+  let spec digit_step : (acc : u64) -> (b : u8) -> u64
+  (** The value of the digits from i to j after the digits worth acc,
+      saturated at the largest u64. *)
+  let spec digits_value : (acc : u64) -> (s : [u8]) -> (i : usize) -> (j : usize) -> u64
+  (** A minus sign at i. *)
+  let spec minus_at : (s : [u8]) -> (i : usize) -> bool
+  (** The magnitude of the integer from i to j: the value of its digits,
+      after the minus if there is one. *)
+  let spec magnitude : (s : [u8]) -> (i : usize) -> (j : usize) -> u64
+  (** The bytes from i to j are UTF-8 encoded scalar values. *)
+  let spec utf8_run : (s : [u8]) -> (i : usize) -> (j : usize) -> bool
   (** A `\uXXXX` escape at k, and whether it is a high or low surrogate. *)
   let spec u_escape : (s : [u8]) -> (k : usize) -> bool
   let spec high_surrogate : (s : [u8]) -> (k : usize) -> bool
@@ -171,6 +183,35 @@ let spec utf8_len (s : [u8]) (i : usize) : int{0..4}
             else is_cont s.[i + 1])
      then 4 else 0)
   else 0
+
+(* The value of an integer number (RFC 8259, section 6, with no fraction
+   or exponent), as a u64: exact up to the largest u64, which also stands
+   for every larger value. A digit step past 1844674407370955161 cannot
+   fit, and one at it fits only when acc * 10 + d does, which `+|` says. *)
+let spec digit_step (acc : u64) (b : u8) : u64 =
+  let d : u64 = if is_digit b then b - 0x30 else 0 in
+  if acc > 1844674407370955161 then 18446744073709551615 else acc * 10 +| d
+
+(* Left to right, as a reader accumulates them. *)
+let spec digits_value (acc : u64) (s : [u8]) (i : usize) (j : usize) : u64
+  decreases j - i
+= if i < j && j <= len s then digits_value (digit_step acc s.[i]) s (i + 1) j else acc
+
+(* '-' 0x2D. *)
+let spec minus_at (s : [u8]) (i : usize) : bool = if i < len s then s.[i] = 0x2D else false
+
+let spec magnitude (s : [u8]) (i : usize) (j : usize) : u64 =
+  if minus_at s i then digits_value 0 s (i + 1) j else digits_value 0 s i j
+
+(* A sequence of utf8_len's scalar values, with nothing left over. *)
+let spec utf8_run (s : [u8]) (i : usize) (j : usize) : bool
+  ensures i = j && j <= len s ==> result
+  ensures result ==> i <= j && j <= len s
+  decreases j - i
+= if i <= j && j <= len s then
+    (if i = j then true
+     else (let n = utf8_len s i in if n > 0 && n <= j - i then utf8_run s (i + n) j else false))
+  else false
 
 (* A backslash, 'u' (0x75) and four hex digits at k. *)
 let spec u_escape (s : [u8]) (k : usize) : bool
