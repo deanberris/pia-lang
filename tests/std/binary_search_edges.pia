@@ -1,0 +1,54 @@
+(* Importers of Pia.Core.Algo.BinarySearch search ranges they know are
+   sorted, by `<` at u8 and by Ord at i32, and get C++'s meaning from the
+   interface alone: sortedness gives each search its partition
+   precondition, and equal_range, proved at its instances here, spans
+   exactly the equivalent elements.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/BinarySearch.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.BinarySearch.BinarySearch as B
+
+let first_at_least (xs : [u8]) (v : u8) : usize
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures result <= len xs
+  ensures forall (k in result .. len xs). xs.[k] >= v
+  ensures forall (k in 0 .. result). xs.[k] < v
+= B.lower_bound xs v (let (a : u8) (b : u8) : bool => a < b)
+
+let first_above (xs : [u8]) (v : u8) : usize
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures forall (k in result .. len xs). xs.[k] > v
+= B.upper_bound xs v (let (a : u8) (b : u8) : bool => a < b)
+
+let has (xs : [u8]) (v : u8) : bool
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures result <==> (exists (k in 0 .. len xs). xs.[k] = v)
+= B.binary_search xs v (let (a : u8) (b : u8) : bool => a < b)
+
+let copies (xs : [u8]) (v : u8) : usize
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures result <= len xs
+= let r = B.equal_range xs v (let (a : u8) (b : u8) : bool => a < b) in
+  assert (forall (k in r.first .. r.last). xs.[k] = v);
+  r.last - r.first
+
+let has_ord (xs : [i32]) (v : i32) : bool
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures result <==> (exists (k in 0 .. len xs). xs.[k] = v)
+= B.binary_search xs v
+
+let range_ord (xs : [i32]) (v : i32) : usize
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  ensures result <= len xs
+= let r = B.equal_range xs v in
+  r.last - r.first
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.BinarySearch.lower_bound#line{{[0-9]+}}[lambda@binary_search_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.BinarySearch.lower_bound#line{{[0-9]+}}#proof' [generic]
+// CHECK: 51 proved, 0 failed, 0 skipped
+*)
