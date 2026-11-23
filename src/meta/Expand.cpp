@@ -221,6 +221,13 @@ class Expander {
   bool takeItems(const ValuePtr &v, SourceLoc at, const std::string &who,
                  std::vector<NodePtr> &out) {
     if (v->kind == Value::Kind::Unit) return true;
+    // A list of items, such as one test per generated case (ADR 0056).
+    if (v->kind == Value::Kind::List) {
+      for (const ValuePtr &x : v->list)
+        if (!takeItems(x, at, who, out))
+          return false;
+      return true;
+    }
     if (v->kind == Value::Kind::Syntax && v->syntax) {
       const Node &n = *v->syntax;
       if (n.kind == NodeKind::Program) {
