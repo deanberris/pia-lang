@@ -140,6 +140,9 @@ SIG_TEMPLATE = """template <class R, class... A> struct sig {
 template <class R, class... A> sig<R, A...> deduce(R (*)(A...));
 template <class R, class... A> sig<R, A...> deduce(R (*)(A..., ...));
 template <class T> struct ty {};
+// A C enum is passed as its underlying integer (macOS's clockid_t).
+template <class T, bool = std::is_enum<T>::value> struct canon { using type = T; };
+template <class T> struct canon<T, true> { using type = typename std::underlying_type<T>::type; };
 """
 
 
@@ -285,7 +288,7 @@ def generate(target, clang):
         fail(f"not declared in the {target} headers: " + ", ".join(missing))
 
     # Values, sizes and offsets, as a C++ probe's template arguments.
-    probe = [includes, "#include <cstddef>\n#include <tuple>\nnamespace pia_probe {\n", "template <auto V> struct v {};\n"]
+    probe = [includes, "#include <cstddef>\n#include <tuple>\n#include <type_traits>\nnamespace pia_probe {\n", "template <auto V> struct v {};\n"]
     for i, n in enumerate(constants):
         probe.append(f"v<+({n})> c{i};\ndecltype(+({n})) t{i};\n")
     # Each function's result and parameter types, desugared to the types
@@ -297,9 +300,9 @@ def generate(target, clang):
         if n not in decls:
             continue
         arity = sum(1 for c in decls[n].get("inner", []) if c.get("kind") == "ParmVarDecl")
-        probe.append(f"ty<decltype(deduce(&::{n}))::r> f{i};\n")
+        probe.append(f"ty<canon<decltype(deduce(&::{n}))::r>::type> f{i};\n")
         for k in range(arity):
-            probe.append(f"ty<decltype(deduce(&::{n}))::a<{k}>> f{i}_{k};\n")
+            probe.append(f"ty<canon<decltype(deduce(&::{n}))::a<{k}>>::type> f{i}_{k};\n")
     layout = {}
     for i, n in enumerate(structs):
         fields = struct_fields(records[n])

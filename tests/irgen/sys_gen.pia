@@ -3,5 +3,6 @@
    every C type has a Pia type, every variadic declaration is well formed,
    and every constant fits its type.
 // RUN: piac --verify --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %S/../../lib/Pia/Sys/Gen/x86_64_linux.pia | FileCheck %s
+// RUN: piac --verify %S/../../lib/Pia/Sys/Gen/arm64_macos.pia | FileCheck %s
 // CHECK: 0 failed, 0 skipped
 *)
