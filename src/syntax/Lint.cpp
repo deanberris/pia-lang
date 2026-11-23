@@ -424,7 +424,14 @@ private:
     for (const NodePtr &c : contracts.kids) {
       if (c->kids.empty())
         continue;
-      nonlinear(*c, fn.text);
+      // A lemma's contract is the fact, proved once, that this lint asks
+      // for, so it is not flagged.
+      bool lemma = false;
+      std::istringstream words(fn.flags);
+      for (std::string word; words >> word;)
+        lemma = lemma || word == "lemma";
+      if (!lemma)
+        nonlinear(*c, fn.text);
     }
     assumes(body);
 
