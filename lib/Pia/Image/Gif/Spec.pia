@@ -1,0 +1,71 @@
+(* Pia.Image.Gif.Spec: what a GIF means, as spec functions (ADR 0054,
+   step 2). This part is the LZW dictionary of GIF89a's appendix F.
+
+   The dictionary is the one a decoder builds: entry k, for k from clear + 2
+   up, is a prefix entry and one more byte, its suffix. The roots, the
+   entries below clear = 2^min_code_size, are one byte each, their own
+   value; clear and clear + 1 (end of information) are codes, not entries.
+   A decoder keeps the dictionary in a table of 12288 bytes, which is what
+   these specs read: the prefix of entry k as a little-endian u16 at bytes
+   2k and 2k + 1, and its suffix at byte 8192 + k.
+
+   `elen t clear k` is the length of entry k's string and `sym t clear k d`
+   is its byte d, both by following the prefix chain down to a root. Each
+   is total: a prefix that does not decrease ends the chain, so neither
+   depends on the table being well formed. `table_ok` is what a decoder
+   keeps true of the entries it has added: each one's prefix is an
+   earlier entry or a root, and its suffix is a root's value. *)
+module Pia.Image.Gif.Spec : Lzw
+
+interface Lzw = sig
+  let spec pre : (t : [u8]) -> (k : usize) -> u16
+  let spec suf : (t : [u8]) -> (k : usize) -> u8
+  let spec elen : (t : [u8]) -> (clear : usize) -> (k : usize) -> usize
+  let spec sym : (t : [u8]) -> (clear : usize) -> (k : usize) -> (d : usize) -> usize
+  let spec entry_ok : (t : [u8]) -> (clear : int{4..256}) -> (k : usize) -> bool
+  let spec table_ok : (t : [u8]) -> (clear : int{4..256}) -> (nx : usize) -> bool
+  let spec valid : (clear : int{4..256}) -> (nx : usize) -> (k : usize) -> bool
+end
+
+(** The prefix of entry k. *)
+let spec pre (t : [u8]) (k : usize) : u16
+  requires len t = 12288 && k < 4096
+= let lo : u16 = t.[2 * k] in
+  let hi : u16 = t.[2 * k + 1] in
+  (lo | (hi << 8))
+
+(** The suffix of entry k: the last byte of its string. *)
+let spec suf (t : [u8]) (k : usize) : u8
+  requires len t = 12288 && k < 4096
+= t.[8192 + k]
+
+(** The length of entry k's string. *)
+let spec elen (t : [u8]) (clear : usize) (k : usize) : usize
+  requires len t = 12288 && k < 4096
+  ensures 1 <= result && result <= k + 1
+  decreases k
+= if k < clear then 1
+  else if pre t k < k then 1 + elen t clear (pre t k)
+  else 1
+
+(** Byte d of entry k's string. *)
+let spec sym (t : [u8]) (clear : usize) (k : usize) (d : usize) : usize
+  requires len t = 12288 && k < 4096 && d < elen t clear k
+  decreases k
+= if d + 1 = elen t clear k then (if k < clear then k else suf t k)
+  else sym t clear (pre t k) d
+
+(** Entry k extends an earlier entry or a root by a root's value. *)
+let spec entry_ok (t : [u8]) (clear : int{4..256}) (k : usize) : bool
+  requires len t = 12288 && k < 4096
+= pre t k < k && (pre t k < clear || clear + 2u16 <= pre t k) && suf t k < clear
+
+(** Every entry added below nx is well formed. *)
+let spec table_ok (t : [u8]) (clear : int{4..256}) (nx : usize) : bool
+  requires len t = 12288 && nx <= 4096
+= forall (k in 0 .. nx). clear + 2u16 <= k ==> entry_ok t clear k
+
+(** k names a string when the next free entry is nx: a root, or an entry
+    already added. *)
+let spec valid (clear : int{4..256}) (nx : usize) (k : usize) : bool =
+  k < clear || (clear + 2u16 <= k && k < nx)
