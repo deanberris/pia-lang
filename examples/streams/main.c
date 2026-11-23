@@ -268,8 +268,9 @@ int main(int argc, char **argv) {
       return 1;
     printf("drew a synthetic terrain: %s\n", input);
   }
-  if (w < 3 || h < 3 || (unsigned long)w * h >= 4294967295ul) {
-    fprintf(stderr, "the map must be at least 3x3 and under 2^32 cells\n");
+  if (w < 3 || h < 3 || (unsigned long)w * h > 16777215ul) {
+    fprintf(stderr,
+            "the map must be at least 3x3 and at most 16777215 cells\n");
     return 1;
   }
   uint64_t n = (uint64_t)w * h;
@@ -400,19 +401,16 @@ int main(int argc, char **argv) {
   memcpy(fill0, fill, n * sizeof *fill);
   double t8 = seconds(), pia_ms = 0;
   for (int e = 0; e < EPOCHS; ++e) {
+    // The rainfall fields are Pia's, each proved to keep the total rain
+    // within a u32 (docs/sediment.pia.md, "Rainfall fields").
     const char *kind;
-    for (long y = 0; y < h; ++y)
-      for (long x = 0; x < w; ++x) {
-        uint32_t r;
-        if (e < 2)
-          kind = "uniform", r = 4;
-        else if (e < 6)
-          kind = "storm",
-          r = y >= (e - 2) * h / 4 && y < (e - 1) * h / 4 ? 16 : 1;
-        else
-          kind = e == 6 ? "wet" : "dry", r = e == 6 ? 8 : 0;
-        rain[y * w + x] = r;
-      }
+    if (e < 2)
+      kind = "uniform", rain_uniform(4, rain, n);
+    else if (e < 6)
+      kind = "storm",
+      rain_band(w, (e - 2) * h / 4, (e - 1) * h / 4, 16, 1, rain, n);
+    else
+      kind = e == 6 ? "wet" : "dry", rain_season(e == 6, 8, rain, n);
     double a = seconds();
     surface(dem, n, bed, n, ground, n);
     fill_sinks(ground, n, w, limit, fill, n);
