@@ -34,5 +34,15 @@ let sizes (x : u8) : bool
   ensures result
 = max usize = max u64 && min isize = min i64 && min u8 = 0
 
-(* Expected report: filled in from a real run.
+(* Expected report:
+// CHECK: type_bounds.pia:11:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:15:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:19:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:23:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:30:19: proved: '*' does not overflow u32
+// CHECK: type_bounds.pia:30:3: proved: the value fits in u16
+// CHECK: type_bounds.pia:28:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:29:3: proved: the postcondition holds
+// CHECK: type_bounds.pia:34:3: proved: the postcondition holds
+// CHECK: 9 proved, 0 failed, 0 skipped
 *)

@@ -3123,7 +3123,7 @@ class Gen {
     auto it = mlir::dyn_cast<IntType>(t);
     if (!it)
       return fail(a, "'" + f.text + " " + a.text + "' needs an integer type, "
-                         "and '" + a.text + "' is " + typeName(t));
+                         "and '" + a.text + "' is not one");
     llvm::APInt bound = f.text == "min" ? it.getLo() : it.getHi();
     bool negative = bound.isNegative();
     llvm::APInt magnitude = negative ? -bound : bound;
