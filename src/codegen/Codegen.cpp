@@ -1,6 +1,7 @@
 // Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
 
 #include "codegen/Codegen.h"
+#include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
 
@@ -733,43 +734,95 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
 
 // `unsafe view addr n`: a memref descriptor over foreign memory, built
 // as the LLVM struct a memref lowers to, so its uses lower as usual.
+// The memref descriptor of the `length` elements at the address `addr`,
+// an i64: no offset, unit stride.
+Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
+              mlir::MemRefType type, Value addr, Value length) {
+  auto i64 = rw.getI64Type();
+  auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+  auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
+  auto desc = mlir::LLVM::LLVMStructType::getLiteral(
+      rw.getContext(), {ptr, ptr, i64, dims, dims});
+  Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
+  Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, length);
+  Value zero =
+      make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(0));
+  Value one =
+      make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(1));
+  Value d = make<mlir::LLVM::UndefOp>(rw, loc, desc);
+  auto insert = [&](Value v, llvm::ArrayRef<int64_t> at) {
+    d = make<mlir::LLVM::InsertValueOp>(rw, loc, d, v, at);
+  };
+  insert(p, {0});
+  insert(p, {1});
+  insert(zero, {2});
+  insert(n, {3, 0});
+  insert(one, {4, 0});
+  return make<mlir::UnrealizedConversionCastOp>(rw, loc, mlir::TypeRange{type},
+                                                mlir::ValueRange{d})
+      .getResult(0);
+}
+
 struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
   using OpConversionPattern::OpConversionPattern;
-  LogicalResult matchAndRewrite(
-      ViewOp op, OpAdaptor adaptor,
-      mlir::ConversionPatternRewriter &rw) const override {
-    Location loc = op.getLoc();
+  LogicalResult
+  matchAndRewrite(ViewOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
     auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
         getTypeConverter()->convertType(op.getType()));
     Value addr = adaptor.getAddress();
-    auto i64 = rw.getI64Type();
-    if (!type || addr.getType() != i64) return mlir::failure();
-    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
-    auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
-    auto desc = mlir::LLVM::LLVMStructType::getLiteral(
-        rw.getContext(), {ptr, ptr, i64, dims, dims});
-    Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
-    Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, adaptor.getLength());
-    Value zero = make<mlir::LLVM::ConstantOp>(rw, loc, i64,
-                                              rw.getI64IntegerAttr(0));
-    Value one = make<mlir::LLVM::ConstantOp>(rw, loc, i64,
-                                             rw.getI64IntegerAttr(1));
-    Value d = make<mlir::LLVM::UndefOp>(rw, loc, desc);
-    auto insert = [&](Value v, llvm::ArrayRef<int64_t> at) {
-      d = make<mlir::LLVM::InsertValueOp>(rw, loc, d, v, at);
-    };
-    insert(p, {0});
-    insert(p, {1});
-    insert(zero, {2});
-    insert(n, {3, 0});
-    insert(one, {4, 0});
-    rw.replaceOpWithNewOp<mlir::UnrealizedConversionCastOp>(op, type, d);
+    if (!type || addr.getType() != rw.getI64Type())
+      return mlir::failure();
+    rw.replaceOp(op, sliceAt(rw, op.getLoc(), type, addr, adaptor.getLength()));
     return mlir::success();
   }
 };
 
-// `abort ()`: proved unreachable; if reached anyway, it traps. A result it
-// stands for is never used, so it is zero.
+// An element of a buffer of slices, rebuilt from its address and length
+// (ADR 0048, section 4).
+struct AtAddressLowering : mlir::OpConversionPattern<AtAddressOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtAddressOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!type)
+      return mlir::failure();
+    Value addr = make<mlir::arith::IndexCastOp>(
+        rw, op.getLoc(), rw.getI64Type(), adaptor.getAddress());
+    rw.replaceOp(op, sliceAt(rw, op.getLoc(), type, addr, adaptor.getLength()));
+    return mlir::success();
+  }
+};
+
+// The address of a slice's first element: its storage's aligned pointer
+// plus its offset, in bytes.
+struct AddressLowering : mlir::OpConversionPattern<AddressOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AddressOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    Value src = adaptor.getSlice();
+    auto type = mlir::dyn_cast<mlir::MemRefType>(src.getType());
+    if (!type)
+      return mlir::failure();
+    // An element's size in bytes, as LLVM stores it: a power of two.
+    unsigned bits = type.getElementType().isIndex()
+                        ? 64
+                        : type.getElementType().getIntOrFloatBitWidth();
+    int64_t bytes = llvm::PowerOf2Ceil(std::max(1u, (bits + 7) / 8));
+    auto meta = make<mlir::memref::ExtractStridedMetadataOp>(rw, loc, src);
+    Value base =
+        make<mlir::memref::ExtractAlignedPointerAsIndexOp>(rw, loc, src);
+    Value size = make<mlir::arith::ConstantIndexOp>(rw, loc, bytes);
+    Value skip = make<mlir::arith::MulIOp>(rw, loc, meta.getOffset(), size);
+    rw.replaceOpWithNewOp<mlir::arith::AddIOp>(op, base, skip);
+    return mlir::success();
+  }
+};
+
 struct AbortLowering : mlir::OpConversionPattern<AbortOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1341,12 +1394,12 @@ void eraseContracts(mlir::ModuleOp module) {
           return;
       spec.push_back(op);
     });
-    // A store into a spec-only field's buffer writes what nothing reads,
-    // and so does the store that empties an element moved out of a buffer
-    // (ADR 0048, section 6): only the proof reads the empty slices.
+    // A store into a spec-only field's buffer writes what nothing reads.
+    // The store that empties an element moved out of a buffer of boxes
+    // stays: the program may read the element's length (ADR 0048,
+    // section 6).
     f.walk([&](StoreOp store) {
-      if (isSpecBuffer(store.getBuffer().getType()) ||
-          store->hasAttr("pia.moved_out"))
+      if (isSpecBuffer(store.getBuffer().getType()))
         spec.push_back(store);
     });
     // Uses come after definitions, so the last is replaced first.
@@ -1423,30 +1476,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
 
-  // A buffer whose elements are slices is proved, but not compiled yet
-  // (ADR 0048, step 3).
-  auto nested = [](Type t) {
-    if (auto s = mlir::dyn_cast<SliceType>(t))
-      return mlir::isa<SliceType>(s.getElementType());
-    if (auto a = mlir::dyn_cast<ArrayType>(t))
-      return mlir::isa<SliceType>(a.getElementType());
-    return false;
-  };
-  bool unsupported = false;
-  module.walk([&](mlir::func::FuncOp f) {
-    if (unsupported) return;
-    bool found = llvm::any_of(f.getFunctionType().getInputs(), nested);
-    f.walk([&](mlir::Operation *op) {
-      found = found || llvm::any_of(op->getResultTypes(), nested);
-    });
-    if (found) {
-      f.emitError() << "'" << f.getSymName()
-                    << "' uses a buffer whose elements hold a slice, which "
-                       "is proved but not compiled yet (ADR 0048, step 3)";
-      unsupported = true;
-    }
-  });
-  if (unsupported) return mlir::failure();
+  // A buffer whose elements are slices becomes a buffer of addresses and
+  // one of lengths (ADR 0048, section 4).
+  if (mlir::failed(splitSliceBuffers(module)))
+    return mlir::failure();
 
   // Signedness is a property of pia types that iN loses, and the C entry
   // points need it, so record it on the signature first.
@@ -1569,23 +1602,20 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-               ArithLowering<SubOp, Arith::Sub>,
-               ArithLowering<MulOp, Arith::Mul>,
-               ArithLowering<DivOp, Arith::Div>,
-               ArithLowering<RemOp, Arith::Rem>,
-               ArithLowering<BAndOp, Arith::BAnd>,
-               ArithLowering<BOrOp, Arith::BOr>,
-               ArithLowering<BXorOp, Arith::BXor>,
-               ArithLowering<ShlOp, Arith::Shl>,
-               ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
-               BitLowering<CtzOp>, BitLowering<PopcountOp>,
-               BitLowering<BSwapOp>, RotateLowering<RotlOp>,
-               RotateLowering<RotrOp>, ConvertLowering, CmpLowering,
-               ToIndexLowering, FromIndexLowering, LenLowering, LoadLowering,
-               StoreLowering, SliceLowering, EmptyLowering, ErasedLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
-               ForeignLowering>(
-      types, ctx);
+  patterns
+      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
+           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
+           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
+           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
+           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
+           ErasedLowering, RegionLowering, ViewLowering, AtAddressLowering,
+           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
+          types, ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
                AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);

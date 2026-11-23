@@ -1,0 +1,136 @@
+(* A vector of boxes compiled (ADR 0048, step 3): each buffer of slices
+   is a buffer of addresses and a buffer of lengths. Loading a box's slot
+   rebuilds it from both, and storing one records both, including the
+   empty slot an element moved out keeps. Running it from C waits on
+   regions in interfaces, which `run`'s exported signature needs.
+// RUN: piac --emit=core %s | FileCheck %s
+*)
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int } @linear
+
+let spec ok (t : type) (b : box t) : bool = len b.slot = 1 && (b.state = 0 || b.state = 1)
+let spec full (t : type) (b : box t) : bool = b.state = 1
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> ok b && full b && b.slot.[0] = v
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let vec = let (t : type) (r : region) (s : region) => type { buf : borrowed(s) mutable [box t r]; len : usize }
+
+(* The elements past the length hold no box: their slots are empty. *)
+let spec good (t : type) (v : vec t) : bool =
+  v.len <= len v.buf &&
+  forall (i in 0 .. len v.buf). (if i < v.len then ok v.buf.[i] && full v.buf.[i] else len v.buf.[i].slot = 0)
+
+let push (t : type) (r : region) (s : region) (v : inout mutable vec t r s) (b : moved box t r) : unit
+  requires good v && v.len < len v.buf && ok b && full b
+  ensures good v && v.len = old v.len + 1 && len v.buf = old (len v.buf)
+  ensures v.buf.[old v.len].slot.[0] = old (b.slot.[0])
+  ensures forall (j in 0 .. old v.len). v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+= (let n = v.len in v.buf.[n] <- b; v.len <- n + 1)
+
+let get_at (t : type) (r : region) (s : region) (v : borrowed vec t r s) (i : usize) : t
+  requires good v && i < v.len
+  ensures result = v.buf.[i].slot.[0]
+= v.buf.[i].slot.[0]
+
+let set_at (t : type) (r : region) (s : region) (v : inout mutable vec t r s) (i : usize) (x : t) : unit
+  requires good v && i < v.len
+  ensures good v && v.len = old v.len && len v.buf = old (len v.buf)
+  ensures v.buf.[i].slot.[0] = x
+  ensures forall (j in 0 .. v.len). j <> i ==> v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+= (v.buf.[i].slot.[0] <- x)
+
+(* Moves every box into a larger buffer from m. *)
+let grow (t : type) (r : region) (s : region) (m : inout mutable bump (box t r) s) (v : inout mutable vec t r s) : result unit oom
+  requires good v && m.used <= len m.mem && len v.buf < 1000000
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures good v && v.len = old v.len
+  ensures forall (j in 0 .. v.len). v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+= let nb = alloc m (2 * len v.buf + 1)? in
+  let old_buf = v.buf in
+  for i in 0 .. v.len
+    invariant len nb = 2 * len old_buf + 1 && v.len <= len old_buf
+    invariant forall (j in 0 .. len nb). (if j < i then ok nb.[j] && full nb.[j] && nb.[j].slot.[0] = old (v.buf.[j].slot.[0]) else len nb.[j].slot = 0)
+    invariant forall (j in i .. v.len). ok old_buf.[j] && full old_buf.[j] && old_buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+  do nb.[i] <- old_buf.[i] done;
+  v.buf <- nb;
+  Ok ()
+
+(* Pushes 7, grows, pushes 8 and 9, sets the first to 10, and returns
+   the sum, 27, or 0 when it runs out of memory. *)
+let run (slots : borrowed mutable [u16]) (cells : borrowed mutable [box u16]) (more : borrowed mutable [box u16]) : u16
+  requires len cells >= 1 && len cells < 1000000
+  requires forall (i in 0 .. len cells). len cells.[i].slot = 0
+= let m : mutable bump u16 = { mem = slots; used = 0 } in
+  let mb : mutable bump (box u16) = { mem = more; used = 0 } in
+  let v : mutable vec u16 = { buf = cells; len = 0 } in
+  match make m 7 with
+  | Err _ -> 0
+  | Ok a ->
+    push v a;
+    match grow mb v with
+    | Err _ -> 0
+    | Ok () ->
+      match make m 8 with
+      | Err _ -> 0
+      | Ok b ->
+        push v b;
+        set_at v 0 10;
+        get_at v 0 + get_at v 1
+
+(* A vector's buffer of boxes is its slots' addresses, their lengths, and
+   the erased states, which share the addresses' length.
+// CHECK-LABEL: func.func @run(
+// CHECK-SAME: %arg1: memref<?xindex, strided<[1], offset: ?>>
+// CHECK-SAME: %arg2: memref<?xindex, strided<[1], offset: ?>> {pia.length_of = 1 : i64
+// CHECK-SAME: %arg3: memref<?xi1, strided<[1], offset: ?>> {pia.erased, pia.length_of = 1 : i64
+
+   Pushing a box stores its slot's address, in bytes, and its length.
+// CHECK-LABEL: func.func private @"push<u16>"(
+// CHECK: %{{[a-z0-9_]+}}, %[[OFF:[a-z0-9_]+]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} = memref.extract_strided_metadata %arg4
+// CHECK: %[[PTR:[a-z0-9_]+]] = memref.extract_aligned_pointer_as_index %arg4
+// CHECK: %[[BYTES:[0-9]+]] = arith.muli %[[OFF]], %c2 : index
+// CHECK: %[[ADDR:[0-9]+]] = arith.addi %[[PTR]], %[[BYTES]] : index
+// CHECK: %[[LEN:[a-z0-9_]+]] = memref.dim %arg4, %c0
+// CHECK: memref.store %[[ADDR]], %arg0[
+// CHECK: memref.store %[[LEN]], %arg1[
+
+   Growing moves each box: the element left behind keeps its address and
+   gets length 0, and the new element gets both.
+// CHECK-LABEL: func.func private @"grow<u16>"(
+// CHECK: scf.for
+// CHECK: memref.store %{{.*}}, %arg4[%[[I:[a-z0-9]+]]] : memref<?xindex
+// CHECK-NEXT: memref.store %c0, %arg5[%[[I]]] : memref<?xindex
+
+   Reading through a box rebuilds its slot from the address and length.
+// CHECK-LABEL: func.func private @"get_at<u16>"(
+// CHECK: memref.load %arg0[
+// CHECK: memref.load %arg1[
+// CHECK: llvm.inttoptr
+// CHECK: builtin.unrealized_conversion_cast
+// CHECK: memref.load %{{.*}}[%c0] : memref<?xi16
+*)

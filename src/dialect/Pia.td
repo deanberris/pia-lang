@@ -564,6 +564,32 @@ def Pia_ViewOp : Pia_Op<"view"> {
   }];
 }
 
+def Pia_AddressOp : Pia_Op<"address", [Pure]> {
+  let summary = "the address of a slice's first element";
+  let description = [{
+    Codegen only: an element of a buffer of slices is stored as its
+    address and its length, each in a buffer of its own (ADR 0048,
+    section 4). The address of an empty slice is not read again.
+  }];
+  let arguments = (ins Pia_SliceType:$slice);
+  let results = (outs Index:$result);
+  let assemblyFormat = "$slice attr-dict `:` type($slice)";
+}
+
+def Pia_AtAddressOp : Pia_Op<"at_address", [Pure]> {
+  let summary = "the slice of `length` elements at `address`";
+  let description = [{
+    Codegen only: an element read from a buffer of slices, rebuilt from
+    the address and length `pia.address` and `pia.len` stored (ADR 0048,
+    section 4).
+  }];
+  let arguments = (ins Index:$address, Index:$length);
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = [{
+    $address `,` $length attr-dict `:` type($result)
+  }];
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{

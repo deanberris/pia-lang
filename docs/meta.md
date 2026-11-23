@@ -45,7 +45,7 @@ Expansion replaces each binary node with the operator's result, innermost first.
 
 ## The interpreter
 
-Values are integers (64-bit), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
+Values are integers (128-bit, so every bound of every Pia integer type fits, `u64`'s included; arithmetic that leaves that range is an error, not a wrap), bools, strings, syntax, lists, functions and unit. A metaprogram can use literals, names, application (curried, with partial application), `let ... in` (a local function may recurse), lambdas, `if`, `;`, list literals, quotes, and `+ - * / % mod < > <= >= = <> && ||` on its own values. Inside a metaprogram these operators act on its values directly. They are not expanded.
 
 | Builtin | Meaning |
 | --- | --- |
@@ -138,6 +138,7 @@ Running out of steps in such a metaprogram is an internal compiler error.
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
 - `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
+- `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, and `| $c of t` a string as a constructor's name, so a derive can write bytes it computed, build a value of the type it was given, and name its own errors (`tests/meta/list_splices.pia`).
 
 The code a quote builds takes the location of the expansion site: the operator, the `@derive` attribute, or the top-level call. Spliced code keeps its own locations.
 
@@ -278,7 +279,29 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 
 `=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records in code is an error that suggests `@derive(eq)`; in a contract they compare as values ([irgen.md](irgen.md#records)). Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
 
+The prelude also defines `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), step 4). For a record of integers, range types and `bool`, it makes:
+
+- `write_json_<t> (dst) (pos) (v : t) : usize`, which writes `v` as a JSON object with `Pia.Text.Json.Write`, one function per member, into room its precondition states as a constant;
+- `read_json_<t> (s) (pos) : result <t>_json_read <t>_json_error`, which reads one with `Pia.Text.Json.Read`. It finds a member by a decision tree built at compile time, on the name's length, then on the first byte where the names left differ, then one full compare. It keeps a flag per field, so a member given twice is `Duplicate_<t>` and one never given is `Missing_<t>`, and it checks each integer's range as its digits are read (`Range_<t>`). An unknown member is `Unknown_<t>`, and anything else `Syntax_<t>`, each with its position. The error type has exactly the constructors its type can raise: no `Range_<t>` without an integer field. The value is built only once every field has been read, so it is fully initialised.
+
+A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read` and `Write`. The derive is in the prelude until interfaces can export metaprograms ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 3), when it moves to `Pia.Text.Json.Derive`. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
+
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
+
+A derive reads the type it is given with these builtins, besides `fields`, `constructors` and `range_of` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), step 3). `t` is a type item, or its name as a string:
+
+| Builtin | Meaning |
+| --- | --- |
+| `field_type t f` | the type of the field `f` of the record `t`, as written, as syntax |
+| `variants t` | the constructors of the variant `t`, each `[name; payload]`, with its payload type as syntax, or unit when it has none |
+| `attrs t` | the attributes on a type item, or on a function's return annotation, as written, `@derive` included |
+| `field_attrs t f` | the attributes on the field `f` of the record `t` |
+| `ctor_attrs t c` | the attributes on the constructor `c` of the variant `t` |
+| `bytes s` | the UTF-8 bytes of the string `s`, as integers |
+
+An attribute is `[name; args]`, and each argument `[key; value]`, with `""` as the key of a positional one. A literal argument is its value and a name its spelling as a string, so `@json(name = "x", ignore_unknown)` is `["json"; [["name"; "x"]; [""; "ignore_unknown"]]]`; any other argument is syntax.
+
+A derive's own attributes are its options: `@json(name = "x")` on a field, `| Rect @json(name = "r") of rect` on a constructor ([grammar.md](grammar.md)), or `@json(tag = "kind")` on the type. Once every derive of the type has run, the attributes named after one leave the type, its fields and its constructors, so the rest of the compiler never sees them. An attribute on a field or a constructor that no derive of its type reads is an error that names the derive to add, rather than one that is ignored (`tests/meta/derive_builtins.pia`, `tests/meta/derive_builtin_errors.pia`).
 
 ## Generators
 
@@ -288,7 +311,7 @@ A generator is a metaprogram that reads a function's signature and contract and 
 | --- | --- |
 | `param_types f` | the type of each parameter of the function `f`, as written, as a list of syntax |
 | `return_type f` | `f`'s return type, as written; a function without one is an error |
-| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `i16`, a range `int{-2..2}`, or a type value. `u64` and `usize` are an error, since their upper bound does not fit a metaprogram integer |
+| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `u64`, `i16`, a range `int{-2..2}`, or a type value |
 | `constructors t` | the constructor names of the variant type `t` (an item, or its name), as strings |
 | `subst e n v` | the syntax `e` with every name `n` replaced by `v`: syntax, a string (a name), an integer or a bool. Pia has no shadowing, so this cannot capture |
 

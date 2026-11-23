@@ -48,7 +48,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 
 A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`. A constant array (`pia.const_array`) becomes a private constant `memref.global`, one per constant, which LLVM places in read-only data; each use is a `memref.get_global`. A `with_arena`'s region (`pia.region`) is a `memref.alloca` at the start of the function, zeroed by a loop where the `with_arena` is entered.
 
-Records are scalarized before codegen ([irgen.md](irgen.md#records)). A buffer of records arrives as one buffer per field (struct of arrays), so `[pixel; 8]` is four `memref<8 x i8>`, which vectorises like any other buffer. Buffers of buffers and `dyn` are not lowered yet.
+Records are scalarized before codegen ([irgen.md](irgen.md#records)). A buffer of records arrives as one buffer per field (struct of arrays), so `[pixel; 8]` is four `memref<8 x i8>`, which vectorises like any other buffer. A buffer whose elements are slices, such as a vector's box slots, becomes two buffers before lowering, `splitSliceBuffers` in `src/codegen/SliceBuffers.cpp` ([ADR 0048](adr/0048-buffers-whose-elements-hold-slices.md), step 3): its elements' addresses and their lengths, both `memref<? x index>`, the lengths marked `{pia.length_of}` the addresses. Storing a slice records `pia.address`, its storage's aligned pointer plus its offset in bytes, and its length; loading one rebuilds it from both with `pia.at_address`, a memref descriptor at that address with offset 0. The store that empties an element moved out (`pia.moved_out`) is code like any other, so a moved-out element's length is 0 at run time, as the proof has it. Buffers of buffers of slices and `dyn` are not lowered yet.
 
 ## Arithmetic
 
@@ -100,6 +100,13 @@ void opaque_all(uint8_t *r, uint64_t n, uint8_t *g, uint8_t *b, uint8_t *a,
                 uint8_t v);
 ```
 
+A buffer of slices is passed the same way, as the buffer of its elements' addresses and the buffer of their lengths, which shares the first's count (tests/codegen/slice_buffers_run.pia, run by slice_buffers_run_test.c):
+
+```c
+// first (xs : borrowed [[u16]]) : u16
+uint16_t first(uint64_t *addr, int64_t n, uint64_t *len);
+```
+
 Integers narrower than 32 bits are marked `zeroext` or `signext`, as the Apple arm64 ABI requires and as clang and GCC do for x86_64 System V. Signedness comes from the range type. Once a range type is lowered to a signless `iN`, its signedness would be lost, so `lowerToCore` records it as a `{pia.signed}` argument or result attribute. Unit results are `void`. A prime cannot appear in a C name, so each `'` in a function's name becomes `_prime` in its entry point: `step'` is called as `step_prime`. Two functions whose C names would be the same are an error. Returning a buffer is not supported yet.
 
 For example, `add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit` is called from C as:
@@ -111,7 +118,7 @@ void add_rows(const uint8_t *a, uint64_t na, const uint8_t *b, uint64_t nb,
 
 ## Spec-only state
 
-A parameter, local or record field whose type is spec-only (`int`, `real` or a theory's sort) is state the verifier sees and the program does not have ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). Code can only store spec values in such places, so nothing the program computes reads them. `eraseContracts` replaces every computation of a spec-only value left in code, such as `Alloc.take t.heap b` stored into a field, with `pia.erased`, and marks the spec-only parameters and results `{pia.erased}`. `lowerToCore` lowers each spec-only value to an `i1` that nothing reads, and LLVM removes it. The C entry points leave spec-only parameters and fields out: `skip (n : int) (x : u8) : u8` is `uint8_t skip(uint8_t x)`, and a result `{ v : u8; steps : int }` is returned as its one remaining field, a `uint8_t`. A spec-only field of a buffer's records is a buffer of its own, struct of arrays like every field: `eraseContracts` removes the stores into it, its loads are spec-only values like any other, and it is marked `{pia.erased}`. Its C entry point leaves it out, and when the fields share one length the first field kept takes it, so `[{ steps : int; v : u8 }]` is `uint8_t *v, int64_t n`, and `len xs` reads the length of a field in code. tests/codegen/spec_state.pia is run from C by spec_state_test.c. It also removes the store marked `pia.moved_out` that empties an element moved out of a buffer of boxes ([ADR 0048](adr/0048-buffers-whose-elements-hold-slices.md), section 6): only the proof reads the empty slices.
+A parameter, local or record field whose type is spec-only (`int`, `real` or a theory's sort) is state the verifier sees and the program does not have ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). Code can only store spec values in such places, so nothing the program computes reads them. `eraseContracts` replaces every computation of a spec-only value left in code, such as `Alloc.take t.heap b` stored into a field, with `pia.erased`, and marks the spec-only parameters and results `{pia.erased}`. `lowerToCore` lowers each spec-only value to an `i1` that nothing reads, and LLVM removes it. The C entry points leave spec-only parameters and fields out: `skip (n : int) (x : u8) : u8` is `uint8_t skip(uint8_t x)`, and a result `{ v : u8; steps : int }` is returned as its one remaining field, a `uint8_t`. A spec-only field of a buffer's records is a buffer of its own, struct of arrays like every field: `eraseContracts` removes the stores into it, its loads are spec-only values like any other, and it is marked `{pia.erased}`. Its C entry point leaves it out, and when the fields share one length the first field kept takes it, so `[{ steps : int; v : u8 }]` is `uint8_t *v, int64_t n`, and `len xs` reads the length of a field in code. tests/codegen/spec_state.pia is run from C by spec_state_test.c.
 
 ## Foreign functions
 
@@ -137,6 +144,6 @@ Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` mak
 ## Limits of v0
 
 - There is no vectorisation yet. Loops compile to scalar code, apart from whatever LLVM's own vectoriser does with them.
-- `dyn`, nested buffers and buffer results are not lowered.
+- `dyn`, buffers nested deeper than a buffer of slices, and buffer results are not lowered.
 - An atomic cell crosses the C boundary as a pointer to its element, like a one-element array.
 - `scf.for` compares its bounds as signed 64-bit integers, so a slice of 2^63 elements or more is not supported.

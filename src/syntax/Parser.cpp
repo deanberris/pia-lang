@@ -1047,6 +1047,8 @@ class Parser {
       auto f = makeNode(N::FieldDecl, loc(), std::string(expect(K::Ident, "a field name").text));
       expect(K::Colon, "':' after the field name");
       f->add(annot());
+      // `x : i32 @json(name = "x")`: attributes a derive reads (ADR 0045).
+      if (at(K::Attr) || at(K::AttrOpen)) f->add(attrs());
       rec->add(std::move(f));
       if (!accept(K::Semi)) break;
     }
@@ -1081,15 +1083,41 @@ class Parser {
     expect(K::Type, "'type'");
     if (at(K::Bar)) {
       auto vs = makeNode(N::Variants, loc());
+      // Attributes after the last constructor's name, with no payload
+      // after them, are the type's, as they always were.
+      NodePtr trailing;
       while (accept(K::Bar)) {
-        auto c = makeNode(N::Ctor, loc(), std::string(expect(K::Ident, "a constructor name").text));
+        // `| $c of t` in a quote: a constructor a metaprogram names.
+        std::string cname = at(K::SpliceIdent)
+                                ? std::string(take().text)
+                                : std::string(expect(K::Ident, "a constructor name").text);
+        auto c = makeNode(N::Ctor, loc(), cname);
+        // `| Circle @json(name = "c") of ...` and `| Empty @json(...) |`:
+        // attributes a derive reads, between the name and `of` or `|`
+        // (ADR 0045).
+        NodePtr cas;
+        if (at(K::Attr) || at(K::AttrOpen)) cas = attrs();
         if (accept(K::Of))
           c->add(appType());
         else
           c->add(makeNode(N::None, loc()));
+        if (cas && !at(K::Bar) && c->kids[0]->kind == N::None)
+          trailing = std::move(cas);
+        else if (cas)
+          c->add(std::move(cas));
         vs->add(std::move(c));
       }
       n->add(std::move(vs));
+      if (trailing) {
+        NodePtr as = std::move(trailing);
+        NodePtr where = makeNode(N::None, loc());
+        for (NodePtr &a : attrs()->kids) as->add(std::move(a));
+        if (accept(K::Where)) where = stmt();
+        for (NodePtr &a : attrs()->kids) as->add(std::move(a));
+        n->add(std::move(as));
+        n->add(std::move(where));
+        return n;
+      }
     } else {
       n->add(type());
     }
@@ -1588,6 +1616,15 @@ class Parser {
         take();
         Bracket b(*this);
         NodePtr n;
+        // `{ $fs }` in a quote: the fields a metaprogram computed, as a
+        // list of [name; value] pairs (docs/meta.md).
+        if (at(K::SpliceIdent) && kind(1) == K::RBrace) {
+          n = makeNode(N::RecordLit, start);
+          n->add(makeNode(N::Splice, loc(), text()));
+          take();
+          expect(K::RBrace, "'}' after the spliced fields");
+          return n;
+        }
         if (at(K::Ident) && kind(1) == K::Eq) {
           n = makeNode(N::RecordLit, start);
         } else {
