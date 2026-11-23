@@ -1,0 +1,114 @@
+(* Pia.Mem.Vec: `vec t a r`, a growable vector of `t` that holds its
+   allocator `a` and a buffer `a` lent from the region `r` (ADR 0041,
+   step 5; ADR 0042). C++: std::vector, with an allocator that is part
+   of the value, and every growth fallible.
+
+   - `with_capacity` makes an empty vector with room for `n`.
+   - `push` appends, growing to twice the capacity plus one when full,
+     and keeps every earlier element. A failed push leaves the vector as
+     it was.
+   - `get` and `set` read and write an element below `len`.
+   - `pop` takes the last element off.
+
+   The elements stay where the allocator put them until a growth copies
+   them, and the old buffer lasts as long as its region. A vector of
+   boxes, which moves its elements and checks each slot owns nothing
+   when written over (ADR 0048, section 6), is in tests/verify/vec_boxes.pia;
+   it moves here with drop for boxes (ADR 0046, step 2). *)
+module Pia.Mem.Vec : Vectors
+
+import Pia.Mem.Alloc.Allocators
+
+interface Vectors = sig
+  (** A vector: its allocator, its buffer, and how many elements it holds. *)
+  let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+  (** An empty vector with room for `n`, over `m`. *)
+  let with_capacity : (t : type) -> (r : region) -> (a : type where Pia.Mem.Alloc.Allocator a t r) -> (m : a) -> (n : usize) -> result (vec t a r) Pia.Mem.Alloc.oom
+    ensures (match result with | Ok v -> v.len = 0 && len v.buf = n | Err _ -> true)
+  (** Appends `x`. The earlier elements stay; on failure nothing changes. *)
+  let push : (t : type) -> (r : region) -> (a : type where Pia.Mem.Alloc.Allocator a t r) -> (v : inout mutable vec t a r) -> (x : t) -> result unit Pia.Mem.Alloc.oom
+    requires v.len <= len v.buf
+    ensures v.len <= len v.buf
+    ensures (match result with
+             | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+             | Err _ -> v.len = old v.len)
+    ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+  (** Element `i`. *)
+  let get : (t : type) -> (r : region) -> (a : type) -> (v : borrowed vec t a r) -> (i : usize) -> t
+    requires v.len <= len v.buf && i < v.len
+    ensures result = v.buf.[i]
+  (** Writes element `i`. *)
+  let set : (t : type) -> (r : region) -> (a : type) -> (v : inout mutable vec t a r) -> (i : usize) -> (x : t) -> unit
+    requires v.len <= len v.buf && i < v.len
+    ensures v.len = old v.len && len v.buf = old (len v.buf) && v.buf.[i] = x
+    ensures forall (j in 0 .. v.len). j = i || v.buf.[j] = old (v.buf.[j])
+  (** Takes off the last element; the others stay. *)
+  let pop : (t : type) -> (r : region) -> (a : type) -> (v : inout mutable vec t a r) -> unit
+    requires v.len <= len v.buf && v.len > 0
+    ensures v.len = old v.len - 1 && v.len <= len v.buf
+    ensures forall (j in 0 .. v.len). v.buf.[j] = old (v.buf.[j])
+end
+
+let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+
+let with_capacity (t : type) (r : region) (a : type where Pia.Mem.Alloc.Allocator a t r) (m : a) (n : usize) : result (vec t a r) Pia.Mem.Alloc.oom
+  ensures (match result with | Ok v -> v.len = 0 && len v.buf = n | Err _ -> true)
+= let mm : mutable a = m in
+  let b = alloc mm n? in
+  Ok { alloc = mm; buf = b; len = 0 }
+
+let push (t : type) (r : region) (a : type where Pia.Mem.Alloc.Allocator a t r) (v : inout mutable vec t a r) (x : t) : result unit Pia.Mem.Alloc.oom
+  requires v.len <= len v.buf
+  ensures v.len <= len v.buf
+  ensures (match result with
+           | Ok () -> v.len = old v.len + 1 && v.buf.[old v.len] = x
+           | Err _ -> v.len = old v.len)
+  ensures forall (i in 0 .. old v.len). v.buf.[i] = old (v.buf.[i])
+= if v.len = len v.buf then
+    (let cap = len v.buf in
+     if cap > 1000000 then Err OutOfMemory
+     else
+       (let nb = alloc v.alloc (2 * cap + 1)? in
+        let old_buf = v.buf in
+        for i in 0 .. v.len
+          invariant forall (j in 0 .. i). nb.[j] = old_buf.[j]
+        do nb.[i] <- old_buf.[i] done;
+        nb.[v.len] <- x;
+        v.buf <- nb;
+        v.len <- v.len + 1;
+        Ok ()))
+  else
+    (let b = v.buf in
+     b.[v.len] <- x;
+     v.len <- v.len + 1;
+     Ok ())
+
+let get (t : type) (r : region) (a : type) (v : borrowed vec t a r) (i : usize) : t
+  requires v.len <= len v.buf && i < v.len
+  ensures result = v.buf.[i]
+= v.buf.[i]
+
+let set (t : type) (r : region) (a : type) (v : inout mutable vec t a r) (i : usize) (x : t) : unit
+  requires v.len <= len v.buf && i < v.len
+  ensures v.len = old v.len && len v.buf = old (len v.buf) && v.buf.[i] = x
+  ensures forall (j in 0 .. v.len). j = i || v.buf.[j] = old (v.buf.[j])
+= (let b = v.buf in b.[i] <- x)
+
+let pop (t : type) (r : region) (a : type) (v : inout mutable vec t a r) : unit
+  requires v.len <= len v.buf && v.len > 0
+  ensures v.len = old v.len - 1 && v.len <= len v.buf
+  ensures forall (j in 0 .. v.len). v.buf.[j] = old (v.buf.[j])
+= v.len <- v.len - 1
+
+(* The instances this module proves, at u8 over a bump: a generic over a
+   record is proved at each instance (ADR 0043), and importers prove
+   their own. *)
+let checks (mem : borrowed mutable [u8]) : result u8 Pia.Mem.Alloc.oom =
+  let m : Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  let v : mutable vec u8 (Pia.Mem.Alloc.bump u8) = with_capacity<u8> m 1? in
+  push v 7?;
+  push v 9?;
+  set v 0 3;
+  let x = get v 1 in
+  pop v;
+  Ok (get v 0 + x / 2)
