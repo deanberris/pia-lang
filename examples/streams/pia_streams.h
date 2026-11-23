@@ -1,4 +1,4 @@
-// The C entry points of docs/streams.pia.md, compiled by piac --emit=obj
+// The C entry points of docs/streams.pia.md and docs/sediment.pia.md, compiled by piac --emit=obj
 // (docs/codegen.md, "C ABI"): a slice is a pointer and a length, and
 // `usize` is uint64_t.
 
@@ -24,12 +24,16 @@ uint64_t delineate(const uint16_t *dem, uint64_t ndem, uint64_t w,
                    uint32_t *acc, uint64_t nacc, uint64_t *basin,
                    uint64_t nbasin, uint8_t *rgb, uint64_t nrgb);
 
+// docs/sediment.pia.md.
 uint64_t sediment(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
                   uint64_t ndown, const uint32_t *acc, uint64_t nacc,
-                  const uint64_t *order, uint64_t norder, uint32_t n,
-                  uint32_t *bed, uint64_t nbed, uint32_t *load, uint64_t nload,
-                  uint32_t *inflow, uint64_t ninflow, uint32_t *flux,
-                  uint64_t nflux);
+                  uint32_t n, uint32_t *bed, uint64_t nbed, uint32_t *load,
+                  uint64_t nload, uint32_t *inflow, uint64_t ninflow,
+                  uint32_t *flux, uint64_t nflux, uint64_t *order,
+                  uint64_t norder, uint64_t *pos, uint64_t npos, uint32_t *cnt,
+                  uint64_t ncnt, uint64_t *first, uint64_t nfirst,
+                  uint64_t *next, uint64_t nnext, uint64_t *last,
+                  uint64_t nlast, uint16_t *owner, uint64_t nowner);
 uint64_t render_load(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                      uint64_t nfill, const uint32_t *acc, uint64_t nacc,
                      const uint64_t *basin, uint64_t nbasin,

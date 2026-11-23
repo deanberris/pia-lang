@@ -8,7 +8,7 @@ enough to be a stream, and which outlet each cell drains to (its watershed).
 It is Pia's flagship demo
 ([ADR 0016](adr/0016-stream-delineation-flagship-demo.md)), and its second
 half moves sediment down those streams, with the total mass proved to stay
-the same exactly ([section 5](#5-sediment-transport)).
+the same exactly ([sediment.pia.md](sediment.pia.md)).
 
 This page is the program. It is a literate Pia file,
 [`docs/streams.pia.md`](https://github.com/deanberris/pia-lang/blob/main/docs/streams.pia.md):
@@ -96,7 +96,7 @@ wider bit-vectors, and loop proofs then time out
 instead: row offsets grow by `w`, and `3 * i` is `i + i + i`.
 
 The file is one module, `Streams` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
-Its interface lists the seven functions the C program calls, with the
+Its interface lists the six functions the C program calls, with the
 preconditions a caller must keep; everything else on this page is private
 to the module:
 
@@ -128,16 +128,6 @@ interface Delineation @abi(c) = sig
     requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
     requires len fill = len dem && len down = len dem && len acc = len dem
     requires len basin = len dem && len rgb = len dem + len dem + len dem
-  let sediment : (fill : [u16]) -> (down : [usize]) -> (acc : [u32])
-      -> (order : [usize]) -> (n : u32) -> (bed : inout mutable [u32])
-      -> (load : out mutable [u32]) -> (inflow : out mutable [u32])
-      -> (flux : out mutable [u32]) -> u64
-    requires len down = len fill && len order = len fill && len acc = len fill
-    requires len bed = len fill && len load = len fill && len inflow = len fill
-    requires len flux = len fill && len fill < 4294967295
-    requires forall (k in 0..len down).
-               down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-    requires forall (q in 0..len order). order.[q] < len fill
   let render_load : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
       -> (basin : [usize]) -> (flux : [u32]) -> (threshold : u32)
       -> (rgb : out mutable [u8]) -> usize
@@ -739,393 +729,11 @@ let delineate (dem : [u16]) (w : usize) (limit : u32) (threshold : u32)
 
 ## 5. Sediment transport
 
-The second half of the demo moves sediment over the landscape the first
-half delineated ([ADR
-0055](adr/0055-sediment-transport-in-fixed-point.md)). Sediment is counted
-in whole units of mass, a `u32` per cell, in three buffers: `bed`, the
-erodible sediment resting in each cell; `load`, what the water leaving a
-cell carries; and `inflow`, what drains into it. One more number, `gone`,
-counts what has left the map through outlets.
-
-Each cell's water has a **capacity**, how much it can carry. Where it
-carries less, it erodes the bed, at most the whole bed; where it carries
-more, it deposits the excess. A step visits the cells from highest to
-lowest, so every cell is visited after the cells that drain into it, and
-each cell's load moves on to the cell below, or off the map.
-
-The theorem is that the total never changes:
-
-```text
-sum bed + sum load + sum inflow + gone = old (the same)
-```
-
-exactly, in whole units, with no tolerance. It is the postcondition of
-every function below, from a single write to `n` time steps over the whole
-map, and it bounds every cell, so nothing overflows.
-
-```pia
-let spec elt (xs : [u32]) (i : usize) : u32
-  requires i < len xs
-= xs.[i]
-```
-
-`sum xs n` is the sum of `xs.[0 .. n]`, a `u64`. An element is read through
-`elt`, whose `u32` result type tells the solver the element's range each
-time `sum` unfolds. The bound in the `ensures` keeps the `u64` from
-overflowing; it is the one product in this stage, and it widens the
-encoding only for the functions that use `sum` (docs/verifier.md,
-"Encoding").
-
-```pia
-let spec sum (xs : [u32]) (n : usize) : u64
-  requires n <= len xs && n <= 4294967296
-  ensures result <= 4294967296 * n
-  decreases n
-= if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
-```
-
-The lemmas about `sum` are proved by induction. Each inductive step goes
-through one of three small lemmas with no quantifier in sight: with a
-`forall` among the facts, the solver does not find the one-step unfolding
-by itself.
-
-```pia
-let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
-  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
-  requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
-  ensures sum ys n = sum xs n
-= ()
-```
-
-```pia
-let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
-  requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
-  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
-= ()
-```
-
-```pia
-let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
-  requires i < len xs && i < len ys && i < 4294967296
-  requires sum ys i = sum xs i
-  ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
-= ()
-```
-
-If `ys` is `xs` except at `i`, the prefixes before `i` have the same sum.
-
-```pia
-let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
-  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
-  ensures sum ys n = sum xs n
-  decreases n
-= if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
-```
-
-The **point update**: writing `ys.[i]` in place of `xs.[i]` changes the sum
-of every prefix that holds `i` by `ys.[i] - xs.[i]`. Every move of sediment
-is a pair of such writes.
-
-```pia
-let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
-  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
-  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
-  decreases n
-= if n > i + 1 then (update xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step_after xs ys i n)
-  else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
-```
-
-```pia
-let lemma at_le (xs : [u32]) (i : usize) : unit
-  requires i < len xs && i < 4294967296
-  ensures xs.[i] <= sum xs (i + 1)
-= ()
-```
-
-A longer prefix has a larger sum.
-
-```pia
-let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
-  requires m <= n && n <= len xs && n <= 4294967296
-  ensures sum xs m <= sum xs n
-  decreases n
-= if n > m then mono xs m (n - 1)
-```
-
-Each element is at most the sum, so a bound on the total bounds every cell.
-This is what proves that no cell overflows when mass arrives.
-
-```pia
-let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
-  requires i < n && n <= len xs && n <= 4294967296
-  ensures xs.[i] <= sum xs n
-= at_le xs i; mono xs (i + 1) n
-```
-
-An all-zero prefix sums to zero.
-
-```pia
-let lemma zero (xs : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= 4294967296
-  requires forall (k in 0 .. n). xs.[k] = 0
-  ensures sum xs n = 0
-  decreases n
-= if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
-```
-
-`set` is a write whose contract is the point update for the whole buffer.
-The element is loaded before it is overwritten: the load is what tells the
-solver that `old (xs.[i])` is a `u32`.
-
-```pia
-let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
-  requires i < len xs && len xs <= 4294967296
-  ensures xs.[i] = v
-  ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
-  ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
-= let w = xs.[i] in
-  xs.[i] <- v;
-  update (old xs) xs i (len xs);
-  assert w = old (xs.[i])
-```
-
-```pia
-let cell = type { bed : u32; load : u32 }
-```
-
-The water erodes when it carries less than its capacity, at most the whole
-bed, and deposits the excess otherwise. Mass moves between bed and load and
-none is created.
-
-```pia
-let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
-  requires bed + inflow <= 4294967295
-  ensures result.bed + result.load = bed + inflow
-  ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
-  ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
-= if inflow < capacity then
-    (let room = capacity - inflow in
-     let e = if room < bed then room else bed in
-     { bed = bed - e; load = inflow + e })
-  else { bed = bed + (inflow - capacity); load = capacity }
-```
-
-`push` moves the load of cell `a` into the inflow of cell `b`, downhill.
-
-```pia
-let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) : unit
-  requires a < len load && b < len inflow && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum load (len load) + sum inflow (len inflow) <= 4294967295
-  ensures load.[a] = 0
-  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
-  ensures sum load (len load) + sum inflow (len inflow) = sum (old load) (len load) + sum (old inflow) (len inflow)
-= let m = load.[a] in
-  let w = inflow.[b] in
-  elt_le load a (len load);
-  elt_le inflow b (len inflow);
-  set load a 0;
-  set inflow b (w + m)
-```
-
-`drain`: the load of an outlet leaves the map.
-
-```pia
-let drain (load : borrowed inout mutable [u32]) (a : usize) (gone : u64) : u64
-  requires a < len load && len load <= 4294967296
-  requires sum load (len load) + gone <= 4294967295
-  ensures load.[a] = 0
-  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
-  ensures sum load (len load) + result = sum (old load) (len load) + gone
-= let m = load.[a] in
-  elt_le load a (len load);
-  set load a 0;
-  gone + m
-```
-
-The arithmetic that adds `erode_cell`'s three writes up. On its own it is a
-small goal; inline, the solver times out on it among the sums.
-
-```pia
-let lemma balance (a : u64) (b : u64) (c : u64) (a0 : u64) (b0 : u64) (c0 : u64) (d : u32) (i : u32) (rb : u32) (rl : u32) : unit
-  requires a + d = a0 + rb && b = b0 + rl && c + i = c0 && rb + rl = d + i
-  ensures a + b + c = a0 + b0 + c0
-= ()
-```
-
-`erode_cell`: a cell takes its inflow and erodes or deposits. Its bed and
-load are rewritten and its inflow is spent.
-
-```pia
-let erode_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) (capacity : u32) : unit
-  requires c < len bed && c < len load && c < len inflow
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum bed (len bed) + sum inflow (len inflow) <= 4294967295
-  requires load.[c] = 0
-  ensures inflow.[c] = 0
-  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
-  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
-    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
-= let i = inflow.[c] in
-  let d = bed.[c] in
-  elt_le bed c (len bed);
-  elt_le inflow c (len inflow);
-  let r = erode_or_deposit i capacity d in
-  set bed c r.bed;
-  assert sum bed (len bed) + d = sum (old bed) (len bed) + r.bed;
-  set load c r.load;
-  assert sum load (len load) = sum (old load) (len load) + r.load;
-  set inflow c 0;
-  assert sum inflow (len inflow) + i = sum (old inflow) (len inflow);
-  balance (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow))
-    (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
-    d i r.bed r.load
-```
-
-One transfer of a step: the load of cell a goes to the cell it drains into,
-b, or out of the map at an outlet. The total is conserved, which is the
-loop invariant of the step to come (ADR 0055, step 4).
-
-```pia
-let transfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64
-  requires a < len load && b < len inflow
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
-  ensures load.[a] = 0
-  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
-  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
-    sum bed (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
-= if outlet then drain load a gone
-  else (push load inflow a b; gone)
-```
-
-The bound before `transfer`, from the totals around `erode_cell`.
-
-```pia
-let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i1 : u64) : unit
-  requires b + l + i + g <= 4294967295 && b1 + l1 + i1 = b + l + i
-  ensures b1 + l1 + i1 + g <= 4294967295
-= ()
-```
-
-The transport capacity of the water leaving a cell: its flow plus the drop
-to the cell below, at most 1024 units.
-
-```pia
-let capacity_of (a : u32) (drop : u16) : u32 =
-  let c : u64 = a + drop in
-  if c < 1024 then c else 1024
-```
-
-One cell of a step: erode or deposit, record the load leaving the cell in
-flux for the picture, and carry it on.
-
-```pia
-let visit (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (c : usize) (d : usize) (capacity : u32) (gone : u64) : u64
-  requires c < len bed && c < len load && c < len inflow && d < len inflow && c < len flux
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
-  requires load.[c] = 0
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
-  ensures load.[c] = 0
-  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
-  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
-    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
-= erode_cell bed load inflow c capacity;
-  chain (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow)) gone
-    (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow));
-  flux.[c] <- load.[c];
-  let r = transfer bed load inflow c d (d = c) gone in
-  r
-```
-
-One time step over the map, highest cells first.
-
-```pia
-let transport (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (gone : u64) : u64
-  requires len down = len fill && len order = len fill && len acc = len fill
-  requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
-  requires len fill <= 4294967296
-  requires forall (k in 0 .. len down).
-             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  requires forall (q in 0 .. len order). order.[q] < len fill
-  requires forall (k in 0 .. len load). load.[k] = 0
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
-  ensures forall (k in 0 .. len load). load.[k] = 0
-  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
-    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
-=
-  let g : mutable u64 = gone in
-  for p in 0 .. len order
-    invariant forall (k in 0 .. len load). load.[k] = 0
-    invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g =
-      sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
-  do
-    let c = order.[p] in
-    let d = down.[c] in
-    let drop : u16 = if d = c then 0 else fill.[c] - fill.[d] in
-    g <- visit bed load inflow flux c d (capacity_of acc.[c] drop) g
-  done;
-  g
-```
-
-The sum of a buffer, computed: what the precondition of the steps states,
-checked at run time.
-
-```pia
-let total (xs : [u32]) : u64
-  requires len xs <= 4294967296
-  ensures result = sum xs (len xs)
-=
-  let t : mutable u64 = 0 in
-  for i in 0 .. len xs
-    invariant t = sum xs i
-  do
-    t <- t + xs.[i]
-  done;
-  t
-```
-
-n time steps of sediment transport, from the sediment in bed with no load
-and no inflow. The result is the mass that left the map, and the total is
-conserved exactly; if the total does not fit in a u32 nothing moves and the
-result is 2^64 - 1.
-
-```pia
-let sediment (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (n : u32)
-    (bed : inout mutable [u32]) (load : out mutable [u32]) (inflow : out mutable [u32])
-    (flux : out mutable [u32]) : u64
-  requires len down = len fill && len order = len fill && len acc = len fill
-  requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
-  requires len fill < 4294967295
-  requires forall (k in 0 .. len down).
-             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  requires forall (q in 0 .. len order). order.[q] < len fill
-  ensures result = 18446744073709551615 ||
-    sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result = sum (old bed) (len bed)
-=
-  for i in 0 .. len fill
-    invariant forall (k in 0 .. i). load.[k] = 0 && inflow.[k] = 0 && flux.[k] = 0
-  do
-    load.[i] <- 0;
-    inflow.[i] <- 0;
-    flux.[i] <- 0
-  done;
-  zero load (len load);
-  zero inflow (len inflow);
-  let t = total bed in
-  if t > 4294967295 then 18446744073709551615
-  else
-    (let g : mutable u64 = 0 in
-     for s in 0 .. n
-       invariant forall (k in 0 .. len load). load.[k] = 0
-       invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g = sum (old bed) (len bed)
-     do
-       g <- transport fill down acc order bed load inflow flux g
-     done;
-     g)
-```
+The second half of the demo moves sediment down the streams, and is its
+own page and module, [sediment.pia.md](sediment.pia.md), so the two prove
+in parallel. Its entry point takes the filled heights, the directions and
+the accumulation from this page, and returns `flux`, the load leaving each
+cell. This page draws it.
 
 The colour of a stream cell by the load leaving it: a ramp over the binary
 logarithm of the load, from blue for a trickle to yellow for 2^15 units or
@@ -1213,10 +821,6 @@ Every goal in this file is proved, by interval analysis or by Z3, before
 | Accumulation never exceeds the number of cells | `walk`, `accumulate` |
 | Every watershed label is an outlet | `walk`, `accumulate` |
 | The number of stream cells is at most the number of cells | `render`, `render_load` |
-| A write changes a sum by the new value less the old | `update`, `set` |
-| Erosion and deposition create no mass, and erosion takes at most the bed | `erode_or_deposit` |
-| Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport` and `sediment` |
-| No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
 What is *not* proved yet: that filling reaches a fixed point within
 `limit` sweeps (the result says whether it did), that a fixed point leaves
@@ -1254,14 +858,6 @@ The demo works around parts of Pia that are not built yet:
   and some slices' element ranges are lost inside quantifiers
   ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
   code is shaped around both, as noted where it matters.
-- **The height order.** `sediment` takes `order`, the cells from highest
-  to lowest, from the caller; `main.c` sorts them with `qsort`. A proved
-  sort of the cell indices by height, with the inverse permutation as its
-  proof, is in `tests/verify/sediment_order.pia`, but it is a selection
-  sort, O(n^2), and the linear counting sort over the 65536 heights does
-  not prove yet. Conservation does not depend on the order, only on its
-  naming cells of the map; the order is what carries sediment to an outlet
-  in one step.
 - **Terrain that evolves.** The landscape is fixed while sediment moves.
   Changing the heights by erosion and deposition, under rainfall that
   changes from step to step, and an animated picture, are the next steps
