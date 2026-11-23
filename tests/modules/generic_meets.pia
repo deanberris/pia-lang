@@ -1,0 +1,23 @@
+(* An importer's types meet an imported concept through an imported
+   generic function: Pia.Mem.Alloc's `alloc` over `bump t r` meets
+   Allocator for `bump u16` at t = u16, so the imported generic `push`
+   runs on a vector of u16 over a bump of u16.
+// RUN: piac --emit=interface -o %t %S/Inputs/allocators.pia
+// RUN: piac --verify %S/Inputs/allocators.pia | FileCheck --check-prefix=LIB %s
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Mem.Alloc.Allocators
+
+let demo (storage : borrowed mutable [u16]) : result usize Pia.Mem.Alloc.oom =
+  let m : Pia.Mem.Alloc.bump u16 = { mem = storage; used = 0 } in
+  let v : mutable Pia.Mem.Alloc.vec u16 (Pia.Mem.Alloc.bump u16) = { alloc = m; buf = storage.[0 .. 0]; len = 0 } in
+  Pia.Mem.Alloc.push v 700?;
+  Pia.Mem.Alloc.push v 900?;
+  Ok v.len
+
+(*
+// LIB-NOT: failed
+// LIB: 0 failed
+// CHECK-NOT: failed
+// CHECK: 0 failed
+*)
