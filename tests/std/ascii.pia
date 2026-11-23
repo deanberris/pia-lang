@@ -1,0 +1,37 @@
+(* Pia.Core.Ascii (ADR 0040, phase 1.9): <cctype> for ASCII bytes, each
+   classifier exact, with the digit and hex digit round trips.
+// RUN: piac --verify %S/../../lib/Pia/Core/Ascii.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ascii.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Ascii.Ascii.piai
+*)
+
+(* Every goal is proved, with no warning.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 66 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Ascii{{$}}
+// IFACE-NEXT: {{^}}interface Ascii = sig{{$}}
+// IFACE-NEXT: {{^}}  let between : (c : u8) -> (lo : u8) -> (hi : u8) -> bool ensures result <==> lo <= c && c <= hi{{$}}
+// IFACE-NEXT: {{^}}  let is_digit : (c : u8) -> bool ensures result <==> 48 <= c && c <= 57{{$}}
+// IFACE-NEXT: {{^}}  let is_upper : (c : u8) -> bool ensures result <==> 65 <= c && c <= 90{{$}}
+// IFACE-NEXT: {{^}}  let is_lower : (c : u8) -> bool ensures result <==> 97 <= c && c <= 122{{$}}
+// IFACE-NEXT: {{^}}  let is_alpha : (c : u8) -> bool ensures result <==> (65 <= c && c <= 90) || (97 <= c && c <= 122){{$}}
+// IFACE-NEXT: {{^}}  let is_alnum : (c : u8) -> bool ensures result <==> (48 <= c && c <= 57) || (65 <= c && c <= 90) || (97 <= c && c <= 122){{$}}
+// IFACE-NEXT: {{^}}  let is_xdigit : (c : u8) -> bool ensures result <==> (48 <= c && c <= 57) || (65 <= c && c <= 70) || (97 <= c && c <= 102){{$}}
+// IFACE-NEXT: {{^}}  let is_space : (c : u8) -> bool ensures result <==> c = 32 || (9 <= c && c <= 13){{$}}
+// IFACE-NEXT: {{^}}  let is_blank : (c : u8) -> bool ensures result <==> c = 32 || c = 9{{$}}
+// IFACE-NEXT: {{^}}  let is_cntrl : (c : u8) -> bool ensures result <==> c <= 31 || c = 127{{$}}
+// IFACE-NEXT: {{^}}  let is_print : (c : u8) -> bool ensures result <==> 32 <= c && c <= 126{{$}}
+// IFACE-NEXT: {{^}}  let is_graph : (c : u8) -> bool ensures result <==> 33 <= c && c <= 126{{$}}
+// IFACE-NEXT: {{^}}  let is_punct : (c : u8) -> bool ensures result <==> (33 <= c && c <= 126) && ((48 <= c && c <= 57) || (65 <= c && c <= 90) || (97 <= c && c <= 122)) = false{{$}}
+// IFACE-NEXT: {{^}}  let to_upper : (c : u8) -> u8 ensures 97 <= c && c <= 122 ==> result = c - 32 ensures (c < 97 || c > 122) ==> result = c{{$}}
+// IFACE-NEXT: {{^}}  let to_lower : (c : u8) -> u8 ensures 65 <= c && c <= 90 ==> result = c + 32 ensures (c < 65 || c > 90) ==> result = c{{$}}
+// IFACE-NEXT: {{^}}  let digit_value : (c : int{48..57}) -> int{0..9} ensures result = c - 48{{$}}
+// IFACE-NEXT: {{^}}  let digit : (d : int{0..9}) -> int{48..57} ensures result - 48 = d{{$}}
+// IFACE-NEXT: {{^}}  let hex_value : (c : u8) -> int{0..15} requires (48 <= c && c <= 57) || (65 <= c && c <= 70) || (97 <= c && c <= 102) ensures 48 <= c && c <= 57 ==> result = c - 48 ensures 65 <= c && c <= 70 ==> result = c - 55 ensures 97 <= c && c <= 102 ==> result = c - 87{{$}}
+// IFACE-NEXT: {{^}}  let hex_digit : (d : int{0..15}) -> u8 ensures d < 10 ==> result - 48 = d ensures d >= 10 ==> result - 87 = d ensures (48 <= result && result <= 57) || (97 <= result && result <= 102){{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

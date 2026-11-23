@@ -134,7 +134,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests in `tests/std/<module>.pia` and `tests/std/Inputs/<module>_run.pia`. Its mapping from C++ and its status are in `docs/cpp-std.md`.
 
 - `lib/Pia/Fn.pia` holds the laws of function arguments as spec functions, such as `strict_weak_order` (ADR 0044).
-- `lib/Pia/Core/Bit.pia` is `<bit>`. `lib/Pia/Core/Int.pia` holds the integer utilities: gcd, midpoint, abs, div and saturating arithmetic.
+- `lib/Pia/Core/Ascii.pia` is `<cctype>` for ASCII bytes. `lib/Pia/Core/Bit.pia` is `<bit>`. `lib/Pia/Core/Int.pia` holds the integer utilities: gcd, midpoint, abs, div and saturating arithmetic.
 - `lib/Pia/Core/Order.pia` is `<compare>`, with the `Eq` and `Ord` concepts and `ordering`. `lib/Pia/Core/Option.pia` is `<optional>`. `lib/Pia/Core/Result.pia` is `<expected>`, its instances stamped out by the `result_family` metaprogram.
 - `lib/Pia/Core/Algo/Search.pia` holds the non-modifying sequence algorithms. `lib/Pia/Core/Algo/Modify.pia` holds the modifying ones. `lib/Pia/Core/Algo/Remove.pia` is `remove`.
 - `lib/Pia/Core/Algo/Sort.pia`, `lib/Pia/Core/Algo/Heap.pia` and `lib/Pia/Core/Algo/BinarySearch.pia` hold sorting, the heap operations and the binary search family. `lib/Pia/Core/Algo/Permutation.pia` holds the multiset spec functions the sorts use.

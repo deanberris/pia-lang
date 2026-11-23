@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 
 # Its tests read the source, to prove it and to write its interfaces.
 exports_files([
+    "Ascii.pia",
     "Bit.pia",
     "Int.pia",
     "Option.pia",
@@ -60,4 +61,12 @@ pia_library(
     src = "Result.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [":order"],
+)
+
+# <cctype> for ASCII bytes: tests/std/ascii.pia checks its goals;
+# tests/std/ascii_edges.pia and :ascii_run test it through its interface.
+pia_library(
+    name = "ascii",
+    src = "Ascii.pia",
+    target_compatible_with = PIA_TARGETS,
 )
