@@ -28,6 +28,7 @@ lit_tests(
         "//lib/Pia/Core/Algo:Sort.pia",
         "//lib/Pia/Core/Algo:Search.pia",
         "//lib/Pia/Core/Algo:Set.pia",
+        "//lib/Pia/Core/Algo:SetSymmetric.pia",
         "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Text/Json:Lex.pia",
@@ -302,6 +303,7 @@ pia_binary(
         "//lib/Pia/Core:order",
         "//lib/Pia/Core/Algo:binary_search",
         "//lib/Pia/Core/Algo:set",
+        "//lib/Pia/Core/Algo:set_symmetric",
         "//lib/Pia/Core/Algo:set_union",
     ],
 )
