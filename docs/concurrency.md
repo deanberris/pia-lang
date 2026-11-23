@@ -22,7 +22,7 @@ Each choice has a recommendation. The alternatives are below in each section.
 | 3 | How is suspension visible? | **`@suspends` effect**, inferred inside a module and written in exported interfaces. Two keywords: `wait` and `yield` |
 | 4 | How is race freedom proved? | **Permissions first**: ownership and borrows in the type checker, disjointness by Presburger (FPL) and Z3, and the **model checker** only for what types cannot express (the primitives themselves, protocols, deadlock) |
 | 5 | How do locks work? | **A lock owns its data** (`mutex<T>`), with a **lock invariant** and a **static level**. Levels must increase, which rules out lock-order deadlocks at compile time |
-| 6 | Which memory orders for atomics? | **`seq_cst`, `acquire`, `release` and `acq_rel`** are checked from day one. `relaxed` is an unproved obligation until the model checker supports RC11 |
+| 6 | Which memory orders for atomics? | **`seq_cst`, `acquire`, `release` and `acq_rel`** are checked from day one. `relaxed` was to be an unproved obligation until the model checker supported RC11. [ADR 0052](adr/0052-atomics.md) models RC11 from the start, so `relaxed` is proved like the other orders |
 | 7 | How are deadlocks in channel communication (CSP) found? | **A deadlock goal for every scope**: a forest-shaped channel topology is proved by a lemma, protocols inferred per channel end are checked for compatibility and matched against proved patterns (pipeline, worker pool, request and reply), and the model checker searches the rest for any set of tasks blocked forever |
 | 8 | What does an unproved race or deadlock do? | **Compile error**, with the accesses or blocked tasks and a witness. `--allow-unproved=race:...` or `deadlock:...` accepts it, records it in the certificate as trusted, and recommends a TSan build |
 
@@ -252,6 +252,8 @@ The model checker supports sequential consistency and release/acquire from the s
 
 - `relaxed` operations whose results never create an ordering, such as a statistics counter or the histogram bins above, are accepted by the type checker. The rule is that the value read is not used to decide whether to touch other shared data.
 - Any other use of `relaxed` is an unproved obligation, so it is an error by default, until the model checker gains an RC11 mode. GenMC and CDSChecker show it can be done.
+
+[ADR 0052](adr/0052-atomics.md) replaces this plan: the language memory model is RC11 from the start (`Pia.Memory`), checked by a battery of litmus tests, so every order, `relaxed` included, is reasoned about under the same axioms.
 
 ### Resources other than memory
 
