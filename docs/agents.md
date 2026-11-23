@@ -33,3 +33,7 @@ claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp
 ## What a session looks like
 
 [The REPL](repl.md#claude-driving-a-session) page shows Claude driving a session over MCP, and [Debugging C++ with the REPL](repl-debugging.md) follows the proof-debugging loop from a literal port of a parser to a verdict and a fix.
+
+## Contributing with an agent
+
+Contributions written with an agent are welcome, and they need no `Co-Authored-By` trailer or other attribution. The person who opens the pull request owns it, and it must pass the proofs and tests like any other change. [CONTRIBUTORS.md](https://github.com/deanberris/pia-lang/blob/main/CONTRIBUTORS.md) has the policy.
