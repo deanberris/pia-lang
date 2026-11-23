@@ -1,0 +1,33 @@
+(* Target's constants as values in code (ADR 0049). Code gets the value of
+   the model for the target it is compiled for, and `if Target.is m` keeps
+   only the branch for that target, so the other's code is never compiled.
+// RUN: piac --emit=llvm %s | FileCheck %s --check-prefix=ARM
+// RUN: piac --emit=llvm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=X86
+*)
+
+(* The padding that keeps a contended atomic on a line of its own. *)
+let line (x : u8) : usize = Target.cache_line
+
+let page (x : u8) : usize = Target.page_size
+
+let wide (x : u8) : usize @target(x86_64_linux) = Target.vector_bits
+
+let vector (x : u8) : usize
+= if Target.is x86_64_linux then wide x else Target.vector_bits
+
+(*
+// ARM-LABEL: define {{.*}}line
+// ARM: ret i64 128
+// ARM-LABEL: define {{.*}}page
+// ARM: ret i64 16384
+// ARM-NOT: define {{.*}}wide
+// ARM-LABEL: define {{.*}}vector
+// ARM: ret i64 128
+// X86-LABEL: define {{.*}}line
+// X86: ret i64 64
+// X86-LABEL: define {{.*}}page
+// X86: ret i64 4096
+// X86-LABEL: define {{.*}}wide
+// X86: ret i64 256
+// X86-LABEL: define {{.*}}vector
+*)
