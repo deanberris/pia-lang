@@ -51,6 +51,13 @@ interface Transport @abi(c) = sig
   let surface : (rock : [u16]) -> (bed : [u32]) -> (height : out mutable [u16])
       -> unit
     requires len bed = len rock && len height = len rock
+  let rain_uniform : (r : u8) -> (rain : out mutable [u32]) -> unit
+    requires len rain <= 16777215
+  let rain_band : (w : usize) -> (lo : usize) -> (hi : usize) -> (inside : u8)
+      -> (outside : u8) -> (rain : out mutable [u32]) -> unit
+    requires w > 0 && len rain <= 16777215
+  let rain_season : (wet : bool) -> (r : u8) -> (rain : out mutable [u32]) -> unit
+    requires len rain <= 16777215
   let evolve : (fill : [u16]) -> (down : [usize]) -> (rain : [u32]) -> (k : u32)
       -> (bed : inout mutable [u32]) -> (load : inout mutable [u32])
       -> (inflow : inout mutable [u32]) -> (flux : out mutable [u32])
@@ -672,7 +679,8 @@ the sediment change the land: the ground the water sees is the rock raised
 by the sediment resting on it, so erosion cuts valleys down and deposition
 fills them. The C program runs the landscape in *epochs*: before each, it
 computes the ground with `surface`, fills its sinks and finds its
-directions with the first half's stages, and builds a rainfall field; then
+directions with the first half's stages, and asks for a rainfall field
+(below); then
 `evolve` sorts the cells, accumulates the rain and moves sediment for `k`
 steps. Because the directions change between epochs, a little load and
 inflow may be left in flight; `fold` settles it into the bed first.
@@ -870,6 +878,71 @@ let evolve (fill : [u16]) (down : [usize]) (rain : [u32]) (k : u32)
      g)
 ```
 
+### Rainfall fields
+
+The C program asks for the rain of each epoch from these. Each cell gets at
+most 255 units, and a map has at most 16777215 cells (a 4096 by 4096 map
+less one cell), so the total rain is at most 255 times 16777215, which fits
+in a `u32`: each field's postcondition says so, which is exactly what
+`evolve` checks before it moves anything, so with these fields its guard
+never trips.
+
+A prefix whose cells hold at most 255 sums to at most 256 per cell.
+
+```pia
+let lemma sum_le (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] <= 255
+  ensures sum xs n <= n << 8
+  decreases n
+= if n > 0 then (sum_le xs (n - 1); assert xs.[n - 1] <= 255)
+```
+
+The same rain r on every cell.
+
+```pia
+let rain_uniform (r : u8) (rain : out mutable [u32]) : unit
+  requires len rain <= 16777215
+  ensures forall (k in 0 .. len rain). rain.[k] = r
+  ensures sum rain (len rain) <= 4294967295
+= for i in 0 .. len rain
+    invariant forall (k in 0 .. i). rain.[k] = r
+  do rain.[i] <- r done;
+  sum_le rain (len rain)
+```
+
+A storm: the rows lo up to hi of a map w cells wide get inside, the others
+outside.
+
+```pia
+let rain_band (w : usize) (lo : usize) (hi : usize) (inside : u8) (outside : u8) (rain : out mutable [u32]) : unit
+  requires w > 0 && len rain <= 16777215
+  ensures forall (k in 0 .. len rain). rain.[k] = inside || rain.[k] = outside
+  ensures sum rain (len rain) <= 4294967295
+=
+  let row : mutable usize = 0 in
+  let col : mutable usize = 0 in
+  for i in 0 .. len rain
+    invariant forall (k in 0 .. i). rain.[k] = inside || rain.[k] = outside
+    invariant col < w && row <= i
+  do
+    rain.[i] <- (if lo <= row && row < hi then inside else outside);
+    if col + 1 = w then (col <- 0; row <- row + 1) else col <- col + 1
+  done;
+  assert (forall (k in 0 .. len rain). rain.[k] <= 255);
+  sum_le rain (len rain)
+```
+
+A season: rain r everywhere when wet, none when dry.
+
+```pia
+let rain_season (wet : bool) (r : u8) (rain : out mutable [u32]) : unit
+  requires len rain <= 16777215
+  ensures forall (k in 0 .. len rain). rain.[k] = (if wet then r else 0)
+  ensures sum rain (len rain) <= 4294967295
+= rain_uniform (if wet then r else 0) rain
+```
+
 ## What is proved
 
 Every goal in this file is proved before `piac` generates code:
@@ -883,6 +956,7 @@ Every goal in this file is proved before `piac` generates code:
 | Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport`, `sediment` and `evolve` |
 | Settling the water's load into the bed conserves the total | `fold_cell`, `fold` |
 | The flow through every cell is at least its own rain and at most the total rain | `accumulate_rain` |
+| Every rainfall field gives each cell at most 255 units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
 | No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
 What is *not* proved: that the capacity rule and the height of a unit of

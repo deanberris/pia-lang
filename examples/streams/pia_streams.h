@@ -5,6 +5,7 @@
 #ifndef PIA_EXAMPLES_STREAMS_H
 #define PIA_EXAMPLES_STREAMS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 uint32_t fill_sinks(const uint16_t *dem, uint64_t ndem, uint64_t w,
@@ -36,6 +37,10 @@ uint64_t sediment(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
                   uint64_t nlast, uint16_t *owner, uint64_t nowner);
 void surface(const uint16_t *rock, uint64_t nrock, const uint32_t *bed,
              uint64_t nbed, uint16_t *height, uint64_t nheight);
+void rain_uniform(uint8_t r, uint32_t *rain, uint64_t nrain);
+void rain_band(uint64_t w, uint64_t lo, uint64_t hi, uint8_t inside,
+               uint8_t outside, uint32_t *rain, uint64_t nrain);
+void rain_season(bool wet, uint8_t r, uint32_t *rain, uint64_t nrain);
 uint64_t evolve(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
                 uint64_t ndown, const uint32_t *rain, uint64_t nrain,
                 uint32_t k, uint32_t *bed, uint64_t nbed, uint32_t *load,
