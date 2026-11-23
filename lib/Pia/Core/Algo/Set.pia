@@ -1,0 +1,114 @@
+(* Pia.Core.Algo.Set: <algorithm>'s operations on sorted ranges (ADR
+   0040, phase 1.8): includes, set_intersection and set_difference here,
+   set_union and set_symmetric_difference in Pia.Core.Algo.SetUnion, which
+   proves on its own. Each takes a strict weak order and is proved once
+   (ADR 0043, ADR 0044).
+
+   They work on sets: ranges strictly increasing by less
+   (`increasing_prefix less xs (len xs)`), with no two equivalent
+   elements, where C++'s multiset semantics and the membership ones
+   below agree. `member xs v less` says some element of xs is equivalent
+   to v, neither less than it nor greater. The range searched must be
+   partitioned for every value (Pia.Core.Algo.BinarySearch's below and
+   above), as a sorted one is.
+
+   includes checks each element of ys with binary_search, O(m log n)
+   rather than C++'s linear walk; its result is the same. set_intersection
+   and set_difference keep the elements of xs that are, or are not,
+   members of ys, in order, into the first `result` places of dst, a
+   slice at least as long as xs; `members xs ys less (len xs)` counts
+   them. *)
+module Pia.Core.Algo.Set : Set
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.BinarySearch.BinarySearch as B
+
+interface Set = sig
+  let spec member : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let spec increasing_prefix : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (n : usize) -> bool
+  let spec members : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> usize
+  let includes : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let set_intersection : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let set_difference : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+end
+
+(** Some element of xs is equivalent to v. *)
+let spec member (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : bool =
+  exists (k in 0 .. len xs). less xs.[k] v = false && less v xs.[k] = false
+
+(** The first n elements of xs are strictly increasing by less. *)
+let spec increasing_prefix (t : type) (less : (a : t) -> (b : t) -> bool) (xs : [t]) (n : usize) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && j < n ==> less xs.[i] xs.[j]
+
+(** How many of xs.[0 .. n] are members of ys. *)
+
+let spec members (t : type) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) (n : usize) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0
+  else if member ys xs.[n - 1] less then members xs ys less (n - 1) + 1
+  else members xs ys less (n - 1)
+
+(** C++: std::includes with a comparator: every element of ys is a
+    member of xs. *)
+let includes (t : type) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) : bool
+  requires Pia.Fn.strict_weak_order less
+  requires forall (v : t). B.below xs v less && B.above xs v less
+  ensures result <==> (forall (b in 0 .. len ys). member xs ys.[b] less)
+= let j : mutable usize = 0 in
+  let ok : mutable bool = true in
+  while ok && j < len ys
+    invariant j <= len ys
+    invariant forall (b in 0 .. j). member xs ys.[b] less
+    invariant ok = false ==> (j < len ys && member xs ys.[j] less = false)
+    decreases len ys - j + (if ok then 1 else 0)
+  do
+    if B.binary_search xs ys.[j] less then j <- j + 1 else ok <- false
+  done;
+  ok
+
+(** C++: std::set_intersection with a comparator, into dst.[0 .. result]. *)
+let set_intersection (t : type) (dst : borrowed inout mutable [t]) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  requires increasing_prefix less xs (len xs)
+  requires forall (v : t). B.below ys v less && B.above ys v less
+  requires len dst >= len xs
+  ensures result = members xs ys less (len xs)
+  ensures forall (k in 0 .. result). member ys dst.[k] less && member xs dst.[k] less
+  ensures increasing_prefix less dst result
+= let c : mutable usize = 0 in
+  for i in 0 .. len xs
+    invariant c <= i && c = members xs ys less i
+    invariant forall (k in 0 .. c). member ys dst.[k] less && member xs dst.[k] less
+    invariant increasing_prefix less dst c
+    invariant forall (k in 0 .. c) (a in 0 .. len xs). i <= a ==> less dst.[k] xs.[a]
+  do
+    if B.binary_search ys xs.[i] less then (
+      dst.[c] <- xs.[i];
+      c <- c + 1)
+  done;
+  c
+
+(** C++: std::set_difference with a comparator, into dst.[0 .. result]. *)
+let set_difference (t : type) (dst : borrowed inout mutable [t]) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  requires increasing_prefix less xs (len xs)
+  requires forall (v : t). B.below ys v less && B.above ys v less
+  requires len dst >= len xs
+  ensures result + members xs ys less (len xs) = len xs
+  ensures forall (k in 0 .. result). member ys dst.[k] less = false && member xs dst.[k] less
+  ensures increasing_prefix less dst result
+= let c : mutable usize = 0 in
+  for i in 0 .. len xs
+    invariant c <= i && c + members xs ys less i = i
+    invariant forall (k in 0 .. c). member ys dst.[k] less = false && member xs dst.[k] less
+    invariant increasing_prefix less dst c
+    invariant forall (k in 0 .. c) (a in 0 .. len xs). i <= a ==> less dst.[k] xs.[a]
+  do
+    if B.binary_search ys xs.[i] less = false then (
+      dst.[c] <- xs.[i];
+      c <- c + 1)
+  done;
+  c

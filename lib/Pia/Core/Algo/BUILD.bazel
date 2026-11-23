@@ -18,6 +18,8 @@ exports_files([
     "Remove.pia",
     "Sort.pia",
     "Search.pia",
+    "Set.pia",
+    "SetUnion.pia",
 ])
 
 # The non-modifying sequence algorithms: tests/std/search.pia checks its
@@ -153,6 +155,34 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# includes, set_intersection and set_difference, on sets by a strict weak
+# order: tests/std/set.pia checks its goals; tests/std/set_edges.pia and
+# :set_run test it through its interface.
+pia_library(
+    name = "set",
+    src = "Set.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":binary_search",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# set_union and set_symmetric_difference, in their own module because
+# they cost most to prove: tests/std/set_union.pia checks its goals.
+pia_library(
+    name = "set_union",
+    src = "SetUnion.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":binary_search",
+        ":set",
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],
