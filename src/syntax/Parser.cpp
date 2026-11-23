@@ -1765,6 +1765,7 @@ NodePtr parseWith(std::string_view source, Diagnostics &diags,
   std::vector<RawComment> comments;
   LexOptions options;
   options.literate = literate;
+  options.cells = expressionItems;
   options.comments = &comments;
   std::vector<Token> toks = tokenize(source, diags, options);
   if (diags.hasErrors()) return makeNode(NodeKind::Program, SourceLoc{});
