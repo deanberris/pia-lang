@@ -1,0 +1,45 @@
+(* Importers of Pia.Image.Raster index a slice of an image's samples with
+   no check of their own: index and row_start bound every sample by size,
+   at the corners of the largest image and of a one-pixel one.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Raster.Raster as R
+
+(* The last sample of a pixel, read from the image's own slice. *)
+let last_sample (d : R.dims) (px : [u8]) (x : u16) (y : u16) : u8
+  requires len px = R.size d.w d.h d.c && x < d.w && y < d.h
+= let k : int{0..3} = d.c - 1 in
+  px.[R.index d x y k]
+
+(* The first and last samples of row j of a rectangle. *)
+let row_ends (d : R.dims) (r : R.rect) (px : [u8]) (j : u16) : u16
+  requires len px = R.size d.w d.h d.c && R.inside d r && j < r.rh
+= let i = R.row_start d r j in
+  let n : usize = r.rw * d.c in
+  let a : u16 = px.[i] in
+  let b : u16 = px.[i + n - 1] in
+  a + b
+
+let corners (d : R.dims) : unit
+  requires d.w = 65535 && d.h = 65535 && d.c = 4
+  ensures R.index d 65534 65534 3 = 17179344899
+  ensures R.index d 0 0 0 = 0
+= let a = R.index d 65534 65534 3 in
+  let b = R.index d 0 0 0 in
+  ()
+
+let one_pixel (d : R.dims) : unit
+  requires d.w = 1 && d.h = 1 && d.c = 1
+  ensures R.index d 0 0 0 = 0
+= let a = R.index d 0 0 0 in ()
+
+let whole (d : R.dims) : bool
+  ensures result
+= let r : R.rect = { x0 = 0; y0 = 0; rw = d.w; rh = d.h } in
+  R.contains d r
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 21 proved, 0 failed, 0 skipped
+*)

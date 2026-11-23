@@ -34,6 +34,8 @@ lit_tests(
         "//lib/Pia/Core/Algo:SetSymmetric.pia",
         "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
+        "//lib/Pia/Image:Bits.pia",
+        "//lib/Pia/Image:Raster.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Spec.pia",
     ],
@@ -361,5 +363,35 @@ sh_test(
     srcs = ["charconv_run_test.sh"],
     args = ["$(rootpath :charconv_run)"],
     data = [":charconv_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "image_bits_run",
+    src = "Inputs/image_bits_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Image:bits"],
+)
+
+sh_test(
+    name = "image_bits_run_test",
+    srcs = ["image_bits_run_test.sh"],
+    args = ["$(rootpath :image_bits_run)"],
+    data = [":image_bits_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "image_raster_run",
+    src = "Inputs/image_raster_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Image:raster"],
+)
+
+sh_test(
+    name = "image_raster_run_test",
+    srcs = ["image_raster_run_test.sh"],
+    args = ["$(rootpath :image_raster_run)"],
+    data = [":image_raster_run"],
     target_compatible_with = PIA_TARGETS,
 )
