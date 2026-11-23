@@ -93,7 +93,7 @@ pia_library(
 pia_library(
     name = "numeric",
     src = "Numeric.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 # The binary search family, by a comparator and by Ord:
@@ -103,7 +103,7 @@ pia_library(
 pia_library(
     name = "binary_search",
     src = "BinarySearch.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
