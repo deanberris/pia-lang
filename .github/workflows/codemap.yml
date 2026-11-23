@@ -1,0 +1,28 @@
+# Checks that CODEMAP.md still names every source file, test directory and
+# ADR, and that every path it names exists (tools/codemap/check.py). Agents
+# navigate by the map instead of reading code, so a stale map costs every
+# later change. Plain Python on a checkout: seconds, no Bazel.
+name: codemap
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codemap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/codemap/check.py

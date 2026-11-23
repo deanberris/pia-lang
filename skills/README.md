@@ -4,6 +4,7 @@ These are [Agent Skills](https://agentskills.io): folders with a `SKILL.md` that
 
 | Skill | Teaches |
 | --- | --- |
+| [pia-language](pia-language/SKILL.md) | writing idiomatic Pia: syntax at a glance, where each fact belongs, the usual shapes for loops, errors, generics, lambdas and modules, and the pitfalls |
 | [pia-mcp](pia-mcp/SKILL.md) | driving a verified session through the `pia mcp` server's `execute` and `poll` tools |
 | [pia-repl](pia-repl/SKILL.md) | `pia repl` from a shell: piped cells, JSON lines, `:redef`, state with invariants and `old`, tasks |
 | [piac-verify](piac-verify/SKILL.md) | `piac --verify`: the goal report, counterexamples, `--allow-unproved`, solver limits, other modes |
