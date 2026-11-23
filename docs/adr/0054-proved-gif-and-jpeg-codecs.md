@@ -1,4 +1,4 @@
-# 54. GIF and JPEG codecs are proved total on every input, decode to a written specification, and round-trip wherever the format is lossless
+# 54. GIF, inflate and JPEG codecs are proved total on every input, decode to a written specification, and round-trip wherever the format is lossless
 
 Date: 2026-11-23
 
@@ -6,7 +6,9 @@ Status: Proposed
 
 ## Context
 
-Dean asked (2026-11-23) for GIF and JPEG encode and decode, implemented in Pia and proved correct, "so we don't have the rendering related bugs that other shaders and renderers have encountered". [ADR 0016](0016-stream-delineation-flagship-demo.md) already puts image I/O on the path of the flagship demo, M13 ([#14](https://github.com/deanberris/pia-lang/issues/14)) is the image I/O milestone, and [stdlib.md](../stdlib.md) lists `Image.Gif` with "GIF LZW" as one of the library's stress tests. JPEG is new.
+Dean asked (2026-11-23) for GIF and JPEG encode and decode, implemented in Pia and proved correct, "so we don't have the rendering related bugs that other shaders and renderers have encountered". [ADR 0016](0016-stream-delineation-flagship-demo.md) already puts image I/O on the path of the flagship demo, M13 ([#14](https://github.com/deanberris/pia-lang/issues/14)) is the image I/O milestone, and [stdlib.md](../stdlib.md) lists `Image.Gif` with "GIF LZW" as one of the library's stress tests. JPEG is new: this ADR adds it to ADR 0016's scope.
+
+Dean also decided (2026-11-23, in the survey of the path to the GPU demo) that the codecs run in parallel with the GPU work, as pure Pia over byte buffers, in the order GIF, then inflate, then JPEG baseline decode, then JPEG encode. Inflate (RFC 1951) is on that list because PNG and the Copernicus GeoTIFF elevation tiles both need it later, and because its Huffman codes are the same canonical codes as JPEG's, so it proves the shared Huffman module before JPEG uses it.
 
 Image decoders are among the most attacked code there is, because an image arrives from anywhere and is decoded before anyone looks at it. The bugs fall into a few classes, and each one is a goal the verifier already knows how to state:
 
@@ -46,6 +48,7 @@ Every codec function has four levels of guarantee. The first two hold for every 
 | Codec | In | Out (rejected with `Unsupported`, never misread) |
 | --- | --- | --- |
 | GIF decode | GIF87a and GIF89a; global and local colour tables; LZW code sizes 2 to 12; interlacing; transparency and disposal from the Graphic Control Extension; every frame of an animation; other extensions skipped by their length | nothing: every valid GIF decodes |
+| Inflate | every RFC 1951 stream: stored, fixed and dynamic Huffman blocks, into a caller's buffer whose length bounds the output; zlib (RFC 1950) framing with its Adler-32 | deflate (compression) comes with PNG encode, in a later ADR |
 | GIF encode | indexed images with a palette of up to 256 colours, one frame or an animation, interlaced or not, with a dictionary reset when it fills | colour quantisation from RGB, which is a separate function (section 6) |
 | JPEG decode | baseline sequential DCT (SOF0) and extended sequential with Huffman coding at 8 bits (SOF1); 1 or 3 components; sampling factors 1 to 4 (4:4:4, 4:2:2, 4:2:0, 4:4:0 and the rest); restart intervals; JFIF and Adobe colour transforms; progressive (SOF2) as the second step | arithmetic coding, 12-bit and lossless JPEG, hierarchical mode, CMYK (a later ADR if needed) |
 | JPEG encode | baseline, 1 or 3 components, 4:4:4 or 4:2:0, quality scaled from the Annex K tables, optional optimised Huffman tables | progressive encode |
@@ -66,8 +69,10 @@ The codecs live under `Pia.Image`, one module per file ([ADR 0039](0039-module-a
 | `Image.Jpeg.Idct`, `Image.Jpeg.Fdct` | the integer transforms |
 | `Image.Jpeg.Color` | upsampling and YCbCr to RGB in fixed point, and the reverse |
 | `Image.Jpeg.Decode`, `Image.Jpeg.Encode` | the container and the scan loop |
+| `Compress.Huffman` | canonical Huffman codes from code lengths, with the completeness check, shared by inflate and JPEG (JPEG adds its BITS/HUFFVAL form) |
+| `Compress.Inflate.Spec`, `Compress.Inflate` | RFC 1951 as spec functions (stored, fixed and dynamic blocks, length and distance codes), and a decoder proved equal to it, with every back-reference proved `distance <= bytes written` |
 
-`Image.Bits` and the LZW and Huffman modules need neither an allocator nor the OS, so they belong with `Pia.Core` in what [stdlib.md](../stdlib.md) says can later run in a GPU kernel.
+`Image.Bits`, inflate and the LZW and Huffman modules need neither an allocator nor the OS, so they belong with `Pia.Core` in what [stdlib.md](../stdlib.md) says can later run in a GPU kernel.
 
 ### 4. JPEG's IDCT is an integer transform proved bit-exact against a reference, with its accuracy tested
 
@@ -110,12 +115,14 @@ One issue and one pull request at a time, each prototyped in the REPL first:
 
 1. `Image.Bits` and `Image.Raster`.
 2. GIF LZW decode against `Gif.Spec`, then the container decode: every GIF decodes.
-3. GIF LZW encode and the round-trip theorem, then the container encode.
-4. JPEG Huffman: table building with the completeness check, decode against Annex C.
-5. JPEG baseline decode: markers, entropy decoding, dequantisation, `Idct` bit-exact against the spec, upsampling, colour conversion, every pixel written.
+3. GIF LZW encode and the round-trip theorem, then the container encode. The streams demo can write its output as GIF from here on.
+4. `Compress.Huffman`, then inflate against `Inflate.Spec`, then zlib framing.
+5. JPEG baseline decode: markers, the BITS/HUFFVAL tables over `Compress.Huffman`, entropy decoding, dequantisation, `Idct` bit-exact against the spec, upsampling, colour conversion, every pixel written.
 6. JPEG baseline encode and its round-trip theorem.
 7. JPEG progressive decode.
-8. The case studies, and the streams demo writing its output as an animated GIF (flow accumulation over time) and reading imagery as JPEG.
+8. The case studies.
+
+`width * height * channels` is a product of header values, so steps 1 and 2 meet verifier issue [#45](https://github.com/deanberris/pia-lang/issues/45) (multiplication) first. `Image.Raster` takes it through the `index_2d_lt` style lemmas with dimensions capped at 65535, and any verifier fix it needs is its own pull request.
 
 ## Questions for Dean
 
