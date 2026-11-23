@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed (revised 2026-11-23: files through the same senders, and `|>` pipelines with error handling proved complete)
+Status: Proposed (revised 2026-11-23: files through the same senders, `|>` pipelines with error handling proved complete, and pipelines as dataflow graphs across CPU and GPU schedulers)
 
 ## Context
 
@@ -161,7 +161,30 @@ let load_config (path : cstr) (buf : moved [u8]) =
 
 **Why this is stronger than exceptions.** An exception can be of any type, thrown from any call, and it is invisible in signatures: C++ has only `noexcept` or nothing. Through asynchronous boundaries it travels as a type-erased `exception_ptr`, and no compiler checks that a handler exists for what can reach it. Here, every pipeline's error set is in its type and is closed, every handler is checked exhaustive against it, what a handler removes is gone from the type, the end of every pipeline must have handled the rest, and cleanup is by linearity, with resources returned along the error path too.
 
-### 7. What this changes
+### 7. A pipeline is a dataflow graph, and devices are schedulers
+
+Senders are lazy and their types say what they are, so a pipeline is a value describing a dataflow graph before anything runs: `then` is an edge, `when_all` is a join, and `split` is a fork. Each node runs on a scheduler. That makes CPU and GPU compute one more pair of schedulers, as NVIDIA's stdexec does for CUDA:
+
+```ocaml
+(* Designed syntax. *)
+let step (gpu : borrowed metal) (cpu : borrowed pool) (tile : moved [f32]) =
+  just tile
+  |> continues_on gpu
+  |> then sediment_kernel                 (* runs as a Metal compute pass *)
+  |> continues_on cpu
+  |> then summarise                       (* runs on a CPU worker *)
+  |> upon_error report_device_error
+```
+
+- **A device is a `Scheduler`.** `Pia.Exec.Metal` schedules work as command buffers on a Metal queue, and its completion handler is the receiver call. `Pia.Task`'s workers are the CPU scheduler, and the Neural Engine can come later the same way. `continues_on d` moves the rest of the pipeline to `d`.
+- **Data moves with ownership.** A buffer is `moved` into a GPU stage and comes back in its value or its error, exactly as with I/O (section 2). So the CPU cannot touch a buffer while the GPU writes it, which is ADR 0027's rule for device queues, now expressed as a sender. On Apple silicon's unified memory, moving costs no copy. A device with its own memory makes `continues_on` insert the transfer, and the transfer is a sender too.
+- **Placement chooses the schedulers.** A pipeline whose stages say `@place(auto)` instead of a fixed `continues_on` is placed by the cost model of [ADR 0015](0015-device-placement.md), which sees the whole graph because it is a type. The model can keep neighbouring stages on one device to avoid transfers, and fuse a chain of `then`s into one kernel. Placement must never change the proved result. So a stage's float tolerance has to be proved on the device it is placed on ([ADR 0038](0038-float-kernels-against-real-theories.md)), and a device that cannot prove it is excluded or is an error, as ADR 0038 already decided.
+- **Device errors are ordinary errors.** A command buffer that fails, or a device that is lost, completes with an error from a closed set (`DeviceLost | OutOfMemory | Timeout`), so the pipeline must handle it like any other (section 6).
+- **The graph is checked as a whole.** It is acyclic by construction, except through channels, so ADR 0027's topology check covers its deadlock goal. Its race freedom is the ownership rule above, and its error handling is section 6's rule.
+
+This is the generic form of the flagship demo's CPU and GPU pipeline ([ADR 0016](0016-stream-delineation-flagship-demo.md)). Its tile loop becomes a graph of senders, placed by the cost model, instead of hand-written queue code.
+
+### 8. What this changes
 
 - **ADR 0027 and issue #79.** `Pia.Io` offers senders instead of a parking API, and the kqueue loop becomes one backend of several. `Pia.Task`'s scheduler is a `Scheduler`, and `spawn s x` accepts a sender as well as a closure. The `@blocking` and `offload` rules are unchanged.
 - **The earlier poller plan** (a readiness poller as the public I/O interface) becomes `Pia.Io.Ready`'s internal `Readiness` concept.
@@ -178,12 +201,14 @@ let load_config (path : cstr) (buf : moved [u8]) =
 6. **`Pia.Exec`**: the concepts and algorithms, with an inline scheduler and `sync_wait`, the `|>` operator, and `recover` with the type-level `without` on error sets. It is pure Pia with no system calls, so it can be proved and tested first.
 7. **`Pia.Io.Ready`, `Pia.Io.Kqueue` and `Pia.Io.Epoll`**, the run loop and the timer heap, with a proved echo server as the demo, tested on both CI jobs.
 8. **`Pia.Io.Uring`**, and the Linux run-time choice between the two backends.
-9. **Cross-thread stop**, when the model checker lands (#81). **`wait` on senders**, when coroutines land (#77).
+9. **`Pia.Exec.Metal`**, a GPU scheduler, once Metal placement lands (ADR 0015), and placement of `@place(auto)` stages over a sender graph.
+10. **Cross-thread stop**, when the model checker lands (#81). **`wait` on senders**, when coroutines land (#77).
 
 ## Consequences
 
 - Every P2300 rule listed under "Where P2300 relies on the programmer" is checked. Exactly-once completion and the absence of detached work are type rules. Buffer ownership during I/O and through cancellation are type rules too. Closed error sets come with exhaustive handlers. The stop race is a model-checker goal.
 - Files, pipes and sockets go through one set of senders, and blocking I/O is `sync_wait` of them.
+- A pipeline is a dataflow graph whose nodes run on schedulers, so CPU and GPU compute use the same interface as I/O, with ownership moving buffers between them.
 - Pipelines written with `|>` are checked to handle every error that can reach their end, which exceptions cannot offer.
 - One interface hides three backends. Only the system-call contracts differ between them, and they are listed per target in the trust report.
 - On macOS, completion is emulated, so an operation can cost one extra system call compared with io_uring, and file I/O runs on the blocking pool. Pia does not claim equal performance across the two platforms, only the same semantics.
