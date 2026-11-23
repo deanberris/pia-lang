@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Proposed (revised 2026-11-23: files through the same senders, and `|>` pipelines with error handling proved complete)
 
 ## Context
 
@@ -126,11 +126,47 @@ Inside a `@suspends` function, `wait s` connects the coroutine's frame as the re
 
 Each in-flight slot is a small state machine: free, submitted, cancel requested, completed, free. A stop request from another thread races the completion handler. The goal is that every slot delivers exactly one completion, and that a stop callback is never running after its slot is freed. That is a protocol goal for the model checker (ADR 0027, section 4, issue #81), proved once for the slot table and the stop-token implementation, and not per program. Until the model checker exists, `Pia.Io` accepts stop requests only from its own run-loop thread, where the race cannot happen. A cross-thread stop is an unproved goal that `--allow-unproved=race:` must accept.
 
-### 5. What this changes
+### 5. Files, pipes and sockets share one set of senders
+
+Nothing in sections 1 to 4 is specific to sockets. `Pia.Io`'s senders cover every kind of descriptor:
+
+- **Streams and files alike.** `read_some` and `write_some` work on any descriptor: a file, a pipe, a socket or a terminal. Files also get positional `read_at` and `write_at` (`pread` and `pwrite`), whose footprints are byte ranges, so tasks that write disjoint ranges of one file are proved race-free by FPL ([docs/concurrency.md](../concurrency.md#resources-other-than-memory)). The flagship demo's parallel tile writes need exactly that.
+- **File operations are senders too.** `open` (`openat`), `close`, `fsync`, `stat`, `rename` and `unlink` are senders. `read_all` and `write_all` are senders composed from the others, proved to transfer exactly the buffer's length or to fail.
+- **The backend chooses how, per descriptor kind.** `open` returns a `file`, and `accept`, `connect` and `pipe` return a `stream`, so the choice is static. io_uring runs all of them natively (`IORING_OP_READ`, `WRITE`, `OPENAT`, `STATX`, `FSYNC` and `CLOSE`). The readiness adapter runs streams through kqueue or epoll and sends file operations to the blocking pool, since readiness says nothing useful about regular files. It is the same sender with the same laws either way, so the caller cannot tell the difference.
+- **Cancelling a file operation on the blocking pool** completes it as `stopped` only if it had not started. A `pread` that is already running cannot be interrupted, so it completes with its value, and the law that `stopped` means nothing happened still holds.
+- **Blocking I/O is the same layer.** The `reader` and `writer` concepts of `Pia.Io` ([docs/stdlib.md](../stdlib.md), [docs/cpp-std.md](../cpp-std.md)) are implemented over these senders, and the blocking forms are `sync_wait` of them. There is one I/O layer, not a blocking one beside an asynchronous one.
+
+### 6. Pipelines: `|>`, with every error case proved handled
+
+A sender adapter takes the sender as its last argument, `then f s`, and the prelude operator `|>` passes its left side as the last argument of its right side: `s |> then f` is `then f s`. It is defined by a metaprogram, as every operator is ([ADR 0008](0008-operators-via-metaprograms.md)). P2300 spells this `|`, but in Pia `|` already separates match arms and variants, and `|>` is OCaml's and F#'s spelling for the same idea. A pipeline is then dataflow between senders, written in the order it runs:
+
+```ocaml
+(* Designed syntax. *)
+let load_config (path : cstr) (buf : moved [u8]) =
+  open path o_rdonly                                   (* errors: OpenError *)
+  |> let_value (let (f) => read_all f buf)             (* ... | IoError *)
+  |> then parse_config                                 (* ... | ParseError *)
+  |> recover (let (e) =>
+       match e with
+       | ParseError _ -> just default_config
+       | NoEntry -> just default_config)
+(* value_of: config.  error_of: (OpenError | IoError) without NoEntry *)
+```
+
+- **Errors flow through the types.** Each stage's error set is the union of its inputs' error sets ([ADR 0028](0028-error-propagation-and-cleanup.md)). `recover` and `upon_error` take a handler whose `match` is checked against that set, and the cases it handles are removed from the set: the stage's `error_of` is the remainder, computed by a type-level `without` on closed error sets. An arm for an error that cannot reach it is an error, as an unreachable arm always is.
+- **A pipeline must end with nothing left unhandled.** A pipeline ends in `sync_wait`, which returns a `result` that the caller must `match`; in `wait`, whose `Err` arms or `handle` block must cover the set; or in `spawn` into a scope, whose handler must cover it. There is no way to start a sender and drop its errors, so an unhandled error is a compile error, never a run-time unwind.
+- **Values carry their facts forward.** `then f` is proved under the facts of the previous stage's value type (section 1), so `parse_config` may assume that `read_all` filled its buffer, and the pipeline's own value has `parse_config`'s `ensures`.
+- **Resources come back on every path.** A buffer moved into a stage comes back in that stage's value or in its error, so a handler that recovers from `IoError` gets the buffer back to reuse or free, and the `@linear` rules check that it does.
+- **Fan-out and fan-in** are `when_all a b c` (variadic, [ADR 0051](0051-variadic-generics-and-foreign-varargs.md)), with `split` later. A channel from ADR 0027 bridges in both directions: `recv ch` and `send ch x` are senders. A pipeline of senders is acyclic by construction, because values only flow forward, so only channels can close a cycle, and ADR 0027's channel topology check covers those.
+
+**Why this is stronger than exceptions.** An exception can be of any type, thrown from any call, and it is invisible in signatures: C++ has only `noexcept` or nothing. Through asynchronous boundaries it travels as a type-erased `exception_ptr`, and no compiler checks that a handler exists for what can reach it. Here, every pipeline's error set is in its type and is closed, every handler is checked exhaustive against it, what a handler removes is gone from the type, the end of every pipeline must have handled the rest, and cleanup is by linearity, with resources returned along the error path too.
+
+### 7. What this changes
 
 - **ADR 0027 and issue #79.** `Pia.Io` offers senders instead of a parking API, and the kqueue loop becomes one backend of several. `Pia.Task`'s scheduler is a `Scheduler`, and `spawn s x` accepts a sender as well as a closure. The `@blocking` and `offload` rules are unchanged.
 - **The earlier poller plan** (a readiness poller as the public I/O interface) becomes `Pia.Io.Ready`'s internal `Readiness` concept.
 - **C++ mapping.** [docs/cpp-std.md](../cpp-std.md) gains `<execution>` mapped to `Pia.Exec`.
+- **Blocking `Pia.Io`** (stdlib.md, section 8) becomes `sync_wait` over the same senders (section 5).
 
 ## Prerequisites, in order
 
@@ -139,7 +175,7 @@ Each in-flight slot is a small state machine: free, submitted, cancel requested,
 3. **`Pia.Sys.Posix`, `Pia.Sys.Fs` and `Pia.Sys.Net`** (#57), blocking and per target: constants, `sockaddr` (macOS has a `sin_len` byte, Linux does not), the packed `epoll_event` on x86_64, and `SO_NOSIGPIPE` versus `MSG_NOSIGNAL`.
 4. **`Pia.Mem` as a module** (#59), for buffers and the in-flight table.
 5. **Tuples and variadic generics** (ADR 0051), for `when_all` over any number of senders. **Function values stored in data** (ADR 0044, a later step), because an operation state holds its receiver and `then`'s function, and **acquire and release atomics on foreign memory**, for the io_uring rings.
-6. **`Pia.Exec`**: the concepts and algorithms, with an inline scheduler and `sync_wait`. It is pure Pia with no system calls, so it can be proved and tested first.
+6. **`Pia.Exec`**: the concepts and algorithms, with an inline scheduler and `sync_wait`, the `|>` operator, and `recover` with the type-level `without` on error sets. It is pure Pia with no system calls, so it can be proved and tested first.
 7. **`Pia.Io.Ready`, `Pia.Io.Kqueue` and `Pia.Io.Epoll`**, the run loop and the timer heap, with a proved echo server as the demo, tested on both CI jobs.
 8. **`Pia.Io.Uring`**, and the Linux run-time choice between the two backends.
 9. **Cross-thread stop**, when the model checker lands (#81). **`wait` on senders**, when coroutines land (#77).
@@ -147,6 +183,8 @@ Each in-flight slot is a small state machine: free, submitted, cancel requested,
 ## Consequences
 
 - Every P2300 rule listed under "Where P2300 relies on the programmer" is checked. Exactly-once completion and the absence of detached work are type rules. Buffer ownership during I/O and through cancellation are type rules too. Closed error sets come with exhaustive handlers. The stop race is a model-checker goal.
+- Files, pipes and sockets go through one set of senders, and blocking I/O is `sync_wait` of them.
+- Pipelines written with `|>` are checked to handle every error that can reach their end, which exceptions cannot offer.
 - One interface hides three backends. Only the system-call contracts differ between them, and they are listed per target in the trust report.
 - On macOS, completion is emulated, so an operation can cost one extra system call compared with io_uring, and file I/O runs on the blocking pool. Pia does not claim equal performance across the two platforms, only the same semantics.
 - The I/O stack is larger than a bare poller. Its lower layers are still needed (`Pia.Sys`), and the poller survives as `Readiness` inside the adapter.
