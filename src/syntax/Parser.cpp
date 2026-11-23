@@ -682,23 +682,30 @@ class Parser {
       // `let spec f : ...` lists a spec function, which is exported with
       // its definition, since importers reason with its body (ADR 0039).
       bool spec = !isConcept && !meta && accept(K::Spec);
+      // `let lemma f : ...` lists a lemma, which is proved once in its
+      // module, and which importers call as a fact: its precondition a
+      // goal, its postcondition assumed (#305).
+      bool lemma = !isConcept && !meta && !spec && accept(K::Lemma);
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
       if (meta && !at(K::Colon)) fail("expected ':' after a concept's name");
       if (spec && !at(K::Colon))
         fail("expected ':' after a spec function's name");
+      if (lemma && !at(K::Colon))
+        fail("expected ':' after a lemma's name");
       if (accept(K::Colon)) {
         auto v = makeNode(N::SigVal, start, name);
         if (meta) v->flags = "meta";
         if (spec) v->flags = "spec";
+        if (lemma) v->flags = "lemma";
         v->add(annot());
         v->add(attrs());
         Node *cs = v->add(makeNode(N::Contracts, loc()));
         while (atContract()) cs->add(contract());
         // `let n : u32 = 4096` shows a value, which importers' proofs may
         // use (ADR 0039).
-        if (!isConcept && !meta && !spec && accept(K::Eq)) v->add(seq());
+        if (!isConcept && !meta && !spec && !lemma && accept(K::Eq)) v->add(seq());
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);

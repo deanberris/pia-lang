@@ -211,6 +211,8 @@ NodePtr importedFunction(const Node &val, const std::string &module,
                          const std::string &where, Diagnostics &diags) {
   auto item = makeNode(N::LetItem, at, module + "." + val.text);
   item->flags = "import from:" + module;
+  // A lemma stays one: a call to it is a fact, proved in its module (#305).
+  if (val.flags == "lemma") item->flags = "lemma " + item->flags;
   Node *params = item->add(makeNode(N::Params, at));
   const Node *type = val.kids[0]->kids[1].get();
   std::set<std::string> names;
