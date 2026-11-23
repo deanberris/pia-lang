@@ -6,6 +6,7 @@ load("//tools/piac:pia.bzl", "pia_library")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "BinarySearch.pia",
     "Heap.pia",
     "Modify.pia",
     "Numeric.pia",
@@ -97,4 +98,18 @@ pia_library(
     name = "numeric",
     src = "Numeric.pia",
     target_compatible_with = APPLE_SILICON,
+)
+
+# The binary search family, by a comparator and by Ord:
+# tests/std/binary_search.pia checks its goals;
+# tests/std/binary_search_edges.pia and :binary_search_run test it through
+# its interface.
+pia_library(
+    name = "binary_search",
+    src = "BinarySearch.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
 )

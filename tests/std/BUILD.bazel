@@ -15,6 +15,7 @@ lit_tests(
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Result.pia",
+        "//lib/Pia/Core/Algo:BinarySearch.pia",
         "//lib/Pia/Core/Algo:Heap.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
         "//lib/Pia/Core/Algo:Numeric.pia",
@@ -206,5 +207,24 @@ sh_test(
     srcs = ["numeric_run_test.sh"],
     args = ["$(rootpath :numeric_run)"],
     data = [":numeric_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "binary_search_run",
+    src = "Inputs/binary_search_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:binary_search",
+    ],
+)
+
+sh_test(
+    name = "binary_search_run_test",
+    srcs = ["binary_search_run_test.sh"],
+    args = ["$(rootpath :binary_search_run)"],
+    data = [":binary_search_run"],
     target_compatible_with = APPLE_SILICON,
 )

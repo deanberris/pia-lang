@@ -1,0 +1,178 @@
+(* Pia.Core.Algo.BinarySearch: <algorithm>'s binary search family (ADR
+   0040, phase 1.7): lower_bound, upper_bound, equal_range and
+   binary_search, each by a comparator and by Pia.Core.Order's Ord, and
+   each proved once (ADR 0043, ADR 0044).
+
+   The precondition is C++'s, not a sortedness: the range is partitioned
+   with respect to the value. lower_bound needs every element less than v
+   before every one that is not (`below xs v less`); upper_bound needs
+   every element v is less than after every one it is not (`above`). A
+   range sorted by a strict weak order is partitioned both ways, which an
+   importer at concrete types gets from its own `sorted`. A position is a
+   usize, `len xs` when there is none, as Pia.Core.Algo.Search's are.
+
+   equal_range returns a span, and binary_search says whether some element
+   is equivalent to v: neither less than it nor greater. *)
+module Pia.Core.Algo.BinarySearch : BinarySearch
+
+import Pia.Core.Order.Ops
+import Pia.Fn.Laws
+
+interface BinarySearch = sig
+  (** The positions first .. last of equal_range. *)
+  let span = type { first : usize; last : usize }
+  let spec below : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let spec above : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let lower_bound : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let upper_bound : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let equal_range : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> span
+  let binary_search : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let spec below_ord : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool
+  let spec above_ord : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool
+  let lower_bound : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> usize
+  let upper_bound : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> usize
+  let equal_range : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> span
+  let binary_search : (t : type where Pia.Core.Order.Ord t) -> (xs : [t]) -> (v : t) -> bool
+end
+
+let span = type { first : usize; last : usize }
+
+(** Every element less than v comes before every element that is not:
+    xs is partitioned by `less e v`, lower_bound's precondition. *)
+let spec below (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && less xs.[j] v ==> less xs.[i] v
+
+(** Every element that v is less than comes after every element it is
+    not: xs is partitioned by `not (less v e)`, upper_bound's
+    precondition. *)
+let spec above (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && less v xs.[i] ==> less v xs.[j]
+
+(** C++: std::lower_bound with a comparator: the first position whose
+    element is not less than v. *)
+let lower_bound (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : usize
+  requires below xs v less
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). less xs.[k] v
+  ensures forall (k in result .. len xs). less xs.[k] v = false
+= let lo : mutable usize = 0 in
+  let hi : mutable usize = len xs in
+  while lo < hi
+    invariant lo <= hi && hi <= len xs
+    invariant forall (k in 0 .. lo). less xs.[k] v
+    invariant forall (k in hi .. len xs). less xs.[k] v = false
+    decreases hi - lo
+  do
+    let mid = lo + ((hi - lo) >> 1) in
+    assert lo <= mid && mid < hi;
+    if less xs.[mid] v then lo <- mid + 1 else hi <- mid
+  done;
+  lo
+
+(** C++: std::upper_bound with a comparator: the first position whose
+    element v is less than. *)
+let upper_bound (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : usize
+  requires above xs v less
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). less v xs.[k] = false
+  ensures forall (k in result .. len xs). less v xs.[k]
+= let lo : mutable usize = 0 in
+  let hi : mutable usize = len xs in
+  while lo < hi
+    invariant lo <= hi && hi <= len xs
+    invariant forall (k in 0 .. lo). less v xs.[k] = false
+    invariant forall (k in hi .. len xs). less v xs.[k]
+    decreases hi - lo
+  do
+    let mid = lo + ((hi - lo) >> 1) in
+    assert lo <= mid && mid < hi;
+    if less v xs.[mid] then hi <- mid else lo <- mid + 1
+  done;
+  lo
+
+(** C++: std::equal_range with a comparator: lower_bound and upper_bound,
+    so xs.[first .. last] are the elements equivalent to v. *)
+let equal_range (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : span
+  requires Pia.Fn.strict_weak_order less
+  requires below xs v less && above xs v less
+  ensures result.first <= result.last && result.last <= len xs
+  ensures forall (k in 0 .. result.first). less xs.[k] v
+  ensures forall (k in result.first .. result.last). less xs.[k] v = false && less v xs.[k] = false
+  ensures forall (k in result.last .. len xs). less v xs.[k]
+= let lo = lower_bound xs v less in
+  let up = upper_bound xs v less in
+  { first = lo; last = up }
+
+(** C++: std::binary_search with a comparator: some element is equivalent
+    to v. *)
+let binary_search (t : type) (xs : [t]) (v : t) (less : (a : t) -> (b : t) -> bool) : bool
+  requires below xs v less && above xs v less
+  ensures result <==> (exists (k in 0 .. len xs). less xs.[k] v = false && less v xs.[k] = false)
+= let i = lower_bound xs v less in
+  i < len xs && less v xs.[i] = false
+
+(** below, by Ord's less. *)
+let spec below_ord (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && less xs.[j] v ==> less xs.[i] v
+
+(** above, by Ord's less. *)
+let spec above_ord (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && less v xs.[i] ==> less v xs.[j]
+
+(** C++: std::lower_bound, by Ord's less. *)
+let lower_bound (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : usize
+  requires below_ord xs v
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). less xs.[k] v
+  ensures forall (k in result .. len xs). less xs.[k] v = false
+= let lo : mutable usize = 0 in
+  let hi : mutable usize = len xs in
+  while lo < hi
+    invariant lo <= hi && hi <= len xs
+    invariant forall (k in 0 .. lo). less xs.[k] v
+    invariant forall (k in hi .. len xs). less xs.[k] v = false
+    decreases hi - lo
+  do
+    let mid = lo + ((hi - lo) >> 1) in
+    assert lo <= mid && mid < hi;
+    if less xs.[mid] v then lo <- mid + 1 else hi <- mid
+  done;
+  lo
+
+(** C++: std::upper_bound, by Ord's less. *)
+let upper_bound (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : usize
+  requires above_ord xs v
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). less v xs.[k] = false
+  ensures forall (k in result .. len xs). less v xs.[k]
+= let lo : mutable usize = 0 in
+  let hi : mutable usize = len xs in
+  while lo < hi
+    invariant lo <= hi && hi <= len xs
+    invariant forall (k in 0 .. lo). less v xs.[k] = false
+    invariant forall (k in hi .. len xs). less v xs.[k]
+    decreases hi - lo
+  do
+    let mid = lo + ((hi - lo) >> 1) in
+    assert lo <= mid && mid < hi;
+    if less v xs.[mid] then hi <- mid else lo <- mid + 1
+  done;
+  lo
+
+(** C++: std::equal_range, by Ord's less, whose asymmetry Ord promises. *)
+let equal_range (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : span
+  requires below_ord xs v && above_ord xs v
+  ensures result.first <= result.last && result.last <= len xs
+  ensures forall (k in 0 .. result.first). less xs.[k] v
+  ensures forall (k in result.first .. result.last). less xs.[k] v = false && less v xs.[k] = false
+  ensures forall (k in result.last .. len xs). less v xs.[k]
+= let lo = lower_bound xs v in
+  let up = upper_bound xs v in
+  { first = lo; last = up }
+
+(** C++: std::binary_search, by Ord's less. *)
+let binary_search (t : type where Pia.Core.Order.Ord t) (xs : [t]) (v : t) : bool
+  requires below_ord xs v && above_ord xs v
+  ensures result <==> (exists (k in 0 .. len xs). less xs.[k] v = false && less v xs.[k] = false)
+= let i = lower_bound xs v in
+  i < len xs && less v xs.[i] = false
