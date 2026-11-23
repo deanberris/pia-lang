@@ -1,0 +1,21 @@
+(* Runs Pia.Core.Hash's compiled code on a buffer in an arena, linked by
+   pia_binary: 0 when each hash is the reference value (FNV-1a's published
+   test vectors, and SplitMix64's finaliser), and otherwise the number of
+   the first wrong one. *)
+import Pia.Core.Order.Ops
+import Pia.Core.Hash.Hash as H
+
+let checks (s : borrowed inout mutable [u8]) : i32
+  requires len s = 2
+= s.[0] <- 97; s.[1] <- 98;
+  let c : u8 = 97 in
+  let m : i8 = -1 in
+  if H.bytes s <> 620445648566982762 then 1
+  else if H.bytes (s.[0 .. 1]) <> 12638187200555641996 then 2
+  else if H.mix 1 <> 6238072747940578789 || H.mix 0 <> 0 then 3
+  else if H.hash c <> 12609935244270955673 then 4
+  else if H.hash m <> 13029008266876403067 then 5
+  else if H.hash_all<u8> s <> 13766678999893387697 then 6
+  else 0
+
+let main () : i32 = with_arena 2 (let (m) => checks m.mem)

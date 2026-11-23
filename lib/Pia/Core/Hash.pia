@@ -1,0 +1,150 @@
+(* Pia.Core.Hash: C++'s std::hash (ADR 0040, phase 1.10, docs/cpp-std.md).
+
+   The concept Hash is Eq with a `hash` to u64 that agrees with it: values
+   that are `same` hash alike, the law a hash table needs. It is proved for
+   every instance (ADR 0034). The instances for the integer types hash a
+   value's 64-bit two's complement encoding with `mix`, SplitMix64's
+   finaliser, so nearby values spread over all 64 bits; C++ leaves the
+   function unspecified, and this one is fixed, so hashes are the same on
+   every target and every run. `bytes` is FNV-1a over a slice of bytes,
+   specified by the fold `fnv`. `combine` folds one hash into a seed, as
+   Boost's hash_combine does, and `hash_all` hashes a slice of any Hash
+   type with it. *)
+module Pia.Core.Hash : Hash
+
+import Pia.Core.Order.Ops
+
+interface Hash = sig
+  (** The concept, for modules whose generic functions are over it. *)
+  let meta Hash : concept
+  (** SplitMix64's finaliser: a bijection on u64. *)
+  let mix : (x : u64) -> u64
+  (** One step of FNV-1a: xor in the byte, then multiply by the prime. *)
+  let fnv_step : (h : u64) -> (c : u8) -> u64
+  (** FNV-1a of xs.[0 .. n]. *)
+  let spec fnv : (xs : [u8]) -> (n : usize) -> u64
+  (** FNV-1a, 64 bits, of the bytes of xs. *)
+  let bytes : (xs : [u8]) -> u64
+    ensures result = fnv xs (len xs)
+  (** Folds the hash h into seed, as Boost's hash_combine does. *)
+  let combine : (seed : u64) -> (h : u64) -> u64
+  (** The integer instances. *)
+  let hash : (a : u8) -> u64
+    ensures result = mix a
+  let hash : (a : u16) -> u64
+    ensures result = mix a
+  let hash : (a : u32) -> u64
+    ensures result = mix a
+  let hash : (a : u64) -> u64
+    ensures result = mix a
+  (** A signed value's 64-bit two's complement encoding. *)
+  let encode : (a : i64) -> u64
+    ensures a >= 0 ==> result = a
+    ensures a < 0 ==> result - 18446744073709551615 - 1 = a
+  let hash : (a : i8) -> u64
+    ensures result = mix (encode a)
+  let hash : (a : i16) -> u64
+    ensures result = mix (encode a)
+  let hash : (a : i32) -> u64
+    ensures result = mix (encode a)
+  let hash : (a : i64) -> u64
+    ensures result = mix (encode a)
+  (** The hash of xs.[0 .. n]: each element's hash combined in turn. *)
+  let spec hash_fold : (t : type where Hash t) -> (xs : [t]) -> (n : usize) -> u64
+  (** The hash of a slice of any Hash type. *)
+  let hash_all : (t : type where Hash t) -> (xs : [t]) -> u64
+end
+
+(** C++: std::hash, with the law that makes a hash table correct. *)
+let meta Hash (t : type) : concept = sig
+  include Pia.Core.Order.Eq t
+  let hash : (a : t) -> u64
+  let lemma agrees (a : t) (b : t) requires same a b ensures hash a = hash b
+end
+
+let mix (x : u64) : u64 @overflow(wrap)
+= let a : u64 = (x ^ (x >> 30)) * 13787848793156543929 in
+  let b : u64 = (a ^ (a >> 27)) * 10723151780598845931 in
+  b ^ (b >> 31)
+
+let fnv_step (h : u64) (c : u8) : u64 @overflow(wrap)
+= (h ^ c) * 1099511628211
+
+let spec fnv (xs : [u8]) (n : usize) : u64
+  requires n <= len xs
+  decreases n
+= if n = 0 then 14695981039346656037 else fnv_step (fnv xs (n - 1)) xs.[n - 1]
+
+let bytes (xs : [u8]) : u64
+  ensures result = fnv xs (len xs)
+= let h : mutable u64 = 14695981039346656037 in
+  let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs
+    invariant h = fnv xs i
+    decreases len xs - i
+  do
+    h <- fnv_step h xs.[i];
+    i <- i + 1
+  done;
+  h
+
+let combine (seed : u64) (h : u64) : u64 @overflow(wrap)
+= seed ^ (h + 11400714819323198485 + (seed << 6) + (seed >> 2))
+
+let hash (a : u8) : u64
+  ensures result = mix a
+= mix a
+
+let hash (a : u16) : u64
+  ensures result = mix a
+= mix a
+
+let hash (a : u32) : u64
+  ensures result = mix a
+= mix a
+
+let hash (a : u64) : u64
+  ensures result = mix a
+= mix a
+
+let encode (a : i64) : u64
+  ensures a >= 0 ==> result = a
+  ensures a < 0 ==> result - 18446744073709551615 - 1 = a
+= if a >= 0 then (let p : u64 = a in p)
+  else (let m : u64 = -1 - a in 18446744073709551615 - m)
+
+let hash (a : i8) : u64
+  ensures result = mix (encode a)
+= mix (encode a)
+
+let hash (a : i16) : u64
+  ensures result = mix (encode a)
+= mix (encode a)
+
+let hash (a : i32) : u64
+  ensures result = mix (encode a)
+= mix (encode a)
+
+let hash (a : i64) : u64
+  ensures result = mix (encode a)
+= mix (encode a)
+
+let spec hash_fold (t : type where Hash t) (xs : [t]) (n : usize) : u64
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0 else combine (hash_fold<t> xs (n - 1)) (hash xs.[n - 1])
+
+let hash_all (t : type where Hash t) (xs : [t]) : u64
+  ensures result = hash_fold<t> xs (len xs)
+= let h : mutable u64 = 0 in
+  let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs
+    invariant h = hash_fold<t> xs i
+    decreases len xs - i
+  do
+    h <- combine h (hash xs.[i]);
+    i <- i + 1
+  done;
+  h
