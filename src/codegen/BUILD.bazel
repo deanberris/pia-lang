@@ -4,8 +4,14 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # LLVM, and emit an object file (docs/codegen.md).
 cc_library(
     name = "codegen",
-    srcs = ["Codegen.cpp"],
-    hdrs = ["Codegen.h"],
+    srcs = [
+        "Codegen.cpp",
+        "SliceBuffers.cpp",
+    ],
+    hdrs = [
+        "Codegen.h",
+        "SliceBuffers.h",
+    ],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
