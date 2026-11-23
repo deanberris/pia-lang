@@ -5,7 +5,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "slice_buffers_run.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "slice_buffers_run.pia", "local_arrays.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -281,6 +281,25 @@ cc_test(
     srcs = [
         "box_concept_test.c",
         ":box_concept_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# local_arrays.pia, arrays with storage of their own, run from C.
+genrule(
+    name = "local_arrays_obj",
+    srcs = ["local_arrays.pia"],
+    outs = ["local_arrays.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "local_arrays_test",
+    srcs = [
+        "local_arrays_test.c",
+        ":local_arrays_obj",
     ],
     target_compatible_with = PIA_TARGETS,
 )
