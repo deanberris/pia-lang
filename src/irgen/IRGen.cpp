@@ -5867,7 +5867,11 @@ class Gen {
       contracts->add(std::move(copy));
     }
     // The body asserts the function's own preconditions, in its own names.
-    NodePtr body = syntax::makeNode(NodeKind::Unit, at);
+    // A lemma's postcondition names no `result`, so the body ends with a
+    // call of it, which assumes what the lemma proved (#305).
+    NodePtr body = hasFlag(*found.item, "lemma")
+                       ? syntax::clone(*call)
+                       : syntax::makeNode(NodeKind::Unit, at);
     const Node &own = *found.item->kids[2];
     for (size_t i = own.kids.size(); i-- > 0;) {
       if (own.kids[i]->kind != NodeKind::Requires) continue;

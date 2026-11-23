@@ -1,0 +1,18 @@
+(* Runs Pia.Core.Digits's one piece of code, put, on a buffer in an arena,
+   linked by pia_binary: 0 when it writes each digit where it is asked to
+   and leaves the others alone, and otherwise the number of the first
+   wrong one. *)
+import Pia.Core.Digits.Digits as D
+
+let checks (s : borrowed inout mutable [u8]) : i32
+  requires len s = 3
+= s.[0] <- 9; s.[1] <- 9; s.[2] <- 9;
+  D.put s 2 3 3 10;
+  if s.[2] <> 3 || s.[0] <> 9 || s.[1] <> 9 then 1
+  else (
+    D.put s 0 1 3 10;
+    D.put s 1 2 3 10;
+    if s.[0] <> 1 || s.[1] <> 2 || s.[2] <> 3 then 2
+    else 0)
+
+let main () : i32 = with_arena 3 (let (m) => checks m.mem)

@@ -14,6 +14,7 @@ lit_tests(
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
+        "//lib/Pia/Core:Digits.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
@@ -331,6 +332,21 @@ sh_test(
     srcs = ["ascii_run_test.sh"],
     args = ["$(rootpath :ascii_run)"],
     data = [":ascii_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "digits_run",
+    src = "Inputs/digits_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:digits"],
+)
+
+sh_test(
+    name = "digits_run_test",
+    srcs = ["digits_run_test.sh"],
+    args = ["$(rootpath :digits_run)"],
+    data = [":digits_run"],
     target_compatible_with = PIA_TARGETS,
 )
 
