@@ -3092,9 +3092,17 @@ class Gen {
 
   // The integer type that `a`, the argument of `min a` or `max a`, names,
   // or null if it names no integer type: a value, a function or nothing.
+  // A name as written, or one a quote made. A quote's names carry
+  // "toplevel" or "prelude" and never resolve to a local at the expansion
+  // site (docs/meta.md, "Hygiene"), so only a written name can be one.
+  bool boundName(const Node &n) {
+    if (n.kind != NodeKind::Name) return false;
+    if (n.flags.empty()) return !lookup(n.text);
+    return n.flags == "toplevel" || n.flags == "prelude";
+  }
+
   Type boundOperandType(const Node &a) {
-    if (a.kind != NodeKind::Name || !a.flags.empty() || lookup(a.text) ||
-        !overloadSet(a.text).empty())
+    if (!boundName(a) || !overloadSet(a.text).empty())
       return {};
     auto name = syntax::makeNode(NodeKind::TypeName, a.loc, a.text);
     size_t errors = diags_.count();
@@ -3114,8 +3122,7 @@ class Gen {
   std::optional<R> genTypeBound(const Node &n, Type expected) {
     if (n.kids.size() != 2) return std::nullopt;
     const Node &f = *n.kids[0];
-    if (f.kind != NodeKind::Name || !f.flags.empty() ||
-        (f.text != "min" && f.text != "max") || lookup(f.text))
+    if (!boundName(f) || (f.text != "min" && f.text != "max"))
       return std::nullopt;
     const Node &a = *n.kids[1];
     Type t = boundOperandType(a);
