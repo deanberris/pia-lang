@@ -111,6 +111,9 @@ const std::map<std::string, size_t> &metaBuiltins() {
       // Tactics (ADR 0036, step 6): a goal and the syntax of its terms.
       {"hypotheses", 1}, {"conclusion", 1}, {"params", 1},
       {"children", 1},   {"op", 1},         {"make_call", 2},
+      // A parameter, for a quote to splice into a parameter list (the
+      // litmus metaprogram, ADR 0052).
+      {"param", 2},
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
@@ -1265,6 +1268,27 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     for (const ValuePtr &a : args[1]->list) call->add(code(a));
     return syntaxValue(std::move(call));
   }
+  if (name == "param") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'param' needs a name, found ") +
+                                 kindName(args[0]->kind)};
+    NodePtr type;
+    if (args[1]->kind == K::Str)
+      type = makeNode(NodeKind::TypeName, site_, args[1]->s);
+    else if (args[1]->kind == K::Syntax && args[1]->syntax &&
+             args[1]->syntax->kind != NodeKind::Program)
+      type = clone(*args[1]->syntax);
+    else
+      throw MetaError{site_, std::string("'param' needs a type, found ") +
+                                 kindName(args[1]->kind)};
+    auto p = makeNode(NodeKind::Param, site_, args[0]->s);
+    auto annot = makeNode(NodeKind::Annot, site_);
+    annot->add(makeNode(NodeKind::Modifiers, site_));
+    annot->add(std::move(type));
+    annot->add(makeNode(NodeKind::None, site_));
+    p->add(std::move(annot));
+    return syntaxValue(std::move(p));
+  }
   if (name == "with_doc") {
     if (args[0]->kind != K::Str)
       throw MetaError{site_, std::string("'with_doc' needs a string, found ") +
@@ -1411,6 +1435,12 @@ class QuoteBuilder {
                        std::make_move_iterator(cs.end()));
   }
 
+  // `$ps` with no annotation, standing for parameters.
+  static bool splicesParams(const Node &p) {
+    return p.kind == NodeKind::Param && p.kids.empty() && p.text.size() > 1 &&
+           p.text[0] == '$' && p.text[1] != '!';
+  }
+
   NodePtr copy(const Node &n, bool typePos) {
     syntax::SourceLoc site = in_.site_;
     if (n.kind == NodeKind::Splice) {
@@ -1454,6 +1484,26 @@ class QuoteBuilder {
     }
     bool members = n.kind == NodeKind::Theory || n.kind == NodeKind::Model;
     for (size_t i = 0; i < n.kids.size(); ++i) {
+      // `$ps` alone in a parameter list splices a list of parameters,
+      // each made by `param`.
+      if (n.kind == NodeKind::Params && splicesParams(*n.kids[i])) {
+        ValuePtr v = var(n.kids[i]->text);
+        std::vector<ValuePtr> parts;
+        if (v->kind == K::List)
+          parts = v->list;
+        else
+          parts.push_back(v);
+        for (const ValuePtr &part : parts) {
+          if (part->kind != K::Syntax || !part->syntax ||
+              part->syntax->kind != NodeKind::Param)
+            throw MetaError{site, std::string("a spliced parameter list "
+                                              "holds parameters made by "
+                                              "'param', not ") +
+                                      kindName(part->kind)};
+          out->add(clone(*part->syntax));
+        }
+        continue;
+      }
       // `$xs` among a theory's or model's members splices a list of them.
       if (members && n.kids[i]->kind == NodeKind::Splice) {
         const Node &sp = *n.kids[i];

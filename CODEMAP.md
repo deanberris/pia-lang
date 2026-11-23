@@ -44,6 +44,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | --- | --- | --- |
 | new syntax | `docs/grammar.md`, `grammar/pia.lark` | `src/syntax/Lexer.cpp`, `Parser.cpp`, `Syntax.h`; tests in `tests/parser`, `tests/grammar` |
 | an operator or a core builtin | `src/syntax/Prelude.cpp` (operators, `derive_eq`, `machine`) | `isCoreBuiltin` in `src/sema/Sema.cpp`, the lowering in `IRGen.cpp` (`genBinary`, `genBitBuiltin`) |
+| the memory model, litmus tests (ADR 0052) | `src/irgen/Memory.pia`, `litmus` in `src/syntax/Prelude.cpp` | `tests/memory`; docs/theories.md, "The memory model" |
 | atomics: cells, orders, overflow modes (ADR 0052) | `genAtomic` in `src/irgen/IRGen.cpp`, the `pia.atomic.*` ops in `src/dialect/Pia.td` | the `Atomic*Lowering` patterns in `src/codegen/Codegen.cpp`; tests in `tests/verify/atomics.pia`, `tests/irgen/atomic_errors.pia`, `tests/codegen/atomics.pia` |
 | a metaprogram builtin or expansion | `src/meta/Interpreter.cpp`, `Expand.cpp` | `docs/meta.md`; tests in `tests/meta` |
 | type checking, overloads, concepts, deduction | `src/sema/Sema.{h,cpp}` | `IRGen.cpp`: `genCall`, `genGenericCall`, `--explain-overloads` |
@@ -95,6 +96,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/irgen/IRGen.{h,cpp}` (9.7k lines, one class `Gen`). Its main entry points are `run`, `genFunction`, `genExprOf`, `genBinary`, `genCall`, `genGenericCall`, `genMatch`, `liftLambda`, `coerce` and `checkFresh` (no shadowing). Run `python3 tools/codemap/outline.py --grep <word> src/irgen/IRGen.cpp` to find the rest.
 - `src/irgen/Theories.{h,cpp}` flattens theories and models (ADR 0036) and detects `@trusted`.
 - `src/irgen/Target.{h,cpp}` adds the built-in theory `Target` (ADR 0049), written in `src/irgen/Target.pia` and compiled in, with the model of the target being compiled for. `tests/verify/target_theory.pia` proves its models.
+- `src/irgen/Memory.{h,cpp}` adds the built-in theory `Memory`, RC11 (ADR 0052), written in `src/irgen/Memory.pia` and compiled in, to a program that names it. `tests/memory/theory.pia` proves its model.
 - `src/irgen/Boxes.{h,cpp}` expands `box` over a concept (ADR 0046).
 - `src/irgen/Regions.{h,cpp}` erases region parameters (ADR 0042).
 
@@ -173,6 +175,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/codegen` | lowering lit tests and C harnesses | the run tests need arm64 macOS or a matching host |
 | `tests/meta` | `--dump-expanded` and proofs of expanded code | |
 | `tests/modules` | interfaces and imports across files | inputs in `tests/modules/Inputs` |
+| `tests/memory` | the litmus battery for `Pia.Memory`, one file per family (MP, SB, LB, coherence, rmw, races, multi) | `theory.pia` proves the theory's model |
 | `tests/std` | the `lib/` modules | build the `.piai` files first in local runs |
 | `tests/lint` | lint text and fixes | |
 | `tests/parser`, `tests/grammar` | AST goldens and the shared grammar corpus | |

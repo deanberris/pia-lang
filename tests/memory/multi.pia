@@ -1,0 +1,86 @@
+(* Shapes with three or four threads, or two locations written by both:
+   WRC, ISA2 and IRIW, S, R and 2+2W.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "wrc_rel_acq"
+  [ thread [ store "release" "x" 1 ]
+  ; thread [ load "acquire" "x" "r1"; store "release" "y" 1 ]
+  ; thread [ load "acquire" "y" "r2"; load "relaxed" "x" "r3" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 1; is "r3" 0 ]
+
+litmus "wrc_rlx"
+  [ thread [ store "relaxed" "x" 1 ]
+  ; thread [ load "relaxed" "x" "r1"; store "relaxed" "y" 1 ]
+  ; thread [ load "relaxed" "y" "r2"; load "relaxed" "x" "r3" ] ]
+  "allowed" [ is "r1" 1; is "r2" 1; is "r3" 0 ]
+
+litmus "isa2_rel_acq"
+  [ thread [ store "relaxed" "x" 1; store "release" "y" 1 ]
+  ; thread [ load "acquire" "y" "r1"; store "release" "z" 1 ]
+  ; thread [ load "acquire" "z" "r2"; load "relaxed" "x" "r3" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 1; is "r3" 0 ]
+
+litmus "iriw_acq"
+  [ thread [ store "release" "x" 1 ]
+  ; thread [ store "release" "y" 1 ]
+  ; thread [ load "acquire" "x" "r1"; load "acquire" "y" "r2" ]
+  ; thread [ load "acquire" "y" "r3"; load "acquire" "x" "r4" ] ]
+  "allowed" [ is "r1" 1; is "r2" 0; is "r3" 1; is "r4" 0 ]
+
+litmus "iriw_sc"
+  [ thread [ store "seq_cst" "x" 1 ]
+  ; thread [ store "seq_cst" "y" 1 ]
+  ; thread [ load "seq_cst" "x" "r1"; load "seq_cst" "y" "r2" ]
+  ; thread [ load "seq_cst" "y" "r3"; load "seq_cst" "x" "r4" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0; is "r3" 1; is "r4" 0 ]
+
+litmus "s_rel_acq"
+  [ thread [ store "relaxed" "x" 2; store "release" "y" 1 ]
+  ; thread [ load "acquire" "y" "r1"; store "relaxed" "x" 1 ] ]
+  "forbidden" [ is "r1" 1; final "x" 2 ]
+
+litmus "s_rlx"
+  [ thread [ store "relaxed" "x" 2; store "relaxed" "y" 1 ]
+  ; thread [ load "relaxed" "y" "r1"; store "relaxed" "x" 1 ] ]
+  "allowed" [ is "r1" 1; final "x" 2 ]
+
+litmus "r_sc"
+  [ thread [ store "seq_cst" "x" 1; store "seq_cst" "y" 1 ]
+  ; thread [ store "seq_cst" "y" 2; load "seq_cst" "x" "r1" ] ]
+  "forbidden" [ final "y" 2; is "r1" 0 ]
+
+litmus "r_rlx"
+  [ thread [ store "relaxed" "x" 1; store "relaxed" "y" 1 ]
+  ; thread [ store "relaxed" "y" 2; load "relaxed" "x" "r1" ] ]
+  "allowed" [ final "y" 2; is "r1" 0 ]
+
+litmus "two_two_w_rlx"
+  [ thread [ store "relaxed" "x" 1; store "relaxed" "y" 2 ]
+  ; thread [ store "relaxed" "y" 1; store "relaxed" "x" 2 ] ]
+  "allowed" [ final "x" 1; final "y" 1 ]
+
+litmus "two_two_w_sc"
+  [ thread [ store "seq_cst" "x" 1; store "seq_cst" "y" 2 ]
+  ; thread [ store "seq_cst" "y" 1; store "seq_cst" "x" 2 ] ]
+  "forbidden" [ final "x" 1; final "y" 1 ]
+
+(* Expected report, in order.
+// CHECK: multi.pia:6:1: proved: the postcondition holds [smt]
+// CHECK: multi.pia:12:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 1, r3 = 0
+// CHECK: multi.pia:18:1: proved: the postcondition holds [smt]
+// CHECK: multi.pia:24:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0, r3 = 1, r4 = 0
+// CHECK: multi.pia:31:1: proved: the postcondition holds [smt]
+// CHECK: multi.pia:38:1: proved: the postcondition holds [smt]
+// CHECK: multi.pia:43:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 1, x_final = 2
+// CHECK: multi.pia:48:1: proved: the postcondition holds [smt]
+// CHECK: multi.pia:53:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 0, y_final = 2
+// CHECK: multi.pia:58:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x_final = 1, y_final = 1
+// CHECK: multi.pia:63:1: proved: the postcondition holds [smt]
+// CHECK: 6 proved, 5 failed, 0 skipped
+*)

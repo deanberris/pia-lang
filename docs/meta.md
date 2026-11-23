@@ -55,6 +55,7 @@ Values are integers (128-bit, so every bound of every Pia integer type fits, `u6
 | `fields t` | the field names of the record type item `t`, or of the record type it names, as strings |
 | `name t` | the name of an item or a name, as a string |
 | `concat a b` | two strings joined (an integer counts as its digits), or two lists |
+| `param name type` | a parameter `(name : type)`, for a quote's parameter list; `type` is a type's name or its syntax |
 | `nth xs i` | the element at index `i`, counting from 0; outside the list is an error |
 | `zip xs ys` | the pairs `[x; y]` of two lists of one length; different lengths are an error |
 | `range n` | `[0; 1; ...; n - 1]` |
@@ -138,6 +139,7 @@ Running out of steps in such a metaprogram is an internal compiler error.
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
 - `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
+- `$ps` alone in a parameter list, as in `let lemma $n $ps : unit = ()`, splices a list of parameters made by `param`, so a metaprogram can make a function with as many parameters as it needs. The prelude's `litmus` uses it for a test's registers.
 - `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, `type { $fs }` a list of `[name; type]` pairs into a record type's, `| $c of t` a string as a constructor's name, and `| $c x -> ...` one as the constructor a pattern matches, so a derive can write bytes it computed, build a value of the type it was given, declare the records it needs, and name and match its own constructors (`tests/meta/list_splices.pia`). A nullary constructor in a quoted pattern is written `$!None`, since a bare name there is a variable that hygiene renames.
 
 The code a quote builds takes the location of the expansion site: the operator, the `@derive` attribute, or the top-level call. Spliced code keeps its own locations.
@@ -179,6 +181,8 @@ let theory Conn = machine "conn" conn_state Closed
 - **One theory per argument tuple.** A second `let theory U = gen args` with the same call, written the same way, does not build again: `U` is another name for the first theory, so `U.x` is `T.x`.
 
 The prelude's `machine` builds a state machine's theory and its model from a table of `edge`s ([theories.md](theories.md#state-machines)). It is written in Pia with `map` and `fold`, so it is total.
+
+The prelude's `litmus` is a top-level call that builds a lemma from a litmus test, a small concurrent program given as data: threads of `write`, `read`, `store`, `load`, `swap`, `fetch_add` and `barrier` events, and an outcome of `is` and `final` conditions ([theories.md](theories.md#the-memory-model-rc11)). It writes the test's RC11 consistency as boolean matrices over its events, so the lemma is a finite query.
 
 ## Tactics
 

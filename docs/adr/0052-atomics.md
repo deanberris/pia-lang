@@ -173,6 +173,12 @@ Building step 1 changed four details, none of which changes the design:
 - **`fence seq_cst` on x86_64 is `lock or`,** which is what LLVM emits; the table above is corrected, since the codegen test checks what LLVM emits.
 - **`trap` reads the old value on both targets for now.** `rmw_flags` is in the target models, but no lowering reads the flags yet, so on x86_64 the overflow is recomputed from the old value, as on arm64.
 
+## Notes from step 2 (2026-11-23)
+
+- **Litmus tests are data.** A metaprogram cannot take code apart yet, so `litmus` takes its threads as lists of events, `[ write "data" 1; store "release" "flag" 1 ]`, with orders as strings, and its outcome as `is` and `final` conditions; `"race"` is the third verdict. An allowed outcome fails with its witness as the counterexample, since the verifier reports a satisfiable query that way.
+- **Derived relations are lower bounds,** in the theory and in each test. Every RC11 axiom only forbids, so the least relations that meet the bounds decide every verdict, including races, and no relation needs to be computed as a closure.
+- **The battery is a first family of tests,** 43 of them, not yet every combination of orders, and the expected results are RC11's published ones, not yet checked against `herd7`. `cas`, which writes only when it succeeds, is not in the litmus vocabulary yet.
+
 ## Answers (Dean, 2026-11-23)
 
 1. **`relaxed` as acquire and release on x86_64:** yes, only inside `@target(x86_64_linux)` items (section 6). Elsewhere it stays LLVM `monotonic`.
