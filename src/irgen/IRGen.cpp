@@ -6213,6 +6213,19 @@ class Gen {
         diags_.error(r.loc, unmet + *why);
         continue;
       }
+      // `let lemma f : ...`: proved here, and a fact to importers, who call
+      // it as one: its precondition a goal, its postcondition assumed. It
+      // has no code, so no link symbol (#305).
+      if (r.flags == "lemma" || hasFlag(*sigs_.at(symbol).item, "lemma")) {
+        if (r.flags != "lemma" || !hasFlag(*sigs_.at(symbol).item, "lemma"))
+          diags_.error(
+              r.loc,
+              unmet + "'" + r.text + "' is " +
+                  (r.flags == "lemma"
+                       ? "listed as a lemma but defined as a function"
+                       : "a lemma, so the interface lists it as 'let lemma'"));
+        continue;
+      }
       // `let n : u32 = 4096`: importers get the value from the interface,
       // so it must be the definition's.
       if (r.kids.size() > 3) {

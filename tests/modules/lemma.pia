@@ -1,0 +1,29 @@
+(* An importer calls a lemma from another module's interface as a fact
+   (#305): its precondition is a goal at the call, its postcondition is
+   assumed after it, and the call leaves no code behind.
+// RUN: piac --emit=interface -o %t %S/Inputs/sums.pia
+// RUN: piac --verify %S/Inputs/sums.pia | FileCheck --check-prefix=LIB %s
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Calc.Sums.Facts.piai
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: not piac --verify %S/Inputs/sums_listed_wrong.pia 2>&1 | FileCheck --check-prefix=WRONG %s
+*)
+import Calc.Sums.Facts as F
+
+let grows (a : int) (b : int) : unit
+  requires a <= b
+  ensures F.dbl a <= F.dbl b
+= F.dbl_mono a b
+
+let unguarded (a : int) (b : int) : unit
+= F.dbl_mono a b
+
+(*
+// LIB: 0 failed, 0 skipped
+// IFACE: let lemma dbl_mono : (a : int) -> (b : int) -> unit requires a <= b ensures dbl a <= dbl b
+// CHECK-DAG: lemma.pia:14:3: proved: the postcondition holds
+// CHECK-DAG: lemma.pia:15:3: proved: the precondition of 'Calc.Sums.dbl_mono' holds
+// CHECK-DAG: lemma.pia:18:3: failed: the precondition of 'Calc.Sums.dbl_mono' holds
+// CHECK: 1 failed
+// WRONG-DAG: 'id' is listed as a lemma but defined as a function
+// WRONG-DAG: 'fact' is a lemma, so the interface lists it as 'let lemma'
+*)

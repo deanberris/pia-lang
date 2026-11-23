@@ -149,7 +149,7 @@ The definition is guarded by the precondition because termination is proved only
 
 A call in code to a spec function is a goal for its precondition, as for any call. In a contract, the call is checked the same way where it is walked, and is a plain term inside quantifiers and `old`.
 
-`let lemma f ...` defines a lemma, which returns unit. It is proved once, like any function, and a call to it is a statement whose precondition is a goal and whose postcondition is assumed afterwards, by the usual rule for calls. Codegen erases lemmas and calls to them. A recursive lemma with `decreases` is a proof by induction:
+`let lemma f ...` defines a lemma, which returns unit. It is proved once, like any function, and a call to it is a statement whose precondition is a goal and whose postcondition is assumed afterwards, by the usual rule for calls. Codegen erases lemmas and calls to them. An interface can list a lemma as `let lemma f : (a : int) -> unit requires ... ensures ...` (#305). The lemma is proved once, in its module. An importer calls it as `M.f a`, and that call works like a call to a local lemma: its precondition is a goal at the call, and its postcondition is assumed after it. The interface's contract must follow from the definition's, as for any function. The interface and the definition must agree on which items are lemmas (tests/modules/lemma.pia). A recursive lemma with `decreases` is a proof by induction:
 
 ```ocaml
 let spec count (xs : [u8]) (n : usize) (v : u8) : usize
