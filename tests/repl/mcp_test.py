@@ -188,6 +188,49 @@ class McpTest(unittest.TestCase):
         r = self.server.call("execute", code="let get (xs : [u8]) : u8 = xs.[3]")
         self.assertIn("(:help contracts)", r["content"][0]["text"])
 
+    # What a proof took (ProofStats in src/repl/Session.h).
+
+    def test_results_say_what_the_proof_took(self):
+        r = self.server.call("execute", code="let sum (a : u8) (b : u8) : u16 = a + b")
+        text = r["content"][0]["text"]
+        self.assertIn("took ", text)
+        self.assertIn("goals: 1 from this cell (1 by intervals, 0 by the solver) "
+                      "and 0 re-proved from the environment: 1 proved", text)
+        # A relation between parameters needs the solver, so it is timed.
+        r = self.server.call("execute",
+                             code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a")
+        text = r["content"][0]["text"]
+        self.assertIn("1 by the solver) and 1 re-proved from the environment", text)
+        self.assertIn("slowest solver goals in this cell:", text)
+        self.assertIn("diff: '-' does not overflow u8 (proved, cost ", text)
+        # A failed goal is the cell's own, listed before the environment's
+        # re-proofs, and has the cost of finding its counterexample.
+        r = self.server.call("execute", code="let bad (a : u8) : u8 = a + 1")
+        text = r["content"][0]["text"]
+        self.assertIn("1 from this cell", text)
+        self.assertIn("2 re-proved from the environment: 2 proved, 1 failed", text)
+        own = text.index("slowest solver goals in this cell:")
+        env = text.index("slowest solver goals re-proved from the environment:")
+        self.assertLess(own, env)
+        self.assertIn("bad: '+' does not overflow u8 (failed, cost ", text)
+        self.assertNotIn("(failed, cost 0)", text)
+
+    def test_stats_as_json(self):
+        r = self.server.call("execute",
+                             code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a",
+                             json=True)
+        stats = r["structuredContent"]["result"]["stats"]
+        self.assertGreaterEqual(stats["cell_goals"], 1)
+        self.assertGreaterEqual(stats["smt"], 1)
+        self.assertEqual(stats["failed"], 0)
+        self.assertEqual(stats["costliest"][0]["name"], "diff")
+        self.assertTrue(stats["costliest"][0]["cell"])
+        self.assertGreater(stats["costliest"][0]["ms"], 0)
+
+    def test_commands_have_no_stats(self):
+        r = self.server.call("execute", code=":env")
+        self.assertNotIn("took ", r["content"][0]["text"])
+
     def test_successes_carry_no_hints(self):
         r = self.server.call("execute", code="let fine (a : u8) : u16 = a + 1")
         self.assertFalse(r["isError"], r)
