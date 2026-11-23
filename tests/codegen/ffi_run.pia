@@ -9,6 +9,9 @@ interface Calls @abi(c) = sig
     requires len xs >= 1
   let pct : (x : i32) -> i32
   let twice_raw : (x : i32) -> i32
+  let va_two : (a : i64) -> (b : i64) -> i64
+  let va_three : (a : i64) -> (b : i64) -> (c : i64) -> i64
+  let va_mix : (a : u32) -> (xs : [u8]) -> u64
 end
 
 let sum_bytes (xs : [u8]) (n : usize) : u32
@@ -31,3 +34,25 @@ let tail_total (xs : [u8]) : u32
 
 let pct (x : i32) : i32 = clamp x
 let twice_raw (x : i32) : i32 = unsafe raw x
+
+(* C variadic functions (ADR 0051): the same symbol at two arities, and a
+   buffer and a u32 among the variadic arguments. A call without the
+   variadic convention would read garbage on Apple arm64. *)
+let sum2 (n : i32) (a : i64) (b : i64) : i64 @variadic(1)
+  requires n = 2
+  ensures true
+= extern "sum_va"
+
+let sum3 (n : i32) (a : i64) (b : i64) (c : i64) : i64 @variadic(1)
+  requires n = 3
+  ensures true
+= extern "sum_va"
+
+let mix (n : i32) (a : u32) (xs : [u8]) (k : usize) : u64 @variadic(1)
+  requires k <= len xs
+  ensures true
+= extern "mix_va"
+
+let va_two (a : i64) (b : i64) : i64 = sum2 2 a b
+let va_three (a : i64) (b : i64) (c : i64) : i64 = sum3 3 a b c
+let va_mix (a : u32) (xs : [u8]) : u64 = mix 3 a xs (len xs)

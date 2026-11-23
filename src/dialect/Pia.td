@@ -211,6 +211,19 @@ def Pia_DynType : Pia_Type<"Dyn", "dyn"> {
   let assemblyFormat = "`<` `[` $tags `]` `>`";
 }
 
+def Pia_AtomicType : Pia_Type<"Atomic", "atomic"> {
+  let summary = "a cell holding one integer or bool, changed only atomically";
+  let description = [{
+    `!pia.atomic<!pia.int<0, 4294967295>>` is `atomic u32` (ADR 0052). The
+    value is a place, not a copy: the atomic ops name it, and the verifier
+    assumes nothing about what it holds between two of them, since another
+    task may write it at any time. Its size and alignment are those of its
+    element, and codegen lowers it to a one-element memref.
+  }];
+  let parameters = (ins "::mlir::Type":$elementType);
+  let assemblyFormat = "`<` $elementType `>`";
+}
+
 def Pia_AnyInt : Type<CPred<"::llvm::isa<::pia::IntType>($_self)">,
                       "Pia range-typed integer", "::pia::IntType">;
 def Pia_Buffer : Type<CPred<"::llvm::isa<::pia::ArrayType, ::pia::SliceType>($_self)">,
@@ -223,6 +236,8 @@ def Pia_Comparable : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::Rea
                           "Pia spec-only int, real or sort value">;
 def Pia_IntOrExact : Type<CPred<"::llvm::isa<::pia::IntType, ::pia::UnboundedIntType, ::pia::RealType>($_self)">,
                           "Pia integer, int or real">;
+def Pia_Atomic : Type<CPred<"::llvm::isa<::pia::AtomicType>($_self)">,
+                      "Pia atomic cell", "::pia::AtomicType">;
 def Pia_Dyn : Type<CPred<"::llvm::isa<::pia::DynType>($_self)">,
                    "Pia dyn value", "::pia::DynType">;
 
@@ -237,6 +252,30 @@ def Pia_OverflowMode : I32EnumAttr<"OverflowMode",
       I32EnumAttrCase<"wrap", 1>,
       I32EnumAttrCase<"saturate", 2>,
       I32EnumAttrCase<"trap", 3>,
+    ]> {
+  let cppNamespace = "::pia";
+}
+
+// The orders of ADR 0052, section 2, which each atomic op checks in IRGen.
+def Pia_MemoryOrder : I32EnumAttr<"MemoryOrder", "a memory order", [
+      I32EnumAttrCase<"relaxed", 0>,
+      I32EnumAttrCase<"acquire", 1>,
+      I32EnumAttrCase<"release", 2>,
+      I32EnumAttrCase<"acq_rel", 3>,
+      I32EnumAttrCase<"seq_cst", 4>,
+    ]> {
+  let cppNamespace = "::pia";
+}
+
+def Pia_RmwKind : I32EnumAttr<"RmwKind", "an atomic read-modify-write", [
+      I32EnumAttrCase<"swap", 0>,
+      I32EnumAttrCase<"add", 1>,
+      I32EnumAttrCase<"sub", 2>,
+      I32EnumAttrCase<"band", 3>,
+      I32EnumAttrCase<"bor", 4>,
+      I32EnumAttrCase<"bxor", 5>,
+      I32EnumAttrCase<"min", 6>,
+      I32EnumAttrCase<"max", 7>,
     ]> {
   let cppNamespace = "::pia";
 }
@@ -686,6 +725,93 @@ def Pia_ExactConvertOp : Pia_Op<"exact.convert", [Pure]> {
   let results = (outs Pia_Exact:$result);
   let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
   let hasVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Atomics (ADR 0052)
+//===----------------------------------------------------------------------===//
+
+// Every atomic op reads and writes memory, so that nothing moves, merges or
+// drops one: even an unused `acquire` load orders the accesses after it.
+class Pia_AtomicOp<string mnemonic>
+    : Pia_Op<"atomic." # mnemonic, [MemoryEffects<[MemRead, MemWrite]>]>;
+
+def Pia_AtomicNewOp : Pia_AtomicOp<"new"> {
+  let summary = "a new cell holding the value: a plain store";
+  let description = [{
+    `atomic_new v`. Nothing else can see the cell yet, so the first value is
+    stored without an order. It must be of the cell's element type.
+  }];
+  let arguments = (ins AnyType:$value);
+  let results = (outs Pia_Atomic:$result);
+  let assemblyFormat = "$value attr-dict `:` type($value) `->` qualified(type($result))";
+  let hasVerifier = 1;
+}
+
+def Pia_AtomicLoadOp : Pia_AtomicOp<"load"> {
+  let summary = "read the cell";
+  let description = [{
+    `atomic_load o c`. To the verifier, the result is a fresh value of the
+    element type, with the type's range assumed (ADR 0052, section 3).
+  }];
+  let arguments = (ins Pia_MemoryOrder:$order, Pia_Atomic:$cell);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$order $cell attr-dict `:` qualified(type($cell)) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Pia_AtomicStoreOp : Pia_AtomicOp<"store"> {
+  let summary = "write the cell";
+  let arguments = (ins Pia_MemoryOrder:$order, AnyType:$value,
+                       Pia_Atomic:$cell);
+  let assemblyFormat = [{
+    $order $value `,` $cell attr-dict `:` type($value) `,` qualified(type($cell))
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_AtomicRmwOp : Pia_AtomicOp<"rmw"> {
+  let summary = "read, modify and write the cell; the result is the old value";
+  let description = [{
+    `atomic_swap`, `atomic_add`, `atomic_sub`, `atomic_and`, `atomic_or`,
+    `atomic_xor`, `atomic_min` and `atomic_max`. `overflow` is the stated
+    mode of an `add` or `sub` (ADR 0052, section 2); the other kinds cannot
+    overflow and keep `proof`. `min` and `max` compare signed when the
+    element type is signed.
+  }];
+  let arguments = (ins Pia_RmwKind:$kind, Pia_MemoryOrder:$order,
+                       Pia_Atomic:$cell, AnyType:$value,
+                       DefaultValuedAttr<Pia_OverflowMode,
+                                         "::pia::OverflowMode::proof">:$overflow);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $kind $order $cell `,` $value (`overflow` `(` $overflow^ `)`)? attr-dict
+    `:` qualified(type($cell)) `,` type($value) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_AtomicCasOp : Pia_AtomicOp<"cas"> {
+  let summary = "strong compare and swap; the result is the old value";
+  let description = [{
+    `atomic_cas ok fail c expected desired`: if the cell holds `expected`,
+    write `desired`. It succeeded exactly when the old value it returns
+    equals `expected`, and it never fails spuriously.
+  }];
+  let arguments = (ins Pia_MemoryOrder:$success, Pia_MemoryOrder:$failure,
+                       Pia_Atomic:$cell, AnyType:$expected, AnyType:$desired);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = [{
+    $success $failure $cell `,` $expected `,` $desired attr-dict `:`
+    qualified(type($cell)) `,` type($expected) `,` type($desired) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_FenceOp : Pia_Op<"fence", [MemoryEffects<[MemRead, MemWrite]>]> {
+  let summary = "order the atomics around it: `fence o`";
+  let arguments = (ins Pia_MemoryOrder:$order);
+  let assemblyFormat = "$order attr-dict";
 }
 
 #endif // PIA_DIALECT_PIA_TD

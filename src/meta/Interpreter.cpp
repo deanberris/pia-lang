@@ -156,13 +156,20 @@ bool hasBinderText(NodeKind k) {
 }  // namespace
 
 bool Interpreter::isCoreBuiltin(const std::string &name) {
+  // A table laid out by hand, in groups.
+  // clang-format off
   static const std::set<std::string> names = {
       "add", "sub", "add_sat", "sub_sat", "mul", "div", "rem",
       "eq",  "ne",  "lt",      "gt",      "le",  "ge",
       "and", "or",  "implies", "iff",     "len", "old",
       "band", "bor", "bxor", "bnot", "shl", "shr", "abort",
       "clz", "ctz", "popcount", "bswap", "rotl", "rotr",
+      // Atomics, as in sema::isCoreBuiltin (ADR 0052).
+      "atomic_new", "atomic_load", "atomic_store", "atomic_swap",
+      "atomic_cas", "atomic_add", "atomic_sub", "atomic_and", "atomic_or",
+      "atomic_xor", "atomic_min", "atomic_max", "fence",
   };
+  // clang-format on
   return names.count(name);
 }
 

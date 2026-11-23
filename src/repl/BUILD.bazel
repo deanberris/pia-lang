@@ -1,5 +1,23 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+# The language guide `pia mcp` teaches with (src/repl/Guide.h), cut from
+# the agent skills so the two cannot drift.
+GUIDE_SKILLS = [
+    "//skills:pia-language/SKILL.md",
+    "//skills:pia-contracts/SKILL.md",
+    "//skills:pia-mcp/SKILL.md",
+]
+
+genrule(
+    name = "guide_text",
+    srcs = GUIDE_SKILLS + ["//skills:pia-mcp/instructions.md"],
+    outs = ["GuideText.inc"],
+    cmd = "python3 $(location embed_guide.py) $@ " +
+          "$(location //skills:pia-mcp/instructions.md) " +
+          " ".join(["$(location %s)" % s for s in GUIDE_SKILLS]),
+    tools = ["embed_guide.py"],
+)
+
 # The REPL's session API (ADR 0031, docs/repl.md): a persistent, verified
 # environment, evaluation with the ORC JIT through MLIR's ExecutionEngine,
 # and an asynchronous Kernel for tools such as the MCP server. It is a
@@ -7,17 +25,20 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "repl",
     srcs = [
+        "Guide.cpp",
         "Kernel.cpp",
         "Mcp.cpp",
         "Session.cpp",
         "State.cpp",
     ],
     hdrs = [
+        "Guide.h",
         "Kernel.h",
         "Mcp.h",
         "Session.h",
         "State.h",
     ],
+    textual_hdrs = ["GuideText.inc"],
     # MLIR's generated headers trip -Wunused-parameter.
     copts = [
         "-Wall",

@@ -197,6 +197,13 @@ static bool closureParam(mlir::func::FuncOp f, Type t) {
          f.getSymName().starts_with("apply[lambda@");
 }
 
+// An atomic op (ADR 0052): another task may write the cell between any two
+// of them, so a function that has one never defines a value.
+bool isAtomicOp(Operation *op) {
+  return mlir::isa<AtomicNewOp, AtomicLoadOp, AtomicStoreOp, AtomicRmwOp,
+                   AtomicCasOp, FenceOp>(op);
+}
+
 // An imported function of scalars: to the solver, an uninterpreted
 // function with the interface's contract, wherever it is called.
 bool contractOnly(mlir::func::FuncOp f) {
@@ -242,7 +249,8 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
                            : mlir::func::FuncOp();
       if (!contractOnly(callee) && !pureScalar(callee, memo)) ok = false;
     } else if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp, AbortOp, LoadOp,
-                         StoreOp>(op)) {
+                         StoreOp>(op) ||
+               isAtomicOp(op)) {
       ok = false;
     }
     for (Type t : op->getResultTypes())
@@ -306,7 +314,8 @@ static bool pureCallUncached(Operation *op) {
   bool ok = true;
   f.walk([&](Operation *inner) {
     if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                  AbortOp, LoadOp, StoreOp>(inner))
+                  AbortOp, LoadOp, StoreOp>(inner) ||
+        isAtomicOp(inner))
       ok = false;
   });
   return ok;
@@ -2535,10 +2544,12 @@ class Encoder {
     bool ok = true;
     f.walk([&](Operation *op) {
       if (mlir::isa<mlir::func::CallOp, mlir::scf::ForOp, mlir::scf::WhileOp,
-                    AbortOp, LoadOp, StoreOp>(op))
+                    AbortOp, LoadOp, StoreOp>(op) ||
+          isAtomicOp(op))
         ok = false;
       for (Type t : op->getResultTypes())
-        if (mlir::isa<ArrayType, SliceType>(t)) ok = false;
+        if (mlir::isa<ArrayType, SliceType>(t))
+          ok = false;
     });
     return ok;
   }

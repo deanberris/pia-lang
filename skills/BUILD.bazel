@@ -1,3 +1,8 @@
 # Agent skills (skills/README.md). Their examples are checked by
-# //tests/docs:skills_test.
-exports_files(glob(["*/SKILL.md"]) + ["README.md"])
+# //tests/docs:skills_test, and //src/repl:guide_text embeds parts of them
+# in `pia mcp`.
+exports_files(glob(["*/SKILL.md"]) + [
+    "README.md",
+    # The `pia mcp` server's instructions (src/repl/embed_guide.py).
+    "pia-mcp/instructions.md",
+])

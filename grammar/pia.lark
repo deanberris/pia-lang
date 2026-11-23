@@ -248,6 +248,7 @@ qbinder: IDENT (COLON type)?                       -> qbinder_typed
       | unary
 ?unary: OP_ADD unary -> neg
       | OP_TILDE unary -> bnot
+      | ATTR unary -> mode_e
       | app
 
 // `e?` (ADR 0028) applies to the whole application.

@@ -1,0 +1,709 @@
+(* The instruction table of ADR 0052, section 5, as LLVM emits it for each
+   target: one function per (operation, order), on a u32 cell unless the
+   name says otherwise. A change in the pinned LLVM that picks other
+   instructions fails here; the table is proved against each hardware
+   model in a later step (ADR 0052, section 8).
+// RUN: piac --emit=asm %s | FileCheck %s --check-prefix=ARM
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=X86
+*)
+
+module Atomics : Ops
+
+interface Ops @abi(c) = sig
+  let load_relaxed : (c : borrowed atomic u32) -> u32
+  let load_acquire : (c : borrowed atomic u32) -> u32
+  let load_seq_cst : (c : borrowed atomic u32) -> u32
+  let store_relaxed : (c : borrowed atomic u32) -> (v : u32) -> unit
+  let store_release : (c : borrowed atomic u32) -> (v : u32) -> unit
+  let store_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> unit
+  let swap_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let swap_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let swap_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let swap_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let swap_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let cas_relaxed_relaxed : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_acquire_relaxed : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_acquire_acquire : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_release_relaxed : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_acq_rel_relaxed : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_acq_rel_acquire : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_seq_cst_relaxed : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_seq_cst_acquire : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let cas_seq_cst_seq_cst : (c : borrowed atomic u32) -> (e : u32) -> (d : u32) -> u32
+  let add_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let add_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let add_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let add_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let add_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let sub_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let sub_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let sub_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let sub_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let sub_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let and_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let and_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let and_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let and_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let and_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let or_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let or_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let or_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let or_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let or_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let xor_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let xor_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let xor_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let xor_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let xor_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let max_relaxed : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let max_acquire : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let max_release : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let max_acq_rel : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let max_seq_cst : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let fence_acquire : (x : u8) -> unit
+  let fence_release : (x : u8) -> unit
+  let fence_acq_rel : (x : u8) -> unit
+  let fence_seq_cst : (x : u8) -> unit
+  let add_trap : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let add_saturate : (c : borrowed atomic u32) -> (v : u32) -> u32
+  let min_signed : (c : borrowed atomic i32) -> (v : i32) -> i32
+  let swap_bool : (c : borrowed atomic bool) -> (v : bool) -> bool
+end
+
+let load_relaxed (c : borrowed atomic u32) : u32 = atomic_load relaxed c
+let load_acquire (c : borrowed atomic u32) : u32 = atomic_load acquire c
+let load_seq_cst (c : borrowed atomic u32) : u32 = atomic_load seq_cst c
+let store_relaxed (c : borrowed atomic u32) (v : u32) : unit = atomic_store relaxed c v
+let store_release (c : borrowed atomic u32) (v : u32) : unit = atomic_store release c v
+let store_seq_cst (c : borrowed atomic u32) (v : u32) : unit = atomic_store seq_cst c v
+let swap_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_swap relaxed c v
+let swap_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_swap acquire c v
+let swap_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_swap release c v
+let swap_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_swap acq_rel c v
+let swap_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_swap seq_cst c v
+let cas_relaxed_relaxed (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas relaxed relaxed c e d
+let cas_acquire_relaxed (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas acquire relaxed c e d
+let cas_acquire_acquire (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas acquire acquire c e d
+let cas_release_relaxed (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas release relaxed c e d
+let cas_acq_rel_relaxed (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas acq_rel relaxed c e d
+let cas_acq_rel_acquire (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas acq_rel acquire c e d
+let cas_seq_cst_relaxed (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas seq_cst relaxed c e d
+let cas_seq_cst_acquire (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas seq_cst acquire c e d
+let cas_seq_cst_seq_cst (c : borrowed atomic u32) (e : u32) (d : u32) : u32 = atomic_cas seq_cst seq_cst c e d
+let add_relaxed (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_add relaxed c v)
+let add_acquire (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_add acquire c v)
+let add_release (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_add release c v)
+let add_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_add acq_rel c v)
+let add_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_add seq_cst c v)
+let sub_relaxed (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_sub relaxed c v)
+let sub_acquire (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_sub acquire c v)
+let sub_release (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_sub release c v)
+let sub_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_sub acq_rel c v)
+let sub_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = @wrap (atomic_sub seq_cst c v)
+let and_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_and relaxed c v
+let and_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_and acquire c v
+let and_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_and release c v
+let and_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_and acq_rel c v
+let and_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_and seq_cst c v
+let or_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_or relaxed c v
+let or_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_or acquire c v
+let or_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_or release c v
+let or_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_or acq_rel c v
+let or_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_or seq_cst c v
+let xor_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_xor relaxed c v
+let xor_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_xor acquire c v
+let xor_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_xor release c v
+let xor_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_xor acq_rel c v
+let xor_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_xor seq_cst c v
+let min_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_min relaxed c v
+let min_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_min acquire c v
+let min_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_min release c v
+let min_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_min acq_rel c v
+let min_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_min seq_cst c v
+let max_relaxed (c : borrowed atomic u32) (v : u32) : u32 = atomic_max relaxed c v
+let max_acquire (c : borrowed atomic u32) (v : u32) : u32 = atomic_max acquire c v
+let max_release (c : borrowed atomic u32) (v : u32) : u32 = atomic_max release c v
+let max_acq_rel (c : borrowed atomic u32) (v : u32) : u32 = atomic_max acq_rel c v
+let max_seq_cst (c : borrowed atomic u32) (v : u32) : u32 = atomic_max seq_cst c v
+let fence_acquire (x : u8) : unit = fence acquire
+let fence_release (x : u8) : unit = fence release
+let fence_acq_rel (x : u8) : unit = fence acq_rel
+let fence_seq_cst (x : u8) : unit = fence seq_cst
+let add_trap (c : borrowed atomic u32) (v : u32) : u32 = @trap (atomic_add acq_rel c v)
+let add_saturate (c : borrowed atomic u32) (v : u32) : u32 = @saturate (atomic_add acq_rel c v)
+let min_signed (c : borrowed atomic i32) (v : i32) : i32 = atomic_min relaxed c v
+let swap_bool (c : borrowed atomic bool) (v : bool) : bool = atomic_swap seq_cst c v
+
+(*
+// ARM-LABEL: {{^_?}}load_relaxed:
+// ARM: ldr w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}load_acquire:
+// ARM: ldapr w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}load_seq_cst:
+// ARM: ldar w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}store_relaxed:
+// ARM: str w1, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}store_release:
+// ARM: stlr w1, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}store_seq_cst:
+// ARM: stlr w1, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_relaxed:
+// ARM: swp w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_acquire:
+// ARM: swpa w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_release:
+// ARM: swpl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_acq_rel:
+// ARM: swpal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_seq_cst:
+// ARM: swpal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_relaxed_relaxed:
+// ARM: cas w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_acquire_relaxed:
+// ARM: casa w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_acquire_acquire:
+// ARM: casa w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_release_relaxed:
+// ARM: casl w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_acq_rel_relaxed:
+// ARM: casal w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_acq_rel_acquire:
+// ARM: casal w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_seq_cst_relaxed:
+// ARM: casal w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_seq_cst_acquire:
+// ARM: casal w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}cas_seq_cst_seq_cst:
+// ARM: casal w1, w2, [x0]
+// ARM: mov x0, x1
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_relaxed:
+// ARM: ldadd w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_acquire:
+// ARM: ldadda w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_release:
+// ARM: ldaddl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_acq_rel:
+// ARM: ldaddal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_seq_cst:
+// ARM: ldaddal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}sub_relaxed:
+// ARM: neg w8, w1
+// ARM: ldadd w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}sub_acquire:
+// ARM: neg w8, w1
+// ARM: ldadda w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}sub_release:
+// ARM: neg w8, w1
+// ARM: ldaddl w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}sub_acq_rel:
+// ARM: neg w8, w1
+// ARM: ldaddal w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}sub_seq_cst:
+// ARM: neg w8, w1
+// ARM: ldaddal w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}and_relaxed:
+// ARM: mvn w8, w1
+// ARM: ldclr w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}and_acquire:
+// ARM: mvn w8, w1
+// ARM: ldclra w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}and_release:
+// ARM: mvn w8, w1
+// ARM: ldclrl w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}and_acq_rel:
+// ARM: mvn w8, w1
+// ARM: ldclral w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}and_seq_cst:
+// ARM: mvn w8, w1
+// ARM: ldclral w8, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}or_relaxed:
+// ARM: ldset w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}or_acquire:
+// ARM: ldseta w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}or_release:
+// ARM: ldsetl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}or_acq_rel:
+// ARM: ldsetal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}or_seq_cst:
+// ARM: ldsetal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}xor_relaxed:
+// ARM: ldeor w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}xor_acquire:
+// ARM: ldeora w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}xor_release:
+// ARM: ldeorl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}xor_acq_rel:
+// ARM: ldeoral w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}xor_seq_cst:
+// ARM: ldeoral w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_relaxed:
+// ARM: ldumin w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_acquire:
+// ARM: ldumina w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_release:
+// ARM: lduminl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_acq_rel:
+// ARM: lduminal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_seq_cst:
+// ARM: lduminal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}max_relaxed:
+// ARM: ldumax w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}max_acquire:
+// ARM: ldumaxa w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}max_release:
+// ARM: ldumaxl w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}max_acq_rel:
+// ARM: ldumaxal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}max_seq_cst:
+// ARM: ldumaxal w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}fence_acquire:
+// ARM: dmb ishld
+// ARM: ret
+// ARM-LABEL: {{^_?}}fence_release:
+// ARM: dmb ish
+// ARM: ret
+// ARM-LABEL: {{^_?}}fence_acq_rel:
+// ARM: dmb ish
+// ARM: ret
+// ARM-LABEL: {{^_?}}fence_seq_cst:
+// ARM: dmb ish
+// ARM: ret
+// ARM-LABEL: {{^_?}}add_trap:
+// ARM: ldaddal w1, w0, [x0]
+// ARM: cmn w0, w1
+// ARM: b.hs LBB{{[0-9_]+}}
+// ARM: ret
+// ARM: brk #0x1
+// ARM-LABEL: {{^_?}}add_saturate:
+// ARM: ldr w8, [x0]
+// ARM: mov x9, x8
+// ARM: adds w10, w8, w1
+// ARM: csinv w10, w10, wzr, lo
+// ARM: casal w9, w10, [x0]
+// ARM: cmp w9, w8
+// ARM: mov x8, x9
+// ARM: b.ne LBB{{[0-9_]+}}
+// ARM: mov x0, x8
+// ARM: ret
+// ARM-LABEL: {{^_?}}min_signed:
+// ARM: ldsmin w1, w0, [x0]
+// ARM: ret
+// ARM-LABEL: {{^_?}}swap_bool:
+// ARM: swpalb w1, w8, [x0]
+// ARM: cmp w8, #0
+// ARM: cset w0, ne
+// ARM: ret
+// X86-LABEL: {{^_?}}load_relaxed:
+// X86: movl (%rdi), %eax
+// X86: retq
+// X86-LABEL: {{^_?}}load_acquire:
+// X86: movl (%rdi), %eax
+// X86: retq
+// X86-LABEL: {{^_?}}load_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: retq
+// X86-LABEL: {{^_?}}store_relaxed:
+// X86: movl %esi, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}store_release:
+// X86: movl %esi, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}store_seq_cst:
+// X86: xchgl %esi, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}swap_relaxed:
+// X86: movl %esi, %eax
+// X86: xchgl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}swap_acquire:
+// X86: movl %esi, %eax
+// X86: xchgl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}swap_release:
+// X86: movl %esi, %eax
+// X86: xchgl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}swap_acq_rel:
+// X86: movl %esi, %eax
+// X86: xchgl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}swap_seq_cst:
+// X86: movl %esi, %eax
+// X86: xchgl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_relaxed_relaxed:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_acquire_relaxed:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_acquire_acquire:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_release_relaxed:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_acq_rel_relaxed:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_acq_rel_acquire:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_seq_cst_relaxed:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_seq_cst_acquire:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}cas_seq_cst_seq_cst:
+// X86: movl %esi, %eax
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}add_relaxed:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}add_acquire:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}add_release:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}add_acq_rel:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}add_seq_cst:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}sub_relaxed:
+// X86: movl %esi, %eax
+// X86: negl %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}sub_acquire:
+// X86: movl %esi, %eax
+// X86: negl %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}sub_release:
+// X86: movl %esi, %eax
+// X86: negl %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}sub_acq_rel:
+// X86: movl %esi, %eax
+// X86: negl %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}sub_seq_cst:
+// X86: movl %esi, %eax
+// X86: negl %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: retq
+// X86-LABEL: {{^_?}}and_relaxed:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: andl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}and_acquire:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: andl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}and_release:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: andl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}and_acq_rel:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: andl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}and_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: andl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}or_relaxed:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: orl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}or_acquire:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: orl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}or_release:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: orl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}or_acq_rel:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: orl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}or_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: orl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}xor_relaxed:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: xorl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}xor_acquire:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: xorl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}xor_release:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: xorl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}xor_acq_rel:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: xorl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}xor_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: movl %eax, %ecx
+// X86: xorl %esi, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_relaxed:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovbel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_acquire:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovbel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_release:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovbel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_acq_rel:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovbel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovbel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}max_relaxed:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmoval %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}max_acquire:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmoval %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}max_release:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmoval %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}max_acq_rel:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmoval %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}max_seq_cst:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmoval %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}fence_acquire:
+// X86-NOT: {{lock|mfence}}
+// X86: retq
+// X86-LABEL: {{^_?}}fence_release:
+// X86-NOT: {{lock|mfence}}
+// X86: retq
+// X86-LABEL: {{^_?}}fence_acq_rel:
+// X86-NOT: {{lock|mfence}}
+// X86: retq
+// X86-LABEL: {{^_?}}fence_seq_cst:
+// X86: lock orl $0, -64(%rsp)
+// X86: retq
+// X86-LABEL: {{^_?}}add_trap:
+// X86: movl %esi, %eax
+// X86: lock xaddl %eax, (%rdi)
+// X86: addl %eax, %esi
+// X86: jb .LBB{{[0-9_]+}}
+// X86: retq
+// X86: ud2
+// X86-LABEL: {{^_?}}add_saturate:
+// X86: movl (%rdi), %eax
+// X86: movl $-1, %ecx
+// X86: movl %eax, %edx
+// X86: addl %esi, %edx
+// X86: cmovbl %ecx, %edx
+// X86: lock cmpxchgl %edx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}min_signed:
+// X86: movl (%rdi), %eax
+// X86: cmpl %esi, %eax
+// X86: movl %esi, %ecx
+// X86: cmovlel %eax, %ecx
+// X86: lock cmpxchgl %ecx, (%rdi)
+// X86: jne .LBB{{[0-9_]+}}
+// X86: retq
+// X86-LABEL: {{^_?}}swap_bool:
+// X86: xchgb %sil, (%rdi)
+// X86: testb %sil, %sil
+// X86: setne %al
+// X86: retq
+*)

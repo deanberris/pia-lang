@@ -1,0 +1,76 @@
+(* What atomics refuse (ADR 0052): an order the operation does not take,
+   an order that is not a constant, a failure order stronger than the
+   success order, an add without its own overflow mode, a copy of a cell,
+   a bitwise op or a wrapping add on a refined cell, and a cell where only
+   values belong.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+(* A release load is undefined in C; here it cannot be written. *)
+let load_release (c : borrowed atomic u32) : u32 = atomic_load release c
+
+let store_acquire (c : borrowed atomic u32) (v : u32) : unit =
+  atomic_store acquire c v
+
+let fence_relaxed (x : u8) : unit = fence relaxed
+
+(* An order is fixed when the program is compiled. *)
+let run_time (c : borrowed atomic u32) (o : u8) : u32 = atomic_load o c
+
+(* The failure order of a compare-and-swap only reads, and is no stronger
+   than the success order. *)
+let cas_fail_release (c : borrowed atomic u32) : u32 =
+  atomic_cas acq_rel release c 0 1
+
+let cas_fail_stronger (c : borrowed atomic u32) : u32 =
+  atomic_cas release acquire c 0 1
+
+(* An atomic add states its own overflow mode, whatever the function's. *)
+let bump (c : borrowed atomic u32) : u32 @overflow(wrap) =
+  atomic_add relaxed c 1
+
+let bump_proof (c : borrowed atomic u32) : u32 = @proof (atomic_add relaxed c 1)
+
+(* A cell is a place: using it as a value moves it, so it cannot be used
+   again. *)
+let copy (x : u32) : u32 =
+  let c = atomic_new x in
+  let d = c in
+  atomic_load relaxed c
+
+let reassign (x : u32) : u32 =
+  let c : mutable atomic u32 = atomic_new x in
+  atomic_load relaxed c
+
+(* On a refined cell, a bitwise result could leave the range, and only a
+   proved add keeps it. *)
+let mask (c : borrowed atomic int{0..64}) : int{0..64} = atomic_and relaxed c 3
+
+let wrap_slots (c : borrowed atomic int{0..64}) : int{0..64} =
+  @wrap (atomic_add relaxed c 1)
+
+let add_bool (c : borrowed atomic bool) : bool = @wrap (atomic_add relaxed c true)
+
+let not_a_cell (x : u32) : u32 = atomic_load relaxed x
+
+let in_contract (c : borrowed atomic u32) : u32
+  ensures result <= atomic_load relaxed c
+= 0
+
+(*
+// CHECK: atomic_errors.pia:10:64: error: 'atomic_load' takes the order relaxed, acquire or seq_cst, not release (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:13:16: error: 'atomic_store' takes the order relaxed, release or seq_cst, not acquire (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:15:43: error: 'fence' takes the order acquire, release, acq_rel or seq_cst, not relaxed (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:18:69: error: the order of 'atomic_load' must be one of the constants relaxed, acquire or seq_cst, written in place: an order is fixed when the program is compiled
+// CHECK: atomic_errors.pia:23:22: error: 'atomic_cas' takes the failure order relaxed or acquire, not release (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:26:22: error: 'atomic_cas' takes the failure order relaxed, not acquire (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:30:3: error: 'atomic_add' must state its overflow mode on the expression itself, as in '@wrap (atomic_add o c v)', or '@trap', '@saturate' or '@proof'; an enclosing @overflow(...) does not apply (ADR 0052, section 2)
+// CHECK: atomic_errors.pia:32:58: error: '@proof' on 'atomic_add' needs a refined cell, such as 'atomic int{0..64}': another task may have left any value of u32 in this one, so the result cannot be proved to fit
+// CHECK: atomic_errors.pia:39:23: error: 'c' was moved by its use as a value (an atomic cell is not copyable; borrow it instead) at 38:11, so it can no longer be used here
+// CHECK: atomic_errors.pia:42:3: error: 'c' is an atomic cell, which its operations change in place; it is never reassigned, so drop 'mutable'
+// CHECK: atomic_errors.pia:47:58: error: 'atomic_and' is not allowed on the refined cell atomic int{0..64}, since its result cannot be proved to stay in the range; use a compare-and-swap loop that checks the new value (ADR 0052, section 3)
+// CHECK: atomic_errors.pia:50:10: error: 'atomic_add' on the refined cell atomic int{0..64} must be '@proof', with a goal that the result stays in the range for every value the cell may hold (ADR 0052, section 3)
+// CHECK: atomic_errors.pia:52:57: error: 'atomic_add' needs a cell of an integer type, found atomic bool
+// CHECK: atomic_errors.pia:54:54: error: 'atomic_load' needs an atomic cell, found u32
+// CHECK: atomic_errors.pia:57:21: error: 'atomic_load' is not allowed in a contract or ghost code: what another task may write is not a value a specification can name (ADR 0052, section 3)
+*)

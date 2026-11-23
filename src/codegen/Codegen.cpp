@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <functional>
+#include <map>
 #include <optional>
 #include <set>
 #include <string>
@@ -307,6 +308,16 @@ class CoreTypes : public mlir::TypeConverter {
       if (!elem) return std::nullopt;
       return mlir::MemRefType::get({static_cast<int64_t>(t.getLength())},
                                    elem);
+    });
+    // An atomic cell is one element in memory (ADR 0052). A bool is held
+    // as a byte, since LLVM's atomics take whole bytes.
+    addConversion([this](AtomicType t) -> std::optional<Type> {
+      Type elem = t.getElementType().isInteger(1)
+                      ? mlir::IntegerType::get(t.getContext(), 8)
+                      : element(t.getElementType());
+      if (!elem)
+        return std::nullopt;
+      return mlir::MemRefType::get({1}, elem);
     });
     // A slice may start part way into its storage (`xs.[a .. b]`), so its
     // offset is dynamic. The descriptor is the same as an identity one's.
@@ -799,6 +810,15 @@ struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
       }
       args.push_back(v);
     }
+    if (op->hasAttr("pia.variadic")) {
+      auto module = op->getParentOfType<mlir::ModuleOp>();
+      auto callee = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(op.getSymbol());
+      if (!callee)
+        return rw.notifyMatchFailure(op, "no variadic declaration");
+      auto call = make<mlir::LLVM::CallOp>(rw, loc, callee, args);
+      rw.replaceOp(op, call->getResults());
+      return mlir::success();
+    }
     llvm::SmallVector<Type> results;
     for (Type t : op.getResultTypes())
       results.push_back(getTypeConverter()->convertType(t));
@@ -816,6 +836,285 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
     rw.replaceOpWithNewOp<mlir::memref::StoreOp>(
         op, adaptor.getValue(), adaptor.getBuffer(),
         mlir::ValueRange{adaptor.getIndex()});
+    return mlir::success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Atomics (ADR 0052)
+//===----------------------------------------------------------------------===//
+
+// A cell is a one-element memref, and its ops are LLVM atomics on the
+// memref's aligned pointer. LLVM's backends pick each target's instructions
+// (ADR 0052, section 5); `relaxed` is LLVM's `monotonic`.
+mlir::LLVM::AtomicOrdering llvmOrder(MemoryOrder o) {
+  using L = mlir::LLVM::AtomicOrdering;
+  switch (o) {
+  case MemoryOrder::relaxed:
+    return L::monotonic;
+  case MemoryOrder::acquire:
+    return L::acquire;
+  case MemoryOrder::release:
+    return L::release;
+  case MemoryOrder::acq_rel:
+    return L::acq_rel;
+  case MemoryOrder::seq_cst:
+    return L::seq_cst;
+  }
+  return L::seq_cst;
+}
+
+// The failure order a compare-and-swap loop uses for an op of order `o`:
+// its read half, which is all a failed exchange does.
+mlir::LLVM::AtomicOrdering readHalf(MemoryOrder o) {
+  using L = mlir::LLVM::AtomicOrdering;
+  switch (o) {
+  case MemoryOrder::acquire:
+  case MemoryOrder::acq_rel:
+    return L::acquire;
+  case MemoryOrder::seq_cst:
+    return L::seq_cst;
+  default:
+    return L::monotonic;
+  }
+}
+
+// A cell's address and how its values are held there. A bool is a byte,
+// since LLVM's atomics take whole bytes.
+struct CellAccess {
+  Value ptr;
+  mlir::IntegerType storage;
+  unsigned align;
+  bool isBool;
+  bool isSigned;
+
+  Value toStorage(OpBuilder &b, Location loc, Value v) const {
+    if (!isBool)
+      return v;
+    return make<mlir::arith::ExtUIOp>(b, loc, storage, v);
+  }
+  Value fromStorage(OpBuilder &b, Location loc, Value v) const {
+    if (!isBool)
+      return v;
+    Value zero = make<mlir::arith::ConstantOp>(b, loc, storage,
+                                               b.getIntegerAttr(storage, 0));
+    return make<mlir::arith::CmpIOp>(b, loc, mlir::arith::CmpIPredicate::ne, v,
+                                     zero);
+  }
+};
+
+CellAccess cellAccess(OpBuilder &b, Location loc, AtomicType cell,
+                      Value memref) {
+  auto ptr = mlir::LLVM::LLVMPointerType::get(b.getContext());
+  Value base =
+      make<mlir::memref::ExtractAlignedPointerAsIndexOp>(b, loc, memref);
+  Value addr = make<mlir::arith::IndexCastOp>(b, loc, b.getI64Type(), base);
+  CellAccess c;
+  c.ptr = make<mlir::LLVM::IntToPtrOp>(b, loc, ptr, addr);
+  c.storage = mlir::cast<mlir::IntegerType>(
+      mlir::cast<mlir::MemRefType>(memref.getType()).getElementType());
+  c.align = c.storage.getWidth() / 8;
+  c.isBool = cell.getElementType().isInteger(1);
+  auto it = mlir::dyn_cast<IntType>(cell.getElementType());
+  c.isSigned = it && reprOf(it).isSigned;
+  return c;
+}
+
+// `atomic_new v`: the cell's memory is a slot in the function's frame,
+// allocated at entry so that a cell made in a loop does not grow the stack.
+struct AtomicNewLowering : mlir::OpConversionPattern<AtomicNewOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtomicNewOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    auto fn = op->getParentOfType<mlir::func::FuncOp>();
+    if (!type || !fn)
+      return mlir::failure();
+    Value storage;
+    {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(&fn.getBody().front());
+      storage = make<mlir::memref::AllocaOp>(rw, loc, type);
+    }
+    Value v = adaptor.getValue();
+    if (v.getType() != type.getElementType())
+      v = make<mlir::arith::ExtUIOp>(rw, loc, type.getElementType(), v);
+    Value zero = make<mlir::arith::ConstantIndexOp>(rw, loc, 0);
+    make<mlir::memref::StoreOp>(rw, loc, v, storage, mlir::ValueRange{zero});
+    rw.replaceOp(op, storage);
+    return mlir::success();
+  }
+};
+
+struct AtomicLoadLowering : mlir::OpConversionPattern<AtomicLoadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtomicLoadOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    CellAccess c =
+        cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
+    Value v = make<mlir::LLVM::LoadOp>(
+        rw, loc, c.storage, c.ptr, c.align, /*isVolatile=*/false,
+        /*isNonTemporal=*/false, /*isInvariant=*/false,
+        /*isInvariantGroup=*/false, /*isNoundef=*/false,
+        llvmOrder(op.getOrder()));
+    rw.replaceOp(op, c.fromStorage(rw, loc, v));
+    return mlir::success();
+  }
+};
+
+struct AtomicStoreLowering : mlir::OpConversionPattern<AtomicStoreOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtomicStoreOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    CellAccess c =
+        cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
+    make<mlir::LLVM::StoreOp>(
+        rw, loc, c.toStorage(rw, loc, adaptor.getValue()), c.ptr, c.align,
+        /*isVolatile=*/false, /*isNonTemporal=*/false,
+        /*isInvariantGroup=*/false, llvmOrder(op.getOrder()));
+    rw.eraseOp(op);
+    return mlir::success();
+  }
+};
+
+struct AtomicCasLowering : mlir::OpConversionPattern<AtomicCasOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtomicCasOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    CellAccess c =
+        cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
+    auto pair = make<mlir::LLVM::AtomicCmpXchgOp>(
+        rw, loc, c.ptr, c.toStorage(rw, loc, adaptor.getExpected()),
+        c.toStorage(rw, loc, adaptor.getDesired()), llvmOrder(op.getSuccess()),
+        llvmOrder(op.getFailure()), llvm::StringRef(), c.align);
+    Value old = make<mlir::LLVM::ExtractValueOp>(rw, loc, pair,
+                                                 llvm::ArrayRef<int64_t>{0});
+    rw.replaceOp(op, c.fromStorage(rw, loc, old));
+    return mlir::success();
+  }
+};
+
+// The read-modify-writes. An add or sub lowers by its stated mode (ADR
+// 0052, section 2): `wrap` and `proof` are one atomicrmw; `trap` is one
+// too, after which the exact result is computed from the old value it
+// returns and checked as ordinary trap arithmetic is; `saturate` is a
+// compare-and-swap loop, so no wrapped value is ever stored.
+struct AtomicRmwLowering : mlir::OpConversionPattern<AtomicRmwOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(AtomicRmwOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    using B = mlir::LLVM::AtomicBinOp;
+    Location loc = op.getLoc();
+    CellAccess c =
+        cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
+    Value v = c.toStorage(rw, loc, adaptor.getValue());
+    bool add = op.getKind() == RmwKind::add;
+    bool arith = add || op.getKind() == RmwKind::sub;
+    if (arith && op.getOverflow() == OverflowMode::saturate) {
+      rw.replaceOp(op, saturatingLoop(rw, op, c, v, add));
+      return mlir::success();
+    }
+    B bin = B::xchg;
+    switch (op.getKind()) {
+    case RmwKind::swap:
+      bin = B::xchg;
+      break;
+    case RmwKind::add:
+      bin = B::add;
+      break;
+    case RmwKind::sub:
+      bin = B::sub;
+      break;
+    case RmwKind::band:
+      bin = B::_and;
+      break;
+    case RmwKind::bor:
+      bin = B::_or;
+      break;
+    case RmwKind::bxor:
+      bin = B::_xor;
+      break;
+    case RmwKind::min:
+      bin = c.isSigned ? B::min : B::umin;
+      break;
+    case RmwKind::max:
+      bin = c.isSigned ? B::max : B::umax;
+      break;
+    }
+    Value old = make<mlir::LLVM::AtomicRMWOp>(rw, loc, bin, c.ptr, v,
+                                              llvmOrder(op.getOrder()),
+                                              llvm::StringRef(), c.align);
+    if (arith && op.getOverflow() == OverflowMode::trap)
+      finish(rw, loc, exact(rw, loc, c, old, v, add),
+             Repr{2 * c.storage.getWidth(), true},
+             mlir::cast<IntType>(op.getType()), OverflowMode::trap);
+    rw.replaceOp(op, c.fromStorage(rw, loc, old));
+    return mlir::success();
+  }
+
+  // `old + v` or `old - v` exactly, at twice the cell's width.
+  static Value exact(OpBuilder &b, Location loc, const CellAccess &c, Value old,
+                     Value v, bool add) {
+    unsigned w = 2 * c.storage.getWidth();
+    Value x = resize(b, loc, old, c.isSigned, w);
+    Value y = resize(b, loc, v, c.isSigned, w);
+    if (add)
+      return make<mlir::arith::AddIOp>(b, loc, x, y);
+    return make<mlir::arith::SubIOp>(b, loc, x, y);
+  }
+
+  // Exchanges the old value for the clamped result until no other task
+  // changed the cell in between; the result is the old value it replaced.
+  static Value saturatingLoop(mlir::ConversionPatternRewriter &rw,
+                              AtomicRmwOp op, const CellAccess &c, Value v,
+                              bool add) {
+    Location loc = op.getLoc();
+    auto t = mlir::cast<IntType>(op.getType());
+    Value first = make<mlir::LLVM::LoadOp>(
+        rw, loc, c.storage, c.ptr, c.align, false, false, false, false, false,
+        mlir::LLVM::AtomicOrdering::monotonic);
+    auto loop = make<mlir::scf::WhileOp>(
+        rw, loc, mlir::TypeRange{c.storage}, mlir::ValueRange{first},
+        [&](OpBuilder &b, Location l, mlir::ValueRange args) {
+          Value old = args[0];
+          Value next = finish(b, l, exact(b, l, c, old, v, add),
+                              Repr{2 * c.storage.getWidth(), true}, t,
+                              OverflowMode::saturate);
+          auto pair = make<mlir::LLVM::AtomicCmpXchgOp>(
+              b, l, c.ptr, old, next, llvmOrder(op.getOrder()),
+              readHalf(op.getOrder()), llvm::StringRef(), c.align);
+          Value seen = make<mlir::LLVM::ExtractValueOp>(
+              b, l, pair, llvm::ArrayRef<int64_t>{0});
+          Value done = make<mlir::LLVM::ExtractValueOp>(
+              b, l, pair, llvm::ArrayRef<int64_t>{1});
+          Value yes = make<mlir::arith::ConstantOp>(b, l, b.getBoolAttr(true));
+          Value again = make<mlir::arith::XOrIOp>(b, l, done, yes);
+          make<mlir::scf::ConditionOp>(b, l, again, mlir::ValueRange{seen});
+        },
+        [&](OpBuilder &b, Location l, mlir::ValueRange args) {
+          make<mlir::scf::YieldOp>(b, l, args);
+        });
+    return loop.getResult(0);
+  }
+};
+
+struct FenceLowering : mlir::OpConversionPattern<FenceOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(FenceOp op, OpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    make<mlir::LLVM::FenceOp>(rw, op.getLoc(), llvmOrder(op.getOrder()));
+    rw.eraseOp(op);
     return mlir::success();
   }
 };
@@ -1158,8 +1457,20 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
     llvm::SmallVector<ForeignOp> foreign;
     module.walk([&](ForeignOp op) { foreign.push_back(op); });
     std::set<std::string> declared;
+    // A variadic symbol's named parameters, so that every call of it
+    // agrees on them (ADR 0051).
+    std::map<std::string, std::optional<int64_t>> variadicOf;
     for (ForeignOp op : foreign) {
       std::string sym = op.getSymbol().str();
+      std::optional<int64_t> named;
+      if (auto v = op->getAttrOfType<mlir::IntegerAttr>("pia.variadic"))
+        named = v.getInt();
+      if (auto [it, fresh] = variadicOf.try_emplace(sym, named);
+          !fresh && it->second != named)
+        return op.emitError()
+               << "the C symbol '" << sym
+               << "' is declared both with and without @variadic, or with "
+                  "different numbers of named parameters";
       if (auto own = module.lookupSymbol<mlir::func::FuncOp>(sym);
           own && !own->hasAttr("pia.c")) {
         if (!own->hasAttr("pia.extern"))
@@ -1193,6 +1504,28 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       for (Type t : op.getResultTypes()) results.push_back(cType(t));
       OpBuilder b(ctx);
       b.setInsertionPointToEnd(module.getBody());
+      // A C variadic function is an llvm.func with `...`, because
+      // func.func cannot say so, and the calling convention differs:
+      // Apple arm64 passes the variadic arguments on the stack, and
+      // x86_64 System V counts vector registers in %al.
+      if (named) {
+        args.resize(*named);
+        Type result = results.empty() ? Type(mlir::LLVM::LLVMVoidType::get(ctx))
+                                      : results.front();
+        auto decl = make<mlir::LLVM::LLVMFuncOp>(
+            b, op.getLoc(), sym,
+            mlir::LLVM::LLVMFunctionType::get(result, args,
+                                              /*isVarArg=*/true));
+        decl->setAttr("pia.c", b.getUnitAttr());
+        for (auto [i, a] : llvm::enumerate(op.getArgs()))
+          if (static_cast<int64_t>(i) < *named)
+            if (auto e = ext(a.getType()))
+              decl.setArgAttr(i, *e, b.getUnitAttr());
+        for (Type t : op.getResultTypes())
+          if (auto e = ext(t))
+            decl.setResultAttr(0, *e, b.getUnitAttr());
+        continue;
+      }
       auto decl = make<mlir::func::FuncOp>(
           b, op.getLoc(), sym, b.getFunctionType(args, results));
       decl.setPrivate();
@@ -1242,6 +1575,9 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                StoreLowering, SliceLowering, EmptyLowering, ErasedLowering, RegionLowering, ViewLowering, AbortLowering, ConstArrayLowering,
                ForeignLowering>(
       types, ctx);
+  // Atomics (ADR 0052).
+  patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
+               AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

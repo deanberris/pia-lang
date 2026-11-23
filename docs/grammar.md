@@ -272,7 +272,8 @@ cmp_e   = range_e [ cmp_op ( range_e | quantifier ) ] ;
 range_e = add_e [ ".." add_e ] ;
 add_e   = mul_e { add_op mul_e } ;
 mul_e   = unary { mul_op unary } ;
-unary   = "-" unary | application ;
+unary   = "-" unary | "~" unary | mode unary | application ;
+mode    = "@wrap" | "@trap" | "@saturate" | "@proof" ;   (* one expression's overflow mode *)
 application = postfix { postfix } { "?" } ;   (* f x? is (f x)? *)
 
 postfix = atom

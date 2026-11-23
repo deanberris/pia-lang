@@ -68,6 +68,16 @@ Metaprograms in the REPL can read and change the environment, as Lisp code can: 
 
 The session, the JIT, the indirection slots and `Pia.Live` are part of the REPL tool, not of the language runtime. `Pia.Rt` does not contain them, ordinary compiled programs call functions directly with no indirection, and code that wants live redefinition must import `Pia.Live` explicitly, which only the REPL (or a program that deliberately embeds it) provides.
 
+### Teaching the language (amendment, 2026-11-23)
+
+Dean asked that the MCP server also teach Pia's syntax and semantics, so that an agent connected to it, with or without the skills loaded, wastes fewer cells and less context. The server still has exactly two tools; the teaching goes through the surfaces MCP already has and through `execute`:
+
+- **`instructions`** are a primer of under 2 KB (`skills/pia-mcp/instructions.md`), with the list of guide topics. Clients put them in the agent's context at connection, so they cost every session, and they hold only what prevents the most failed cells.
+- **`:help <topic>`** is a REPL command, so it works in every client and in `pia repl`. Each topic is one section of the `pia-language`, `pia-contracts` or `pia-mcp` skill. The same text is served as MCP resources, `pia://guide/<topic>`, for clients that attach resources. A new tool for it was rejected: it would add a schema to every session for something one command already does.
+- **Hints.** A failed cell's result ends with one line per kind of failure, recognised by the diagnostic's wording, saying the fix and the topic. They are added by the MCP server only, so `pia repl`'s text, which the docs' console blocks check, is unchanged.
+
+The guide is not a second copy. `src/repl/embed_guide.py` cuts it from the skills when the server is built, and fails the build when a skill gains a section that is neither a topic nor deliberately skipped. The skills' examples are already proved by `//tests/docs:skills_test`, so what the server teaches is checked against the compiler.
+
 ## Consequences
 
 - Every value the REPL prints comes from code that was proved first, so the REPL teaches the language's main rule rather than bending it.

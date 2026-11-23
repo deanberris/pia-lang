@@ -1,0 +1,5 @@
+(* One expression's overflow mode (docs/design.md), and an atomic add,
+   which must state its own (ADR 0052). *)
+let mix (a : u8) (b : u8) : u8 = @wrap (a + b) ^ @saturate (a - b)
+
+let bump (c : borrowed atomic u32) : u32 = @wrap (atomic_add relaxed c 1)
