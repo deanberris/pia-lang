@@ -15,8 +15,15 @@ let other (x : u8) : usize @target(arm64_macos)
 
 let nowhere (x : u8) : u8 @target(riscv) = x
 
+(* The 'then' of 'if Target.is m' is code for m, and the 'else' is not. *)
+let fine (x : u8) : usize = if Target.is x86_64_linux then page x else 0
+let wrong (x : u8) : usize = if Target.is x86_64_linux then 0 else page x
+let unknown (x : u8) : bool = Target.is riscv
+
 (* Expected errors:
-// CHECK-DAG: target_errors.pia:11:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)' may use it
-// CHECK-DAG: target_errors.pia:14:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)' may use it
+// CHECK-DAG: target_errors.pia:11:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)', or the 'then' of 'if Target.is x86_64_linux', may use it
+// CHECK-DAG: target_errors.pia:14:3: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)', or the 'then' of 'if Target.is x86_64_linux', may use it
 // CHECK-DAG: target_errors.pia:16:{{[0-9]+}}: error: '@target' names the model of one target: 'arm64_macos', 'x86_64_linux'
+// CHECK-DAG: target_errors.pia:20:68: error: 'page' is compiled only for the target 'x86_64_linux', so only a function marked '@target(x86_64_linux)', or the 'then' of 'if Target.is x86_64_linux', may use it
+// CHECK-DAG: target_errors.pia:21:41: error: 'riscv' is not the model of a target
 *)

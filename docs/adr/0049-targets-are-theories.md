@@ -72,7 +72,7 @@ end
 The axioms are what both targets have in common, and they are all a target-generic program may assume. A program proved against them holds on both targets, and on any later target whose model meets them. Each axiom must be true of every build of the architectures Pia targets, not just of the two triples it has today, so a later triple on the same architecture can never break a target-generic proof:
 
 - **Little-endian is an axiom.** x86_64 is little-endian in every mode, on Intel and AMD alike: AMD64 and Intel 64 are one architecture, and nothing in it is byte-order configurable. arm64 *can* run big-endian (the `aarch64_be` triples), but Apple's platforms never do, and a big-endian arm64 target would be a new architecture variant for Pia, with this axiom reconsidered then.
-- **64-bit pointers are not an axiom.** Pointer width is a property of the ABI, not of x86_64. The same 64-bit CPU runs 32-bit code with 32-bit pointers in compatibility mode (the i386 ABI under a 64-bit OS), and Linux's x32 ABI (`x86_64-unknown-linux-gnux32`) runs in 64-bit mode with 32-bit pointers. So `ptr_bits` is a value of each model, 64 for both of Pia's triples, and the theory only says it is a power of two of at least 32. `usize` is then as wide as the model says, and target-generic code that needs 64-bit pointers proves it under `when Target.ptr_bits = 64`, which folds to one branch per target. Even on 64-bit ABIs, only 48 bits of a virtual address are in use with 4-level paging and 57 with 5-level paging (LA57), which is one more reason [ADR 0030](0030-published-object-layouts.md) never tags a pointer's high bits.
+- **64-bit pointers are not an axiom.** Pointer width is a property of the ABI, not of x86_64. The same 64-bit CPU runs 32-bit code with 32-bit pointers in compatibility mode (the i386 ABI under a 64-bit OS), and Linux's x32 ABI (`x86_64-unknown-linux-gnux32`) runs in 64-bit mode with 32-bit pointers. So `ptr_bits` is a value of each model, 64 for both of Pia's triples, and the theory only says it is a power of two of at least 32. `usize` is then as wide as the model says, and target-generic code that needs 64-bit pointers marks itself `@target(m)` for the models with 64-bit pointers, or branches on `if Target.is m`, which folds to one branch per target. Even on 64-bit ABIs, only 48 bits of a virtual address are in use with 4-level paging and 57 with 5-level paging (LA57), which is one more reason [ADR 0030](0030-published-object-layouts.md) never tags a pointer's high bits.
 
 Every axiom a module's proof used is listed in its certificate ([ADR 0024](0024-published-proof-certificates.md)).
 
@@ -98,7 +98,7 @@ let huge_page_count (bytes : usize) : usize @target(x86_64_linux)
 = (bytes + 4095) / 4096
 ```
 
-Like `@overflow`, the attribute follows the return type. Inside `@target(m)`, the solver sees model `m`'s definitions as well as the axioms, and the item is compiled only for that target. An exported `@target` item appears only in that target's interface, and its importers must be `@target` of the same model, or reach it through a `when Target.is m` branch, which the meta engine folds at compile time ([ADR 0022](0022-metaprogram-hygiene.md)). The certificate lists each module's `@target` items.
+Like `@overflow`, the attribute follows the return type. Inside `@target(m)`, the solver sees model `m`'s definitions as well as the axioms, and the item is compiled only for that target. An exported `@target` item appears only in that target's interface, and its importers must be `@target` of the same model, or reach it from the `then` of an `if Target.is m`, which `piac` folds at compile time, so the other target's branch is never compiled. This is an ordinary `if`, not a new keyword. The certificate lists each module's `@target` items.
 
 Constants such as `cache_line` are values, not just facts: `Pia.Sync` pads a contended atomic to `Target.cache_line`, so it is 128 bytes on Apple silicon and 64 on x86_64, and the layout ([ADR 0030](0030-published-object-layouts.md)) published for each target says which.
 
@@ -136,7 +136,7 @@ The questions, as they were asked:
 ## Consequences
 
 - Proof work, the whole x86_64 build and its tests run in a cloud session and in Linux CI. The iMac is needed only for arm64 runs.
-- `usize` is as wide as the target model says. Today it is 64 bits on both targets, and code that relies on that proves it under `when Target.ptr_bits = 64`.
+- `usize` is as wide as the target model says. Today it is 64 bits on both targets, and `piac` refuses a model whose pointers are another width until `usize` can follow it.
 - Every proof that used a machine fact now names it, through the `Pia.Target` axioms or a model under `@target`, and the certificate lists it.
 - Two targets means two published layouts per type and two interfaces where `@target` items differ.
 - On x86_64, `relaxed` atomics lose some compiler reorderings, which costs nothing in the instructions emitted.

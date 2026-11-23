@@ -227,6 +227,16 @@ class Gen {
         interp_([](const std::string &) { return true; }) {}
 
   void setTheoryInfo(TheoryInfo info) { theoryInfo_ = std::move(info); }
+
+  // Whether `sig` is a constant of the built-in theory `Target`, such as
+  // `Target.page_size`, which code may use as a value (ADR 0049). Proofs
+  // see only the axioms about it, outside `@target`.
+  bool isTargetValue(const sema::FuncSig &sig) const {
+    return sig.item && sig.params.empty() &&
+           llvm::StringRef(sig.name).starts_with("Target.") &&
+           hasFlag(*sig.item, "abstract") &&
+           theoryInfo_.modelled.count("Target");
+  }
   void setRegionInfo(RegionInfo info) { regionInfo_ = std::move(info); }
   // Whether the file is marked `@trusted` (ADR 0023): only then may it use
   // `assume`.
@@ -913,6 +923,12 @@ class Gen {
       fn.setPrivate();
       fn->setAttr(PiaDialect::getSpecAttrName(), b_.getUnitAttr());
       fn->setAttr(PiaDialect::getAbstractAttrName(), b_.getUnitAttr());
+      // A constant of `Target` is a value in code too: codegen puts in the
+      // value of the model compiled for (ADR 0049).
+      if (isTargetValue(sig))
+        fn->setAttr("pia.target_value",
+                    b_.getStringAttr(theoryInfo_.modelled.at("Target") +
+                                     sig.name.substr(6)));
       return;
     }
     // An imported function's body is in another module (ADR 0039).
@@ -2920,7 +2936,8 @@ class Gen {
       return fail(n, "'" + sig.name + "' is used before its return type is "
                      "known; annotate it, as in 'let " + sig.name +
                      " ... : T = ...'");
-    if (sig.item && hasFlag(*sig.item, "spec") && !contract_ && !ghost_)
+    if (sig.item && hasFlag(*sig.item, "spec") && !contract_ && !ghost_ &&
+        !isTargetValue(sig))
       return fail(n, "'" + sig.name + "' is a spec function, so it can be "
                      "used only in contracts, spec functions and lemmas");
     if (effectful_.count(sig.name) && (contract_ || ghost_))
