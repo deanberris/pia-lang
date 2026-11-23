@@ -213,7 +213,7 @@ A state is an integer or a `bool` for now. State belongs to the REPL until modul
 | `:wait <n>` | wait for task `n` to finish, and show its value |
 | `:load <file>` | run a file as one cell; for a literate `.pia.md` file, its `pia` blocks |
 | `:reset` | empty the environment |
-| `:help` | the list of commands |
+| `:help [<topic>]` | the list of commands and guide topics, or one topic of the language guide (see [MCP server](#mcp-server)) |
 | `:quit` | leave |
 
 `pia repl` takes the same `--allow-unproved=<spec>` flag as `piac`, and `--meta-cycles=N`, `--timeout-ms=N` (the solver's limit per obligation) and `--no-run` (verify, but never compile or run). Files named on the command line are loaded first, each as one cell.
@@ -260,7 +260,15 @@ Each event has a `kind`:
 
 With `json: true`, a result also carries the job, its state and the JSON result above as structured content. It is off by default because some clients, Claude Code among them, show the agent the structured content in place of the text, and the events are several times longer than the text.
 
-A tool result is an error when the cell failed, so the agent sees failed proofs and counterexamples as errors to fix. The [agent skills](agents.md) teach an agent how to work with it. To use it from Claude Code:
+A tool result is an error when the cell failed, so the agent sees failed proofs and counterexamples as errors to fix. The [agent skills](agents.md) teach an agent how to work with it.
+
+The server also teaches the language itself, for agents that have no skills loaded:
+
+- **Its `instructions`** (which clients put in the agent's context when it connects) are a primer of under 2 KB: the binding form, bounded integers, where contracts go, no shadowing, comments, and the list of guide topics.
+- **`:help <topic>`**, sent through `execute`, returns one section of the guide: `syntax`, `facts`, `shapes`, `pitfalls`, `contracts`, `loops`, `termination`, `specs` and more (`:help` lists them). The same text is served as MCP resources, `pia://guide/<topic>`.
+- **A failed cell ends with hints**, one line per kind of failure, such as `hint: arithmetic is checked at the operands' width: ... (:help facts)`. They are only in the server's results, not in `pia repl`'s output.
+
+The guide is cut from the `pia-language`, `pia-contracts` and `pia-mcp` skills when the server is built (`src/repl/embed_guide.py`), so it says what the skills say, and their examples are proved by the skills test. To use it from Claude Code:
 
 ```sh
 claude mcp add pia -- "$PWD/bazel-bin/tools/pia/pia" mcp

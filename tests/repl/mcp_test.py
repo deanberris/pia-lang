@@ -126,7 +126,72 @@ class McpTest(unittest.TestCase):
         self.assertIn("- : u8 = 42", r["content"][0]["text"])
 
     def test_unknown_method(self):
-        self.assertIn("error", self.server.send("resources/list"))
+        self.assertIn("error", self.server.send("prompts/list"))
+
+    # The guide (src/repl/Guide.h): instructions, :help topics, resources
+    # and hints on failures.
+
+    def test_instructions_teach_and_stay_short(self):
+        init = Server()
+        try:
+            r = init.send("initialize", {"protocolVersion": "2025-06-18",
+                                         "capabilities": {},
+                                         "clientInfo": {"name": "t", "version": "0"}})
+        finally:
+            init.close()
+        text = r["result"]["instructions"]
+        self.assertIn("No shadowing", text)
+        self.assertIn("  pitfalls ", text)
+        self.assertIn("resources", r["result"]["capabilities"])
+        # Clients put them in every session's context; some cut them at 2 KB.
+        self.assertLess(len(text.encode()), 2048)
+
+    def test_help_lists_topics(self):
+        r = self.server.call("execute", code=":help")
+        self.assertFalse(r["isError"], r)
+        self.assertIn(":help [<topic>]", r["content"][0]["text"])
+        self.assertIn("  syntax ", r["content"][0]["text"])
+
+    def test_help_topic_is_the_skill_section(self):
+        r = self.server.call("execute", code=":help syntax")
+        self.assertFalse(r["isError"], r)
+        text = r["content"][0]["text"]
+        self.assertIn("# Syntax at a glance", text)
+        self.assertIn("let count_bright", text)
+        self.assertNotIn("<!--", text)
+        r = self.server.call("execute", code=":help contracts")
+        self.assertIn("the precondition of 'f' holds", r["content"][0]["text"])
+        self.assertIn("https://pia-lang.dev/tour/#contracts", r["content"][0]["text"])
+
+    def test_help_unknown_topic(self):
+        r = self.server.call("execute", code=":help nonsense")
+        self.assertTrue(r["isError"])
+        self.assertIn("pitfalls", r["content"][0]["text"])
+
+    def test_guide_resources(self):
+        listed = self.server.send("resources/list")["result"]["resources"]
+        uris = [x["uri"] for x in listed]
+        self.assertIn("pia://guide/pitfalls", uris)
+        r = self.server.send("resources/read", {"uri": "pia://guide/loops"})
+        self.assertIn("# Loop invariants", r["result"]["contents"][0]["text"])
+        r = self.server.send("resources/read", {"uri": "pia://guide/nope"})
+        self.assertIn("error", r)
+
+    def test_failures_carry_hints(self):
+        r = self.server.call("execute", code="let bad (a : u8) : u8 = a + 1")
+        self.assertIn("hint: ", r["content"][0]["text"])
+        self.assertIn("(:help facts)", r["content"][0]["text"])
+        r = self.server.call("execute",
+                             code="let twice (a : u8) : u16 = let a = 2 in a + a")
+        self.assertTrue(r["isError"])
+        self.assertIn("(:help pitfalls)", r["content"][0]["text"])
+        r = self.server.call("execute", code="let get (xs : [u8]) : u8 = xs.[3]")
+        self.assertIn("(:help contracts)", r["content"][0]["text"])
+
+    def test_successes_carry_no_hints(self):
+        r = self.server.call("execute", code="let fine (a : u8) : u16 = a + 1")
+        self.assertFalse(r["isError"], r)
+        self.assertNotIn("hint:", r["content"][0]["text"])
 
 
 if __name__ == "__main__":

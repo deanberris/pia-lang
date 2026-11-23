@@ -1,6 +1,9 @@
 #include "repl/Mcp.h"
 
+#include "repl/Guide.h"
+
 #include <chrono>
+#include <cstring>
 #include <string>
 
 namespace pia::repl {
@@ -32,7 +35,8 @@ lsp::Json tools() {
   execute["description"] =
       "Run Pia code in a persistent, verified REPL session. A cell is Pia "
       "code (definitions with let, expressions to evaluate) or a command "
-      "(:help, :type e, :proof f, :env, :source f, :redef code, :forget f, "
+      "(:help, :help <topic> for a guide to the language, :type e, :proof f, "
+      ":env, :source f, :redef code, :forget f, "
       ":allow spec, :load file (.pia or literate .pia.md), :reset, :spawn e, "
       ":tasks, :wait n). Definitions join the environment "
       "only if every proof obligation in the whole environment is proved; "
@@ -62,6 +66,27 @@ lsp::Json tools() {
              {"job"});
   lsp::Json result;
   result["tools"] = lsp::Json::Array{execute, poll};
+  return result;
+}
+
+constexpr const char *kGuideScheme = "pia://guide/";
+
+// The guide's topics as MCP resources, for clients that let an agent or a
+// person attach them. They are the same text as `:help <topic>`, which
+// works in every client because it goes through execute.
+lsp::Json resources() {
+  lsp::Json::Array list;
+  for (const GuideTopic &t : guideTopics()) {
+    lsp::Json r;
+    r["uri"] = std::string(kGuideScheme) + t.name;
+    r["name"] = t.name;
+    r["title"] = t.title;
+    r["description"] = t.summary;
+    r["mimeType"] = "text/markdown";
+    list.push_back(std::move(r));
+  }
+  lsp::Json result;
+  result["resources"] = std::move(list);
   return result;
 }
 
@@ -124,6 +149,10 @@ lsp::Json McpServer::jobResult(const Kernel::Status &s, bool json) {
     if (text.empty())
       text = s.result->ok ? "ok\n" : "failed\n";
     isError = !s.result->ok;
+    // A failed cell carries a line on how to fix each kind of failure in it,
+    // so an agent's next cell is more often right without reading a guide.
+    if (isError)
+      text += guideHints(text);
   } else if (s.state == Kernel::State::Unknown) {
     text = "there is no job " + std::to_string(s.job) + "\n";
   } else {
@@ -169,6 +198,7 @@ lsp::Json McpServer::handle(const lsp::Json &message) {
   if (method == "initialize") {
     lsp::Json caps;
     caps["tools"] = lsp::Json::Object{};
+    caps["resources"] = lsp::Json::Object{};
     lsp::Json info;
     info["name"] = "pia-repl";
     info["version"] = "0.0.0";
@@ -179,10 +209,10 @@ lsp::Json McpServer::handle(const lsp::Json &message) {
     result["protocolVersion"] = version;
     result["capabilities"] = std::move(caps);
     result["serverInfo"] = std::move(info);
-    result["instructions"] =
-        "A persistent Pia REPL. Send code with execute; every definition is "
-        "proved before it joins the environment. Start with execute "
-        "{\"code\": \":help\"}.";
+    // Clients put the instructions in the agent's context before its first
+    // call, so they carry what saves the most failed cells, and they are
+    // short, since they cost context in every session.
+    result["instructions"] = guideInstructions();
     return reply(id, std::move(result));
   }
   if (notification)
@@ -191,6 +221,25 @@ lsp::Json McpServer::handle(const lsp::Json &message) {
     return reply(id, lsp::Json::Object{});
   if (method == "tools/list")
     return reply(id, tools());
+  if (method == "resources/list")
+    return reply(id, resources());
+  if (method == "resources/read") {
+    const lsp::Json &uri = message["params"]["uri"];
+    std::string u = uri.isString() ? uri.asString() : "";
+    const GuideTopic *topic =
+        u.rfind(kGuideScheme, 0) == 0
+            ? findGuideTopic(std::string_view(u).substr(strlen(kGuideScheme)))
+            : nullptr;
+    if (!topic)
+      return errorReply(id, -32002, "resource not found: " + u);
+    lsp::Json c;
+    c["uri"] = u;
+    c["mimeType"] = "text/markdown";
+    c["text"] = topic->text;
+    lsp::Json result;
+    result["contents"] = lsp::Json::Array{c};
+    return reply(id, std::move(result));
+  }
   if (method == "tools/call") {
     const lsp::Json &params = message["params"];
     if (!params["name"].isString())

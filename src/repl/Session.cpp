@@ -23,6 +23,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "repl/Guide.h"
 #include "repl/State.h"
 #include "sema/Sema.h"
 #include "syntax/Lexer.h"
@@ -581,7 +582,7 @@ const char *helpText =
     "  :wait <n>         wait for task n to finish\n"
     "  :load <file>      run a file as one cell\n"
     "  :reset            empty the environment\n"
-    "  :help             this list\n"
+    "  :help [<topic>]   this list, or a guide to the language\n"
     "  :quit             leave\n"
     "A definition joins the environment only if everything still verifies.\n"
     "`let x : mutable T invariant p = v` is a state: it keeps its value, "
@@ -1889,7 +1890,19 @@ struct Session::Impl {
     };
 
     if (word == "help" || word == "h" || word == "?") {
-      info(helpText);
+      if (arg.empty()) {
+        info(std::string(helpText) +
+             "Guides to the language, as :help <topic>:\n" + guideTopicList());
+        return r;
+      }
+      const GuideTopic *topic = findGuideTopic(arg);
+      if (!topic) {
+        error(r.events, "no guide topic '" + arg + "'; the topics are:\n" +
+                            guideTopicList());
+        r.ok = false;
+        return r;
+      }
+      info(topic->text);
     } else if (word == "type" || word == "t") {
       if (!needArg())
         return r;
