@@ -874,6 +874,7 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    variadic_.reset();
     solver_.clear();
     ghost_ = false;
     triggers_.clear();
@@ -1062,6 +1063,11 @@ class Gen {
             frames_.back().defers.push_back(&d);
           }
     if (!isSpec) addTails(*bodyPtr);
+    if (variadic_ && !isExtern) {
+      fail(*variadicNode_, "@variadic is only for a foreign declaration, "
+                           "'= extern \"symbol\"'");
+      return;
+    }
     R body = isExtern ? genForeign(bodyNode, foreign, sig, entry)
              : isSpec ? genContractExpr(bodyNode, sig.result)
                       : genExpr(*bodyPtr, sig.result);
@@ -1572,6 +1578,20 @@ class Gen {
           return false;
         }
         solver_ = strategy;
+        continue;
+      }
+      // `@variadic(n)` on a foreign declaration: the C function has n
+      // named parameters, and the rest are its variadic ones (ADR 0051).
+      if (a->text == "variadic" && a->kids.size() == 1 &&
+          a->kids[0]->kind == NodeKind::IntLit) {
+        auto lit = sema::parseIntLiteral(a->kids[0]->text);
+        if (!lit || !lit->suffix.empty() || lit->value.ugt(64)) {
+          fail(*a, "@variadic takes the number of the C function's named "
+                   "parameters");
+          return false;
+        }
+        variadic_ = static_cast<unsigned>(lit->value.getZExtValue());
+        variadicNode_ = a.get();
         continue;
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
@@ -7961,6 +7981,38 @@ class Gen {
     return false;
   }
 
+  // A C variadic function's arguments after its named ones are promoted
+  // by C: integers narrower than an int and bools become an int, which
+  // the callee reads with va_arg. Pia does not promote silently, so those
+  // types are errors, and the declaration says the type C reads
+  // (ADR 0051, section 6).
+  bool checkVariadic(const sema::FuncSig &sig) {
+    if (*variadic_ > sig.params.size()) {
+      fail(*variadicNode_, "@variadic(" + std::to_string(*variadic_) +
+                               ") names more parameters than the "
+                               "declaration has");
+      return false;
+    }
+    for (size_t i = *variadic_; i < sig.params.size(); ++i) {
+      const sema::Param &p = sig.params[i];
+      if (mlir::isa<ArrayType, SliceType>(p.type))
+        continue;
+      auto it = mlir::dyn_cast<IntType>(p.type);
+      if (it && it.getStorageWidth() >= 32)
+        continue;
+      diags_.error(p.loc,
+                   "'" + p.name +
+                       "' is a variadic argument of a C "
+                       "function, which C promotes to int, so it must be "
+                       "an integer of 32 bits or more, or a buffer: give "
+                       "it the type the function reads, such as i32 or "
+                       "u32, instead of " +
+                       typeName(p.type));
+      return false;
+    }
+    return true;
+  }
+
   // An extern's body: the C call, with the parameters as its arguments.
   R genForeign(const Node &body, const std::string &symbol,
                const sema::FuncSig &sig, Block *entry) {
@@ -7980,12 +8032,16 @@ class Gen {
                          isBool(sig.result)))
       return fail(body, "a foreign function returns unit, an integer or a "
                         "bool for now");
+    if (variadic_ && !checkVariadic(sig))
+      return std::nullopt;
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
                                   entry->getArguments().end());
     auto op = create<ForeignOp>(loc(body), results,
                                 b_.getStringAttr(symbol), args);
+    if (variadic_)
+      op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }
@@ -9519,6 +9575,9 @@ class Gen {
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  // @variadic(n) on the foreign declaration being generated (ADR 0051).
+  std::optional<unsigned> variadic_;
+  const Node *variadicNode_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes

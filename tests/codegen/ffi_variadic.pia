@@ -1,0 +1,24 @@
+(* C variadic functions (ADR 0051): `@variadic(n)` says the C function has
+   n named parameters, so each call uses the variadic calling convention,
+   which on Apple arm64 passes the rest on the stack. Two declarations may
+   call one symbol with different numbers of arguments.
+// RUN: piac --emit=core %s 2>&1 | FileCheck %s
+*)
+
+let sum2 (n : i32) (a : i64) (b : i64) : i64 @variadic(1)
+  requires n = 2
+  ensures true
+= extern "sum_va"
+
+let sum3 (n : i32) (a : i64) (b : i64) (c : i64) : i64 @variadic(1)
+  requires n = 3
+  ensures true
+= extern "sum_va"
+
+let two (a : i64) (b : i64) : i64 = sum2 2 a b
+let three (a : i64) (b : i64) (c : i64) : i64 = sum3 3 a b c
+
+(* CHECK-DAG: llvm.func @sum_va(i32, ...) -> i64
+// CHECK-DAG: llvm.call @sum_va({{.*}}) vararg(!llvm.func<i64 (i32, ...)>) : (i32, i64, i64) -> i64
+// CHECK-DAG: llvm.call @sum_va({{.*}}) vararg(!llvm.func<i64 (i32, ...)>) : (i32, i64, i64, i64) -> i64
+*)

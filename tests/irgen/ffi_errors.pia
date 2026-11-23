@@ -22,3 +22,17 @@ let by_record (p : point) : i32 ensures true = extern "by_record"
 (* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'extern "symbol"' is only a function's whole body
 *)
 let inside (x : i32) : i32 = extern "f" + 1
+
+(* A C variadic function's extra arguments are promoted by C, so a type
+   narrower than an int is an error, not a silent widening (ADR 0051).
+// CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'b' is a variadic argument of a C function, which C promotes to int, so it must be an integer of 32 bits or more, or a buffer: give it the type the function reads, such as i32 or u32, instead of u16
+*)
+let narrow (n : i32) (b : u16) : i32 @variadic(1) ensures true = extern "narrow_va"
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @variadic(3) names more parameters than the declaration has
+*)
+let too_many (n : i32) : i32 @variadic(3) ensures true = extern "many_va"
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @variadic is only for a foreign declaration, '= extern "symbol"'
+*)
+let not_foreign (n : i32) : i32 @variadic(1) = n
