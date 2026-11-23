@@ -71,7 +71,7 @@ if (auto r = intervals.decide(goal))
 
 Some more guidance:
 
-- **A file starts with a comment that says what it is for**, and where its design is written down. See [`src/syntax/Lint.h`](../src/syntax/Lint.h) for an example.
+- **A header starts with a comment that says what it is for**, and where its design is written down. See [`src/syntax/Lint.h`](../src/syntax/Lint.h) for an example. A `.cpp` file that implements one header needs no comment of its own; one that stands alone, such as a tool's `main`, gets one.
 - **A declaration in a header gets a comment** saying what it promises its callers: what it returns, what it requires, and what it does when something goes wrong. That is the contract, and it is not obvious from the signature.
 - **Link to the decision.** When code is the way it is because of an ADR, an issue or a measured result, name it: `(ADR 0026)`, `(#152)`. The reasoning lives there, and the comment stays short.
 - **Keep comments true.** A comment that no longer matches the code is worse than none. When you change code, read the comments around it.
