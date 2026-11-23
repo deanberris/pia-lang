@@ -2,7 +2,7 @@
 
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 
-def lit_tests(name, srcs, tools = ["//tools/pia-opt"], data = []):
+def lit_tests(name, srcs, tools = ["//tools/pia-opt"], data = [], sizes = {}):
     """Declares `<file>_test` for each file in `srcs` and a suite `name`.
 
     Args:
@@ -10,6 +10,8 @@ def lit_tests(name, srcs, tools = ["//tools/pia-opt"], data = []):
       srcs: .mlir, .pia or literate .pia.md test files with `// RUN:` lines.
       tools: binaries the RUN lines call by name; FileCheck is always there.
       data: other files the RUN lines read, through `%S`.
+      sizes: a Bazel test size for a file whose proofs take longer than the
+        default 300 s allows when the whole suite runs at once.
     """
     all_tools = tools + ["@llvm-project//llvm:FileCheck"]
     tests = []
@@ -21,6 +23,7 @@ def lit_tests(name, srcs, tools = ["//tools/pia-opt"], data = []):
             srcs = ["//tests/lit:run_lit.sh"],
             args = ["$(rootpath %s)" % src] + ["$(rootpath %s)" % t for t in all_tools],
             data = [src] + all_tools + data,
+            size = sizes.get(src, "medium"),
         )
         tests.append(test_name)
     native.test_suite(name = name, tests = tests)

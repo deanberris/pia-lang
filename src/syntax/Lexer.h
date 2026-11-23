@@ -18,7 +18,8 @@ struct LexOptions {
   // only in fenced `pia` blocks (ADR 0029).
   bool literate = false;
   // Read the buffer as REPL cells, where a line at column 1 can also start
-  // with a statement such as `if` or `match`, so it begins a new item.
+  // with a statement such as `if` or `match`, or with a `-`, so it begins a
+  // new item.
   bool cells = false;
   // Where to keep the comments (and, in a literate file, the prose). Null
   // drops them.
