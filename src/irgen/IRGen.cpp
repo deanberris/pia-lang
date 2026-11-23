@@ -1,6 +1,7 @@
 #include "irgen/IRGen.h"
 #include "irgen/Boxes.h"
 #include "irgen/Regions.h"
+#include "irgen/Target.h"
 #include "irgen/Theories.h"
 #include "verify/Strategy.h"
 #include "verify/Triggers.h"
@@ -9660,7 +9661,17 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
     eraseRegions(*erased, diags, regions);
     if (diags.hasErrors()) return nullptr;
   }
-  const syntax::Node &source = erased ? *erased : program;
+  // A program that names `Target` gets the built-in theory and the model
+  // of the target it is compiled for (ADR 0049).
+  syntax::NodePtr targeted;
+  if (usesTargetTheory(erased ? *erased : program)) {
+    targeted = syntax::clone(erased ? *erased : program);
+    if (!addTargetTheory(*targeted, options.triple, diags))
+      return nullptr;
+  }
+  const syntax::Node &source = targeted ? *targeted
+                               : erased ? *erased
+                                        : program;
   // Theories (ADR 0036) become ordinary items with qualified names.
   if (hasTheories(source)) {
     syntax::NodePtr flat = syntax::clone(source);

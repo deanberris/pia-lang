@@ -1,21 +1,34 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
+# The built-in theory `Target` (ADR 0049), compiled into piac as a string.
+genrule(
+    name = "target_source",
+    srcs = ["Target.pia"],
+    outs = ["TargetSource.inc"],
+    cmd = "(echo 'R\"pia('; cat $<; echo ')pia\"') > $@",
+)
+
 # IRGen for the scalar subset (milestone M4): syntax tree to the pia and
 # pia_contract dialects, with control flow in scf.
+exports_files(["Target.pia"])
+
 cc_library(
     name = "irgen",
     srcs = [
         "Boxes.cpp",
         "IRGen.cpp",
         "Regions.cpp",
+        "Target.cpp",
         "Theories.cpp",
     ],
     hdrs = [
         "Boxes.h",
         "IRGen.h",
         "Regions.h",
+        "Target.h",
         "Theories.h",
     ],
+    textual_hdrs = ["TargetSource.inc"],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

@@ -241,7 +241,13 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
   for (const NodePtr &item : program.kids) {
     if (item->kind != NodeKind::Theory || item->flags == "alias") continue;
     const Theory &t = theories.at(item->text);
+    // The built-in `Target` (ADR 0049) is the compiler's, and a program
+    // only ever names its members qualified, so a program's own
+    // `page_size` does not clash with it.
+    bool builtin = item->flags == "builtin";
     for (const NodePtr &m : item->kids) {
+      if (builtin)
+        break;
       std::string what;
       if (topLevel.count(m->text) || theories.count(m->text))
         what = "the item '" + m->text + "'";
@@ -357,7 +363,13 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
       if (!defined.count(need))
         diags.error(model->loc, "the model '" + model->text + "' does not "
                                 "define '" + need + "'");
+    // A built-in model is proved to meet the axioms once, when the
+    // compiler is tested (tests/verify/target_theory.pia), not again in
+    // every program that uses it.
+    bool builtin = model->flags == "builtin";
     for (const NodePtr &axiom : t.axioms) {
+      if (builtin)
+        break;
       NodePtr lemma = syntax::clone(*axiom);
       substitute(*lemma, t, model->text);
       std::string name = model->text + axiom->text.substr(t.name.size());

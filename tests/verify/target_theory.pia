@@ -1,0 +1,20 @@
+(* The built-in theory Target (ADR 0049) is consistent: each model, one
+   per target, meets every axiom. Programs that use Target do not prove
+   this again, so this is where it is proved. The file it checks is the
+   one compiled into piac, src/irgen/Target.pia.
+// RUN: piac --verify --trust-report %S/../../src/irgen/Target.pia | FileCheck %s
+// CHECK: 0 trusted items
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.ptr_pow2'
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.little'
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.align_16'
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.page_pow2'
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.line_pow2'
+// CHECK-DAG: proved: the model 'arm64_macos' meets the axiom 'Target.vector_min'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.ptr_pow2'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.little'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.align_16'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.page_pow2'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.line_pow2'
+// CHECK-DAG: proved: the model 'x86_64_linux' meets the axiom 'Target.vector_min'
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
