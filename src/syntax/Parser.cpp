@@ -1087,7 +1087,11 @@ class Parser {
       // after them, are the type's, as they always were.
       NodePtr trailing;
       while (accept(K::Bar)) {
-        auto c = makeNode(N::Ctor, loc(), std::string(expect(K::Ident, "a constructor name").text));
+        // `| $c of t` in a quote: a constructor a metaprogram names.
+        std::string cname = at(K::SpliceIdent)
+                                ? std::string(take().text)
+                                : std::string(expect(K::Ident, "a constructor name").text);
+        auto c = makeNode(N::Ctor, loc(), cname);
         // `| Circle @json(name = "c") of ...` and `| Empty @json(...) |`:
         // attributes a derive reads, between the name and `of` or `|`
         // (ADR 0045).
@@ -1612,6 +1616,15 @@ class Parser {
         take();
         Bracket b(*this);
         NodePtr n;
+        // `{ $fs }` in a quote: the fields a metaprogram computed, as a
+        // list of [name; value] pairs (docs/meta.md).
+        if (at(K::SpliceIdent) && kind(1) == K::RBrace) {
+          n = makeNode(N::RecordLit, start);
+          n->add(makeNode(N::Splice, loc(), text()));
+          take();
+          expect(K::RBrace, "'}' after the spliced fields");
+          return n;
+        }
         if (at(K::Ident) && kind(1) == K::Eq) {
           n = makeNode(N::RecordLit, start);
         } else {

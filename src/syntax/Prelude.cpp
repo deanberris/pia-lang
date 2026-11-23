@@ -60,6 +60,260 @@ let meta derive_eq (t : type_decl) : item =
   with_doc (concat "Field-by-field equality for " what)
     `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
 
+(* @derive(json) (ADR 0045, step 2 to 4; docs/json.md): for a record of
+   integers, range types and bools, `write_json_<t>` writes it as a JSON
+   object with Pia.Text.Json.Write, into a caller's buffer with the room
+   its precondition gives, and `read_json_<t>` reads one with
+   Pia.Text.Json.Read and Pia.Text.Json.Lex. A member's name is its
+   field's, or `@json(name = "...")` on the field, in printable ASCII.
+   The reader finds a member by a decision tree built here, on the name's
+   length, then on the first byte where the candidates differ, then one
+   full compare; it keeps a flag per field, so a member given twice is
+   `Duplicate_<t>` and one never given is `Missing_<t>`; an unknown one is
+   `Unknown_<t>`; each integer's range is checked as its digits are read,
+   `Range_<t>`; anything else is `Syntax_<t>`. Its error type,
+   `<t>_json_error`, has exactly the constructors its type can raise.
+   The value it returns is built only once every field is read, so it is
+   fully initialised. The generated code calls those modules by their
+   full paths, so a program that derives json imports their interfaces.
+   It lives here until interfaces can export metaprograms (ADR 0039,
+   step 3); then it moves to Pia.Text.Json.Derive. Names it binds end in
+   `#field`, which no source can write. *)
+let meta derive_json (t : type_decl) : list =
+  let tn = name t in
+  (* The modules' functions by their full paths, spliced as names. *)
+  let json_write = let (f) => concat "Pia.Text.Json.Write." f in
+  let json_read = let (f) => concat "Pia.Text.Json.Read." f in
+  let fs = fields t in
+  let nf = length fs in
+  let idx = range nf in
+  (* The member name of a field: @json(name = "...") or its own. *)
+  let key_of = let (f) =>
+    fold (let (acc) (a) =>
+            if eq (nth a 0) "json" then
+              fold (let (acc2) (arg) => if eq (nth arg 0) "name" then nth arg 1 else acc2) acc (nth a 1)
+            else acc)
+         f (field_attrs t f) in
+  let keys = map key_of fs in
+  let plain = let (k) =>
+    fold (let (ok) (b) => and ok (and (ge b 32) (and (le b 126) (and (ne b 34) (ne b 92))))) (gt (length (bytes k)) 0) (bytes k) in
+  let checked = map (let (k) => if plain k then k else fail (concat "@derive(json): the member name '" (concat k "' needs printable ASCII with no quote or backslash"))) keys in
+  (* What a field is: "bool", or an integer with its bounds. *)
+  let is_bool = let (f) =>
+    let ft = field_type t f in if eq (kind ft) "TypeName" then eq (name ft) "bool" else false in
+  (* Integer and range types have bounds; any other type is not supported
+     yet, which is an error that names the field. *)
+  let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
+  let supported = map (let (f) =>
+      let ft = field_type t f in
+      if is_bool f then true
+      else if eq (kind ft) "RangeType" then true
+      else if eq (kind ft) "TypeName" then
+        (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
+         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types and bool")))
+      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types and bool")))
+    fs in
+  let bounds = let (f) => range_of (field_type t f) in
+  (* The writer of a field's value, and the room it needs. *)
+  let writer = let (f) =>
+    if is_bool f then [ "write_bool"; 5 ]
+    else (
+      let b = bounds f in
+      let lo = nth b 0 in
+      let hi = nth b 1 in
+      if ge lo 0 then
+        (if le hi 255 then [ "write_u8"; 3 ] else if le hi 65535 then [ "write_u16"; 5 ]
+         else if le hi 4294967295 then [ "write_u32"; 10 ] else [ "write_u64"; 20 ])
+      else
+        (if and (ge lo (-128)) (le hi 127) then [ "write_i8"; 4 ] else if and (ge lo (-32768)) (le hi 32767) then [ "write_i16"; 6 ]
+         else if and (ge lo (-2147483648)) (le hi 2147483647) then [ "write_i32"; 11 ] else [ "write_i64"; 20 ])) in
+  (* A member's room: its key with quotes, the colon and its value. *)
+  let member_room = let (i) => add (add (length (bytes (nth checked i))) 3) (nth (writer (nth fs i)) 1) in
+  let room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
+  let wname = concat "write_json_" tn in
+  let wfield = let (i) => concat (concat (concat "write_json_" tn) "_") (nth fs i) in
+  (* One function per member: its key, a colon and its value. *)
+  let member_writer = let (i) =>
+    let f = nth fs i in
+    let fn = wfield i in
+    let ft = field_type t f in
+    let kb = bytes (nth checked i) in
+    let kn = length kb in
+    let r = member_room i in
+    let w = concat "Pia.Text.Json.Write." (nth (writer f) 0) in
+    `( let $fn ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $ft) : usize
+         requires $!pos <= len $!dst && len $!dst - $!pos >= $r
+         ensures $!pos < $!result && $!result - $!pos <= $r
+       = let $!key : [u8; $kn] = [ $kb ] in
+         let $!p1 = $(json_write "write_key") $!dst $!pos $!key in
+         let $!p2 = $(json_write "write_colon") $!dst $!p1 in
+         $w $!dst $!p2 $!v ) in
+  (* The object: `{`, the members with commas between, `}`. *)
+  let body = fold (let (acc) (i) =>
+      let fn = wfield i in
+      let f = nth fs i in
+      let after = if lt (add i 1) nf then `( $(json_write "write_comma") $!dst ($fn $!dst $acc $!v.$f) ) else `( $fn $!dst $acc $!v.$f ) in
+      after)
+    `( $(json_write "write_lbrace") $!dst $!pos ) idx in
+  let writer_fn =
+    `( let $wname ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $t) : usize
+         requires $!pos <= len $!dst && len $!dst - $!pos >= $room
+         ensures $!pos < $!result && $!result <= $!pos + $room
+       = $(json_write "write_rbrace") $!dst ($body) ) in
+  (* ---- The reader ---- *)
+  let has_int = fold (let (acc) (f) => or acc (eq (is_bool f) false)) false fs in
+  let ctor = let (c) => concat (concat c "_") tn in
+  let esyn = ctor "Syntax" in
+  let eunk = ctor "Unknown" in
+  let edup = ctor "Duplicate" in
+  let emis = ctor "Missing" in
+  let erng = ctor "Range" in
+  let ename = concat tn "_json_error" in
+  (* The error set is exact: Range only when there is an integer field. *)
+  let error_type =
+    if has_int then
+      `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize )
+    else
+      `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize ) in
+  let rname = concat tn "_json_read" in
+  let read_type = `( let $rname = type { value : $t; stop : usize } ) in
+  let fread = let (i) => concat (concat (concat "read_json_" tn) "_") (nth fs i) in
+  let ftype = let (i) => concat (concat (concat tn "_") (nth fs i)) "_json" in
+  (* One reader per field's value, with its range checked as it reads. *)
+  let field_reader = let (i) =>
+    let f = nth fs i in
+    let fn = fread i in
+    let rt = ftype i in
+    let ft = field_type t f in
+    let rtype = `( let $rt = type { value : $ft; stop : usize } ) in
+    let body =
+      if is_bool f then
+        `( match $(json_read "read_bool") $!s $!pos with
+           | Ok $!r -> Ok { value = $!r.value; stop = $!r.stop }
+           | Err $!p -> Err ($esyn $!p) )
+      else (
+        let b = bounds f in
+        let lo = nth b 0 in
+        let hi = nth b 1 in
+        if ge lo 0 then
+          `( match $(json_read "read_uint") $!s $!pos $hi with
+             | Ok $!r ->
+                 if $!r.value < $lo then Err ($erng $!r.start)
+                 else (let $!v : $ft = $!r.value in Ok { value = $!v; stop = $!r.stop })
+             | Err $!e ->
+                 (match $!e with
+                  | NotNumber $!p -> Err ($esyn $!p)
+                  | OutOfRange $!p -> Err ($erng $!p)) )
+        else
+          `( match $(json_read "read_int") $!s $!pos $lo $hi with
+             | Ok $!r -> (let $!v : $ft = $!r.value in Ok { value = $!v; stop = $!r.stop })
+             | Err $!e ->
+                 (match $!e with
+                  | NotNumber $!p -> Err ($esyn $!p)
+                  | OutOfRange $!p -> Err ($erng $!p)) )) in
+    [ rtype;
+      `( let $fn ($!s : [u8]) ($!pos : usize) : result $rt $ename
+           requires $!pos <= len $!s
+           ensures (match $!result with
+             | Ok $!q -> $!pos < $!q.stop && $!q.stop <= len $!s
+             | Err _ -> true)
+         = $body ) ] in
+  (* The key decision tree: on the name's length, then on the first byte
+     where the candidates differ, then one full compare. It returns the
+     field's number from 1, or 0 for no field. *)
+  let kbytes = map bytes checked in
+  let dup_free = fold (let (acc) (i) =>
+      fold (let (a2) (j) => if and (lt j i) (eq (nth checked j) (nth checked i)) then fail (concat "@derive(json): two fields have the member name " (nth checked i)) else a2) acc idx)
+    true idx in
+  let distinct = let (xs) => fold (let (acc) (x) => if fold (let (h) (y) => or h (eq y x)) false acc then acc else concat acc [ x ]) [] xs in
+  let compare_all = let (c) =>
+    let bs = nth c 1 in
+    fold (let (acc) (j) => `( $acc && $!s.[$!a + $j] = $(nth bs j) )) `( true ) (range (length bs)) in
+  let tree (cs : list) : expr =
+    if eq (length cs) 1 then
+      `( if $(compare_all (nth cs 0)) then $(add (nth (nth cs 0) 0) 1) else 0 )
+    else (
+      let n = length (nth (nth cs 0) 1) in
+      let differs = let (p) => gt (length (distinct (map (let (c) => nth (nth c 1) p) cs))) 1 in
+      let p = nth (filter differs (range n)) 0 in
+      let vals = distinct (map (let (c) => nth (nth c 1) p) cs) in
+      fold (let (acc) (v) =>
+              let sub = filter (let (c) => eq (nth (nth c 1) p) v) cs in
+              `( if $!s.[$!a + $p] = $v then $(tree sub) else $acc ))
+           `( 0 ) vals) in
+  let cands = map (let (i) => [ i; nth kbytes i ]) idx in
+  let lens = distinct (map (let (c) => length (nth c 1)) cands) in
+  let dispatch = fold (let (acc) (l) =>
+      `( if $!n = $l then $(tree (filter (let (c) => eq (length (nth c 1)) l) cands)) else $acc ))
+    `( 0 ) lens in
+  let kname = concat "json_key_" tn in
+  let key_fn =
+    `( let $kname ($!s : [u8]) ($!a : usize) ($!n : usize) : u8
+         requires $!a <= len $!s && $!n <= len $!s - $!a
+         ensures $!result <= $nf
+       = $dispatch ) in
+  (* The reader: `{`, then members until `}`, each name once. *)
+  let seen = let (i) => concat "seen#" (nth fs i) in
+  let val = let (i) => concat "val#" (nth fs i) in
+  (* A member's action: once, reading its value; a second time is an
+     error. *)
+  let action = let (i) =>
+    let sn = seen i in
+    let vn = val i in
+    let fn = fread i in
+    `( if $sn then ($!err <- $edup $!k.start; 0)
+       else
+         (match $fn $!s $!k.next with
+          | Ok $!q -> ($vn <- $!q.value; $sn <- true; $!q.stop)
+          | Err $!e -> ($!err <- $!e; 0)) ) in
+  let actions = fold (let (acc) (i) =>
+      `( if $!which = $(add i 1) then $(action i) else $acc ))
+    `( ($!err <- $eunk $!k.start; 0) ) idx in
+  let all_seen = fold (let (acc) (i) => `( $acc && $(seen i) )) `( true ) idx in
+  let record = fold (let (acc) (i) => concat acc [ [ nth fs i; val i ] ]) [] idx in
+  let loop =
+    `( let $!at : mutable usize = $!o.next in
+       let $!err : mutable $ename = $esyn $!pos in
+       let $!going : mutable bool = $!o.empty = false in
+       let $!ok : mutable bool = true in
+       while $!going
+         invariant $!pos < $!at && $!at <= len $!s
+         decreases len $!s - $!at + (if $!going then 1 else 0)
+       do
+         match $(json_read "read_key") $!s $!at with
+         | Err $!p -> ($!err <- $esyn $!p; $!ok <- false; $!going <- false)
+         | Ok $!k ->
+             let $!which = $kname $!s ($!k.start + 1) ($!k.stop - $!k.start - 2) in
+             let $!next : usize = $actions in
+             if $!next > $!at then
+               (match $(json_read "after_member") $!s $!next with
+                | Ok $!sp -> ($!at <- $!sp.next; $!going <- $!sp.more)
+                | Err $!p -> ($!err <- $esyn $!p; $!ok <- false; $!going <- false))
+             else ($!ok <- false; $!going <- false)
+       done;
+       if $!ok = false then Err $!err
+       else if $all_seen then Ok { value = { $record }; stop = $!at }
+       else Err ($emis $!at) ) in
+  let wrapped = fold (let (acc) (i) =>
+      let sn = seen i in
+      let vn = val i in
+      let ft = field_type t (nth fs i) in
+      let init = if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
+      `( let $sn : mutable bool = false in let $vn : mutable $ft = $init in $acc ))
+    loop (reverse idx) in
+  let rfn = concat "read_json_" tn in
+  let reader_fn =
+    `( let $rfn ($!s : [u8]) ($!pos : usize) : result $rname $ename
+         requires $!pos <= len $!s
+         ensures (match $!result with
+           | Ok $!r -> $!pos < $!r.stop && $!r.stop <= len $!s
+           | Err _ -> true)
+       = match $(json_read "open_object") $!s $!pos with
+         | Err $!p -> Err ($esyn $!p)
+         | Ok $!o -> $wrapped ) in
+  concat (concat (map member_writer idx) [ writer_fn ])
+    (concat [ error_type; read_type; key_fn ] (concat (fold (let (acc) (i) => concat acc (field_reader i)) [] idx) [ reader_fn ]))
+
 (* State machines as theories (ADR 0036, step 5; docs/theories.md).
    `let theory Conn = machine "conn" conn_state Closed [ edge Closed
    "connect" Open; ... ]` builds a theory with a sort `conn`, `at c : conn

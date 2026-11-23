@@ -11,12 +11,13 @@
 (* The digit count and the digits' value by induction, the digit loops,
    a character sequence by induction, and the string loop.
 // CHECK-NOT: failed
-// CHECK-DAG: Write.pia:261:17: proved: the measure of 'digits_frame' decreases [smt]
-// CHECK-DAG: Write.pia:316:5: proved: the measure decreases [smt]
-// CHECK-DAG: Write.pia:330:17: proved: the measure of 'run_digits' decreases [smt]
-// CHECK-DAG: Write.pia:474:36: proved: the measure of 'chars_frame' decreases [smt]
-// CHECK-DAG: Write.pia:667:5: proved: the measure decreases [smt]
-// CHECK: 542 proved, 0 failed, 0 skipped
+// CHECK-DAG: Write.pia:270:17: proved: the measure of 'digits_frame' decreases [smt]
+// CHECK-DAG: Write.pia:325:5: proved: the measure decreases [smt]
+// CHECK-DAG: Write.pia:339:17: proved: the measure of 'run_digits' decreases [smt]
+// CHECK-DAG: Write.pia:483:36: proved: the measure of 'chars_frame' decreases [smt]
+// CHECK-DAG: Write.pia:676:5: proved: the measure decreases [smt]
+// CHECK-DAG: Write.pia:696:5: proved: the measure decreases [smt]
+// CHECK: 571 proved, 0 failed, 0 skipped
 *)
 
 (*

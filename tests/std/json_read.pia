@@ -1,0 +1,25 @@
+(* Pia.Text.Json.Read (ADR 0045, step 4): every goal of the token readers
+   is proved, with nothing accepted unproved: the digit loop ends and
+   checks its bound as it reads, a value it returns is within the range
+   asked for and is the number token's, and each reader's positions stay
+   within the input.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: FileCheck --check-prefix=READER %s < %t/Pia.Text.Json.Read.Reader.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Read.pia | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK-DAG: Read.pia:141:5: proved: the measure decreases [smt]
+// CHECK: 73 proved, 0 failed, 0 skipped
+*)
+
+(*
+// READER:      {{^}}module Pia.Text.Json.Read{{$}}
+// READER-NEXT: {{^}}interface Reader = sig{{$}}
+// READER-NEXT: {{^}}  let num_error = type | NotNumber of usize | OutOfRange of usize{{$}}
+// READER:      {{^}}  let read_uint : (s : [u8]) -> (pos : usize) -> (max : u64) -> result uint_read num_error requires pos <= len s
+// READER-SAME: Pia.Text.Json.Spec.magnitude s r.start r.stop = r.value
+*)

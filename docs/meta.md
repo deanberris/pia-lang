@@ -138,6 +138,7 @@ Running out of steps in such a metaprogram is an internal compiler error.
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
 - `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
+- `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, and `| $c of t` a string as a constructor's name, so a derive can write bytes it computed, build a value of the type it was given, and name its own errors (`tests/meta/list_splices.pia`).
 
 The code a quote builds takes the location of the expansion site: the operator, the `@derive` attribute, or the top-level call. Spliced code keeps its own locations.
 
@@ -277,6 +278,13 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 ```
 
 `=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records in code is an error that suggests `@derive(eq)`; in a contract they compare as values ([irgen.md](irgen.md#records)). Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
+
+The prelude also defines `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), step 4). For a record of integers, range types and `bool`, it makes:
+
+- `write_json_<t> (dst) (pos) (v : t) : usize`, which writes `v` as a JSON object with `Pia.Text.Json.Write`, one function per member, into room its precondition states as a constant;
+- `read_json_<t> (s) (pos) : result <t>_json_read <t>_json_error`, which reads one with `Pia.Text.Json.Read`. It finds a member by a decision tree built at compile time, on the name's length, then on the first byte where the names left differ, then one full compare. It keeps a flag per field, so a member given twice is `Duplicate_<t>` and one never given is `Missing_<t>`, and it checks each integer's range as its digits are read (`Range_<t>`). An unknown member is `Unknown_<t>`, and anything else `Syntax_<t>`, each with its position. The error type has exactly the constructors its type can raise: no `Range_<t>` without an integer field. The value is built only once every field has been read, so it is fully initialised.
+
+A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read` and `Write`. The derive is in the prelude until interfaces can export metaprograms ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 3), when it moves to `Pia.Text.Json.Derive`. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
 
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
 

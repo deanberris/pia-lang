@@ -199,7 +199,7 @@ bool hasBinderText(NodeKind k) {
     case NodeKind::LetItem: case NodeKind::LetIn: case NodeKind::Param:
     case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
     case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
-    case NodeKind::QuotedDecl:
+    case NodeKind::QuotedDecl: case NodeKind::Ctor:
     // A theory's, a model's and a sort's names (ADR 0036): `let sort $s`.
     case NodeKind::Theory: case NodeKind::Model: case NodeKind::SortItem:
       return true;
@@ -1471,6 +1471,40 @@ class QuoteBuilder {
           else
             out->add(clone(p));
         }
+        continue;
+      }
+      // `{ $fs }`: a record literal's fields, a list of [name; value]
+      // pairs, so a derive can build a value of the type it was given.
+      if (n.kind == NodeKind::RecordLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        ValuePtr v = var(n.kids[i]->text);
+        if (v->kind != K::List)
+          throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                "pairs"};
+        for (const ValuePtr &pair : v->list) {
+          if (pair->kind != K::List || pair->list.size() != 2 ||
+              pair->list[0]->kind != K::Str)
+            throw MetaError{site, "'{ $fields }' needs a list of [name; value] "
+                                  "pairs"};
+          auto f = makeNode(NodeKind::FieldInit, site, pair->list[0]->s);
+          f->add(fromValue(pair->list[1], false));
+          out->add(std::move(f));
+        }
+        continue;
+      }
+      // `[ $xs ]`: a list spliced among a list literal's elements is
+      // its elements, so a derive can write a buffer of bytes it computed
+      // (ADR 0045, step 4).
+      if (n.kind == NodeKind::ListLit && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        const Node &sp = *n.kids[i];
+        ValuePtr v = sp.text.empty() ? in_.eval(*sp.kids[0], env_)
+                                     : var(sp.text);
+        if (v->kind == K::List) {
+          for (const ValuePtr &part : v->list) out->add(fromValue(part, false));
+          continue;
+        }
+        out->add(fromValue(v, false));
         continue;
       }
       out->add(copy(*n.kids[i], isTypePosition(n.kind, i)));
