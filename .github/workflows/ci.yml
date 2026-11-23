@@ -38,6 +38,24 @@ jobs:
             ${{ steps.key.outputs.key }}-partial-
             bazel-disk-${{ runner.os }}-${{ runner.arch }}-
 
+      # BuildBuddy remote cache and results UI (.bazelrc, config buildbuddy).
+      # Pull requests from forks get no secrets, so they build without it.
+      - name: Use the BuildBuddy remote cache
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [ -n "$BUILDBUDDY_API_KEY" ]; then
+            {
+              echo "common --config=buildbuddy"
+              echo "common --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+              echo "common --build_metadata=ROLE=CI"
+              echo "common --build_metadata=REPO_URL=${{ github.server_url }}/${{ github.repository }}"
+            } > user.bazelrc
+            echo "BuildBuddy remote cache on."
+          else
+            echo "No BUILDBUDDY_API_KEY secret; building without the remote cache."
+          fi
+
       # The step timeouts leave the job time to save what was built.
       - name: Build
         timeout-minutes: 300

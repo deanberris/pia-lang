@@ -7,6 +7,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 package(default_visibility = ["//visibility:public"])
 
 exports_files([
+    "Heap.pia",
     "Modify.pia",
     "Permutation.pia",
     "Remove.pia",
@@ -64,6 +65,21 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# The heap operations and heap sort, with a comparator: tests/std/heap.pia
+# checks its goals; tests/std/heap_edges.pia and :heap_run test it through
+# its interface.
+pia_library(
+    name = "heap",
+    src = "Heap.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        ":permutation",
+        ":sort",
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],

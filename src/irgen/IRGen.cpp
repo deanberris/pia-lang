@@ -305,9 +305,11 @@ class Gen {
         if (sigs_.at(it->second).isGeneric()) checkDefinition(it->second);
     if (diags_.hasErrors()) return nullptr;
     // Each higher-order function is proved once too, with its function
-    // parameters abstract (ADR 0044, step 6).
-    for (auto &[name, list] : hofs_)
-      for (sema::FuncSig &h : list) proveOnce(h);
+    // parameters abstract (ADR 0044, step 6). Callees first, so that the
+    // specialisation of one another calls, made at the caller's stand-in,
+    // is discharged by the callee's proof rather than proved again. Not by
+    // position: the functions of an imported module all sit at its import.
+    for (sema::FuncSig *h : hofsCalleesFirst()) proveOnce(*h);
     for (const syntax::NodePtr &item : program.kids) {
       if (auto it = symbolOf.find(item.get()); it != symbolOf.end())
         genFunction(it->second);
@@ -803,13 +805,17 @@ class Gen {
     }
     // A specialisation of a higher-order function proved once is an
     // instance of that proof (ADR 0044, step 6).
-    if (!checking_)
-      if (auto p = provedBy_.find(llvm::StringRef(sig.name).split('<').first.str());
-          p != provedBy_.end()) {
-        bool concrete = true;
-        for (auto &[n, t] : sig.typeArgs) concrete &= !standIns_.contains(t);
-        if (concrete) fn->setAttr("pia.instance_of", b_.getStringAttr(p->second));
-      }
+    if (auto p = provedBy_.find(llvm::StringRef(sig.name).split('<').first.str());
+        p != provedBy_.end()) {
+      bool concrete = true;
+      for (auto &[n, t] : sig.typeArgs) concrete &= !standIns_.contains(t);
+      if (concrete && !checking_)
+        fn->setAttr("pia.instance_of", b_.getStringAttr(p->second));
+      // At another proof's stand-ins, it is part of that proof, which then
+      // holds only if this one's does (the verifier checks both).
+      else if (!concrete)
+        fn->setAttr("pia.proved_by", b_.getStringAttr(p->second));
+    }
     // A spec function copied from another module's interface is proved by
     // that module; here it is only unfolded (ADR 0039).
     if (sig.typeArgs.empty() && hasFlag(item, "spec"))
@@ -3922,6 +3928,42 @@ class Gen {
                     syntax::makeNode(NodeKind::Name, n.kids[0]->loc, via));
   }
 
+  // The higher-order functions, each after those its body names, and
+  // otherwise in the order they are written. A name is matched by its last
+  // component too, since a body from an interface names its module's
+  // functions unqualified; matching too much only reorders.
+  std::vector<sema::FuncSig *> hofsCalleesFirst() {
+    std::vector<sema::FuncSig *> all;
+    for (auto &[name, list] : hofs_)
+      for (sema::FuncSig &h : list) all.push_back(&h);
+    std::stable_sort(all.begin(), all.end(),
+                     [](const sema::FuncSig *a, const sema::FuncSig *b) {
+                       return a->item->loc.offset < b->item->loc.offset;
+                     });
+    auto last = [](llvm::StringRef n) { return n.rsplit('.').second.empty() ? n : n.rsplit('.').second; };
+    std::map<std::string, std::vector<sema::FuncSig *>> byLast;
+    for (sema::FuncSig *h : all) byLast[last(h->name).str()].push_back(h);
+    std::vector<sema::FuncSig *> out;
+    std::set<sema::FuncSig *> done, active;
+    std::function<void(sema::FuncSig *)> visit = [&](sema::FuncSig *h) {
+      if (done.count(h) || active.count(h)) return;
+      active.insert(h);
+      std::function<void(const Node &)> walk = [&](const Node &n) {
+        if (n.kind == NodeKind::Name)
+          if (auto c = byLast.find(last(n.text).str()); c != byLast.end())
+            for (sema::FuncSig *callee : c->second)
+              if (callee != h) visit(callee);
+        for (const NodePtr &k : n.kids) walk(*k);
+      };
+      walk(*h->item);
+      active.erase(h);
+      done.insert(h);
+      out.push_back(h);
+    };
+    for (sema::FuncSig *h : all) visit(h);
+    return out;
+  }
+
   // Proves a higher-order function once (ADR 0044, step 6, with ADR
   // 0043): each pure function parameter `p` becomes a parameter of a type
   // `p#type` that meets a concept made for it, whose one requirement is
@@ -4032,8 +4074,23 @@ class Gen {
     checkDefinition(symbol);
     bool kept = diags_.count() == errors && notParametric_.size() == notes &&
                 module_.lookupSymbol<mlir::func::FuncOp>("definition of " + symbol);
+    // Why, as a note: a module with no specialisation of its own would
+    // otherwise pass without proving the function at all.
+    std::optional<NotParametric> why;
+    if (diags_.count() > errors) {
+      const syntax::Diagnostic &d = diags_.errors()[errors];
+      why = NotParametric{file_.str() + ":" + std::to_string(d.loc.line) +
+                              ":" + std::to_string(d.loc.column),
+                          hof.name,
+                          "its check over any function argument failed here: " +
+                              d.message};
+    } else if (notParametric_.size() > notes) {
+      why = notParametric_[notes];
+      why->generic = hof.name;
+    }
     diags_.truncate(errors);
     notParametric_.resize(notes);
+    if (why) notParametric_.push_back(std::move(*why));
     if (kept) hofProof_[hof.name] = symbol;
   }
 

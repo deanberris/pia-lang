@@ -1,0 +1,219 @@
+(* Pia.Core.Algo.Heap: <algorithm>'s heap operations and heap sort (ADR
+   0040, phase 1.7): is_heap_until, is_heap, push_heap, pop_heap,
+   make_heap, sort_heap, and sort, which is a heap sort. Each takes a
+   comparator that must be a strict weak order (Pia.Fn.strict_weak_order)
+   and is proved once, over the element type and any such comparator (ADR
+   0043, ADR 0044). The overload `sort xs`, by Ord's less, waits: its
+   proof from the comparator form does not go through yet.
+
+   A heap is stated parent to child: no element is less than its child,
+   and the parent of k is (k - 1) >> 1, a shift rather than a division,
+   which the solver handles far more cheaply. Every step is
+   Pia.Core.Algo.Sort's exchange, whose contract keeps how often each
+   value occurs, so the results are permutations of the input. sift_up
+   and sift_down are the steps push_heap, pop_heap and make_heap share;
+   they, larger_child and the spec functions heap_top and not_less_trans
+   are exported because the exported functions' bodies call them. *)
+module Pia.Core.Algo.Heap : Heap
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+
+interface Heap = sig
+  let spec heap : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (n : usize) -> bool
+  let spec heap_top : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> bool
+  let is_heap_until : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
+  let is_heap : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool
+  let spec not_less_trans : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (a : t) -> (b : t) -> (c : t) -> bool
+  let sift_up : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> unit
+  let larger_child : (t : type) -> (xs : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (j : usize) -> (n : usize) -> usize
+  let sift_down : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (i : usize) -> (n : usize) -> unit
+  let push_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+  let pop_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> unit
+  let make_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+  let sort_heap : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+  let sort : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (less : (a : t) -> (b : t) -> bool) -> unit
+end
+
+(* xs.[0 .. n] is a max-heap by less: no element is less than its child. *)
+let spec heap (t : type) (less : (a : t) -> (b : t) -> bool) (xs : [t]) (n : usize) : bool
+  requires n <= len xs
+= forall (k in 1 .. n). less xs.[(k - 1) >> 1] xs.[k] = false
+
+(* The first element of a heap is not less than any other. *)
+let spec heap_top (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) (n : usize) : bool
+  requires Pia.Fn.strict_weak_order less
+  requires n <= len xs
+  requires heap less xs n
+  ensures forall (k in 0 .. n). less xs.[0] xs.[k] = false
+  decreases n
+= if n <= 1 then true else heap_top xs less (n - 1)
+
+(* For a strict weak order, not less is transitive. A spec function, true,
+   for its contract: asserting it gives a caller the fact. *)
+let spec not_less_trans (t : type) (less : (a : t) -> (b : t) -> bool) (a : t) (b : t) (c : t) : bool
+  requires Pia.Fn.strict_weak_order less
+  ensures less a b = false && less b c = false ==> less a c = false
+= true
+
+let is_heap_until (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : usize
+  requires Pia.Fn.strict_weak_order less
+  ensures result <= len xs
+  ensures heap less xs result
+  ensures result < len xs ==> result > 0 && less xs.[(result - 1) >> 1] xs.[result]
+= if len xs < 2 then len xs else (
+    let i : mutable usize = 1 in
+    while i < len xs && less xs.[(i - 1) >> 1] xs.[i] = false
+      invariant 1 <= i && i <= len xs
+      invariant heap less xs i
+      decreases len xs - i
+    do i <- i + 1 done;
+    i)
+
+let is_heap (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) : bool
+  requires Pia.Fn.strict_weak_order less
+  ensures result <==> heap less xs (len xs)
+= is_heap_until xs less = len xs
+
+(* Sift xs.[n - 1] up into the heap xs.[0 .. n - 1]. *)
+let sift_up (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) (n : usize) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires 0 < n && n <= len xs
+  requires heap less xs (n - 1)
+  ensures heap less xs n
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+  ensures forall (k in n .. len xs). xs.[k] = old (xs.[k])
+= let j : mutable usize = n - 1 in
+  while j > 0 && less xs.[(j - 1) >> 1] xs.[j]
+    invariant j < n
+    invariant forall (k in 1 .. n). k <> j ==> less xs.[(k - 1) >> 1] xs.[k] = false
+    invariant j > 0 ==> (forall (k in 1 .. n). (k - 1) >> 1 = j ==> less xs.[(j - 1) >> 1] xs.[k] = false)
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+    invariant forall (k in n .. len xs). xs.[k] = old (xs.[k])
+    decreases j
+  do
+    let p = (j - 1) >> 1 in
+    let up = xs.[j] in
+    assert less up xs.[p] = false;
+    assert (forall (k in 1 .. n). (k - 1) >> 1 = p && k <> j ==> less up xs.[k] = false);
+    S.exchange xs p j;
+    j <- p
+  done
+
+(* The larger of xs.[j]'s children in xs.[0 .. n], the left one when
+   neither is less. *)
+let larger_child (t : type) (xs : [t]) (less : (a : t) -> (b : t) -> bool) (j : usize) (n : usize) : usize
+  requires Pia.Fn.strict_weak_order less
+  requires j < n >> 1 && n <= len xs
+  ensures result < n && (result - 1) >> 1 = j && result > j
+  ensures forall (k in 1 .. n). (k - 1) >> 1 = j ==> less xs.[result] xs.[k] = false
+= let c = 2 * j + 1 in
+  if c + 1 < n && less xs.[c] xs.[c + 1] then c + 1 else c
+
+(* Sift xs.[i] down into xs.[i .. n], whose other parents are in order. *)
+let sift_down (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) (i : usize) (n : usize) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires i < n && n <= len xs
+  requires forall (k in 1 .. n). (k - 1) >> 1 > i ==> less xs.[(k - 1) >> 1] xs.[k] = false
+  ensures forall (k in 1 .. n). (k - 1) >> 1 >= i ==> less xs.[(k - 1) >> 1] xs.[k] = false
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+  ensures forall (k in 0 .. len xs). k < i || n <= k ==> xs.[k] = old (xs.[k])
+  ensures forall (b : t). (forall (k in i .. n). less b (old (xs.[k])) = false) ==>
+    (forall (k in i .. n). less b xs.[k] = false)
+= let j : mutable usize = i in
+  let going : mutable bool = true in
+  while going && j < n >> 1
+    invariant i <= j && j < n
+    invariant forall (k in 1 .. n). (k - 1) >> 1 >= i && (k - 1) >> 1 <> j ==> less xs.[(k - 1) >> 1] xs.[k] = false
+    invariant j > i ==> (forall (k in 1 .. n). (k - 1) >> 1 = j ==> less xs.[(j - 1) >> 1] xs.[k] = false)
+    invariant going = false ==> (forall (k in 1 .. n). (k - 1) >> 1 = j ==> less xs.[j] xs.[k] = false)
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+    invariant forall (k in 0 .. len xs). k < i || n <= k ==> xs.[k] = old (xs.[k])
+    invariant forall (b : t). (forall (k in i .. n). less b (old (xs.[k])) = false) ==>
+      (forall (k in i .. n). less b xs.[k] = false)
+    decreases n - j + (if going then 1 else 0)
+  do
+    let c = larger_child xs less j n in
+    if less xs.[j] xs.[c] then (
+      S.exchange xs j c;
+      j <- c)
+    else (
+      assert (not_less_trans less xs.[j] xs.[c] xs.[2 * j + 1] || true);
+      assert (2 * j + 2 < n ==> not_less_trans less xs.[j] xs.[c] xs.[2 * j + 2] || true);
+      going <- false)
+  done
+
+(** C++: std::push_heap: xs.[0 .. len xs - 1] is a heap, and the last
+    element joins it. *)
+let push_heap (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires len xs > 0 && heap less xs (len xs - 1)
+  ensures heap less xs (len xs)
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= sift_up xs less (len xs)
+
+(** C++: std::pop_heap on xs.[0 .. n]: its largest element moves to
+    xs.[n - 1], and the rest stay a heap. Every element of the first n
+    stays among them, which `b` says: what nothing in them was less than
+    still is not. *)
+let pop_heap (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) (n : usize) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires 0 < n && n <= len xs
+  requires heap less xs n
+  ensures heap less xs (n - 1)
+  ensures forall (k in 0 .. n - 1). less xs.[n - 1] xs.[k] = false
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+  ensures forall (k in n .. len xs). xs.[k] = old (xs.[k])
+  ensures forall (b : t). (forall (k in 0 .. n). less b (old (xs.[k])) = false) ==>
+    (forall (k in 0 .. n). less b xs.[k] = false)
+= if n > 1 then (
+    assert (heap_top xs less n || true);
+    S.exchange xs 0 (n - 1);
+    sift_down xs less 0 (n - 1))
+
+(** C++: std::make_heap. *)
+let make_heap (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  ensures heap less xs (len xs)
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= let i : mutable usize = len xs >> 1 in
+  while i > 0
+    invariant i <= len xs >> 1
+    invariant forall (k in 1 .. len xs). (k - 1) >> 1 >= i ==> less xs.[(k - 1) >> 1] xs.[k] = false
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+    decreases i
+  do
+    i <- i - 1;
+    sift_down xs less i (len xs)
+  done
+
+(** C++: std::sort_heap: a heap, sorted by less. *)
+let sort_heap (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  requires heap less xs (len xs)
+  ensures Pia.Fn.sorted less xs
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= let m : mutable usize = len xs in
+  while m > 1
+    invariant m <= len xs
+    invariant heap less xs m
+    invariant forall (p in 0 .. len xs) (q in 0 .. len xs). m <= p && p < q ==> less xs.[q] xs.[p] = false
+    invariant forall (a in 0 .. len xs) (q in 0 .. len xs). a < m && m <= q ==> less xs.[q] xs.[a] = false
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+    decreases m
+  do
+    pop_heap xs less m;
+    m <- m - 1
+  done
+
+(** C++: std::sort with a comparator, as a heap sort: sorted by less, and
+    a permutation of the input. *)
+let sort (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (less : (a : t) -> (b : t) -> bool) : unit
+  requires Pia.Fn.strict_weak_order less
+  ensures Pia.Fn.sorted less xs
+  ensures P.permutation xs (old xs)
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= make_heap xs less;
+  sort_heap xs less

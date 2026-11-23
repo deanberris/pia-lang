@@ -44,13 +44,13 @@ let stuck (x : u8) : u8 requires x < 100 =
   bump x same
 
 (* Expected report, in order.
-// CHECK: lambda_named.pia:25:3: proved: the assertion holds [generic]
-// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [generic]
 // CHECK: lambda_named.pia:12:5: proved: the loop invariant holds on entry [generic]
 // CHECK: lambda_named.pia:13:11: proved: the index is within bounds [generic]
 // CHECK: lambda_named.pia:13:30: proved: '+' does not overflow usize [generic]
 // CHECK: lambda_named.pia:12:5: proved: the loop invariant holds after each iteration [generic]
 // CHECK: lambda_named.pia:9:3: proved: the postcondition holds [generic]
+// CHECK: lambda_named.pia:25:3: proved: the assertion holds [generic]
+// CHECK: lambda_named.pia:24:3: proved: the postcondition holds [generic]
 // CHECK: lambda_named.pia:19:3: proved: the postcondition holds [smt]
 // CHECK: lambda_named.pia:30:5: proved: '+' does not overflow u8 [smt]
 // CHECK: lambda_named.pia:29:3: proved: the postcondition holds [smt]
