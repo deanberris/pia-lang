@@ -1,0 +1,38 @@
+(* Importers of Pia.Core.Charconv know from the interface alone what
+   from_chars returns for any input: how many digits it used, their value
+   in the base when it fits, and the value kept on an error, for an
+   unsigned and a signed type and two bases. Concrete inputs are checked
+   at run time by :charconv_run.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Charconv.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Charconv.Charconv as C
+
+let decimal (s : [u8]) (fallback : u32) : u32
+  ensures C.run s 0 10 = 0 ==> result = fallback
+  ensures C.run s 0 10 > 0 && C.num s 0 (C.run s 0 10) 10 4294967296 <= 4294967295 ==>
+    result = C.num s 0 (C.run s 0 10) 10 4294967296
+  ensures C.run s 0 10 > 0 && C.num s 0 (C.run s 0 10) 10 4294967296 > 4294967295 ==> result = fallback
+= let r = C.from_chars s 10 fallback in
+  r.value
+
+let hex_used (s : [u8]) : usize
+  ensures result = C.run s 0 16
+= let v : u8 = 0 in
+  let r = C.from_chars s 16 v in
+  r.used
+
+let no_digits (s : [u8]) (fallback : i16) : unit
+  requires len s > 0 && C.digit_of s.[0] 10 >= 10 && s.[0] <> 45
+= let r = C.from_chars s 10 fallback in
+  assert r.used = 0 && C.is_invalid (r.ec) && r.value = fallback
+
+let a_minus_alone (s : [u8]) (fallback : i32) : unit
+  requires len s = 1 && s.[0] = 45
+= let r = C.from_chars s 10 fallback in
+  assert r.used = 0 && C.is_invalid (r.ec) && r.value = fallback
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 16 proved, 0 failed, 0 skipped
+*)

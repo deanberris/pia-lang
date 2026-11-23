@@ -13,6 +13,7 @@ lit_tests(
         "Inputs/hof_overloads.pia",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
+        "//lib/Pia/Core:Charconv.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
@@ -345,5 +346,20 @@ sh_test(
     srcs = ["utf8_run_test.sh"],
     args = ["$(rootpath :utf8_run)"],
     data = [":utf8_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "charconv_run",
+    src = "Inputs/charconv_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:charconv"],
+)
+
+sh_test(
+    name = "charconv_run_test",
+    srcs = ["charconv_run_test.sh"],
+    args = ["$(rootpath :charconv_run)"],
+    data = [":charconv_run"],
     target_compatible_with = PIA_TARGETS,
 )

@@ -11,6 +11,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Ascii.pia",
     "Bit.pia",
+    "Charconv.pia",
     "Int.pia",
     "Option.pia",
     "Order.pia",
@@ -78,5 +79,14 @@ pia_library(
 pia_library(
     name = "utf8",
     src = "Utf8.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# <charconv>'s from_chars for integers: tests/std/charconv.pia checks its
+# goals; tests/std/charconv_edges.pia and :charconv_run test it through
+# its interface.
+pia_library(
+    name = "charconv",
+    src = "Charconv.pia",
     target_compatible_with = PIA_TARGETS,
 )
