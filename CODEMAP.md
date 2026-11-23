@@ -115,6 +115,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/repl/Session.{h,cpp}` (2.1k lines) holds the persistent verified environment, `:redef`, the JIT and background tasks.
 - `src/repl/State.{h,cpp}` holds REPL state with invariants and `old` migration.
 - `src/repl/Kernel.{h,cpp}` is an asynchronous job front for a session. `src/repl/Mcp.{h,cpp}` is the MCP server with the two tools `execute` and `poll`.
+- `src/repl/Guide.{h,cpp}` is the language guide `pia mcp` teaches with: its instructions, `:help <topic>`, `pia://guide/` resources and hints on failed cells. `src/repl/embed_guide.py` cuts it from the skills at build time, with the primer in `skills/pia-mcp/instructions.md`.
 - `src/repl/LineEditor.{h,cpp}` is the terminal line editor.
 - `src/lsp/Server.{h,cpp}` is the LSP over a byte stream. `src/lsp/Analysis.{h,cpp}` analyses one document: symbols, hover, rename and lints. `src/lsp/Proofs.{h,cpp}` runs the deep proof check. `src/lsp/Json.{h,cpp}` is a small JSON library.
 
