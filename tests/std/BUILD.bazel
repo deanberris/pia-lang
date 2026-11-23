@@ -37,9 +37,17 @@ lit_tests(
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
+        "//lib/Pia/Image/Gif:Lzw.pia",
+        "//lib/Pia/Image/Gif:Spec.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Spec.pia",
     ],
+    # These two prove alone in about 190 s, so under a full parallel
+    # `bazel test //tests/...` they went past the 300 s of a medium test.
+    sizes = {
+        "heap.pia": "large",
+        "partial_sort.pia": "large",
+    },
     tools = ["//tools/piac"],
 )
 
@@ -409,5 +417,24 @@ sh_test(
     srcs = ["image_raster_run_test.sh"],
     args = ["$(rootpath :image_raster_run)"],
     data = [":image_raster_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_lzw_run",
+    src = "Inputs/gif_lzw_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_lzw_run_test",
+    srcs = ["gif_lzw_run_test.sh"],
+    args = ["$(rootpath :gif_lzw_run)"],
+    data = [":gif_lzw_run"],
     target_compatible_with = PIA_TARGETS,
 )

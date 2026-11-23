@@ -1,0 +1,92 @@
+(* Test-case generators (ADR 0056, step 1): a metaprogram reads a
+   function's signature and contract, forms the product of each
+   parameter's bounds, and returns one item per case, plus a runner. The
+   cases are checked like any other code: each call's precondition is a
+   goal. Their results are not goals yet; offering each case to the
+   verifier is step 2.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=AST
+*)
+
+let clamp (v : u8) (lo : u8) (hi : int{0..9}) : u8
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+  ensures (lo <= v && v <= hi) ==> result = v
+= if v < lo then lo else if v > hi then hi else v
+
+let dec (d : int{-2..2}) : int{-3..1}
+  ensures result = d - 1
+= d - 1
+
+let meta conj (xs : list) : syntax = fold (let (a) (h) => `( $a && $h )) `( true ) xs
+
+(* One case: the parameters bound to the case's values with their own
+   types, the call bound once, and the postcondition checked when the
+   precondition holds. *)
+let meta check (f : syntax) (r : list) : syntax =
+  let res = concat (name f) "_result" in
+  let ret = return_type f in
+  let call = make_call (name f) (params f) in
+  let post = subst (conclusion f) "result" res in
+  let body = `( if $(conj (hypotheses f)) then (let $res : $ret = $call in $post) else true ) in
+  fold (let (acc) (pv) =>
+         let p = nth (nth pv 0) 0 in
+         let t = nth (nth pv 0) 1 in
+         let v = nth pv 1 in
+         `( let $p : $t = $v in $acc ))
+       body (reverse (zip (zip (params f) (param_types f)) r))
+
+let meta cases (f : syntax) : list =
+  let rows = product (map range_of (param_types f)) in
+  let case_name = (let (k) => concat (concat (name f) "_case_") (k + 1)) in
+  let one = (let (k) =>
+    let n = case_name k in
+    let c = check f (nth rows k) in
+    `( let $n () : bool = $c )) in
+  let runner_name = concat (name f) "_cases" in
+  let chain = fold (let (rest) (k) =>
+                     let n = case_name k in
+                     let num = k + 1 in
+                     `( if $n then $rest else $num ))
+                   `( 0 ) (reverse (range (length rows))) in
+  concat (map one (range (length rows))) [ `( let $runner_name () : u32 = $chain ) ]
+
+cases clamp
+cases dec
+
+(* Constructors of a variant, here an error set: one item per constructor. *)
+let parse_error = type | Empty | TooLong | NotDigit of u8
+
+let meta per_error (t : syntax) : list =
+  map (let (c) => let n = concat "seen_" c in `( let $n () : bool = false ))
+      (constructors t)
+
+per_error parse_error
+
+(* AST:  (LetItem "clamp_case_1"
+   AST:    (LetIn "v"
+   AST:          (TypeName "u8")
+   AST:      (IntLit "0")
+   AST:      (LetIn "lo"
+   AST:        (LetIn "hi"
+   AST:              (RangeType "int"
+   AST:            (LetIn "clamp_result"
+   AST:              (Apply
+   AST-NEXT:           (Name "clamp")
+   AST-NEXT:           (Name "v")
+   AST-NEXT:           (Name "lo")
+   AST-NEXT:           (Name "hi")
+   AST:  (LetItem "clamp_case_8"
+   AST:  (LetItem "clamp_cases"
+   AST:  (LetItem "dec_case_1"
+   AST:    (LetIn "d"
+   AST:      (Neg
+   AST-NEXT:   (IntLit "2")
+   AST:  (LetItem "dec_cases"
+   AST:  (LetItem "seen_Empty"
+   AST:  (LetItem "seen_TooLong"
+   AST:  (LetItem "seen_NotDigit"
+   Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 15 proved, 0 failed, 0 skipped
+*)

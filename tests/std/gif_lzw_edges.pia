@@ -1,0 +1,42 @@
+(* Importers of Pia.Image.Gif.Lzw see only its interface, and that is
+   enough to look every decoded index up in a palette of 2^m colours with
+   no check of their own, and to know where a failure points.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Lzw.Lzw as L
+
+(* How many pixels are bright red, from a palette of four RGB colours. *)
+let reds (s : [u8]) (pal : [u8]) (t : borrowed inout mutable [u8]) (o : borrowed inout mutable [u8]) : usize
+  requires len t = 12288 && len pal = 12
+= match L.decode s 2 t o with
+  | Ok n -> (
+      let count : mutable usize = 0 in
+      for i in 0 .. n
+        invariant count <= i
+      do
+        let k : usize = o.[i] in
+        if pal.[3 * k] > 128 then count <- count + 1 else ()
+      done;
+      count)
+  | Err _ -> 0
+
+(* An empty stream is truncated at its start. *)
+let empty (s : [u8]) (t : borrowed inout mutable [u8]) (o : borrowed inout mutable [u8]) : unit
+  requires len t = 12288 && len s = 0
+= match L.decode s 8 t o with
+  | Ok n -> ()
+  | Err e -> (match e with
+      | Truncated p -> assert p = 0
+      | BadCode p -> assert false
+      | OutputFull p -> assert false)
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 11 proved, 0 failed, 0 skipped
+*)

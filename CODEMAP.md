@@ -58,7 +58,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | REPL or MCP | `src/repl/Session.cpp`, `Mcp.cpp` | `docs/repl.md`; `tests/repl` |
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
-| an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*` |
+| an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*` |
 | memory, allocators, `box`, `vec` | no module yet: they are prototyped as tests | `tests/verify/{bump,arena,pool,box,vec_*}.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
@@ -148,6 +148,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
 - `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it (ADR 0045).
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
+- `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions, starting with the LZW dictionary. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it.
 
 ### Elsewhere
 
@@ -188,7 +189,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).
-- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0021 (LSP), 0025 (sanitizers), 0031 (REPL).
+- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point).
 

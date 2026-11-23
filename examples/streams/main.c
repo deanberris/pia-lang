@@ -233,6 +233,21 @@ static double seconds(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 
+// The cells from highest to lowest filled height, for sediment transport.
+static const uint16_t *order_fill;
+static int higher_first(const void *a, const void *b) {
+  uint16_t x = order_fill[*(const uint64_t *)a], y = order_fill[*(const uint64_t *)b];
+  return (x < y) - (x > y);
+}
+
+// The name of the sediment map: the output name with "-sediment" before
+// its extension.
+static void sediment_name(const char *output, char *buf, size_t size) {
+  const char *dot = strrchr(output, '.');
+  size_t stem = dot ? (size_t)(dot - output) : strlen(output);
+  snprintf(buf, size, "%.*s-sediment%s", (int)stem, output, dot ? dot : ".png");
+}
+
 int main(int argc, char **argv) {
   char in_buf[4096], out_buf[4096];
   const char *input = argc > 1 ? argv[1] : NULL;
@@ -307,6 +322,46 @@ int main(int argc, char **argv) {
          (unsigned long long)outlets, (unsigned long long)drained,
          (unsigned long long)rivers);
   printf("map written to %s\n", output);
+
+  // Sediment transport (docs/streams.pia.md, section 5): 100 units of bed
+  // on every cell, moved for a few steps in height order. Pia proves the
+  // total is conserved; the check here is that the compiled code agrees.
+  const uint32_t seed = 100, nsteps = 4;
+  uint64_t *order = malloc(n * sizeof *order);
+  uint32_t *bed = malloc(n * sizeof *bed), *load = malloc(n * sizeof *load);
+  uint32_t *inflow = malloc(n * sizeof *inflow), *flux = malloc(n * sizeof *flux);
+  for (uint64_t i = 0; i < n; ++i) order[i] = i, bed[i] = seed;
+  double t5 = seconds();
+  order_fill = fill;
+  qsort(order, n, sizeof *order, higher_first);
+  double t6 = seconds();
+  uint64_t gone = sediment(fill, n, down, n, acc, n, order, n, nsteps, bed, n,
+                           load, n, inflow, n, flux, n);
+  double t7 = seconds();
+  uint64_t total = 0, carried = 0, moving = 0;
+  for (uint64_t i = 0; i < n; ++i) {
+    total += (uint64_t)bed[i] + load[i] + inflow[i];
+    carried += flux[i] > 0;
+    moving += flux[i] > 0 && acc[i] >= threshold;
+  }
+  render_load(dem, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb, 3 * n);
+  printf("sediment: %u steps over %llu cells (sort %.1f ms, transport %.1f ms)\n",
+         nsteps, (unsigned long long)n, (t6 - t5) * 1e3, (t7 - t6) * 1e3);
+  printf("sediment: %llu units in the beds and the water, %llu out, %llu in all;"
+         " %llu at the start\n",
+         (unsigned long long)total, (unsigned long long)gone,
+         (unsigned long long)(total + gone), (unsigned long long)(n * seed));
+  printf("sediment: %llu cells carry a load, %llu of them on a stream\n",
+         (unsigned long long)carried, (unsigned long long)moving);
+  if (total + gone != n * seed) {
+    fprintf(stderr, "sediment: the total changed\n");
+    return 1;
+  }
+  char sed_name[4096], sed_buf[4096];
+  sediment_name(output, sed_name, sizeof sed_name);
+  if (!write_rgb(resolve(sed_name, sed_buf, sizeof sed_buf), w, h, rgb)) return 1;
+  printf("sediment map written to %s\n", sed_name);
+  free(order), free(bed), free(load), free(inflow), free(flux);
   free(dem), free(fill), free(down), free(basin), free(acc), free(rgb);
   return 0;
 }

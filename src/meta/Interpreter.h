@@ -153,6 +153,14 @@ class Interpreter {
   ValuePtr quote(const syntax::Node &n, const EnvPtr &env);
   ValuePtr match(const syntax::Node &n, const EnvPtr &env);
   bool matches(const syntax::Node &p, const ValuePtr &v, EnvPtr &env);
+  // The code a value stands for when it is put into syntax: syntax itself,
+  // a string as a name, a non-negative integer or a bool as a literal.
+  syntax::NodePtr toCode(const ValuePtr &v, const std::string &who);
+  // The type item `t` names: an item, or a type's name, found in the
+  // listing.
+  const syntax::Node *findTypeItem(const ValuePtr &t);
+  // `range_of t`: the bounds of an integer type, as `[lo; hi]`.
+  ValuePtr rangeOf(const ValuePtr &t);
   void tick(const syntax::Node &n);
 
   std::function<bool(const std::string &)> isTypeDefined_;

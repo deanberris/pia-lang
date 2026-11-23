@@ -140,3 +140,4 @@ These have no C++ standard header. They are listed here because they are library
 | --- | --- | --- |
 | `Pia.Image.Bits` | LSB-first bit fields over a byte slice, as GIF's LZW and deflate read them: `read_bits` and `write_bits` for fields of up to 16 bits, proved against `bits_at`, the field as its bits, with the write's frame proved ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md)) | done (173 goals) |
 | `Pia.Image.Raster` | image dimensions (`dims`), the index of a sample and the rows of a rectangle, each proved to lie below `size w h c` (ADR 0054) | done (50 goals) |
+| `Pia.Image.Gif.Spec`, `Pia.Image.Gif.Lzw` | GIF's LZW decoder, codes of 3 to 12 bits with the deferred clear, into a caller's buffer with a 12288-byte dictionary table the caller lends; total on every input, each code's string proved to be the spec's (`sym`), every index proved below 2^m, and checked against giflib on five streams (ADR 0054) | done |
