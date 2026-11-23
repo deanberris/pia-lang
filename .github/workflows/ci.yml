@@ -1,5 +1,6 @@
-# Builds and tests everything on Apple Silicon, the target Pia compiles for.
-# A cold run builds LLVM/MLIR and Z3 from source, which can take two to three
+# Builds and tests everything on both targets Pia compiles for (ADR 0049):
+# Apple silicon (macOS arm64), the product target, and Linux x86_64. A cold
+# run builds LLVM/MLIR and Z3 from source, which can take two to three
 # hours on a hosted runner. The Bazel disk cache below makes later runs
 # incremental.
 name: CI
@@ -112,5 +113,119 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-logs
+          path: testlogs/
+          if-no-files-found: ignore
+
+  # The same build and tests on Linux x86_64, where piac compiles to ELF for
+  # x86-64-v3. Proofs are target-independent, so this job also proves every
+  # Pia file, and its proof benchmark has its own baseline.
+  linux:
+    name: bazel test (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      # clang, as on macOS, so both jobs build Z3 with the same compiler
+      # family.
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      # A hosted runner starts with about 14 GB free, and LLVM's build
+      # needs more. These preinstalled SDKs are never used here. With the
+      # Android SDK gone, ANDROID_HOME must go too: Bazel's Android rules
+      # fail every target when it names a directory with no SDK in it.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Name the cache
+        id: key
+        run: echo "key=bazel-disk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.bazelversion', '.bazelrc', 'MODULE.bazel', 'MODULE.bazel.lock') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore the Bazel disk cache
+        id: restore
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: ${{ steps.key.outputs.key }}
+          restore-keys: |
+            ${{ steps.key.outputs.key }}-partial-
+            bazel-disk-${{ runner.os }}-${{ runner.arch }}-
+
+      # BuildBuddy remote cache and results UI (.bazelrc, config buildbuddy).
+      # Pull requests from forks get no secrets, so they build without it.
+      - name: Use the BuildBuddy remote cache
+        env:
+          BUILDBUDDY_API_KEY: ${{ secrets.BUILDBUDDY_API_KEY }}
+        run: |
+          if [ -n "$BUILDBUDDY_API_KEY" ]; then
+            {
+              echo "common --config=buildbuddy"
+              echo "common --remote_header=x-buildbuddy-api-key=$BUILDBUDDY_API_KEY"
+              echo "common --build_metadata=ROLE=CI"
+              echo "common --build_metadata=REPO_URL=${{ github.server_url }}/${{ github.repository }}"
+            } > user.bazelrc
+            echo "BuildBuddy remote cache on."
+          else
+            echo "No BUILDBUDDY_API_KEY secret; building without the remote cache."
+          fi
+
+      - name: Build
+        timeout-minutes: 300
+        run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --keep_going //...
+
+      - name: Test
+        id: test
+        timeout-minutes: 30
+        run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
+
+      # The rlimit cost of a query is the same on Linux as on the iMac: the
+      # first Linux run matched several files exactly, and no file cost more
+      # than 1.5% above the baseline, so this job gates on the same one. Wall times are not gated, since the
+      # baseline was recorded on another host.
+      - name: Proof build-time benchmark
+        id: bench
+        if: steps.test.outcome == 'success'
+        timeout-minutes: 30
+        run: >-
+          python3 tools/bench/proof_bench.py
+          --piac bazel-bin/tools/piac/piac
+          --host github-ubuntu-24.04
+          --out bench.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the benchmark
+        if: always() && steps.bench.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-bench-linux
+          path: bench.json
+          if-no-files-found: ignore
+
+      - name: Save the Bazel disk cache
+        if: steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: ${{ steps.key.outputs.key }}
+
+      - name: Save a partial Bazel disk cache
+        if: always() && steps.test.outcome != 'success' && steps.restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/pia-bazel-disk
+          key: ${{ steps.key.outputs.key }}-partial-${{ github.run_id }}
+
+      - name: Collect test logs
+        if: failure()
+        run: rsync -aL --include='*/' --include='test.log' --exclude='*' --prune-empty-dirs bazel-testlogs/ testlogs/ || true
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-linux
           path: testlogs/
           if-no-files-found: ignore

@@ -29,13 +29,13 @@ struct TextEdit {
 };
 
 struct Lint {
-  std::string name;     // such as "range_requires"
-  SourceLoc loc;        // where the warning points
-  uint32_t end = 0;     // byte offset one past the flagged text
+  std::string name; // such as "range_requires"
+  SourceLoc loc;    // where the warning points
+  uint32_t end = 0; // byte offset one past the flagged text
   std::string message;
-  std::string fixTitle;          // empty when there is no fix
-  std::vector<TextEdit> edits;   // in source order, not overlapping
-  bool preferred = true;         // whether the fix is safe to apply blindly
+  std::string fixTitle;        // empty when there is no fix
+  std::vector<TextEdit> edits; // in source order, not overlapping
+  bool preferred = true;       // whether the fix is safe to apply blindly
 };
 
 // Every lint name, in the order docs/idioms.md lists them.
@@ -49,6 +49,6 @@ std::vector<Lint> lint(const Node &program, std::string_view source);
 void printLint(std::ostream &os, const Lint &l, std::string_view filename,
                std::string_view source);
 
-}  // namespace pia::syntax
+} // namespace pia::syntax
 
-#endif  // PIA_SYNTAX_LINT_H
+#endif // PIA_SYNTAX_LINT_H

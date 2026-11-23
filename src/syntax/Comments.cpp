@@ -10,23 +10,35 @@ using K = TokenKind;
 
 bool opens(K k) {
   switch (k) {
-    case K::LParen: case K::LBracket: case K::LBrace: case K::LBraceAdj:
-    case K::QuoteOpen: case K::SpliceOpen: case K::AttrOpen:
-    case K::DotLBracket: case K::TargsOpen: case K::Sig: case K::Struct:
-    case K::Do:
-      return true;
-    default:
-      return false;
+  case K::LParen:
+  case K::LBracket:
+  case K::LBrace:
+  case K::LBraceAdj:
+  case K::QuoteOpen:
+  case K::SpliceOpen:
+  case K::AttrOpen:
+  case K::DotLBracket:
+  case K::TargsOpen:
+  case K::Sig:
+  case K::Struct:
+  case K::Do:
+    return true;
+  default:
+    return false;
   }
 }
 
 bool closes(K k) {
   switch (k) {
-    case K::RParen: case K::RBracket: case K::RBrace: case K::TargsClose:
-    case K::End: case K::Done:
-      return true;
-    default:
-      return false;
+  case K::RParen:
+  case K::RBracket:
+  case K::RBrace:
+  case K::TargsClose:
+  case K::End:
+  case K::Done:
+    return true;
+  default:
+    return false;
   }
 }
 
@@ -34,13 +46,20 @@ bool closes(K k) {
 // group others, where a reader means the first thing in the group.
 bool isTarget(NodeKind k) {
   switch (k) {
-    case NodeKind::None: case NodeKind::Program: case NodeKind::Sequence:
-    case NodeKind::Params: case NodeKind::Contracts: case NodeKind::Attrs:
-    case NodeKind::LoopAnnots: case NodeKind::Modifiers: case NodeKind::Paths:
-    case NodeKind::Variants: case NodeKind::Comment:
-      return false;
-    default:
-      return true;
+  case NodeKind::None:
+  case NodeKind::Program:
+  case NodeKind::Sequence:
+  case NodeKind::Params:
+  case NodeKind::Contracts:
+  case NodeKind::Attrs:
+  case NodeKind::LoopAnnots:
+  case NodeKind::Modifiers:
+  case NodeKind::Paths:
+  case NodeKind::Variants:
+  case NodeKind::Comment:
+    return false;
+  default:
+    return true;
   }
 }
 
@@ -48,22 +67,29 @@ bool isTarget(NodeKind k) {
 // next: `= \ the default`, `` `( (** doc *) ``, `do \ each tile`.
 bool leadsIn(K k) {
   switch (k) {
-    case K::Eq: case K::Arrow: case K::FatArrow: case K::LArrow:
-    case K::Then: case K::Else: case K::With: case K::Bar:
-      return true;
-    default:
-      return opens(k);
+  case K::Eq:
+  case K::Arrow:
+  case K::FatArrow:
+  case K::LArrow:
+  case K::Then:
+  case K::Else:
+  case K::With:
+  case K::Bar:
+    return true;
+  default:
+    return opens(k);
   }
 }
 
 constexpr size_t kNone = std::numeric_limits<size_t>::max();
 
 class Attacher {
- public:
+public:
   Attacher(Node &root, const std::vector<Token> &tokens, std::string_view src)
       : root_(root), src_(src) {
     for (const Token &t : tokens)
-      if (t.kind != K::Sep && t.kind != K::Eof) toks_.push_back(&t);
+      if (t.kind != K::Sep && t.kind != K::Eof)
+        toks_.push_back(&t);
     match_.assign(toks_.size(), kNone);
     std::vector<size_t> stack;
     for (size_t r = 0; r < toks_.size(); ++r) {
@@ -85,36 +111,15 @@ class Attacher {
     Node *target = nullptr;
     const char *place = "leading";
 
-    bool trailing = prev != kNone && !c.ownLine && !leadsIn(toks_[prev]->kind) &&
+    bool trailing = prev != kNone && !c.ownLine &&
+                    !leadsIn(toks_[prev]->kind) &&
                     c.style != RawComment::Style::Prose &&
                     (!hasNext || toks_[next]->loc.line > c.endLine);
     if (trailing) {
       place = "trailing";
-      size_t p = prev;
-      while (p > 0 && (toks_[p]->kind == K::Semi || toks_[p]->kind == K::Comma ||
-                       toks_[p]->kind == K::In))
-        --p;
-      const Extent *best = nullptr;
-      uint32_t line = toks_[p]->loc.line;
-      for (const Extent &e : extents_)  // outermost that starts on the line
-        if (e.end == p && toks_[e.start]->loc.line == line &&
-            (!best || e.depth < best->depth))
-          best = &e;
-      if (!best)
-        for (const Extent &e : extents_)  // else the innermost
-          if (e.end == p && (!best || e.depth > best->depth)) best = &e;
-      if (best) target = best->node;
+      target = endingAt(prev);
     } else if (hasNext) {
-      // The outermost node that starts at the next token, looking past
-      // opening brackets that no node starts at.
-      for (size_t q = next; q < toks_.size() && !target; ++q) {
-        const Extent *best = nullptr;
-        for (const Extent &e : extents_)
-          if (e.start == q && (!best || e.depth < best->depth)) best = &e;
-        if (best) target = best->node;
-        if (toks_[q]->kind != K::LParen && toks_[q]->kind != K::LBracket)
-          break;
-      }
+      target = startingAt(next);
       // Markdown puts a blank line before a fence, so prose always leads the
       // code block after it.
       if (target && c.style != RawComment::Style::Prose &&
@@ -125,25 +130,69 @@ class Attacher {
       // The innermost node around the comment.
       const Extent *best = nullptr;
       for (const Extent &e : extents_)
-        if (e.start <= prev && e.end >= next && (!best || e.depth > best->depth))
+        if (e.start <= prev && e.end >= next &&
+            (!best || e.depth > best->depth))
           best = &e;
-      if (best) target = best->node;
-      if (!c.ownLine) place = "trailing";
+      if (best)
+        target = best->node;
+      if (!c.ownLine)
+        place = "trailing";
     }
     if (!target) {
       target = &root_;
       place = "detached";
     }
-    target->comments.push_back(makeComment(
-        c.loc, c.text, commentStyleName(c.style), place));
+    target->comments.push_back(
+        makeComment(c.loc, c.text, commentStyleName(c.style), place));
   }
 
- private:
+private:
   struct Extent {
     Node *node;
     int depth;
-    size_t start, end;  // indexes into toks_
+    size_t start, end; // indexes into toks_
   };
+
+  // The node a trailing comment after token `prev` describes: the
+  // outermost node that ends there and starts on the same line, so
+  // `let x = f y (* why *)` describes the `let` and not `y`; failing that,
+  // the innermost node that ends there. Separators before the comment are
+  // looked past.
+  Node *endingAt(size_t prev) const {
+    size_t p = prev;
+    while (p > 0 && (toks_[p]->kind == K::Semi || toks_[p]->kind == K::Comma ||
+                     toks_[p]->kind == K::In))
+      --p;
+    const Extent *best = nullptr;
+    uint32_t line = toks_[p]->loc.line;
+    for (const Extent &e : extents_)
+      if (e.end == p && toks_[e.start]->loc.line == line &&
+          (!best || e.depth < best->depth))
+        best = &e;
+    if (best)
+      return best->node;
+    for (const Extent &e : extents_)
+      if (e.end == p && (!best || e.depth > best->depth))
+        best = &e;
+    return best ? best->node : nullptr;
+  }
+
+  // The node a leading comment before token `next` describes: the
+  // outermost node that starts there, looking past opening brackets that no
+  // node starts at.
+  Node *startingAt(size_t next) const {
+    for (size_t q = next; q < toks_.size(); ++q) {
+      const Extent *best = nullptr;
+      for (const Extent &e : extents_)
+        if (e.start == q && (!best || e.depth < best->depth))
+          best = &e;
+      if (best)
+        return best->node;
+      if (toks_[q]->kind != K::LParen && toks_[q]->kind != K::LBracket)
+        return nullptr;
+    }
+    return nullptr;
+  }
 
   size_t firstAtOrAfter(uint32_t offset) const {
     auto it = std::lower_bound(
@@ -157,7 +206,8 @@ class Attacher {
     for (uint32_t i = from; i < to && i < src_.size(); ++i) {
       char ch = src_[i];
       if (ch == '\n') {
-        if (sawNewline) return true;
+        if (sawNewline)
+          return true;
         sawNewline = true;
       } else if (ch != ' ' && ch != '\t' && ch != '\r') {
         sawNewline = false;
@@ -184,12 +234,17 @@ class Attacher {
         end = std::max(end, e);
       }
     }
-    if (start == kNone) return false;
+    if (start == kNone)
+      return false;
     for (size_t r = start; r <= end; ++r)
-      if (match_[r] != kNone && match_[r] > end) end = match_[r];
-    if (isTarget(n.kind)) extents_.push_back({&n, depth, start, end});
-    if (startOut) *startOut = start;
-    if (endOut) *endOut = end;
+      if (match_[r] != kNone && match_[r] > end)
+        end = match_[r];
+    if (isTarget(n.kind))
+      extents_.push_back({&n, depth, start, end});
+    if (startOut)
+      *startOut = start;
+    if (endOut)
+      *endOut = end;
     return true;
   }
 
@@ -200,14 +255,16 @@ class Attacher {
   std::vector<Extent> extents_;
 };
 
-}  // namespace
+} // namespace
 
 void attachComments(Node &root, const std::vector<Token> &tokens,
                     const std::vector<RawComment> &comments,
                     std::string_view source) {
-  if (comments.empty()) return;
+  if (comments.empty())
+    return;
   Attacher a(root, tokens, source);
-  for (const RawComment &c : comments) a.attach(c);
+  for (const RawComment &c : comments)
+    a.attach(c);
 }
 
 NodePtr makeComment(SourceLoc loc, std::string text, std::string_view style,
@@ -232,10 +289,11 @@ std::string docText(const Node &node) {
     std::string style = commentStyle(*c);
     if ((style != "doc" && style != "prose") || commentPlace(*c) != "leading")
       continue;
-    if (!out.empty()) out += "\n\n";
+    if (!out.empty())
+      out += "\n\n";
     out += c->text;
   }
   return out;
 }
 
-}  // namespace pia::syntax
+} // namespace pia::syntax

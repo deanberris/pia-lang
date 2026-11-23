@@ -31,7 +31,8 @@ its own ```pia blocks.
 Every piac run gets the same deterministic solver limits as `pia_object`
 (tools/piac/pia.bzl), unless its command line sets them, so whether a goal
 is proved does not depend on how busy the machine is: `bazel test //...`
-runs this test alongside everything else.
+runs this test alongside everything else. It compiles for Apple silicon in
+the same way, so the assembly a page shows does not depend on the host.
 """
 
 import os
@@ -42,8 +43,11 @@ import subprocess
 import sys
 import tempfile
 
-# The defaults of pia_object in tools/piac/pia.bzl.
-SOLVER_LIMITS = ["--solver-rlimit=1200000000", "--solver-timeout=600000"]
+# The defaults of pia_object in tools/piac/pia.bzl, and the Apple silicon
+# target, so that assembly a page shows is the same on every host (as in
+# tests/lit/run_lit.sh). A command that names its own target overrides it.
+SOLVER_LIMITS = ["--solver-rlimit=1200000000", "--solver-timeout=600000",
+                 "--target=arm64-apple-macosx14.0.0", "--cpu=apple-m1"]
 
 
 def with_limits(args):

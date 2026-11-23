@@ -1,6 +1,7 @@
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tests/lit:lit.bzl", "lit_tests")
 load("//tools/piac:pia.bzl", "pia_binary")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # The library's tests (ADR 0040, section 11): for each module, a lit test of
 # its goal counts and interfaces, an importer that proves its edge cases
@@ -31,15 +32,10 @@ lit_tests(
     tools = ["//tools/piac"],
 )
 
-APPLE_SILICON = [
-    "@platforms//os:macos",
-    "@platforms//cpu:arm64",
-]
-
 pia_binary(
     name = "bit_run",
     src = "Inputs/bit_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:bit"],
 )
 
@@ -48,13 +44,13 @@ sh_test(
     srcs = ["bit_run_test.sh"],
     args = ["$(rootpath :bit_run)"],
     data = [":bit_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "int_run",
     src = "Inputs/int_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:int"],
 )
 
@@ -63,13 +59,13 @@ sh_test(
     srcs = ["int_run_test.sh"],
     args = ["$(rootpath :int_run)"],
     data = [":int_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "order_run",
     src = "Inputs/order_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:order"],
 )
 
@@ -78,13 +74,13 @@ sh_test(
     srcs = ["order_run_test.sh"],
     args = ["$(rootpath :order_run)"],
     data = [":order_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "result_run",
     src = "Inputs/result_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia/Core:order",
         "//lib/Pia/Core:result",
@@ -96,13 +92,13 @@ sh_test(
     srcs = ["result_run_test.sh"],
     args = ["$(rootpath :result_run)"],
     data = [":result_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "search_run",
     src = "Inputs/search_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -115,13 +111,13 @@ sh_test(
     srcs = ["search_run_test.sh"],
     args = ["$(rootpath :search_run)"],
     data = [":search_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "json_lex_run",
     src = "Inputs/json_lex_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:spec",
@@ -133,13 +129,13 @@ sh_test(
     srcs = ["json_lex_run_test.sh"],
     args = ["$(rootpath :json_lex_run)"],
     data = [":json_lex_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "modify_run",
     src = "Inputs/modify_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia/Core:order",
         "//lib/Pia/Core/Algo:modify",
@@ -152,13 +148,13 @@ sh_test(
     srcs = ["modify_run_test.sh"],
     args = ["$(rootpath :modify_run)"],
     data = [":modify_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "sort_run",
     src = "Inputs/sort_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -172,13 +168,13 @@ sh_test(
     srcs = ["sort_run_test.sh"],
     args = ["$(rootpath :sort_run)"],
     data = [":sort_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "heap_run",
     src = "Inputs/heap_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -193,13 +189,13 @@ sh_test(
     srcs = ["heap_run_test.sh"],
     args = ["$(rootpath :heap_run)"],
     data = [":heap_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "numeric_run",
     src = "Inputs/numeric_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core/Algo:numeric"],
 )
 
@@ -208,13 +204,13 @@ sh_test(
     srcs = ["numeric_run_test.sh"],
     args = ["$(rootpath :numeric_run)"],
     data = [":numeric_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
     name = "binary_search_run",
     src = "Inputs/binary_search_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -227,7 +223,7 @@ sh_test(
     srcs = ["binary_search_run_test.sh"],
     args = ["$(rootpath :binary_search_run)"],
     data = [":binary_search_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )
 
 pia_binary(
