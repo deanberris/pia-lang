@@ -591,11 +591,6 @@ static mlir::Type buildType(const std::string &name, const Node &value,
       diags.error(f->loc, "a field cannot have type unit");
       return {};
     }
-    if (mlir::isa<ArrayType>(t)) {
-      diags.error(f->loc, "a record field cannot be an array yet; a slice "
-                          "field can hold one");
-      return {};
-    }
     if (mlir::isa<AtomicType>(t)) {
       diags.error(f->loc, "a record field cannot be an atomic cell yet "
                           "(ADR 0052); pass the cell as a borrowed "
