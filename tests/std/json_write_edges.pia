@@ -1,0 +1,168 @@
+(* Importers of Pia.Text.Json.Write see only its interface's contracts and
+   Pia.Text.Json.Spec's definitions, and those decide the edges: the room
+   each token needs, the bytes around a write, a number that ends the
+   buffer, the empty string, and the round trip with Pia.Text.Json.Lex for
+   literals and structural characters.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Lex.Lexer as Lex
+import Pia.Text.Json.Write.Writer as Write
+
+(* `null` fills a buffer of exactly four bytes, and is a token there. *)
+let null_fills (dst : borrowed inout mutable [u8]) : unit
+  requires len dst = 4
+= let e = Write.write_null dst 0 in
+  assert e = len dst && Spec.token_at dst Spec.Null 0 4
+
+(* The bytes before and after a write are as they were. *)
+let around (dst : borrowed inout mutable [u8]) : unit
+  requires len dst = 8
+= let a = dst.[0] in
+  let z = dst.[7] in
+  let e = Write.write_bool dst 1 false in
+  assert e = 6 && dst.[0] = a && dst.[7] = z
+
+(* The largest u8 takes all three bytes of its room, and the smallest i8
+   all four of its; at the end of the buffer each is a whole number token,
+   since nothing can continue it. *)
+let u8_max (dst : borrowed inout mutable [u8]) : unit
+  requires len dst = 3
+= let e = Write.write_u8 dst 0 255 in
+  assert e <= 3;
+  assert Spec.magnitude dst 0 e = 255
+
+let at_end (dst : borrowed inout mutable [u8]) (v : i8) : unit
+  requires len dst = 4
+= let e = Write.write_i8 dst 0 v in
+  if e = len dst then assert Spec.token_at dst Spec.Number 0 e
+
+(* A negative number starts with its minus, and its magnitude is the
+   value's. *)
+let negative (dst : borrowed inout mutable [u8]) : unit
+  requires len dst = 20
+= let e = Write.write_i64 dst 0 (-9223372036854775808) in
+  assert dst.[0] = 0x2D;
+  assert Spec.magnitude dst 0 e = 9223372036854775808
+
+(* The empty string is two quotes. *)
+let empty_string (dst : borrowed inout mutable [u8]) (src : [u8]) : unit
+  requires len src = 0 && len dst = 2
+= assert Spec.utf8_run src 0 0;
+  assert Write.escaped_size src 0 0 = 0;
+  let e = Write.write_string dst 0 src in
+  assert e = 2 && Spec.token_at dst Spec.String 0 2;
+  assert dst.[0] = 0x22 && dst.[1] = 0x22
+
+(* A string needs its escaped size and two quotes, which string_size
+   computes; a quote takes two bytes, \". *)
+let quote_size (src : [u8]) : unit
+  requires len src = 1 && src.[0] = 0x22
+= let n = Write.string_size src in
+  assert n = 4
+
+(* Round trips: the lexer reads each literal and structural character the
+   writer wrote, as that token, at the place it was written. *)
+let null_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos <= len dst && len dst - pos >= 4
+= let e = Write.write_null dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.Null;
+      assert t.stop = e; ()
+  | Err _ -> assert Spec.literal_at dst pos; assert false; ()
+
+let true_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos <= len dst && len dst - pos >= 5
+= let e = Write.write_bool dst pos true in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.True;
+      assert t.stop = e; ()
+  | Err _ -> assert Spec.literal_at dst pos; assert false; ()
+
+let false_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos <= len dst && len dst - pos >= 5
+= let e = Write.write_bool dst pos false in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.False;
+      assert t.stop = e; ()
+  | Err _ -> assert Spec.literal_at dst pos; assert false; ()
+
+let lbrace_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_lbrace dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.LBrace;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()
+
+let rbrace_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_rbrace dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.RBrace;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()
+
+let lbracket_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_lbracket dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.LBracket;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()
+
+let rbracket_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_rbracket dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.RBracket;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()
+
+let colon_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_colon dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.Colon;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()
+
+let comma_back (dst : borrowed inout mutable [u8]) (pos : usize) : unit
+  requires pos < len dst
+= let e = Write.write_comma dst pos in
+  assert Spec.is_ws dst.[pos] = false;
+  match Lex.next dst pos with
+  | Ok t ->
+      assert t.start = pos;
+      assert t.kind = Spec.Comma;
+      assert t.stop = e; ()
+  | Err _ -> assert false; ()

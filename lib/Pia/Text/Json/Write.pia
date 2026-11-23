@@ -1,0 +1,673 @@
+(* Pia.Text.Json.Write: a JSON writer into a caller's buffer (ADR 0045,
+   sections 1 and 4, step 2). Each function writes one token at a position
+   `pos` of `dst` and returns the position after it. The room it needs is
+   its precondition, so nothing can fail at run time, and it is proved
+   against Pia.Text.Json.Spec:
+
+   - the bytes it writes are a token of its kind (Spec.token_at): a
+     literal, a structural character, a string literal, or a number;
+   - nothing outside the bytes it wrote changes;
+   - a number is the decimal digits of its integer, with a minus first
+     when it is negative: Spec.magnitude of the bytes is its magnitude,
+     and the digits have no leading zero, as the grammar requires;
+   - a string literal escapes the quote, the backslash and every byte
+     below 0x20, as \" \\ \b \t \n \f \r or \u00XX, and copies the rest of
+     its input, which must be valid UTF-8 (Spec.utf8_run), byte for byte.
+
+   A number token is the longest one at its start (Spec.number_at), so
+   whether its bytes are the token depends on the byte after them, which
+   the next write supplies. Its contract says it is one when that byte
+   stops it (Spec.num_stops), and that the bytes are accepted by the
+   number automaton whatever follows: every structural character,
+   whitespace and the end of the buffer stop a number.
+
+   Callers count the room up front: a literal takes 4 or 5 bytes, a
+   structural character 1, an integer at most 3, 5, 10 or 20 digits for
+   u8, u16, u32 and u64, and one more for a signed type's minus (i64's
+   magnitude has at most 19 digits), and a string 2 plus
+   `escaped_size`, at most 6 per byte. `string_size` computes it, and
+   `utf8_valid` checks the input write_string requires.
+
+   Not yet proved: which value of Spec a string literal denotes (an
+   unescaping spec comes with Json.Dom), and that Pia.Text.Json.Lex reads
+   a written number or string back, which needs the completeness of its
+   number and string scanners (see Lex.pia). *)
+module Pia.Text.Json.Write : Writer
+
+import Pia.Text.Json.Spec.Grammar as Spec
+
+interface Writer = sig
+  (** The bytes the writer uses for the byte b of a string. *)
+  let spec byte_size : (b : u8) -> u8
+  (** The bytes the writer uses for the bytes from i to j of a string,
+      without its quotes. *)
+  let spec escaped_size : (s : [u8]) -> (i : usize) -> (j : usize) -> usize
+  (** The room a string literal of src takes: its escaped bytes and two
+      quotes. *)
+  let string_size : (src : [u8]) -> usize
+    requires len src <= 1000000000000
+    ensures result = 2 + escaped_size src 0 (len src)
+  (** Whether src is valid UTF-8, as write_string requires. *)
+  let utf8_valid : (src : [u8]) -> bool
+    ensures result <==> Pia.Text.Json.Spec.utf8_run src 0 (len src)
+  (** `null`. *)
+  let write_null : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos <= len dst && len dst - pos >= 4
+    ensures result = pos + 4 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Null pos result
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  (** `true` or `false`. *)
+  let write_bool : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (b : bool) -> usize
+    requires pos <= len dst && len dst - pos >= 5
+    ensures result = pos + (if b then 4 else 5)
+    ensures b ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.True pos result
+    ensures b = false ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.False pos result
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  (** The structural characters `{ } [ ] : ,`. *)
+  let write_lbrace : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.LBrace pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  let write_rbrace : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.RBrace pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  let write_lbracket : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.LBracket pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  let write_rbracket : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.RBracket pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  let write_colon : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Colon pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  let write_comma : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos < len dst
+    ensures result = pos + 1 && Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Comma pos result
+    ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+  (** Unsigned integers: their decimal digits. *)
+  let write_u8 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u8) -> usize
+    requires pos <= len dst && len dst - pos >= 3
+    ensures pos < result && result - pos <= 3
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_u16 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u16) -> usize
+    requires pos <= len dst && len dst - pos >= 5
+    ensures pos < result && result - pos <= 5
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_u32 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u32) -> usize
+    requires pos <= len dst && len dst - pos >= 10
+    ensures pos < result && result - pos <= 10
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_u64 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u64) -> usize
+    requires pos <= len dst && len dst - pos >= 20
+    ensures pos < result && result - pos <= 20
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures Pia.Text.Json.Spec.minus_at dst pos = false && Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  (** Signed integers: a minus when negative, then the magnitude's digits. *)
+  let write_i8 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i8) -> usize
+    requires pos <= len dst && len dst - pos >= 4
+    ensures pos < result && result - pos <= 4
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
+    ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_i16 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i16) -> usize
+    requires pos <= len dst && len dst - pos >= 6
+    ensures pos < result && result - pos <= 6
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
+    ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_i32 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i32) -> usize
+    requires pos <= len dst && len dst - pos >= 11
+    ensures pos < result && result - pos <= 11
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
+    ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  let write_i64 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : i64) -> usize
+    requires pos <= len dst && len dst - pos >= 20
+    ensures pos < result && result - pos <= 20
+    ensures Pia.Text.Json.Spec.num_accepting (Pia.Text.Json.Spec.num_run dst pos result)
+    ensures Pia.Text.Json.Spec.num_stops dst result (Pia.Text.Json.Spec.num_run dst pos result) ==> Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.Number pos result
+    ensures (Pia.Text.Json.Spec.minus_at dst pos <==> v < 0)
+    ensures v >= 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = v
+    ensures v < 0 ==> Pia.Text.Json.Spec.magnitude dst pos result = 0 - v
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+  (** A string literal of the UTF-8 bytes src. *)
+  let write_string : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (src : [u8]) -> usize
+    requires len src <= 1000000000000 && pos <= len dst && Pia.Text.Json.Spec.utf8_run src 0 (len src)
+    requires len dst - pos >= 2 + escaped_size src 0 (len src)
+    ensures result = pos + 2 + escaped_size src 0 (len src)
+    ensures Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.String pos result
+    ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+end
+
+(* ---- Literals and structural characters ---- *)
+
+let write_null (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos <= len dst && len dst - pos >= 4
+  ensures result = pos + 4 && Spec.token_at dst Spec.Null pos result
+  ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x6E; dst.[pos + 1] <- 0x75; dst.[pos + 2] <- 0x6C; dst.[pos + 3] <- 0x6C;
+  pos + 4
+
+let write_bool (dst : borrowed inout mutable [u8]) (pos : usize) (b : bool) : usize
+  requires pos <= len dst && len dst - pos >= 5
+  ensures result = pos + (if b then 4 else 5)
+  ensures b ==> Spec.token_at dst Spec.True pos result
+  ensures b = false ==> Spec.token_at dst Spec.False pos result
+  ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+= if b then (
+    dst.[pos] <- 0x74; dst.[pos + 1] <- 0x72; dst.[pos + 2] <- 0x75; dst.[pos + 3] <- 0x65;
+    pos + 4)
+  else (
+    dst.[pos] <- 0x66; dst.[pos + 1] <- 0x61; dst.[pos + 2] <- 0x6C; dst.[pos + 3] <- 0x73;
+    dst.[pos + 4] <- 0x65;
+    pos + 5)
+
+let write_lbrace (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.LBrace pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x7B; pos + 1
+
+let write_rbrace (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.RBrace pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x7D; pos + 1
+
+let write_lbracket (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.LBracket pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x5B; pos + 1
+
+let write_rbracket (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.RBracket pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x5D; pos + 1
+
+let write_colon (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.Colon pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x3A; pos + 1
+
+let write_comma (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos < len dst
+  ensures result = pos + 1 && Spec.token_at dst Spec.Comma pos result
+  ensures forall (k in 0 .. len dst). k <> pos ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x2C; pos + 1
+
+(* ---- Integers ---- *)
+
+(* How many decimal digits v has. *)
+let spec ndig (v : u64) : int{1..20}
+= if v < 10 then 1
+  else if v < 100 then 2
+  else if v < 1000 then 3
+  else if v < 10000 then 4
+  else if v < 100000 then 5
+  else if v < 1000000 then 6
+  else if v < 10000000 then 7
+  else if v < 100000000 then 8
+  else if v < 1000000000 then 9
+  else if v < 10000000000 then 10
+  else if v < 100000000000 then 11
+  else if v < 1000000000000 then 12
+  else if v < 10000000000000 then 13
+  else if v < 100000000000000 then 14
+  else if v < 1000000000000000 then 15
+  else if v < 10000000000000000 then 16
+  else if v < 100000000000000000 then 17
+  else if v < 1000000000000000000 then 18
+  else if v < 10000000000000000000 then 19
+  else 20
+
+(* Dropping the last digit drops one from the count. *)
+let lemma ndig_step (q : u64) : unit
+  requires q >= 10
+  ensures ndig (q / 10) + 1 = ndig q
+= ()
+
+(* The digits' value depends only on their own bytes. *)
+let lemma digits_frame (s : [u8]) (t : [u8]) (acc : u64) (i : usize) (j : usize) : unit
+  requires i <= j && j <= len s && len s = len t
+  requires forall (k in i..j). s.[k] = t.[k]
+  ensures Spec.digits_value acc s i j = Spec.digits_value acc t i j
+  decreases j - i
+= if i < j then digits_frame s t (Spec.digit_step acc s.[i]) (i + 1) j
+
+(* q's last digit after the rest of q is q: the step put_digit relies on. *)
+let lemma step_last (q : u64) : unit
+  ensures Spec.digit_step (q / 10) (0x30 + q % 10) = q
+= ()
+
+let count_digits (v : u64) : usize
+  ensures result = ndig v
+= let t : mutable u64 = v in
+  let n : mutable usize = 1 in
+  while t >= 10
+    invariant 1 <= n && ndig v = ndig t + n - 1
+    decreases t
+  do ndig_step t; t <- t / 10; n <- n + 1 done;
+  n
+
+(* Writes q's last digit at p - 1 and returns the rest of q: the digits
+   from p - 1 to e after the rest are worth what those from p to e were
+   after q. *)
+let put_digit (dst : borrowed inout mutable [u8]) (p : usize) (e : usize) (q : u64) : u64
+  requires 0 < p && p <= e && e <= len dst
+  ensures result = q / 10
+  ensures Spec.digits_value result dst (p - 1) e = Spec.digits_value q (old dst) p e
+  ensures Spec.is_digit dst.[p - 1]
+  ensures 0 < q && q < 10 ==> dst.[p - 1] <> 0x30
+  ensures forall (k in 0 .. len dst). k <> p - 1 ==> dst.[k] = old (dst.[k])
+= let d : u8 = q % 10 in
+  dst.[p - 1] <- 0x30 + d;
+  digits_frame (old dst) dst q p e;
+  step_last q;
+  q / 10
+
+(* v's digits at start, from the last to the first, most significant
+   first in the buffer, with no leading zero. *)
+let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) : usize
+  requires start <= len dst && len dst - start >= ndig v
+  ensures result = start + ndig v
+  ensures Spec.digits_value 0 dst start result = v
+  ensures forall (k in start .. result). Spec.is_digit dst.[k]
+  ensures v > 0 ==> dst.[start] <> 0x30
+  ensures forall (k in 0 .. len dst). k < start || result <= k ==> dst.[k] = old (dst.[k])
+= let n = count_digits v in
+  let e = start + n in
+  let q : mutable u64 = v in
+  let p : mutable usize = e in
+  while p > start
+    invariant start <= p && p <= e
+    invariant Spec.digits_value q dst p e = v
+    invariant p > start ==> ndig q = p - start
+    invariant p > start && v > 0 ==> q > 0
+    invariant p = start ==> q = 0
+    invariant p = start && v > 0 ==> dst.[start] <> 0x30
+    invariant forall (k in p .. e). Spec.is_digit dst.[k]
+    invariant forall (k in 0 .. len dst). k < p || e <= k ==> dst.[k] = old (dst.[k])
+    decreases p
+  do
+    if q >= 10 then ndig_step q;
+    q <- put_digit dst p e q;
+    p <- p - 1
+  done;
+  e
+
+(* Digits after a prefix the automaton has left in state 3 keep it there. *)
+let lemma run_digits (s : [u8]) (i : usize) (k : usize) (j : usize) : unit
+  requires i < k && k <= j && j <= len s && Spec.num_run s i k = 3
+  requires forall (m in k..j). Spec.is_digit s.[m]
+  ensures Spec.num_run s i j = 3
+  decreases j - k
+= if k < j then run_digits s i k (j - 1)
+
+(* Digits with no leading zero are a number the automaton accepts. *)
+let lemma unsigned_run (s : [u8]) (i : usize) (j : usize) : unit
+  requires i < j && j <= len s
+  requires forall (m in i..j). Spec.is_digit s.[m]
+  requires j - i > 1 ==> s.[i] <> 0x30
+  ensures Spec.num_accepting (Spec.num_run s i j)
+= assert Spec.num_run s i i = 0;
+  if s.[i] <> 0x30 then run_digits s i (i + 1) j
+  else assert Spec.num_run s i (i + 1) = 2
+
+(* So is a minus followed by them. *)
+let lemma signed_run (s : [u8]) (i : usize) (j : usize) : unit
+  requires i + 1 < j && j <= len s && s.[i] = 0x2D
+  requires forall (m in i + 1 .. j). Spec.is_digit s.[m]
+  requires s.[i + 1] <> 0x30
+  ensures Spec.num_accepting (Spec.num_run s i j)
+= assert Spec.num_run s i i = 0;
+  assert Spec.num_run s i (i + 1) = 1;
+  run_digits s i (i + 2) j
+
+let write_unsigned (dst : borrowed inout mutable [u8]) (pos : usize) (v : u64) : usize
+  requires pos <= len dst && len dst - pos >= ndig v
+  ensures result = pos + ndig v
+  ensures Spec.num_accepting (Spec.num_run dst pos result)
+  ensures Spec.minus_at dst pos = false && Spec.magnitude dst pos result = v
+  ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+= let e = write_digits dst pos v in
+  unsigned_run dst pos e;
+  e
+
+(* The magnitude of v, as a u64. *)
+let spec mag (v : i64) : u64 =
+  if v >= 0 then (let m : u64 = v in m)
+  else if v = -9223372036854775808 then 9223372036854775808
+  else (let p : i64 = 0 - v in let m : u64 = p in m)
+
+let write_signed (dst : borrowed inout mutable [u8]) (pos : usize) (v : i64) : usize
+  requires pos <= len dst && len dst - pos >= ndig (mag v) + 1
+  ensures result <= pos + ndig (mag v) + 1 && pos < result
+  ensures Spec.num_accepting (Spec.num_run dst pos result)
+  ensures (Spec.minus_at dst pos <==> v < 0) && Spec.magnitude dst pos result = mag v
+  ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+= if v >= 0 then (let m : u64 = v in write_unsigned dst pos m)
+  else (
+    let m : u64 = if v = -9223372036854775808 then 9223372036854775808 else (let p : i64 = 0 - v in p) in
+    dst.[pos] <- 0x2D;
+    let e = write_digits dst (pos + 1) m in
+    signed_run dst pos e;
+    e)
+
+(* The writer of the unsigned type t, whose digits fit in `room` bytes. *)
+let meta unsigned_writer (name : string) (t : string) (room : int) : item =
+  `( let $name ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $t) : usize
+       requires $!pos <= len $!dst && len $!dst - $!pos >= $room
+       ensures $!pos < $!result && $!result - $!pos <= $room
+       ensures Spec.num_accepting (Spec.num_run $!dst $!pos $!result)
+       ensures Spec.num_stops $!dst $!result (Spec.num_run $!dst $!pos $!result) ==> Spec.token_at $!dst Spec.Number $!pos $!result
+       ensures Spec.minus_at $!dst $!pos = false && Spec.magnitude $!dst $!pos $!result = $!v
+       ensures forall (k in 0 .. len $!dst). k < $!pos || $!result <= k ==> $!dst.[k] = old ($!dst.[k])
+     = let $!w : u64 = $!v in write_unsigned $!dst $!pos $!w )
+
+(* The writer of the signed type t, whose minus and digits fit in `room`
+   bytes. *)
+let meta signed_writer (name : string) (t : string) (room : int) : item =
+  `( let $name ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $t) : usize
+       requires $!pos <= len $!dst && len $!dst - $!pos >= $room
+       ensures $!pos < $!result && $!result - $!pos <= $room
+       ensures Spec.num_accepting (Spec.num_run $!dst $!pos $!result)
+       ensures Spec.num_stops $!dst $!result (Spec.num_run $!dst $!pos $!result) ==> Spec.token_at $!dst Spec.Number $!pos $!result
+       ensures (Spec.minus_at $!dst $!pos <==> $!v < 0)
+       ensures $!v >= 0 ==> Spec.magnitude $!dst $!pos $!result = $!v
+       ensures $!v < 0 ==> Spec.magnitude $!dst $!pos $!result = 0 - $!v
+       ensures forall (k in 0 .. len $!dst). k < $!pos || $!result <= k ==> $!dst.[k] = old ($!dst.[k])
+     = let $!w : i64 = $!v in write_signed $!dst $!pos $!w )
+
+unsigned_writer "write_u8" "u8" 3
+unsigned_writer "write_u16" "u16" 5
+unsigned_writer "write_u32" "u32" 10
+unsigned_writer "write_u64" "u64" 20
+signed_writer "write_i8" "i8" 4
+signed_writer "write_i16" "i16" 6
+signed_writer "write_i32" "i32" 11
+signed_writer "write_i64" "i64" 20
+
+(* ---- Strings ---- *)
+
+(* The quote and the backslash take two bytes, \" and \; the control
+   characters with a short escape (backspace 08, tab 09, line feed 0A,
+   form feed 0C, carriage return 0D) take two, and the others below 0x20
+   take six, \u00XX; every other byte is copied. *)
+let spec byte_size (b : u8) : u8 =
+  if b = 0x22 || b = 0x5C then 2
+  else if b < 0x20 then
+    (if b = 0x08 || b = 0x09 || b = 0x0A || b = 0x0C || b = 0x0D then 2 else 6)
+  else 1
+
+let spec escaped_size (s : [u8]) (i : usize) (j : usize) : usize
+  requires i <= j && j <= len s && j - i <= 1000000000000
+  ensures j - i <= result && result <= 6 * (j - i)
+  decreases j - i
+= if i < j then byte_size s.[i] + escaped_size s (i + 1) j else 0
+
+let string_size (src : [u8]) : usize
+  requires len src <= 1000000000000
+  ensures result = 2 + escaped_size src 0 (len src)
+= let n : mutable usize = 2 in
+  let i : mutable usize = len src in
+  while i > 0
+    invariant i <= len src
+    invariant n = 2 + escaped_size src i (len src)
+    decreases i
+  do
+    i <- i - 1;
+    let b = src.[i] in
+    n <- n + (if b = 0x22 || b = 0x5C then 2
+              else if b < 0x20 then
+                (if b = 0x08 || b = 0x09 || b = 0x0A || b = 0x0C || b = 0x0D then 2 else 6)
+              else 1)
+  done;
+  n
+
+(* A character sequence grows by the character after it. Pia.Text.Json.Lex
+   proves the same lemma; interfaces cannot list lemmas yet. *)
+let lemma chars_snoc (s : [u8]) (i : usize) (j : usize) : unit
+  requires Spec.chars s i j && Spec.char_len s j > 0
+  ensures Spec.chars s i (j + Spec.char_len s j)
+  decreases j - i
+= if i < j then chars_snoc s (i + Spec.char_len s i) j
+
+(* A character depends only on its own bytes. *)
+let lemma char_frame (s : [u8]) (t : [u8]) (i : usize) : unit
+  requires i < len s && len s = len t && Spec.char_len s i > 0
+  requires forall (k in i .. i + Spec.char_len s i). s.[k] = t.[k]
+  ensures Spec.char_len t i = Spec.char_len s i
+= ()
+
+(* And so does a sequence of them. *)
+let lemma chars_frame (s : [u8]) (t : [u8]) (i : usize) (j : usize) : unit
+  requires Spec.chars s i j && len s = len t
+  requires forall (k in i..j). s.[k] = t.[k]
+  ensures Spec.chars t i j
+  decreases j - i
+= if i < j then (char_frame s t i; chars_frame s t (i + Spec.char_len s i) j)
+
+(* A copied byte adds one to the size. *)
+let lemma plain_size (s : [u8]) (i : usize) (j : usize) : unit
+  requires i < j && j <= len s && j - i <= 1000000000000 && byte_size s.[i] = 1
+  ensures escaped_size s i j = 1 + escaped_size s (i + 1) j
+= ()
+
+let cont (b : u8) : bool = 0x80 <= b && b <= 0xBF
+
+(* Spec.utf8_len, as code. *)
+let utf8_at (s : [u8]) (i : usize) : int{0..4}
+  requires i < len s
+  ensures result = Spec.utf8_len s i
+= let b = s.[i] in
+  if b <= 0x7F then 1
+  else if len s - i < 2 then 0
+  else if 0xC2 <= b && b <= 0xDF then (if cont s.[i + 1] then 2 else 0)
+  else if 0xE0 <= b && b <= 0xEF then
+    (if len s - i < 3 then 0
+     else if cont s.[i + 2]
+        && (if b = 0xE0 then 0xA0 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xED then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x9F
+            else cont s.[i + 1])
+     then 3 else 0)
+  else if 0xF0 <= b && b <= 0xF4 then
+    (if len s - i < 4 then 0
+     else if cont s.[i + 2] && cont s.[i + 3]
+        && (if b = 0xF0 then 0x90 <= s.[i + 1] && s.[i + 1] <= 0xBF
+            else if b = 0xF4 then 0x80 <= s.[i + 1] && s.[i + 1] <= 0x8F
+            else cont s.[i + 1])
+     then 4 else 0)
+  else 0
+
+let utf8_valid (src : [u8]) : bool
+  ensures result <==> Spec.utf8_run src 0 (len src)
+= let i : mutable usize = 0 in
+  let ok : mutable bool = true in
+  while ok && i < len src
+    invariant i <= len src
+    invariant ok ==> (Spec.utf8_run src 0 (len src) <==> Spec.utf8_run src i (len src))
+    invariant ok = false ==> Spec.utf8_run src 0 (len src) = false
+    decreases len src - i + (if ok then 1 else 0)
+  do
+    let n = utf8_at src i in
+    if n = 0 || n > len src - i then ok <- false else i <- i + n
+  done;
+  ok
+
+(* The letter of a two-byte escape for b, or 0: b t n f r. *)
+let short_escape (b : u8) : u8 =
+  if b = 0x22 then 0x22 else if b = 0x5C then 0x5C
+  else if b = 0x08 then 0x62 else if b = 0x09 then 0x74 else if b = 0x0A then 0x6E
+  else if b = 0x0C then 0x66 else if b = 0x0D then 0x72 else 0
+
+(* A lower-case hexadecimal digit. *)
+let hex_digit (d : int{0..15}) : u8
+  ensures Spec.is_hex result
+= let x : u8 = d in if x < 10 then 0x30 + x else 0x57 + x
+
+(* The escape of b at w, after the characters from a to w. *)
+let put_escape (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (b : u8) : usize
+  requires a <= w && w <= len dst && (b < 0x20 || b = 0x22 || b = 0x5C)
+  requires len dst - w >= byte_size b
+  requires Spec.chars dst a w
+  ensures result = w + byte_size b
+  ensures Spec.chars dst a result
+  ensures forall (k in 0 .. len dst). k < w || result <= k ==> dst.[k] = old (dst.[k])
+= let c = short_escape b in
+  dst.[w] <- 0x5C;
+  if c <> 0 then (
+    dst.[w + 1] <- c;
+    chars_frame (old dst) dst a w;
+    chars_snoc dst a w;
+    w + 2)
+  else (
+    dst.[w + 1] <- 0x75;
+    dst.[w + 2] <- 0x30;
+    dst.[w + 3] <- 0x30;
+    dst.[w + 4] <- hex_digit (b / 16);
+    dst.[w + 5] <- hex_digit (b % 16);
+    chars_frame (old dst) dst a w;
+    chars_snoc dst a w;
+    w + 6)
+
+(* The n bytes of the scalar value at src.[i], copied to w, after the
+   characters from a to w. *)
+let put_utf8 (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (src : [u8]) (i : usize) (n : int{1..4}) : usize
+  requires a <= w && w <= len dst && i < len src
+  requires n = Spec.utf8_len src i
+  requires src.[i] >= 0x20 && src.[i] <> 0x22 && src.[i] <> 0x5C
+  requires len dst - w >= n
+  requires Spec.chars dst a w
+  ensures result = w + n
+  ensures Spec.chars dst a result
+  ensures forall (k in 0 .. len dst). k < w || result <= k ==> dst.[k] = old (dst.[k])
+= dst.[w] <- src.[i];
+  if n >= 2 then dst.[w + 1] <- src.[i + 1];
+  if n >= 3 then dst.[w + 2] <- src.[i + 2];
+  if n >= 4 then dst.[w + 3] <- src.[i + 3];
+  chars_frame (old dst) dst a w;
+  assert Spec.utf8_len dst w = n;
+  chars_snoc dst a w;
+  w + n
+
+(* The closing quote at w, after the opening one at pos and the
+   characters between. *)
+let close_string (dst : borrowed inout mutable [u8]) (pos : usize) (w : usize) : usize
+  requires pos < w && w < len dst && dst.[pos] = 0x22
+  requires Spec.chars dst (pos + 1) w
+  ensures result = w + 1 && Spec.string_at dst pos result
+  ensures forall (k in 0 .. len dst). k <> w ==> dst.[k] = old (dst.[k])
+= dst.[w] <- 0x22;
+  chars_frame (old dst) dst (pos + 1) w;
+  w + 1
+
+(* A copied scalar value adds its length to the size: its first byte is
+   plain and the rest are continuation bytes. *)
+let lemma char_size (s : [u8]) (i : usize) (j : usize) : unit
+  requires i < j && j <= len s && j - i <= 1000000000000
+  requires Spec.utf8_len s i > 0 && Spec.utf8_len s i <= j - i
+  requires s.[i] >= 0x20 && s.[i] <> 0x22 && s.[i] <> 0x5C
+  ensures escaped_size s i j = Spec.utf8_len s i + escaped_size s (i + Spec.utf8_len s i) j
+= let n = Spec.utf8_len s i in
+  plain_size s i j;
+  if n >= 2 then plain_size s (i + 1) j;
+  if n >= 3 then plain_size s (i + 2) j;
+  if n >= 4 then plain_size s (i + 3) j
+
+(* Where the writer is in a string: the next bytes of dst and of src. *)
+let cursor = type { w : usize; i : usize }
+
+let put_special (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (src : [u8]) (i : usize) : cursor
+  requires len src <= 1000000000000 && i < len src && Spec.utf8_run src i (len src)
+  requires src.[i] < 0x20 || src.[i] = 0x22 || src.[i] = 0x5C
+  requires a <= w && w + escaped_size src i (len src) <= len dst
+  requires Spec.chars dst a w
+  ensures i < result.i && result.i <= len src
+  ensures Spec.utf8_run src result.i (len src)
+  ensures w <= result.w
+  ensures result.w + escaped_size src result.i (len src) = w + escaped_size src i (len src)
+  ensures Spec.chars dst a result.w
+  ensures forall (k in 0 .. len dst). k < w || result.w <= k ==> dst.[k] = old (dst.[k])
+= let b = src.[i] in
+  let e = put_escape dst a w b in
+  { w = e; i = i + 1 }
+
+let put_plain (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (src : [u8]) (i : usize) : cursor
+  requires len src <= 1000000000000 && i < len src && Spec.utf8_run src i (len src)
+  requires src.[i] >= 0x20 && src.[i] <> 0x22 && src.[i] <> 0x5C
+  requires a <= w && w + escaped_size src i (len src) <= len dst
+  requires Spec.chars dst a w
+  ensures i < result.i && result.i <= len src
+  ensures Spec.utf8_run src result.i (len src)
+  ensures w <= result.w
+  ensures result.w + escaped_size src result.i (len src) = w + escaped_size src i (len src)
+  ensures Spec.chars dst a result.w
+  ensures forall (k in 0 .. len dst). k < w || result.w <= k ==> dst.[k] = old (dst.[k])
+= let n = utf8_at src i in
+  char_size src i (len src);
+  let e = put_utf8 dst a w src i n in
+  { w = e; i = i + n }
+
+(* The character of src at i, escaped or copied to w. *)
+let put_char (dst : borrowed inout mutable [u8]) (a : usize) (w : usize) (src : [u8]) (i : usize) : cursor
+  requires len src <= 1000000000000 && i < len src && Spec.utf8_run src i (len src)
+  requires a <= w && w + escaped_size src i (len src) <= len dst
+  requires Spec.chars dst a w
+  ensures i < result.i && result.i <= len src
+  ensures Spec.utf8_run src result.i (len src)
+  ensures w <= result.w
+  ensures result.w + escaped_size src result.i (len src) = w + escaped_size src i (len src)
+  ensures Spec.chars dst a result.w
+  ensures forall (k in 0 .. len dst). k < w || result.w <= k ==> dst.[k] = old (dst.[k])
+= if src.[i] < 0x20 || src.[i] = 0x22 || src.[i] = 0x5C then put_special dst a w src i
+  else put_plain dst a w src i
+
+let write_string (dst : borrowed inout mutable [u8]) (pos : usize) (src : [u8]) : usize
+  requires len src <= 1000000000000 && pos <= len dst && Spec.utf8_run src 0 (len src)
+  requires len dst - pos >= 2 + escaped_size src 0 (len src)
+  ensures result = pos + 2 + escaped_size src 0 (len src)
+  ensures Spec.token_at dst Spec.String pos result
+  ensures forall (k in 0 .. len dst). k < pos || result <= k ==> dst.[k] = old (dst.[k])
+= dst.[pos] <- 0x22;
+  let i : mutable usize = 0 in
+  let w : mutable usize = pos + 1 in
+  while i < len src
+    invariant i <= len src && Spec.utf8_run src i (len src)
+    invariant pos < w
+    invariant w + escaped_size src i (len src) = pos + 1 + escaped_size src 0 (len src)
+    invariant dst.[pos] = 0x22
+    invariant Spec.chars dst (pos + 1) w
+    invariant forall (k in 0 .. len dst). k < pos || w <= k ==> dst.[k] = old (dst.[k])
+    decreases len src - i
+  do
+    let c = put_char dst (pos + 1) w src i in
+    w <- c.w;
+    i <- c.i
+  done;
+  close_string dst pos w

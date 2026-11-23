@@ -3,7 +3,8 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # Pia.Text.Json (ADR 0045): JSON, proved against one grammar. Step 1 is the
 # grammar of RFC 8259's tokens (Spec) and a tokenizer proved sound against
-# it (Lex). Each module is proved and compiled on its own, and importers
+# it (Lex); step 2 is a writer proved to produce those tokens (Write).
+# Each module is proved and compiled on its own, and importers
 # build against its interface artifacts.
 
 package(default_visibility = ["//visibility:public"])
@@ -12,6 +13,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Lex.pia",
     "Spec.pia",
+    "Write.pia",
 ])
 
 # The token grammar as spec functions: tests/std/json_lex.pia checks its
@@ -28,6 +30,16 @@ pia_library(
 pia_library(
     name = "lex",
     src = "Lex.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":spec"],
+)
+
+# The writer: tests/std/json_write.pia checks its goals;
+# tests/std/json_write_edges.pia and :json_write_run test it through its
+# interface.
+pia_library(
+    name = "write",
+    src = "Write.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [":spec"],
 )
