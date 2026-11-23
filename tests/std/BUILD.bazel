@@ -11,6 +11,7 @@ lit_tests(
     srcs = glob(["*.pia"]),
     data = [
         "Inputs/hof_overloads.pia",
+        "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
@@ -313,5 +314,20 @@ sh_test(
     srcs = ["set_run_test.sh"],
     args = ["$(rootpath :set_run)"],
     data = [":set_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "ascii_run",
+    src = "Inputs/ascii_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:ascii"],
+)
+
+sh_test(
+    name = "ascii_run_test",
+    srcs = ["ascii_run_test.sh"],
+    args = ["$(rootpath :ascii_run)"],
+    data = [":ascii_run"],
     target_compatible_with = PIA_TARGETS,
 )

@@ -58,7 +58,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<cstring>` | slice algorithms (`copy` for `memcpy`, `equal` and `lexicographical_compare` for `memcmp`, `find` for `memchr`); no NUL-terminated strings | Idiom | phase 1 |
 | `<charconv>` | `Pia.Core.Charconv`: `to_chars`, `from_chars` for integers in bases 2 to 36, with round trips proved | Direct; floats deferred (M11) | phase 1, phase 4 |
 | `<format>`, `<print>` | `Pia.Text.Format`: format strings checked at compile time by a metaprogram; `Format` concept instead of `formatter` | Direct | phase 3 |
-| `<cctype>` | `Pia.Core.Ascii` | Direct, ASCII only | phase 1 |
+| `<cctype>` | `Pia.Core.Ascii`: `is_digit`, `is_upper`, `is_lower`, `is_alpha`, `is_alnum`, `is_xdigit`, `is_space`, `is_blank`, `is_cntrl`, `is_print`, `is_graph`, `is_punct`, `to_upper`, `to_lower`, and `digit_value`/`digit`, `hex_value`/`hex_digit` | Direct, ASCII only | done: each classifier says exactly which bytes it holds for, as C++'s do in the "C" locale, bytes above 127 are in no class, and each digit pair is a round trip (66 goals); no locales |
 | `<cuchar>` | `Pia.Core.Utf8` (encode, decode, validate) | Direct | phase 1 |
 | `<cwctype>`, `<cwchar>` | none | Out: UTF-8 only | n/a |
 | `<locale>`, `<clocale>`, `<codecvt>` | none | Out: no locales | n/a |

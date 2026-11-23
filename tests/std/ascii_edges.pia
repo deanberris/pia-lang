@@ -1,0 +1,38 @@
+(* Importers of Pia.Core.Ascii know each answer from the interface alone:
+   the digits' and hex digits' round trips, case changes that touch only
+   letters and undo each other on them, and no class holding a byte above
+   127.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Ascii.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Ascii.Ascii as A
+
+let round_trip (d : int{0..9}) : unit
+  ensures A.digit_value (A.digit d) = d
+= ()
+
+let hex_round_trip (d : int{0..15}) : unit
+  ensures A.hex_value (A.hex_digit d) = d
+= ()
+
+let case_undo (c : u8) : unit
+  ensures A.is_lower c ==> A.to_lower (A.to_upper c) = c
+  ensures A.is_upper c ==> A.to_upper (A.to_lower c) = c
+  ensures A.is_alpha c = false ==> A.to_upper c = c && A.to_lower c = c
+= ()
+
+let high_bytes (c : u8) : unit
+  requires c > 127
+  ensures A.is_alnum c = false && A.is_space c = false && A.is_print c = false && A.is_cntrl c = false && A.is_punct c = false
+= ()
+
+let partition (c : u8) : unit
+  ensures c <= 127 ==> (A.is_cntrl c || A.is_print c)
+  ensures A.is_print c ==> (A.is_graph c || c = 32)
+  ensures A.is_graph c ==> (A.is_alnum c || A.is_punct c)
+= ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 10 proved, 0 failed, 0 skipped
+*)

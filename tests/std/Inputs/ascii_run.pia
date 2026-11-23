@@ -1,0 +1,16 @@
+(* Runs Pia.Core.Ascii's compiled code, linked by pia_binary: 0 when every
+   answer is what C++'s <cctype> gives in the "C" locale, and otherwise
+   the number of the first wrong one. *)
+import Pia.Core.Ascii.Ascii as A
+
+let main () : i32 =
+  if A.is_digit 55 = false || A.is_digit 65 then 1
+  else if A.is_alpha 122 = false || A.is_alpha 91 then 2
+  else if A.is_space 10 = false || A.is_space 65 then 3
+  else if A.is_punct 33 = false || A.is_punct 48 then 4
+  else if A.to_upper 97 <> 65 || A.to_upper 49 <> 49 then 5
+  else if A.to_lower 90 <> 122 || A.to_lower 200 <> 200 then 6
+  else if A.digit_value 57 <> 9 || A.digit 3 <> 51 then 7
+  else if A.hex_value 70 <> 15 || A.hex_value 98 <> 11 || A.hex_digit 12 <> 99 then 8
+  else if A.is_xdigit 103 || A.is_cntrl 127 = false then 9
+  else 0
