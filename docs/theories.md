@@ -675,7 +675,7 @@ let theory Target = sig
   let spec cache_line : usize   \ the destructive interference size
   let spec vector_bits : usize  \ the widest vector the CPU runs natively
 
-  let spec is_pow2 (n : usize) : bool = n > 0 && n & (n - 1) = 0
+  let spec is_pow2 (n : usize) : bool = popcount n = 1
 
   let axiom ptr_pow2 ensures is_pow2 ptr_bits && ptr_bits >= 32
   let axiom little ensures little_endian
