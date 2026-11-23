@@ -1,9 +1,10 @@
-(* Pia.Core.Algo.Modify: <algorithm>'s modifying sequence operations and
-   <numeric>'s algorithms (ADR 0040, phase 1.6, docs/cpp-std.md). This is
-   fill, copy, copy_backward, swap_ranges, reverse, replace, shift_left
-   and shift_right; remove is in Pia.Core.Algo.Remove, which proves on
-   its own. rotate and unique, which cost 280M and 120M to prove as
-   written so far, and <numeric>, follow in later pull requests.
+(* Pia.Core.Algo.Modify: <algorithm>'s modifying sequence operations
+   (ADR 0040, phase 1.6, docs/cpp-std.md). This is fill, copy,
+   copy_backward, swap_ranges, reverse, replace, shift_left and
+   shift_right; remove is in Pia.Core.Algo.Remove, which proves on its
+   own, and <numeric> in Pia.Core.Algo.Numeric. rotate and unique, which
+   cost 280M and 120M to prove as written so far, follow in later pull
+   requests.
 
    Each is generic over the element type and proved once (ADR 0043). C++
    writes through an output iterator; here the destination is an `out`

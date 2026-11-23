@@ -17,6 +17,7 @@ lit_tests(
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core/Algo:Heap.pia",
         "//lib/Pia/Core/Algo:Modify.pia",
+        "//lib/Pia/Core/Algo:Numeric.pia",
         "//lib/Pia/Core/Algo:Permutation.pia",
         "//lib/Pia/Core/Algo:Remove.pia",
         "//lib/Pia/Core/Algo:Sort.pia",
@@ -190,5 +191,20 @@ sh_test(
     srcs = ["heap_run_test.sh"],
     args = ["$(rootpath :heap_run)"],
     data = [":heap_run"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+pia_binary(
+    name = "numeric_run",
+    src = "Inputs/numeric_run.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = ["//lib/Pia/Core/Algo:numeric"],
+)
+
+sh_test(
+    name = "numeric_run_test",
+    srcs = ["numeric_run_test.sh"],
+    args = ["$(rootpath :numeric_run)"],
+    data = [":numeric_run"],
     target_compatible_with = APPLE_SILICON,
 )
