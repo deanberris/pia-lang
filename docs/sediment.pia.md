@@ -58,6 +58,19 @@ interface Transport @abi(c) = sig
     requires w > 0 && len rain <= 16777215
   let rain_season : (wet : bool) -> (r : u8) -> (rain : out mutable [u32]) -> unit
     requires len rain <= 16777215
+  let drainage : (fill : [u16]) -> (down : [usize]) -> (acc : out mutable [u32])
+      -> (basin : out mutable [usize]) -> (rain : out mutable [u32])
+      -> (pend : out mutable [u32]) -> (order : out mutable [usize])
+      -> (pos : out mutable [usize]) -> (cnt : out mutable [u32])
+      -> (first : out mutable [usize]) -> (next : out mutable [usize])
+      -> (last : out mutable [usize]) -> (owner : out mutable [u16]) -> unit
+    requires len down = len fill && len acc = len fill && len basin = len fill
+    requires len rain = len fill && len pend = len fill
+    requires len order = len fill && len pos = len fill && len owner = len fill
+    requires len fill < 4294967295
+    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires forall (j in 0..len down).
+               down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
   let evolve : (fill : [u16]) -> (down : [usize]) -> (rain : [u32]) -> (k : u32)
       -> (bed : inout mutable [u32]) -> (load : inout mutable [u32])
       -> (inflow : inout mutable [u32]) -> (flux : out mutable [u32])
@@ -943,6 +956,104 @@ let rain_season (wet : bool) (r : u8) (rain : out mutable [u32]) : unit
 = rain_uniform (if wet then r else 0) rain
 ```
 
+## 7. Watersheds in linear time
+
+Each epoch's picture colours every cell by its watershed and draws the
+streams, which needs the flow accumulation, counted in cells, and the
+outlet of every cell. The first half's `accumulate` follows a drop from
+every cell, which costs the total length of all the paths. The height
+order gives both in one pass each: the counts going down the order, as
+`accumulate_rain` does with one unit of rain per cell, and the outlets
+going up it, since a cell's downstream neighbour is lower and so already
+labelled. That a neighbour comes later in the order is the lemma `later`:
+it is strictly lower, and height never increases along the order.
+
+An all-one prefix sums to its length.
+
+```pia
+let lemma ones (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] = 1
+  ensures sum xs n = n
+  decreases n
+= if n > 0 then (ones xs (n - 1); assert xs.[n - 1] = 1)
+```
+
+In the height order a cell's downstream neighbour comes after it: it is
+strictly lower, and height never increases along the order.
+
+```pia
+let lemma later (fill : [u16]) (order : [usize]) (pos : [usize]) (c : usize) (d : usize) : unit
+  requires len order = len fill && len pos = len fill && c < len fill && d < len fill
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  requires fill.[d] < fill.[c]
+  ensures pos.[c] < pos.[d]
+= let a = pos.[c] in
+  let b = pos.[d] in
+  assert order.[a] = c && order.[b] = d;
+  assert b < a ==> fill.[order.[a]] <= fill.[order.[b]]
+```
+
+Every cell's watershed: the outlet its water reaches. The cells are taken
+from lowest to highest, so a cell's downstream neighbour, lower than it,
+already has its label, and the cell takes the same one.
+
+```pia
+let label_outlets (fill : [u16]) (down : [usize]) (order : [usize]) (pos : [usize]) (basin : out mutable [usize]) : unit
+  requires len down = len fill && len order = len fill && len pos = len fill && len basin = len fill
+  requires forall (j in 0 .. len down).
+             down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  ensures forall (k in 0 .. len basin). basin.[k] < len fill && down.[basin.[k]] = basin.[k]
+= let n = len fill in
+  for t in 0 .. n
+    invariant forall (k in 0 .. len basin). n - t <= at pos k ==> basin.[k] < n && down.[basin.[k]] = basin.[k]
+  do
+    let p = n - 1 - t in
+    let c = order.[p] in
+    let d = down.[c] in
+    if d = c then basin.[c] <- c
+    else
+      (later fill order pos c d;
+       basin.[c] <- basin.[d])
+  done
+```
+
+The flow accumulation and the watersheds in one linear pass each, over the
+height order: acc.[k] counts the cells whose water passes through k, and
+basin.[k] is the outlet k drains to. It gives what the first half's
+walk-based `accumulate` gives, in time O(n) rather than the total length of
+all the paths. rain and pend are scratch.
+
+```pia
+let drainage (fill : [u16]) (down : [usize]) (acc : out mutable [u32]) (basin : out mutable [usize])
+    (rain : out mutable [u32]) (pend : out mutable [u32])
+    (order : out mutable [usize]) (pos : out mutable [usize])
+    (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
+    (last : out mutable [usize]) (owner : out mutable [u16]) : unit
+  requires len down = len fill && len acc = len fill && len basin = len fill
+  requires len rain = len fill && len pend = len fill
+  requires len order = len fill && len pos = len fill && len owner = len fill
+  requires len fill < 4294967295
+  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires forall (j in 0 .. len down).
+             down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
+  ensures forall (k in 0 .. len acc). 1 <= acc.[k] && acc.[k] <= len fill
+  ensures forall (k in 0 .. len basin). basin.[k] < len fill && down.[basin.[k]] = basin.[k]
+=
+  height_order fill order pos cnt first next last owner;
+  for i in 0 .. len rain
+    invariant forall (k in 0 .. i). rain.[k] = 1
+  do rain.[i] <- 1 done;
+  ones rain (len rain);
+  accumulate_rain down order pos rain acc pend;
+  label_outlets fill down order pos basin
+```
+
 ## What is proved
 
 Every goal in this file is proved before `piac` generates code:
@@ -957,6 +1068,8 @@ Every goal in this file is proved before `piac` generates code:
 | Settling the water's load into the bed conserves the total | `fold_cell`, `fold` |
 | The flow through every cell is at least its own rain and at most the total rain | `accumulate_rain` |
 | Every rainfall field gives each cell at most 255 units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
+| A cell's downstream neighbour comes later in the height order | `later` |
+| Accumulation is between 1 and the number of cells, and every watershed label is an outlet, in linear time | `label_outlets`, `drainage` |
 | No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
 What is *not* proved: that the capacity rule and the height of a unit of

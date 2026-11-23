@@ -399,7 +399,7 @@ int main(int argc, char **argv) {
   uint64_t moved = 0, changed = 0;
   uint16_t *fill0 = malloc(n * sizeof *fill0);
   memcpy(fill0, fill, n * sizeof *fill);
-  double t8 = seconds(), pia_ms = 0;
+  double t8 = seconds(), pia_ms = 0, shed_ms = 0;
   for (int e = 0; e < EPOCHS; ++e) {
     // The rainfall fields are Pia's, each proved to keep the total rain
     // within a u32 (docs/sediment.pia.md, "Rainfall fields").
@@ -427,7 +427,13 @@ int main(int argc, char **argv) {
       return 1;
     }
     moved += out;
-    accumulate(fill, n, down, n, acc, n, basin, n);
+    // The picture's flow counts and watersheds, in linear time over the
+    // height order (docs/sediment.pia.md, section 7).
+    double c0 = seconds();
+    drainage(fill, n, down, n, acc, n, basin, n, rain, n, pend, n, order, n,
+             pos, n, cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS, last, HEIGHTS,
+             owner, n);
+    shed_ms += (seconds() - c0) * 1e3;
     render_load(ground, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb,
                 3 * n);
     char frame[4096], frame_buf[4096];
@@ -445,6 +451,7 @@ int main(int argc, char **argv) {
     left += (uint64_t)bed[i] + load[i] + inflow[i];
     changed += fill[i] != fill0[i];
   }
+  printf("evolution: watersheds for the pictures in %.1f ms\n", shed_ms);
   printf("evolution: %d epochs of %d steps in %.1f ms (%.1f ms in Pia); "
          "%llu cells changed height\n",
          EPOCHS, STEPS, (seconds() - t8) * 1e3, pia_ms,

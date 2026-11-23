@@ -41,6 +41,13 @@ void rain_uniform(uint8_t r, uint32_t *rain, uint64_t nrain);
 void rain_band(uint64_t w, uint64_t lo, uint64_t hi, uint8_t inside,
                uint8_t outside, uint32_t *rain, uint64_t nrain);
 void rain_season(bool wet, uint8_t r, uint32_t *rain, uint64_t nrain);
+void drainage(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
+              uint64_t ndown, uint32_t *acc, uint64_t nacc, uint64_t *basin,
+              uint64_t nbasin, uint32_t *rain, uint64_t nrain, uint32_t *pend,
+              uint64_t npend, uint64_t *order, uint64_t norder, uint64_t *pos,
+              uint64_t npos, uint32_t *cnt, uint64_t ncnt, uint64_t *first,
+              uint64_t nfirst, uint64_t *next, uint64_t nnext, uint64_t *last,
+              uint64_t nlast, uint16_t *owner, uint64_t nowner);
 uint64_t evolve(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
                 uint64_t ndown, const uint32_t *rain, uint64_t nrain,
                 uint32_t k, uint32_t *bed, uint64_t nbed, uint32_t *load,
