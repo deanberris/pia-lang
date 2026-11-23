@@ -79,6 +79,7 @@ class Expander {
   void run() {
     declare(preludeProgram());
     declare(program_);
+    checkListedMetaprograms();
     for (unsigned pass = 1;; ++pass) {
       size_t errors = diags_.errors().size();
       producers_.clear();
@@ -119,6 +120,26 @@ class Expander {
   }
 
  private:
+   // An interface's `let meta m : item` (any result but `concept`) lists a
+   // metaprogram, which the module must define (ADR 0039).
+   void checkListedMetaprograms() {
+     for (const NodePtr &item : program_.kids) {
+       if (item->kind != NodeKind::Interface)
+         continue;
+       for (const NodePtr &r : item->kids) {
+         if (r->kind != NodeKind::SigVal || r->flags != "meta")
+           continue;
+         const Node &t = *r->kids[0]->kids[1];
+         if (t.kind != NodeKind::TypeName || t.text == "concept")
+           continue;
+         if (!metaItems_.count(r->text))
+           diags_.error(r->loc, "the interface '" + item->text +
+                                    "' lists the metaprogram '" + r->text +
+                                    "', which the module does not define");
+       }
+     }
+   }
+
   void declare(const Node &program) {
     for (const NodePtr &item : program.kids) {
       if (item->kind == NodeKind::MetaOperator) {

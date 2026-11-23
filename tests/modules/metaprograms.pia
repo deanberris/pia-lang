@@ -1,0 +1,28 @@
+(* An importer runs metaprograms exported by another module's interface
+   (ADR 0039): Calc.Scale.reduce folds a fraction at compile time, and
+   Calc.Scale.define makes a function of it. The quote names Calc.Scale's
+   frac, which the importer's own frac does not capture.
+// RUN: piac --emit=interface -o %t %S/Inputs/scale.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Calc.Scale.Scale.piai
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: not piac --verify %S/Inputs/scale_missing.pia 2>&1 | FileCheck --check-prefix=MISSING %s
+*)
+import Calc.Scale.Scale as S
+
+let frac = type { a : u8 }
+
+S.define "milli" (S.reduce 2 2000)
+
+let check (x : u8) : unit
+  ensures milli.num = 1 && milli.den = 1000
+= ()
+
+(*
+// IFACE: let meta reduce : list
+// IFACE: let meta define : item
+// IFACE: let meta reduce (n : int) (d : int) : list
+// IFACE: let meta define (x : string) (r : list) : item
+// CHECK-NOT: failed
+// CHECK: 2 proved, 0 failed, 0 skipped
+// MISSING: scale_missing.pia:5:3: error: the interface 'Scale' lists the metaprogram 'define', which the module does not define
+*)

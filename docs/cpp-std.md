@@ -108,7 +108,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | `<cmath>`, `<numbers>`, `<complex>`, `<cfenv>` | `Pia.Math`, proved in Pia, never libm | Direct | deferred: floats (M11) |
 | `<valarray>` | `vec<T, k>` and `spread` | Out | n/a |
 | `<random>` | `Pia.Core.Rand`: integer engines and integer distributions; floating-point distributions later | Direct | phase 1, phase 4 |
-| `<ratio>` | `Pia.Core.Ratio`: rationals folded at compile time | Direct | phase 1 |
+| `<ratio>` | `Pia.Core.Ratio`: `reduce`, `add`, `subtract`, `multiply`, `divide`, `equal`, `less`, `less_equal` and the SI prefixes (`si "milli"`), metaprograms that fold ratios at compile time; `define` makes one a function whose contract gives its exact parts, and `check` is `static_assert` | Direct: C++ folds in its types, Pia in exported metaprograms (ADR 0039) | done: exact 128-bit arithmetic, always in lowest terms with a positive denominator; a zero denominator, division by zero or a part outside i64 is a compile-time error, as in C++; no proof obligations beyond `value`'s (1 goal) |
 | `<chrono>`, `<ctime>` | `Pia.Time`: integer durations, time points and the civil calendar; clocks over `Pia.Sys.Clock`; time zones later | Direct | phase 1, phase 3, later |
 
 ## Input and output
