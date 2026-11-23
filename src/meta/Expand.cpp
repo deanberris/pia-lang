@@ -541,13 +541,20 @@ class Expander {
       rec->add(makeNode(NodeKind::Contracts, c->loc));
       auto value = makeNode(NodeKind::TypeValue, c->loc);
       value->add(std::move(c->kids[0]));
-      value->add(makeNode(NodeKind::Attrs, c->loc));
+      // The record derives what its variant derives, so a variant's
+      // codec can build on its payloads' (ADR 0045, step 5).
+      auto attrs = makeNode(NodeKind::Attrs, c->loc);
+      for (const NodePtr &a : item.kids[3]->kids[1]->kids)
+        if (a->text == "derive") attrs->add(clone(*a));
+      value->add(std::move(attrs));
       value->add(makeNode(NodeKind::None, c->loc));
       rec->add(std::move(value));
       c->kids[0] = makeNode(NodeKind::TypeName, c->loc, name);
       payloadOf_[name] = item.text;
       lifted_[name] = rec.get();
       types_.insert(name);
+      // The variant's derives, later in this pass, read it.
+      interp_.addToListing(rec.get());
       out.push_back(std::move(rec));
       changed = true;
     }
@@ -616,14 +623,24 @@ class Expander {
   // type, its fields and its constructors, so that nothing else sees
   // them, and an attribute on a field or a constructor that no derive of
   // the type reads is an error rather than silently ignored.
+  // Whether a type item derives anything: an @derive left, or one run.
+  bool derives(const Node &item) {
+    for (const NodePtr &a : item.kids[3]->kids[1]->kids)
+      if (a->text == "derive") return true;
+    return !derived_[item.text].empty();
+  }
+
   bool settleAttrs(Node &item) {
     std::set<std::string> pending;
     for (const NodePtr &attr : item.kids[3]->kids[1]->kids)
       if (attr->text == "derive")
         for (const NodePtr &arg : attr->kids) pending.insert(arg->text);
-    // A lifted payload record's attributes are for its variant's derives,
-    // which settle them with the variant's own.
-    if (payloadOf_.count(item.text)) return false;
+    // A lifted payload record that derives nothing of its own has
+    // attributes for its variant's derives, which settle them with the
+    // variant's own; one that derives settles them itself.
+    if (payloadOf_.count(item.text) && pending.empty() &&
+        derived_[item.text].empty())
+      return false;
     const std::set<std::string> &done = derived_[item.text];
     bool changed = false;
     auto settle = [&](Node &attrs, const std::string *member) {
@@ -653,7 +670,8 @@ class Expander {
           if (k->kind == NodeKind::Attrs) settle(*k, &m->text);
     if (body.kind == NodeKind::Variants)
       for (NodePtr &c : body.kids)
-        if (auto r = lifted_.find(item.text + "_" + c->text); r != lifted_.end())
+        if (auto r = lifted_.find(item.text + "_" + c->text);
+            r != lifted_.end() && !derives(*r->second))
           for (NodePtr &f : r->second->kids[3]->kids[0]->kids)
             for (NodePtr &k : f->kids)
               if (k->kind == NodeKind::Attrs) settle(*k, &f->text);
