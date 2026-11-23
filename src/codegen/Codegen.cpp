@@ -16,6 +16,7 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
+#include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -1536,6 +1537,10 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
 
 namespace {
 
+// The features x86-64-v3 adds to x86-64-v2, which an x86_64 CPU must have.
+constexpr const char *kX86V3Features =
+    "+avx2,+bmi,+bmi2,+f16c,+fma,+lzcnt,+movbe";
+
 std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
                                                    std::string &error) {
   static bool initialised = [] {
@@ -1555,7 +1560,21 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
   std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
       triple, options.cpu, "", llvm::TargetOptions(), llvm::Reloc::PIC_,
       std::nullopt, level));
-  if (!tm) error = "cannot create a target machine for " + options.triple;
+  if (!tm) {
+    error = "cannot create a target machine for " + options.triple;
+    return nullptr;
+  }
+  // x86-64-v3 is the oldest x86_64 CPU Pia supports (ADR 0049): the
+  // vectoriser and the cost model assume AVX2, so code for an older CPU
+  // would be slower than promised, or would not run on the machine it was
+  // compiled for.
+  if (triple.getArch() == llvm::Triple::x86_64 &&
+      !tm->getMCSubtargetInfo()->checkFeatures(kX86V3Features)) {
+    error = "the x86_64 CPU '" + options.cpu +
+            "' is older than x86-64-v3, the oldest Pia supports (it needs "
+            "AVX2, BMI1, BMI2, F16C, FMA, LZCNT and MOVBE)";
+    return nullptr;
+  }
   return tm;
 }
 
