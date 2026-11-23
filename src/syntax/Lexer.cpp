@@ -127,8 +127,8 @@ bool isItemStarter(TokenKind k) {
 
 // What else starts a REPL cell's line at column 1: the statements a cell can
 // be, beside the items a file allows there. A leading `-` does too (see
-// push), so `1` then `-1` are two values; a subtraction that goes on to the
-// next line ends its first line with the `-`, or indents the second.
+// startsItem), so `1` then `-1` are two values; a subtraction that goes on
+// to the next line indents it, as any continuation line does.
 bool isCellStarter(TokenKind k) {
   switch (k) {
   case TokenKind::If:
