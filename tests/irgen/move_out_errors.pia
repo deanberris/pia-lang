@@ -1,0 +1,23 @@
+(* An element that owns its slices, such as a box, read as a value moves
+   out of its buffer, which must be writable so that the element left
+   behind can be emptied (ADR 0048, section 6). Moving one out of a
+   borrowed buffer would leave the box in both places. Reading through it
+   only borrows it.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let cell = type { slot : [u16]; state : int } @linear
+
+let first (xs : [cell]) : u16
+  requires len xs > 0 && len xs.[0].slot > 0
+= xs.[0].slot.[0]
+
+let keep (c : moved cell) (ys : inout [cell]) : unit
+  requires len ys > 0
+= ys.[0] <- c
+
+(* CHECK: move_out_errors.pia:[[@LINE+4]]:{{[0-9]+}}: error: this moves an element that owns its slices out of a buffer that cannot be written, which would leave it in both; borrow it, as in a field read, or take the buffer as 'inout'
+*)
+let copy (xs : [cell]) (ys : inout [cell]) : unit
+  requires len xs > 0 && len ys > 0
+= keep xs.[0] ys

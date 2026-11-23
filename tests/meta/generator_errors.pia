@@ -1,0 +1,38 @@
+(* The list and signature builtins for generators (ADR 0056) say what
+   went wrong, where the metaprogram was called.
+// RUN: not piac --dump-expanded %s 2>&1 | FileCheck %s
+*)
+
+let wide (x : u64) : u64 = x
+let flag (b : bool) : bool = b
+let point = type { x : u8 }
+let no_ret (x : u8) = x
+
+(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'past' failed: 'nth' index 3 is outside a list of 2
+*)
+let meta past () : list = [ nth [ `( let a : u8 = 1 ); `( let b : u8 = 2 ) ] 3 ]
+past ()
+
+(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'uneven' failed: 'zip' needs lists of one length, found 2 and 1
+*)
+let meta uneven () : list = map (let (p) => nth p 0) (zip [ `( let c : u8 = 1 ); `( let d : u8 = 2 ) ] [ 1 ])
+uneven ()
+
+(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'bounds' failed: 'range_of': the upper bound of u64 does not fit a metaprogram integer
+*)
+let meta bounds (f : syntax) : list = map (let (t) => `( let e : u8 = $(nth (range_of t) 0) )) (param_types f)
+bounds wide
+
+(* CHECK: generator_errors.pia:[[@LINE+2]]:1: error: the metaprogram 'bounds' failed: 'range_of' needs an integer type with bounds
+*)
+bounds flag
+
+(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'ctors' failed: 'constructors' needs a variant type
+*)
+let meta ctors (t : syntax) : list = map (let (c) => `( let $c : u8 = 0 )) (constructors t)
+ctors point
+
+(* CHECK: generator_errors.pia:[[@LINE+3]]:1: error: the metaprogram 'ret' failed: 'return_type': 'no_ret' has no return type written
+*)
+let meta ret (f : syntax) : item = `( let g : $(return_type f) = 0 )
+ret no_ret

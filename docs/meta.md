@@ -56,6 +56,12 @@ Values are integers (64-bit), bools, strings, syntax, lists, functions and unit.
 | `name t` | the name of an item or a name, as a string |
 | `concat a b` | two strings joined (an integer counts as its digits), or two lists |
 | `param name type` | a parameter `(name : type)`, for a quote's parameter list; `type` is a type's name or its syntax |
+| `nth xs i` | the element at index `i`, counting from 0; outside the list is an error |
+| `zip xs ys` | the pairs `[x; y]` of two lists of one length; different lengths are an error |
+| `range n` | `[0; 1; ...; n - 1]` |
+| `reverse xs` | the elements in the opposite order |
+| `filter p xs` | the elements for which `p` returns `true` |
+| `product xss` | every list that takes one element from each list of `xss`, the first varying slowest |
 
 Each expansion has a fuel budget of a million steps. Running out is an error.
 
@@ -278,9 +284,55 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 
 Other derives (`ord`, `hash`, `serialise`, `deserialise`) come later. A user can write their own `derive_x`.
 
+## Generators
+
+A generator is a metaprogram that reads a function's signature and contract and writes tests for it ([ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md)). Besides `params`, `hypotheses` and `conclusion` (see [Tactics](#tactics)), which work on any function item, it has:
+
+| Builtin | Meaning |
+| --- | --- |
+| `param_types f` | the type of each parameter of the function `f`, as written, as a list of syntax |
+| `return_type f` | `f`'s return type, as written; a function without one is an error |
+| `range_of t` | the bounds `[lo; hi]` of an integer type: `u8`, `i16`, a range `int{-2..2}`, or a type value. `u64` and `usize` are an error, since their upper bound does not fit a metaprogram integer |
+| `constructors t` | the constructor names of the variant type `t` (an item, or its name), as strings |
+| `subst e n v` | the syntax `e` with every name `n` replaced by `v`: syntax, a string (a name), an integer or a bool. Pia has no shadowing, so this cannot capture |
+
+On an item from `listing ()` or a top-level call's argument, the operators have already expanded, so `hypotheses` returns calls such as `le lo hi`, and `conclusion` joins the clauses with a call of `and` too. On a tactic's goal, which is the lemma as written, both keep the operators.
+
+`tests/meta/generators.pia` has a generator that writes one case per combination of its parameters' bounds, and a runner that returns the number of the first case that fails:
+
+```ocaml
+let clamp (v : u8) (lo : u8) (hi : int{0..9}) : u8
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+= if v < lo then lo else if v > hi then hi else v
+
+let meta conj (xs : list) : syntax = fold (let (a) (h) => `( $a && $h )) `( true ) xs
+
+let meta check (f : syntax) (r : list) : syntax =
+  let res = concat (name f) "_result" in
+  let ret = return_type f in
+  let call = make_call (name f) (params f) in
+  let post = subst (conclusion f) "result" res in
+  let body = `( if $(conj (hypotheses f)) then (let $res : $ret = $call in $post) else true ) in
+  fold (let (acc) (pv) =>
+         let p = nth (nth pv 0) 0 in
+         let t = nth (nth pv 0) 1 in
+         let v = nth pv 1 in
+         `( let $p : $t = $v in $acc ))
+       body (reverse (zip (zip (params f) (param_types f)) r))
+
+let meta cases (f : syntax) : list =
+  let rows = product (map range_of (param_types f)) in
+  map (let (k) => let n = concat (concat (name f) "_case_") (k + 1) in
+                  `( let $n () : bool = $(check f (nth rows k)) ))
+      (range (length rows))
+
+cases clamp
+```
+
 ## Top-level calls
 
-An item that is a call of a metaprogram, such as `make_byte ()` in column 1, runs it. The items it returns replace the call. A metaprogram may also return a call of another metaprogram, which runs in the next pass.
+An item that is a call of a metaprogram, such as `make_byte ()` in column 1, runs it. The items it returns replace the call. A metaprogram may return a list of items, which all replace the call. A metaprogram may also return a call of another metaprogram, which runs in the next pass.
 
 ## The expansion loop
 
@@ -316,6 +368,7 @@ The loop stops when a pass changes nothing. A metaprogram still waiting then is 
 | `shadowing.pia`, `builtin_name.pia` | the no-shadowing rule, and that quote binders never trip it |
 | `comments.pia` | where comments attach, and that quotes, splices, derives and operators keep them |
 | `doc_lint.pia` | a metaprogram that walks `listing ()` and insists on doc comments |
+| `generators.pia`, `generator_errors.pia` | the list and signature builtins, a generator that writes one proved case per combination of bounds, and their errors |
 | `tactic_errors.pia` | `@by` on something other than a lemma, tactics that are not total or pure, and tactics that return something other than proof steps; `tests/verify/tactics.pia` proves what tactics write |
 | `literate.pia.md`, `literate_errors.pia.md`, `literate_unclosed.pia.md` | a literate program, proved, and its errors |
 
