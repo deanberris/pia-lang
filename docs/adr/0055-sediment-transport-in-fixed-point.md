@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -75,6 +75,8 @@ Dean decided (2026-11-23) that the fixed terrain is for building and proving the
 
 Processing cells in height order is sequential. The GPU form ([survey](https://claude.ai/artifact/GNhoJ74ocgLnBPzE5kUcFA), items 3 to 7) is a "pull" step: every cell reads its eight neighbours and adds the loads of those that drain into it. Each cell writes only itself, so the step is race-free. Its conservation proof needs one more lemma, that summing every cell's inflow counts every pushed load once (a reindexing of the sum over `down`). Moving mass one cell per step, that form needs as many steps as the longest flow path to carry sediment to the outlet. So it is a second implementation proved to conserve the same total, not a replacement for the sequential one.
 
+Dean decided (2026-11-23) the order: **sequential first, then concurrent on the CPU, then GPU offload last.** The CPU step needs no new lemma: cells in different basins never exchange mass, so each basin (the cells sharing an outlet label from the accumulation) is an independent sequential problem in height order, and basins run in parallel with `spread` (M12), each owning its disjoint set of cells. The total is the sum of the basins' totals, each conserved. The pull step above is the GPU form, after that.
+
 ### 7. Render
 
 `render` colours stream cells by `load`, through an integer colour map: a ramp over `log2 load` from `Pia.Core.Bit`'s count of leading zeros. No `exp` or `log` is needed, so `Pia.Math` is not on this path either.
@@ -96,7 +98,7 @@ Processing cells in height order is sequential. The GPU form ([survey](https://c
 - The topological order is shared by sediment transport and the scalable accumulation, so building one advances the other.
 - The physics is simplified: one sediment class, fixed terrain, a capacity rule rather than a calibrated erosion law. It is a demonstration of a proved conservation law, not a geomorphology model.
 
-## Questions for Dean
+## Questions for Dean (answered 2026-11-23)
 
 1. ~~Fixed terrain first (section 5)?~~ Answered: fixed for building the model only, then terrain evolution under rainfall models, rendered as an animated GIF.
-2. The sequential height-order step first and the race-free pull step later for the GPU (section 6), or the pull step from the start?
+2. ~~Sequential first, pull step later?~~ Answered: sequential first, then concurrent on the CPU (basins in parallel), then GPU offload last.
