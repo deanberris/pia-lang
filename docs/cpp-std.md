@@ -59,7 +59,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<charconv>` | `Pia.Core.Charconv`: `to_chars`, `from_chars` for integers in bases 2 to 36, with round trips proved | Direct; floats deferred (M11) | phase 1, phase 4 |
 | `<format>`, `<print>` | `Pia.Text.Format`: format strings checked at compile time by a metaprogram; `Format` concept instead of `formatter` | Direct | phase 3 |
 | `<cctype>` | `Pia.Core.Ascii`: `is_digit`, `is_upper`, `is_lower`, `is_alpha`, `is_alnum`, `is_xdigit`, `is_space`, `is_blank`, `is_cntrl`, `is_print`, `is_graph`, `is_punct`, `to_upper`, `to_lower`, and `digit_value`/`digit`, `hex_value`/`hex_digit` | Direct, ASCII only | done: each classifier says exactly which bytes it holds for, as C++'s do in the "C" locale, bytes above 127 are in no class, and each digit pair is a round trip (66 goals); no locales |
-| `<cuchar>` | `Pia.Core.Utf8` (encode, decode, validate) | Direct | phase 1 |
+| `<cuchar>` | `Pia.Core.Utf8`: `sequence_length`, `decode`, `encode`, `valid` | Direct | done, by the Unicode standard's table 3-7 (no overlong forms, no surrogates, nothing above U+10FFFF), with both round trips proved: decoding what `encode` wrote gives the scalar back, and a valid sequence's bytes are what `encode` writes for the value `decode` reads (`bytes_of`) (294 goals); `Pia.Text.Json.Spec`'s own `utf8_len` can move here next |
 | `<cwctype>`, `<cwchar>` | none | Out: UTF-8 only | n/a |
 | `<locale>`, `<clocale>`, `<codecvt>` | none | Out: no locales | n/a |
 | `<regex>` | `Pia.Text.Regex`, a linear-time automaton engine | Deferred | later |

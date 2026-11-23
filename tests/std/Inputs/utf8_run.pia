@@ -1,0 +1,29 @@
+(* Runs Pia.Core.Utf8's compiled code on a buffer in an arena, linked by
+   pia_binary: 0 when encode, decode and valid agree with the Unicode
+   standard on one scalar of each length and on invalid input, and
+   otherwise the number of the first wrong one. *)
+import Pia.Core.Utf8.Utf8 as U
+
+let checks (b : borrowed inout mutable [u8]) : i32
+  requires len b = 8
+= let n1 = U.encode b 0 0x24 in
+  if n1 <> 1 || b.[0] <> 0x24 then 1
+  else (
+    let n2 = U.encode b 0 0xA3 in
+    if n2 <> 2 || b.[0] <> 0xC2 || b.[1] <> 0xA3 || U.decode b 0 <> 0xA3 then 2
+    else (
+      let n3 = U.encode b 0 0x20AC in
+      if n3 <> 3 || b.[0] <> 0xE2 || b.[1] <> 0x82 || b.[2] <> 0xAC || U.decode b 0 <> 0x20AC then 3
+      else (
+        let n4 = U.encode b 0 0x1F600 in
+        if n4 <> 4 || b.[0] <> 0xF0 || b.[3] <> 0x80 || U.decode b 0 <> 0x1F600 then 4
+        else (
+          let m = U.encode b 4 0x10FFFF in
+          if U.valid b = false then 5
+          else (
+            b.[1] <- 0x20;
+            if U.valid b then 6
+            else if U.sequence_length b 0 <> 0 then 7
+            else 0)))))
+
+let main () : i32 = with_arena 8 (let (m) => checks m.mem)

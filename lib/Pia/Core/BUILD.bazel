@@ -15,6 +15,7 @@ exports_files([
     "Option.pia",
     "Order.pia",
     "Result.pia",
+    "Utf8.pia",
 ])
 
 # <bit>: tests/std/bit.pia checks its goals; tests/std/bit_edges.pia and
@@ -68,5 +69,14 @@ pia_library(
 pia_library(
     name = "ascii",
     src = "Ascii.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# UTF-8: sequence_length, decode, encode and valid, with both round trips
+# proved: tests/std/utf8.pia checks its goals; tests/std/utf8_edges.pia
+# and :utf8_run test it through its interface.
+pia_library(
+    name = "utf8",
+    src = "Utf8.pia",
     target_compatible_with = PIA_TARGETS,
 )

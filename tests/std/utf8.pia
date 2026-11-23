@@ -1,0 +1,31 @@
+(* Pia.Core.Utf8 (ADR 0040, phase 1.9): sequence_length, decode, encode
+   and valid, by the Unicode standard's table 3-7, with both round trips
+   proved.
+// RUN: piac --verify %S/../../lib/Pia/Core/Utf8.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Utf8.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Utf8.Utf8.piai
+*)
+
+(* Every goal is proved, with no warning.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 294 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Utf8{{$}}
+// IFACE-NEXT: {{^}}interface Utf8 = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec cont : (b : u8) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec scalar : (cp : u32) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec encoded_len : (cp : u32) -> int{1..4}{{$}}
+// IFACE-NEXT: {{^}}  let spec byte : (cp : u32) -> (k : usize) -> u8{{$}}
+// IFACE-NEXT: {{^}}  let spec bytes_of : (s : [u8]) -> (i : usize) -> (cp : u32) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let spec seq_len : (s : [u8]) -> (i : usize) -> int{0..4}{{$}}
+// IFACE-NEXT: {{^}}  let spec value : (s : [u8]) -> (i : usize) -> u32{{$}}
+// IFACE-NEXT: {{^}}  let spec valid_from : (s : [u8]) -> (i : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let sequence_length : (s : [u8]) -> (i : usize) -> int{0..4} requires i < len s ensures result = seq_len s i{{$}}
+// IFACE-NEXT: {{^}}  let decode : (s : [u8]) -> (i : usize) -> u32 requires i < len s && seq_len s i > 0 ensures result = value s i ensures scalar result ensures encoded_len result = seq_len s i ensures bytes_of s i result{{$}}
+// IFACE-NEXT: {{^}}  let encode : (dst : borrowed inout mutable [u8]) -> (i : usize) -> (cp : u32) -> int{1..4} requires scalar cp requires i < len dst && encoded_len cp <= len dst - i ensures result = encoded_len cp ensures seq_len dst i = result && value dst i = cp ensures bytes_of dst i cp ensures forall (k in 0 .. len dst). (k < i || i + result <= k) ==> dst.[k] = old (dst.[k]){{$}}
+// IFACE-NEXT: {{^}}  let valid : (s : [u8]) -> bool ensures result <==> valid_from s 0{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

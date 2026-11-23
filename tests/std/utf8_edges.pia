@@ -1,0 +1,44 @@
+(* Importers of Pia.Core.Utf8 get both round trips from the interface
+   alone: decoding what encode wrote gives the scalar back, and encoding
+   what decode read writes the same bytes. Each length's boundaries, and
+   the bytes UTF-8 rules out, are checked at concrete values.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Utf8.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Utf8.Utf8 as U
+
+let encode_then_decode (buf : borrowed inout mutable [u8]) (cp : u32) : u32
+  requires U.scalar cp && len buf >= 4
+  ensures result = cp
+= let n = U.encode buf 0 cp in
+  U.decode buf 0
+
+let decode_then_encode (s : [u8]) (dst : borrowed inout mutable [u8]) : unit
+  requires len s > 0 && U.seq_len s 0 > 0 && len dst >= 4
+  ensures U.bytes_of dst 0 (U.value s 0)
+  ensures U.bytes_of s 0 (U.value s 0)
+= let cp = U.decode s 0 in
+  let n = U.encode dst 0 cp in
+  ()
+
+let lengths (cp : u32) : unit
+  ensures cp = 0x7F ==> U.encoded_len cp = 1
+  ensures cp = 0x80 ==> U.encoded_len cp = 2
+  ensures cp = 0x7FF ==> U.encoded_len cp = 2
+  ensures cp = 0x800 ==> U.encoded_len cp = 3
+  ensures cp = 0xFFFF ==> U.encoded_len cp = 3
+  ensures cp = 0x10000 ==> U.encoded_len cp = 4
+  ensures U.scalar 0xD800 = false && U.scalar 0xDFFF = false && U.scalar 0x110000 = false
+  ensures U.scalar 0xD7FF && U.scalar 0xE000 && U.scalar 0x10FFFF
+= ()
+
+let bad_leads (s : [u8]) : unit
+  requires len s >= 2
+  ensures s.[0] = 0xC0 || s.[0] = 0xC1 || s.[0] >= 0xF5 ==> U.seq_len s 0 = 0
+  ensures 0x80 <= s.[0] && s.[0] <= 0xBF ==> U.seq_len s 0 = 0
+= ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 24 proved, 0 failed, 0 skipped
+*)
