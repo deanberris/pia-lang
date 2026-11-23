@@ -1,0 +1,16 @@
+(* A lemma exported in an interface (#305): proved here, once. *)
+module Calc.Sums : Facts
+
+interface Facts = sig
+  let spec dbl : (x : int) -> int
+  let lemma dbl_mono : (a : int) -> (b : int) -> unit
+    requires a <= b
+    ensures dbl a <= dbl b
+end
+
+let spec dbl (x : int) : int = x + x
+
+let lemma dbl_mono (a : int) (b : int) : unit
+  requires a <= b
+  ensures dbl a <= dbl b
+= ()

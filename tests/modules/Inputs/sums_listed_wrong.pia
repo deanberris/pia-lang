@@ -1,0 +1,13 @@
+(* The interface calls a function a lemma, and a lemma a function. *)
+module Calc.Wrong : Facts
+
+interface Facts = sig
+  let lemma id : (a : int) -> int
+  let fact : (a : int) -> unit
+end
+
+let id (a : int) : int = a
+
+let lemma fact (a : int) : unit
+  ensures a = a
+= ()
