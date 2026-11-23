@@ -48,6 +48,25 @@ interface Transport @abi(c) = sig
     requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
     requires forall (k in 0..len down).
                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  let surface : (rock : [u16]) -> (bed : [u32]) -> (height : out mutable [u16])
+      -> unit
+    requires len bed = len rock && len height = len rock
+  let evolve : (fill : [u16]) -> (down : [usize]) -> (rain : [u32]) -> (k : u32)
+      -> (bed : inout mutable [u32]) -> (load : inout mutable [u32])
+      -> (inflow : inout mutable [u32]) -> (flux : out mutable [u32])
+      -> (flow : out mutable [u32]) -> (pend : out mutable [u32])
+      -> (order : out mutable [usize]) -> (pos : out mutable [usize])
+      -> (cnt : out mutable [u32]) -> (first : out mutable [usize])
+      -> (next : out mutable [usize]) -> (last : out mutable [usize])
+      -> (owner : out mutable [u16]) -> u64
+    requires len down = len fill && len rain = len fill
+    requires len bed = len fill && len load = len fill && len inflow = len fill
+    requires len flux = len fill && len flow = len fill && len pend = len fill
+    requires len order = len fill && len pos = len fill && len owner = len fill
+    requires len fill < 4294967295
+    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires forall (j in 0..len down).
+               down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
 end
 ```
 
@@ -645,6 +664,212 @@ let sediment (fill : [u16]) (down : [usize]) (acc : [u32]) (n : u32)
      g)
 ```
 
+## 6. Rain and a changing landscape
+
+So far every cell gets one unit of water and the land stays put. Step 6 of
+ADR 0055 lets the rain vary, from step to step and across the map, and lets
+the sediment change the land: the ground the water sees is the rock raised
+by the sediment resting on it, so erosion cuts valleys down and deposition
+fills them. The C program runs the landscape in *epochs*: before each, it
+computes the ground with `surface`, fills its sinks and finds its
+directions with the first half's stages, and builds a rainfall field; then
+`evolve` sorts the cells, accumulates the rain and moves sediment for `k`
+steps. Because the directions change between epochs, a little load and
+inflow may be left in flight; `fold` settles it into the bed first.
+
+The conservation theorem is unchanged: `evolve` conserves
+`sum bed + sum load + sum inflow + gone` exactly, whatever the rain and
+however the land moved, because it counts mass, not heights.
+
+Two buffers equal on a prefix have the same sum over it.
+
+```pia
+let lemma same_sum (xs : [u32]) (ys : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= len ys && n <= 4294967296
+  requires forall (k in 0 .. n). ys.[k] = xs.[k]
+  ensures sum ys n = sum xs n
+  decreases n
+= if n > 0 then (same_sum xs ys (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
+```
+
+```pia
+let spec at (xs : [usize]) (k : usize) : usize
+  requires k < len xs
+= xs.[k]
+```
+
+The arithmetic of one fold.
+
+```pia
+let lemma fold3 (b : u64) (l : u64) (i : u64) (b0 : u64) (l0 : u64) (i0 : u64) (x : u32) (y : u32) (z : u32) (b1 : u64) (l1 : u64) (i1 : u64) (t : u64) : unit
+  requires b0 + l0 + i0 = t
+  requires b1 + x = b0 + (x + y + z) && l1 + y = l0 && i1 + z = i0
+  ensures b1 + l1 + i1 = t
+= ()
+```
+
+Every cell's load and inflow settle into its bed, which conserves the total
+and leaves no water carrying anything.
+
+```pia
+let fold (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) : unit
+  requires len load = len bed && len inflow = len bed && len bed <= 4294967296
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= 4294967295
+  ensures forall (k in 0 .. len load). load.[k] = 0 && inflow.[k] = 0
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+= for c in 0 .. len bed
+    invariant forall (k in 0 .. c). load.[k] = 0 && inflow.[k] = 0
+    invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+      sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+  do
+    fold_cell bed load inflow c
+  done
+```
+
+One cell of `fold`.
+
+```pia
+let fold_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) : unit
+  requires len load = len bed && len inflow = len bed && len bed <= 4294967296 && c < len bed
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= 4294967295
+  ensures load.[c] = 0 && inflow.[c] = 0
+  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k]) && inflow.[k] = old (inflow.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+= let x = bed.[c] in
+  let y = load.[c] in
+  let z = inflow.[c] in
+  elt_le bed c (len bed);
+  elt_le load c (len load);
+  elt_le inflow c (len inflow);
+  set bed c (x + y + z);
+  set load c 0;
+  set inflow c 0;
+  fold3 (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
+    (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
+    x y z (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow))
+    (sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow))
+```
+
+pend starts as a copy of rain, and flow at zero.
+
+```pia
+let start_rain (rain : [u32]) (flow : out mutable [u32]) (pend : out mutable [u32]) : unit
+  requires len flow = len rain && len pend = len rain && len rain <= 4294967296
+  ensures forall (k in 0 .. len flow). flow.[k] = 0 && pend.[k] = rain.[k]
+  ensures sum pend (len pend) = sum rain (len rain)
+= for i in 0 .. len rain
+    invariant forall (k in 0 .. i). flow.[k] = 0 && pend.[k] = rain.[k]
+  do
+    flow.[i] <- 0;
+    pend.[i] <- rain.[i]
+  done;
+  same_sum rain pend (len rain)
+```
+
+The flow through every cell under the rainfall field rain: one pass over
+the height order, each cell's pending water becoming its flow and moving on
+to the cell below. Every cell's flow is at least its own rain and at most
+the total rain.
+
+```pia
+let accumulate_rain (down : [usize]) (order : [usize]) (pos : [usize]) (rain : [u32]) (flow : out mutable [u32]) (pend : out mutable [u32]) : unit
+  requires len order = len down && len pos = len down && len rain = len down
+  requires len flow = len down && len pend = len down && len down <= 4294967296
+  requires sum rain (len rain) <= 4294967295
+  requires forall (k in 0 .. len down). down.[k] < len down
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (k in 0 .. len flow). rain.[k] <= flow.[k] && flow.[k] <= sum rain (len rain)
+= start_rain rain flow pend;
+  let gone : mutable u64 = 0 in
+  for p in 0 .. len order
+    invariant sum pend (len pend) + gone = sum rain (len rain)
+    invariant forall (k in 0 .. len flow). flow.[k] <= sum rain (len rain)
+    invariant forall (k in 0 .. len pend). p <= at pos k ==> rain.[k] <= pend.[k]
+    invariant forall (k in 0 .. len flow). p <= at pos k || rain.[k] <= flow.[k]
+  do
+    let c = order.[p] in
+    let v = pend.[c] in
+    elt_le pend c (len pend);
+    flow.[c] <- v;
+    set pend c 0;
+    let d = down.[c] in
+    if d <> c then
+      (let w = pend.[d] in
+       elt_le pend d (len pend);
+       set pend d (w + v))
+    else gone <- gone + v
+  done
+```
+
+The terrain the water sees: the rock, raised by the sediment resting on it,
+a height unit per 64 units of bed, at most 65535.
+
+```pia
+let surface (rock : [u16]) (bed : [u32]) (height : out mutable [u16]) : unit
+  requires len bed = len rock && len height = len rock
+= for c in 0 .. len rock
+  do
+    let r : u64 = rock.[c] in
+    let h : u64 = r + (bed.[c] >> 6) in
+    height.[c] <- (if h < 65535 then h else 65535)
+  done
+```
+
+One epoch of terrain evolution: k time steps under the rainfall field rain,
+over the terrain whose filled heights and directions the caller computed
+from `surface`. The cells are sorted by height, the flow is accumulated
+from the rain, every cell's load and inflow from the last epoch settle into
+its bed, and then the water moves sediment for k steps. The total sum bed +
+sum load + sum inflow + gone is conserved exactly; if the total rain or the
+total sediment does not fit in a u32, nothing moves and the result is 2^64
+- 1.
+
+```pia
+let evolve (fill : [u16]) (down : [usize]) (rain : [u32]) (k : u32)
+    (bed : inout mutable [u32]) (load : inout mutable [u32]) (inflow : inout mutable [u32])
+    (flux : out mutable [u32]) (flow : out mutable [u32]) (pend : out mutable [u32])
+    (order : out mutable [usize]) (pos : out mutable [usize])
+    (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
+    (last : out mutable [usize]) (owner : out mutable [u16]) : u64
+  requires len down = len fill && len rain = len fill
+  requires len bed = len fill && len load = len fill && len inflow = len fill
+  requires len flux = len fill && len flow = len fill && len pend = len fill
+  requires len order = len fill && len pos = len fill && len owner = len fill
+  requires len fill < 4294967295
+  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires forall (j in 0 .. len down).
+             down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
+  ensures result = 18446744073709551615 ||
+    sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+      sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+=
+  height_order fill order pos cnt first next last owner;
+  for i in 0 .. len fill
+    invariant forall (j in 0 .. i). flux.[j] = 0
+  do flux.[i] <- 0 done;
+  let r = total rain in
+  let tb = total bed in
+  let tl = total load in
+  let ti = total inflow in
+  if r > 4294967295 || tb > 4294967295 || tl > 4294967295 || ti > 4294967295
+     || tb + tl + ti > 4294967295 then 18446744073709551615
+  else
+    (accumulate_rain down order pos rain flow pend;
+     fold bed load inflow;
+     let g : mutable u64 = 0 in
+     for s in 0 .. k
+       invariant forall (j in 0 .. len load). load.[j] = 0
+       invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g =
+         sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+     do
+       g <- transport fill down flow order bed load inflow flux g
+     done;
+     g)
+```
+
 ## What is proved
 
 Every goal in this file is proved before `piac` generates code:
@@ -655,9 +880,12 @@ Every goal in this file is proved before `piac` generates code:
 | A write changes a sum by the new value less the old | `update`, `set` |
 | Erosion and deposition create no mass, and erosion takes at most the bed | `erode_or_deposit` |
 | The height order is a permutation of the cells, with its exact inverse, and height never increases along it | `histogram` up to `height_order` |
-| Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport` and `sediment` |
+| Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport`, `sediment` and `evolve` |
+| Settling the water's load into the bed conserves the total | `fold_cell`, `fold` |
+| The flow through every cell is at least its own rain and at most the total rain | `accumulate_rain` |
 | No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
-What is *not* proved: that the capacity rule is physical, and that a step
+What is *not* proved: that the capacity rule and the height of a unit of
+sediment are physical, and that a step
 carries all sediment to an outlet (it does when the order is topological,
 which the height order is, but the proof does not use it).

@@ -233,12 +233,17 @@ static double seconds(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 
-// The name of the sediment map: the output name with "-sediment" before
-// its extension.
-static void sediment_name(const char *output, char *buf, size_t size) {
+// The name of a sediment map: the output name with `tag`, and the epoch
+// when it is not negative, before its extension.
+static void sediment_name(const char *output, const char *tag, int epoch,
+                          char *buf, size_t size) {
   const char *dot = strrchr(output, '.');
   size_t stem = dot ? (size_t)(dot - output) : strlen(output);
-  snprintf(buf, size, "%.*s-sediment%s", (int)stem, output, dot ? dot : ".png");
+  char num[16] = "";
+  if (epoch >= 0)
+    snprintf(num, sizeof num, "%d", epoch);
+  snprintf(buf, size, "%.*s%s%s%s", (int)stem, output, tag, num,
+           dot ? dot : ".png");
 }
 
 int main(int argc, char **argv) {
@@ -375,9 +380,86 @@ int main(int argc, char **argv) {
     return 1;
   }
   char sed_name[4096], sed_buf[4096];
-  sediment_name(output, sed_name, sizeof sed_name);
+  sediment_name(output, "-sediment", -1, sed_name, sizeof sed_name);
   if (!write_rgb(resolve(sed_name, sed_buf, sizeof sed_buf), w, h, rgb)) return 1;
   printf("sediment map written to %s\n", sed_name);
+
+  // The landscape evolves (docs/sediment.pia.md, section 6): epochs of
+  // `steps` time steps, each under its own rainfall field, with the ground
+  // raised by the sediment on it, and its sinks, directions and order
+  // recomputed before each. Two epochs of uniform rain, four of a storm
+  // band moving down the map, then a wet season and a dry one.
+  enum { EPOCHS = 8, STEPS = 4 };
+  uint16_t *ground = malloc(n * sizeof *ground);
+  uint32_t *rain = malloc(n * sizeof *rain), *flow = malloc(n * sizeof *flow);
+  uint32_t *pend = malloc(n * sizeof *pend);
+  for (uint64_t i = 0; i < n; ++i)
+    bed[i] = seed, load[i] = 0, inflow[i] = 0;
+  uint64_t moved = 0, changed = 0;
+  uint16_t *fill0 = malloc(n * sizeof *fill0);
+  memcpy(fill0, fill, n * sizeof *fill);
+  double t8 = seconds(), pia_ms = 0;
+  for (int e = 0; e < EPOCHS; ++e) {
+    const char *kind;
+    for (long y = 0; y < h; ++y)
+      for (long x = 0; x < w; ++x) {
+        uint32_t r;
+        if (e < 2)
+          kind = "uniform", r = 4;
+        else if (e < 6)
+          kind = "storm",
+          r = y >= (e - 2) * h / 4 && y < (e - 1) * h / 4 ? 16 : 1;
+        else
+          kind = e == 6 ? "wet" : "dry", r = e == 6 ? 8 : 0;
+        rain[y * w + x] = r;
+      }
+    double a = seconds();
+    surface(dem, n, bed, n, ground, n);
+    fill_sinks(ground, n, w, limit, fill, n);
+    directions(fill, n, w, down, n);
+    uint64_t out =
+        evolve(fill, n, down, n, rain, n, STEPS, bed, n, load, n, inflow, n,
+               flux, n, flow, n, pend, n, order, n, pos, n, cnt, HEIGHTS, first,
+               HEIGHTS, next, HEIGHTS, last, HEIGHTS, owner, n);
+    double b = seconds();
+    pia_ms += (b - a) * 1e3;
+    if (out == UINT64_MAX) {
+      fprintf(stderr,
+              "evolve: the rain or the sediment does not fit in a u32\n");
+      return 1;
+    }
+    moved += out;
+    accumulate(fill, n, down, n, acc, n, basin, n);
+    render_load(ground, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb,
+                3 * n);
+    char frame[4096], frame_buf[4096];
+    sediment_name(output, "-epoch-", e, frame, sizeof frame);
+    if (!write_rgb(resolve(frame, frame_buf, sizeof frame_buf), w, h, rgb))
+      return 1;
+    uint32_t peak = 0;
+    for (uint64_t i = 0; i < n; ++i)
+      peak = flow[i] > peak ? flow[i] : peak;
+    printf("epoch %d (%s rain): %llu out, peak flow %u, written to %s\n", e,
+           kind, (unsigned long long)out, peak, frame);
+  }
+  uint64_t left = 0;
+  for (uint64_t i = 0; i < n; ++i) {
+    left += (uint64_t)bed[i] + load[i] + inflow[i];
+    changed += fill[i] != fill0[i];
+  }
+  printf("evolution: %d epochs of %d steps in %.1f ms (%.1f ms in Pia); "
+         "%llu cells changed height\n",
+         EPOCHS, STEPS, (seconds() - t8) * 1e3, pia_ms,
+         (unsigned long long)changed);
+  printf("evolution: %llu units left, %llu out, %llu in all; %llu at the "
+         "start\n",
+         (unsigned long long)left, (unsigned long long)moved,
+         (unsigned long long)(left + moved), (unsigned long long)(n * seed));
+  if (left + moved != n * seed) {
+    fprintf(stderr, "evolution: the total changed\n");
+    return 1;
+  }
+  free(ground), free(rain), free(flow), free(pend), free(fill0);
   free(order), free(pos), free(bed), free(load), free(inflow), free(flux);
   free(cnt), free(first), free(next), free(last), free(owner);
   free(dem), free(fill), free(down), free(basin), free(acc), free(rgb);

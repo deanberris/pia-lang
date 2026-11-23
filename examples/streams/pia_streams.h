@@ -34,6 +34,18 @@ uint64_t sediment(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
                   uint64_t ncnt, uint64_t *first, uint64_t nfirst,
                   uint64_t *next, uint64_t nnext, uint64_t *last,
                   uint64_t nlast, uint16_t *owner, uint64_t nowner);
+void surface(const uint16_t *rock, uint64_t nrock, const uint32_t *bed,
+             uint64_t nbed, uint16_t *height, uint64_t nheight);
+uint64_t evolve(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
+                uint64_t ndown, const uint32_t *rain, uint64_t nrain,
+                uint32_t k, uint32_t *bed, uint64_t nbed, uint32_t *load,
+                uint64_t nload, uint32_t *inflow, uint64_t ninflow,
+                uint32_t *flux, uint64_t nflux, uint32_t *flow, uint64_t nflow,
+                uint32_t *pend, uint64_t npend, uint64_t *order,
+                uint64_t norder, uint64_t *pos, uint64_t npos, uint32_t *cnt,
+                uint64_t ncnt, uint64_t *first, uint64_t nfirst, uint64_t *next,
+                uint64_t nnext, uint64_t *last, uint64_t nlast, uint16_t *owner,
+                uint64_t nowner);
 uint64_t render_load(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                      uint64_t nfill, const uint32_t *acc, uint64_t nacc,
                      const uint64_t *basin, uint64_t nbasin,

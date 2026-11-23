@@ -856,7 +856,6 @@ The demo works around parts of Pia that are not built yet:
   and some slices' element ranges are lost inside quantifiers
   ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
   code is shaped around both, as noted where it matters.
-- **Terrain that evolves.** The landscape is fixed while sediment moves.
-  Changing the heights by erosion and deposition, under rainfall that
-  changes from step to step, and an animated picture, are the next steps
-  of ADR 0055.
+- **An animated picture.** The landscape evolves under changing rain
+  ([sediment.pia.md](sediment.pia.md), section 6), and `main.c` writes one
+  PNG per epoch; an animated GIF waits for the GIF encoder of ADR 0054.
