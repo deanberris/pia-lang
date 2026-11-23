@@ -1,0 +1,56 @@
+(* @derive(json) (ADR 0045, step 4): for each record type, a writer and a
+   reader whose goals are all proved, a few per field, so their cost grows
+   with the number of fields and no faster. The reader's error type has
+   exactly the constructors its type can raise, and its key decision tree
+   tests the name's length, then the first byte where names of that length
+   differ, then the whole name.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --dump-expanded --iface-path=%t %s | FileCheck %s --check-prefix=AST
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+(* The error type has a constructor for each error, named for the type,
+   since constructors are names of the module. Three names of length 2:
+   "ok" differs from "xx" and "xy" in the first byte, and those two in
+   the second. The tree tests the length first.
+// AST:      (LetItem "point_json_error"
+// AST:          (Ctor "Syntax_point"
+// AST:          (Ctor "Unknown_point"
+// AST:          (Ctor "Duplicate_point"
+// AST:          (Ctor "Missing_point"
+// AST:          (Ctor "Range_point"
+// AST:      (LetItem "json_key_point"
+// AST:        (If
+// AST-NEXT:     (Apply
+// AST-NEXT:       (Name "eq" [prelude])
+// AST-NEXT:       (Name "n")
+// AST-NEXT:       (IntLit "2")
+*)
+let point = type { x : i32 @json(name = "xx"); y : u8 @json(name = "xy"); ok : bool } @derive(json)
+
+(* No integer field: no Range.
+// AST:      (LetItem "flags_json_error"
+// AST:          (Ctor "Missing_flags"
+// AST-NOT:      (Ctor "Range_flags"
+// AST:      (LetItem "flags_json_read"
+*)
+let flags = type { a : bool; b : bool } @derive(json)
+
+(* A range type and the widest integers. *)
+let level = type { n : int{1..20}; total : u64; delta : i64 } @derive(json)
+
+(* A caller gets the whole value back, every field set. *)
+let first (s : [u8]) : bool
+  requires len s >= 1
+= match read_json_flags s 0 with
+  | Ok r -> r.value.a
+  | Err _ -> false

@@ -39,6 +39,7 @@ lit_tests(
         "//lib/Pia/Image/Gif:Lzw.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
         "//lib/Pia/Text/Json:Lex.pia",
+        "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
         "//lib/Pia/Text/Json:Write.pia",
     ],
@@ -149,6 +150,26 @@ sh_test(
     srcs = ["json_lex_run_test.sh"],
     args = ["$(rootpath :json_lex_run)"],
     data = [":json_lex_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "json_derive_run",
+    src = "Inputs/json_derive_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+sh_test(
+    name = "json_derive_run_test",
+    srcs = ["json_derive_run_test.sh"],
+    args = ["$(rootpath :json_derive_run)"],
+    data = [":json_derive_run"],
     target_compatible_with = PIA_TARGETS,
 )
 

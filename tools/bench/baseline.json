@@ -127,6 +127,15 @@
       "wall_ms_1": 15315.7,
       "wall_ms_n": 10618.7
     },
+    "lib/Pia/Text/Json/Read.pia": {
+      "cost": 129723807,
+      "goals": 73,
+      "solve_ms_1": 22767,
+      "solve_ms_n": 10192,
+      "solved": 70,
+      "wall_ms_1": 27122.1,
+      "wall_ms_n": 14562.1
+    },
     "lib/Pia/Text/Json/Spec.pia": {
       "cost": 13158437,
       "goals": 134,
@@ -137,13 +146,13 @@
       "wall_ms_n": 1742.0
     },
     "lib/Pia/Text/Json/Write.pia": {
-      "cost": 373362854,
-      "goals": 542,
-      "solve_ms_1": 33920,
-      "solve_ms_n": 10067,
-      "solved": 532,
-      "wall_ms_1": 73791.1,
-      "wall_ms_n": 49742.2
+      "cost": 467188743,
+      "goals": 571,
+      "solve_ms_1": 38650,
+      "solve_ms_n": 13000,
+      "solved": 561,
+      "wall_ms_1": 81379.0,
+      "wall_ms_n": 56184.7
     },
     "tests/verify/bits.pia": {
       "cost": 10549,
@@ -265,10 +274,10 @@
   },
   "host": "BabyHouse-iMac",
   "total": {
-    "cost": 1163721577,
-    "goals": 3847,
-    "solved": 3521,
-    "wall_ms_1": 456530.3,
-    "wall_ms_n": 214387.1
+    "cost": 1387271273,
+    "goals": 3949,
+    "solved": 3620,
+    "wall_ms_1": 491240.3,
+    "wall_ms_n": 235391.7
   }
 }

@@ -1,0 +1,280 @@
+(* Pia.Text.Json.Read: the token readers that `@derive(json)` builds its
+   readers from (ADR 0045, sections 2 and 3, step 4). Each reads the next
+   token or two with Pia.Text.Json.Lex from a position in the input and
+   returns where it stopped, or the position of what went wrong. They are
+   proved once here, so a derived reader's own goals are only its control
+   flow, one field at a time.
+
+   - `read_uint` and `read_int` read an integer number token into a range
+     given by its bounds, with the range check fused into the digit loop:
+     a digit that would take the value past the bound stops it, so a u8
+     reads at most three digits. A number with a fraction or an exponent
+     is out of range of every integer type. On success the value is the
+     token's (Spec.magnitude, with the minus), and the token is one by
+     Spec.token_at.
+   - `read_bool` reads `true` or `false`.
+   - `open_object` reads `{`, and says whether `}` follows at once.
+   - `read_key` reads a member's name, a string token, and the colon after
+     it. The name's bytes are compared as written: a name with escapes
+     only matches a field whose name has the same escapes (unescaping
+     comes with Json.Dom).
+   - `after_member` reads the `,` or `}` after a member's value. *)
+module Pia.Text.Json.Read : Reader
+
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Lex.Lexer as Lex
+
+interface Reader = sig
+  (** What went wrong reading a number: no number token there, or one
+      outside the range asked for, at the token's start. *)
+  let num_error = type | NotNumber of usize | OutOfRange of usize
+  (** An unsigned integer, and the token it was read from. *)
+  let uint_read = type { value : u64; start : usize; stop : usize }
+  (** A signed integer, and the token it was read from. *)
+  let int_read = type { value : i64; start : usize; stop : usize }
+  (** A bool, and the position after it. *)
+  let bool_read = type { value : bool; stop : usize }
+  (** A member name from start to stop, quotes included, and the position
+      after its colon. *)
+  let key = type { start : usize; stop : usize; next : usize }
+  (** After `{`: the position after it, or after `}` when the object is
+      empty. *)
+  let opened = type { next : usize; empty : bool }
+  (** After a member's value: the position after `,` (more) or `}`. *)
+  let sep = type { next : usize; more : bool }
+  (** The unsigned integer at or after pos, at most max. *)
+  let read_uint : (s : [u8]) -> (pos : usize) -> (max : u64) -> result uint_read num_error
+    requires pos <= len s
+    ensures (match result with
+      | Ok r -> pos <= r.start && r.start < r.stop && r.stop <= len s && r.value <= max
+      | Err _ -> true)
+    ensures (match result with
+      | Ok r -> Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number r.start r.stop
+                && Pia.Text.Json.Spec.minus_at s r.start = false
+                && Pia.Text.Json.Spec.magnitude s r.start r.stop = r.value
+      | Err _ -> true)
+  (** The integer at or after pos, from lo to hi. *)
+  let read_int : (s : [u8]) -> (pos : usize) -> (lo : i64) -> (hi : i64) -> result int_read num_error
+    requires pos <= len s && lo <= hi
+    ensures (match result with
+      | Ok r -> pos <= r.start && r.start < r.stop && r.stop <= len s && lo <= r.value && r.value <= hi
+      | Err _ -> true)
+    ensures (match result with
+      | Ok r -> Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number r.start r.stop
+                && (Pia.Text.Json.Spec.minus_at s r.start <==> r.value < 0)
+      | Err _ -> true)
+  (** `true` or `false` at or after pos. *)
+  let read_bool : (s : [u8]) -> (pos : usize) -> result bool_read usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok r -> pos < r.stop && r.stop <= len s
+      | Err p -> p <= len s)
+  (** `{` at or after pos. *)
+  let open_object : (s : [u8]) -> (pos : usize) -> result opened usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok o -> pos < o.next && o.next <= len s
+      | Err p -> p <= len s)
+  (** A member's name and its colon, at or after pos. *)
+  let read_key : (s : [u8]) -> (pos : usize) -> result key usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok k -> pos <= k.start && k.start + 2 <= k.stop && k.stop < k.next && k.next <= len s
+                && Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String k.start k.stop
+      | Err p -> p <= len s)
+  (** `,` or `}` at or after pos. *)
+  let after_member : (s : [u8]) -> (pos : usize) -> result sep usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok r -> pos < r.next && r.next <= len s && (r.more = false ==> r.next >= 1 && s.[r.next - 1] = 0x7D)
+      | Err p -> p <= len s)
+end
+
+let num_error = type | NotNumber of usize | OutOfRange of usize
+let uint_read = type { value : u64; start : usize; stop : usize }
+let int_read = type { value : i64; start : usize; stop : usize }
+let bool_read = type { value : bool; stop : usize }
+let key = type { start : usize; stop : usize; next : usize }
+let opened = type { next : usize; empty : bool }
+let sep = type { next : usize; more : bool }
+
+(* Where a lex error is, as code. *)
+let lex_pos (e : Lex.lex_error) : usize
+  ensures result = Lex.error_at e
+= match e with
+  | Unexpected p -> p
+  | BadLiteral p -> p
+  | BadNumber p -> p
+  | BadString p -> p
+
+(* A digit after acc, when the result fits, is acc * 10 plus the digit:
+   Spec.digit_step saturates only past the largest u64. *)
+let lemma step_exact (acc : u64) (b : u8) : unit
+  requires 0x30 <= b && b <= 0x39
+  requires acc * 10 + (b - 0x30) <= 18446744073709551615
+  ensures Spec.digit_step acc b = acc * 10 + (b - 0x30)
+= ()
+
+(* A digit more stays within the bound max = q * 10 + r when acc is below
+   q, or is q and the digit at most r. *)
+let lemma fits (acc : u64) (d : u64) (max : u64) (q : u64) (r : u64) : unit
+  requires d <= 9 && max = q * 10 + r && (acc < q || (acc = q && d <= r))
+  ensures acc * 10 + d <= max
+= ()
+
+(* The digits from i to j, as a value at most max: Err at the first byte
+   that is not a digit, or at the digit that would pass max. The check is
+   in the loop, so it reads no digit past the one that overflows. *)
+let parse_digits (s : [u8]) (i : usize) (j : usize) (max : u64) : result u64 usize
+  requires i <= j && j <= len s
+  ensures (match result with
+    | Ok m -> m <= max && Spec.digits_value 0 s i j = m
+    | Err p -> i <= p && p <= j)
+= let q = max / 10 in
+  let r = max % 10 in
+  let acc : mutable u64 = 0 in
+  let k : mutable usize = i in
+  let bad : mutable bool = false in
+  while k < j && bad = false
+    invariant i <= k && k <= j && acc <= max
+    invariant bad = false ==> Spec.digits_value acc s k j = Spec.digits_value 0 s i j
+    decreases j - k + (if bad then 0 else 1)
+  do
+    let b = s.[k] in
+    if b < 0x30 || b > 0x39 then bad <- true
+    else (
+      let d : u64 = b - 0x30 in
+      if acc > q || (acc = q && d > r) then bad <- true
+      else (
+        fits acc d max q r;
+        step_exact acc b;
+        acc <- acc * 10 + d;
+        k <- k + 1))
+  done;
+  if bad then Err k else Ok acc
+
+let read_uint (s : [u8]) (pos : usize) (max : u64) : result uint_read num_error
+  requires pos <= len s
+  ensures (match result with
+    | Ok r -> pos <= r.start && r.start < r.stop && r.stop <= len s && r.value <= max
+    | Err _ -> true)
+  ensures (match result with
+    | Ok r -> Spec.token_at s Spec.Number r.start r.stop
+              && Spec.minus_at s r.start = false
+              && Spec.magnitude s r.start r.stop = r.value
+    | Err _ -> true)
+= match Lex.next s pos with
+  | Err e -> Err (NotNumber (lex_pos e))
+  | Ok t ->
+      (match t.kind with
+       | Number ->
+           if s.[t.start] = 0x2D then Err (OutOfRange t.start)
+           else
+             (match parse_digits s t.start t.stop max with
+              | Ok m -> Ok { value = m; start = t.start; stop = t.stop }
+              | Err _ -> Err (OutOfRange t.start))
+       | _ -> Err (NotNumber t.start))
+
+let read_int (s : [u8]) (pos : usize) (lo : i64) (hi : i64) : result int_read num_error
+  requires pos <= len s && lo <= hi
+  ensures (match result with
+    | Ok r -> pos <= r.start && r.start < r.stop && r.stop <= len s && lo <= r.value && r.value <= hi
+    | Err _ -> true)
+  ensures (match result with
+    | Ok r -> Spec.token_at s Spec.Number r.start r.stop
+              && (Spec.minus_at s r.start <==> r.value < 0)
+    | Err _ -> true)
+= match Lex.next s pos with
+  | Err e -> Err (NotNumber (lex_pos e))
+  | Ok t ->
+      (match t.kind with
+       | Number ->
+           if s.[t.start] = 0x2D then (
+             (* A negative number: its magnitude is at most -lo. *)
+             if lo >= 0 || t.start + 1 >= t.stop then Err (OutOfRange t.start)
+             else (
+               let lim : u64 = if lo = -9223372036854775808 then 9223372036854775808
+                               else (let p : i64 = 0 - lo in p) in
+               match parse_digits s (t.start + 1) t.stop lim with
+               | Ok m ->
+                   if m = 0 then Err (OutOfRange t.start)
+                   else (
+                     let v : i64 = if m = 9223372036854775808 then -9223372036854775808
+                                   else (let q : i64 = m in 0 - q) in
+                     if v > hi then Err (OutOfRange t.start)
+                     else Ok { value = v; start = t.start; stop = t.stop })
+               | Err _ -> Err (OutOfRange t.start)))
+           else (
+             if hi < 0 then Err (OutOfRange t.start)
+             else (
+               let lim : u64 = hi in
+               match parse_digits s t.start t.stop lim with
+               | Ok m ->
+                   let v : i64 = m in
+                   if v < lo then Err (OutOfRange t.start)
+                   else Ok { value = v; start = t.start; stop = t.stop }
+               | Err _ -> Err (OutOfRange t.start)))
+       | _ -> Err (NotNumber t.start))
+
+let read_bool (s : [u8]) (pos : usize) : result bool_read usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok r -> pos < r.stop && r.stop <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | True -> Ok { value = true; stop = t.stop }
+       | False -> Ok { value = false; stop = t.stop }
+       | _ -> Err t.start)
+
+let open_object (s : [u8]) (pos : usize) : result opened usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok o -> pos < o.next && o.next <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | LBrace ->
+           (match Lex.next s t.stop with
+            | Ok u ->
+                (match u.kind with
+                 | RBrace -> Ok { next = u.stop; empty = true }
+                 | _ -> Ok { next = t.stop; empty = false })
+            | Err _ -> Ok { next = t.stop; empty = false })
+       | _ -> Err t.start)
+
+let read_key (s : [u8]) (pos : usize) : result key usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok k -> pos <= k.start && k.start + 2 <= k.stop && k.stop < k.next && k.next <= len s
+              && Spec.token_at s Spec.String k.start k.stop
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | String ->
+           (match Lex.next s t.stop with
+            | Err e -> Err (lex_pos e)
+            | Ok c ->
+                (match c.kind with
+                 | Colon -> Ok { start = t.start; stop = t.stop; next = c.stop }
+                 | _ -> Err c.start))
+       | _ -> Err t.start)
+
+let after_member (s : [u8]) (pos : usize) : result sep usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len s && (r.more = false ==> r.next >= 1 && s.[r.next - 1] = 0x7D)
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | Comma -> Ok { next = t.stop; more = true }
+       | RBrace -> Ok { next = t.stop; more = false }
+       | _ -> Err t.start)
