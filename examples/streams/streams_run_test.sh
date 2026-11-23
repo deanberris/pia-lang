@@ -14,7 +14,7 @@ grep -q '^1276 outlets drain 98304 cells; ' out.txt
 grep -q '^map written to streams-output.png$' out.txt
 # Sediment transport ran, and the C side counts the same total it started
 # with (main.c also exits 1 if it does not).
-grep -q '^sediment: 4 steps over 98304 cells ' out.txt
+grep -q '^sediment: 4 steps over 98304 cells, sorted by height in Pia ' out.txt
 grep -q '^sediment: [0-9]* units in the beds and the water, [0-9]* out, 9830400 in all; 9830400 at the start$' out.txt
 grep -q '^sediment map written to streams-output-sediment.png$' out.txt
 # Streams print as '~' and '#' in the text preview, and the crater as 'o'.

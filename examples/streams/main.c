@@ -233,13 +233,6 @@ static double seconds(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 
-// The cells from highest to lowest filled height, for sediment transport.
-static const uint16_t *order_fill;
-static int higher_first(const void *a, const void *b) {
-  uint16_t x = order_fill[*(const uint64_t *)a], y = order_fill[*(const uint64_t *)b];
-  return (x < y) - (x > y);
-}
-
 // The name of the sediment map: the output name with "-sediment" before
 // its extension.
 static void sediment_name(const char *output, char *buf, size_t size) {
@@ -327,16 +320,24 @@ int main(int argc, char **argv) {
   // on every cell, moved for a few steps in height order. Pia proves the
   // total is conserved; the check here is that the compiled code agrees.
   const uint32_t seed = 100, nsteps = 4;
-  uint64_t *order = malloc(n * sizeof *order);
+  // Pia sorts the cells by height itself, in linear time; it needs scratch
+  // buffers, since it cannot allocate yet.
+  enum { HEIGHTS = 65536 };
+  uint64_t *order = malloc(n * sizeof *order), *pos = malloc(n * sizeof *pos);
   uint32_t *bed = malloc(n * sizeof *bed), *load = malloc(n * sizeof *load);
   uint32_t *inflow = malloc(n * sizeof *inflow), *flux = malloc(n * sizeof *flux);
-  for (uint64_t i = 0; i < n; ++i) order[i] = i, bed[i] = seed;
-  double t5 = seconds();
-  order_fill = fill;
-  qsort(order, n, sizeof *order, higher_first);
+  uint32_t *cnt = malloc(HEIGHTS * sizeof *cnt);
+  uint64_t *first = malloc(HEIGHTS * sizeof *first),
+           *next = malloc(HEIGHTS * sizeof *next);
+  uint64_t *last = malloc(HEIGHTS * sizeof *last);
+  uint16_t *owner = malloc(n * sizeof *owner);
+  for (uint64_t i = 0; i < n; ++i)
+    bed[i] = seed;
   double t6 = seconds();
-  uint64_t gone = sediment(fill, n, down, n, acc, n, order, n, nsteps, bed, n,
-                           load, n, inflow, n, flux, n);
+  uint64_t gone =
+      sediment(fill, n, down, n, acc, n, nsteps, bed, n, load, n, inflow, n,
+               flux, n, order, n, pos, n, cnt, HEIGHTS, first, HEIGHTS, next,
+               HEIGHTS, last, HEIGHTS, owner, n);
   double t7 = seconds();
   uint64_t total = 0, carried = 0, moving = 0;
   for (uint64_t i = 0; i < n; ++i) {
@@ -345,14 +346,30 @@ int main(int argc, char **argv) {
     moving += flux[i] > 0 && acc[i] >= threshold;
   }
   render_load(dem, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb, 3 * n);
-  printf("sediment: %u steps over %llu cells (sort %.1f ms, transport %.1f ms)\n",
-         nsteps, (unsigned long long)n, (t6 - t5) * 1e3, (t7 - t6) * 1e3);
+  printf(
+      "sediment: %u steps over %llu cells, sorted by height in Pia (%.1f ms)\n",
+      nsteps, (unsigned long long)n, (t7 - t6) * 1e3);
   printf("sediment: %llu units in the beds and the water, %llu out, %llu in all;"
          " %llu at the start\n",
          (unsigned long long)total, (unsigned long long)gone,
          (unsigned long long)(total + gone), (unsigned long long)(n * seed));
   printf("sediment: %llu cells carry a load, %llu of them on a stream\n",
          (unsigned long long)carried, (unsigned long long)moving);
+  // How the load leaving the stream cells spreads, by its number of bits:
+  // the picture's colour ramp is over the same scale.
+  uint64_t bits[33] = {0};
+  for (uint64_t i = 0; i < n; ++i)
+    if (acc[i] >= threshold) {
+      int b = 0;
+      for (uint32_t f = flux[i]; f; f >>= 1)
+        ++b;
+      ++bits[b];
+    }
+  printf("sediment: stream load by bits:");
+  for (int b = 0; b <= 32; ++b)
+    if (bits[b])
+      printf(" %d:%llu", b, (unsigned long long)bits[b]);
+  printf("\n");
   if (total + gone != n * seed) {
     fprintf(stderr, "sediment: the total changed\n");
     return 1;
@@ -361,7 +378,8 @@ int main(int argc, char **argv) {
   sediment_name(output, sed_name, sizeof sed_name);
   if (!write_rgb(resolve(sed_name, sed_buf, sizeof sed_buf), w, h, rgb)) return 1;
   printf("sediment map written to %s\n", sed_name);
-  free(order), free(bed), free(load), free(inflow), free(flux);
+  free(order), free(pos), free(bed), free(load), free(inflow), free(flux);
+  free(cnt), free(first), free(next), free(last), free(owner);
   free(dem), free(fill), free(down), free(basin), free(acc), free(rgb);
   return 0;
 }
