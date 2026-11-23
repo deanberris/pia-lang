@@ -1,0 +1,86 @@
+(* The builtins a derive reads a type with (ADR 0045, step 3): a field's
+   type and attributes, a variant's constructors with their payloads and
+   attributes, the type's own attributes, a string's bytes, and integer
+   bounds up to u64's. Each derive here writes what it read as constants,
+   and the postconditions check the values.
+// RUN: piac --verify %s | FileCheck %s
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=AST
+// CHECK-NOT: failed
+// CHECK: 10 proved, 0 failed, 0 skipped
+*)
+
+(* A record with an attribute on a field, and one on the type after the
+   derive: field_type, field_attrs, attrs and bytes. *)
+let meta derive_info (t : item) : item =
+  let f = nth (fields t) 0 in
+  let ft = field_type t f in
+  let named = nth (nth (nth (nth (field_attrs t f) 0) 1) 0) 1 in
+  let key = bytes named in
+  let n = length key in
+  let b0 = nth key 0 in
+  let lo = nth (range_of ft) 0 in
+  let tags = length (attrs t) in
+  let lname = concat "keylen_" (name t) in
+  let bname = concat "first_" (name t) in
+  let fname = concat "low_" (name t) in
+  let aname = concat "tags_" (name t) in
+  `( let $lname () : usize ensures $!result = 2 = $n
+     let $bname () : u8 ensures $!result = 0x78 = $b0
+     let $fname () : $ft ensures $!result = -2147483648 = $lo
+     let $aname () : usize ensures $!result = 2 = $tags )
+
+let point = type { x : i32 @info(name = "xx"); y : i32 } @derive(info) @info(strict)
+
+(* The attribute is gone once the derive has run.
+// AST:      (LetItem "point"
+// AST:          (FieldDecl "x"
+// AST-NEXT:       (Annot
+// AST-NEXT:         (Modifiers)
+// AST-NEXT:         (TypeName "i32")
+// AST-NEXT:         (None)
+// AST-NEXT:       )
+// AST-NEXT:       (Attrs)
+*)
+
+(* u64's bounds are exact, and a hexadecimal literal in a metaprogram is
+   its value. *)
+let meta derive_top (t : item) : item =
+  let hi = nth (range_of "u64") 1 in
+  let same = if hi = 0xFFFF_FFFF_FFFF_FFFF then 1 else 0 in
+  let tname = concat "top_" (name t) in
+  let sname = concat "hex_" (name t) in
+  `( let $tname () : u64 ensures $!result = 18446744073709551615 = $hi
+     let $sname () : u8 ensures $!result = 1 = $same )
+
+let unit_like = type { z : u8 } @derive(top)
+
+(* Constructors with payloads and attributes, before `of` and between two
+   `|`; the last one's attribute here, with no payload, is the type's. *)
+let circle = type { r : u16 }
+let rect = type { w : u16; h : u16 }
+
+let meta derive_vinfo (t : item) : item =
+  let vs = variants t in
+  let c1 = nth (nth vs 1) 0 in
+  let tag = nth (nth (nth (nth (ctor_attrs t c1) 0) 1) 0) 1 in
+  let empty = nth (nth (nth (nth (ctor_attrs t "Empty") 0) 1) 0) 1 in
+  let n = length vs in
+  let m = length (bytes tag) in
+  let e = length (bytes empty) in
+  let vname = concat "ctors_" (name t) in
+  let tname = concat "tag_" (name t) in
+  let ename = concat "empty_" (name t) in
+  `( let $vname () : usize ensures $!result = 4 = $n
+     let $tname () : usize ensures $!result = 4 = $m
+     let $ename () : usize ensures $!result = 1 = $e )
+
+let shape = type
+  | Circle of circle
+  | Rect @vinfo(name = "rect") of rect
+  | Empty @vinfo(name = "e")
+  | Point
+  @derive(vinfo)
+
+(* An attribute before @derive is still the item's when the derive reads
+   it: @linear, then @derive(eq). *)
+let token = type { id : u8 } @linear @derive(eq)

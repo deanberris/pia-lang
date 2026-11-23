@@ -4,11 +4,18 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 # LLVM, and emit an object file (docs/codegen.md).
 cc_library(
     name = "codegen",
-    srcs = ["Codegen.cpp"],
-    hdrs = ["Codegen.h"],
+    srcs = [
+        "Codegen.cpp",
+        "SliceBuffers.cpp",
+    ],
+    hdrs = [
+        "Codegen.h",
+        "SliceBuffers.h",
+    ],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
+        "//src/cert",
         "//src/dialect",
         "@llvm-project//llvm:AllTargetsCodeGens",
         "@llvm-project//llvm:Core",
@@ -16,6 +23,7 @@ cc_library(
         "@llvm-project//llvm:Support",
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
+        "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",

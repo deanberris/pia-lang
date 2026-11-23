@@ -1,0 +1,38 @@
+(* Coherence: the accesses to one location agree with one order, its
+   modification order, even when every access is relaxed.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+litmus "corr"
+  [ thread [ store "relaxed" "x" 1 ]
+  ; thread [ load "relaxed" "x" "r1"; load "relaxed" "x" "r2" ] ]
+  "forbidden" [ is "r1" 1; is "r2" 0 ]
+
+litmus "corw"
+  [ thread [ load "relaxed" "x" "r1"; store "relaxed" "x" 1 ]
+  ; thread [ store "relaxed" "x" 2 ] ]
+  "forbidden" [ is "r1" 2; final "x" 2 ]
+
+litmus "cowr"
+  [ thread [ store "relaxed" "x" 1; load "relaxed" "x" "r1" ]
+  ; thread [ store "relaxed" "x" 2 ] ]
+  "forbidden" [ is "r1" 2; final "x" 1 ]
+
+litmus "coww"
+  [ thread [ store "relaxed" "x" 1; store "relaxed" "x" 2 ] ]
+  "forbidden" [ final "x" 1 ]
+
+litmus "cowr_allowed"
+  [ thread [ store "relaxed" "x" 1; load "relaxed" "x" "r1" ]
+  ; thread [ store "relaxed" "x" 2 ] ]
+  "allowed" [ is "r1" 2; final "x" 2 ]
+
+(* Expected report, in order.
+// CHECK: coherence.pia:6:1: proved: the postcondition holds [smt]
+// CHECK: coherence.pia:11:1: proved: the postcondition holds [smt]
+// CHECK: coherence.pia:16:1: proved: the postcondition holds [smt]
+// CHECK: coherence.pia:21:1: proved: the postcondition holds [smt]
+// CHECK: coherence.pia:25:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = 2, x_final = 2
+// CHECK: 4 proved, 1 failed, 0 skipped
+*)

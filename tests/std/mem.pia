@@ -1,0 +1,19 @@
+(* Pia.Mem (ADR 0026, ADR 0041, ADR 0046): the allocators, box and vec
+   are each proved at the u8 instances their modules make, since a
+   generic over a record is proved at each instance (ADR 0043). Box and
+   Vec are generic over the Allocator concept, which the bump's generic
+   `alloc` meets (ADR 0034), and their interfaces carry regions (ADR 0042).
+// RUN: piac --verify %S/../../lib/Pia/Mem/Alloc.pia | FileCheck --check-prefix=ALLOC %s
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Mem/Box.pia | FileCheck --check-prefix=BOX %s
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Mem/Vec.pia | FileCheck --check-prefix=VEC %s
+*)
+
+(*
+// ALLOC-NOT: failed
+// ALLOC: 7 proved, 0 failed, 0 skipped
+// BOX-NOT: failed
+// BOX: 23 proved, 0 failed, 0 skipped
+// VEC-NOT: failed
+// VEC: 37 proved, 0 failed, 0 skipped
+*)

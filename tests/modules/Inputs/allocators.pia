@@ -1,0 +1,49 @@
+(* A module whose generic allocator meets its own exported concept, Allocator,
+   at whatever element type an importer chooses (ADR 0034, ADR 0039). *)
+module Pia.Mem.Alloc : Allocators
+
+interface Allocators = sig
+  let oom = type | OutOfMemory
+  let meta Allocator : concept
+  let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+  let alloc : (t : type) -> (r : region) -> (m : inout mutable bump t r) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+  let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+  let push : (t : type) -> (r : region) -> (a : type where Allocator a t r) -> (v : inout mutable vec t a r) -> (x : t) -> result unit oom
+    requires v.len <= len v.buf
+    ensures v.len <= len v.buf
+end
+
+let oom = type | OutOfMemory
+let meta Allocator (a : type) (t : type) (r : region) : concept = sig
+  let alloc : (m : inout mutable a) -> (n : usize) -> result (borrowed(r) out mutable [t]) oom
+    ensures (match result with | Ok b -> len b = n | Err _ -> true)
+end
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  ensures (match result with | Ok b -> len b = n | Err _ -> true)
+= if m.used <= len m.mem && n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+let vec = let (t : type) (a : type) (r : region) => type { alloc : a; buf : borrowed(r) mutable [t]; len : usize }
+let push (t : type) (r : region) (a : type where Allocator a t r) (v : inout mutable vec t a r) (x : t) : result unit oom
+  requires v.len <= len v.buf
+  ensures v.len <= len v.buf
+= if v.len = len v.buf then
+    (let cap = len v.buf in
+     if cap > 1000000 then Err OutOfMemory
+     else
+       (let nb = alloc v.alloc (2 * cap + 1)? in
+        let old_buf = v.buf in
+        for i in 0 .. v.len do nb.[i] <- old_buf.[i] done;
+        nb.[v.len] <- x;
+        v.buf <- nb;
+        v.len <- v.len + 1;
+        Ok ()))
+  else
+    (let b = v.buf in
+     b.[v.len] <- x;
+     v.len <- v.len + 1;
+     Ok ())

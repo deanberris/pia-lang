@@ -5,9 +5,10 @@ streams. *Stream delineation* recovers those streams from a terrain model:
 given the height of every point on a grid, it works out where the water on
 each cell goes, how much water passes through each cell, which cells carry
 enough to be a stream, and which outlet each cell drains to (its watershed).
-It is the first half of Pia's flagship demo
-([ADR 0016](adr/0016-stream-delineation-flagship-demo.md)); the second half,
-sediment transport, comes later.
+It is Pia's flagship demo
+([ADR 0016](adr/0016-stream-delineation-flagship-demo.md)), and its second
+half moves sediment down those streams, with the total mass proved to stay
+the same exactly ([sediment.pia.md](sediment.pia.md)).
 
 This page is the program. It is a literate Pia file,
 [`docs/streams.pia.md`](https://github.com/deanberris/pia-lang/blob/main/docs/streams.pia.md):
@@ -44,6 +45,8 @@ flowchart LR
   dirs --> acc["3. accumulate,<br/>label watersheds"]
   acc --> render["4. streams and<br/>colours"]
   render --> png["PNG / GIF"]
+  acc --> sed["5. sediment<br/>transport"]
+  sed --> png2["PNG by load"]
 ```
 
 1. **Fill sinks.** Real elevation data has pits, cells lower than all their
@@ -58,6 +61,9 @@ flowchart LR
    drain through it. The last stage colours the map: streams in blue,
    filled pits as lakes, and every other cell by its watershed, shaded by
    height.
+5. **Sediment.** Water carries sediment down the same paths, eroding where
+   it can carry more and depositing where it carries too much, and the
+   stream cells are coloured by the load they carry.
 
 What the verifier proves, function by function, is summed up
 [at the end](#what-is-proved). The headline results are three theorems
@@ -66,7 +72,9 @@ about the whole grid, each a postcondition with a `forall`:
 - filling never lowers the ground: `fill.[k] >= dem.[k]` for every cell;
 - every flow direction points strictly downhill, or nowhere;
 - no cell's accumulation exceeds the number of cells, and every watershed
-  label is an outlet.
+  label is an outlet;
+- sediment transport conserves the total mass exactly:
+  `sum bed + sum load + sum inflow + gone` never changes.
 
 The second one is what makes the third possible: because water only ever
 runs strictly downhill, the path from a cell must end, and it cannot visit a
@@ -88,7 +96,7 @@ wider bit-vectors, and loop proofs then time out
 instead: row offsets grow by `w`, and `3 * i` is `i + i + i`.
 
 The file is one module, `Streams` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
-Its interface lists the five functions the C program calls, with the
+Its interface lists the six functions the C program calls, with the
 preconditions a caller must keep; everything else on this page is private
 to the module:
 
@@ -120,6 +128,11 @@ interface Delineation @abi(c) = sig
     requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
     requires len fill = len dem && len down = len dem && len acc = len dem
     requires len basin = len dem && len rgb = len dem + len dem + len dem
+  let render_load : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
+      -> (basin : [usize]) -> (flux : [u32]) -> (threshold : u32)
+      -> (rgb : out mutable [u8]) -> usize
+    requires len fill = len dem && len acc = len dem && len basin = len dem
+    requires len flux = len dem && len rgb = len dem + len dem + len dem
 end
 ```
 
@@ -714,6 +727,52 @@ let delineate (dem : [u16]) (w : usize) (limit : u32) (threshold : u32)
   render dem fill acc basin threshold rgb
 ```
 
+## 5. Sediment transport
+
+The second half of the demo moves sediment down the streams, and is its
+own page and module, [sediment.pia.md](sediment.pia.md), so the two prove
+in parallel. Its entry point takes the filled heights, the directions and
+the accumulation from this page, and returns `flux`, the load leaving each
+cell. This page draws it.
+
+The colour of a stream cell by the load leaving it: a ramp over the binary
+logarithm of the load, from blue for 63 units or fewer to orange for 8192
+or more, in eight steps. `clz` counts the leading zeros, so 32 - clz f is
+the number of bits in f, with no logarithm and no multiplication.
+
+```pia
+let load_colour (f : u32) : colour =
+  let lz : u32 = clz f in
+  let l : u32 = 32 - lz in
+  let m : u32 = if l < 6 then 0 else if l > 13 then 7 else l - 6 in
+  { red = 31 + (m << 5); green = 60 + (m << 4); blue = 230 - (m << 5) }
+```
+
+The picture after transport: stream cells coloured by their load, every
+other cell as in `render`.
+
+```pia
+let render_load (dem : [u16]) (fill : [u16]) (acc : [u32]) (basin : [usize])
+    (flux : [u32]) (threshold : u32) (rgb : out mutable [u8]) : usize
+  requires len fill = len dem && len acc = len dem && len basin = len dem
+  requires len flux = len dem && len rgb = len dem + len dem + len dem
+  ensures result <= len dem
+=
+  let streams : mutable usize = 0 in
+  for i in 0..len dem
+    invariant streams <= i
+  do
+    let c = (if acc.[i] >= threshold then load_colour (flux.[i])
+             else paint (dem.[i]) (fill.[i]) (acc.[i]) (basin.[i]) threshold) in
+    let j = i + i + i in
+    rgb.[j] <- c.red;
+    rgb.[j + 1] <- c.green;
+    rgb.[j + 2] <- c.blue;
+    streams <- streams + (if acc.[i] >= threshold then 1 else 0)
+  done;
+  streams
+```
+
 ## Why the order matters
 
 Here is the walk without the downhill precondition. Nothing then stops
@@ -759,7 +818,7 @@ Every goal in this file is proved, by interval analysis or by Z3, before
 | Every direction points strictly downhill or nowhere | `consider` up to `directions` |
 | Accumulation never exceeds the number of cells | `walk`, `accumulate` |
 | Every watershed label is an outlet | `walk`, `accumulate` |
-| The number of stream cells is at most the number of cells | `render` |
+| The number of stream cells is at most the number of cells | `render`, `render_load` |
 
 What is *not* proved yet: that filling reaches a fixed point within
 `limit` sweeps (the result says whether it did), that a fixed point leaves
@@ -797,4 +856,6 @@ The demo works around parts of Pia that are not built yet:
   and some slices' element ranges are lost inside quantifiers
   ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
   code is shaped around both, as noted where it matters.
-- **Sediment transport**, the second half of the flagship demo, is next.
+- **An animated picture.** The landscape evolves under changing rain
+  ([sediment.pia.md](sediment.pia.md), section 6), and `main.c` writes one
+  PNG per epoch; an animated GIF waits for the GIF encoder of ADR 0054.

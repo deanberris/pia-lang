@@ -1,0 +1,2 @@
+(* A digit separator `'` must sit between two digits, as in C++14. *)
+let n : u32 = 100'

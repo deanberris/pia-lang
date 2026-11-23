@@ -1,0 +1,114 @@
+(* Pia.Core.Ratio: C++'s <ratio> (ADR 0040, phase 1.10, docs/cpp-std.md).
+
+   C++ folds std::ratio arithmetic at compile time, in its type system.
+   Here the arithmetic is metaprograms over exact 128-bit integers, so
+   there is nothing to prove: a ratio is the list [num; den], always in
+   lowest terms with a positive denominator, and a zero denominator or a
+   value that no longer fits i64 is a compile-time error, as in C++.
+   `define` turns one into a function of the program, whose contract
+   states its exact value, and `check` is static_assert over them. The SI
+   prefixes that fit i64 are `si "milli"` and the like.
+
+   - reduce n d: n/d in lowest terms (std::ratio's own normalisation).
+   - add, subtract, multiply, divide: std::ratio_add and the others.
+   - equal, less, less_equal: std::ratio_equal, ratio_less and the rest.
+   - num r and den r: a ratio's parts.
+   - si name: atto, femto, pico, nano, micro, milli, centi, deci, deca,
+     hecto, kilo, mega, giga, tera, peta and exa.
+   - define x r: `let x () : ratio`, with `ensures` giving its parts.
+   - check b why: nothing when b holds, else the error `why`. *)
+module Pia.Core.Ratio : Ratio
+
+interface Ratio = sig
+  (** A ratio as a value of the program, in lowest terms. *)
+  let ratio = type { num : i64; den : i64 }
+  (** Its value, exactly. *)
+  let spec value : (r : ratio) -> real
+  let meta reduce : list
+  let meta num : int
+  let meta den : int
+  let meta add : list
+  let meta subtract : list
+  let meta multiply : list
+  let meta divide : list
+  let meta equal : bool
+  let meta less : bool
+  let meta less_equal : bool
+  let meta si : list
+  let meta define : item
+  let meta check : list
+end
+
+let ratio = type { num : i64; den : i64 }
+
+let spec value (r : ratio) : real
+  requires r.den > 0
+= real r.num / real r.den
+
+(** n/d in lowest terms, with a positive denominator. *)
+let meta reduce (n : int) (d : int) : list =
+  let g (a : int) (b : int) = if b = 0 then a else g b (a % b) in
+  let m = if n < 0 then 0 - n else n in
+  let e = if d < 0 then 0 - d else d in
+  if d = 0 then fail "a ratio's denominator is 0"
+  else (
+    let k = g m e in
+    let s = if d < 0 then 0 - 1 else 1 in
+    [s * n / k; s * d / k])
+
+let meta num (r : list) : int = nth r 0
+let meta den (r : list) : int = nth r 1
+
+let meta add (a : list) (b : list) : list =
+  reduce (nth a 0 * nth b 1 + nth b 0 * nth a 1) (nth a 1 * nth b 1)
+
+let meta subtract (a : list) (b : list) : list =
+  reduce (nth a 0 * nth b 1 - nth b 0 * nth a 1) (nth a 1 * nth b 1)
+
+let meta multiply (a : list) (b : list) : list =
+  reduce (nth a 0 * nth b 0) (nth a 1 * nth b 1)
+
+let meta divide (a : list) (b : list) : list =
+  if nth b 0 = 0 then fail "a ratio divided by 0"
+  else reduce (nth a 0 * nth b 1) (nth a 1 * nth b 0)
+
+(* Both are in lowest terms, so equal ratios have equal parts. *)
+let meta equal (a : list) (b : list) : bool =
+  nth a 0 = nth b 0 && nth a 1 = nth b 1
+
+let meta less (a : list) (b : list) : bool =
+  nth a 0 * nth b 1 < nth b 0 * nth a 1
+
+let meta less_equal (a : list) (b : list) : bool =
+  nth a 0 * nth b 1 <= nth b 0 * nth a 1
+
+let meta si (name : string) : list =
+  if name = "atto" then [1; 1000000000000000000]
+  else if name = "femto" then [1; 1000000000000000]
+  else if name = "pico" then [1; 1000000000000]
+  else if name = "nano" then [1; 1000000000]
+  else if name = "micro" then [1; 1000000]
+  else if name = "milli" then [1; 1000]
+  else if name = "centi" then [1; 100]
+  else if name = "deci" then [1; 10]
+  else if name = "deca" then [10; 1]
+  else if name = "hecto" then [100; 1]
+  else if name = "kilo" then [1000; 1]
+  else if name = "mega" then [1000000; 1]
+  else if name = "giga" then [1000000000; 1]
+  else if name = "tera" then [1000000000000; 1]
+  else if name = "peta" then [1000000000000000; 1]
+  else if name = "exa" then [1000000000000000000; 1]
+  else fail (concat "no SI prefix " name)
+
+(** `let x () : ratio`, the ratio r, with its exact parts as its contract. *)
+let meta define (x : string) (r : list) : item =
+  let n = nth r 0 in
+  let d = nth r 1 in
+  if n < 0 - 9223372036854775808 || n > 9223372036854775807 || d > 9223372036854775807
+  then fail (concat x ": the ratio does not fit i64")
+  else `( let $x () : ratio ensures $!result.num = $n && $!result.den = $d = { num = $n; den = $d } )
+
+(** static_assert: nothing when b holds, and otherwise the error why. *)
+let meta check (b : bool) (why : string) : list =
+  if b then [] else fail why

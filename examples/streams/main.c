@@ -233,6 +233,19 @@ static double seconds(void) {
   return t.tv_sec + t.tv_nsec / 1e9;
 }
 
+// The name of a sediment map: the output name with `tag`, and the epoch
+// when it is not negative, before its extension.
+static void sediment_name(const char *output, const char *tag, int epoch,
+                          char *buf, size_t size) {
+  const char *dot = strrchr(output, '.');
+  size_t stem = dot ? (size_t)(dot - output) : strlen(output);
+  char num[16] = "";
+  if (epoch >= 0)
+    snprintf(num, sizeof num, "%d", epoch);
+  snprintf(buf, size, "%.*s%s%s%s", (int)stem, output, tag, num,
+           dot ? dot : ".png");
+}
+
 int main(int argc, char **argv) {
   char in_buf[4096], out_buf[4096];
   const char *input = argc > 1 ? argv[1] : NULL;
@@ -255,8 +268,9 @@ int main(int argc, char **argv) {
       return 1;
     printf("drew a synthetic terrain: %s\n", input);
   }
-  if (w < 3 || h < 3 || (unsigned long)w * h >= 4294967295ul) {
-    fprintf(stderr, "the map must be at least 3x3 and under 2^32 cells\n");
+  if (w < 3 || h < 3 || (unsigned long)w * h > 16777215ul) {
+    fprintf(stderr,
+            "the map must be at least 3x3 and at most 16777215 cells\n");
     return 1;
   }
   uint64_t n = (uint64_t)w * h;
@@ -307,6 +321,152 @@ int main(int argc, char **argv) {
          (unsigned long long)outlets, (unsigned long long)drained,
          (unsigned long long)rivers);
   printf("map written to %s\n", output);
+
+  // Sediment transport (docs/streams.pia.md, section 5): 100 units of bed
+  // on every cell, moved for a few steps in height order. Pia proves the
+  // total is conserved; the check here is that the compiled code agrees.
+  const uint32_t seed = 100, nsteps = 4;
+  // Pia sorts the cells by height itself, in linear time; it needs scratch
+  // buffers, since it cannot allocate yet.
+  enum { HEIGHTS = 65536 };
+  uint64_t *order = malloc(n * sizeof *order), *pos = malloc(n * sizeof *pos);
+  uint32_t *bed = malloc(n * sizeof *bed), *load = malloc(n * sizeof *load);
+  uint32_t *inflow = malloc(n * sizeof *inflow), *flux = malloc(n * sizeof *flux);
+  uint32_t *cnt = malloc(HEIGHTS * sizeof *cnt);
+  uint64_t *first = malloc(HEIGHTS * sizeof *first),
+           *next = malloc(HEIGHTS * sizeof *next);
+  uint64_t *last = malloc(HEIGHTS * sizeof *last);
+  uint16_t *owner = malloc(n * sizeof *owner);
+  for (uint64_t i = 0; i < n; ++i)
+    bed[i] = seed;
+  double t6 = seconds();
+  uint64_t gone =
+      sediment(fill, n, down, n, acc, n, nsteps, bed, n, load, n, inflow, n,
+               flux, n, order, n, pos, n, cnt, HEIGHTS, first, HEIGHTS, next,
+               HEIGHTS, last, HEIGHTS, owner, n);
+  double t7 = seconds();
+  uint64_t total = 0, carried = 0, moving = 0;
+  for (uint64_t i = 0; i < n; ++i) {
+    total += (uint64_t)bed[i] + load[i] + inflow[i];
+    carried += flux[i] > 0;
+    moving += flux[i] > 0 && acc[i] >= threshold;
+  }
+  render_load(dem, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb, 3 * n);
+  printf(
+      "sediment: %u steps over %llu cells, sorted by height in Pia (%.1f ms)\n",
+      nsteps, (unsigned long long)n, (t7 - t6) * 1e3);
+  printf("sediment: %llu units in the beds and the water, %llu out, %llu in all;"
+         " %llu at the start\n",
+         (unsigned long long)total, (unsigned long long)gone,
+         (unsigned long long)(total + gone), (unsigned long long)(n * seed));
+  printf("sediment: %llu cells carry a load, %llu of them on a stream\n",
+         (unsigned long long)carried, (unsigned long long)moving);
+  // How the load leaving the stream cells spreads, by its number of bits:
+  // the picture's colour ramp is over the same scale.
+  uint64_t bits[33] = {0};
+  for (uint64_t i = 0; i < n; ++i)
+    if (acc[i] >= threshold) {
+      int b = 0;
+      for (uint32_t f = flux[i]; f; f >>= 1)
+        ++b;
+      ++bits[b];
+    }
+  printf("sediment: stream load by bits:");
+  for (int b = 0; b <= 32; ++b)
+    if (bits[b])
+      printf(" %d:%llu", b, (unsigned long long)bits[b]);
+  printf("\n");
+  if (total + gone != n * seed) {
+    fprintf(stderr, "sediment: the total changed\n");
+    return 1;
+  }
+  char sed_name[4096], sed_buf[4096];
+  sediment_name(output, "-sediment", -1, sed_name, sizeof sed_name);
+  if (!write_rgb(resolve(sed_name, sed_buf, sizeof sed_buf), w, h, rgb)) return 1;
+  printf("sediment map written to %s\n", sed_name);
+
+  // The landscape evolves (docs/sediment.pia.md, section 6): epochs of
+  // `steps` time steps, each under its own rainfall field, with the ground
+  // raised by the sediment on it, and its sinks, directions and order
+  // recomputed before each. Two epochs of uniform rain, four of a storm
+  // band moving down the map, then a wet season and a dry one.
+  enum { EPOCHS = 8, STEPS = 4 };
+  uint16_t *ground = malloc(n * sizeof *ground);
+  uint32_t *rain = malloc(n * sizeof *rain), *flow = malloc(n * sizeof *flow);
+  uint32_t *pend = malloc(n * sizeof *pend);
+  for (uint64_t i = 0; i < n; ++i)
+    bed[i] = seed, load[i] = 0, inflow[i] = 0;
+  uint64_t moved = 0, changed = 0;
+  uint16_t *fill0 = malloc(n * sizeof *fill0);
+  memcpy(fill0, fill, n * sizeof *fill);
+  double t8 = seconds(), pia_ms = 0, shed_ms = 0;
+  for (int e = 0; e < EPOCHS; ++e) {
+    // The rainfall fields are Pia's, each proved to keep the total rain
+    // within a u32 (docs/sediment.pia.md, "Rainfall fields").
+    const char *kind;
+    if (e < 2)
+      kind = "uniform", rain_uniform(4, rain, n);
+    else if (e < 6)
+      kind = "storm",
+      rain_band(w, (e - 2) * h / 4, (e - 1) * h / 4, 16, 1, rain, n);
+    else
+      kind = e == 6 ? "wet" : "dry", rain_season(e == 6, 8, rain, n);
+    double a = seconds();
+    surface(dem, n, bed, n, ground, n);
+    fill_sinks(ground, n, w, limit, fill, n);
+    directions(fill, n, w, down, n);
+    uint64_t out =
+        evolve(fill, n, down, n, rain, n, STEPS, bed, n, load, n, inflow, n,
+               flux, n, flow, n, pend, n, order, n, pos, n, cnt, HEIGHTS, first,
+               HEIGHTS, next, HEIGHTS, last, HEIGHTS, owner, n);
+    double b = seconds();
+    pia_ms += (b - a) * 1e3;
+    if (out == UINT64_MAX) {
+      fprintf(stderr,
+              "evolve: the rain or the sediment does not fit in a u32\n");
+      return 1;
+    }
+    moved += out;
+    // The picture's flow counts and watersheds, in linear time over the
+    // height order (docs/sediment.pia.md, section 7).
+    double c0 = seconds();
+    drainage(fill, n, down, n, acc, n, basin, n, rain, n, pend, n, order, n,
+             pos, n, cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS, last, HEIGHTS,
+             owner, n);
+    shed_ms += (seconds() - c0) * 1e3;
+    render_load(ground, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb,
+                3 * n);
+    char frame[4096], frame_buf[4096];
+    sediment_name(output, "-epoch-", e, frame, sizeof frame);
+    if (!write_rgb(resolve(frame, frame_buf, sizeof frame_buf), w, h, rgb))
+      return 1;
+    uint32_t peak = 0;
+    for (uint64_t i = 0; i < n; ++i)
+      peak = flow[i] > peak ? flow[i] : peak;
+    printf("epoch %d (%s rain): %llu out, peak flow %u, written to %s\n", e,
+           kind, (unsigned long long)out, peak, frame);
+  }
+  uint64_t left = 0;
+  for (uint64_t i = 0; i < n; ++i) {
+    left += (uint64_t)bed[i] + load[i] + inflow[i];
+    changed += fill[i] != fill0[i];
+  }
+  printf("evolution: watersheds for the pictures in %.1f ms\n", shed_ms);
+  printf("evolution: %d epochs of %d steps in %.1f ms (%.1f ms in Pia); "
+         "%llu cells changed height\n",
+         EPOCHS, STEPS, (seconds() - t8) * 1e3, pia_ms,
+         (unsigned long long)changed);
+  printf("evolution: %llu units left, %llu out, %llu in all; %llu at the "
+         "start\n",
+         (unsigned long long)left, (unsigned long long)moved,
+         (unsigned long long)(left + moved), (unsigned long long)(n * seed));
+  if (left + moved != n * seed) {
+    fprintf(stderr, "evolution: the total changed\n");
+    return 1;
+  }
+  free(ground), free(rain), free(flow), free(pend), free(fill0);
+  free(order), free(pos), free(bed), free(load), free(inflow), free(flux);
+  free(cnt), free(first), free(next), free(last), free(owner);
   free(dem), free(fill), free(down), free(basin), free(acc), free(rgb);
   return 0;
 }

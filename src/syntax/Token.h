@@ -10,6 +10,10 @@
 
 namespace pia::syntax {
 
+// A digit separator in a number literal: `1_000_000` or `1'000'000`
+// (docs/grammar.md). Every reader of a literal's text skips both.
+inline bool isDigitSeparator(char c) { return c == '_' || c == '\''; }
+
 struct SourceLoc {
   uint32_t line = 0;   // 1-based
   uint32_t column = 0; // 1-based

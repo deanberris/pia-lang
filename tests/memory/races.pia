@@ -1,0 +1,42 @@
+(* Data races: two accesses to one location, at least one a write and at
+   least one plain, with neither happening before the other. A race is
+   undefined, so the program must not have one (ADR 0027). "race" claims
+   none: it is proved when the program is race-free, and fails with a
+   racy execution otherwise.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A relaxed flag publishes nothing. *)
+litmus "mp_rlx_flag"
+  [ thread [ write "data" 1; store "relaxed" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; read "data" "r2" ] ]
+  "race" []
+
+(* Unguarded, even a release flag races: the reader may read the data
+   before the flag is set, here with r1 = 0. Tasks will guard the read. *)
+litmus "mp_unguarded"
+  [ thread [ write "data" 1; store "release" "flag" 1 ]
+  ; thread [ load "acquire" "flag" "r1"; read "data" "r2" ] ]
+  "race" []
+
+(* Plain accesses in one thread are ordered by po. *)
+litmus "one_thread"
+  [ thread [ write "x" 1; read "x" "r1"; store "relaxed" "y" 1 ]
+  ; thread [ load "relaxed" "y" "r2" ] ]
+  "race" []
+
+(* Atomics never race. *)
+litmus "all_atomic"
+  [ thread [ store "relaxed" "x" 1; load "relaxed" "x" "r1" ]
+  ; thread [ store "relaxed" "x" 2 ] ]
+  "race" []
+
+(* Expected report, in order.
+// CHECK: races.pia:10:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = {{-?[0-9]+}}, r2 = {{-?[0-9]+}}
+// CHECK: races.pia:17:1: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r1 = {{-?[0-9]+}}, r2 = {{-?[0-9]+}}
+// CHECK: races.pia:23:1: proved: the postcondition holds [smt]
+// CHECK: races.pia:29:1: proved: the postcondition holds [smt]
+// CHECK: 2 proved, 2 failed, 0 skipped
+*)

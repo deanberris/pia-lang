@@ -1,0 +1,24 @@
+(* Pia.Time (ADR 0040, phase 1.10): <chrono>'s durations, as exported
+   metaprograms over Pia.Core.Ratio. The module has no goals: what its
+   metaprograms make is proved in each importer (time_edges.pia).
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Time.pia | FileCheck %s
+// RUN: mkdir -p %t/t && piac --emit=interface -o %t/t %S/../../lib/Pia/Time.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/t/Pia.Time.Durations.piai
+*)
+
+(*
+// CHECK: 0 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Time{{$}}
+// IFACE-NEXT: {{^}}interface Durations = sig{{$}}
+// IFACE-NEXT: {{^}}  let meta duration : list{{$}}
+// IFACE-NEXT: {{^}}  let meta cast : item{{$}}
+// IFACE-NEXT: {{^}}  let meta standard : list{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+// IFACE: {{^}}let meta duration (x : string) (p : list) : list{{$}}
+// IFACE: {{^}}let meta cast (name : string) (from : string) (fp : list) (to : string) (tp : list) : item{{$}}
+// IFACE: {{^}}let meta standard (u : unit) : list{{$}}
+*)

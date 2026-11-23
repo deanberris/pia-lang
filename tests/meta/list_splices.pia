@@ -1,0 +1,22 @@
+(* A metaprogram can splice a list into a list literal's elements, a list
+   of [name; value] pairs into a record literal's fields, and a name as a
+   constructor's (ADR 0045, step 4): what a derive needs to write a key's
+   bytes, build a value of the type it was given, and name its errors.
+// RUN: piac --verify %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: 4 proved, 0 failed, 0 skipped
+*)
+
+let meta derive_parts (t : item) : list =
+  let bs = bytes "AB" in
+  let n = length bs in
+  let fs = map (let (f) => [ f; 7 ]) (fields t) in
+  let c = concat "Bad_" (name t) in
+  let e = concat (name t) "_error" in
+  [ `( let first_byte () : u8 ensures $!result = 0x42 =
+         let $!k : [u8; $n] = [ $bs ] in $!k.[1] );
+    `( let sevens () : $t ensures $!result.lo = 7 && $!result.hi = 7 = { $fs } );
+    `( let $e = type | $c of usize );
+    `( let code ($!x : $e) : usize ensures $!result = 3 = 3 ) ]
+
+let pair = type { lo : u8; hi : u8 } @derive(parts)

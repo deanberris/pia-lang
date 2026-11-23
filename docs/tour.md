@@ -60,7 +60,7 @@ let count_up (n : u8) : u8 =
 
 Integers are bounded, and there are no implicit narrowing conversions. The types are `u8` `u16` `u32` `u64` `i8` `i16` `i32` `i64`, `usize` and `isize`, `bool`, and range types such as `int{0..255}`. A range type is an integer whose bounds are part of its type, and it is stored in the smallest machine integer that holds the range.
 
-A literal takes the type its context expects, and a suffix such as `42u8` fixes it. Widening is implicit and always safe. Narrowing is a goal: it must be proved to fit.
+A literal takes the type its context expects, and a suffix such as `42u8` fixes it. Digits group with `'` or `_`, as in `100'000` or `0xFFFF'FFFF`. `min t` and `max t` are the bounds of an integer type, as literals, so `max u16` is `65'535` and a contract never needs to spell it out. Widening is implicit and always safe. Narrowing is a goal: it must be proved to fit.
 
 ```ocaml
 let widen (x : u8) : u32 = x

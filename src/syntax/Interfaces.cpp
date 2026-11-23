@@ -308,12 +308,6 @@ bool hasWord(const std::string &flags, const std::string &word) {
   return false;
 }
 
-// Whether an item is a concept, `let meta C (t : type) : concept = sig`.
-bool conceptItem(const Node &item) {
-  return item.kind == N::LetItem && hasWord(item.flags, "meta") &&
-         item.kids.size() > 3 && item.kids[3]->kind == N::Sig;
-}
-
 // Whether an item is a spec function, `let spec f ...`.
 bool specItem(const Node &item) {
   return item.kind == N::LetItem && hasWord(item.flags, "spec");
@@ -326,8 +320,14 @@ bool inlinedSig(const Node &k) {
          (k.flags == "meta" || k.flags == "spec" || genericSig(k));
 }
 
+// A metaprogram, concepts included, is exported with its definition,
+// which importers run (ADR 0039): its expansion is their code.
+bool metaprogramItem(const Node &item) {
+  return item.kind == N::LetItem && hasWord(item.flags, "meta");
+}
+
 bool inlinedItem(const Node &item) {
-  return genericItem(item) || conceptItem(item) || specItem(item);
+  return genericItem(item) || metaprogramItem(item) || specItem(item);
 }
 
 // The names an item uses, as names and as types.
@@ -516,7 +516,8 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
 }
 
 void resolveImports(Node &program, const std::vector<std::string> &paths,
-                    Diagnostics &diags) {
+                    Diagnostics &diags,
+                    std::vector<InterfaceArtifact> *loaded) {
   std::set<std::string> theories;
   for (const NodePtr &item : program.kids)
     if (item->kind == N::Theory) theories.insert(item->text);
@@ -578,6 +579,8 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
       diags.error(at, "'" + found + "' is not an interface artifact" + why);
       continue;
     }
+    if (loaded)
+      loaded->push_back({module, name, *text});
     if (header->text != module || iface->text != name) {
       diags.error(at, "'" + found + "' holds '" + header->text + "." +
                       iface->text + "', not '" + path + "'");

@@ -1,0 +1,22 @@
+(* A module that exports metaprograms with their definitions (ADR 0039):
+   importers run them, and their quotes name this module's items. *)
+module Calc.Scale : Scale
+
+interface Scale = sig
+  let frac = type { num : i64; den : i64 }
+  let meta reduce : list
+  let meta define : item
+end
+
+let frac = type { num : i64; den : i64 }
+
+(** [n; d] in lowest terms; a zero denominator is an error. *)
+let meta reduce (n : int) (d : int) : list =
+  let g (a : int) (b : int) = if b = 0 then a else g b (a % b) in
+  if d = 0 then fail "a zero denominator" else [n / g n d; d / g n d]
+
+(** A function `x ()` returning the fraction r, with its exact value. *)
+let meta define (x : string) (r : list) : item =
+  let n = nth r 0 in
+  let d = nth r 1 in
+  `( let $x () : frac ensures $!result.num = $n && $!result.den = $d = { num = $n; den = $d } )

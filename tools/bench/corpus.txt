@@ -3,7 +3,9 @@
 # library joins this list as its modules land (docs/stdlib.md, ADR 0040).
 examples/edges/edges.pia
 docs/streams.pia.md
+docs/sediment.pia.md
 tests/verify/*.pia
+tests/memory/*.pia
 lib/Pia/*.pia
 lib/Pia/*/*.pia
 lib/Pia/*/*/*.pia

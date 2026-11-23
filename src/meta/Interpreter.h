@@ -22,10 +22,18 @@ using ValuePtr = std::shared_ptr<const Value>;
 struct Env;
 using EnvPtr = std::shared_ptr<Env>;
 
+// A metaprogram's integer. It holds every bound of every Pia integer type,
+// u64's and i64's included, with room to spare for arithmetic on them;
+// arithmetic that leaves its range is an error, not a wrap.
+using MetaInt = __int128;
+
+// The decimal spelling of an integer, with a minus when negative.
+std::string decimal(MetaInt v);
+
 struct Value {
   enum class Kind { Unit, Int, Bool, Str, Syntax, List, Closure, Builtin, Type };
   Kind kind = Kind::Unit;
-  int64_t i = 0;
+  MetaInt i = 0;
   bool b = false;
   std::string s;                          // Str; Builtin: its name; Type: its
                                           // spelling, `u8` or `option<u8>`
@@ -127,6 +135,9 @@ class Interpreter {
     listing_ = std::move(items);
     program_ = program;
   }
+  // An item made during the pass, such as a lifted payload record, that
+  // the pass's later metaprograms can see.
+  void addToListing(const syntax::Node *item) { listing_.push_back(item); }
 
   // Makes the REPL-only builtins of Pia.Live available (ADR 0031).
   void setLive(bool live) { live_ = live; }

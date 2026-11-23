@@ -1,0 +1,76 @@
+(* Pia.Time: C++'s <chrono> durations (ADR 0040, phase 1.10,
+   docs/cpp-std.md).
+
+   C++'s std::chrono::duration<Rep, Period> is a class template. Here a
+   duration is a type a metaprogram makes: `duration x p` makes the
+   record type x, a count of i64 ticks of the period p, a Pia.Core.Ratio
+   ratio folded at compile time, with plus, minus, times, less and same
+   overloaded on it. `cast name from fp to tp` makes duration_cast from
+   one to another: the count times the folded factor fp / tp, truncated
+   toward zero as C++'s is, with a precondition that a widening cast does
+   not overflow. `standard ()` makes C++'s nanoseconds to weeks, with
+   `to_<unit>` from every other unit. Everything is proved where it is
+   made, in the importer; this module has no goals of its own.
+   The civil calendar (year_month_day) comes later. *)
+module Pia.Time : Durations
+
+import Pia.Core.Ratio.Ratio
+
+interface Durations = sig
+  let meta duration : list
+  let meta cast : item
+  let meta standard : list
+end
+
+(** The duration type x, a count of ticks of the period p (a Ratio list),
+    with its arithmetic and order, overloaded on x. *)
+let meta duration (x : string) (p : list) : list =
+  let n = Pia.Core.Ratio.num p in
+  let d = Pia.Core.Ratio.den p in
+  [ `( let $x = type { count : i64 } );
+    `( let plus ($!a : $x) ($!b : $x) : $x
+         requires $!a.count + $!b.count >= -9223372036854775808 && $!a.count + $!b.count <= 9223372036854775807
+         ensures $!result.count = $!a.count + $!b.count
+       = { count = $!a.count + $!b.count } );
+    `( let minus ($!a : $x) ($!b : $x) : $x
+         requires $!a.count - $!b.count >= -9223372036854775808 && $!a.count - $!b.count <= 9223372036854775807
+         ensures $!result.count = $!a.count - $!b.count
+       = { count = $!a.count - $!b.count } );
+    `( let times ($!a : $x) ($!k : i64) : $x
+         requires $!a.count * $!k >= -9223372036854775808 && $!a.count * $!k <= 9223372036854775807
+         ensures $!result.count = $!a.count * $!k
+       = { count = $!a.count * $!k } );
+    `( let less ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.count < $!b.count = $!a.count < $!b.count );
+    `( let same ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.count = $!b.count = $!a.count = $!b.count ) ]
+
+(** `name (a : from) : to`, std::duration_cast: the count times the
+    factor from's period / to's period, truncated toward zero. *)
+let meta cast (name : string) (from : string) (fp : list) (to : string) (tp : list) : item =
+  let f = Pia.Core.Ratio.divide fp tp in
+  let n = Pia.Core.Ratio.num f in
+  let d = Pia.Core.Ratio.den f in
+  if d = 1 then
+    `( let $name ($!a : $from) : $to
+         requires $!a.count * $n >= -9223372036854775808 && $!a.count * $n <= 9223372036854775807
+         ensures $!result.count = $!a.count * $n
+       = { count = $!a.count * $n } )
+  else if n = 1 then
+    `( let $name ($!a : $from) : $to
+         ensures $!result.count = $!a.count / $d
+       = { count = $!a.count / $d } )
+  else fail "a cast between periods that do not divide each other is not supported yet"
+
+(** C++'s std::chrono durations, nanoseconds to weeks, each with a cast
+    `to_<unit>` from every other, overloaded on the argument's type. *)
+let meta standard (u : unit) : list =
+  let units = [ ["nanoseconds"; Pia.Core.Ratio.si "nano"]; ["microseconds"; Pia.Core.Ratio.si "micro"];
+                ["milliseconds"; Pia.Core.Ratio.si "milli"]; ["seconds"; Pia.Core.Ratio.reduce 1 1];
+                ["minutes"; Pia.Core.Ratio.reduce 60 1]; ["hours"; Pia.Core.Ratio.reduce 3600 1];
+                ["days"; Pia.Core.Ratio.reduce 86400 1]; ["weeks"; Pia.Core.Ratio.reduce 604800 1] ] in
+  let types = fold (let (acc) (x) => concat acc (duration (nth x 0) (nth x 1))) [] units in
+  let casts = fold (let (acc) (to) =>
+      fold (let (acc2) (from) =>
+          if nth from 0 = nth to 0 then acc2
+          else concat acc2 [cast (concat "to_" (nth to 0)) (nth from 0) (nth from 1) (nth to 0) (nth to 1)])
+        acc units) [] units in
+  concat types casts

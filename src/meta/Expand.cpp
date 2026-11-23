@@ -68,7 +68,10 @@ class Expander {
         diags_(diags),
         options_(options),
         interp_([this](const std::string &t) {
-          return isBuiltinType(t) || types_.count(t);
+          // A qualified name is an imported type, which the import has
+          // already resolved: it is defined before expansion starts.
+          return isBuiltinType(t) || types_.count(t) ||
+                 t.find('.') != std::string::npos;
         }) {
     interp_.setLive(options.live);
   }
@@ -76,6 +79,7 @@ class Expander {
   void run() {
     declare(preludeProgram());
     declare(program_);
+    checkListedMetaprograms();
     for (unsigned pass = 1;; ++pass) {
       size_t errors = diags_.errors().size();
       producers_.clear();
@@ -116,6 +120,26 @@ class Expander {
   }
 
  private:
+   // An interface's `let meta m : item` (any result but `concept`) lists a
+   // metaprogram, which the module must define (ADR 0039).
+   void checkListedMetaprograms() {
+     for (const NodePtr &item : program_.kids) {
+       if (item->kind != NodeKind::Interface)
+         continue;
+       for (const NodePtr &r : item->kids) {
+         if (r->kind != NodeKind::SigVal || r->flags != "meta")
+           continue;
+         const Node &t = *r->kids[0]->kids[1];
+         if (t.kind != NodeKind::TypeName || t.text == "concept")
+           continue;
+         if (!metaItems_.count(r->text))
+           diags_.error(r->loc, "the interface '" + item->text +
+                                    "' lists the metaprogram '" + r->text +
+                                    "', which the module does not define");
+       }
+     }
+   }
+
   void declare(const Node &program) {
     for (const NodePtr &item : program.kids) {
       if (item->kind == NodeKind::MetaOperator) {
@@ -182,6 +206,7 @@ class Expander {
         continue;
       }
       std::vector<NodePtr> generated;
+      if (isTypeItem(*item)) changed |= liftPayloads(*item, out);
       if (isTypeItem(*item)) changed |= runDerives(*item, generated);
       // `@by(t)` on a lemma, at the top level or in a theory (ADR 0036,
       // step 6), before its operators expand, so the tactic sees the goal
@@ -518,9 +543,52 @@ class Expander {
     return true;
   }
 
+  // `| Circle of { r : u16 }`: a constructor's record payload becomes a
+  // record type of its own, `shape_Circle`, defined just before the
+  // variant, and the payload names it. Its fields keep their attributes,
+  // for the variant's derives to read (ADR 0045, step 5).
+  bool liftPayloads(Node &item, std::vector<NodePtr> &out) {
+    Node &body = *item.kids[3]->kids[0];
+    if (body.kind != NodeKind::Variants) return false;
+    bool changed = false;
+    for (NodePtr &c : body.kids) {
+      if (c->kids.empty() || c->kids[0]->kind != NodeKind::RecordType)
+        continue;
+      std::string name = item.text + "_" + c->text;
+      auto rec = makeNode(NodeKind::LetItem, c->kids[0]->loc, name);
+      rec->flags = "payload";
+      rec->add(makeNode(NodeKind::Params, c->loc));
+      rec->add(makeNode(NodeKind::None, c->loc));
+      rec->add(makeNode(NodeKind::Contracts, c->loc));
+      auto value = makeNode(NodeKind::TypeValue, c->loc);
+      value->add(std::move(c->kids[0]));
+      // The record derives what its variant derives, so a variant's
+      // codec can build on its payloads' (ADR 0045, step 5).
+      auto attrs = makeNode(NodeKind::Attrs, c->loc);
+      for (const NodePtr &a : item.kids[3]->kids[1]->kids)
+        if (a->text == "derive") attrs->add(clone(*a));
+      value->add(std::move(attrs));
+      value->add(makeNode(NodeKind::None, c->loc));
+      rec->add(std::move(value));
+      c->kids[0] = makeNode(NodeKind::TypeName, c->loc, name);
+      payloadOf_[name] = item.text;
+      lifted_[name] = rec.get();
+      types_.insert(name);
+      // The variant's derives, later in this pass, read it.
+      interp_.addToListing(rec.get());
+      out.push_back(std::move(rec));
+      changed = true;
+    }
+    return changed;
+  }
+
   // Runs each `@derive(x)` on a type item through `derive_x`.
   bool runDerives(Node &item, std::vector<NodePtr> &out) {
     Node &attrs = *item.kids[3]->kids[1];
+    // What each derive is given: the item as written, taken before the
+    // loop below moves its attributes, so an attribute before @derive is
+    // still there for the derive to read.
+    NodePtr given = clone(item);
     bool changed = false;
     std::vector<NodePtr> keptAttrs;
     for (NodePtr &attr : attrs.kids) {
@@ -547,15 +615,18 @@ class Expander {
           callee.kind = NodeKind::Name;
           callee.text = fn;
           ValuePtr f = interp_.eval(callee);
-          ValuePtr v = interp_.apply(f, {Interpreter::syntaxValue(clone(item))});
+          ValuePtr v = interp_.apply(f, {Interpreter::syntaxValue(clone(*given))});
           produced(fn, attr->loc);
           takeItems(v, attr->loc, what, out);
+          derived_[item.text].insert(arg->text);
           changed = true;
         } catch (const Deferred &d) {
           waiting_.push_back({what, d.type, arg->loc});
           keptArgs.push_back(std::move(arg));
         } catch (const MetaError &e) {
           diags_.error(e.loc, what + " failed: " + e.message);
+          // Its attributes were for it, so they are not reported again.
+          derived_[item.text].insert(arg->text);
         }
       }
       if (!keptArgs.empty()) {
@@ -564,6 +635,67 @@ class Expander {
       }
     }
     attrs.kids = std::move(keptAttrs);
+    changed |= settleAttrs(item);
+    return changed;
+  }
+
+  // A derive's own attributes, such as @json(name = "x") on a field, are
+  // for it to read (ADR 0045, step 3). Once it has run they leave the
+  // type, its fields and its constructors, so that nothing else sees
+  // them, and an attribute on a field or a constructor that no derive of
+  // the type reads is an error rather than silently ignored.
+  // Whether a type item derives anything: an @derive left, or one run.
+  bool derives(const Node &item) {
+    for (const NodePtr &a : item.kids[3]->kids[1]->kids)
+      if (a->text == "derive") return true;
+    return !derived_[item.text].empty();
+  }
+
+  bool settleAttrs(Node &item) {
+    std::set<std::string> pending;
+    for (const NodePtr &attr : item.kids[3]->kids[1]->kids)
+      if (attr->text == "derive")
+        for (const NodePtr &arg : attr->kids) pending.insert(arg->text);
+    // A lifted payload record that derives nothing of its own has
+    // attributes for its variant's derives, which settle them with the
+    // variant's own; one that derives settles them itself.
+    if (payloadOf_.count(item.text) && pending.empty() &&
+        derived_[item.text].empty())
+      return false;
+    const std::set<std::string> &done = derived_[item.text];
+    bool changed = false;
+    auto settle = [&](Node &attrs, const std::string *member) {
+      std::vector<NodePtr> kept;
+      for (NodePtr &a : attrs.kids) {
+        if (a->text == "derive" || pending.count(a->text)) {
+          kept.push_back(std::move(a));
+        } else if (done.count(a->text)) {
+          changed = true;
+        } else if (member) {
+          diags_.error(a->loc, "the attribute @" + a->text + " on '" +
+                                   *member + "' is read by no derive of '" +
+                                   item.text + "'; add @derive(" + a->text +
+                                   ") to the type, or remove it");
+          changed = true;
+        } else {
+          kept.push_back(std::move(a));
+        }
+      }
+      attrs.kids = std::move(kept);
+    };
+    settle(*item.kids[3]->kids[1], nullptr);
+    Node &body = *item.kids[3]->kids[0];
+    if (body.kind == NodeKind::RecordType || body.kind == NodeKind::Variants)
+      for (NodePtr &m : body.kids)
+        for (NodePtr &k : m->kids)
+          if (k->kind == NodeKind::Attrs) settle(*k, &m->text);
+    if (body.kind == NodeKind::Variants)
+      for (NodePtr &c : body.kids)
+        if (auto r = lifted_.find(item.text + "_" + c->text);
+            r != lifted_.end() && !derives(*r->second))
+          for (NodePtr &f : r->second->kids[3]->kids[0]->kids)
+            for (NodePtr &k : f->kids)
+              if (k->kind == NodeKind::Attrs) settle(*k, &f->text);
     return changed;
   }
 
@@ -617,6 +749,12 @@ class Expander {
   std::set<std::string> producers_;
   SourceLoc producerLoc_;  // where the first of them ran in the last pass
   std::vector<Waiting> waiting_;
+  // The derives that have run on each type item, by its name.
+  std::map<std::string, std::set<std::string>> derived_;
+  // A lifted payload record's variant, by the record's name.
+  std::map<std::string, std::string> payloadOf_;
+  // Each lifted payload record, by its name; the program owns it.
+  std::map<std::string, Node *> lifted_;
   // Theory-building metaprograms (ADR 0036): every `let meta`, for the
   // totality check, and each instance built, by its call.
   std::map<std::string, const Node *> metaItems_;

@@ -495,6 +495,8 @@ The interpreter has `map fold length fields name concat` ([meta.md](meta.md)), a
 | `attrs x` | the attributes on an item or field, with their arguments |
 | `nth` `zip` `range` | list helpers the library would otherwise write recursively |
 
+Status (ADR 0045, step 3): `field_type`, `variants`, `attrs` (with `field_attrs` and `ctor_attrs`, and attributes on fields and constructors to read), `bytes` for the bytes of a string, and `nth`, `zip` and `range` are done, in expanding metaprograms ([meta.md](meta.md#derives)). `int_bounds` is `range_of`, which now covers `u64` and `usize`, since metaprogram integers are 128 bits. `type_kind` and `size_of` work in type-level metaprograms; `align_of` waits on codegen's layout.
+
 With these, `@derive(ord)`, `@derive(hash)`, `@derive(serialise)` and `@derive(deserialise)` are library metaprograms. A PNG chunk header can be declared as a record and read by a derived, bounds-proved reader.
 
 ### 12. Later

@@ -1,0 +1,30 @@
+(* Pia.Text.Json.Write (ADR 0045, step 2): every goal of the writer is
+   proved, with nothing accepted unproved: its writes are in bounds and
+   within the room it requires, its loops end, each token it writes is
+   one of its kind by Pia.Text.Json.Spec, and nothing else changes.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: FileCheck --check-prefix=WRITER %s < %t/Pia.Text.Json.Write.Writer.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Write.pia | FileCheck %s
+*)
+
+(* The digit count and the digits' value by induction, the digit loops,
+   a character sequence by induction, and the string loop.
+// CHECK-NOT: failed
+// CHECK-DAG: Write.pia:270:17: proved: the measure of 'digits_frame' decreases [smt]
+// CHECK-DAG: Write.pia:325:5: proved: the measure decreases [smt]
+// CHECK-DAG: Write.pia:339:17: proved: the measure of 'run_digits' decreases [smt]
+// CHECK-DAG: Write.pia:483:36: proved: the measure of 'chars_frame' decreases [smt]
+// CHECK-DAG: Write.pia:676:5: proved: the measure decreases [smt]
+// CHECK-DAG: Write.pia:696:5: proved: the measure decreases [smt]
+// CHECK: 571 proved, 0 failed, 0 skipped
+*)
+
+(*
+// WRITER:      {{^}}module Pia.Text.Json.Write{{$}}
+// WRITER-NEXT: {{^}}interface Writer = sig{{$}}
+// WRITER:      {{^}}  let write_u64 : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (v : u64) -> usize requires
+// WRITER-SAME: Pia.Text.Json.Spec.magnitude dst pos result = v
+// WRITER:      {{^}}  let write_string : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (src : [u8]) -> usize requires
+// WRITER-SAME: Pia.Text.Json.Spec.token_at dst Pia.Text.Json.Spec.String pos result
+*)

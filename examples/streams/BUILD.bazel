@@ -3,8 +3,8 @@ load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/piac:pia.bzl", "pia_object")
 load("//tools/piac:targets.bzl", "APPLE_SILICON", "PIA_TARGETS")
 
-# The stream delineation demo. The program is the literate page
-# docs/streams.pia.md, which is also its documentation; main.c reads and
+# The stream delineation demo. The program is the literate pages
+# docs/streams.pia.md and docs/sediment.pia.md, which are also its documentation; main.c reads and
 # writes images around it with macOS's ImageIO, because Pia has no I/O yet.
 #
 #   bazel run //examples/streams                     # a synthetic terrain
@@ -20,9 +20,16 @@ pia_object(
     target_compatible_with = PIA_TARGETS,
 )
 
+# Sediment transport is its own page and module, proved in parallel.
+pia_object(
+    name = "sediment_obj",
+    src = "//docs:sediment.pia.md",
+    target_compatible_with = PIA_TARGETS,
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":streams_obj"],
+    srcs = [":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )
