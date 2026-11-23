@@ -1,0 +1,207 @@
+(* Pia.Core.Algo.Numeric: <numeric>'s algorithms (ADR 0040, phase 1.6,
+   docs/cpp-std.md): iota, accumulate, reduce, inner_product,
+   transform_reduce, partial_sum, inclusive_scan, exclusive_scan and
+   adjacent_difference. gcd and midpoint are in Pia.Core.Int.
+
+   Each takes its operation as a function value, C++'s overload with a
+   binary op, and is proved once, over the element type and any such
+   function (ADR 0043, ADR 0044); there are no `_if` names (ADR 0040,
+   section 6). Its contract states the result exactly, as the spec
+   function fold (a left fold, C++'s order) or scan1, so what overflow
+   means is the operation's: a caller that sums u32s passes an add
+   written @overflow(wrap), or one whose `requires` rules overflow out, or
+   one that saturates, and the contract says which it got. reduce and
+   transform_reduce fold in order too, which is what C++ permits for any
+   op and equals it for an associative and commutative one.
+
+   iota also has an overload for each integer type, counting up by one,
+   whose precondition is that the last value fits: v + (len xs - 1) is
+   in the type, so no element overflows. Not for i64 yet: its loop
+   invariant, v + k against a usize k, does not prove in reasonable time;
+   iota with a successor function covers it. Forms by + and * on integers
+   with exact sums wait: the spec of an exact sum is an `int`, and the
+   solver does not prove its step against a fixed-width accumulator in
+   reasonable time yet.
+
+   The destination of a scan is an `out` slice of the source's length
+   (ADR 0040, section 5). *)
+module Pia.Core.Algo.Numeric : Numeric
+
+interface Numeric = sig
+  let spec fold : (t : type) -> (op : (a : t) -> (b : t) -> t) -> (init : t) -> (xs : [t]) -> (n : usize) -> t
+  let spec scan1 : (t : type) -> (op : (a : t) -> (b : t) -> t) -> (xs : [t]) -> (k : usize) -> t
+  let spec iterate : (t : type) -> (next : (a : t) -> t) -> (v : t) -> (k : usize) -> t
+  let spec fold2 : (t : type) -> (op1 : (a : t) -> (b : t) -> t) -> (op2 : (a : t) -> (b : t) -> t) -> (init : t) -> (xs : [t]) -> (ys : [t]) -> (n : usize) -> t
+  let iota : (t : type) -> (xs : out mutable [t]) -> (v : t) -> (next : (a : t) -> t) -> unit
+  let accumulate : (t : type) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> t
+  let reduce : (t : type) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> t
+  let inner_product : (t : type) -> (xs : [t]) -> (ys : [t]) -> (init : t) -> (op1 : (a : t) -> (b : t) -> t) -> (op2 : (a : t) -> (b : t) -> t) -> t
+  let transform_reduce : (t : type) -> (xs : [t]) -> (ys : [t]) -> (init : t) -> (reduce_op : (a : t) -> (b : t) -> t) -> (transform_op : (a : t) -> (b : t) -> t) -> t
+  let partial_sum : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit
+  let inclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit
+  let inclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> (init : t) -> unit
+  let exclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> unit
+  let adjacent_difference : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit
+  let iota : (xs : out mutable [u8]) -> (v : u8) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 8) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [u16]) -> (v : u16) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 16) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [u32]) -> (v : u32) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 32) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [u64]) -> (v : u64) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 64) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [i8]) -> (v : i8) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 7) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [i16]) -> (v : i16) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 15) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+  let iota : (xs : out mutable [i32]) -> (v : i32) -> unit
+    requires len xs = 0 || v + (len xs - 1) <= (1 << 31) - 1
+    ensures forall (k in 0..len xs). xs.[k] = v + k
+end
+
+(** init, then op applied to it and each of xs.[0 .. n] in turn: a left
+    fold, op (op (op init x0) x1) ... *)
+let spec fold (t : type) (op : (a : t) -> (b : t) -> t) (init : t) (xs : [t]) (n : usize) : t @fuel(3)
+  requires n <= len xs
+  decreases n
+= if n = 0 then init else op (fold op init xs (n - 1)) xs.[n - 1]
+
+(** The fold of xs.[0 .. k + 1] that starts from xs.[0]: partial_sum's
+    k-th element. *)
+let spec scan1 (t : type) (op : (a : t) -> (b : t) -> t) (xs : [t]) (k : usize) : t @fuel(3)
+  requires k < len xs
+  decreases k
+= if k = 0 then xs.[0] else op (scan1 op xs (k - 1)) xs.[k]
+
+(** next applied k times to v. *)
+let spec iterate (t : type) (next : (a : t) -> t) (v : t) (k : usize) : t @fuel(3)
+  decreases k
+= if k = 0 then v else next (iterate next v (k - 1))
+
+(** init, then op1 applied to it and op2 of each pair of xs.[0 .. n] and
+    ys.[0 .. n] in turn. *)
+let spec fold2 (t : type) (op1 : (a : t) -> (b : t) -> t) (op2 : (a : t) -> (b : t) -> t) (init : t) (xs : [t]) (ys : [t]) (n : usize) : t @fuel(3)
+  requires n <= len xs && n <= len ys
+  decreases n
+= if n = 0 then init
+  else op1 (fold2 op1 op2 init xs ys (n - 1)) (op2 xs.[n - 1] ys.[n - 1])
+
+(** C++: std::iota, with the step as a function: xs.[k] is next applied
+    k times to v. *)
+let iota (t : type) (xs : out mutable [t]) (v : t) (next : (a : t) -> t) : unit
+  ensures forall (k in 0..len xs). xs.[k] = iterate next v k
+= let x : mutable t = v in
+  for i in 0..len xs
+    invariant x = iterate next v i
+    invariant forall (k in 0..i). xs.[k] = iterate next v k
+  do xs.[i] <- x; x <- next x done
+
+(** C++: std::accumulate with an operation. *)
+let accumulate (t : type) (xs : [t]) (init : t) (op : (a : t) -> (b : t) -> t) : t
+  ensures result = fold op init xs (len xs)
+= let acc : mutable t = init in
+  for i in 0..len xs
+    invariant acc = fold op init xs i
+  do acc <- op acc xs.[i] done;
+  acc
+
+(** C++17: std::reduce with an operation, folded in order. *)
+let reduce (t : type) (xs : [t]) (init : t) (op : (a : t) -> (b : t) -> t) : t
+  ensures result = fold op init xs (len xs)
+= accumulate xs init op
+
+(** C++: std::inner_product with two operations: op1 folds, from init,
+    the op2 of each pair. *)
+let inner_product (t : type) (xs : [t]) (ys : [t]) (init : t) (op1 : (a : t) -> (b : t) -> t) (op2 : (a : t) -> (b : t) -> t) : t
+  requires len xs = len ys
+  ensures result = fold2 op1 op2 init xs ys (len xs)
+= let acc : mutable t = init in
+  for i in 0..len xs
+    invariant acc = fold2 op1 op2 init xs ys i
+  do acc <- op1 acc (op2 xs.[i] ys.[i]) done;
+  acc
+
+(** C++17: std::transform_reduce over two ranges, folded in order. *)
+let transform_reduce (t : type) (xs : [t]) (ys : [t]) (init : t) (reduce_op : (a : t) -> (b : t) -> t) (transform_op : (a : t) -> (b : t) -> t) : t
+  requires len xs = len ys
+  ensures result = fold2 reduce_op transform_op init xs ys (len xs)
+= inner_product xs ys init reduce_op transform_op
+
+(** C++: std::partial_sum with an operation: dst.[k] folds xs.[0 .. k + 1]
+    from xs.[0]. *)
+let partial_sum (t : type) (dst : out mutable [t]) (xs : [t]) (op : (a : t) -> (b : t) -> t) : unit
+  requires len dst = len xs
+  ensures forall (k in 0..len xs). dst.[k] = scan1 op xs k
+= if len xs > 0 then (
+    let acc : mutable t = xs.[0] in
+    dst.[0] <- acc;
+    for i in 1..len xs
+      invariant acc = scan1 op xs (i - 1)
+      invariant forall (k in 0..i). dst.[k] = scan1 op xs k
+    do acc <- op acc xs.[i]; dst.[i] <- acc done)
+
+(** C++17: std::inclusive_scan with an operation, folded in order: the
+    same as partial_sum. *)
+let inclusive_scan (t : type) (dst : out mutable [t]) (xs : [t]) (op : (a : t) -> (b : t) -> t) : unit
+  requires len dst = len xs
+  ensures forall (k in 0..len xs). dst.[k] = scan1 op xs k
+= partial_sum dst xs op
+
+(** C++17: std::inclusive_scan with an operation and an initial value:
+    dst.[k] folds xs.[0 .. k + 1] from init. *)
+let inclusive_scan (t : type) (dst : out mutable [t]) (xs : [t]) (op : (a : t) -> (b : t) -> t) (init : t) : unit
+  requires len dst = len xs
+  ensures forall (k in 0..len xs). dst.[k] = fold op init xs (k + 1)
+= let acc : mutable t = init in
+  for i in 0..len xs
+    invariant acc = fold op init xs i
+    invariant forall (k in 0..i). dst.[k] = fold op init xs (k + 1)
+  do acc <- op acc xs.[i]; dst.[i] <- acc done
+
+(** C++17: std::exclusive_scan with an operation: dst.[k] folds
+    xs.[0 .. k] from init, so dst.[0] is init. *)
+let exclusive_scan (t : type) (dst : out mutable [t]) (xs : [t]) (init : t) (op : (a : t) -> (b : t) -> t) : unit
+  requires len dst = len xs
+  ensures forall (k in 0..len xs). dst.[k] = fold op init xs k
+= let acc : mutable t = init in
+  for i in 0..len xs
+    invariant acc = fold op init xs i
+    invariant forall (k in 0..i). dst.[k] = fold op init xs k
+  do dst.[i] <- acc; acc <- op acc xs.[i] done
+
+(** C++: std::adjacent_difference with an operation: dst.[0] is xs.[0],
+    and each later element is op of an element and the one before it. *)
+let adjacent_difference (t : type) (dst : out mutable [t]) (xs : [t]) (op : (a : t) -> (b : t) -> t) : unit
+  requires len dst = len xs
+  ensures len xs > 0 ==> dst.[0] = xs.[0]
+  ensures forall (k in 1..len xs). dst.[k] = op xs.[k] xs.[k - 1]
+= if len xs > 0 then (
+    dst.[0] <- xs.[0];
+    for i in 1..len xs
+      invariant dst.[0] = xs.[0]
+      invariant forall (k in 1..i). dst.[k] = op xs.[k] xs.[k - 1]
+    do dst.[i] <- op xs.[i] xs.[i - 1] done)
+
+(* C++'s std::iota for the integer type `t`, whose largest value is
+   2^b - 1: xs.[k] is v + k, and the last of them fits. *)
+let meta iota_family (t : string) (b : int) : item =
+  `( let iota ($!xs : out mutable [$t]) ($!v : $t) : unit
+       requires len $!xs = 0 || $!v + (len $!xs - 1) <= (1 << $b) - 1
+       ensures forall (k in 0..len $!xs). $!xs.[k] = $!v + k
+     = for i in 0..len $!xs
+         invariant forall (k in 0..i). $!xs.[k] = $!v + k
+       do $!xs.[i] <- $!v + i done )
+
+iota_family "u8" 8
+iota_family "u16" 16
+iota_family "u32" 32
+iota_family "u64" 64
+iota_family "i8" 7
+iota_family "i16" 15
+iota_family "i32" 31

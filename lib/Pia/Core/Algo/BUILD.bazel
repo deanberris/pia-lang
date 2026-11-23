@@ -8,6 +8,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Heap.pia",
     "Modify.pia",
+    "Numeric.pia",
     "Permutation.pia",
     "Remove.pia",
     "Sort.pia",
@@ -87,4 +88,13 @@ pia_library(
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],
+)
+
+# <numeric>'s algorithms, each with an operation: tests/std/numeric.pia
+# checks its goals; tests/std/numeric_edges.pia and :numeric_run test it
+# through its interface.
+pia_library(
+    name = "numeric",
+    src = "Numeric.pia",
+    target_compatible_with = APPLE_SILICON,
 )

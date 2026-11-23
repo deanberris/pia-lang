@@ -1,0 +1,38 @@
+(* An element of a slice read inside a spec function keeps its type's
+   range: the solver learns that an element of a [u32] is between 0 and
+   2^32 - 1, as it does where code loads one. So a sum over a [u32],
+   stated as an int, does not decrease from one prefix to the next.
+// RUN: piac --verify %s | FileCheck %s
+*)
+let spec elt (xs : [u32]) (i : usize) : int
+  requires i < len xs
+= xs.[i]
+
+let spec sum (xs : [u32]) (n : usize) : int
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0 else sum xs (n - 1) + xs.[n - 1]
+
+let not_negative (xs : [u32]) : unit
+  requires len xs > 0
+  ensures elt xs 0 >= 0
+= ()
+
+let fits (xs : [i8]) : unit
+  requires len xs > 0
+  ensures elt2 xs 0 <= 127 && elt2 xs 0 >= -128
+= ()
+
+let spec elt2 (xs : [i8]) (i : usize) : int
+  requires i < len xs
+= xs.[i]
+
+let grows (xs : [u32]) (n : usize) : unit
+  requires 0 < n && n <= len xs
+  ensures sum xs (n - 1) <= sum xs n
+= ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 15 proved, 0 failed, 0 skipped
+*)

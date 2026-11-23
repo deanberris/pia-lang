@@ -1,0 +1,53 @@
+(* Importers of Pia.Core.Algo.Numeric pass their own operations and know
+   each result from the interface alone: a u32 sum written
+   @overflow(wrap), a saturating product, scans, a difference, and iota's
+   exact values at u8, the plain overload beside the generic iota.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Numeric.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Algo.Numeric.Numeric as N
+
+let plus_wrap (a : u32) (b : u32) : u32 @overflow(wrap) = a + b
+let minus_wrap (a : u32) (b : u32) : u32 @overflow(wrap) = a - b
+let times_sat (a : u8) (b : u8) : u8 @overflow(saturate) = a * b
+let plus_sat (a : u8) (b : u8) : u8 @overflow(saturate) = a + b
+
+(* Two elements: the fold unfolds to the wrapping sum of both. *)
+let total (xs : [u32]) : u32
+  ensures len xs = 2 ==> result = plus_wrap (plus_wrap 0 xs.[0]) xs.[1]
+= N.accumulate xs 0 plus_wrap
+
+let dot (xs : [u8]) (ys : [u8]) : u8
+  requires len xs = len ys
+  ensures len xs = 1 ==> result = plus_sat 0 (times_sat xs.[0] ys.[0])
+= N.inner_product xs ys 0 plus_sat times_sat
+
+let running (dst : out mutable [u32]) (xs : [u32]) : unit
+  requires len dst = len xs && len xs = 2
+  ensures dst.[0] = 0 && dst.[1] = plus_wrap 0 xs.[0]
+= N.exclusive_scan dst xs 0 plus_wrap
+
+(* Both inclusive_scan overloads, with and without an initial value: two
+   higher-order functions of one name, imported from one module. *)
+let scans (dst : out mutable [u32]) (xs : [u32]) : unit
+  requires len dst = len xs && len xs = 1
+  ensures dst.[0] = plus_wrap 5 xs.[0]
+= N.inclusive_scan dst xs plus_wrap;
+  N.inclusive_scan dst xs plus_wrap 5
+
+let steps (dst : out mutable [u32]) (xs : [u32]) : unit
+  requires len dst = len xs
+  ensures forall (k in 1..len xs). dst.[k] = minus_wrap xs.[k] xs.[k - 1]
+= N.adjacent_difference dst xs minus_wrap
+
+let counted (xs : out mutable [u8]) : unit
+  requires len xs <= 200
+  ensures forall (k in 0..len xs). xs.[k] = 10 + k
+= N.iota xs 10
+
+(* Every goal is proved, and each call is an instance of its proof.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.Numeric.accumulate[plus_wrap]<u32>' is an instance of the generic proof of 'Pia.Core.Algo.Numeric.accumulate#proof' [generic]
+// CHECK-DAG: 'Pia.Core.Algo.Numeric.inner_product[plus_sat, times_sat]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.Numeric.inner_product#proof' [generic]
+// CHECK: 36 proved, 0 failed, 0 skipped
+*)

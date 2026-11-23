@@ -955,6 +955,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
   for (auto &[name, group] : byName) {
     if (group.size() == 1) continue;
     unsigned generics = 0;
+    std::set<std::string> hofNames;
     for (size_t k = 0; k < group.size(); ++k) {
       FuncSig &sig = all[group[k]];
       const Node &item = *sig.item;
@@ -969,9 +970,14 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         continue;
       }
       // A higher-order overload is chosen by which arguments are functions
-      // (ADR 0044), and named after its line, `find#line12`.
+      // (ADR 0044), and named after its line, `find#line12`. The functions
+      // of an imported module all sit at its import, so a second one on a
+      // line is numbered too, `find#line3#2`.
       if (sig.isHigherOrder()) {
-        sig.name = name + "#line" + std::to_string(item.loc.line);
+        std::string base = name + "#line" + std::to_string(item.loc.line);
+        sig.name = base;
+        for (unsigned n = 2; !hofNames.insert(sig.name).second; ++n)
+          sig.name = base + "#" + std::to_string(n);
         continue;
       }
       // Generic overloads are told apart by their parameter patterns and

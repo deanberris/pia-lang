@@ -175,7 +175,7 @@ Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `
 
 Two types exist only for specifications ([ADR 0036](adr/0036-library-theories.md), step 1):
 
-- **`int`**, an unbounded mathematical integer. Bare `int` is unbounded, and `int{lo..hi}` is still a range type: a range is written with its braces right after `int`, so the two spellings cannot be confused ([grammar.md](grammar.md)). The verifier encodes `int` as the SMT `Int` sort.
+- **`int`**, an unbounded mathematical integer. Bare `int` is unbounded, and `int{lo..hi}` is still a range type: a range is written with its braces right after `int`, so the two spellings cannot be confused ([grammar.md](grammar.md)). The verifier encodes `int` as the SMT `Int` sort. An element of a slice read in a spec function's body keeps its type's range, as it does where code loads one: an element of a `[u32]` is between 0 and 2^32 - 1 there, so a sum of them as an `int` does not decrease.
 - **`real`**, a mathematical real number, encoded as the SMT `Real` sort. It is not a floating-point type.
 
 They have `+`, `-`, `*`, unary `-` and the comparisons, and `real` also has `/`. All of it is exact, so nothing overflows and no `nooverflow` goal is raised. A real division raises a `nonzero` goal for its divisor where it is walked as code, such as in a spec function's body. An integer literal takes either type from the context, and an `int` literal may be larger than any machine type. A literal with a decimal point or an exponent, such as `0.5` or `1.0e3`, is a `real`, read as an exact rational (`1/2`, `1000`), and a suffix such as `0.5f32` is an error until Pia has floating-point types.
