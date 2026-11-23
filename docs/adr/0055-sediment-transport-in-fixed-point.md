@@ -65,6 +65,12 @@ The other theorems of the stage:
 
 In this first version, `fill`, `down` and `capacity` do not change between steps. Sediment moves over a fixed landscape, which is enough to colour the streams by load, as the demo's render step needs. Letting erosion and deposition change the heights (landscape evolution) means recomputing the fill and the directions every few steps. It is a later step, and the conservation law carries over unchanged, since it does not mention heights.
 
+Dean decided (2026-11-23) that the fixed terrain is for building and proving the transport model only. The goal after it is **terrain evolution under rainfall models**, rendered as an **animated GIF**:
+
+- **Rainfall models** replace the uniform one unit of water per cell in `acc` with a rainfall field per time step (uniform, a storm moving across the map, or seasonal), so each step's flow is accumulated rainfall, not area.
+- **Evolution**: each step's erosion lowers `fill` and deposition raises it, in integer height units, and the fill and the directions are recomputed every few steps. The conservation law still holds across a recomputation, because it counts mass, not heights.
+- **Animated GIF**: one frame per few steps, through the proved GIF encoder of [ADR 0054](0054-proved-gif-and-jpeg-codecs.md) (multiple frames with a delay, and a palette shared across frames so colours stay stable between frames).
+
 ### 6. The GPU form comes later and is proved against this one
 
 Processing cells in height order is sequential. The GPU form ([survey](https://claude.ai/artifact/GNhoJ74ocgLnBPzE5kUcFA), items 3 to 7) is a "pull" step: every cell reads its eight neighbours and adds the loads of those that drain into it. Each cell writes only itself, so the step is race-free. Its conservation proof needs one more lemma, that summing every cell's inflow counts every pushed load once (a reindexing of the sum over `down`). Moving mass one cell per step, that form needs as many steps as the longest flow path to carry sediment to the outlet. So it is a second implementation proved to conserve the same total, not a replacement for the sequential one.
@@ -80,6 +86,8 @@ Processing cells in height order is sequential. The GPU form ([survey](https://c
 3. The height order: a proved sort of cell indices by `fill`, and the topological accumulation that uses it.
 4. `transport`, one step over the whole map, with the conservation equation as its postcondition; `steps n` repeats it.
 5. In `docs/streams.pia.md`: the new stage, `render` by load, and the theorems listed under "What is proved".
+6. Rainfall fields in place of uniform water, then heights changed by erosion and deposition, with fill and directions recomputed every few steps.
+7. The animated GIF, once ADR 0054's encoder writes multiple frames.
 
 ## Consequences
 
@@ -90,5 +98,5 @@ Processing cells in height order is sequential. The GPU form ([survey](https://c
 
 ## Questions for Dean
 
-1. Fixed terrain first (section 5), or should erosion change the heights in the first version?
+1. ~~Fixed terrain first (section 5)?~~ Answered: fixed for building the model only, then terrain evolution under rainfall models, rendered as an animated GIF.
 2. The sequential height-order step first and the race-free pull step later for the GPU (section 6), or the pull step from the start?
