@@ -1,0 +1,663 @@
+# Demo: sediment transport
+
+The second half of the [stream delineation demo](streams.pia.md) moves
+sediment over the landscape the first half delineated ([ADR
+0055](adr/0055-sediment-transport-in-fixed-point.md)). Sediment is counted
+in whole units of mass, a `u32` per cell, in three buffers: `bed`, the
+erodible sediment resting in each cell; `load`, what the water leaving a
+cell carries; and `inflow`, what drains into it. One more number, `gone`,
+counts what has left the map through outlets.
+
+Each cell's water has a **capacity**, how much it can carry. Where it
+carries less, it erodes the bed, at most the whole bed; where it carries
+more, it deposits the excess. A step visits the cells from highest to
+lowest, so every cell is visited after the cells that drain into it, and
+each cell's load moves on to the cell below, or off the map.
+
+The theorem is that the total never changes:
+
+```text
+sum bed + sum load + sum inflow + gone = old (the same)
+```
+
+exactly, in whole units, with no tolerance. It is the postcondition of
+every function below, from a single write to `n` time steps over the whole
+map, and it bounds every cell, so nothing overflows.
+
+This page is the program, a literate Pia file like
+[`streams.pia.md`](streams.pia.md) and its own module, so the two prove in
+parallel. The C program in `examples/streams` calls `sediment` with the
+filled heights, the flow directions and the accumulation from the first
+half, and draws the result with `render_load` from that page.
+
+```pia
+module Sediment : Transport
+
+interface Transport @abi(c) = sig
+  let sediment : (fill : [u16]) -> (down : [usize]) -> (acc : [u32])
+      -> (n : u32) -> (bed : inout mutable [u32])
+      -> (load : out mutable [u32]) -> (inflow : out mutable [u32])
+      -> (flux : out mutable [u32]) -> (order : out mutable [usize])
+      -> (pos : out mutable [usize]) -> (cnt : out mutable [u32])
+      -> (first : out mutable [usize]) -> (next : out mutable [usize])
+      -> (last : out mutable [usize]) -> (owner : out mutable [u16]) -> u64
+    requires len down = len fill && len acc = len fill
+    requires len bed = len fill && len load = len fill && len inflow = len fill
+    requires len flux = len fill && len order = len fill && len pos = len fill
+    requires len owner = len fill && len fill < 4294967295
+    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires forall (k in 0..len down).
+               down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+end
+```
+
+## 1. The sum and the point update
+
+```pia
+let spec elt (xs : [u32]) (i : usize) : u32
+  requires i < len xs
+= xs.[i]
+```
+
+`sum xs n` is the sum of `xs.[0 .. n]`, a `u64`. An element is read through
+`elt`, whose `u32` result type tells the solver the element's range each
+time `sum` unfolds. The bound in the `ensures` keeps the `u64` from
+overflowing; it is the one product in this stage, and it widens the
+encoding only for the functions that use `sum` (docs/verifier.md,
+"Encoding").
+
+```pia
+let spec sum (xs : [u32]) (n : usize) : u64
+  requires n <= len xs && n <= 4294967296
+  ensures result <= 4294967296 * n
+  decreases n
+= if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
+```
+
+The lemmas about `sum` are proved by induction. Each inductive step goes
+through one of three small lemmas with no quantifier in sight: with a
+`forall` among the facts, the solver does not find the one-step unfolding
+by itself.
+
+```pia
+let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
+  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n = sum xs n
+= ()
+```
+
+```pia
+let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
+  requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+= ()
+```
+
+```pia
+let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
+  requires i < len xs && i < len ys && i < 4294967296
+  requires sum ys i = sum xs i
+  ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
+= ()
+```
+
+If `ys` is `xs` except at `i`, the prefixes before `i` have the same sum.
+
+```pia
+let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n = sum xs n
+  decreases n
+= if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
+```
+
+The **point update**: writing `ys.[i]` in place of `xs.[i]` changes the sum
+of every prefix that holds `i` by `ys.[i] - xs.[i]`. Every move of sediment
+is a pair of such writes.
+
+```pia
+let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+  decreases n
+= if n > i + 1 then (update xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step_after xs ys i n)
+  else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
+```
+
+```pia
+let lemma at_le (xs : [u32]) (i : usize) : unit
+  requires i < len xs && i < 4294967296
+  ensures xs.[i] <= sum xs (i + 1)
+= ()
+```
+
+A longer prefix has a larger sum.
+
+```pia
+let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
+  requires m <= n && n <= len xs && n <= 4294967296
+  ensures sum xs m <= sum xs n
+  decreases n
+= if n > m then mono xs m (n - 1)
+```
+
+Each element is at most the sum, so a bound on the total bounds every cell.
+This is what proves that no cell overflows when mass arrives.
+
+```pia
+let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
+  requires i < n && n <= len xs && n <= 4294967296
+  ensures xs.[i] <= sum xs n
+= at_le xs i; mono xs (i + 1) n
+```
+
+An all-zero prefix sums to zero.
+
+```pia
+let lemma zero (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= 4294967296
+  requires forall (k in 0 .. n). xs.[k] = 0
+  ensures sum xs n = 0
+  decreases n
+= if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
+```
+
+`set` is a write whose contract is the point update for the whole buffer.
+The element is loaded before it is overwritten: the load is what tells the
+solver that `old (xs.[i])` is a `u32`.
+
+```pia
+let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
+  requires i < len xs && len xs <= 4294967296
+  ensures xs.[i] = v
+  ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
+  ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
+= let w = xs.[i] in
+  xs.[i] <- v;
+  update (old xs) xs i (len xs);
+  assert w = old (xs.[i])
+```
+
+```pia
+let cell = type { bed : u32; load : u32 }
+```
+
+The water erodes when it carries less than its capacity, at most the whole
+bed, and deposits the excess otherwise. Mass moves between bed and load and
+none is created.
+
+```pia
+let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
+  requires bed + inflow <= 4294967295
+  ensures result.bed + result.load = bed + inflow
+  ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
+  ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
+= if inflow < capacity then
+    (let room = capacity - inflow in
+     let e = if room < bed then room else bed in
+     { bed = bed - e; load = inflow + e })
+  else { bed = bed + (inflow - capacity); load = capacity }
+```
+
+`push` moves the load of cell `a` into the inflow of cell `b`, downhill.
+
+```pia
+let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) : unit
+  requires a < len load && b < len inflow && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum load (len load) + sum inflow (len inflow) <= 4294967295
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum load (len load) + sum inflow (len inflow) = sum (old load) (len load) + sum (old inflow) (len inflow)
+= let m = load.[a] in
+  let w = inflow.[b] in
+  elt_le load a (len load);
+  elt_le inflow b (len inflow);
+  set load a 0;
+  set inflow b (w + m)
+```
+
+`drain`: the load of an outlet leaves the map.
+
+```pia
+let drain (load : borrowed inout mutable [u32]) (a : usize) (gone : u64) : u64
+  requires a < len load && len load <= 4294967296
+  requires sum load (len load) + gone <= 4294967295
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum load (len load) + result = sum (old load) (len load) + gone
+= let m = load.[a] in
+  elt_le load a (len load);
+  set load a 0;
+  gone + m
+```
+
+The arithmetic that adds `erode_cell`'s three writes up. On its own it is a
+small goal; inline, the solver times out on it among the sums.
+
+```pia
+let lemma balance (a : u64) (b : u64) (c : u64) (a0 : u64) (b0 : u64) (c0 : u64) (d : u32) (i : u32) (rb : u32) (rl : u32) : unit
+  requires a + d = a0 + rb && b = b0 + rl && c + i = c0 && rb + rl = d + i
+  ensures a + b + c = a0 + b0 + c0
+= ()
+```
+
+## 2. One cell
+
+`erode_cell`: a cell takes its inflow and erodes or deposits. Its bed and
+load are rewritten and its inflow is spent.
+
+```pia
+let erode_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) (capacity : u32) : unit
+  requires c < len bed && c < len load && c < len inflow
+  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum bed (len bed) + sum inflow (len inflow) <= 4294967295
+  requires load.[c] = 0
+  ensures inflow.[c] = 0
+  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+= let i = inflow.[c] in
+  let d = bed.[c] in
+  elt_le bed c (len bed);
+  elt_le inflow c (len inflow);
+  let r = erode_or_deposit i capacity d in
+  set bed c r.bed;
+  assert sum bed (len bed) + d = sum (old bed) (len bed) + r.bed;
+  set load c r.load;
+  assert sum load (len load) = sum (old load) (len load) + r.load;
+  set inflow c 0;
+  assert sum inflow (len inflow) + i = sum (old inflow) (len inflow);
+  balance (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow))
+    (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
+    d i r.bed r.load
+```
+
+One transfer of a step: the load of cell a goes to the cell it drains into,
+b, or out of the map at an outlet. The total is conserved, which is the
+loop invariant of the step to come (ADR 0055, step 4).
+
+```pia
+let transfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64
+  requires a < len load && b < len inflow
+  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum bed (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+= if outlet then drain load a gone
+  else (push load inflow a b; gone)
+```
+
+## 3. A time step
+
+The bound before `transfer`, from the totals around `erode_cell`.
+
+```pia
+let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i1 : u64) : unit
+  requires b + l + i + g <= 4294967295 && b1 + l1 + i1 = b + l + i
+  ensures b1 + l1 + i1 + g <= 4294967295
+= ()
+```
+
+The transport capacity of the water leaving a cell grows with its flow and
+with the drop to the cell below: a sixteenth of the flow plus four times
+the drop, at most 65535 units. It is shifts and adds, so the proof stays
+linear, and the shifts spread capacities over a range wide enough that the
+picture's colour ramp, over the number of bits of the load, shows the
+difference between a brook and a river.
+
+```pia
+let capacity_of (a : u32) (drop : u16) : u32 =
+  let d : u32 = drop in
+  let c : u64 = (a >> 4) + (d << 2) in
+  if c < 65535 then c else 65535
+```
+
+One cell of a step: erode or deposit, record the load leaving the cell in
+flux for the picture, and carry it on.
+
+```pia
+let visit (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (c : usize) (d : usize) (capacity : u32) (gone : u64) : u64
+  requires c < len bed && c < len load && c < len inflow && d < len inflow && c < len flux
+  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires load.[c] = 0
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  ensures load.[c] = 0
+  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+= erode_cell bed load inflow c capacity;
+  chain (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow)) gone
+    (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow));
+  flux.[c] <- load.[c];
+  let r = transfer bed load inflow c d (d = c) gone in
+  r
+```
+
+One time step over the map, highest cells first.
+
+```pia
+let transport (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (gone : u64) : u64
+  requires len down = len fill && len order = len fill && len acc = len fill
+  requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
+  requires len fill <= 4294967296
+  requires forall (k in 0 .. len down).
+             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  requires forall (q in 0 .. len order). order.[q] < len fill
+  requires forall (k in 0 .. len load). load.[k] = 0
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  ensures forall (k in 0 .. len load). load.[k] = 0
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+=
+  let g : mutable u64 = gone in
+  for p in 0 .. len order
+    invariant forall (k in 0 .. len load). load.[k] = 0
+    invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g =
+      sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+  do
+    let c = order.[p] in
+    let d = down.[c] in
+    let drop : u16 = if d = c then 0 else fill.[c] - fill.[d] in
+    g <- visit bed load inflow flux c d (capacity_of acc.[c] drop) g
+  done;
+  g
+```
+
+The sum of a buffer, computed: what the precondition of the steps states,
+checked at run time.
+
+```pia
+let total (xs : [u32]) : u64
+  requires len xs <= 4294967296
+  ensures result = sum xs (len xs)
+=
+  let t : mutable u64 = 0 in
+  for i in 0 .. len xs
+    invariant t = sum xs i
+  do
+    t <- t + xs.[i]
+  done;
+  t
+```
+
+## 4. The height order
+
+A step visits the cells from highest to lowest. `height_order` sorts them
+by filled height with a counting sort over the 65536 heights, in time
+O(n + 65536). It writes `order`, the cells from highest to lowest, and
+`pos`, its inverse, and proves that `order` is a permutation, each cell
+exactly once, and that height never increases along it. `cnt`, `first`,
+`next`, `last` and `owner` are scratch the caller passes, since Pia cannot
+allocate yet.
+
+The proof has a shape worth noting. Each height gets a bucket of places in
+`order`. Placing a cell needs its bucket's next place to be free, which
+needs the buckets not to overlap; said directly, that compares every pair
+of buckets, and the solver does not settle it
+([#336](https://github.com/deanberris/pia-lang/issues/336)). So `owners`
+writes, for every place, the height whose bucket holds it. A place has one
+owner, so buckets cannot overlap, and no goal compares two of them.
+
+How many of fill.[k ..] have height h.
+
+```pia
+let spec count_from (fill : [u16]) (h : usize) (k : usize) : usize
+  requires k <= len fill
+  ensures result <= len fill - k
+  decreases len fill - k
+= if k = len fill then 0 else (if fill.[k] = h then 1 else 0) + count_from fill h (k + 1)
+```
+
+cnt.[h] is the number of cells of height h, and cnt sums to n.
+
+```pia
+let histogram (fill : [u16]) (cnt : out mutable [u32]) : unit
+  requires len cnt = 65536 && len fill <= 4294967295
+  ensures forall (h in 0 .. 65536). cnt.[h] = count_from fill h 0
+  ensures sum cnt 65536 = len fill
+= for h in 0 .. 65536
+    invariant forall (j in 0 .. h). cnt.[j] = 0
+  do cnt.[h] <- 0 done;
+  zero cnt 65536;
+  for k in 0 .. len fill
+    invariant sum cnt 65536 = k
+    invariant forall (h in 0 .. 65536). cnt.[h] + count_from fill h k = count_from fill h 0
+  do
+    let h : usize = fill.[k] in
+    let c = cnt.[h] in
+    elt_le cnt h 65536;
+    set cnt h (c + 1)
+  done
+```
+
+The bucket of height h is order.[first.[h] .. last.[h]], the highest
+heights first. The sum appears only in the running total acc; each bucket
+is stated by its neighbour.
+
+```pia
+let offsets (n : usize) (cnt : [u32]) (first : out mutable [usize]) (next : out mutable [usize]) (last : out mutable [usize]) : unit
+  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires sum cnt 65536 = n
+  ensures last.[0] = n && first.[65535] = 0
+  ensures forall (h in 0 .. 65536). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  ensures forall (h in 0 .. 65535). first.[h] = last.[h + 1]
+= let acc : mutable u64 = 0 in
+  for t in 0 .. 65536
+    invariant acc = sum cnt t && acc <= n
+    invariant t > 0 ==> last.[0] = n
+    invariant t > 0 ==> first.[t - 1] + acc = n
+    invariant forall (h in 0 .. t). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+    invariant forall (h in 0 .. t). h + 1 < t ==> first.[h] = last.[h + 1]
+  do
+    mono cnt (t + 1) 65536;
+    let c = cnt.[t] in
+    last.[t] <- n - acc;
+    acc <- acc + c;
+    first.[t] <- n - acc;
+    next.[t] <- n - acc
+  done
+```
+
+An element of a [u16] read through a spec function, whose result type gives
+it its range inside quantifiers (#330).
+
+```pia
+let spec own (o : [u16]) (q : usize) : u16
+  requires q < len o
+= o.[q]
+```
+
+Writes t into owner.[lo .. hi] and nothing else.
+
+```pia
+let mark (owner : borrowed inout mutable [u16]) (lo : usize) (hi : usize) (t : u16) : unit
+  requires lo <= hi && hi <= len owner
+  ensures forall (j in 0 .. len owner). (lo <= j && j < hi ==> owner.[j] = t) && (j < lo || hi <= j ==> owner.[j] = old (owner.[j]))
+= for q in lo .. hi
+    invariant forall (j in 0 .. len owner). (lo <= j && j < q ==> owner.[j] = t) && (j < lo || q <= j ==> owner.[j] = old (owner.[j]))
+  do
+    owner.[q] <- t
+  done
+```
+
+owner.[q] is the height whose bucket holds position q. Buckets are written
+from the highest height down to the lowest, which fills the positions from
+the end towards the start, so each bucket goes below all the ones before
+it: that is the only order fact this needs.
+
+```pia
+let owners (n : usize) (cnt : [u32]) (first : [usize]) (last : [usize]) (owner : out mutable [u16]) : unit
+  requires len cnt = 65536 && len first = 65536 && len last = 65536 && len owner = n
+  requires last.[0] = n && first.[65535] = 0
+  requires forall (h in 0 .. 65536). first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  requires forall (h in 0 .. 65535). first.[h] = last.[h + 1]
+  ensures forall (q in 0 .. n). first.[own owner q] <= q && q < last.[own owner q]
+  ensures forall (h in 0 .. 65536) (q in 0 .. n). first.[h] <= q && q < last.[h] ==> own owner q = h
+  ensures forall (a in 0 .. n) (b in 0 .. n). a < b ==> own owner b <= own owner a
+= let w : mutable usize = n in
+  for t in 0 .. 65536
+    invariant w <= n
+    invariant t < 65536 ==> w = last.[t]
+    invariant t = 65536 ==> w = 0
+    invariant forall (h in 0 .. t). w <= first.[h]
+    invariant forall (q in w .. n). own owner q < t && first.[own owner q] <= q && q < last.[own owner q]
+    invariant forall (h in 0 .. t) (q in w .. n). first.[h] <= q && q < last.[h] ==> owner.[q] = h
+    invariant forall (a in w .. n) (b in w .. n). a < b ==> own owner b <= own owner a
+  do
+    let lo = first.[t] in
+    assert lo + cnt.[t] = last.[t] && lo <= w;
+    let ht : u16 = t in
+    mark owner lo w ht;
+    w <- lo;
+    if t + 1 < 65536 then assert lo = last.[t + 1] else ()
+  done
+```
+
+Every place of order starts free, holding v.
+
+```pia
+let blank (order : out mutable [usize]) (v : usize) : unit
+  ensures forall (q in 0 .. len order). order.[q] = v
+= for q in 0 .. len order
+    invariant forall (j in 0 .. q). order.[j] = v
+  do order.[q] <- v done
+```
+
+Each cell goes to the next free place in its height's bucket. A place q is
+taken when it is before next.[owner.[q]], and free (holding n) otherwise.
+
+```pia
+let place (fill : [u16]) (first : [usize]) (last : [usize]) (owner : [u16]) (next : borrowed inout mutable [usize]) (order : out mutable [usize]) (pos : out mutable [usize]) : unit
+  requires len first = 65536 && len last = 65536 && len next = 65536
+  requires len owner = len fill && len order = len fill && len pos = len fill
+  requires forall (h in 0 .. 65536). next.[h] = first.[h] && first.[h] + count_from fill h 0 = last.[h] && last.[h] <= len fill
+  requires forall (q in 0 .. len fill). first.[own owner q] <= q && q < last.[own owner q]
+  requires forall (h in 0 .. 65536) (q in 0 .. len fill). first.[h] <= q && q < last.[h] ==> own owner q = h
+  ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q && fill.[order.[q]] = own owner q
+  ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+= blank order (len fill);
+  assert (forall (q in 0 .. len fill). next.[own owner q] = first.[own owner q]);
+  assert (forall (q in 0 .. len fill). next.[own owner q] <= q);
+  for k in 0 .. len fill
+    invariant forall (h in 0 .. 65536). first.[h] <= next.[h] && next.[h] + count_from fill h k = last.[h]
+    invariant forall (q in 0 .. len fill).
+      (q < next.[own owner q] ==> order.[q] < k && pos.[order.[q]] = q && fill.[order.[q]] = own owner q)
+      && (next.[own owner q] <= q ==> order.[q] = len fill)
+    invariant forall (j in 0 .. k). pos.[j] < len fill && order.[pos.[j]] = j
+  do
+    let h : usize = fill.[k] in
+    let p = next.[h] in
+    assert count_from fill h k = 1 + count_from fill h (k + 1);
+    assert p < last.[h] && last.[h] <= len fill;
+    assert own owner p = h;
+    order.[p] <- k;
+    pos.[k] <- p;
+    next.[h] <- p + 1
+  done;
+  assert (forall (h in 0 .. 65536). next.[h] = last.[h]);
+  assert (forall (q in 0 .. len fill). q < next.[own owner q])
+```
+
+Sorted by fill, from sorted by owner and each cell's height being its
+place's owner.
+
+```pia
+let sorted_from_owner (fill : [u16]) (owner : [u16]) (order : [usize]) (pos : [usize]) : unit
+  requires len order = len fill && len owner = len fill && len pos = len fill
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q && fill.[order.[q]] = own owner q
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> own owner b <= own owner a
+  ensures forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+= ()
+```
+
+The cells by decreasing fill, in linear time: a counting sort over the
+65536 heights. order is a permutation with inverse pos, and a cell comes
+after every cell higher than it, the contract the selection sort had. cnt,
+first, next, last and owner are scratch.
+
+```pia
+let height_order (fill : [u16]) (order : out mutable [usize]) (pos : out mutable [usize])
+    (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
+    (last : out mutable [usize]) (owner : out mutable [u16]) : unit
+  requires len order = len fill && len pos = len fill && len owner = len fill
+  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires len fill <= 4294967295
+  ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+= histogram fill cnt;
+  offsets (len fill) cnt first next last;
+  owners (len fill) cnt first last owner;
+  place fill first last owner next order pos;
+  sorted_from_owner fill owner order pos
+```
+
+## 5. The whole stage
+
+`sediment` runs `n` time steps from the sediment in `bed`, with no load and
+no inflow. It sorts the cells first, so the order `transport` needs is
+proved, not assumed. The result is the mass that left the map, and the
+total is conserved exactly. If the total does not fit in a `u32`, nothing
+moves and the result is 2^64 - 1.
+
+```pia
+let sediment (fill : [u16]) (down : [usize]) (acc : [u32]) (n : u32)
+    (bed : inout mutable [u32]) (load : out mutable [u32]) (inflow : out mutable [u32])
+    (flux : out mutable [u32]) (order : out mutable [usize]) (pos : out mutable [usize])
+    (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
+    (last : out mutable [usize]) (owner : out mutable [u16]) : u64
+  requires len down = len fill && len acc = len fill
+  requires len bed = len fill && len load = len fill && len inflow = len fill
+  requires len flux = len fill && len order = len fill && len pos = len fill
+  requires len owner = len fill && len fill < 4294967295
+  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires forall (k in 0 .. len down).
+             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  ensures result = 18446744073709551615 ||
+    sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result = sum (old bed) (len bed)
+=
+  height_order fill order pos cnt first next last owner;
+  for i in 0 .. len fill
+    invariant forall (k in 0 .. i). load.[k] = 0 && inflow.[k] = 0 && flux.[k] = 0
+  do
+    load.[i] <- 0;
+    inflow.[i] <- 0;
+    flux.[i] <- 0
+  done;
+  zero load (len load);
+  zero inflow (len inflow);
+  let t = total bed in
+  if t > 4294967295 then 18446744073709551615
+  else
+    (let g : mutable u64 = 0 in
+     for s in 0 .. n
+       invariant forall (k in 0 .. len load). load.[k] = 0
+       invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g = sum (old bed) (len bed)
+     do
+       g <- transport fill down acc order bed load inflow flux g
+     done;
+     g)
+```
+
+## What is proved
+
+Every goal in this file is proved before `piac` generates code:
+
+| Goal | Where |
+| --- | --- |
+| Every slice index is in bounds, no arithmetic overflows | every function |
+| A write changes a sum by the new value less the old | `update`, `set` |
+| Erosion and deposition create no mass, and erosion takes at most the bed | `erode_or_deposit` |
+| The height order is a permutation of the cells, with its exact inverse, and height never increases along it | `histogram` up to `height_order` |
+| Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport` and `sediment` |
+| No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
+
+What is *not* proved: that the capacity rule is physical, and that a step
+carries all sediment to an outlet (it does when the order is topological,
+which the height order is, but the proof does not use it).

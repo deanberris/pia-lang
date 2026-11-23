@@ -77,7 +77,7 @@ suffix = ( "u" | "i" | "f" ) digits | "usize" | "isize" ;     (* 42u8, 1i64, 0.5
 STRING = '"' { char | escape } '"' ;
 ```
 
-Digits may contain `_` separators (`1_000_000`). A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
+Digits may be grouped with `'` or `_` (`100'000`, `0xFFFF'FFFF`, `1_000_000`), which mean nothing to the value. A `'` must sit between two digits of the literal's base, as in C++14, so `100'` and `1'_0` are errors. `,` cannot group digits, because it already separates tuple elements and arguments: `f (1,000)` would be ambiguous. A `'` after a name is a prime, as in `x'`, which is part of the name. A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
 
 ### Operators
 

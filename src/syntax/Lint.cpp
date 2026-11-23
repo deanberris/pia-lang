@@ -45,7 +45,7 @@ std::optional<i128> literal(std::string_view s) {
   i128 v = 0;
   bool any = false;
   for (char c : s) {
-    if (c == '_')
+    if (isDigitSeparator(c))
       continue;
     unsigned d;
     if (std::isdigit(static_cast<unsigned char>(c)))

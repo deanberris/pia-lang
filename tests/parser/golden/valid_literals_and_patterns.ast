@@ -11,6 +11,18 @@
       (IntLit "3usize")
     )
   )
+  (LetItem "grouped"
+    (Params)
+    (None)
+    (Contracts)
+    (ListLit
+      (IntLit "100'000")
+      (IntLit "0xFFFF'FFFF")
+      (IntLit "0b1010'0101")
+      (IntLit "4'294'967'295u64")
+      (FloatLit "1'000.25")
+    )
+  )
   (LetItem "floats"
     (Params)
     (None)

@@ -183,23 +183,35 @@ class Lexer:
             else:
                 self.advance()
 
-    def scan_number(self):
-        if self.peek() == "0" and self.peek(1) in "xXbBoO":
-            digits = {"x": "0123456789abcdefABCDEF_", "b": "01_",
-                      "o": "01234567_"}[self.peek(1).lower()]
-            self.advance(2)
-            while self.peek() != "" and self.peek() in digits:
+    def scan_digits(self, digits):
+        # A ' must sit between two digits, as in C++14; _ may go anywhere
+        # after the first digit (docs/grammar.md, "Literals").
+        while True:
+            c = self.peek()
+            if c != "" and (c in digits or c == "_"):
                 self.advance()
+            elif c == "'" and self.pos > 0 and self.text[self.pos - 1] in digits:
+                if self.peek(1) == "" or self.peek(1) not in digits:
+                    self.error("a digit separator ' must sit between two digits")
+                self.advance()
+            else:
+                return
+
+    def scan_number(self):
+        decimal = "0123456789"
+        if self.peek() == "0" and self.peek(1) in "xXbBoO":
+            digits = {"x": "0123456789abcdefABCDEF", "b": "01",
+                      "o": "01234567"}[self.peek(1).lower()]
+            self.advance(2)
+            self.scan_digits(digits)
             kind = "INT"
         else:
-            while self.peek().isdigit() or self.peek() == "_":
-                self.advance()
+            self.scan_digits(decimal)
             kind = "INT"
             if self.peek() == "." and self.peek(1).isdigit():
                 kind = "FLOAT"
                 self.advance()
-                while self.peek().isdigit() or self.peek() == "_":
-                    self.advance()
+                self.scan_digits(decimal)
             if self.peek() in "eE" and (self.peek(1).isdigit() or
                                         (self.peek(1) in "+-" and
                                          self.peek(2).isdigit())):
@@ -207,7 +219,6 @@ class Lexer:
                 self.advance(2)
                 while self.peek().isdigit():
                     self.advance()
-        # Type suffix: 42u8, 1i64, 2.0f32, 0usize.
         if self.peek() in "uif" and (self.peek(1).isdigit() or
                                      self.text.startswith("size", self.pos + 1)):
             self.advance()
