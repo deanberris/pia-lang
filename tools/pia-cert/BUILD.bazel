@@ -1,0 +1,11 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools:link.bzl", "TOOL_LINKOPTS")
+
+# Reads and checks the proof certificates in Pia objects (docs/abi.md).
+cc_binary(
+    name = "pia-cert",
+    srcs = ["pia-cert.cpp"],
+    linkopts = TOOL_LINKOPTS,
+    visibility = ["//visibility:public"],
+    deps = ["//src/cert"],
+)

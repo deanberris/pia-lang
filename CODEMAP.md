@@ -110,7 +110,8 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Verifier.{h,cpp}` (4.7k lines) holds the obligations, interval and Presburger discharge, the `Encoder` that builds the smt dialect, Z3 per goal (`--jobs`), the proof cache, slicing and counterexamples.
 - `src/verify/Triggers.{h,cpp}` picks the triggers for axiom instantiation (ADR 0036).
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
-- `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field).
+- `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -126,6 +127,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/piac/piac.cpp` is the compiler driver, where every flag is parsed.
 - `tools/piac/pia.bzl` defines `pia_library` and `pia_binary`. `tools/piac/targets.bzl` defines `PIA_TARGETS` and the flags for each platform.
 - `tools/pia/pia.cpp` is the `pia` tool (`pia repl`, `pia mcp`).
+- `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).

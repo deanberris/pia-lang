@@ -1189,7 +1189,10 @@ class Encoder {
       return true;
     }
     if (auto a = mlir::dyn_cast<contract::AssertOp>(op)) {
-      goal(ObligationKind::assert_, op, "the assertion holds",
+      // A contract lemma's assertion says whose precondition it checks.
+      auto claim = fn_->getAttrOfType<mlir::StringAttr>("pia.assert_claim");
+      goal(ObligationKind::assert_, op,
+           claim ? claim.getValue().str() : "the assertion holds",
            term(a.getPredicate()), false);
       return true;
     }
