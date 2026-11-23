@@ -22,6 +22,7 @@
 // IFACE-NEXT: {{^}}  let spec member : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
 // IFACE-NEXT: {{^}}  let spec increasing_prefix : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (n : usize) -> bool{{$}}
 // IFACE-NEXT: {{^}}  let spec members : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let spec nonmembers : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> usize{{$}}
 // IFACE-NEXT: {{^}}  let includes : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool{{$}}
 // IFACE-NEXT: {{^}}  let set_intersection : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}
 // IFACE-NEXT: {{^}}  let set_difference : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize{{$}}

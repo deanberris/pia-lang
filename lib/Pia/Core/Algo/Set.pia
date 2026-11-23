@@ -16,8 +16,8 @@
    rather than C++'s linear walk; its result is the same. set_intersection
    and set_difference keep the elements of xs that are, or are not,
    members of ys, in order, into the first `result` places of dst, a
-   slice at least as long as xs; `members xs ys less (len xs)` counts
-   them. *)
+   slice at least as long as xs; `members xs ys less (len xs)` and
+   `nonmembers xs ys less (len xs)` count them. *)
 module Pia.Core.Algo.Set : Set
 
 import Pia.Fn.Laws
@@ -28,6 +28,7 @@ interface Set = sig
   let spec member : (t : type) -> (xs : [t]) -> (v : t) -> (less : (a : t) -> (b : t) -> bool) -> bool
   let spec increasing_prefix : (t : type) -> (less : (a : t) -> (b : t) -> bool) -> (xs : [t]) -> (n : usize) -> bool
   let spec members : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> usize
+  let spec nonmembers : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> (n : usize) -> usize
   let includes : (t : type) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> bool
   let set_intersection : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
   let set_difference : (t : type) -> (dst : borrowed inout mutable [t]) -> (xs : [t]) -> (ys : [t]) -> (less : (a : t) -> (b : t) -> bool) -> usize
@@ -50,6 +51,15 @@ let spec members (t : type) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> 
 = if n = 0 then 0
   else if member ys xs.[n - 1] less then members xs ys less (n - 1) + 1
   else members xs ys less (n - 1)
+
+(** How many of xs.[0 .. n] are not members of ys. *)
+let spec nonmembers (t : type) (xs : [t]) (ys : [t]) (less : (a : t) -> (b : t) -> bool) (n : usize) : usize
+  requires n <= len xs
+  ensures result <= n
+  decreases n
+= if n = 0 then 0
+  else if member ys xs.[n - 1] less then nonmembers xs ys less (n - 1)
+  else nonmembers xs ys less (n - 1) + 1
 
 (** C++: std::includes with a comparator: every element of ys is a
     member of xs. *)
@@ -97,12 +107,12 @@ let set_difference (t : type) (dst : borrowed inout mutable [t]) (xs : [t]) (ys 
   requires increasing_prefix less xs (len xs)
   requires forall (v : t). B.below ys v less && B.above ys v less
   requires len dst >= len xs
-  ensures result + members xs ys less (len xs) = len xs
+  ensures result = nonmembers xs ys less (len xs)
   ensures forall (k in 0 .. result). member ys dst.[k] less = false && member xs dst.[k] less
   ensures increasing_prefix less dst result
 = let c : mutable usize = 0 in
   for i in 0 .. len xs
-    invariant c <= i && c + members xs ys less i = i
+    invariant c <= i && c = nonmembers xs ys less i
     invariant forall (k in 0 .. c). member ys dst.[k] less = false && member xs dst.[k] less
     invariant increasing_prefix less dst c
     invariant forall (k in 0 .. c) (a in 0 .. len xs). i <= a ==> less dst.[k] xs.[a]
