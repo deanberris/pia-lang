@@ -22,7 +22,7 @@ interface Posix = sig
     ensures result >= -1
   (** close(2) *)
   let close : (fd : i32) -> i32
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** read(2): returns at most n, or -1. *)
   let read : (fd : i32) -> (buf : out mutable [u8]) -> (n : usize) -> isize
     requires n <= len buf
@@ -44,18 +44,18 @@ interface Posix = sig
     ensures result >= -1
   (** fsync(2) *)
   let fsync : (fd : i32) -> i32
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** ftruncate(2) *)
   let ftruncate : (fd : i32) -> (length : i64) -> i32
     requires length >= 0
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** unlink(2) *)
   let unlink : (path : [u8]) -> i32
     requires len path >= 1 && path.[len path - 1] = 0
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** isatty(3): 1 for a terminal, else 0. *)
   let isatty : (fd : i32) -> i32
-    ensures result = 0 || result = 1
+    ensures result >= 0 && result <= 1
 
   let o_rdonly : i32
   let o_wronly : i32

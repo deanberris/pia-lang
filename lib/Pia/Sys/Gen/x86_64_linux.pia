@@ -21,7 +21,7 @@ interface Posix = sig
     ensures result >= -1
   (** close(2) *)
   let close : (fd : i32) -> i32
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** read(2): returns at most n, or -1. *)
   let read : (fd : i32) -> (buf : out mutable [u8]) -> (n : usize) -> isize
     requires n <= len buf
@@ -43,18 +43,18 @@ interface Posix = sig
     ensures result >= -1
   (** fsync(2) *)
   let fsync : (fd : i32) -> i32
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** ftruncate(2) *)
   let ftruncate : (fd : i32) -> (length : i64) -> i32
     requires length >= 0
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** unlink(2) *)
   let unlink : (path : [u8]) -> i32
     requires len path >= 1 && path.[len path - 1] = 0
-    ensures result = 0 || result = -1
+    ensures result >= -1 && result <= 0
   (** isatty(3): 1 for a terminal, else 0. *)
   let isatty : (fd : i32) -> i32
-    ensures result = 0 || result = 1
+    ensures result >= 0 && result <= 1
 
   let o_rdonly : i32
   let o_wronly : i32
@@ -402,7 +402,7 @@ let open_mode (path : [u8]) (flags : i32) (mode : u32) : i32 @variadic(2)
 
 \ int close(int)
 let close (fd : i32) : i32
-  ensures result = 0 || result = -1
+  ensures result >= -1 && result <= 0
 = extern "close"
 
 \ ssize_t read(int, void *, size_t)
@@ -436,24 +436,24 @@ let lseek (fd : i32) (offset : i64) (whence : i32) : i64
 
 \ int fsync(int)
 let fsync (fd : i32) : i32
-  ensures result = 0 || result = -1
+  ensures result >= -1 && result <= 0
 = extern "fsync"
 
 \ int ftruncate(int, __off_t)
 let ftruncate (fd : i32) (length : i64) : i32
   requires length >= 0
-  ensures result = 0 || result = -1
+  ensures result >= -1 && result <= 0
 = extern "ftruncate"
 
 \ int unlink(const char *)
 let unlink (path : [u8]) : i32
   requires len path >= 1 && path.[len path - 1] = 0
-  ensures result = 0 || result = -1
+  ensures result >= -1 && result <= 0
 = extern "unlink"
 
 \ int isatty(int)
 let isatty (fd : i32) : i32
-  ensures result = 0 || result = 1
+  ensures result >= 0 && result <= 1
 = extern "isatty"
 
 (* The other functions: C's signatures, with no contract, private to this
