@@ -4103,7 +4103,12 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
   auto worker = [&] {
     for (size_t k; (k = next.fetch_add(1)) < order.size();) {
       size_t i = order[k];
-      solve(jobs[i], options, outcomes[jobs[i].outcome], js[i]);
+      auto begin = std::chrono::steady_clock::now();
+      Outcome &out = outcomes[jobs[i].outcome];
+      solve(jobs[i], options, out, js[i]);
+      out.ms = std::chrono::duration<double, std::milli>(
+                   std::chrono::steady_clock::now() - begin)
+                   .count();
     }
   };
   std::vector<std::thread> pool;

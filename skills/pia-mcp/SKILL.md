@@ -56,6 +56,17 @@ A definition joined the environment, with its type and the number of obligations
 
 An expression's value. Expressions are proved, then compiled and run. They never join the environment.
 
+Every result that reached the verifier then says what the proof took:
+
+```text
+took 41 ms: verifying 33 ms (solver 21 ms)
+goals: 1 in this cell (0 by intervals, 1 by the solver); 5 in the environment, all re-proved: 5 proved
+slowest:
+  14 ms  [2]:1:56 diff: '-' does not overflow u8 (proved, cost 1830)
+```
+
+Watch the environment count and the slowest goals: every cell proves the whole environment again, so one costly goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
+
 ## The working loop
 
 1. **Send the smallest piece that can be proved alone**, usually one function. Callers come later, since they are proved against the callee's contract, not its body.

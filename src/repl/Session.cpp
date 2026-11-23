@@ -5,6 +5,7 @@
 #include <cctype>
 #include <chrono>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -592,6 +593,62 @@ const char *helpText =
     "once if the new body is proved against the old contract, or else "
     "together\n"
     "with its callers, at a moment when no task is running any of them.\n";
+
+double msSince(std::chrono::steady_clock::time_point begin) {
+  return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now() - begin)
+      .count();
+}
+
+// How many of the cell's goals ProofStats::costliest keeps.
+constexpr size_t kCostliest = 3;
+
+// Adds one goal to a cell's stats. `e` is its event, with the REPL's name
+// and status; `mine` says whether it belongs to the cell's own definitions.
+void countGoal(ProofStats &s, const verify::Outcome &o, const Event &e,
+               bool mine) {
+  ++s.goals;
+  s.proved += e.status == "proved";
+  s.failed += e.status == "failed";
+  s.unproved += e.status == "unproved";
+  s.allowed += e.status == "allowed";
+  bool smt = o.ms > 0;
+  s.smt += smt;
+  s.cost += o.cost;
+  if (mine) {
+    ++s.cellGoals;
+    s.cellSmt += smt;
+    s.cellIntervals += o.method == "intervals";
+  }
+  if (!smt)
+    return;
+  GoalCost g;
+  g.function = e.name;
+  // Hidden names say nothing to the reader: an expression's goals belong to
+  // no definition, and a refinement check's to the definition it replaces.
+  if (g.function.rfind(kEvalPrefix, 0) == 0)
+    g.function.clear();
+  else if (g.function.rfind(kRefinesPrefix, 0) == 0)
+    g.function = g.function.substr(std::strlen(kRefinesPrefix));
+  g.claim = e.text;
+  g.status = e.status;
+  g.where = e.where;
+  g.ms = o.ms;
+  g.cost = o.cost;
+  s.costliest.push_back(std::move(g));
+}
+
+// Keeps the slowest few goals, slowest first, ties by resource count.
+void keepCostliest(ProofStats &s) {
+  std::stable_sort(s.costliest.begin(), s.costliest.end(),
+                   [](const GoalCost &a, const GoalCost &b) {
+                     if (a.ms != b.ms)
+                       return a.ms > b.ms;
+                     return a.cost > b.cost;
+                   });
+  if (s.costliest.size() > kCostliest)
+    s.costliest.resize(kCostliest);
+}
 
 } // namespace
 
@@ -1187,7 +1244,15 @@ struct Session::Impl {
       mine.insert(name);
     verify::Options vo;
     vo.timeoutMs = options.timeoutMs;
-    std::vector<verify::Outcome> outcomes = verify::verifyModule(*module, vo);
+    // The resource counts are free to keep, and say which goals cost most.
+    vo.reportCost = true;
+    verify::Stats vst;
+    auto verifyBegin = std::chrono::steady_clock::now();
+    std::vector<verify::Outcome> outcomes =
+        verify::verifyModule(*module, vo, &vst);
+    r.stats.verified = true;
+    r.stats.verifyMs = msSince(verifyBegin);
+    r.stats.solveMs = vst.solveMs;
     for (Event &e : mlirErrors)
       a.errors.push_back(std::move(e));
     mlirErrors.clear();
@@ -1220,6 +1285,7 @@ struct Session::Impl {
         e.status = allowed(e) ? "allowed" : "unproved";
         break;
       }
+      countGoal(r.stats, o, e, mine.count(e.name) > 0);
       if (refinement) {
         std::string n = o.function.substr(std::strlen(kRefinesPrefix));
         if ((e.status == "failed" || e.status == "unproved") &&
@@ -1235,6 +1301,7 @@ struct Session::Impl {
       if (mine.count(e.name) || (e.status != "proved" && e.status != "allowed"))
         proofEvents.push_back(std::move(e));
     }
+    keepCostliest(r.stats);
     for (Event &e : proofEvents) {
       if (e.name.rfind(kEvalPrefix, 0) == 0)
         e.name.clear();
@@ -1409,7 +1476,9 @@ struct Session::Impl {
                     slot.type,
                     reinterpret_cast<const unsigned char *>(slot.cell.get()));
           }
+          auto runBegin = std::chrono::steady_clock::now();
           execute(engine, toRun, r, spawn);
+          r.stats.runMs += msSince(runBegin);
         };
     if (mode == Mode::Check) {
       if (options.run && anyTaskRunning() && (!forgotten.empty() || engine))
@@ -2097,11 +2166,14 @@ Session::Session(Options options)
 Session::~Session() = default;
 
 CellResult Session::execute(std::string_view cell) {
+  auto begin = std::chrono::steady_clock::now();
   unsigned n = ++impl_->cells;
   std::string t = trim(cell);
-  if (!t.empty() && t[0] == ':')
-    return impl_->command(t, n);
-  return impl_->code(cell, Impl::Mode::Define, n);
+  CellResult r = !t.empty() && t[0] == ':'
+                     ? impl_->command(t, n)
+                     : impl_->code(cell, Impl::Mode::Define, n);
+  r.stats.cellMs = msSince(begin);
+  return r;
 }
 
 void Session::reset() { impl_->command(":reset", ++impl_->cells); }
@@ -2369,6 +2441,97 @@ lsp::Json toJson(const Event &e) {
   return j;
 }
 
+namespace {
+
+// "0.4 ms", "12 ms", "1.3 s".
+std::string formatMs(double ms) {
+  char buf[32];
+  if (ms < 10)
+    std::snprintf(buf, sizeof buf, "%.1f ms", ms);
+  else if (ms < 1000)
+    std::snprintf(buf, sizeof buf, "%.0f ms", ms);
+  else
+    std::snprintf(buf, sizeof buf, "%.1f s", ms / 1000);
+  return buf;
+}
+
+lsp::Json toJson(const ProofStats &s) {
+  lsp::Json j;
+  j["cell_ms"] = s.cellMs;
+  j["verify_ms"] = s.verifyMs;
+  j["solve_ms"] = s.solveMs;
+  j["run_ms"] = s.runMs;
+  j["goals"] = s.goals;
+  j["cell_goals"] = s.cellGoals;
+  j["cell_intervals"] = s.cellIntervals;
+  j["cell_smt"] = s.cellSmt;
+  j["proved"] = s.proved;
+  j["failed"] = s.failed;
+  j["unproved"] = s.unproved;
+  j["allowed"] = s.allowed;
+  j["smt"] = s.smt;
+  j["cost"] = static_cast<double>(s.cost);
+  lsp::Json::Array slow;
+  for (const GoalCost &g : s.costliest) {
+    lsp::Json c;
+    if (!g.function.empty())
+      c["name"] = g.function;
+    c["text"] = g.claim;
+    c["status"] = g.status;
+    c["ms"] = g.ms;
+    c["cost"] = static_cast<double>(g.cost);
+    if (g.where.cell) {
+      lsp::Json w;
+      w["cell"] = g.where.cell;
+      w["line"] = g.where.line;
+      w["column"] = g.where.column;
+      c["where"] = std::move(w);
+    }
+    slow.push_back(std::move(c));
+  }
+  j["costliest"] = std::move(slow);
+  return j;
+}
+
+} // namespace
+
+std::string renderStats(const ProofStats &s) {
+  if (!s.verified)
+    return "";
+  std::string out = "took " + formatMs(s.cellMs) + ": verifying " +
+                    formatMs(s.verifyMs) + " (solver " + formatMs(s.solveMs) +
+                    ")";
+  if (s.runMs > 0)
+    out += ", running " + formatMs(s.runMs);
+  out += "\n";
+  out += "goals: " + std::to_string(s.cellGoals) + " in this cell (" +
+         std::to_string(s.cellIntervals) + " by intervals, " +
+         std::to_string(s.cellSmt) + " by the solver); " +
+         std::to_string(s.goals) +
+         " in the environment, all re-proved: " + std::to_string(s.proved) +
+         " proved";
+  if (s.failed)
+    out += ", " + std::to_string(s.failed) + " failed";
+  if (s.unproved)
+    out += ", " + std::to_string(s.unproved) + " unproved";
+  if (s.allowed)
+    out += ", " + std::to_string(s.allowed) + " allowed";
+  out += "\n";
+  if (!s.costliest.empty()) {
+    out += "slowest:\n";
+    for (const GoalCost &g : s.costliest) {
+      out += "  " + formatMs(g.ms) + "  ";
+      if (g.where.cell)
+        out += formatWhere(g.where) + " ";
+      if (!g.function.empty())
+        out += g.function + ": ";
+      out += g.claim + " (" + g.status + ", cost " + std::to_string(g.cost) +
+             ")\n";
+    }
+  }
+  return out;
+}
+
 lsp::Json toJson(const CellResult &r) {
   lsp::Json j;
   j["cell"] = r.cell;
@@ -2377,6 +2540,8 @@ lsp::Json toJson(const CellResult &r) {
   for (const Event &e : r.events)
     events.push_back(toJson(e));
   j["events"] = std::move(events);
+  if (r.stats.verified)
+    j["stats"] = toJson(r.stats);
   return j;
 }
 

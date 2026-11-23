@@ -251,6 +251,8 @@ Each event has a `kind`:
 
 `where` is `{"cell", "line", "column"}`. The exit status is 1 if any cell failed.
 
+A cell that reached the verifier also has `stats`, what its proof took: `cell_ms`, `verify_ms`, `solve_ms` and `run_ms` (milliseconds); `cell_goals`, `cell_intervals` and `cell_smt` for the cell's own goals; `goals`, `proved`, `failed`, `unproved`, `allowed` and `smt` for the whole environment, which every cell proves again; `cost`, Z3's resource count; and `costliest`, the slowest solver goals (up to three, each with `name`, `text`, `status`, `ms`, `cost` and `where`). The text output leaves them out, since times differ from run to run.
+
 ## MCP server
 
 `pia mcp` serves a persistent REPL session over the Model Context Protocol (stdio transport), so an agent such as Claude can use Pia interactively. It has exactly two tools, in the style of Code Mode:
@@ -266,6 +268,7 @@ The server also teaches the language itself, for agents that have no skills load
 
 - **Its `instructions`** (which clients put in the agent's context when it connects) are a primer of under 2 KB: the binding form, bounded integers, where contracts go, no shadowing, comments, and the list of guide topics.
 - **`:help <topic>`**, sent through `execute`, returns one section of the guide: `syntax`, `facts`, `shapes`, `pitfalls`, `contracts`, `loops`, `termination`, `specs` and more (`:help` lists them). The same text is served as MCP resources, `pia://guide/<topic>`.
+- **Every result says what its proof took**, after the REPL's text: the time for the cell and for verifying it, how many goals the cell raised and how each was proved, how many the environment holds (all proved again for each cell), and the slowest solver goals with their locations and Z3 resource counts.
 - **A failed cell ends with hints**, one line per kind of failure, such as `hint: arithmetic is checked at the operands' width: ... (:help facts)`. They are only in the server's results, not in `pia repl`'s output.
 
 The guide is cut from the `pia-language`, `pia-contracts` and `pia-mcp` skills when the server is built (`src/repl/embed_guide.py`), so it says what the skills say, and their examples are proved by the skills test. To use it from Claude Code:

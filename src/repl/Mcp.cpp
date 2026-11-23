@@ -153,6 +153,9 @@ lsp::Json McpServer::jobResult(const Kernel::Status &s, bool json) {
     // so an agent's next cell is more often right without reading a guide.
     if (isError)
       text += guideHints(text);
+    // What the proof took, so an agent can see a slow goal or an
+    // environment that has grown costly before it becomes a timeout.
+    text += renderStats(s.result->stats);
   } else if (s.state == Kernel::State::Unknown) {
     text = "there is no job " + std::to_string(s.job) + "\n";
   } else {

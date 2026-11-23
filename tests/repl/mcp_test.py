@@ -180,6 +180,37 @@ class McpTest(unittest.TestCase):
         r = self.server.call("execute", code="let get (xs : [u8]) : u8 = xs.[3]")
         self.assertIn("(:help contracts)", r["content"][0]["text"])
 
+    # What a proof took (ProofStats in src/repl/Session.h).
+
+    def test_results_say_what_the_proof_took(self):
+        r = self.server.call("execute", code="let sum (a : u8) (b : u8) : u16 = a + b")
+        text = r["content"][0]["text"]
+        self.assertIn("took ", text)
+        self.assertIn("goals: 1 in this cell (1 by intervals, 0 by the solver)", text)
+        # A relation between parameters needs the solver, so it is timed.
+        r = self.server.call("execute",
+                             code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a")
+        text = r["content"][0]["text"]
+        self.assertIn("by the solver", text)
+        self.assertIn("slowest:", text)
+        self.assertIn("diff: '-' does not overflow u8 (proved, cost ", text)
+        self.assertIn("in the environment, all re-proved", text)
+
+    def test_stats_as_json(self):
+        r = self.server.call("execute",
+                             code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a",
+                             json=True)
+        stats = r["structuredContent"]["result"]["stats"]
+        self.assertGreaterEqual(stats["cell_goals"], 1)
+        self.assertGreaterEqual(stats["smt"], 1)
+        self.assertEqual(stats["failed"], 0)
+        self.assertEqual(stats["costliest"][0]["name"], "diff")
+        self.assertGreater(stats["costliest"][0]["ms"], 0)
+
+    def test_commands_have_no_stats(self):
+        r = self.server.call("execute", code=":env")
+        self.assertNotIn("took ", r["content"][0]["text"])
+
     def test_successes_carry_no_hints(self):
         r = self.server.call("execute", code="let fine (a : u8) : u16 = a + 1")
         self.assertFalse(r["isError"], r)
