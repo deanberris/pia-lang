@@ -601,8 +601,10 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     for (const NodePtr &k : iface->kids) {
       if (k->kind == N::Attrs || k->kind == N::Comment) continue;
       // A generic function or a concept comes in with its definition,
-      // below.
-      if (k->kind == N::SigVal && inlined.count(k->text)) {
+      // below. Each entry by its own shape: a plain overload of the same
+      // name, such as iota at u8 beside a generic iota, still comes in as
+      // a declaration.
+      if (k->kind == N::SigVal && inlinedSig(*k)) {
         imp.items.insert(module + "." + k->text);
         continue;
       }

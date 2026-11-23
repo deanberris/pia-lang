@@ -66,5 +66,5 @@ let own_errors (d : u16) : unit =
 let unchecked (r : result u8 u32) : u8 = Pia.Core.Result.value r
 
 (*
-// CHECK: 42 proved, 1 failed, 0 skipped
+// CHECK: 37 proved, 1 failed, 0 skipped
 *)

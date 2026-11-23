@@ -1,0 +1,43 @@
+(* Pia.Core.Algo.Numeric (ADR 0040, phase 1.6): the algorithms of
+   <numeric>, each with an operation and proved once, over the element
+   type and any such function (ADR 0043, ADR 0044); iota counting by one
+   is stamped out per integer type and proved at each. The interface
+   exports the generic functions, the spec functions their contracts use,
+   and the per-type iota with its contract.
+// RUN: piac --verify %S/../../lib/Pia/Core/Algo/Numeric.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Numeric.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Algo.Numeric.Numeric.piai
+*)
+
+(* No function of the module is left unproved.
+// CHECK-NOT: not proved generically
+// CHECK-NOT: failed
+// CHECK: 165 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.Numeric{{$}}
+// IFACE-NEXT: {{^}}interface Numeric = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec fold : (t : type) -> (op : (a : t) -> (b : t) -> t) -> (init : t) -> (xs : [t]) -> (n : usize) -> t{{$}}
+// IFACE-NEXT: {{^}}  let spec scan1 : (t : type) -> (op : (a : t) -> (b : t) -> t) -> (xs : [t]) -> (k : usize) -> t{{$}}
+// IFACE-NEXT: {{^}}  let spec iterate : (t : type) -> (next : (a : t) -> t) -> (v : t) -> (k : usize) -> t{{$}}
+// IFACE-NEXT: {{^}}  let spec fold2 : (t : type) -> (op1 : (a : t) -> (b : t) -> t) -> (op2 : (a : t) -> (b : t) -> t) -> (init : t) -> (xs : [t]) -> (ys : [t]) -> (n : usize) -> t{{$}}
+// IFACE-NEXT: {{^}}  let iota : (t : type) -> (xs : out mutable [t]) -> (v : t) -> (next : (a : t) -> t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let accumulate : (t : type) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> t{{$}}
+// IFACE-NEXT: {{^}}  let reduce : (t : type) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> t{{$}}
+// IFACE-NEXT: {{^}}  let inner_product : (t : type) -> (xs : [t]) -> (ys : [t]) -> (init : t) -> (op1 : (a : t) -> (b : t) -> t) -> (op2 : (a : t) -> (b : t) -> t) -> t{{$}}
+// IFACE-NEXT: {{^}}  let transform_reduce : (t : type) -> (xs : [t]) -> (ys : [t]) -> (init : t) -> (reduce_op : (a : t) -> (b : t) -> t) -> (transform_op : (a : t) -> (b : t) -> t) -> t{{$}}
+// IFACE-NEXT: {{^}}  let partial_sum : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let inclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let inclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> (init : t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let exclusive_scan : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (init : t) -> (op : (a : t) -> (b : t) -> t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let adjacent_difference : (t : type) -> (dst : out mutable [t]) -> (xs : [t]) -> (op : (a : t) -> (b : t) -> t) -> unit{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [u8]) -> (v : u8) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 8) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [u16]) -> (v : u16) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 16) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [u32]) -> (v : u32) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 32) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [u64]) -> (v : u64) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 64) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [i8]) -> (v : i8) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 7) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [i16]) -> (v : i16) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 15) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}  let iota : (xs : out mutable [i32]) -> (v : i32) -> unit requires len xs = 0 || v + (len xs - 1) <= (1 << 31) - 1 ensures forall (k in 0..len xs). xs.[k] = v + k{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

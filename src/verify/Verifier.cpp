@@ -1659,6 +1659,14 @@ class Encoder {
     }
     if (auto c = mlir::dyn_cast<ExactConvertOp>(op)) {
       Value x = in[0];
+      // In code, a load assumes its element's range (verifyOp). In a spec
+      // function's body, an element made exact is read through its range:
+      // the same value for any buffer a program can hold, and the solver
+      // learns that an element of a [u32] is not negative. Only here, where
+      // the bit-vector meets the integers, so other proofs pay nothing.
+      if (auto it = mlir::dyn_cast<IntType>(c.getInput().getType()))
+        if (&arrays != &arrays_ && c.getInput().getDefiningOp<LoadOp>())
+          x = ite(inRange(x, it), x, bv(it.getLo()));
       if (mlir::isa<IntType>(c.getInput().getType())) x = bvToInt(x);
       if (mlir::isa<RealType>(c.getType())) x = toReal(x);
       out.push_back(x);
