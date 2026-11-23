@@ -1,0 +1,38 @@
+(* `min t` and `max t` (ADR 0057): an integer type's bounds, folded to
+   literals, so they read in contracts as the numbers did and prove the
+   same way. A literal takes its context's type, and so does a bound.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let byte = type u8
+let percent = type int{0..100}
+
+let top (x : u8) : u32
+  ensures result = max u32
+= 4'294'967'295
+
+let floor (x : u8) : i64
+  ensures result = min i64
+= min i64
+
+let bytes (x : u8) : u16
+  ensures result = max byte + 1
+= 256
+
+let pct (p : percent) : bool
+  ensures result
+= min percent <= p && p <= max percent
+
+(* The bound of a wider type, in a narrower context: saturation. *)
+let mul_sat (a : u16) (b : u16) : u16
+  ensures a * b <= max u16 ==> result = a * b
+  ensures a * b > max u16 ==> result = max u16
+= let p : u32 = a * b in
+  if p > max u16 then max u16 else p
+
+let sizes (x : u8) : bool
+  ensures result
+= max usize = max u64 && min isize = min i64 && min u8 = 0
+
+(* Expected report: filled in from a real run.
+*)

@@ -132,7 +132,7 @@ std::optional<std::string> realLiteral(llvm::StringRef text, bool negate) {
   bool point = false;
   for (; i < text.size(); ++i) {
     char c = text[i];
-    if (c == '_') continue;
+    if (syntax::isDigitSeparator(c)) continue;
     if (c == '.') {
       if (point) return std::nullopt;
       point = true;
@@ -1666,7 +1666,8 @@ class Gen {
         if (!lit && isExact(expected)) {
           std::string digits;
           for (char c : n.text)
-            if (c != '_') digits.push_back(c);
+            if (!syntax::isDigitSeparator(c))
+              digits.push_back(c);
           if (!digits.empty() &&
               llvm::all_of(digits, [](char c) { return c >= '0' && c <= '9'; }))
             return exactConst(loc(n), expected,
@@ -3089,9 +3090,55 @@ class Gen {
     return TV{r, t};
   }
 
+  // The integer type that `a`, the argument of `min a` or `max a`, names,
+  // or null if it names no integer type: a value, a function or nothing.
+  Type boundOperandType(const Node &a) {
+    if (a.kind != NodeKind::Name || !a.flags.empty() || lookup(a.text) ||
+        !overloadSet(a.text).empty())
+      return {};
+    auto name = syntax::makeNode(NodeKind::TypeName, a.loc, a.text);
+    size_t errors = diags_.count();
+    Type t = types_.resolve(*name);
+    diags_.truncate(errors);
+    return t;
+  }
+
+  // `min t` and `max t`: the bounds of the integer type `t` (ADR 0057).
+  // They overload Pia.Core.Order's `min a b` and `max a b` by their one
+  // argument being a type, so they are folded here, before overload
+  // resolution sees a type where it expects a value. The result is the
+  // bound as a literal, which takes its context's type like any literal,
+  // so `ensures a * b > max u16 ==> ...` reads exactly as the number did.
+  // Each bound comes from the type as Sema resolved it, so `max usize`
+  // follows the pointer width that the target's model gives usize.
+  std::optional<R> genTypeBound(const Node &n, Type expected) {
+    if (n.kids.size() != 2) return std::nullopt;
+    const Node &f = *n.kids[0];
+    if (f.kind != NodeKind::Name || !f.flags.empty() ||
+        (f.text != "min" && f.text != "max") || lookup(f.text))
+      return std::nullopt;
+    const Node &a = *n.kids[1];
+    Type t = boundOperandType(a);
+    if (!t) return std::nullopt;
+    auto it = mlir::dyn_cast<IntType>(t);
+    if (!it)
+      return fail(a, "'" + f.text + " " + a.text + "' needs an integer type, "
+                         "and '" + a.text + "' is " + typeName(t));
+    llvm::APInt bound = f.text == "min" ? it.getLo() : it.getHi();
+    bool negative = bound.isNegative();
+    llvm::APInt magnitude = negative ? -bound : bound;
+    auto lit = syntax::makeNode(NodeKind::IntLit, n.loc,
+                                llvm::toString(magnitude, 10, false));
+    if (!negative) return genExpr(*keep(std::move(lit)), expected);
+    auto neg = syntax::makeNode(NodeKind::Neg, n.loc);
+    neg->add(std::move(lit));
+    return genExpr(*keep(std::move(neg)), expected);
+  }
+
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
     if (n.flags == "region") return genRegion(n, expected);
+    if (std::optional<R> b = genTypeBound(n, expected)) return *b;
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {

@@ -333,7 +333,7 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
     case NodeKind::IntLit: {
       std::string digits;
       for (char c : n.text) {
-        if (c == '_') continue;
+        if (syntax::isDigitSeparator(c)) continue;
         if (c < '0' || c > '9') break;
         digits += c;
       }

@@ -1,0 +1,25 @@
+(* Digit separators (docs/grammar.md, "Literals"): `'` and `_` group the
+   digits of a literal and mean nothing to its value, so each contract
+   below proves by comparing two spellings of one number.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let u32_top (x : u8) : u32
+  ensures result = 4294967295
+= 4'294'967'295
+
+let mask (x : u8) : u32
+  ensures result = 0xFFFFFFFF
+= 0xFFFF'FFFF
+
+let bits (x : u8) : u8
+  ensures result = 165
+= 0b1010'0101
+
+let both (x : u8) : u64
+  ensures result = 1000000
+= 1'000_000u64
+
+let sum (x : int{0..100'000}) : u32
+  ensures result = x + 100000
+= x + 100'000

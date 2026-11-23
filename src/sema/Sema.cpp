@@ -53,7 +53,7 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   }
   std::string digits;
   for (char c : s)
-    if (c != '_') digits.push_back(c);
+    if (!syntax::isDigitSeparator(c)) digits.push_back(c);
   if (digits.empty()) return std::nullopt;
   llvm::APInt v(kWidth, 0);
   llvm::APInt base(kWidth, radix);

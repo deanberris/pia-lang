@@ -1,0 +1,16 @@
+(* `min t` and `max t` need an integer type, and a bound is a literal, so
+   it must fit where it goes (ADR 0057).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let pixel = type { r : u8; g : u8; b : u8 }
+
+let too_big (x : u8) : u8 = max u16
+
+let not_int (x : u8) : bool = max bool
+
+let record (x : u8) : u8 = min pixel
+
+(* A local's name is never a bound: `max` here is the local.
+*)
+let local (max : u8) : u8 = max u8

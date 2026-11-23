@@ -52,6 +52,7 @@ let count_bright (ys : [u16]) : usize
 | `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = type u8` |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
+| `100'000`, `0xFFFF'FFFF`, `1_000_000`, `42u8` | digits group with `'` (between two digits) or `_`; `,` never groups. A suffix gives a literal its type |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
