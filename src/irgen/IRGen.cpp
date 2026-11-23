@@ -1022,6 +1022,20 @@ class Gen {
       }
     } movedScope{moved_, std::move(moved_), loopDepth_, loopDepth_};
     moved_.clear();
+    // Moves out of buffer elements are this function's own.
+    struct ElementScope {
+      std::map<const Node *, mlir::Operation *> &moved;
+      std::map<const Node *, syntax::SourceLoc> &copied;
+      std::map<const Node *, mlir::Operation *> savedMoved;
+      std::map<const Node *, syntax::SourceLoc> savedCopied;
+      ~ElementScope() {
+        moved = std::move(savedMoved);
+        copied = std::move(savedCopied);
+      }
+    } elementScope{movedOut_, copiedOut_, std::move(movedOut_),
+                   std::move(copiedOut_)};
+    movedOut_.clear();
+    copiedOut_.clear();
     loopDepth_ = 0;
     frames_.clear();
     frames_.emplace_back();
@@ -1138,6 +1152,15 @@ class Gen {
                        "cannot be consumed here; take it as 'moved'");
           owned = false;
         }
+      }
+      // An owning element read as a value out of a buffer this function
+      // cannot write would leave the box in both places.
+      for (const auto &[node, at] : copiedOut_) {
+        diags_.error(at, "this moves an element that owns its slices out "
+                         "of a buffer that cannot be written, which would "
+                         "leave it in both; borrow it, as in a field read, "
+                         "or take the buffer as 'inout'");
+        owned = false;
       }
       if (!owned) return;
     }
@@ -7586,7 +7609,82 @@ class Gen {
     auto idx = genIndexValue(*n.kids[1]);
     if (!idx) return std::nullopt;
     Value v = create<LoadOp>(loc(n), elem, buf->value, *idx);
+    if (!contract_ && !ghost_ && ownsSlices(elem))
+      noteMoveOut(n, buf->value, *idx, v, elem);
     return TV{v, elem};
+  }
+
+  // `xs.[i]` read as a value moves the element out when it owns slices,
+  // as a box does (ADR 0048, section 6): the element left behind keeps
+  // empty slices, so it owns nothing and its old slots are the moved
+  // value's alone. The emptying store is spec-only; codegen erases it. A
+  // read that turns out to be a borrow, `xs.[i].slot`, undoes it
+  // (`unconsume`).
+  void noteMoveOut(const Node &n, Value buf, Value idx, Value v, Type elem) {
+    const Node &place = *n.kids[0];
+    if (!writable(place) && !writablePath(place)) {
+      copiedOut_[&n] = n.loc;
+      return;
+    }
+    Location l = loc(n);
+    auto store = create<StoreOp>(l, emptied(l, v, elem), buf, idx);
+    store->setAttr("pia.moved_out", b_.getUnitAttr());
+    movedOut_[&n] = store;
+  }
+
+  // `v` with every slice it holds, directly or in a field, empty.
+  Value emptied(Location l, Value v, Type t) {
+    if (mlir::isa<SliceType>(t)) {
+      Value zero = create<mlir::arith::ConstantIndexOp>(l, 0);
+      return create<SliceOp>(l, t, v, zero, zero);
+    }
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (!rt || types_.isVariant(rt) || !holdsSlice(t))
+      return v;
+    llvm::SmallVector<Value> fields;
+    for (auto [ft, name] : llvm::zip(rt.getFieldTypes(), rt.getFieldNames()))
+      fields.push_back(emptied(l, create<FieldOp>(l, ft, v, name), ft));
+    return create<RecordOp>(l, rt, fields);
+  }
+
+  static bool holdsSlice(Type t) {
+    if (mlir::isa<SliceType>(t))
+      return true;
+    if (auto rt = mlir::dyn_cast<RecordType>(t))
+      return llvm::any_of(rt.getFieldTypes(), holdsSlice);
+    return false;
+  }
+
+  // An element read only to be borrowed was not moved out: erase the
+  // emptying store and what fed it.
+  void keepElement(const Node &n) {
+    copiedOut_.erase(&n);
+    auto m = movedOut_.find(&n);
+    if (m == movedOut_.end())
+      return;
+    mlir::Operation *store = m->second;
+    movedOut_.erase(m);
+    // The store, then each record, field read, view and constant made
+    // only for it, once nothing else uses it.
+    llvm::SmallVector<mlir::Operation *> work{store};
+    llvm::SmallPtrSet<mlir::Operation *, 8> erased;
+    while (!work.empty()) {
+      mlir::Operation *op = work.pop_back_val();
+      if (erased.count(op) || !op->use_empty())
+        continue;
+      llvm::SmallVector<mlir::Operation *> feeds;
+      for (Value o : op->getOperands())
+        if (mlir::Operation *d = o.getDefiningOp();
+            d &&
+            mlir::isa<RecordOp, FieldOp, SliceOp, mlir::arith::ConstantIndexOp>(
+                d))
+          feeds.push_back(d);
+      erased.insert(op);
+      op->erase();
+      for (mlir::Operation *d : feeds)
+        if (!erased.count(d))
+          work.push_back(d);
+    }
   }
 
   // `{ r = x; g = 0 }`: the record type comes from the context or, failing
@@ -8512,6 +8610,8 @@ class Gen {
   // `n` was only borrowed: a field read, `len`, or an argument of a
   // borrowed parameter.
   void unconsume(const Node &n) {
+    if (n.kind == NodeKind::Index)
+      keepElement(n);
     if (n.kind != NodeKind::Name || !n.flags.empty()) return;
     BindingPtr b = lookup(n.text);
     if (!b) return;
@@ -9511,6 +9611,11 @@ class Gen {
   // The locals moved so far on the path being generated (`moved`), and the
   // loops open there.
   std::map<BindingPtr, Move> moved_;
+  // Elements of buffers that own their slices read as values: moved out
+  // of a writable buffer, with the store that empties the one left behind,
+  // or copied out of one that cannot be written (ADR 0048, section 6).
+  std::map<const Node *, mlir::Operation *> movedOut_;
+  std::map<const Node *, syntax::SourceLoc> copiedOut_;
   unsigned loopDepth_ = 0;
   // What each expression generated so far is borrowed from (#70).
   std::map<const Node *, std::vector<BindingPtr>> lent_;

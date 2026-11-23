@@ -1199,6 +1199,15 @@ class Encoder {
       // Replacing an element of a buffer of slices stores the slice's
       // contents and its length (ADR 0048).
       if (mlir::isa<SliceType>(store.getValue().getType())) {
+        // An element moved out keeps its contents, which the moved value
+        // may still read through, and owns none of them (ADR 0048,
+        // section 6).
+        if (store->hasAttr("pia.moved_out")) {
+          if (Value inner = innerLengths_.lookup(root))
+            innerLengths_[root] = create<mlir::smt::ArrayStoreOp>(
+                inner.getType(), inner, at, bv(0));
+          return true;
+        }
         Value sv = calleeArray(store.getValue());
         Value slen = lengths_.lookup(store.getValue());
         Value inner = innerLengths_.lookup(root);

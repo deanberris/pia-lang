@@ -4,8 +4,10 @@
    invariant to write. The vector's buffer is one buffer per field, the
    slots a buffer of slices and the spec-only states a buffer the verifier
    sees and codegen erases. `push` moves a full box in, `set_at` writes
-   through an element's box, and `get_at` reads one. Growing the buffer
-   needs elements moved between buffers, which is not supported yet.
+   through an element's box, and `get_at` reads one. `grow` moves every
+   box into a larger buffer: reading an element as a value moves it out
+   and leaves it empty (ADR 0048, section 6), so each box is in one buffer
+   only.
 // RUN: not piac --verify %s | FileCheck %s
 *)
 
@@ -81,48 +83,118 @@ let empty_push (r : region) (s : region) (v : inout mutable vec u16 r s) (b : mo
   requires v.len = 0 && len v.buf > 0 && ok b
 = push v b
 
+(* Moves every box into a larger buffer from m. *)
+let grow (t : type) (r : region) (s : region) (m : inout mutable bump (box t r) s) (v : inout mutable vec t r s) : result unit oom
+  requires good v && m.used <= len m.mem && len v.buf < 1000000
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures good v && v.len = old v.len
+  ensures forall (j in 0 .. v.len). v.buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+  ensures (match result with
+           | Ok () -> v.len < len v.buf
+           | Err _ -> true)
+= let nb = alloc m (2 * len v.buf + 1)? in
+  let old_buf = v.buf in
+  for i in 0 .. v.len
+    invariant len nb = 2 * len old_buf + 1 && v.len <= len old_buf
+    invariant forall (j in 0 .. i). ok nb.[j] && full nb.[j] && nb.[j].slot.[0] = old (v.buf.[j].slot.[0])
+    invariant forall (j in i .. v.len). ok old_buf.[j] && full old_buf.[j] && old_buf.[j].slot.[0] = old (v.buf.[j].slot.[0])
+  do nb.[i] <- old_buf.[i] done;
+  v.buf <- nb;
+  Ok ()
+
+(* Growing keeps each box's contents. *)
+let grow_get (r : region) (s : region) (m : inout mutable bump (box u16 r) s) (v : inout mutable vec u16 r s) : result u16 oom
+  requires good v && v.len > 0 && m.used <= len m.mem && len v.buf < 1000000
+  ensures (match result with
+           | Ok x -> x = old (v.buf.[0].slot.[0])
+           | Err _ -> true)
+= grow m v?;
+  Ok (get_at v 0)
+
+(* Wrong: the box moved out of xs.[0] leaves that element empty, so
+   writing through it is out of bounds. *)
+let stale (xs : inout [box u16]) (ys : inout [box u16]) : unit
+  requires len xs > 0 && len ys > 0 && len xs.[0].slot = 1
+= ys.[0] <- xs.[0];
+  xs.[0].slot.[0] <- 1
+
 (* Expected report, in order.
-// CHECK: vec_boxes.pia:73:11: proved: the precondition of 'make<u16>' holds [smt]
-// CHECK: vec_boxes.pia:73:3: proved: the precondition of 'push<u16>' holds [smt]
-// CHECK: vec_boxes.pia:74:11: proved: the precondition of 'make<u16>' holds [smt]
-// CHECK: vec_boxes.pia:74:3: proved: the precondition of 'push<u16>' holds [smt]
-// CHECK: vec_boxes.pia:75:3: proved: the precondition of 'set_at<u16>' holds [smt]
-// CHECK: vec_boxes.pia:76:7: proved: the precondition of 'get_at<u16>' holds [smt]
-// CHECK: vec_boxes.pia:76:20: proved: the precondition of 'get_at<u16>' holds [smt]
-// CHECK: vec_boxes.pia:76:18: proved: '+' does not overflow u16 [smt]
-// CHECK: vec_boxes.pia:68:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:82:3: failed: the precondition of 'push<u16>' holds
-// CHECK: vec_boxes.pia:38:11: proved: the precondition of 'alloc<u16>' holds [smt]
-// CHECK: vec_boxes.pia:39:3: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:34:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:36:40: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:35:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:52:21: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:52:48: proved: '+' does not overflow usize [smt]
-// CHECK: vec_boxes.pia:49:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:75:11: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: vec_boxes.pia:75:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_boxes.pia:76:11: proved: the precondition of 'make<u16>' holds [smt]
+// CHECK: vec_boxes.pia:76:3: proved: the precondition of 'push<u16>' holds [smt]
+// CHECK: vec_boxes.pia:77:3: proved: the precondition of 'set_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:78:7: proved: the precondition of 'get_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:78:20: proved: the precondition of 'get_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:78:18: proved: '+' does not overflow u16 [smt]
+// CHECK: vec_boxes.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:84:3: failed: the precondition of 'push<u16>' holds
+// CHECK-NEXT: counterexample: lens v.buf.slot = {{-?[0-9]+}}, len v.buf.slot = {{-?[0-9]+}}, len v.buf.state = {{-?[0-9]+}}, v.len = {{-?[0-9]+}}, len b.slot = {{-?[0-9]+}}, b.state = {{-?[0-9]+}}
+// CHECK: vec_boxes.pia:111:3: proved: the precondition of 'grow<u16>' holds [smt]
+// CHECK: vec_boxes.pia:112:7: proved: the precondition of 'get_at<u16>' holds [smt]
+// CHECK: vec_boxes.pia:108:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:118:13: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:118:13: proved: the slice is within bounds [smt]
+// CHECK: vec_boxes.pia:118:13: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:118:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:119:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:119:3: failed: the index is within bounds
+// CHECK-NEXT: counterexample: lens xs.slot = {{-?[0-9]+}}, len xs.slot = {{-?[0-9]+}}, lens ys.slot = {{-?[0-9]+}}, len ys.slot = {{-?[0-9]+}}, index = {{-?[0-9]+}}, length = {{-?[0-9]+}}
+// CHECK: vec_boxes.pia:40:11: proved: the precondition of 'alloc<u16>' holds [smt]
+// CHECK: vec_boxes.pia:41:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:38:40: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:54:21: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:54:48: proved: '+' does not overflow usize [smt]
 // CHECK: vec_boxes.pia:51:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:64:4: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:64:4: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:61:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:62:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:66:4: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:66:4: proved: the index is within bounds [smt]
 // CHECK: vec_boxes.pia:63:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:57:3: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:57:3: proved: the index is within bounds [smt]
-// CHECK: vec_boxes.pia:56:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:21:21: proved: '-' does not overflow usize [smt]
-// CHECK: vec_boxes.pia:23:22: proved: '+' does not overflow usize [smt]
-// CHECK: vec_boxes.pia:24:31: proved: '+' does not overflow usize [smt]
-// CHECK: vec_boxes.pia:24:9: proved: the slice is within bounds [smt]
-// CHECK: vec_boxes.pia:17:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:18:3: proved: the postcondition holds [smt]
-// CHECK: vec_boxes.pia:15:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
-// CHECK: vec_boxes.pia:29:1: not proved generically: 'ok' is proved at each instance, since it takes a value of box<t> [generic]
-// CHECK: vec_boxes.pia:30:1: not proved generically: 'full' is proved at each instance, since it takes a value of box<t> [generic]
-// CHECK: vec_boxes.pia:32:1: not proved generically: 'make' is proved at each instance, since it returns a value of bump<t> [generic]
-// CHECK: vec_boxes.pia:44:1: not proved generically: 'good' is proved at each instance, since it takes a value of vec<t> [generic]
-// CHECK: vec_boxes.pia:47:1: not proved generically: 'push' is proved at each instance, since it returns a value of vec<t> [generic]
-// CHECK: vec_boxes.pia:54:1: not proved generically: 'get_at' is proved at each instance, since it takes a value of vec<t> [generic]
-// CHECK: vec_boxes.pia:59:1: not proved generically: 'set_at' is proved at each instance, since it returns a value of vec<t> [generic]
-// CHECK: 33 proved, 1 failed, 0 skipped
+// CHECK: vec_boxes.pia:64:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:65:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:59:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:59:3: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:95:23: proved: '*' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:95:35: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:95:12: proved: the precondition of 'alloc<box<u16>>' holds [smt]
+// CHECK: vec_boxes.pia:98:5: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_boxes.pia:99:5: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_boxes.pia:100:5: proved: the loop invariant holds on entry [smt]
+// CHECK: vec_boxes.pia:101:16: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:101:16: proved: the slice is within bounds [smt]
+// CHECK: vec_boxes.pia:101:16: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:101:6: proved: the index is within bounds [smt]
+// CHECK: vec_boxes.pia:98:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_boxes.pia:99:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_boxes.pia:100:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: vec_boxes.pia:89:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:90:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:91:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:92:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:23:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:25:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:26:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:26:9: proved: the slice is within bounds [smt]
+// CHECK: vec_boxes.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:23:21: proved: '-' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:25:22: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:26:31: proved: '+' does not overflow usize [smt]
+// CHECK: vec_boxes.pia:26:9: proved: the slice is within bounds [smt]
+// CHECK: vec_boxes.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: vec_boxes.pia:17:1: not proved generically: 'alloc' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: vec_boxes.pia:31:1: not proved generically: 'ok' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: vec_boxes.pia:32:1: not proved generically: 'full' is proved at each instance, since it takes a value of box<t> [generic]
+// CHECK: vec_boxes.pia:34:1: not proved generically: 'make' is proved at each instance, since it returns a value of bump<t> [generic]
+// CHECK: vec_boxes.pia:46:1: not proved generically: 'good' is proved at each instance, since it takes a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:49:1: not proved generically: 'push' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:56:1: not proved generically: 'get_at' is proved at each instance, since it takes a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:61:1: not proved generically: 'set_at' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: vec_boxes.pia:87:1: not proved generically: 'grow' is proved at each instance, since it returns a value of vec<t> [generic]
+// CHECK: 64 proved, 2 failed, 0 skipped
 *)

@@ -269,6 +269,9 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
       // The first store written carries the bounds goal, whichever field
       // it is.
       auto store = make<StoreOp>(rw, op.getLoc(), v, b, index);
+      // The store that empties an element moved out stays spec-only.
+      if (op->hasAttr("pia.moved_out"))
+        store->setAttr("pia.moved_out", op->getAttr("pia.moved_out"));
       if (!first) shareBounds(rw, store);
       first = false;
     }

@@ -1035,9 +1035,13 @@ void eraseContracts(mlir::ModuleOp module) {
           return;
       spec.push_back(op);
     });
-    // A store into a spec-only field's buffer writes what nothing reads.
+    // A store into a spec-only field's buffer writes what nothing reads,
+    // and so does the store that empties an element moved out of a buffer
+    // (ADR 0048, section 6): only the proof reads the empty slices.
     f.walk([&](StoreOp store) {
-      if (isSpecBuffer(store.getBuffer().getType())) spec.push_back(store);
+      if (isSpecBuffer(store.getBuffer().getType()) ||
+          store->hasAttr("pia.moved_out"))
+        spec.push_back(store);
     });
     // Uses come after definitions, so the last is replaced first.
     for (mlir::Operation *op : llvm::reverse(spec)) {
