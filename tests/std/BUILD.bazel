@@ -11,6 +11,7 @@ lit_tests(
     srcs = glob(["*.pia"]),
     data = [
         "Inputs/hof_overloads.pia",
+        "Inputs/ratio_errors.pia",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
@@ -19,6 +20,7 @@ lit_tests(
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
+        "//lib/Pia/Core:Ratio.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core:Utf8.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
@@ -467,6 +469,21 @@ sh_test(
     srcs = ["hash_run_test.sh"],
     args = ["$(rootpath :hash_run)"],
     data = [":hash_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "ratio_run",
+    src = "Inputs/ratio_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:ratio"],
+)
+
+sh_test(
+    name = "ratio_run_test",
+    srcs = ["ratio_run_test.sh"],
+    args = ["$(rootpath :ratio_run)"],
+    data = [":ratio_run"],
     target_compatible_with = PIA_TARGETS,
 )
 

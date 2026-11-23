@@ -1,0 +1,6 @@
+(* The interface lists a metaprogram the module does not define. *)
+module Calc.Missing : Scale
+
+interface Scale = sig
+  let meta define : item
+end

@@ -359,6 +359,8 @@ cases clamp
 
 An item that is a call of a metaprogram, such as `make_byte ()` in column 1, runs it. The items it returns replace the call. A metaprogram may return a list of items, which all replace the call. A metaprogram may also return a call of another metaprogram, which runs in the next pass.
 
+A module exports a metaprogram by listing it in an interface with its result type, as `let meta define : item` ([ADR 0039](adr/0039-module-and-interface-syntax.md)). The interface artifact carries its definition, and an importer runs it by its qualified name, as `R.define "milli" (R.si "milli")`. The names its quotes use are the defining module's: an importer's own `ratio` does not capture `Pia.Core.Ratio.ratio`. The module must define every metaprogram its interfaces list (tests/modules/metaprograms.pia). `Pia.Core.Ratio` is built this way.
+
 ## The expansion loop
 
 Expansion runs in passes, to a fixed point (design.md, "Stages"). Each pass looks only at the items that existed when it started:

@@ -1,0 +1,34 @@
+(* Pia.Core.Ratio (ADR 0040, phase 1.10): <ratio> as metaprograms that
+   fold ratios at compile time, exported with their definitions.
+// RUN: piac --verify %S/../../lib/Pia/Core/Ratio.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Ratio.Ratio.piai
+*)
+
+(* The one goal is value's division; the metaprograms have none.
+// CHECK-NOT: failed
+// CHECK: 1 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Ratio{{$}}
+// IFACE-NEXT: {{^}}interface Ratio = sig{{$}}
+// IFACE-NEXT: {{^}}  let ratio = type { num : i64; den : i64 }{{$}}
+// IFACE-NEXT: {{^}}  let spec value : (r : ratio) -> real{{$}}
+// IFACE-NEXT: {{^}}  let meta reduce : list{{$}}
+// IFACE-NEXT: {{^}}  let meta num : int{{$}}
+// IFACE-NEXT: {{^}}  let meta den : int{{$}}
+// IFACE-NEXT: {{^}}  let meta add : list{{$}}
+// IFACE-NEXT: {{^}}  let meta subtract : list{{$}}
+// IFACE-NEXT: {{^}}  let meta multiply : list{{$}}
+// IFACE-NEXT: {{^}}  let meta divide : list{{$}}
+// IFACE-NEXT: {{^}}  let meta equal : bool{{$}}
+// IFACE-NEXT: {{^}}  let meta less : bool{{$}}
+// IFACE-NEXT: {{^}}  let meta less_equal : bool{{$}}
+// IFACE-NEXT: {{^}}  let meta si : list{{$}}
+// IFACE-NEXT: {{^}}  let meta define : item{{$}}
+// IFACE-NEXT: {{^}}  let meta check : list{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+// IFACE-NEXT: {{^}}let spec value (r : ratio) : real requires r.den > 0{{$}}
+// IFACE-NEXT: {{^}}= real r.num / real r.den{{$}}
+*)

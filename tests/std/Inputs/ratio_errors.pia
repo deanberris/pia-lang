@@ -1,0 +1,7 @@
+(* Each of these is an error at compile time, as in C++. *)
+import Pia.Core.Ratio.Ratio as R
+
+R.define "zero" (R.reduce 1 0)
+R.define "div" (R.divide (R.reduce 1 2) (R.reduce 0 1))
+R.define "big" (R.multiply (R.si "exa") (R.si "exa"))
+R.check (R.less (R.reduce 1 2) (R.reduce 1 3)) "1/2 < 1/3"
