@@ -60,7 +60,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
 | an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*` |
-| memory, allocators, `box`, `vec` | no module yet: they are prototyped as tests | `tests/verify/{bump,arena,pool,box,vec_*}.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
+| memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
 
@@ -149,6 +149,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Sort.pia`, `lib/Pia/Core/Algo/Heap.pia` and `lib/Pia/Core/Algo/BinarySearch.pia` hold sorting, the heap operations and the binary search family. `lib/Pia/Core/Algo/Permutation.pia` holds the multiset spec functions the sorts use.
 - `lib/Pia/Core/Algo/PartialSort.pia` holds `partial_sort` and `nth_element`. `lib/Pia/Core/Algo/Partition.pia` holds `is_partitioned`, `partition_point` and `partition`.
 - `lib/Pia/Core/Algo/Merge.pia` holds `merge`, from two sorted ranges into an out slice.
+- `lib/Pia/Mem/Alloc.pia` holds `oom`, the `Allocator` concept and the bump allocator. `lib/Pia/Mem/Box.pia` is `box t r` over any allocator, and `lib/Pia/Mem/Vec.pia` is `vec t a r`, a growable vector that holds its allocator.
 - `lib/Pia/Core/Algo/Set.pia` holds `includes`, `set_intersection` and `set_difference`. `lib/Pia/Core/Algo/SetUnion.pia` holds `set_union`.
 - `lib/Pia/Core/Algo/SetSymmetric.pia` holds `set_symmetric_difference`, in its own module so it proves in parallel with `set_union`.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
@@ -192,7 +193,7 @@ User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour
 ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topic:
 
 - **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
-- **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings).
+- **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings), 0057 (`Pia.Sys.Posix` per target behind one interface).
 - **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).

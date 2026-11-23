@@ -1,0 +1,85 @@
+(* Pia.Mem.Box: `box t r` (ADR 0046), an owning box of one `t` in a slot
+   an allocator lent from the region `r` (ADR 0042).
+
+   Whether a box holds a value is spec-only state, `state`, which codegen
+   erases: `get`, `set` and `release` require a full box, `release`
+   leaves it empty, and `fill` requires an empty one. So a use after
+   `release` is a failed goal, not a run-time check. The slot lasts as
+   long as its region, so a box from a bump allocator needs no `free`.
+
+   Not here yet: a box over an allocator that frees one by one, whose
+   drop must give its slot back (ADR 0046, step 2), and inline storage
+   of small boxes (ADR 0048, section 5). *)
+module Pia.Mem.Box : Boxes
+
+import Pia.Mem.Alloc.Allocators
+
+interface Boxes = sig
+  (** A box: one slot from the region `r`, and whether it holds a value. *)
+  let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+  (** A box made by `make`: one slot, full or empty. *)
+  let spec ok : (t : type) -> (b : box t) -> bool
+  (** The box holds a value. *)
+  let spec full : (t : type) -> (b : box t) -> bool
+  (** A full box of `v`, in a slot `m` allocates. *)
+  let make : (t : type) -> (r : region) -> (a : type where Pia.Mem.Alloc.Allocator a t r) -> (m : inout mutable a) -> (v : t) -> result (box t r) Pia.Mem.Alloc.oom
+    ensures (match result with | Ok b -> ok b && full b && b.slot.[0] = v | Err _ -> true)
+  (** The value a full box holds. *)
+  let get : (t : type) -> (r : region) -> (b : borrowed box t r) -> t
+    requires ok b && full b
+    ensures result = b.slot.[0]
+  (** Replaces the value of a full box. *)
+  let set : (t : type) -> (r : region) -> (b : inout mutable box t r) -> (v : t) -> unit
+    requires ok b && full b
+    ensures ok b && full b && b.slot.[0] = v
+  (** Takes the value out of a full box, which is then empty. *)
+  let release : (t : type) -> (r : region) -> (b : inout mutable box t r) -> t
+    requires ok b && full b
+    ensures ok b && full b = false && result = old (b.slot.[0])
+  (** Puts `v` in an empty box. *)
+  let fill : (t : type) -> (r : region) -> (b : inout mutable box t r) -> (v : t) -> unit
+    requires ok b && full b = false
+    ensures ok b && full b && b.slot.[0] = v
+end
+
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let spec ok (t : type) (b : box t) : bool = len b.slot = 1 && (b.state = 0 || b.state = 1)
+let spec full (t : type) (b : box t) : bool = b.state = 1
+
+let make (t : type) (r : region) (a : type where Pia.Mem.Alloc.Allocator a t r) (m : inout mutable a) (v : t) : result (box t r) Pia.Mem.Alloc.oom
+  ensures (match result with | Ok b -> ok b && full b && b.slot.[0] = v | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let get (t : type) (r : region) (b : borrowed box t r) : t
+  requires ok b && full b
+  ensures result = b.slot.[0]
+= b.slot.[0]
+
+let set (t : type) (r : region) (b : inout mutable box t r) (v : t) : unit
+  requires ok b && full b
+  ensures ok b && full b && b.slot.[0] = v
+= (let s = b.slot in s.[0] <- v)
+
+let release (t : type) (r : region) (b : inout mutable box t r) : t
+  requires ok b && full b
+  ensures ok b && full b = false && result = old (b.slot.[0])
+= (let v = b.slot.[0] in b.state <- 0; v)
+
+let fill (t : type) (r : region) (b : inout mutable box t r) (v : t) : unit
+  requires ok b && full b = false
+  ensures ok b && full b && b.slot.[0] = v
+= (let s = b.slot in s.[0] <- v; b.state <- 1)
+
+(* The instances this module proves, at u8 over a bump: a generic over a
+   record is proved at each instance (ADR 0043), and importers prove
+   their own. *)
+let checks (mem : borrowed mutable [u8]) : result u8 Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  let b : mutable box u8 = make<u8> m 7? in
+  set b 9;
+  let x = release b in
+  fill b (x / 2);
+  Ok (get b)

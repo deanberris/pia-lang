@@ -356,6 +356,13 @@ class Eraser {
     auto isRegion = [&](const std::string &n) {
       return std::find(regions.begin(), regions.end(), n) != regions.end();
     };
+    // A type parameter constrained by a concept with regions, as `a` in
+    // `(a : type where Allocator a t r)`, is in those regions, as the
+    // concept's requirements are (conceptShapeOf).
+    std::map<std::string, std::vector<std::string>> constrained;
+    for (NodePtr &p : params.kids)
+      if (p->kind == NodeKind::Param)
+        constraintRegions(*p, constrained);
     // Which regions each parameter's type mentions, before the arguments
     // go.
     std::map<std::string, std::vector<std::string>> mentions;
@@ -363,6 +370,11 @@ class Eraser {
       if (p->kind != NodeKind::Param || p->kids.empty()) continue;
       std::vector<std::string> m;
       mentionsOf(*p->kids[0], m);
+      typeNamesIn(*p->kids[0], [&](const std::string &t) {
+        if (auto c = constrained.find(t); c != constrained.end())
+          for (const std::string &r : c->second)
+            addUnique(m, r);
+      });
       mentions[p->text] = m;
     }
     auto from = [&](const std::string &r) {
@@ -411,6 +423,36 @@ class Eraser {
         n.kids[0]->kind == NodeKind::Modifiers && !n.kids[0]->kids.empty())
       f(*n.kids[0]->kids[0]);
     for (NodePtr &k : n.kids) forEachLender(*k, f);
+  }
+
+  // The regions each type argument of a constraint `C a t r` in `n` is
+  // in, for a concept `C` with regions.
+  void constraintRegions(const Node &n,
+                         std::map<std::string, std::vector<std::string>> &out) {
+    if (n.kind == NodeKind::Apply && !n.kids.empty() &&
+        n.kids[0]->kind == NodeKind::Name)
+      if (auto s = concepts_.find(n.kids[0]->text);
+          s != concepts_.end() &&
+          n.kids.size() - 1 == s->second.region.size()) {
+        const Shape &shape = s->second;
+        std::vector<std::string> regions;
+        for (size_t i = 0; i < shape.region.size(); ++i)
+          if (shape.region[i])
+            regions.push_back(n.kids[i + 1]->text);
+        for (size_t i = 0; i < shape.region.size(); ++i)
+          if (!shape.region[i])
+            for (const std::string &r : regions)
+              addUnique(out[n.kids[i + 1]->text], r);
+      }
+    for (const NodePtr &k : n.kids)
+      constraintRegions(*k, out);
+  }
+
+  template <typename F> static void typeNamesIn(const Node &n, F f) {
+    if (n.kind == NodeKind::TypeName)
+      f(n.text);
+    for (const NodePtr &k : n.kids)
+      typeNamesIn(*k, f);
   }
 
   // The regions that the type applications in `n` pass.
