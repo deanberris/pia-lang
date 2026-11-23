@@ -120,6 +120,7 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //
 - [Language design](docs/design.md): the whole language as designed, including the parts still to come
 - [Compiler architecture](docs/architecture.md), [grammar](docs/grammar.md), [IRGen](docs/irgen.md), [verifier](docs/verifier.md), [codegen](docs/codegen.md) and [metaprograms](docs/meta.md)
 - [Architecture Decision Records](docs/adr/README.md): why Pia is the way it is
+- [Style guide](docs/style.md): how the compiler, tools and documentation are written, for anyone sending a change
 
 Every example in this README and in the user documentation is a test: `bazel test //tests/docs:doc_examples_test` runs each one through `piac` and compares the output.
 

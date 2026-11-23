@@ -1,0 +1,42 @@
+# Checks that the C++ lines a pull request changes are formatted with
+# clang-format (.clang-format, docs/style.md). Only changed lines are checked,
+# so older code is reformatted as it is touched, not all at once. The version
+# is pinned so CI and contributors produce the same formatting.
+name: style
+
+on:
+  pull_request:
+    paths:
+      - "**.cpp"
+      - "**.h"
+      - ".clang-format"
+      - ".github/workflows/style.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: style-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-format:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install clang-format==18.1.8
+      - name: git clang-format --diff
+        run: |
+          # Compare with where the branch left main, so changes on main since
+          # then are not counted as this pull request's.
+          base=$(git merge-base "${{ github.event.pull_request.base.sha }}" HEAD)
+          if ! git clang-format --diff "$base" HEAD -- '*.cpp' '*.h'; then
+            echo "::error::Some changed lines are not formatted. Run: pip install clang-format==18.1.8 && git clang-format origin/main"
+            exit 1
+          fi
