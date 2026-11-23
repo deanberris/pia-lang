@@ -713,6 +713,48 @@ class Gen {
     }
   }
 
+  // Whether every element of an array literal is an integer literal, so
+  // it can be constant data.
+  static bool constantElements(const Node &lit) {
+    for (const syntax::NodePtr &k : lit.kids) {
+      const Node *e = k.get();
+      if (e->kind == NodeKind::Neg && e->kids.size() == 1) e = e->kids[0].get();
+      if (e->kind != NodeKind::IntLit) return false;
+    }
+    return true;
+  }
+
+  // Fresh storage for a local array (`pia.region`), with the literal's
+  // elements stored into it one by one, or another array copied in.
+  R genLocalArray(const Node &value, ArrayType arr) {
+    Location l = loc(value);
+    Value storage = create<RegionOp>(l, arr);
+    Type elem = arr.getElementType();
+    if (value.kind == NodeKind::ListLit) {
+      if (value.kids.size() != arr.getLength())
+        return fail(value, "an array literal for " + typeName(arr) +
+                               " needs " + plural(arr.getLength(), "element") +
+                               ", found " + std::to_string(value.kids.size()));
+      for (size_t i = 0; i < value.kids.size(); ++i) {
+        const Node &k = *value.kids[i];
+        R e = genExpr(k, elem);
+        if (!e) return e;
+        R c = coerce(*e, elem, k);
+        if (!c) return c;
+        Value at = create<mlir::arith::ConstantIndexOp>(loc(k),
+                                                        static_cast<int64_t>(i));
+        create<StoreOp>(loc(k), c->value, storage, at);
+      }
+      return TV{storage, arr};
+    }
+    R src = genExpr(value, arr);
+    if (!src) return src;
+    R c = coerce(*src, arr, value);
+    if (!c) return c;
+    create<CopyOp>(l, c->value, storage);
+    return TV{storage, arr};
+  }
+
   // The values of an array literal of integer literals, checked against
   // the array type.
   std::optional<mlir::ArrayAttr> constValues(const Node &lit, ArrayType arr) {
@@ -737,8 +779,9 @@ class Gen {
         n = n->kids[0].get();
       }
       if (n->kind != NodeKind::IntLit) {
-        fail(*k, "an array literal's elements must be integer literals for "
-                 "now");
+        fail(*k, "an array literal with computed elements needs storage of "
+                 "its own: bind it to a local first, as in "
+                 "'let a : [u8; 2] = [x; y] in ...'");
         return std::nullopt;
       }
       auto v = sema::parseIntLiteral(n->text);
@@ -8341,8 +8384,9 @@ class Gen {
         return fail(obj, "only arrays and slices can be indexed, found " +
                              typeName(b->type));
       if (!writableBuffer(*b))
-        return fail(obj, "cannot write to '" + obj.text +
-                             "': declare the parameter 'out' or 'inout'");
+        return fail(obj, "cannot write to '" + obj.text + "': " +
+                             (b->isParam ? "declare the parameter 'out' or 'inout'"
+                                         : "declare the local 'mutable'"));
       // A lambda that captures the buffer reads it until its last use.
       if (!contract_ && !ghost_)
         for (const auto &scope : scopes_)
@@ -9957,7 +10001,24 @@ class Gen {
                     "attributes on a local 'let' are not supported yet");
     }
     const Node &valueNode = *n.kids[3];
-    R v = genExpr(valueNode, declared);
+    // A local array that is `mutable`, or whose literal computes its
+    // elements, has storage of its own: a fresh array, filled from the
+    // literal's elements or copied from the value. Arrays are values, so
+    // a write through it reaches nothing else.
+    auto localArray = mlir::dyn_cast_or_null<ArrayType>(declared);
+    bool ownStorage = false;
+    if (localArray && !contract_ && !ghost_) {
+      bool isMut = sema::hasModifier(modifiers, "mutable");
+      bool computed = valueNode.kind == NodeKind::ListLit &&
+                      !constantElements(valueNode);
+      ownStorage = isMut || computed;
+    }
+    R v;
+    if (ownStorage) {
+      v = genLocalArray(valueNode, localArray);
+    } else {
+      v = genExpr(valueNode, declared);
+    }
     if (!v) return v;
     if (declared) {
       v = coerce(*v, declared, valueNode);
@@ -9992,6 +10053,13 @@ class Gen {
       b->isMutable = true;
     }
     b->scope = n.kids[4].get();
+    // A local array's storage is on the stack, so it lends itself: it can
+    // be read, written when `mutable`, and passed on, but nothing holding
+    // it outlives the `let`.
+    if (ownStorage) {
+      b->lenders = {b};
+      b->writable = sema::hasModifier(modifiers, "mutable");
+    }
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
     // `let` (#70).

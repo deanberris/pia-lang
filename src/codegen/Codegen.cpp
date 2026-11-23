@@ -696,6 +696,18 @@ struct ErasedLowering : mlir::OpConversionPattern<ErasedOp> {
   }
 };
 
+// `pia.copy src, dst`: memref.copy of every element.
+struct CopyLowering : mlir::OpConversionPattern<CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      CopyOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::memref::CopyOp>(op, adaptor.getSrc(),
+                                                adaptor.getDst());
+    return mlir::success();
+  }
+};
+
 struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1613,7 +1625,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
            CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
            LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, ViewLowering, AtAddressLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
            AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
           types, ctx);
   // Atomics (ADR 0052).

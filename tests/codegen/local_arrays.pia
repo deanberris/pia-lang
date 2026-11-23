@@ -1,0 +1,37 @@
+(* Local arrays with storage of their own, compiled and run from
+   local_arrays_test.c: a `mutable` array written in a loop, a literal of
+   computed elements, a copy written after it is made, and a record with
+   an array field. *)
+module LocalArrays : Exported
+
+(* What local_arrays_test.c calls, by its C names (ADR 0039). *)
+interface Exported @abi(c) = sig
+  let fill : (v : u8) -> u16
+  let pair : (x : u8) -> (y : u8) -> u16
+  let copied : (x : u8) -> u16
+  let grey : (v : u8) -> u16
+end
+
+let sum3 (a : [u8; 3]) : u16
+  ensures result = a.[0] + a.[1] + a.[2]
+= a.[0] + a.[1] + a.[2]
+
+let fill (v : u8) : u16 =
+  let a : mutable [u8; 3] = [0; 0; 0] in
+  for i in 0 .. 3 do a.[i] <- v done;
+  sum3 a
+
+let pair (x : u8) (y : u8) : u16 = let a : [u8; 3] = [x; y; y] in sum3 a
+
+let copied (x : u8) : u16 =
+  let a : [u8; 3] = [x; 1; 1] in
+  let b : mutable [u8; 3] = a in
+  b.[0] <- 0;
+  a.[0] + b.[0] + b.[1]
+
+let rgb = type { c : [u8; 3]; alpha : u8 }
+
+let grey (v : u8) : u16 =
+  let a : [u8; 3] = [v; v; v] in
+  let p : rgb = { c = a; alpha = 1 } in
+  sum3 p.c + p.alpha
