@@ -55,4 +55,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0049](0049-targets-are-theories.md) | Linux x86_64 is a second target, tested in Linux CI, and each target is a model of a built-in `Pia.Target` theory | Accepted |
 | [0050](0050-senders-and-receivers.md) | Asynchronous work is senders and receivers whose completion rules are proved, over io_uring on Linux and a kqueue completion adapter on macOS | Accepted |
 | [0051](0051-variadic-generics-and-foreign-varargs.md) | Variadic functions and types take a pack that is called and partially applied like any argument list, walked by metaprograms and proved once; sums over a pack are matched by type; foreign bindings are generated from headers | Accepted |
-| [0052](0052-atomics.md) | Atomics are a core cell type with checked memory orders, proved as if any task may write between two accesses, and lowered per target by a proved table | Proposed |
+| [0052](0052-atomics.md) | Atomics are a core cell type with checked orders and stated overflow, modelled by RC11 with a litmus battery before tasks exist, and lowered per target by a table proved against each hardware model | Accepted |
