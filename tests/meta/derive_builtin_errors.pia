@@ -39,3 +39,11 @@ not_text ()
 let pixel = type { x : u8 @json(name = "x") } @derive(eq)
 let hue = type
   | Red @json(name = "r") | Green
+
+(* A record payload's fields too: their attributes are for the variant's
+   derives.
+// CHECK: derive_builtin_errors.pia:[[@LINE+3]]:23: error: the attribute @json on 'r' is read by no derive of 'wheel'; add @derive(json) to the type, or remove it
+*)
+let wheel = type
+  | Spoke of { r : u8 @json(name = "radius") }
+  | Hub

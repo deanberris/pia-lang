@@ -182,6 +182,7 @@ class Expander {
         continue;
       }
       std::vector<NodePtr> generated;
+      if (isTypeItem(*item)) changed |= liftPayloads(*item, out);
       if (isTypeItem(*item)) changed |= runDerives(*item, generated);
       // `@by(t)` on a lemma, at the top level or in a theory (ADR 0036,
       // step 6), before its operators expand, so the tactic sees the goal
@@ -518,6 +519,38 @@ class Expander {
     return true;
   }
 
+  // `| Circle of { r : u16 }`: a constructor's record payload becomes a
+  // record type of its own, `shape_Circle`, defined just before the
+  // variant, and the payload names it. Its fields keep their attributes,
+  // for the variant's derives to read (ADR 0045, step 5).
+  bool liftPayloads(Node &item, std::vector<NodePtr> &out) {
+    Node &body = *item.kids[3]->kids[0];
+    if (body.kind != NodeKind::Variants) return false;
+    bool changed = false;
+    for (NodePtr &c : body.kids) {
+      if (c->kids.empty() || c->kids[0]->kind != NodeKind::RecordType)
+        continue;
+      std::string name = item.text + "_" + c->text;
+      auto rec = makeNode(NodeKind::LetItem, c->kids[0]->loc, name);
+      rec->flags = "payload";
+      rec->add(makeNode(NodeKind::Params, c->loc));
+      rec->add(makeNode(NodeKind::None, c->loc));
+      rec->add(makeNode(NodeKind::Contracts, c->loc));
+      auto value = makeNode(NodeKind::TypeValue, c->loc);
+      value->add(std::move(c->kids[0]));
+      value->add(makeNode(NodeKind::Attrs, c->loc));
+      value->add(makeNode(NodeKind::None, c->loc));
+      rec->add(std::move(value));
+      c->kids[0] = makeNode(NodeKind::TypeName, c->loc, name);
+      payloadOf_[name] = item.text;
+      lifted_[name] = rec.get();
+      types_.insert(name);
+      out.push_back(std::move(rec));
+      changed = true;
+    }
+    return changed;
+  }
+
   // Runs each `@derive(x)` on a type item through `derive_x`.
   bool runDerives(Node &item, std::vector<NodePtr> &out) {
     Node &attrs = *item.kids[3]->kids[1];
@@ -585,6 +618,9 @@ class Expander {
     for (const NodePtr &attr : item.kids[3]->kids[1]->kids)
       if (attr->text == "derive")
         for (const NodePtr &arg : attr->kids) pending.insert(arg->text);
+    // A lifted payload record's attributes are for its variant's derives,
+    // which settle them with the variant's own.
+    if (payloadOf_.count(item.text)) return false;
     const std::set<std::string> &done = derived_[item.text];
     bool changed = false;
     auto settle = [&](Node &attrs, const std::string *member) {
@@ -612,6 +648,12 @@ class Expander {
       for (NodePtr &m : body.kids)
         for (NodePtr &k : m->kids)
           if (k->kind == NodeKind::Attrs) settle(*k, &m->text);
+    if (body.kind == NodeKind::Variants)
+      for (NodePtr &c : body.kids)
+        if (auto r = lifted_.find(item.text + "_" + c->text); r != lifted_.end())
+          for (NodePtr &f : r->second->kids[3]->kids[0]->kids)
+            for (NodePtr &k : f->kids)
+              if (k->kind == NodeKind::Attrs) settle(*k, &f->text);
     return changed;
   }
 
@@ -667,6 +709,10 @@ class Expander {
   std::vector<Waiting> waiting_;
   // The derives that have run on each type item, by its name.
   std::map<std::string, std::set<std::string>> derived_;
+  // A lifted payload record's variant, by the record's name.
+  std::map<std::string, std::string> payloadOf_;
+  // Each lifted payload record, by its name; the program owns it.
+  std::map<std::string, Node *> lifted_;
   // Theory-building metaprograms (ADR 0036): every `let meta`, for the
   // totality check, and each instance built, by its call.
   std::map<std::string, const Node *> metaItems_;
