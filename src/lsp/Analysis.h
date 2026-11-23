@@ -33,7 +33,7 @@ struct Position {
 // Maps between byte offsets, the compiler's 1-based line and byte column,
 // and LSP positions.
 class TextIndex {
- public:
+public:
   explicit TextIndex(std::string_view text);
   Position position(uint32_t offset) const;
   uint32_t offset(Position pos) const;
@@ -41,7 +41,7 @@ class TextIndex {
   uint32_t offsetOfLineColumn(uint32_t line, uint32_t column) const;
   uint32_t size() const { return static_cast<uint32_t>(text_.size()); }
 
- private:
+private:
   std::string_view text_;
   std::vector<uint32_t> lineStarts_;
 };
@@ -51,8 +51,8 @@ enum class Severity { Error = 1, Warning = 2, Information = 3, Hint = 4 };
 struct Diag {
   Range range;
   Severity severity = Severity::Error;
-  std::string source;  // "pia", "pia-lint" or "pia-verify"
-  std::string code;    // a goal kind for proof diagnostics, a lint name, or empty
+  std::string source; // "pia", "pia-lint" or "pia-verify"
+  std::string code; // a goal kind for proof diagnostics, a lint name, or empty
   std::string message;
 };
 
@@ -71,18 +71,18 @@ enum class SymbolKind {
 struct Symbol {
   std::string name;
   SymbolKind kind = SymbolKind::Variable;
-  std::string detail;  // a one-line signature
-  Range range;         // the whole item
-  Range selection;     // the name
+  std::string detail; // a one-line signature
+  Range range;        // the whole item
+  Range selection;    // the name
   std::vector<Symbol> children;
 };
 
 // What a name refers to.
 struct Binding {
   std::string name;
-  std::string role;     // "function", "value", "type", "parameter", ...
-  Range nameRange;      // where it is bound
-  std::string snippet;  // its definition as written, for hover
+  std::string role;    // "function", "value", "type", "parameter", ...
+  Range nameRange;     // where it is bound
+  std::string snippet; // its definition as written, for hover
 };
 
 // The identifier or operator token around `offset`, or an empty range
@@ -93,7 +93,7 @@ Range tokenAt(std::string_view text, uint32_t offset);
 Range tokenFrom(std::string_view text, uint32_t offset);
 
 class Analysis {
- public:
+public:
   // With `literate`, the text is a `.pia.md` file (ADR 0029).
   explicit Analysis(std::string text, bool literate = false);
   Analysis(const Analysis &) = delete;
@@ -125,7 +125,7 @@ class Analysis {
   // parameters of the item that contains `offset`.
   std::vector<Binding> completions(uint32_t offset) const;
 
- private:
+private:
   std::string text_;
   TextIndex index_;
   syntax::Diagnostics diags_;
@@ -136,6 +136,6 @@ class Analysis {
 // Reserved words, for completion.
 const std::vector<std::string_view> &keywords();
 
-}  // namespace pia::lsp
+} // namespace pia::lsp
 
-#endif  // PIA_LSP_ANALYSIS_H
+#endif // PIA_LSP_ANALYSIS_H

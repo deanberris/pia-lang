@@ -16,22 +16,27 @@ namespace {
 // Line and column from the end of "file:line:col".
 void parseWhere(const std::string &where, uint32_t &line, uint32_t &column) {
   size_t c = where.rfind(':');
-  if (c == std::string::npos || c == 0) return;
+  if (c == std::string::npos || c == 0)
+    return;
   size_t l = where.rfind(':', c - 1);
-  if (l == std::string::npos) return;
-  line = static_cast<uint32_t>(std::strtoul(where.c_str() + l + 1, nullptr, 10));
-  column = static_cast<uint32_t>(std::strtoul(where.c_str() + c + 1, nullptr, 10));
+  if (l == std::string::npos)
+    return;
+  line =
+      static_cast<uint32_t>(std::strtoul(where.c_str() + l + 1, nullptr, 10));
+  column =
+      static_cast<uint32_t>(std::strtoul(where.c_str() + c + 1, nullptr, 10));
 }
 
-}  // namespace
+} // namespace
 
 ProofReport checkProofs(std::string_view source, const std::string &path,
                         unsigned timeoutMs) {
   ProofReport report;
   syntax::Diagnostics diags;
-  syntax::NodePtr tree = syntax::parseProgram(
-      source, diags, syntax::isLiterateFileName(path));
-  if (diags.hasErrors()) return report;  // the front end reports these
+  syntax::NodePtr tree =
+      syntax::parseProgram(source, diags, syntax::isLiterateFileName(path));
+  if (diags.hasErrors())
+    return report; // the front end reports these
 
   // Proofs are about the code after its metaprograms run (docs/meta.md).
   meta::expand(*tree, diags);
@@ -59,9 +64,15 @@ ProofReport checkProofs(std::string_view source, const std::string &path,
   for (const verify::Outcome &o : verify::verifyModule(*module, options)) {
     Goal g;
     switch (o.status) {
-      case verify::Status::Proved: g.status = Goal::Status::Proved; break;
-      case verify::Status::Failed: g.status = Goal::Status::Failed; break;
-      case verify::Status::Skipped: g.status = Goal::Status::Skipped; break;
+    case verify::Status::Proved:
+      g.status = Goal::Status::Proved;
+      break;
+    case verify::Status::Failed:
+      g.status = Goal::Status::Failed;
+      break;
+    case verify::Status::Skipped:
+      g.status = Goal::Status::Skipped;
+      break;
     }
     parseWhere(o.where, g.line, g.column);
     g.kind = contract::stringifyObligationKind(o.kind).str();
@@ -74,4 +85,4 @@ ProofReport checkProofs(std::string_view source, const std::string &path,
   return report;
 }
 
-}  // namespace pia::lsp
+} // namespace pia::lsp

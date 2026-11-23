@@ -18,23 +18,23 @@ namespace pia::lsp {
 struct Goal {
   enum class Status { Proved, Failed, Skipped };
   Status status = Status::Skipped;
-  uint32_t line = 0;    // 1-based
-  uint32_t column = 0;  // 1-based, in bytes
-  std::string kind;     // "nooverflow", "inbounds", "ensures", ...
-  std::string claim;    // "'+' does not overflow u8"
-  std::string method;   // "intervals", "smt", ... or why it failed/skipped
+  uint32_t line = 0;   // 1-based
+  uint32_t column = 0; // 1-based, in bytes
+  std::string kind;    // "nooverflow", "inbounds", "ensures", ...
+  std::string claim;   // "'+' does not overflow u8"
+  std::string method;  // "intervals", "smt", ... or why it failed/skipped
   std::vector<std::pair<std::string, std::string>> counterexample;
 };
 
 struct CompileError {
-  uint32_t line = 0;    // 1-based
-  uint32_t column = 0;  // 1-based, in bytes
+  uint32_t line = 0;   // 1-based
+  uint32_t column = 0; // 1-based, in bytes
   std::string message;
 };
 
 struct ProofReport {
-  std::vector<CompileError> errors;  // from Sema and IRGen
-  std::vector<Goal> goals;           // empty when there are errors
+  std::vector<CompileError> errors; // from Sema and IRGen
+  std::vector<Goal> goals;          // empty when there are errors
 };
 
 // Lowers and verifies `source`. `path` names the file in locations.
@@ -45,6 +45,6 @@ using ProofChecker = std::function<ProofReport(std::string_view source,
 ProofReport checkProofs(std::string_view source, const std::string &path,
                         unsigned timeoutMs);
 
-}  // namespace pia::lsp
+} // namespace pia::lsp
 
-#endif  // PIA_LSP_PROOFS_H
+#endif // PIA_LSP_PROOFS_H
