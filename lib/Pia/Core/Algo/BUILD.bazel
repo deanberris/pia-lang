@@ -9,6 +9,7 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "BinarySearch.pia",
     "Heap.pia",
+    "Merge.pia",
     "Modify.pia",
     "Numeric.pia",
     "PartialSort.pia",
@@ -138,6 +139,20 @@ pia_library(
         ":heap",
         ":permutation",
         ":sort",
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# merge into an out slice, by a strict weak order: tests/std/merge.pia
+# checks its goals; tests/std/merge_edges.pia and :merge_run test it
+# through its interface.
+pia_library(
+    name = "merge",
+    src = "Merge.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":permutation",
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],

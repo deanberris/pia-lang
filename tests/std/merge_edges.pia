@@ -1,0 +1,27 @@
+(* Importers of Pia.Core.Algo.Merge merge two sorted u8 ranges by `<`
+   and know from the interface alone that the result is sorted and holds
+   each value as often as the two inputs together.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Merge.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Merge.Merge as M
+
+let together (dst : out mutable [u8]) (xs : [u8]) (ys : [u8]) : unit
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j ==> xs.[i] <= xs.[j]
+  requires forall (i in 0 .. len ys) (j in 0 .. len ys). i < j ==> ys.[i] <= ys.[j]
+  requires len dst = len xs + len ys
+  ensures forall (i in 0 .. len dst) (j in 0 .. len dst). i < j ==> dst.[i] <= dst.[j]
+  ensures forall (v : u8). P.occurrences dst v (len dst) = P.occurrences xs v (len xs) + P.occurrences ys v (len ys)
+= M.merge dst xs ys (let (a : u8) (b : u8) : bool => a < b)
+
+(* Every goal is proved, and the call is an instance of merge's proof.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.Merge.merge[lambda@merge_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.Merge.merge#proof' [generic]
+// CHECK: 18 proved, 0 failed, 0 skipped
+*)
