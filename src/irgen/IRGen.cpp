@@ -1057,6 +1057,10 @@ class Gen {
       fn.setPrivate();
       fn->setAttr("pia.extern", b_.getStringAttr(foreign));
     }
+    // The buffer it lends is `out`, unwritten: a caller finds every
+    // element of it empty (ADR 0048, section 6).
+    if (sema::hasModifier(sig.lentModifiers, "out"))
+      fn->setAttr("pia.out_result", b_.getUnitAttr());
     // A `moved` parameter with a `drop` is dropped at the end of the body
     // unless it is consumed first.
     const Node *bodyPtr = &bodyNode;
@@ -7902,7 +7906,7 @@ class Gen {
         if (!v) return v;
         R c = coerce(*v, elem, valueNode);
         if (!c) return c;
-        create<StoreOp>(loc(n), c->value, buf->value, *idx);
+        fillElement(create<StoreOp>(loc(n), c->value, buf->value, *idx), elem);
         return unit();
       }
       if (obj.kind != NodeKind::Name)
@@ -7933,10 +7937,19 @@ class Gen {
       if (!v) return v;
       R c = coerce(*v, elem, valueNode);
       if (!c) return c;
-      create<StoreOp>(loc(n), c->value, b->value, *idx);
+      fillElement(create<StoreOp>(loc(n), c->value, b->value, *idx), elem);
       return unit();
     }
     return fail(place, "only a name or an element can be assigned");
+  }
+
+  // A store of a whole element that owns its slices must find the element
+  // empty, so that no box is lost by writing over it (ADR 0048, section
+  // 6). The verifier proves it from the mark.
+  void fillElement(StoreOp store, Type elem) {
+    if (contract_ || ghost_ || !ownsSlices(elem))
+      return;
+    store->setAttr("pia.fills", b_.getUnitAttr());
   }
 
   // --- ownership: `moved` (docs/design.md) ---------------------------

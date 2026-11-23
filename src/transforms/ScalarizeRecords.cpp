@@ -270,8 +270,9 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
       // it is.
       auto store = make<StoreOp>(rw, op.getLoc(), v, b, index);
       // The store that empties an element moved out stays spec-only.
-      if (op->hasAttr("pia.moved_out"))
-        store->setAttr("pia.moved_out", op->getAttr("pia.moved_out"));
+      for (llvm::StringRef mark : {"pia.moved_out", "pia.fills"})
+        if (op->hasAttr(mark))
+          store->setAttr(mark, op->getAttr(mark));
       if (!first) shareBounds(rw, store);
       first = false;
     }

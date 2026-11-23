@@ -50,14 +50,14 @@ The element left behind keeps its contents: the moved value still reads them. Th
 
 A read through the element, `xs.[i].slot.[0]`, `len xs.[i].slot`, or an argument of a `borrowed` parameter, borrows it and moves nothing, as a field read of a linear local does. Moving out needs a buffer the function may write. Moving an element out of a borrowed buffer is an error, since the caller would still hold the box.
 
-Still to come: a store into an owning element must find it empty, so that no box is lost by writing over it, and a fresh `out` buffer starts with every element empty.
+Storing a whole owning element, `xs.[i] <- b`, needs the element written over to be empty, so that no box is lost by writing over it: the verifier proves that every slice of the old element has length zero. A buffer that is `out`, as a parameter or as the buffer a function lends, holds nothing yet, so all its elements are empty. A vector says the same of its spare capacity: `good v` states that the elements past `v.len` have empty slots.
 
 ## Implementation order
 
 1. Sema accepts buffers whose elements hold slices; IRGen stores them as buffers of slices, with the ownership rule for writes and the loan rule for slices taken out.
 2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Element lengths in callee and spec-function contracts are encoded too.)
 3. Codegen: pointer and length buffers, and C entry points; buffers of `box t` inline as buffers of `t` (section 5).
-4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Growing, which moves the boxes into a larger buffer (section 6), is proved too. Not yet: checking that an element written over is empty.)
+4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Growing, which moves the boxes into a larger buffer, is proved too, and so is that a box is stored only where no box is (section 6).)
 
 ## Consequences
 
