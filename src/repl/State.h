@@ -32,8 +32,8 @@ inline constexpr const char *kInitPrefix = "__pia_init_";
 
 struct StateDecl {
   std::string name;
-  syntax::NodePtr type;       // the element type, without `mutable`
-  syntax::NodePtr invariant;  // null for none
+  syntax::NodePtr type;      // the element type, without `mutable`
+  syntax::NodePtr invariant; // null for none
   syntax::SourceLoc loc;
   // Its initial value names `old <name>`: the value of the definition it
   // replaces, which its `__pia_init_` function then takes as a buffer, under
@@ -42,10 +42,10 @@ struct StateDecl {
 };
 
 struct StateUse {
-  std::vector<StateDecl> states;  // in the order they are defined
+  std::vector<StateDecl> states; // in the order they are defined
   // The states each rewritten definition takes, in that order.
   std::map<std::string, std::vector<std::string>> uses;
-  std::set<std::string> writes;  // definitions that may change a state
+  std::set<std::string> writes; // definitions that may change a state
   // Definitions written with `()` that now take only states.
   std::set<std::string> unitFns;
 };
@@ -61,11 +61,11 @@ bool isStateItem(const syntax::Node &item);
 // state's initial value that uses state) go to `errors` as (loc, message).
 // Only a state for which `isNew` holds gets an `__pia_init_` function: the
 // others keep the value they have.
-StateUse rewriteState(
-    syntax::Node &program, const std::vector<syntax::Node *> &extra,
-    const std::function<bool(const syntax::Node &)> &isNew,
-    std::vector<std::pair<syntax::SourceLoc, std::string>> &errors);
+StateUse
+rewriteState(syntax::Node &program, const std::vector<syntax::Node *> &extra,
+             const std::function<bool(const syntax::Node &)> &isNew,
+             std::vector<std::pair<syntax::SourceLoc, std::string>> &errors);
 
-}  // namespace pia::repl
+} // namespace pia::repl
 
-#endif  // PIA_REPL_STATE_H
+#endif // PIA_REPL_STATE_H

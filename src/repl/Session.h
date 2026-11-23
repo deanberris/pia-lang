@@ -38,32 +38,32 @@ struct Where {
 
 struct Event {
   enum class Kind {
-    Defined,    // a definition joined the environment: name, type
-    Redefined,  // one replaced an older definition: name, type
-    Removed,    // :forget took one out: name
-    Value,      // an expression or a constant was evaluated: name?, type, value
-    Type,       // :type: text (what was asked about), type
-    Proof,      // an obligation: name (function), status, text (claim), method
-    Error,      // text, where?
-    Info,       // text: command output, notes, warnings
-    Task,       // a background task: name (its number), text (the
-                // expression), type, status ("running" or "done"), value
+    Defined,   // a definition joined the environment: name, type
+    Redefined, // one replaced an older definition: name, type
+    Removed,   // :forget took one out: name
+    Value,     // an expression or a constant was evaluated: name?, type, value
+    Type,      // :type: text (what was asked about), type
+    Proof,     // an obligation: name (function), status, text (claim), method
+    Error,     // text, where?
+    Info,      // text: command output, notes, warnings
+    Task,      // a background task: name (its number), text (the
+               // expression), type, status ("running" or "done"), value
   };
   Kind kind = Kind::Info;
   std::string name;
   std::string type;
   std::string value;
   std::string text;
-  std::string status;  // Proof: "proved", "failed", "unproved" or "allowed";
-                       // Task: "running" or "done"
-  std::string method;  // Proof: "intervals", "smt", "presburger", or a reason
+  std::string status; // Proof: "proved", "failed", "unproved" or "allowed";
+                      // Task: "running" or "done"
+  std::string method; // Proof: "intervals", "smt", "presburger", or a reason
   std::vector<std::pair<std::string, std::string>> counterexample;
   Where where;
 };
 
 struct CellResult {
-  unsigned cell = 0;  // the cell's number, counting from 1
-  bool ok = true;     // false when anything in the cell failed
+  unsigned cell = 0; // the cell's number, counting from 1
+  bool ok = true;    // false when anything in the cell failed
   std::vector<Event> events;
 };
 
@@ -72,15 +72,15 @@ struct Options {
   // name, or a location "[cell]:line" or "[cell]:line:col".
   std::vector<std::string> allowUnproved;
   meta::Options meta;
-  unsigned timeoutMs = 10000;  // per obligation
+  unsigned timeoutMs = 10000; // per obligation
   // How long a swap waits for running tasks to leave the definitions it
   // changes together (ADR 0031, "Live redefinition").
   unsigned quiesceMs = 2000;
-  bool run = true;             // false: verify, but never compile or run
+  bool run = true; // false: verify, but never compile or run
 };
 
 class Session {
- public:
+public:
   explicit Session(Options options = {});
   ~Session();
   Session(const Session &) = delete;
@@ -102,7 +102,7 @@ class Session {
   // it to read multi-line cells.
   static bool isComplete(std::string_view text);
 
- private:
+private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
@@ -115,6 +115,6 @@ std::string render(const CellResult &result);
 lsp::Json toJson(const CellResult &result);
 lsp::Json toJson(const Event &event);
 
-}  // namespace pia::repl
+} // namespace pia::repl
 
-#endif  // PIA_REPL_SESSION_H
+#endif // PIA_REPL_SESSION_H

@@ -12,7 +12,7 @@
 namespace pia::repl {
 
 class LineEditor {
- public:
+public:
   // History is loaded from and saved to `historyFile`, if it is not empty.
   explicit LineEditor(std::string historyFile = "");
   ~LineEditor();
@@ -29,7 +29,7 @@ class LineEditor {
 
   static bool isTerminal();
 
- private:
+private:
   std::optional<std::string> readRaw(const std::string &prompt);
 
   std::string historyFile_;
@@ -37,6 +37,6 @@ class LineEditor {
   bool interrupted_ = false;
 };
 
-}  // namespace pia::repl
+} // namespace pia::repl
 
-#endif  // PIA_REPL_LINEEDITOR_H
+#endif // PIA_REPL_LINEEDITOR_H

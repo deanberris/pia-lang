@@ -30,7 +30,8 @@ Kernel::Status Kernel::poll(uint64_t job, std::chrono::milliseconds wait) {
   std::unique_lock<std::mutex> lock(mutex_);
   Status s;
   s.job = job;
-  if (job == 0 || job > next_) return s;
+  if (job == 0 || job > next_)
+    return s;
   changed_.wait_for(lock, wait, [&] { return done_.count(job) || stop_; });
   auto it = done_.find(job);
   if (it != done_.end()) {
@@ -55,7 +56,8 @@ void Kernel::work() {
     {
       std::unique_lock<std::mutex> lock(mutex_);
       changed_.wait(lock, [&] { return stop_ || !queue_.empty(); });
-      if (stop_) return;
+      if (stop_)
+        return;
       job = std::move(queue_.front());
       queue_.pop_front();
       running_ = job.first;
@@ -72,12 +74,16 @@ void Kernel::work() {
 
 const char *stateName(Kernel::State state) {
   switch (state) {
-    case Kernel::State::Queued: return "queued";
-    case Kernel::State::Running: return "running";
-    case Kernel::State::Done: return "done";
-    case Kernel::State::Unknown: return "unknown";
+  case Kernel::State::Queued:
+    return "queued";
+  case Kernel::State::Running:
+    return "running";
+  case Kernel::State::Done:
+    return "done";
+  case Kernel::State::Unknown:
+    return "unknown";
   }
   return "unknown";
 }
 
-}  // namespace pia::repl
+} // namespace pia::repl
