@@ -126,7 +126,9 @@ bool isItemStarter(TokenKind k) {
 }
 
 // What else starts a REPL cell's line at column 1: the statements a cell can
-// be, beside the items a file allows there.
+// be, beside the items a file allows there. A leading `-` does too (see
+// push), so `1` then `-1` are two values; a subtraction that goes on to the
+// next line ends its first line with the `-`, or indents the second.
 bool isCellStarter(TokenKind k) {
   switch (k) {
   case TokenKind::If:
@@ -455,15 +457,27 @@ private:
     flush();
   }
 
+  // Whether a token at column 1, outside brackets, begins a new item.
+  bool startsItem(TokenKind kind, std::string_view text) const {
+    if (isItemStarter(kind))
+      return true;
+    if (!cells_)
+      return false;
+    if (isCellStarter(kind))
+      return true;
+    // A `-` after an operator, as in `1 -` then `-1`, is still a negation
+    // inside the expression the line before began.
+    return text == "-" && out_.back().kind != TokenKind::Op;
+  }
+
   void push(TokenKind kind, SourceLoc start) {
     Token t;
     t.kind = kind;
     t.loc = start;
     t.text = src_.substr(start.offset, pos_ - start.offset);
     if (kind != TokenKind::Sep && start.column == 1 && depth_ == 0 &&
-        !out_.empty() &&
-        (isItemStarter(kind) || (cells_ && isCellStarter(kind))) &&
-        out_.back().kind != TokenKind::Sep) {
+        !out_.empty() && out_.back().kind != TokenKind::Sep &&
+        startsItem(kind, t.text)) {
       Token sep;
       sep.kind = TokenKind::Sep;
       sep.loc = start;
