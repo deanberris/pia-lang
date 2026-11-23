@@ -8368,10 +8368,8 @@ class Gen {
           return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
         }))
       return fail(*body.kids[1], "a C symbol is letters, digits and '_'");
-    // `(u : unit)` alone is C's `(void)`: a function of no arguments.
-    bool none = sig.params.size() == 1 && isUnit(sig.params[0].type);
     for (const sema::Param &p : sig.params)
-      if (!none && !foreignType(p.type)) {
+      if (!foreignType(p.type)) {
         diags_.error(p.loc, "a foreign function takes integers, bools and "
                             "buffers of integers for now, but '" + p.name +
                             "' has type " + typeName(p.type));
@@ -8385,9 +8383,8 @@ class Gen {
       return std::nullopt;
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
-    llvm::SmallVector<Value> args;
-    if (!none)
-      args.assign(entry->getArguments().begin(), entry->getArguments().end());
+    llvm::SmallVector<Value> args(entry->getArguments().begin(),
+                                  entry->getArguments().end());
     auto op = create<ForeignOp>(loc(body), results,
                                 b_.getStringAttr(symbol), args);
     if (variadic_)

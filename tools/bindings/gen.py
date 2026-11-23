@@ -385,7 +385,7 @@ def generate(target, clang):
         # A line comment, since a C pointer's "*)" would end a (* comment.
         fn_lines.append(f"\n\\ {spelled_result} {n}({args})\n")
         fn_lines.append(
-            f"let {define(n)} {' '.join(pieces) or '(u : unit)'} : {result} {attrs}\n"
+            f"let {define(n)} {' '.join(pieces) or '()'} : {result} {attrs}\n"
             f"= extern \"{n}\"\n"
         )
 

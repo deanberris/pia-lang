@@ -387,11 +387,11 @@ let isatty (fd : i32) : i32 @target(x86_64_linux)
 = extern "isatty"
 
 \ __pid_t getpid(void)
-let getpid (u : unit) : i32 @target(x86_64_linux)
+let getpid () : i32 @target(x86_64_linux)
 = extern "getpid"
 
 \ int getpagesize(void)
-let getpagesize (u : unit) : i32 @target(x86_64_linux)
+let getpagesize () : i32 @target(x86_64_linux)
 = extern "getpagesize"
 
 \ void _exit(int) __attribute__((noreturn))
