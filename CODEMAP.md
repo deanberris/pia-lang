@@ -186,7 +186,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).
 - **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0021 (LSP), 0025 (sanitizers), 0031 (REPL).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC).
-- **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and JPEG codecs).
+- **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and JPEG codecs), 0055 (sediment transport in fixed point).
 
 ## 7. Keeping this map current
 
