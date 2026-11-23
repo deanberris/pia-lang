@@ -726,6 +726,18 @@ let whole_page (x : u8) : usize @target(x86_64_linux)
 
 A function marked `@target(m)` is compiled, and proved, only for the target whose model is `m`, and its proofs see `m`'s values as well as the axioms. So `huge_page_count` can use the page size of 4096, and `whole_page` meets `take_page`'s target-generic precondition with it. Only a function for the same target may use one, on every target: a target-generic function that called `whole_page` would be an error even on x86_64, so a program that compiles for one target compiles for the others. [tests/verify/target_items.pia](https://github.com/deanberris/pia-lang/blob/main/tests/verify/target_items.pia) proves functions for both targets.
 
+Code can also use the constants as values. `Target.cache_line` in a function body compiles to 128 on Apple silicon and 64 on x86_64, while its proof still sees only the axioms. `if Target.is m then a else b` is folded when the program is compiled, so `a` is compiled only for `m`'s target and `b` only for the others, and `a` may call `@target(m)` functions:
+
+```ocaml
+let wide (x : u8) : usize @target(x86_64_linux) = Target.vector_bits
+
+let vector_width (x : u8) : usize
+  ensures result >= 128
+= if Target.is x86_64_linux then wide x else Target.vector_bits
+```
+
+[tests/codegen/target_values.pia](https://github.com/deanberris/pia-lang/blob/main/tests/codegen/target_values.pia) checks the values each target compiles to.
+
 ## Writing a theory
 
 - **Write the model first.** If no model is easy to write, the axioms may say more than you mean. A theory without a model needs `@trusted`, and every user must import it with `trusting`. Keep trusted axioms in a theory of their own, as `Pia.Rand.Ideal` does, since trust covers a whole theory. A model can also live in another module, found by the ADL rule, which suits a theory with several implementations.

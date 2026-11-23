@@ -4,10 +4,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
 #include <optional>
 #include <set>
-#include <type_traits>
 #include <string>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -32,6 +33,7 @@
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
@@ -869,6 +871,45 @@ void eraseContracts(mlir::ModuleOp module) {
   // A generic's proof over sorts (ADR 0043) is for the verifier only.
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
     if (f->hasAttr("pia.generic_proof")) f.erase();
+  // A constant of `Target` used in code, such as `Target.page_size`, is the
+  // value its model gives for the target compiled for (ADR 0049): the
+  // model's definition is a constant, which takes the call's place.
+  module.walk([&](mlir::func::CallOp call) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    if (!f)
+      return;
+    auto of = f->getAttrOfType<mlir::StringAttr>("pia.target_value");
+    if (!of)
+      return;
+    auto def = module.lookupSymbol<mlir::func::FuncOp>(of.getValue());
+    if (!def || def.getBody().empty())
+      return;
+    auto ret = mlir::dyn_cast<mlir::func::ReturnOp>(
+        def.getBody().front().getTerminator());
+    if (!ret || ret.getNumOperands() != 1 || call.getNumResults() != 1)
+      return;
+    // The value and the ops it is computed from, such as a literal and
+    // its conversion, all without regions or block arguments.
+    mlir::OpBuilder b(call);
+    mlir::IRMapping map;
+    std::function<Value(Value)> copy = [&](Value v) -> Value {
+      if (Value done = map.lookupOrNull(v))
+        return done;
+      mlir::Operation *op = v.getDefiningOp();
+      if (!op || op->getNumRegions() != 0 || mlir::isa<mlir::func::CallOp>(op))
+        return Value();
+      for (Value o : op->getOperands())
+        if (!copy(o))
+          return Value();
+      mlir::Operation *c = b.clone(*op, map);
+      return c->getResult(mlir::cast<mlir::OpResult>(v).getResultNumber());
+    };
+    Value v = copy(ret.getOperand(0));
+    if (!v || v.getType() != call.getResult(0).getType())
+      return;
+    call.getResult(0).replaceAllUsesWith(v);
+    call.erase();
+  });
   // An imported function's body is its interface's contract, for the
   // verifier. The code is in its module's object file, so what remains is
   // a declaration of the module's link symbol (ADR 0039).
