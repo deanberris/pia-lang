@@ -1,0 +1,28 @@
+(* Buffers of slices compiled for Apple Silicon and run by
+   slice_buffers_run_test.c (ADR 0048, step 3). C passes a buffer of
+   slices as its elements' addresses, their lengths and one count. Every
+   goal here must be proved.
+*)
+module SliceBuffersRun : Rows
+
+interface Rows @abi(c) = sig
+  let first : (xs : borrowed [[u16]]) -> u16
+    requires len xs > 0 && len xs.[0] > 0
+  let width : (xs : borrowed [[u16]]) -> (i : usize) -> usize
+    requires i < len xs
+  let copy_row : (xs : inout [[u16]]) -> unit
+    requires len xs >= 2
+end
+
+let first (xs : borrowed [[u16]]) : u16
+  requires len xs > 0 && len xs.[0] > 0
+= xs.[0].[0]
+
+let width (xs : borrowed [[u16]]) (i : usize) : usize
+  requires i < len xs
+= len xs.[i]
+
+(* Element 0 becomes the same slice as element 1. *)
+let copy_row (xs : inout [[u16]]) : unit
+  requires len xs >= 2
+= xs.[0] <- xs.[1]

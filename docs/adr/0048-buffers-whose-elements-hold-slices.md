@@ -46,7 +46,7 @@ A box over a concept, `box c`, holds values of different sizes. Stored inline, e
 
 An owning element read as a value, `nb.[i] <- old_buf.[i]` or `push v xs.[i]`, moves out of its buffer, as growing a vector does. The element left behind must not still own the box's slot, or two boxes would share it while the verifier models them apart. So each element of a buffer of owning elements has a held state (Dean, 2026-11-23), and the held state is its slices' lengths: a move leaves every slice of the element behind empty. A box is held when its slot has length one, which `ok` already says, so contracts need no new spec state and no new word. Reading or writing through an element moved out is then out of bounds, and a second move gets a box with an empty slot, which owns nothing and fails `ok`.
 
-The element left behind keeps its contents: the moved value still reads them. The emptying is spec-only, and codegen erases it.
+The element left behind keeps its contents: the moved value still reads them. Codegen keeps the emptying store, so the element's length is 0 at run time too, as the proof has it, and a program that reads it sees what was proved.
 
 A read through the element, `xs.[i].slot.[0]`, `len xs.[i].slot`, or an argument of a `borrowed` parameter, borrows it and moves nothing, as a field read of a linear local does. Moving out needs a buffer the function may write. Moving an element out of a borrowed buffer is an error, since the caller would still hold the box.
 
@@ -56,7 +56,7 @@ Storing a whole owning element, `xs.[i] <- b`, needs the element written over to
 
 1. Sema accepts buffers whose elements hold slices; IRGen stores them as buffers of slices, with the ownership rule for writes and the loan rule for slices taken out.
 2. The verifier's array-of-arrays encoding, with reads, `len`, writes through owned elements, and element replacement. (Steps 1 and 2 implemented: tests/verify/slice_buffers.pia. Spec-only fields in buffer elements, which `box`'s state needs, are proved and erased by codegen: tests/verify/spec_buffers.pia. Element lengths in callee and spec-function contracts are encoded too.)
-3. Codegen: pointer and length buffers, and C entry points; buffers of `box t` inline as buffers of `t` (section 5).
+3. Codegen: pointer and length buffers, and C entry points; buffers of `box t` inline as buffers of `t` (section 5). (Pointer and length buffers and C entry points implemented: tests/codegen/slice_buffers_run.pia runs from C, and tests/codegen/vec_boxes_core.pia checks a vector of boxes' lowering. Running a vector of boxes from C waits on regions in interfaces; inline boxes are not done yet.)
 4. `vec (box t)` proved end to end, with `push` of boxes and `set` on an element (ADR 0046's priority test, at a concrete type). (Implemented over a fixed buffer: tests/verify/vec_boxes.pia, `vec (box u16)`. Growing, which moves the boxes into a larger buffer, is proved too, and so is that a box is stored only where no box is (section 6).)
 
 ## Consequences
