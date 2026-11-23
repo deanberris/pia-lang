@@ -3,6 +3,7 @@
 #include "codegen/Codegen.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <functional>
 #include <optional>
@@ -44,15 +45,19 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Target/TargetOptions.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 namespace pia::codegen {
 
@@ -1621,6 +1626,62 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
 
 }  // namespace
 
+std::string witnessSymbol(const std::string &module, const std::string &iface,
+                          llvm::StringRef text) {
+  std::array<uint8_t, 32> hash = llvm::SHA256::hash(
+      llvm::ArrayRef<uint8_t>(text.bytes_begin(), text.bytes_end()));
+  // RFC 4648 base32 of the first 16 bytes, lowercase, without padding.
+  static constexpr char kAlphabet[] = "abcdefghijklmnopqrstuvwxyz234567";
+  std::string code;
+  unsigned buffer = 0, bits = 0;
+  for (size_t i = 0; i < 16; ++i) {
+    buffer = (buffer << 8) | hash[i];
+    bits += 8;
+    for (; bits >= 5; bits -= 5)
+      code += kAlphabet[(buffer >> (bits - 5)) & 31];
+  }
+  if (bits > 0)
+    code += kAlphabet[(buffer << (5 - bits)) & 31];
+  // Dots become '$', as in link symbols (`__pia$Image$Pixels$mix`).
+  std::string path = module;
+  std::replace(path.begin(), path.end(), '.', '$');
+  return "pia$w$" + path + "$" + iface + "$" + code;
+}
+
+namespace {
+
+// Defines the witnesses the module provides and references the ones it
+// requires. A reference is a pointer kept by llvm.used, so neither the
+// optimiser nor the linker's dead stripping can drop it: the linker, or
+// dyld for a shared library, must find the exact hash it names.
+void addWitnesses(llvm::Module &m, const Options &options) {
+  llvm::Type *byte = llvm::Type::getInt8Ty(m.getContext());
+  std::vector<llvm::GlobalValue *> used;
+  for (const std::string &name : options.providedWitnesses) {
+    if (m.getNamedGlobal(name))
+      continue;
+    auto *w = new llvm::GlobalVariable(m, byte, /*isConstant=*/true,
+                                       llvm::GlobalValue::ExternalLinkage,
+                                       llvm::ConstantInt::get(byte, 0), name);
+    used.push_back(w);
+  }
+  for (const std::string &name : options.requiredWitnesses) {
+    llvm::GlobalVariable *w = m.getNamedGlobal(name);
+    if (!w)
+      w = new llvm::GlobalVariable(m, byte, /*isConstant=*/true,
+                                   llvm::GlobalValue::ExternalLinkage, nullptr,
+                                   name);
+    auto *ref = new llvm::GlobalVariable(
+        m, llvm::PointerType::getUnqual(m.getContext()), /*isConstant=*/true,
+        llvm::GlobalValue::PrivateLinkage, w, "pia$uses$" + name.substr(6));
+    used.push_back(ref);
+  }
+  if (!used.empty())
+    llvm::appendToUsed(m, used);
+}
+
+} // namespace
+
 std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
                                         llvm::LLVMContext &llvmCtx,
                                         const Options &options,
@@ -1640,6 +1701,7 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
     error = llvm::toString(std::move(e));
     return nullptr;
   }
+  addWitnesses(*m, options);
   return m;
 }
 

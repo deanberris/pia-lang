@@ -787,9 +787,25 @@ int main(int argc, char **argv) {
     // metaprograms have run (docs/meta.md).
     // Imports bring in the functions of other modules' interfaces, as
     // items whose bodies are elsewhere (ADR 0039).
+    // An object defines a witness for each interface its module provides
+    // and references one for each it imports (docs/abi.md, Layer 1).
+    std::vector<pia::syntax::InterfaceArtifact> provided, imported;
+    if (!diags.hasErrors() && codegen) {
+      pia::syntax::Diagnostics ignored; // the module check reports them
+      provided =
+          pia::syntax::interfaceArtifacts(*tree, source, literate, ignored);
+    }
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)
-      pia::syntax::resolveImports(*tree, ifacePaths, diags);
+      pia::syntax::resolveImports(*tree, ifacePaths, diags, &imported);
+#ifndef PIA_NO_MLIR
+    for (const pia::syntax::InterfaceArtifact &a : provided)
+      cg.providedWitnesses.push_back(
+          pia::codegen::witnessSymbol(a.module, a.name, a.text));
+    for (const pia::syntax::InterfaceArtifact &a : imported)
+      cg.requiredWitnesses.push_back(
+          pia::codegen::witnessSymbol(a.module, a.name, a.text));
+#endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)
       pia::meta::expand(*tree, diags, meta);

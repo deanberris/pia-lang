@@ -14,6 +14,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
@@ -43,7 +44,19 @@ struct Options {
   std::string cpu = kAppleSiliconCpu;
 #endif
   unsigned optLevel = 2;
+  // Witness symbols (docs/abi.md, Layer 1): one byte each, defined for
+  // every interface the module provides and referenced for every interface
+  // it imports, so a link or load against a module whose interface hash
+  // differs fails with an undefined `pia$w$...` symbol.
+  std::vector<std::string> providedWitnesses, requiredWitnesses;
 };
+
+// The witness symbol of interface `iface` of `module`, whose canonical
+// artifact is `text`: `pia$w$<module>$<iface>$<hash>`, the module's dots
+// spelled '$', with the first 128 bits of the text's SHA-256 in lowercase
+// base32 (docs/abi.md).
+std::string witnessSymbol(const std::string &module, const std::string &iface,
+                          llvm::StringRef text);
 
 // Loads every dialect the lowering produces into `ctx`.
 void loadDialects(mlir::MLIRContext &ctx);

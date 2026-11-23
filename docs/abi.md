@@ -316,7 +316,7 @@ Each step is a GitHub issue, tracked from M8 ([#9](https://github.com/deanberris
 1. Canonical interface serialisation and the interface and inline surface hashes ([#40](https://github.com/deanberris/pia-lang/issues/40)).
 2. The certificate format: a small C++ reader and writer, and `pia-cert dump` ([#41](https://github.com/deanberris/pia-lang/issues/41)).
 3. Emit `__pia_cert` and `__pia_iface` in objects and merge them into image certificates at link ([#42](https://github.com/deanberris/pia-lang/issues/42)).
-4. Witness symbols: export them from libraries and reference them from importers ([#43](https://github.com/deanberris/pia-lang/issues/43)).
+4. Witness symbols: export them from libraries and reference them from importers ([#43](https://github.com/deanberris/pia-lang/issues/43)). Implemented for objects: the hash is over the whole `.piai` text until the inline surface gets its own hash, and the module path is spelled with `$`, as in `pia$w$Image$Pixels$Ops$<hash>`.
 5. The link checker for objects and `.dylib` inputs, including `--trust-report` ([#44](https://github.com/deanberris/pia-lang/issues/44)).
 6. Pia images without static initializers, the runtime's launch check, and `Pia.Dl.open` ([#46](https://github.com/deanberris/pia-lang/issues/46)).
 7. ABI baselines and refinement proofs ([#49](https://github.com/deanberris/pia-lang/issues/49)).
