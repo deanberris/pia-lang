@@ -34,6 +34,6 @@ bool isLiterateFileName(std::string_view path);
 // offsets, lines and columns stay those of the Markdown.
 std::string literateCode(std::string_view text);
 
-}  // namespace pia::syntax
+} // namespace pia::syntax
 
-#endif  // PIA_SYNTAX_LEXER_H
+#endif // PIA_SYNTAX_LEXER_H

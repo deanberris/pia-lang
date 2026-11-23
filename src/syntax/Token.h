@@ -11,11 +11,13 @@
 namespace pia::syntax {
 
 struct SourceLoc {
-  uint32_t line = 0;    // 1-based
-  uint32_t column = 0;  // 1-based
-  uint32_t offset = 0;  // byte offset into the buffer
+  uint32_t line = 0;   // 1-based
+  uint32_t column = 0; // 1-based
+  uint32_t offset = 0; // byte offset into the buffer
 };
 
+// One row per group of token kinds; clang-format would reflow the table.
+// clang-format off
 #define PIA_TOKEN_KINDS(X)                                                     \
   /* keywords */                                                               \
   X(Let) X(Rec) X(Meta) X(In) X(Type) X(Of) X(Where) X(If) X(Then) X(Else)     \
@@ -24,7 +26,7 @@ struct SourceLoc {
   X(Requires) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume)         \
   X(Forall) X(Exists) X(Interface) X(Sig) X(Module) X(Struct) X(End)           \
   X(Import) X(Operator) X(True) X(False) X(Borrowed) X(Moved) X(Out)           \
-  X(Inout) X(Fixed) X(Mutable) X(Handle) X(Defer) X(As)                                                 \
+  X(Inout) X(Fixed) X(Mutable) X(Handle) X(Defer) X(As)                        \
   /* names and literals */                                                     \
   X(Ident) X(Int) X(Float) X(String) X(QIdent) X(SpliceIdent) X(SpliceOpen)    \
   X(QuoteOpen) X(Attr) X(AttrOpen) X(TargsOpen) X(TargsClose) X(LBraceAdj)     \
@@ -37,6 +39,7 @@ struct SourceLoc {
   /* operators whose precedence comes from the operator table */               \
   X(Op)                                                                        \
   X(Eof)
+// clang-format on
 
 enum class TokenKind : uint8_t {
 #define PIA_TOKEN_ENUM(name) name,
@@ -48,7 +51,7 @@ const char *tokenKindName(TokenKind kind);
 
 struct Token {
   TokenKind kind = TokenKind::Eof;
-  std::string_view text;  // points into the source buffer
+  std::string_view text; // points into the source buffer
   SourceLoc loc;
 };
 
@@ -57,16 +60,16 @@ struct Token {
 struct RawComment {
   enum class Style : uint8_t { Line, Block, Doc, Prose };
   Style style = Style::Block;
-  std::string text;       // the content without its delimiters, trimmed
-  SourceLoc loc;          // where it starts
-  uint32_t end = 0;       // byte offset just past it
-  uint32_t endLine = 0;   // the line it ends on
-  bool ownLine = false;   // only whitespace before it on its first line
-  size_t tokensBefore = 0;  // how many tokens the lexer had produced
+  std::string text;        // the content without its delimiters, trimmed
+  SourceLoc loc;           // where it starts
+  uint32_t end = 0;        // byte offset just past it
+  uint32_t endLine = 0;    // the line it ends on
+  bool ownLine = false;    // only whitespace before it on its first line
+  size_t tokensBefore = 0; // how many tokens the lexer had produced
 };
 
 const char *commentStyleName(RawComment::Style style);
 
-}  // namespace pia::syntax
+} // namespace pia::syntax
 
-#endif  // PIA_SYNTAX_TOKEN_H
+#endif // PIA_SYNTAX_TOKEN_H

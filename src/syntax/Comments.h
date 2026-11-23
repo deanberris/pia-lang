@@ -34,6 +34,6 @@ NodePtr makeComment(SourceLoc loc, std::string text, std::string_view style,
 // lines; empty when there are none.
 std::string docText(const Node &node);
 
-}  // namespace pia::syntax
+} // namespace pia::syntax
 
-#endif  // PIA_SYNTAX_COMMENTS_H
+#endif // PIA_SYNTAX_COMMENTS_H
