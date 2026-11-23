@@ -2560,7 +2560,30 @@ class Encoder {
                              : create<mlir::smt::ApplyFuncOp>(
                                    sortOf(rt), fun, mlir::ValueRange(args));
     if (auto it2 = mlir::dyn_cast<IntType>(rt)) define(inRange(app, it2));
+    // In an `@target(m)` function, a constant of the theory m models is
+    // m's value (ADR 0049): the function is compiled only for m's target.
+    if (auto m = targetModelOf(callee); !m.empty() && args.empty()) {
+      std::string name = callee.getSymName().str();
+      std::string member = name.substr(theoryOf(callee).size());
+      if (auto def = module_.lookupSymbol<mlir::func::FuncOp>(m + member)) {
+        Demand none;
+        if (Value v = specCall(def, 0, none))
+          define(eq(app, v));
+      }
+    }
     return app;
+  }
+
+  // The model of `callee`'s theory that this `@target` function is
+  // compiled for, or "" outside one.
+  std::string targetModelOf(mlir::func::FuncOp callee) {
+    if (!fn_)
+      return "";
+    auto target = fn_->getAttrOfType<mlir::StringAttr>("pia.target");
+    auto modelled = callee->getAttrOfType<mlir::StringAttr>("pia.modelled");
+    if (!target || !modelled || target != modelled)
+      return "";
+    return target.getValue().str();
   }
 
   void noteTheoryUse(mlir::func::FuncOp f) {
@@ -2575,6 +2598,9 @@ class Encoder {
 
   void declareSpecFunctions() {
     auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
+    // An `@target(m)` function sees m's functions too (ADR 0049).
+    if (!here)
+      here = fn_->getAttrOfType<mlir::StringAttr>("pia.target");
     bool inGenericProof = fn_ && fn_->hasAttr("pia.generic_proof");
     for (auto f : module_.getOps<mlir::func::FuncOp>()) {
       if (!hasSpecDecl(f)) continue;

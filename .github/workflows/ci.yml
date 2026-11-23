@@ -72,7 +72,10 @@ jobs:
       - name: Proof build-time benchmark
         id: bench
         if: steps.test.outcome == 'success'
-        timeout-minutes: 30
+        # The corpus proves twice (1 thread, then several), about 35 min on
+        # macos-15 since the set algorithms (#288). The gate is the solver
+        # cost, not the wall time, so the limit only stops a hang.
+        timeout-minutes: 75
         run: >-
           python3 tools/bench/proof_bench.py
           --piac bazel-bin/tools/piac/piac
@@ -188,7 +191,10 @@ jobs:
       - name: Proof build-time benchmark
         id: bench
         if: steps.test.outcome == 'success'
-        timeout-minutes: 30
+        # The corpus proves twice (1 thread, then several), about 35 min on
+        # macos-15 since the set algorithms (#288). The gate is the solver
+        # cost, not the wall time, so the limit only stops a hang.
+        timeout-minutes: 75
         run: >-
           python3 tools/bench/proof_bench.py
           --piac bazel-bin/tools/piac/piac
