@@ -181,24 +181,20 @@ jobs:
         timeout-minutes: 30
         run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
 
-      # Z3 built on Linux may spend a different rlimit on the same query
-      # from Z3 built by Apple clang, so Linux has its own baseline. Until
-      # one is checked in, the job records one and uploads it.
+      # The rlimit cost of a query is the same on Linux as on the iMac: the
+      # first Linux run matched several files exactly, and no file cost more
+      # than 1.5% above the baseline, so this job gates on the same one. Wall times are not gated, since the
+      # baseline was recorded on another host.
       - name: Proof build-time benchmark
         id: bench
         if: steps.test.outcome == 'success'
         timeout-minutes: 30
-        run: |
-          baseline=tools/bench/baseline-linux-x86_64.json
-          if [ -f "$baseline" ]; then
-            python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac \
-              --baseline "$baseline" --host github-ubuntu-24.04 \
-              --out bench.json --summary "$GITHUB_STEP_SUMMARY"
-          else
-            python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac \
-              --baseline bench.json --host github-ubuntu-24.04 --write-baseline
-            echo "No Linux baseline yet: recorded one as the proof-bench-linux artifact." >> "$GITHUB_STEP_SUMMARY"
-          fi
+        run: >-
+          python3 tools/bench/proof_bench.py
+          --piac bazel-bin/tools/piac/piac
+          --host github-ubuntu-24.04
+          --out bench.json
+          --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Upload the benchmark
         if: always() && steps.bench.outcome != 'skipped'
