@@ -304,13 +304,18 @@ let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i
 = ()
 ```
 
-The transport capacity of the water leaving a cell: its flow plus the drop
-to the cell below, at most 1024 units.
+The transport capacity of the water leaving a cell grows with its flow and
+with the drop to the cell below: a sixteenth of the flow plus four times
+the drop, at most 65535 units. It is shifts and adds, so the proof stays
+linear, and the shifts spread capacities over a range wide enough that the
+picture's colour ramp, over the number of bits of the load, shows the
+difference between a brook and a river.
 
 ```pia
 let capacity_of (a : u32) (drop : u16) : u32 =
-  let c : u64 = a + drop in
-  if c < 1024 then c else 1024
+  let d : u32 = drop in
+  let c : u64 = (a >> 4) + (d << 2) in
+  if c < 65535 then c else 65535
 ```
 
 One cell of a step: erode or deposit, record the load leaving the cell in

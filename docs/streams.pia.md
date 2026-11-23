@@ -736,18 +736,16 @@ the accumulation from this page, and returns `flux`, the load leaving each
 cell. This page draws it.
 
 The colour of a stream cell by the load leaving it: a ramp over the binary
-logarithm of the load, from blue for a trickle to yellow for 2^15 units or
-more. `clz` counts the leading zeros, so 32 - clz f is the number of bits
-in f, with no logarithm and no multiplication.
+logarithm of the load, from blue for 63 units or fewer to orange for 8192
+or more, in eight steps. `clz` counts the leading zeros, so 32 - clz f is
+the number of bits in f, with no logarithm and no multiplication.
 
 ```pia
 let load_colour (f : u32) : colour =
-  if f = 0 then { red = 20; green = 70; blue = 190 }
-  else
-    (let lz : u32 = clz f in
-     let l : u32 = 32 - lz in
-     let m : u32 = if l > 15 then 15 else l in
-     { red = m << 4; green = 120 + (m << 3); blue = 240 - (m << 4) })
+  let lz : u32 = clz f in
+  let l : u32 = 32 - lz in
+  let m : u32 = if l < 6 then 0 else if l > 13 then 7 else l - 6 in
+  { red = 31 + (m << 5); green = 60 + (m << 4); blue = 230 - (m << 5) }
 ```
 
 The picture after transport: stream cells coloured by their load, every

@@ -351,6 +351,19 @@ int main(int argc, char **argv) {
          (unsigned long long)(total + gone), (unsigned long long)(n * seed));
   printf("sediment: %llu cells carry a load, %llu of them on a stream\n",
          (unsigned long long)carried, (unsigned long long)moving);
+  // How the load leaving the stream cells spreads, by its number of bits:
+  // the picture's colour ramp is over the same scale.
+  uint64_t bits[33] = {0};
+  for (uint64_t i = 0; i < n; ++i)
+    if (acc[i] >= threshold) {
+      int b = 0;
+      for (uint32_t f = flux[i]; f; f >>= 1) ++b;
+      ++bits[b];
+    }
+  printf("sediment: stream load by bits:");
+  for (int b = 0; b <= 32; ++b)
+    if (bits[b]) printf(" %d:%llu", b, (unsigned long long)bits[b]);
+  printf("\n");
   if (total + gone != n * seed) {
     fprintf(stderr, "sediment: the total changed\n");
     return 1;
