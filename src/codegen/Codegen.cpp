@@ -1569,7 +1569,7 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
   // would be slower than promised, or would not run on the machine it was
   // compiled for.
   if (triple.getArch() == llvm::Triple::x86_64 &&
-      !tm->getMCSubtargetInfo()->checkFeatures(kX86V3Features)) {
+      !tm->getMCSubtargetInfo().checkFeatures(kX86V3Features)) {
     error = "the x86_64 CPU '" + options.cpu +
             "' is older than x86-64-v3, the oldest Pia supports (it needs "
             "AVX2, BMI1, BMI2, F16C, FMA, LZCNT and MOVBE)";
