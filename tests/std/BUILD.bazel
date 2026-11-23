@@ -229,7 +229,7 @@ sh_test(
 pia_binary(
     name = "partition_run",
     src = "Inputs/partition_run.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
@@ -244,5 +244,5 @@ sh_test(
     srcs = ["partition_run_test.sh"],
     args = ["$(rootpath :partition_run)"],
     data = [":partition_run"],
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
 )

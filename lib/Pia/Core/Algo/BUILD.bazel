@@ -117,7 +117,7 @@ pia_library(
 pia_library(
     name = "partition",
     src = "Partition.pia",
-    target_compatible_with = APPLE_SILICON,
+    target_compatible_with = PIA_TARGETS,
     deps = [
         ":permutation",
         ":sort",
