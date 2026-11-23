@@ -27,6 +27,8 @@ lit_tests(
         "//lib/Pia/Core/Algo:Remove.pia",
         "//lib/Pia/Core/Algo:Sort.pia",
         "//lib/Pia/Core/Algo:Search.pia",
+        "//lib/Pia/Core/Algo:Set.pia",
+        "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -288,5 +290,26 @@ sh_test(
     srcs = ["merge_run_test.sh"],
     args = ["$(rootpath :merge_run)"],
     data = [":merge_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "set_run",
+    src = "Inputs/set_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core/Algo:binary_search",
+        "//lib/Pia/Core/Algo:set",
+        "//lib/Pia/Core/Algo:set_union",
+    ],
+)
+
+sh_test(
+    name = "set_run_test",
+    srcs = ["set_run_test.sh"],
+    args = ["$(rootpath :set_run)"],
+    data = [":set_run"],
     target_compatible_with = PIA_TARGETS,
 )
