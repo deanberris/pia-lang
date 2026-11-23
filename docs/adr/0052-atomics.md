@@ -179,6 +179,14 @@ Building step 1 changed four details, none of which changes the design:
 - **Derived relations are lower bounds,** in the theory and in each test. Every RC11 axiom only forbids, so the least relations that meet the bounds decide every verdict, including races, and no relation needs to be computed as a closure.
 - **The battery is a first family of tests,** 43 of them, not yet every combination of orders, and the expected results are RC11's published ones, not yet checked against `herd7`. `cas`, which writes only when it succeeds, is not in the litmus vocabulary yet.
 
+## Notes from step 3 (2026-11-23)
+
+- **The hardware models live in `Memory.pia`,** as the theories `Tso` and `Armv8` beside `Memory`, not in `Target.pia`, since they share its events and its model. `litmus` states each one for a test's compiled instructions, so every test gives three lemmas, named in the report by `@claim`.
+- **x86_64 is sound for the whole battery.** Every outcome RC11 forbids, x86-TSO forbids for the compiled code.
+- **arm64 has two mismatches,** which the battery marks and which need a decision:
+  1. *Load buffering* (`lb_rlx`). Armv8 allows it for plain `ldr` and `str`, and RC11's no-thin-air axiom forbids it. The RC11 paper's ARM mapping puts a fake control dependency after each relaxed load (`ldr; cbz` to the next instruction). Proposed: emit that for relaxed loads on arm64. The alternatives are `ldapr` for relaxed loads, or a weaker no-thin-air rule in `Memory`.
+  2. *Release sequences through program order* (`release_po`). Armv8 does not order `stlr x` before a later `str x` for other threads. C++20 drops this part of release sequences (P0982R1). Proposed: the same in `Memory`, keeping only the read-modify-write chain.
+
 ## Answers (Dean, 2026-11-23)
 
 1. **`relaxed` as acquire and release on x86_64:** yes, only inside `@target(x86_64_linux)` items (section 6). Elsewhere it stays LLVM `monotonic`.

@@ -393,17 +393,24 @@ litmus "mp_rlx"
 
 ```console
 $ piac --verify litmus.pia
-litmus.pia:1:1: proved: the postcondition holds [smt]
-litmus.pia:6:1: failed: the postcondition holds
+litmus.pia:1:1: proved: no RC11 execution of 'mp_rel_acq' ends with the outcome [smt]
+litmus.pia:1:1: proved: no x86-TSO execution of 'mp_rel_acq' ends with the outcome [smt]
+litmus.pia:1:1: proved: no Armv8 execution of 'mp_rel_acq' ends with the outcome [smt]
+litmus.pia:6:1: failed: no RC11 execution of 'mp_rlx' ends with the outcome
   counterexample: r1 = 1, r2 = 0
-1 proved, 1 failed, 0 skipped
+litmus.pia:6:1: proved: no x86-TSO execution of 'mp_rlx' ends with the outcome [smt]
+litmus.pia:6:1: failed: no Armv8 execution of 'mp_rlx' ends with the outcome
+  counterexample: r1 = 1, r2 = 0
+4 proved, 2 failed, 0 skipped
 ```
 
-Both lemmas claim that no consistent execution ends with the outcome. A forbidden outcome is proved. An allowed one fails, and its counterexample is a witness: an execution that RC11 allows and that ends that way, with each register's value and each `<loc>_final`. A third verdict, `"race"`, claims that no execution has a data race: two accesses to one location, one of them a write and one of them plain, with neither happening before the other. It fails with a racy execution when there is one.
+Each lemma claims that no consistent execution ends with the outcome, as its report says. A forbidden outcome is proved. An allowed one fails, and its counterexample is a witness: an execution that RC11 allows and that ends that way, with each register's value and each `<loc>_final`. A third verdict, `"race"`, claims that no execution has a data race: two accesses to one location, one of them a write and one of them plain, with neither happening before the other. It fails with a racy execution when there is one.
 
 A test has a handful of events, so the lemma is finite. `litmus` numbers the events, starting with an initial write of 0 to each location, and each relation becomes an array of booleans indexed by pairs of events: `rf` with each read reading exactly one write to its location, a rank per write for `mo`, and lower bounds for the derived relations, exactly as in the theory. Each acyclicity is a rank per event. The query is a few thousand clauses over booleans and integers, which Z3 decides in well under a second. Expanding the test takes longer than solving it: the expansion is the interpreter building those clauses.
 
-[tests/memory/](https://github.com/deanberris/pia-lang/tree/main/tests/memory) is the battery, one file per family: message passing with every pairing of orders and fences, store buffering, load buffering, the four coherence shapes, read-modify-write atomicity and release sequences, WRC, ISA2, IRIW, S, R and 2+2W, and races. Each expected result is RC11's. When tasks land, each test also becomes a program of spawned tasks with the same outcomes, for the model checker, and the hardware models of each target are checked against the same battery (ADR 0052, section 5).
+**The hardware.** Each test is also compiled by each target's table ([ADR 0052](adr/0052-atomics.md), section 5) and checked against that target's hardware model, `Tso` for x86_64 (Owens, Sarkar and Sewell) and `Armv8` for arm64 (the multi-copy-atomic model Arm publishes), which `Memory.pia` defines in the same shape as `Memory`. On x86_64 a load is `mov`, a seq_cst store `xchg`, a read-modify-write lock-prefixed, and only a seq_cst fence an instruction. On arm64 an acquire load is `ldapr`, a seq_cst load `ldar`, a release or seq_cst store `stlr`, and fences `dmb ishld` or `dmb ish`. So each test makes three lemmas, as above: on x86_64 even relaxed message passing is ordered, while Armv8 shows the same weak outcome as RC11. The rule is that every outcome a target allows for the compiled instructions is one RC11 allows for the source: wherever the RC11 lemma is proved, both hardware lemmas must be. Two are not yet, both on arm64, and the battery marks them: Armv8 allows load buffering for plain `ldr` and `str` (`lb_rlx`), which RC11 forbids, and it does not order a `stlr` before a later `str` to the same location for other threads, which RC11's release sequences need (`release_po`). ADR 0052 records them, with the fixes proposed.
+
+[tests/memory/](https://github.com/deanberris/pia-lang/tree/main/tests/memory) is the battery, one file per family: message passing with every pairing of orders and fences, store buffering, load buffering, the four coherence shapes, read-modify-write atomicity and release sequences, WRC, ISA2, IRIW, S, R and 2+2W, and races. Each expected result is RC11's. When tasks land, each test also becomes a program of spawned tasks with the same outcomes, for the model checker.
 
 ## State machines
 

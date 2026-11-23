@@ -4,6 +4,9 @@
 // RUN: not piac --verify %s | FileCheck %s
 *)
 
+(* A known mismatch (ADR 0052, notes from step 3): Armv8 allows this for
+   plain ldr and str, so arm64's lowering of relaxed loads does not yet
+   implement RC11's no-thin-air rule. *)
 litmus "lb_rlx"
   [ thread [ load "relaxed" "x" "r1"; store "relaxed" "y" 1 ]
   ; thread [ load "relaxed" "y" "r2"; store "relaxed" "x" 1 ] ]
@@ -20,9 +23,18 @@ litmus "lb_one_read"
   "allowed" [ is "r1" 1; is "r2" 0 ]
 
 (* Expected report, in order.
-// CHECK: lb.pia:7:1: proved: the postcondition holds [smt]
-// CHECK: lb.pia:12:1: proved: the postcondition holds [smt]
-// CHECK: lb.pia:17:1: failed: the postcondition holds
+// CHECK: lb.pia:10:1: proved: no RC11 execution of 'lb_rlx' ends with the outcome [smt]
+// CHECK: lb.pia:10:1: proved: no x86-TSO execution of 'lb_rlx' ends with the outcome [smt]
+// CHECK: lb.pia:10:1: failed: no Armv8 execution of 'lb_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 1
+// CHECK: lb.pia:15:1: proved: no RC11 execution of 'lb_acq_rel' ends with the outcome [smt]
+// CHECK: lb.pia:15:1: proved: no x86-TSO execution of 'lb_acq_rel' ends with the outcome [smt]
+// CHECK: lb.pia:15:1: proved: no Armv8 execution of 'lb_acq_rel' ends with the outcome [smt]
+// CHECK: lb.pia:20:1: failed: no RC11 execution of 'lb_one_read' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 1, r2 = 0
-// CHECK: 2 proved, 1 failed, 0 skipped
+// CHECK: lb.pia:20:1: failed: no x86-TSO execution of 'lb_one_read' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: lb.pia:20:1: failed: no Armv8 execution of 'lb_one_read' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 0
+// CHECK: 5 proved, 4 failed, 0 skipped
 *)

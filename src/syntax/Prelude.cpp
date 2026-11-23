@@ -1105,13 +1105,102 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
     then [ `( ($(hb a b) || $(hb b a)) = false ) ] else [])) in
   let goal = if verdict = "race" then racy else outcome in
   let consistent = conj all in
-  with_doc (concat "Litmus test " (concat name (concat ": " verdict)))
-    `( let lemma $name ($!rf : [bool; $nn]) ($!hb : [bool; $nn]) ($!eco : [bool; $nn])
-           ($!rs : [bool; $nn]) ($!scb : [bool; $nn]) ($!lsc : [bool; $nn])
-           ($!v : [int; $n]) ($!mo : [int; $n]) ($!air : [int; $n]) ($!sco : [int; $n]) $params' : unit
-         requires $consistent
-         ensures $goal ==> false
-       = () )
+  (* The hardware (ADR 0052, section 5): the test compiled by each target's
+     table, under x86-TSO and the Armv8 model. Both share reads-from, the
+     values and the coherence order with RC11; each has its own ranks, `u`
+     for coherence per location and `g` for the global order. *)
+  let shared = fold concat [] [c_rf; c_val; c_mo; c_reg; c_final] in
+  let u = let (a) (b) => `( $!u.[$(ix a)] < $!u.[$(ix b)] ) in
+  let g = let (a) (b) => `( $!g.[$(ix a)] < $!g.[$(ix b)] ) in
+  let ext = let (a) (b) => th a <> th b in
+  let rmwread = let (r) => isr r && fold (let (acc) (w) => acc || rmw r w) false evs in
+  let rmwev = let (e) => (isw e && partner e >= 0) || rmwread e in
+  (* Coherence per location, the same on both: po to one location, rf, fr
+     and co are acyclic. *)
+  let c_uni = concat
+    (each (let (a) (b) => if po a b && sloc a b then [ u a b ] else []))
+    (concat (each (let (w) (r) => if cand w r then [ `( $(rf w r) ==> $(u w r) ) ] else []))
+    (concat (each (let (r) (w) => map (let (f) => `( $f ==> $(u r w) )) (frs r w)))
+            (each (let (a) (b) => if isw a && isw b && sloc a b && same a b = false then [ `( $(mo a b) ==> $(u a b) ) ] else [])))) in
+  (* Atomicity: no other thread's write is between a read-modify-write's
+     read and write in co. *)
+  let c_hwatom = each (let (r) (w) =>
+    if rmw r w = false then [] else
+    fold (let (acc) (x) => if isw x && sloc x w && ext x r then concat acc [ `( ($(fr r x) && $(mo x w)) = false ) ] else acc) [] evs) in
+  (* External reads-from, co and fr, in the global order. *)
+  let obs = let (all_fr) => concat
+    (each (let (w) (r) => if cand w r && ext w r then [ `( $(rf w r) ==> $(g w r) ) ] else []))
+    (concat (each (let (a) (b) => if isw a && isw b && sloc a b && same a b = false && (all_fr || ext a b) then [ `( $(mo a b) ==> $(g a b) ) ] else []))
+            (each (let (r) (w) => if all_fr || ext r w then map (let (f) => `( $f ==> $(g r w) )) (frs r w) else []))) in
+  (* x86-TSO: loads and stores are mov, a seq_cst store is xchg, a
+     read-modify-write is lock-prefixed, and only a seq_cst fence is an
+     instruction, mfence. Program order is kept except from a write to a
+     later read, unless a locked instruction or mfence is between. *)
+  let locked = let (e) => rmwev e || (isw e && sc e) in
+  let mfence = let (e) => isf e && sc e in
+  let noop = let (e) => isf e && sc e = false in
+  let tso_ppo = each (let (a) (b) =>
+    if po a b && noop a = false && noop b = false &&
+       (isw a && isr b && locked a = false && locked b = false) = false
+    then [ g a b ] else []) in
+  let tso = fold concat [] [c_uni; c_hwatom; obs true; tso_ppo] in
+  (* Armv8 (LSE, RCpc): relaxed accesses are ldr and str, an acquire load
+     is ldapr (Q), a seq_cst load is ldar (A), a release or seq_cst store
+     is stlr (L), a read-modify-write's read is A and its write L by its
+     order, an acquire fence is dmb ishld and the others dmb ish. *)
+  let arm_a = let (e) => isr e && (sc e || (rmwread e && acq e)) in
+  let arm_q = let (e) => isr e && rmwread e = false && ord e = "acquire" in
+  let arm_l = let (e) => isw e && rel e in
+  let dmb_full = let (e) => isf e && ord e <> "acquire" in
+  let dmb_ld = let (e) => isf e && ord e = "acquire" in
+  let arm_bob = each (let (a) (b) =>
+    if po a b = false then [] else
+    if (dmb_full b) || (dmb_full a) || (isr a && dmb_ld b) || (dmb_ld a) ||
+       (arm_l a && arm_a b) || arm_a a || arm_q a || arm_l b
+    then [ g a b ] else []) in
+  let arm_aob = concat
+    (each (let (r) (w) => if rmw r w then [ g r w ] else []))
+    (each (let (w) (r) => if isw w && partner w >= 0 && cand w r && th w = th r && (arm_a r || arm_q r) then [ `( $(rf w r) ==> $(g w r) ) ] else [])) in
+  let arm = fold concat [] [c_uni; c_hwatom; obs false; arm_bob; arm_aob] in
+  let hw = let (rules) => conj (concat shared rules) in
+  let tso_c = hw tso in
+  let arm_c = hw arm in
+  let tso_name = concat name "_x86_tso" in
+  let arm_name = concat name "_armv8" in
+  let doc = concat "Litmus test " (concat name (concat ": " verdict)) in
+  let what = if verdict = "race" then "has a data race" else "ends with the outcome" in
+  let claim = let (m) => concat "no " (concat m (concat " execution of '" (concat name (concat "' " what)))) in
+  let rc11_claim = claim "RC11" in
+  let tso_claim = claim "x86-TSO" in
+  let arm_claim = claim "Armv8" in
+  if verdict = "race" then
+    with_doc doc
+      `( let lemma $name ($!rf : [bool; $nn]) ($!hb : [bool; $nn]) ($!eco : [bool; $nn])
+             ($!rs : [bool; $nn]) ($!scb : [bool; $nn]) ($!lsc : [bool; $nn])
+             ($!v : [int; $n]) ($!mo : [int; $n]) ($!air : [int; $n]) ($!sco : [int; $n]) $params' : unit @claim($rc11_claim)
+           requires $consistent
+           ensures $goal ==> false
+         = () )
+  else
+    (* The hardware lemmas say what each target shows for the compiled
+       instructions. Where RC11 forbids the outcome, both must be proved. *)
+    with_doc doc
+      `( let lemma $name ($!rf : [bool; $nn]) ($!hb : [bool; $nn]) ($!eco : [bool; $nn])
+             ($!rs : [bool; $nn]) ($!scb : [bool; $nn]) ($!lsc : [bool; $nn])
+             ($!v : [int; $n]) ($!mo : [int; $n]) ($!air : [int; $n]) ($!sco : [int; $n]) $params' : unit @claim($rc11_claim)
+           requires $consistent
+           ensures $goal ==> false
+         = ()
+         let lemma $tso_name ($!rf : [bool; $nn]) ($!v : [int; $n]) ($!mo : [int; $n])
+             ($!u : [int; $n]) ($!g : [int; $n]) $params' : unit @claim($tso_claim)
+           requires $tso_c
+           ensures $goal ==> false
+         = ()
+         let lemma $arm_name ($!rf : [bool; $nn]) ($!v : [int; $n]) ($!mo : [int; $n])
+             ($!u : [int; $n]) ($!g : [int; $n]) $params' : unit @claim($arm_claim)
+           requires $arm_c
+           ensures $goal ==> false
+         = () )
 )pia";
   return source;
 }

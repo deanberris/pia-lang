@@ -1,4 +1,5 @@
-// The built-in theory `Memory`, RC11 (ADR 0052, section 4), written in
+// The built-in theory `Memory`, RC11 (ADR 0052, section 4), and the
+// hardware models `Tso` and `Armv8` (section 5), written in
 // src/irgen/Memory.pia and compiled into piac. tests/memory/theory.pia
 // proves its model.
 
@@ -12,11 +13,11 @@
 
 namespace pia::irgen {
 
-// The source of the theory `Memory` and its model `timeline`.
+// The source of the theories `Memory`, `Tso` and `Armv8`, and their models.
 std::string_view memoryTheorySource();
 
-// Whether `program` names `Memory`, as `Memory.x` or a type `Memory.t`,
-// and does not define an item `Memory` itself.
+// Whether `program` names `Memory`, `Tso` or `Armv8`, as `Memory.x` or a
+// type `Memory.t`, and does not define an item of that name itself.
 bool usesMemoryTheory(const syntax::Node &program);
 
 // Puts the theory `Memory` and its model in front of `program`'s items,

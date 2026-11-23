@@ -30,13 +30,29 @@ litmus "sb_one_fence"
   "allowed" [ is "r1" 0; is "r2" 0 ]
 
 (* Expected report, in order.
-// CHECK: sb.pia:7:1: failed: the postcondition holds
+// CHECK: sb.pia:7:1: failed: no RC11 execution of 'sb_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 0, r2 = 0
-// CHECK: sb.pia:12:1: failed: the postcondition holds
+// CHECK: sb.pia:7:1: failed: no x86-TSO execution of 'sb_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 0, r2 = 0
-// CHECK: sb.pia:17:1: proved: the postcondition holds [smt]
-// CHECK: sb.pia:22:1: proved: the postcondition holds [smt]
-// CHECK: sb.pia:27:1: failed: the postcondition holds
+// CHECK: sb.pia:7:1: failed: no Armv8 execution of 'sb_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 0, r2 = 0
-// CHECK: 2 proved, 3 failed, 0 skipped
+// CHECK: sb.pia:12:1: failed: no RC11 execution of 'sb_rel_acq' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:12:1: failed: no x86-TSO execution of 'sb_rel_acq' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:12:1: failed: no Armv8 execution of 'sb_rel_acq' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:17:1: proved: no RC11 execution of 'sb_sc' ends with the outcome [smt]
+// CHECK: sb.pia:17:1: proved: no x86-TSO execution of 'sb_sc' ends with the outcome [smt]
+// CHECK: sb.pia:17:1: proved: no Armv8 execution of 'sb_sc' ends with the outcome [smt]
+// CHECK: sb.pia:22:1: proved: no RC11 execution of 'sb_sc_fences' ends with the outcome [smt]
+// CHECK: sb.pia:22:1: proved: no x86-TSO execution of 'sb_sc_fences' ends with the outcome [smt]
+// CHECK: sb.pia:22:1: proved: no Armv8 execution of 'sb_sc_fences' ends with the outcome [smt]
+// CHECK: sb.pia:27:1: failed: no RC11 execution of 'sb_one_fence' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:27:1: failed: no x86-TSO execution of 'sb_one_fence' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: sb.pia:27:1: failed: no Armv8 execution of 'sb_one_fence' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, r2 = 0
+// CHECK: 6 proved, 9 failed, 0 skipped
 *)

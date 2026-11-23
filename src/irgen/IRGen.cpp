@@ -877,6 +877,7 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    claim_.clear();
     variadic_.reset();
     solver_.clear();
     ghost_ = false;
@@ -977,6 +978,14 @@ class Gen {
       if (fuel_)
         fn->setAttr(PiaDialect::getFuelAttrName(),
                     b_.getI64IntegerAttr(fuel_));
+      // `@claim("...")` names what a lemma's postcondition says, for the
+      // report, as a litmus test's lemmas do (ADR 0052).
+      if (!claim_.empty())
+        fn->setAttr("pia.obligation", b_.getStringAttr(claim_));
+    }
+    if (!claim_.empty() && !isLemma) {
+      fail(item, "@claim applies only to a lemma");
+      return;
     }
 
     // A parameter whose record type refines its fields holds them: the
@@ -1566,6 +1575,16 @@ class Gen {
           fail(*a, "@overflow takes proof, wrap, saturate or trap");
           return false;
         }
+        continue;
+      }
+      // A string, or the name a metaprogram splices from one.
+      if (a->text == "claim" && a->kids.size() == 1 &&
+          (a->kids[0]->kind == NodeKind::StringLit ||
+           a->kids[0]->kind == NodeKind::Name)) {
+        const std::string &t = a->kids[0]->text;
+        claim_ = a->kids[0]->kind == NodeKind::StringLit && t.size() >= 2
+                     ? t.substr(1, t.size() - 2)
+                     : t;
         continue;
       }
       if (a->text == "fuel" && a->kids.size() == 1 &&
@@ -10129,6 +10148,7 @@ class Gen {
   const Node *statedNode_ = nullptr;
   std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  std::string claim_;  // @claim("...") on the lemma being generated
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;

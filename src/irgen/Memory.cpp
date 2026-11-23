@@ -19,17 +19,24 @@ std::string_view memoryTheorySource() {
   return {kSource, sizeof(kSource) - 1};
 }
 
+// The theories Memory.pia defines: RC11 and the hardware models.
+static bool isMemoryTheory(const std::string &name) {
+  return name == "Memory" || name == "Tso" || name == "Armv8";
+}
+
 bool usesMemoryTheory(const Node &program) {
   for (const NodePtr &item : program.kids)
-    if (item->text == "Memory" && item->kind != NodeKind::Import)
+    if (isMemoryTheory(item->text) && item->kind != NodeKind::Import)
       return false;
   std::function<bool(const Node &)> uses = [&](const Node &n) {
     if (n.kind == NodeKind::Field && n.kids.size() == 1 &&
         n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
-        n.kids[0]->text == "Memory")
+        isMemoryTheory(n.kids[0]->text))
       return true;
-    if (n.kind == NodeKind::TypeName && n.text.rfind("Memory.", 0) == 0)
-      return true;
+    if (n.kind == NodeKind::TypeName)
+      if (size_t dot = n.text.find('.');
+          dot != std::string::npos && isMemoryTheory(n.text.substr(0, dot)))
+        return true;
     for (const NodePtr &k : n.kids)
       if (uses(*k))
         return true;

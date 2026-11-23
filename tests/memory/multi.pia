@@ -66,21 +66,48 @@ litmus "two_two_w_sc"
   "forbidden" [ final "x" 1; final "y" 1 ]
 
 (* Expected report, in order.
-// CHECK: multi.pia:6:1: proved: the postcondition holds [smt]
-// CHECK: multi.pia:12:1: failed: the postcondition holds
+// CHECK: multi.pia:6:1: proved: no RC11 execution of 'wrc_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:6:1: proved: no x86-TSO execution of 'wrc_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:6:1: proved: no Armv8 execution of 'wrc_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:12:1: failed: no RC11 execution of 'wrc_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 1, r2 = 1, r3 = 0
-// CHECK: multi.pia:18:1: proved: the postcondition holds [smt]
-// CHECK: multi.pia:24:1: failed: the postcondition holds
+// CHECK: multi.pia:12:1: proved: no x86-TSO execution of 'wrc_rlx' ends with the outcome [smt]
+// CHECK: multi.pia:12:1: failed: no Armv8 execution of 'wrc_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 1, r2 = 1, r3 = 0
+// CHECK: multi.pia:18:1: proved: no RC11 execution of 'isa2_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:18:1: proved: no x86-TSO execution of 'isa2_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:18:1: proved: no Armv8 execution of 'isa2_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:24:1: failed: no RC11 execution of 'iriw_acq' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 1, r2 = 0, r3 = 1, r4 = 0
-// CHECK: multi.pia:31:1: proved: the postcondition holds [smt]
-// CHECK: multi.pia:38:1: proved: the postcondition holds [smt]
-// CHECK: multi.pia:43:1: failed: the postcondition holds
+// CHECK: multi.pia:24:1: proved: no x86-TSO execution of 'iriw_acq' ends with the outcome [smt]
+// CHECK: multi.pia:24:1: proved: no Armv8 execution of 'iriw_acq' ends with the outcome [smt]
+// CHECK: multi.pia:31:1: proved: no RC11 execution of 'iriw_sc' ends with the outcome [smt]
+// CHECK: multi.pia:31:1: proved: no x86-TSO execution of 'iriw_sc' ends with the outcome [smt]
+// CHECK: multi.pia:31:1: proved: no Armv8 execution of 'iriw_sc' ends with the outcome [smt]
+// CHECK: multi.pia:38:1: proved: no RC11 execution of 's_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:38:1: proved: no x86-TSO execution of 's_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:38:1: proved: no Armv8 execution of 's_rel_acq' ends with the outcome [smt]
+// CHECK: multi.pia:43:1: failed: no RC11 execution of 's_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 1, x_final = 2
-// CHECK: multi.pia:48:1: proved: the postcondition holds [smt]
-// CHECK: multi.pia:53:1: failed: the postcondition holds
+// CHECK: multi.pia:43:1: proved: no x86-TSO execution of 's_rlx' ends with the outcome [smt]
+// CHECK: multi.pia:43:1: failed: no Armv8 execution of 's_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 1, x_final = 2
+// CHECK: multi.pia:48:1: proved: no RC11 execution of 'r_sc' ends with the outcome [smt]
+// CHECK: multi.pia:48:1: proved: no x86-TSO execution of 'r_sc' ends with the outcome [smt]
+// CHECK: multi.pia:48:1: proved: no Armv8 execution of 'r_sc' ends with the outcome [smt]
+// CHECK: multi.pia:53:1: failed: no RC11 execution of 'r_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 0, y_final = 2
-// CHECK: multi.pia:58:1: failed: the postcondition holds
+// CHECK: multi.pia:53:1: failed: no x86-TSO execution of 'r_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, y_final = 2
+// CHECK: multi.pia:53:1: failed: no Armv8 execution of 'r_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 0, y_final = 2
+// CHECK: multi.pia:58:1: failed: no RC11 execution of 'two_two_w_rlx' ends with the outcome
 // CHECK-NEXT: counterexample: x_final = 1, y_final = 1
-// CHECK: multi.pia:63:1: proved: the postcondition holds [smt]
-// CHECK: 6 proved, 5 failed, 0 skipped
+// CHECK: multi.pia:58:1: proved: no x86-TSO execution of 'two_two_w_rlx' ends with the outcome [smt]
+// CHECK: multi.pia:58:1: failed: no Armv8 execution of 'two_two_w_rlx' ends with the outcome
+// CHECK-NEXT: counterexample: x_final = 1, y_final = 1
+// CHECK: multi.pia:63:1: proved: no RC11 execution of 'two_two_w_sc' ends with the outcome [smt]
+// CHECK: multi.pia:63:1: proved: no x86-TSO execution of 'two_two_w_sc' ends with the outcome [smt]
+// CHECK: multi.pia:63:1: proved: no Armv8 execution of 'two_two_w_sc' ends with the outcome [smt]
+// CHECK: 23 proved, 10 failed, 0 skipped
 *)

@@ -26,6 +26,10 @@ litmus "release_rmw"
   ; thread [ load "acquire" "x" "r1"; read "data" "r2" ] ]
   "forbidden" [ is "r1" 2; is "r2" 0 ]
 
+(* A known mismatch (ADR 0052, notes from step 3): Armv8 does not order a
+   stlr before a later str to the same location for other threads, so the
+   release sequence through po is not implemented on arm64. C++20 drops
+   this part of release sequences. *)
 litmus "release_po"
   [ thread [ store "relaxed" "data" 1; store "release" "x" 1; store "relaxed" "x" 2 ]
   ; thread [ load "acquire" "x" "r1"; load "relaxed" "data" "r2" ] ]
@@ -38,12 +42,27 @@ litmus "release_broken"
   "allowed" [ is "r1" 2; is "r2" 0 ]
 
 (* Expected report, in order.
-// CHECK: rmw.pia:8:1: proved: the postcondition holds [smt]
-// CHECK: rmw.pia:13:1: proved: the postcondition holds [smt]
-// CHECK: rmw.pia:18:1: proved: the postcondition holds [smt]
-// CHECK: rmw.pia:23:1: proved: the postcondition holds [smt]
-// CHECK: rmw.pia:29:1: proved: the postcondition holds [smt]
-// CHECK: rmw.pia:34:1: failed: the postcondition holds
+// CHECK: rmw.pia:8:1: proved: no RC11 execution of 'inc_inc' ends with the outcome [smt]
+// CHECK: rmw.pia:8:1: proved: no x86-TSO execution of 'inc_inc' ends with the outcome [smt]
+// CHECK: rmw.pia:8:1: proved: no Armv8 execution of 'inc_inc' ends with the outcome [smt]
+// CHECK: rmw.pia:13:1: proved: no RC11 execution of 'inc_inc_final' ends with the outcome [smt]
+// CHECK: rmw.pia:13:1: proved: no x86-TSO execution of 'inc_inc_final' ends with the outcome [smt]
+// CHECK: rmw.pia:13:1: proved: no Armv8 execution of 'inc_inc_final' ends with the outcome [smt]
+// CHECK: rmw.pia:18:1: proved: no RC11 execution of 'swap_swap' ends with the outcome [smt]
+// CHECK: rmw.pia:18:1: proved: no x86-TSO execution of 'swap_swap' ends with the outcome [smt]
+// CHECK: rmw.pia:18:1: proved: no Armv8 execution of 'swap_swap' ends with the outcome [smt]
+// CHECK: rmw.pia:23:1: proved: no RC11 execution of 'release_rmw' ends with the outcome [smt]
+// CHECK: rmw.pia:23:1: proved: no x86-TSO execution of 'release_rmw' ends with the outcome [smt]
+// CHECK: rmw.pia:23:1: proved: no Armv8 execution of 'release_rmw' ends with the outcome [smt]
+// CHECK: rmw.pia:33:1: proved: no RC11 execution of 'release_po' ends with the outcome [smt]
+// CHECK: rmw.pia:33:1: proved: no x86-TSO execution of 'release_po' ends with the outcome [smt]
+// CHECK: rmw.pia:33:1: failed: no Armv8 execution of 'release_po' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 2, r2 = 0
-// CHECK: 5 proved, 1 failed, 0 skipped
+// CHECK: rmw.pia:38:1: failed: no RC11 execution of 'release_broken' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 2, r2 = 0
+// CHECK: rmw.pia:38:1: failed: no x86-TSO execution of 'release_broken' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 2, r2 = 0
+// CHECK: rmw.pia:38:1: failed: no Armv8 execution of 'release_broken' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 2, r2 = 0
+// CHECK: 14 proved, 4 failed, 0 skipped
 *)

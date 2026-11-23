@@ -146,7 +146,7 @@ To the solver, `f` is an uninterpreted function `F` with one argument per scalar
 
 - `F a` is in the result type's range.
 - `pre(a) ==> post(a, F a)`: f's postconditions, where its preconditions hold.
-- `pre(a) ==> F a = body(a)`: the definition, unfolded once. A recursive call in the body is `F` again, with the two facts above but no definition. `@fuel(n)` on the return annotation unfolds n levels.
+- `pre(a) ==> F a = body(a)`: the definition, unfolded once. A recursive call in the body is `F` again, with the two facts above but no definition. `@fuel(n)` on the return annotation unfolds n levels. `@claim("...")` on a lemma's return annotation says what its postcondition claims, and the report uses it in place of "the postcondition holds"; `litmus` names its lemmas that way.
 
 The definition is guarded by the precondition because termination is proved only where the precondition holds, so outside it the body could define `F` in terms of itself. Inside a quantifier, the facts for calls that mention the bound variables become hypotheses of the quantifier. A call that passes a view inside a quantifier is left uninterpreted, and so is a definition with a value the encoding cannot model.
 

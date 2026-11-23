@@ -96,7 +96,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/irgen/IRGen.{h,cpp}` (9.7k lines, one class `Gen`). Its main entry points are `run`, `genFunction`, `genExprOf`, `genBinary`, `genCall`, `genGenericCall`, `genMatch`, `liftLambda`, `coerce` and `checkFresh` (no shadowing). Run `python3 tools/codemap/outline.py --grep <word> src/irgen/IRGen.cpp` to find the rest.
 - `src/irgen/Theories.{h,cpp}` flattens theories and models (ADR 0036) and detects `@trusted`.
 - `src/irgen/Target.{h,cpp}` adds the built-in theory `Target` (ADR 0049), written in `src/irgen/Target.pia` and compiled in, with the model of the target being compiled for. `tests/verify/target_theory.pia` proves its models.
-- `src/irgen/Memory.{h,cpp}` adds the built-in theory `Memory`, RC11 (ADR 0052), written in `src/irgen/Memory.pia` and compiled in, to a program that names it. `tests/memory/theory.pia` proves its model.
+- `src/irgen/Memory.{h,cpp}` adds the built-in theories `Memory` (RC11), `Tso` and `Armv8` (ADR 0052), written in `src/irgen/Memory.pia` and compiled in, to a program that names it. `tests/memory/theory.pia` proves its model.
 - `src/irgen/Boxes.{h,cpp}` expands `box` over a concept (ADR 0046).
 - `src/irgen/Regions.{h,cpp}` erases region parameters (ADR 0042).
 
