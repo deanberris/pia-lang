@@ -1,0 +1,28 @@
+(* Pia.Core.Algo.Partition (ADR 0040, phase 1.7): is_partitioned,
+   partition_point and partition, each with a predicate and proved once
+   (ADR 0043, ADR 0044); partition's result is a permutation of its input.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Partition.pia | FileCheck %s
+// RUN: mkdir -p %t/q && piac --emit=interface -o %t/q %S/../../lib/Pia/Core/Algo/Partition.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/q/Pia.Core.Algo.Partition.Partition.piai
+*)
+
+(* No function of the module is left unproved. (Pia.Core.Order's compare
+   and lex_compare_three_way, imported, are proved at each instance.)
+// CHECK-NOT: not proved generically: '{{[a-z_]+}}'
+// CHECK-NOT: failed
+// CHECK: 57 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Algo.Partition{{$}}
+// IFACE-NEXT: {{^}}interface Partition = sig{{$}}
+// IFACE-NEXT: {{^}}  let spec partitioned : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let is_partitioned : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let partition_point : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize{{$}}
+// IFACE-NEXT: {{^}}  let partition : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (p : (a : t) -> bool) -> usize{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)
