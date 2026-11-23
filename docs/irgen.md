@@ -22,6 +22,7 @@ Status: implemented in M4 ([#5](https://github.com/deanberris/pia-lang/issues/5)
 | `bool` | `i1` |
 | `[T; n]` | `!pia.array<n x T>` (n is a literal for now) |
 | `[T]` | `!pia.slice<T>` |
+| `atomic T` | `!pia.atomic<T>`, for an integer type or `bool` ([ADR 0052](adr/0052-atomics.md)) |
 | `unit` | no value; a function returning unit has no results |
 | `let pixel = type { r : u8; ... }` | `!pia.record<"pixel", r : !pia.int<0, 255>, ...>`, printed as `!pixel` |
 
@@ -32,7 +33,7 @@ Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`
 - **Literals** take the type the context expects. With no context they are `i32`, or `i64` or `u64` if the value does not fit. A suffix (`42u8`) fixes the type. A literal that does not fit its type is an error.
 - **Binary operators** arrive from expansion as calls of core builtins (`a + b` is `add a b`, [meta.md](meta.md#operators)). IRGen lowers a builtin call as the operator it stands for. They compute at the join of the operand types, the smallest range holding both. When the context expects a wider integer, they compute at that type, so `dst.[i] <- src.[i] * 3` with `u8` source and `u16` destination multiplies at `u16`. The other operand is widened with `pia.convert`. A literal takes the other operand's type, whichever side it is on.
 - **Conversions**: wherever a value meets a declared type (a parameter, a return type, an annotated `let`, an assignment, an element store), IRGen inserts `pia.convert`. Widening always holds. Narrowing is a proof obligation for the verifier (M5).
-- **Overflow**: `+ - * / %` lower to `pia.add`, `sub`, `mul`, `div`, `rem` with the function's overflow mode. The default is `proof`. `@overflow(wrap | saturate | trap)` on the return annotation sets another mode, and `+|` `-|` always saturate. `mod` is `%`.
+- **Overflow**: `+ - * / %` lower to `pia.add`, `sub`, `mul`, `div`, `rem` with the function's overflow mode. The default is `proof`. `@overflow(wrap | saturate | trap)` on the return annotation sets another mode, `@wrap e` (and `@trap`, `@saturate`, `@proof`) sets it for one expression, and `+|` `-|` always saturate. The parser writes `@wrap e` as the prelude builtin `#overflow wrap e`, as it writes `~x` as `bnot x`. `mod` is `%`.
 - **Negation** `-x` is `0 - x` at x's type, so it is an obligation for unsigned and minimum values. `-5` is a literal.
 - **Comparisons** lower to `pia.cmp` at the joined type. `=` and `<>` on bools lower to `arith.cmpi`.
 
@@ -148,6 +149,25 @@ Step 4 adds untyped and generic lambdas (ADR 0044, section 2). At a call of a ge
 Step 6 proves each higher-order function once (ADR 0044, section 5; ADR 0043). Before any call, each pure function parameter `p` of `f` becomes a type parameter `p#type` constrained by a concept made for it, `f#p`, whose one requirement is `apply` with the arrow's types and its `ensures`; `p` gets that type, so `p x` is `apply p x`. The copy, `f#proof`, is checked like a written generic, and its generic proof is kept when it is parametric. Each specialisation of `f` is then marked as an instance of `f#proof`, and the verifier discharges it when its calls match the proof's, a call of `apply` matched by the argument's function, which must return: the argument's own check against the arrow's contract happens where it is passed (its lifted function's `requires` and `ensures` are the arrow's). A law applied to `p` in a contract, such as `requires Pia.Fn.strict_weak_order p`, is part of the copy, and so is an arrow's `requires`: in a definition check, each call of a requirement with a precondition asserts it with the call's arguments, and the requirement's axiom is guarded by it. An arrow with `inout`, a specialisation whose closure writes a capture, and a function whose copy is not parametric are proved at each specialisation, as before. Spec functions are left alone.
 
 Step 7 adds partial application, functions as results and moved captures. A call of a lone top-level function with arguments left, `below lim`, is the lambda `let [lim] (arg#1 : u8) : bool => below lim arg#1`: a local argument is captured (copied, or borrowed when it cannot be), a literal is written in, and any other argument must be bound first. A function whose result is written as a function type, `: u8 -> u8`, has the type of the closure its body makes, found by generating the body once before its first call; callers apply it like any function object. A capture list may say `[moved t]`: the closure owns `t`, which the record literal that makes it consumes, and when a moved capture has a `drop` the closure gets one, `@"drop[lambda@f.pia:12:9]"`, that takes it apart so each field is dropped once. A lambda in one place may be made with different captures in different copies of its body, such as a proof and a specialisation, and each copy gets its own closure type, `lambda@f.pia:12:9#2`.
+
+## Atomics
+
+An atomic cell, `atomic t`, is a place, not a value ([ADR 0052](adr/0052-atomics.md)). Its type is `!pia.atomic<T>` for an integer type or `bool`. A range type such as `atomic int{0..64}` is a refined cell: its range is an invariant of the cell across every task. The ops are core builtins with the order first:
+
+| Pia | IR |
+| --- | --- |
+| `atomic_new v` | `pia.atomic.new`, the cell's type from the context or from `v` |
+| `atomic_load o c` | `pia.atomic.load o` |
+| `atomic_store o c v` | `pia.atomic.store o` |
+| `atomic_swap`, `atomic_add`, `atomic_sub`, `atomic_and`, `atomic_or`, `atomic_xor`, `atomic_min`, `atomic_max` | `pia.atomic.rmw <kind> o`, with `overflow(m)` on an add or sub |
+| `atomic_cas ok fail c expected desired` | `pia.atomic.cas ok fail` |
+| `fence o` | `pia.fence o` |
+
+- **Orders** are the names `relaxed`, `acquire`, `release`, `acq_rel` and `seq_cst`, read from the order position only. So an order is always a compile-time constant, and the names stay free for functions such as `release`. Each op takes the orders in ADR 0052's table, and a failure order of `atomic_cas` is `relaxed`, `acquire` or `seq_cst` and no stronger than the success order. Anything else is an error that lists the orders the op takes.
+- **Values** stored or combined are converted to the cell's type, so storing into a refined cell is a range goal. On a refined cell `atomic_and`, `atomic_or` and `atomic_xor` are errors, since their results cannot be proved to stay in range.
+- **Overflow.** `atomic_add` and `atomic_sub` take only a mode written on the expression itself, `@wrap (atomic_add o c v)`, and are an error without one, even inside an `@overflow(...)` function. A plain cell takes `wrap`, `trap` or `saturate`. A refined cell takes only `proof`, and IRGen adds `pia.add` (or `sub`) of the old value and `v` in proof mode, whose goal is that the result stays in the range. Nothing reads its result, and codegen drops it.
+- **Ownership.** A cell is not copyable. Naming it in an op, or passing it to a borrowed parameter, borrows it; any other use as a value moves it, so it cannot be used afterwards. A cell local cannot be `mutable`. The ops are not allowed in contracts or ghost code.
+- **Not yet:** a cell in a record field, a buffer of cells, a function returning a cell, and a lambda capturing one. Each is an error that says so.
 
 ## Not yet
 

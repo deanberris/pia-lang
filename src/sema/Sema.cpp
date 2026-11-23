@@ -118,6 +118,8 @@ std::string typeName(mlir::Type t) {
   if (auto s = mlir::dyn_cast<SliceType>(t))
     return "[" + typeName(s.getElementType()) + "]";
   if (auto r = mlir::dyn_cast<RecordType>(t)) return r.getName().str();
+  if (auto a = mlir::dyn_cast<AtomicType>(t))
+    return "atomic " + typeName(a.getElementType());
   if (mlir::isa<UnboundedIntType>(t)) return "int";
   if (mlir::isa<RealType>(t)) return "real";
   if (auto so = mlir::dyn_cast<SortType>(t)) return so.getName().str();
@@ -203,7 +205,11 @@ static bool holdsBuffer(mlir::Type t) {
 bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
   // A buffer whose elements hold slices is a buffer of slices (ADR 0048),
   // one per slice field; a slice in a variant's payload is not yet.
-  (void)at;
+  if (mlir::isa<AtomicType>(elem)) {
+    diags_.error(at, "a buffer of atomic cells is not supported yet "
+                     "(ADR 0052)");
+    return false;
+  }
   return true;
 }
 
@@ -235,6 +241,9 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     }
     case NodeKind::TypeApp: {
       const Node &head = *type.kids[0];
+      if (head.kind == NodeKind::TypeName && head.text == "atomic" &&
+          !generic(head.text))
+        return resolveAtomic(type);
       if (head.kind == NodeKind::TypeName && isTypeFunction(head.text)) {
         llvm::SmallVector<mlir::Type> args;
         for (size_t i = 1; i < type.kids.size(); ++i) {
@@ -367,6 +376,26 @@ mlir::Type TypeResolver::unionOf(llvm::ArrayRef<mlir::Type> in,
   return u;
 }
 
+// `atomic t` (ADR 0052, section 1): one integer or bool, which every target
+// reads and writes in one instruction, so no cell needs a lock. A range type
+// such as `int{0..64}` is a refined cell, and its storage is the range's.
+mlir::Type TypeResolver::resolveAtomic(const Node &type) {
+  if (type.kids.size() != 2) {
+    diags_.error(type.loc, "'atomic' takes one type, as in 'atomic u32'");
+    return {};
+  }
+  mlir::Type elem = resolve(*type.kids[1]);
+  if (!elem)
+    return {};
+  if (!mlir::isa<IntType>(elem) && !elem.isInteger(1)) {
+    diags_.error(type.kids[1]->loc,
+                 "an atomic cell holds an integer or bool, not " +
+                     typeName(elem));
+    return {};
+  }
+  return AtomicType::get(&ctx_, elem);
+}
+
 mlir::Type TypeResolver::resolveAnnot(const Node &annot) {
   if (annot.kids.size() > 2 && annot.kids[2]->kind != NodeKind::None) {
     diags_.error(annot.kids[2]->loc, "refinements ('where') are not supported yet");
@@ -444,13 +473,22 @@ bool TypeResolver::unify(const Node &written, mlir::Type actual,
 }
 
 bool isCoreBuiltin(std::string_view name) {
+  // A table laid out by hand, in groups.
+  // clang-format off
   static const std::set<std::string, std::less<>> names = {
       "add", "sub", "add_sat", "sub_sat", "mul", "div", "rem",
       "eq",  "ne",  "lt",      "gt",      "le",  "ge",
       "and", "or",  "implies", "iff",     "len", "old",
       "band", "bor", "bxor", "bnot", "shl", "shr", "abort",
       "clz", "ctz", "popcount", "bswap", "rotl", "rotr",
+      // Atomics (ADR 0052). Their orders are not reserved: an order is
+      // read from the order position of these builtins alone, so a
+      // function may still be called `release`.
+      "atomic_new", "atomic_load", "atomic_store", "atomic_swap",
+      "atomic_cas", "atomic_add", "atomic_sub", "atomic_and", "atomic_or",
+      "atomic_xor", "atomic_min", "atomic_max", "fence",
   };
+  // clang-format on
   return names.count(name);
 }
 
@@ -555,6 +593,12 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     if (mlir::isa<ArrayType>(t)) {
       diags.error(f->loc, "a record field cannot be an array yet; a slice "
                           "field can hold one");
+      return {};
+    }
+    if (mlir::isa<AtomicType>(t)) {
+      diags.error(f->loc, "a record field cannot be an atomic cell yet "
+                          "(ADR 0052); pass the cell as a borrowed "
+                          "parameter beside the record");
       return {};
     }
     for (mlir::StringAttr n : names)
@@ -832,6 +876,14 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
       ret.kids[0]->kind == NodeKind::Annot) {
     sig.result = types.resolveAnnot(*ret.kids[0]);
     if (!sig.result) ok = false;
+    // A local cell lives in its function's frame, so it cannot outlive the
+    // call (ADR 0052).
+    if (mlir::isa_and_nonnull<AtomicType>(sig.result)) {
+      diags.error(ret.kids[0]->loc,
+                  "a function cannot return an atomic cell yet; create it "
+                  "in the caller and pass it as a borrowed parameter");
+      ok = false;
+    }
     sig.resultLender.clear();
     sig.lentModifiers.clear();
     sig.resultRegions = regionsOf(ret.flags);

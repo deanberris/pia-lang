@@ -674,6 +674,7 @@ let theory Target = sig
   let spec page_size : usize
   let spec cache_line : usize   \ the destructive interference size
   let spec vector_bits : usize  \ the widest vector the CPU runs natively
+  let spec rmw_flags : bool     \ an atomic add sets overflow and carry flags
 
   let spec is_pow2 (n : usize) : bool = popcount n = 1
 
@@ -683,9 +684,13 @@ let theory Target = sig
   let axiom page_pow2 ensures is_pow2 page_size && page_size >= 4096
   let axiom line_pow2 ensures is_pow2 cache_line && cache_line >= 64
   let axiom vector_min ensures vector_bits >= 128
+  (* rmw_flags has no axiom: the targets differ, and no proof may depend
+     on it. Codegen reads it to lower an atomic add's overflow check
+     (ADR 0052, section 2). *)
 end
 
-(* Apple silicon: 16 KiB pages, 128-byte cache lines, 128-bit NEON. *)
+(* Apple silicon: 16 KiB pages, 128-byte cache lines, 128-bit NEON, and
+   LSE atomics, whose `ldadd` sets no flags. *)
 let model arm64_macos : Target = struct
   let spec ptr_bits : usize = 64
   let spec little_endian : bool = true
@@ -693,9 +698,11 @@ let model arm64_macos : Target = struct
   let spec page_size : usize = 16384
   let spec cache_line : usize = 128
   let spec vector_bits : usize = 128
+  let spec rmw_flags : bool = false
 end
 
-(* x86_64 Linux at x86-64-v3: 4 KiB pages, 64-byte lines, 256-bit AVX2. *)
+(* x86_64 Linux at x86-64-v3: 4 KiB pages, 64-byte lines, 256-bit AVX2,
+   and a `lock`-prefixed add that sets the overflow and carry flags. *)
 let model x86_64_linux : Target = struct
   let spec ptr_bits : usize = 64
   let spec little_endian : bool = true
@@ -703,6 +710,7 @@ let model x86_64_linux : Target = struct
   let spec page_size : usize = 4096
   let spec cache_line : usize = 64
   let spec vector_bits : usize = 256
+  let spec rmw_flags : bool = true
 end
 ```
 

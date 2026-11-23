@@ -460,3 +460,40 @@ LogicalResult ExactCmpOp::verify() {
     return emitOpError("compares values of a sort only for equality");
   return success();
 }
+
+//===----------------------------------------------------------------------===//
+// Atomics (ADR 0052)
+//===----------------------------------------------------------------------===//
+
+// Every operand and result that is a value of the cell has its element type,
+// which is an integer type or bool.
+static LogicalResult checkCell(Operation *op, AtomicType cell,
+                               ArrayRef<Type> values) {
+  Type elem = cell.getElementType();
+  if (!isa<IntType>(elem) && !elem.isInteger(1))
+    return op->emitOpError("holds an integer or bool, not ") << elem;
+  for (Type t : values)
+    if (t != elem)
+      return op->emitOpError("value of type ")
+             << t << " does not match the cell's " << elem;
+  return success();
+}
+
+LogicalResult AtomicNewOp::verify() {
+  return checkCell(*this, getType(), {getValue().getType()});
+}
+LogicalResult AtomicLoadOp::verify() {
+  return checkCell(*this, getCell().getType(), {getType()});
+}
+LogicalResult AtomicStoreOp::verify() {
+  return checkCell(*this, getCell().getType(), {getValue().getType()});
+}
+LogicalResult AtomicRmwOp::verify() {
+  return checkCell(*this, getCell().getType(),
+                   {getValue().getType(), getType()});
+}
+LogicalResult AtomicCasOp::verify() {
+  return checkCell(
+      *this, getCell().getType(),
+      {getExpected().getType(), getDesired().getType(), getType()});
+}

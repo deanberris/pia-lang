@@ -132,7 +132,7 @@ The metaprogram expands a test into the test's events and a goal over `Pia.Memor
 | `seq_cst` load / store | `ldar` / `stlr` | `mov` / `xchg` |
 | read-modify-write, `cas` | `ldadd`, `swp`, `cas` and so on, with `a`, `l` or `al` | `lock xadd`, `xchg`, `lock cmpxchg`; a loop of `lock cmpxchg` for `and`, `or`, `xor`, `min`, `max` when the old value is used |
 | `fence acquire`, `release`, `acq_rel` | `dmb ishld` for acquire, `dmb ish` otherwise | nothing (compiler barrier only) |
-| `fence seq_cst` | `dmb ish` | `mfence` |
+| `fence seq_cst` | `dmb ish` | `lock or` of zero to the stack, which LLVM prefers to `mfence` as a full barrier |
 
 Since Pia trusts LLVM for instruction selection, the table is checked in two halves:
 
@@ -163,6 +163,15 @@ io_uring's rings and other memory shared with the kernel or another process are 
 4. **The x86_64 TSO lowering and check** (section 6), which is ADR 0049 step 3d.
 5. **Foreign atomic views** (section 7), when `Pia.Io.Uring` needs them, and `padded` with the per-target layout.
 6. **Tasks** (ADR 0027, issue #75 onwards) then connect: spawned code produces `Pia.Memory` events, the model checker and race prover use the theory, and the battery runs as programs.
+
+## Notes from step 1 (2026-11-23)
+
+Building step 1 changed four details, none of which changes the design:
+
+- **Refined cells are range types.** Sema does not resolve a scalar refinement such as `{ n : u32 | n <= 64 }` yet, so a refined cell is written with a range type, `atomic int{0..64}`, which is the same invariant. Its storage is the range's, a byte here, not a `u32`.
+- **`atomic_update` retries a bounded number of times.** A compare-and-swap loop that can lose every race cannot be proved to end, and a `while` without a measure is not proved. The version in `tests/verify/atomics.pia` takes a number of tries and returns the old value it last saw. `Pia.Sync` will need the same, or a measure that tasks can supply.
+- **`fence seq_cst` on x86_64 is `lock or`,** which is what LLVM emits; the table above is corrected, since the codegen test checks what LLVM emits.
+- **`trap` reads the old value on both targets for now.** `rmw_flags` is in the target models, but no lowering reads the flags yet, so on x86_64 the overflow is recomputed from the old value, as on arm64.
 
 ## Answers (Dean, 2026-11-23)
 

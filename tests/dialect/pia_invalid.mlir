@@ -81,3 +81,11 @@ func.func @real_to_int(%a: !pia.real) {
   %n = pia.exact.convert %a : !pia.real -> !pia.integer
   return
 }
+
+// -----
+
+func.func @atomic_wrong_value(%c: !pia.atomic<!pia.int<0, 255>>, %v: i1) {
+  // expected-error @+1 {{does not match the cell's}}
+  pia.atomic.store relaxed %v, %c : i1, !pia.atomic<!pia.int<0, 255>>
+  return
+}

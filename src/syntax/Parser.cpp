@@ -1471,7 +1471,24 @@ class Parser {
       n->add(unary());
       return n;
     }
+    // `@wrap e`, `@trap e`, `@saturate e` and `@proof e` set the overflow
+    // mode of one expression (docs/design.md). It is the prelude builtin
+    // `#overflow mode e`, as `~x` is `bnot x`.
+    if (at(K::Attr) && isOverflowMode(tok().text.substr(1))) {
+      auto n = makeNode(N::Apply, loc());
+      auto fn = makeNode(N::Name, loc(), "#overflow");
+      fn->flags = "prelude";
+      n->add(std::move(fn));
+      n->add(makeNode(N::Name, loc(), std::string(tok().text.substr(1))));
+      take();
+      n->add(unary());
+      return n;
+    }
     return application();
+  }
+
+  static bool isOverflowMode(std::string_view m) {
+    return m == "wrap" || m == "trap" || m == "saturate" || m == "proof";
   }
 
   NodePtr application() {
