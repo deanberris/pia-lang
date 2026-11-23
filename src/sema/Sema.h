@@ -102,6 +102,10 @@ class TypeResolver {
   // null type for anything outside the subset.
   mlir::Type resolve(const syntax::Node &type);
 
+  // `atomic t`: a cell of an integer type or bool (ADR 0052), or null with
+  // an error for any other `t`.
+  mlir::Type resolveAtomic(const syntax::Node &type);
+
   // The type of an `Annot` node, which must not carry a `where` refinement.
   mlir::Type resolveAnnot(const syntax::Node &annot);
   // Whether `elem` can be a buffer's element type; an error if not.

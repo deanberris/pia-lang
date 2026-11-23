@@ -2648,6 +2648,330 @@ class Gen {
     return TV{r, full};
   }
 
+  // --- atomics (ADR 0052) ----------------------------------------------
+
+  static bool isAtomicBuiltin(const std::string &name) {
+    static const std::set<std::string> names = {
+        "atomic_new", "atomic_load", "atomic_store", "atomic_swap",
+        "atomic_cas", "atomic_add",  "atomic_sub",   "atomic_and",
+        "atomic_or",  "atomic_xor",  "atomic_min",   "atomic_max",
+        "fence",
+    };
+    return names.count(name) != 0;
+  }
+
+  static const char *orderName(MemoryOrder o) {
+    switch (o) {
+    case MemoryOrder::relaxed:
+      return "relaxed";
+    case MemoryOrder::acquire:
+      return "acquire";
+    case MemoryOrder::release:
+      return "release";
+    case MemoryOrder::acq_rel:
+      return "acq_rel";
+    case MemoryOrder::seq_cst:
+      return "seq_cst";
+    }
+    return "?";
+  }
+
+  // "relaxed, acquire or seq_cst".
+  static std::string orderList(llvm::ArrayRef<MemoryOrder> orders) {
+    std::string out;
+    for (size_t i = 0; i < orders.size(); ++i) {
+      if (i)
+        out += i + 1 == orders.size() ? " or " : ", ";
+      out += orderName(orders[i]);
+    }
+    return out;
+  }
+
+  // The order written at `n`, which must be one of the five constants by
+  // name: an order is fixed when the program is compiled, so it can never
+  // be a run-time value that a compiler would have to treat as `seq_cst`.
+  // The name is read here alone, so it means the order even where a
+  // function of the same name exists (ADR 0052, section 2).
+  std::optional<MemoryOrder> orderOf(const Node &n, const std::string &op,
+                                     llvm::ArrayRef<MemoryOrder> allowed,
+                                     const char *which = "") {
+    std::optional<MemoryOrder> o;
+    if (n.kind == NodeKind::Name)
+      o = symbolizeMemoryOrder(n.text);
+    if (!o) {
+      fail(n, "the " + std::string(which) + "order of '" + op +
+                  "' must be one of the constants " + orderList(allowed) +
+                  ", written in place: an order is fixed when the program "
+                  "is compiled");
+      return std::nullopt;
+    }
+    if (!llvm::is_contained(allowed, *o)) {
+      fail(n, "'" + op + "' takes the " + std::string(which) + "order " +
+                  orderList(allowed) + ", not " + orderName(*o) +
+                  " (ADR 0052, section 2)");
+      return std::nullopt;
+    }
+    return o;
+  }
+
+  // A cell of a range type narrower than its machine integer, such as
+  // `atomic int{0..64}`, is refined: the range is an invariant of the cell
+  // across every task, proved one store at a time (ADR 0052, section 3).
+  static bool refinedCell(AtomicType cell) {
+    auto t = mlir::dyn_cast<IntType>(cell.getElementType());
+    if (!t)
+      return false;
+    unsigned w = t.getStorageWidth();
+    llvm::APInt lo = t.getLo().sextOrTrunc(kWidth);
+    llvm::APInt hi = t.getHi().sextOrTrunc(kWidth);
+    if (lo.isZero() && hi == llvm::APInt::getMaxValue(w).zext(kWidth))
+      return false;
+    return !(lo == llvm::APInt::getSignedMinValue(w).sext(kWidth) &&
+             hi == llvm::APInt::getSignedMaxValue(w).sext(kWidth));
+  }
+
+  // The cell an atomic op names. Naming it only borrows it.
+  std::optional<std::pair<Value, AtomicType>> genCell(const Node &n,
+                                                      const std::string &op) {
+    R c = genExpr(n, Type());
+    if (!c)
+      return std::nullopt;
+    unconsume(n);
+    auto cell = mlir::dyn_cast<AtomicType>(c->type);
+    if (!cell) {
+      fail(n, "'" + op + "' needs an atomic cell, found " + typeName(c->type));
+      return std::nullopt;
+    }
+    return std::make_pair(c->value, cell);
+  }
+
+  // A value to store in `cell`, or to combine with what it holds: it must
+  // be of the cell's type, so a refined cell's range is a goal here.
+  std::optional<Value> genCellValue(const Node &n, AtomicType cell) {
+    Type elem = cell.getElementType();
+    R v = genExpr(n, elem);
+    if (!v)
+      return std::nullopt;
+    R cv = coerce(*v, elem, n);
+    if (!cv)
+      return std::nullopt;
+    return cv->value;
+  }
+
+  // `atomic_new v`, `atomic_load o c`, `atomic_store o c v`, `atomic_swap o
+  // c v`, `atomic_cas ok fail c expected desired`, the read-modify-writes
+  // and `fence o` (ADR 0052, section 2). `mode` is the overflow mode stated
+  // on this very expression, as in `@wrap (atomic_add o c v)`.
+  R genAtomic(const Node &n, const std::string &name, Type expected,
+              std::optional<OverflowMode> mode) {
+    if (contract_ || ghost_)
+      return fail(n, "'" + name +
+                         "' is not allowed in a contract or ghost "
+                         "code: what another task may write is not a value a "
+                         "specification can name (ADR 0052, section 3)");
+    using O = MemoryOrder;
+    const O all[] = {O::relaxed, O::acquire, O::release, O::acq_rel,
+                     O::seq_cst};
+    size_t argc = n.kids.size() - 1;
+    auto arity = [&](size_t k, const char *form) -> bool {
+      if (argc == k)
+        return true;
+      fail(n, "'" + name + "' takes " + std::to_string(k) + " argument" +
+                  (k == 1 ? "" : "s") + ", as in '" + form + "'");
+      return false;
+    };
+    Location l = loc(n);
+    if (name == "fence") {
+      if (!arity(1, "fence seq_cst"))
+        return std::nullopt;
+      auto o = orderOf(*n.kids[1], name,
+                       {O::acquire, O::release, O::acq_rel, O::seq_cst});
+      if (!o)
+        return std::nullopt;
+      create<FenceOp>(l, *o);
+      return unit();
+    }
+    if (name == "atomic_new") {
+      if (!arity(1, "atomic_new 0"))
+        return std::nullopt;
+      auto want = mlir::dyn_cast_or_null<AtomicType>(expected);
+      R v = genExpr(*n.kids[1], want ? want.getElementType() : Type());
+      if (!v)
+        return v;
+      if (want) {
+        v = coerce(*v, want.getElementType(), *n.kids[1]);
+        if (!v)
+          return v;
+      }
+      if (!mlir::isa<IntType>(v->type) && !isBool(v->type))
+        return fail(*n.kids[1], "an atomic cell holds an integer or bool, "
+                                "not " +
+                                    typeName(v->type));
+      auto cell = want ? want : AtomicType::get(&ctx_, v->type);
+      return TV{create<AtomicNewOp>(l, cell, v->value).getResult(), cell};
+    }
+    if (name == "atomic_load") {
+      if (!arity(2, "atomic_load acquire c"))
+        return std::nullopt;
+      auto o = orderOf(*n.kids[1], name, {O::relaxed, O::acquire, O::seq_cst});
+      if (!o)
+        return std::nullopt;
+      auto c = genCell(*n.kids[2], name);
+      if (!c)
+        return std::nullopt;
+      Type elem = c->second.getElementType();
+      return TV{create<AtomicLoadOp>(l, elem, *o, c->first).getResult(), elem};
+    }
+    if (name == "atomic_store") {
+      if (!arity(3, "atomic_store release c v"))
+        return std::nullopt;
+      auto o = orderOf(*n.kids[1], name, {O::relaxed, O::release, O::seq_cst});
+      if (!o)
+        return std::nullopt;
+      auto c = genCell(*n.kids[2], name);
+      if (!c)
+        return std::nullopt;
+      auto v = genCellValue(*n.kids[3], c->second);
+      if (!v)
+        return std::nullopt;
+      create<AtomicStoreOp>(l, *o, *v, c->first);
+      return unit();
+    }
+    if (name == "atomic_cas") {
+      if (!arity(5, "atomic_cas acq_rel acquire c expected desired"))
+        return std::nullopt;
+      auto ok = orderOf(*n.kids[1], name, all, "success ");
+      if (!ok)
+        return std::nullopt;
+      // The failure order only reads, and it may not be stronger than the
+      // success order, so the cases C leaves undefined cannot be written.
+      llvm::SmallVector<O> fails = {O::relaxed};
+      if (*ok == O::acquire || *ok == O::acq_rel || *ok == O::seq_cst)
+        fails.push_back(O::acquire);
+      if (*ok == O::seq_cst)
+        fails.push_back(O::seq_cst);
+      auto bad = orderOf(*n.kids[2], name, fails, "failure ");
+      if (!bad)
+        return std::nullopt;
+      auto c = genCell(*n.kids[3], name);
+      if (!c)
+        return std::nullopt;
+      auto e = genCellValue(*n.kids[4], c->second);
+      if (!e)
+        return std::nullopt;
+      auto d = genCellValue(*n.kids[5], c->second);
+      if (!d)
+        return std::nullopt;
+      Type elem = c->second.getElementType();
+      Value old = create<AtomicCasOp>(l, elem, *ok, *bad, c->first, *e, *d);
+      return TV{old, elem};
+    }
+    return genAtomicRmw(n, name, mode);
+  }
+
+  R genAtomicRmw(const Node &n, const std::string &name,
+                 std::optional<OverflowMode> mode) {
+    static const std::map<std::string, RmwKind> kinds = {
+        {"atomic_swap", RmwKind::swap}, {"atomic_add", RmwKind::add},
+        {"atomic_sub", RmwKind::sub},   {"atomic_and", RmwKind::band},
+        {"atomic_or", RmwKind::bor},    {"atomic_xor", RmwKind::bxor},
+        {"atomic_min", RmwKind::min},   {"atomic_max", RmwKind::max},
+    };
+    RmwKind kind = kinds.at(name);
+    if (n.kids.size() != 4)
+      return fail(n, "'" + name + "' takes 3 arguments, as in '" + name +
+                         " acq_rel c v'");
+    using O = MemoryOrder;
+    auto o =
+        orderOf(*n.kids[1], name,
+                {O::relaxed, O::acquire, O::release, O::acq_rel, O::seq_cst});
+    if (!o)
+      return std::nullopt;
+    auto c = genCell(*n.kids[2], name);
+    if (!c)
+      return std::nullopt;
+    AtomicType cell = c->second;
+    Type elem = cell.getElementType();
+    bool refined = refinedCell(cell);
+    bool arith = kind == RmwKind::add || kind == RmwKind::sub;
+    bool bitwise =
+        kind == RmwKind::band || kind == RmwKind::bor || kind == RmwKind::bxor;
+    if (isBool(elem) && (arith || kind == RmwKind::min || kind == RmwKind::max))
+      return fail(n, "'" + name + "' needs a cell of an integer type, found " +
+                         typeName(cell));
+    // Nothing is known of the result of a bitwise op on a value that any
+    // task may have left there, so none can be proved to meet a range.
+    if (refined && bitwise)
+      return fail(n, "'" + name + "' is not allowed on the refined cell " +
+                         typeName(cell) +
+                         ", since its result cannot be "
+                         "proved to stay in the range; use a compare-and-"
+                         "swap loop that checks the new value (ADR 0052, "
+                         "section 3)");
+    OverflowMode overflow = OverflowMode::proof;
+    if (arith) {
+      // An atomic add states its own overflow handling, never the
+      // function's: nothing is assumed of what the hardware does.
+      if (!mode)
+        return fail(n, "'" + name +
+                           "' must state its overflow mode on the "
+                           "expression itself, as in '@wrap (" +
+                           name +
+                           " o c v)', or '@trap', '@saturate' or '@proof'; "
+                           "an enclosing @overflow(...) does not apply "
+                           "(ADR 0052, section 2)");
+      overflow = *mode;
+      if (refined && overflow != OverflowMode::proof)
+        return fail(n, "'" + name + "' on the refined cell " + typeName(cell) +
+                           " must be '@proof', with a goal "
+                           "that the result stays in the range for every "
+                           "value the cell may hold (ADR 0052, section 3)");
+      if (!refined && overflow == OverflowMode::proof)
+        return fail(n, "'@proof' on '" + name +
+                           "' needs a refined cell, "
+                           "such as 'atomic int{0..64}': another task may "
+                           "have left any value of " +
+                           typeName(elem) +
+                           " in this one, so the result cannot be proved "
+                           "to fit");
+    }
+    auto v = genCellValue(*n.kids[3], cell);
+    if (!v)
+      return std::nullopt;
+    Location l = loc(n);
+    Value old = create<AtomicRmwOp>(l, elem, kind, *o, c->first, *v, overflow);
+    // The goal of `@proof`: from any value the range allows, the result
+    // stays in it. `old` is such a value, and nothing else is known of it.
+    // The sum itself is only checked; codegen drops it.
+    if (arith && overflow == OverflowMode::proof) {
+      auto pm = OverflowModeAttr::get(&ctx_, OverflowMode::proof);
+      if (kind == RmwKind::add)
+        create<AddOp>(l, elem, old, *v, pm);
+      else
+        create<SubOp>(l, elem, old, *v, pm);
+    }
+    return TV{old, elem};
+  }
+
+  // `@wrap e`, `@trap e`, `@saturate e`, `@proof e`: `e` under that
+  // overflow mode (docs/design.md). The parser writes it `#overflow m e`.
+  R genModeExpr(const Node &n, Type expected) {
+    auto m = symbolizeOverflowMode(n.kids[1]->text);
+    if (!m)
+      return fail(*n.kids[1], "unknown overflow mode");
+    OverflowMode saved = overflow_;
+    const Node *savedNode = statedNode_;
+    std::optional<OverflowMode> savedMode = statedMode_;
+    overflow_ = *m;
+    statedNode_ = n.kids[2].get();
+    statedMode_ = *m;
+    R r = genExpr(*n.kids[2], expected);
+    overflow_ = saved;
+    statedNode_ = savedNode;
+    statedMode_ = savedMode;
+    return r;
+  }
+
   // `&&`, `||` and `==>` short-circuit in code, so they lower to `scf.if`.
   // In contracts, which have no effects, they are plain `arith` logic.
   R genLogic(const Node &n, const std::string &op, const Node &lhsNode,
@@ -2856,6 +3180,11 @@ class Gen {
     }
     if (fn.flags == "prelude" && (fn.text == "#is" || fn.text == "#payload"))
       return genMatchBuiltin(n);
+    if (fn.flags == "prelude" && fn.text == "#overflow" && argc == 2)
+      return genModeExpr(n, expected);
+    if (!local && isAtomicBuiltin(fn.text))
+      return genAtomic(n, fn.text, expected,
+                       statedNode_ == &n ? statedMode_ : std::nullopt);
     if (!local) {
       if (fn.text == "abort") {
         if (argc != 1 || n.kids[1]->kind != NodeKind::Unit)
@@ -3625,6 +3954,11 @@ class Gen {
         if (std::any_of(caps.begin(), caps.end(),
                         [&](const Capture &k) { return k.name == c->text; })) {
           error(*c, "'" + c->text + "' is captured twice; list it once");
+          continue;
+        }
+        if (mlir::isa<AtomicType>(b->type)) {
+          error(*c, "a lambda cannot capture the atomic cell '" + c->text +
+                        "' yet (ADR 0052); pass it as a borrowed parameter");
           continue;
         }
         if ((isLinear(b->type) || hasDrop(b->type)) && c->flags != "moved") {
@@ -8490,8 +8824,18 @@ class Gen {
   // A use of a linear local, or of one with a drop, as a value consumes
   // it, unless the use turns out to be a borrow (`unconsume`).
   void consumeValue(const BindingPtr &b, const Node &n) {
-    if (contract_ || ghost_ || n.text.find('#') != std::string::npos ||
-        !(isLinear(b->type) || hasDrop(b->type)))
+    if (contract_ || ghost_ || n.text.find('#') != std::string::npos)
+      return;
+    // An atomic cell is a place: copying one would not be atomic, so a use
+    // as a value moves it (ADR 0052, section 1).
+    if (mlir::isa<AtomicType>(b->type)) {
+      moved_[b] = Move{n.loc,
+                       "moved by its use as a value (an atomic cell "
+                       "is not copyable; borrow it instead)",
+                       false, &n};
+      return;
+    }
+    if (!(isLinear(b->type) || hasDrop(b->type)))
       return;
     moved_[b] = Move{n.loc, "consumed by its use as a value", false, &n};
   }
@@ -9370,6 +9714,12 @@ class Gen {
     }
     if (isUnit(v->type))
       return fail(valueNode, "'" + n.text + "' would have type unit");
+    if (mlir::isa<AtomicType>(v->type) &&
+        sema::hasModifier(modifiers, "mutable"))
+      return fail(n, "'" + n.text +
+                         "' is an atomic cell, which its "
+                         "operations change in place; it is never reassigned, "
+                         "so drop 'mutable'");
     if (!checkFresh(n.text, n.loc)) return std::nullopt;
     if (n.flags == "arena" && !mayBorrow(v->type))
       return fail(n, "'arena' must be a record holding the region, as in "
@@ -9518,6 +9868,10 @@ class Gen {
   std::vector<std::map<std::string, BindingPtr>> scopes_;
   bool contract_ = false;
   OverflowMode overflow_ = OverflowMode::proof;
+  // The expression an `@wrap`-style mode was written on, and the mode: an
+  // atomic add takes only a mode stated on itself (ADR 0052).
+  const Node *statedNode_ = nullptr;
+  std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma

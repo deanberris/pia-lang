@@ -1,0 +1,19 @@
+(* Where an atomic cell cannot appear yet (ADR 0052, section 1): a record
+   field, a cell of anything but an integer or bool, and a function's
+   result, since a local cell lives in its function's frame.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+let cells = type { hits : atomic u32 }
+
+let wide (c : borrowed atomic [u8; 4]) : unit = ()
+
+let give (x : u32) : atomic u32 = atomic_new x
+
+let table (xs : [atomic u32; 4]) : unit = ()
+
+(*
+// CHECK: atomic_type_errors.pia:6:20: error: a record field cannot be an atomic cell yet (ADR 0052); pass the cell as a borrowed parameter beside the record
+// CHECK: atomic_type_errors.pia:8:31: error: an atomic cell holds an integer or bool, not [u8; 4]
+// CHECK: atomic_type_errors.pia:10:22: error: a function cannot return an atomic cell yet; create it in the caller and pass it as a borrowed parameter
+// CHECK: atomic_type_errors.pia:12:18: error: a buffer of atomic cells is not supported yet (ADR 0052)
+*)

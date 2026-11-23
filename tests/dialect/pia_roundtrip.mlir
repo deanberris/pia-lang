@@ -121,3 +121,21 @@ func.func @exact(%a: !pia.int<0, 255>) -> i1 attributes {pia.spec} {
   %c = pia.exact.cmp le %p, %q : !pia.real
   return %c : i1
 }
+
+// Atomics (ADR 0052): a cell, its ops with their orders, and a fence.
+// CHECK-LABEL: func.func @atomics
+// CHECK: pia.atomic.new %{{.*}} : !pia.int<0, 255> -> !pia.atomic<!pia.int<0, 255>>
+// CHECK: pia.atomic.load acquire %{{.*}} : !pia.atomic<!pia.int<0, 255>> -> !pia.int<0, 255>
+// CHECK: pia.atomic.store release %{{.*}}, %{{.*}} : !pia.int<0, 255>, !pia.atomic<!pia.int<0, 255>>
+// CHECK: pia.atomic.rmw add acq_rel %{{.*}}, %{{.*}} overflow(wrap) : !pia.atomic<!pia.int<0, 255>>, !pia.int<0, 255> -> !pia.int<0, 255>
+// CHECK: pia.atomic.cas seq_cst acquire %{{.*}}, %{{.*}}, %{{.*}} : !pia.atomic<!pia.int<0, 255>>, !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
+// CHECK: pia.fence seq_cst
+func.func @atomics(%v: !pia.int<0, 255>) -> !pia.int<0, 255> {
+  %c = pia.atomic.new %v : !pia.int<0, 255> -> !pia.atomic<!pia.int<0, 255>>
+  %a = pia.atomic.load acquire %c : !pia.atomic<!pia.int<0, 255>> -> !pia.int<0, 255>
+  pia.atomic.store release %a, %c : !pia.int<0, 255>, !pia.atomic<!pia.int<0, 255>>
+  %b = pia.atomic.rmw add acq_rel %c, %a overflow(wrap) : !pia.atomic<!pia.int<0, 255>>, !pia.int<0, 255> -> !pia.int<0, 255>
+  %d = pia.atomic.cas seq_cst acquire %c, %a, %b : !pia.atomic<!pia.int<0, 255>>, !pia.int<0, 255>, !pia.int<0, 255> -> !pia.int<0, 255>
+  pia.fence seq_cst
+  return %d : !pia.int<0, 255>
+}

@@ -10,6 +10,9 @@ let line (x : u8) : usize = Target.cache_line
 
 let page (x : u8) : usize = Target.page_size
 
+(* Whether a locked add sets the flags (ADR 0052): codegen's to read. *)
+let flags (x : u8) : bool = Target.rmw_flags
+
 let wide (x : u8) : usize @target(x86_64_linux) = Target.vector_bits
 
 let vector (x : u8) : usize
@@ -20,6 +23,8 @@ let vector (x : u8) : usize
 // ARM: constant 128
 // ARM-LABEL: func.func @page
 // ARM: constant 16384
+// ARM-LABEL: func.func @flags
+// ARM: constant false
 // ARM-NOT: @wide
 // ARM-LABEL: func.func @vector
 // ARM: constant 128
@@ -27,6 +32,8 @@ let vector (x : u8) : usize
 // X86: constant 64
 // X86-LABEL: func.func @page
 // X86: constant 4096
+// X86-LABEL: func.func @flags
+// X86: constant true
 // X86-LABEL: func.func @wide
 // X86: constant 256
 // X86-LABEL: func.func @vector

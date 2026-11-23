@@ -44,6 +44,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | `!pia.int<lo, hi>` | `iN`, as above |
 | `[T; n]` | `memref<n x T>` |
 | `[T]` | `memref<? x T, strided<[1], offset: ?>>` |
+| `!pia.atomic<T>` | `memref<1 x T>`, with a `bool` held as `i8` |
 
 A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`. A constant array (`pia.const_array`) becomes a private constant `memref.global`, one per constant, which LLVM places in read-only data; each use is a `memref.get_global`. A `with_arena`'s region (`pia.region`) is a `memref.alloca` at the start of the function, zeroed by a loop where the `with_arena` is entered.
 
@@ -63,6 +64,14 @@ Each `pia.add`, `sub`, `mul`, `div` and `rem` is computed at one width. That wid
 `pia.convert` is the same with the input as the exact value. `pia.cmp` extends both sides to a width that holds both ranges. `to_index` and `from_index` become `index_cast` (or `index_castui` when the value is non-negative). `len` becomes `memref.dim`, or a constant for a fixed array. `load` and `store` become `memref.load` and `memref.store`, without bounds checks, because the verifier proved them in bounds.
 
 LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@overflow(saturate)` compiles to `llvm.uadd.sat.i8`. In a loop over slices, such as `add_rows` in `tests/codegen/saturate.pia`, LLVM's loop vectoriser turns it into NEON `uqadd.16b`.
+
+## Atomics
+
+An atomic cell is a one-element memref ([ADR 0052](adr/0052-atomics.md), section 5). `atomic_new` is a `memref.alloca` at the start of the function and a plain store, since nothing else sees the cell yet. Every other op is an LLVM atomic on the memref's aligned pointer, at the element's alignment: `llvm.load` and `llvm.store` with an ordering, `llvm.atomicrmw`, `llvm.cmpxchg` (whose old value is the result) and `llvm.fence`. `relaxed` is LLVM's `monotonic`, and the other orders keep their names. `atomic_min` and `atomic_max` are `min` and `max` on a signed cell, `umin` and `umax` otherwise. A `bool` is a byte, since LLVM's atomics take whole bytes.
+
+An add or sub lowers by its stated mode. `wrap` and `proof` are one `atomicrmw`. `trap` is one too, after which the exact result is computed from the old value it returns, at twice the cell's width, and checked as trap arithmetic is, so the cell already holds the wrapped value when the program stops. `saturate` is a loop: a relaxed load, then `cmpxchg` of the old value for the clamped result until no other task changed the cell in between, so no wrapped value is ever stored. The loop's failure order is the read half of the op's order.
+
+LLVM's backends choose the instructions, which are those of ADR 0052's table. `tests/codegen/atomics.pia` compiles one function per (operation, order) for both targets and checks the instructions with FileCheck. Both targets detect a `trap` overflow from the old value for now; the target model's `rmw_flags` records that x86_64's `lock xadd` sets the flags, for a lowering that reads them. The x86_64 lowering of `relaxed` inside `@target(x86_64_linux)` items, and its check, are a later step (ADR 0052, section 6).
 
 ## C ABI
 
@@ -123,4 +132,5 @@ Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` mak
 
 - There is no vectorisation yet. Loops compile to scalar code, apart from whatever LLVM's own vectoriser does with them.
 - `dyn`, nested buffers and buffer results are not lowered.
+- An atomic cell crosses the C boundary as a pointer to its element, like a one-element array.
 - `scf.for` compares its bounds as signed 64-bit integers, so a slice of 2^63 elements or more is not supported.

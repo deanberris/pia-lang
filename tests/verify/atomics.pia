@@ -1,0 +1,103 @@
+(* Atomic cells (ADR 0052, section 3). Within one function, another task
+   may write a cell between any two accesses, so each load, and the old
+   value each read-modify-write or compare-and-swap returns, is a fresh
+   value of the cell's type. A refined cell's range is assumed of every
+   value read and is a goal for every value stored, which makes it an
+   invariant across tasks.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* Nothing is known of a load but its type: two loads may differ. *)
+let twice (c : borrowed atomic u32) : bool
+  ensures result
+= atomic_load acquire c = atomic_load acquire c
+
+let count (c : borrowed atomic u64) : u64 = @wrap (atomic_add relaxed c 1)
+
+let publish (flag : borrowed atomic bool) : unit = atomic_store release flag true
+
+(* A compare-and-swap succeeded exactly when the old value is the one
+   expected. *)
+let claim (owner : borrowed atomic u32) (me : u32) : bool
+= let seen = atomic_cas acq_rel acquire owner 0 me in
+  seen = 0
+
+(* One expression's overflow mode, here on plain arithmetic. *)
+let mix (a : u8) (b : u8) : u8 = @wrap (a + b)
+
+(* A refined cell: at most 64 free slots. A value read is in range. *)
+let slots = type int{0..64}
+
+let free (c : borrowed atomic slots) : bool
+  ensures result
+= atomic_load acquire c <= 64
+
+(* A store must meet the range. *)
+let refill (c : borrowed atomic slots) (n : u32) : unit
+= if n <= 64 then atomic_store release c n else ()
+
+let overfill (c : borrowed atomic slots) (n : u32) : unit
+= atomic_store release c n
+
+(* `@proof` on a refined cell: the goal is that from every value the range
+   allows, the result stays in it. Adding zero does; adding one does not,
+   since another task may have filled the cell. *)
+let touch (c : borrowed atomic slots) (z : int{0..0}) : slots
+= @proof (atomic_add relaxed c z)
+
+let grab (c : borrowed atomic slots) : slots
+= @proof (atomic_add relaxed c 1)
+
+(* A cell made here is still shared once borrowed, so this proves nothing
+   about what the load returns. *)
+let local (x : u32) : u32 =
+  let c = atomic_new x in
+  let before = @wrap (atomic_add relaxed c 1) in
+  atomic_load seq_cst c
+
+(* Pia.Sync.atomic_update, written here until the module exists: a
+   compare-and-swap loop that stores `f` of the old value, and returns the
+   old value it replaced. `f`'s result is a goal of the cell's range, at
+   every call. A loop that may lose every race cannot be proved to end, so
+   it retries a bounded number of times and then gives back what it saw. *)
+let update_from (c : borrowed atomic slots) (f : (n : slots) -> slots)
+    (seen : slots) (tries : u8) : slots
+  decreases tries
+= if tries = 0 then seen
+  else (
+    let prev = atomic_cas acq_rel relaxed c seen (f seen) in
+    if prev = seen then seen else update_from c f prev (tries - 1))
+
+let atomic_update (c : borrowed atomic slots) (f : (n : slots) -> slots)
+    : slots
+= update_from c f (atomic_load relaxed c) 64
+
+let take (c : borrowed atomic slots) : bool
+= let seen = atomic_update c (let (n) => if n > 0 then n - 1 else n) in
+  seen > 0
+
+let give_back (c : borrowed atomic slots) : slots
+= atomic_update c (let (n) => if n < 64 then n + 1 else n)
+
+(* Expected report, in order.
+// CHECK: atomics.pia:69:63: proved: '-' does not overflow u8 [generic]
+// CHECK: atomics.pia:69:63: proved: '-' does not overflow u8 [generic]
+// CHECK: atomics.pia:69:35: proved: the measure of 'update_from[type#standin#update_from#f#type]' decreases [generic]
+// CHECK: atomics.pia:69:63: proved: '-' does not overflow u8 [generic]
+// CHECK: atomics.pia:69:35: proved: the measure of 'update_from[type#standin#atomic_update#f#type]' decreases [generic]
+// CHECK: atomics.pia:12:3: failed: the postcondition holds
+// CHECK: atomics.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: atomics.pia:37:42: proved: the value fits in int{0..64} [smt]
+// CHECK: atomics.pia:40:26: failed: the value fits in int{0..64}
+// CHECK-NEXT: counterexample: n = {{-?[0-9]+}}, value = {{-?[0-9]+}}
+// CHECK: atomics.pia:46:11: proved: '+' does not overflow int{0..64} [intervals]
+// CHECK: atomics.pia:49:11: failed: '+' does not overflow int{0..64}
+// CHECK-NEXT: counterexample: result = {{-?[0-9]+}}
+// CHECK: atomics.pia:76:58: proved: '-' does not overflow int{0..64} [smt]
+// CHECK: atomics.pia:80:48: proved: '+' does not overflow int{0..64} [smt]
+// CHECK: atomics.pia:69:63: proved: '-' does not overflow u8 [smt]
+// CHECK: atomics.pia:69:35: proved: the measure of 'update_from[lambda@atomics.pia:76:31]' decreases [smt]
+// CHECK: atomics.pia:69:63: proved: '-' does not overflow u8 [smt]
+// CHECK: atomics.pia:69:35: proved: the measure of 'update_from[lambda@atomics.pia:80:20]' decreases [smt]
+// CHECK: 14 proved, 3 failed, 0 skipped
+*)
