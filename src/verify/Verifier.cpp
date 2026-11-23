@@ -755,9 +755,14 @@ class Encoder {
       Type sort = sortOf(t);
       if (!sort) return;
       arrays_[arg] = declare(sort, "");
+      // An `out` buffer holds nothing yet: every element is empty
+      // (ADR 0048, section 6).
       if (holdsSlices(t))
-        innerLengths_[arg] = declare(
-            mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "lens " + name);
+        innerLengths_[arg] =
+            isWritable(arg) && !hasModifier(index, "inout")
+                ? emptyLengths()
+                : declare(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()),
+                          "lens " + name);
       auto shared = fn_.getArgAttrOfType<mlir::IntegerAttr>(
           index, PiaDialect::getLengthOfAttrName());
       if (auto a = mlir::dyn_cast<ArrayType>(t)) {
@@ -827,6 +832,18 @@ class Encoder {
     setArray(root, declare(arrays_[root].getType(), "", false));
     if (innerLengths_.count(root))
       innerLengths_[root] = declare(innerLengths_[root].getType(), "", false);
+  }
+
+  // Element lengths with every element empty.
+  Value emptyLengths() {
+    return create<mlir::smt::ArrayBroadcastOp>(
+        mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), bv(0));
+  }
+
+  bool hasModifier(unsigned index, llvm::StringRef modifier) {
+    auto mods = fn_.getArgAttrOfType<mlir::StringAttr>(
+        index, PiaDialect::getModifiersAttrName());
+    return mods && sema::hasModifier(mods.getValue(), modifier.str());
   }
 
   bool isWritable(Value buffer) {
@@ -966,6 +983,11 @@ class Encoder {
                        "the index fits in " + sema::typeName(f.getType())});
     if (mlir::isa<LoadOp, StoreOp>(op) && !boundsShared(op))
       out.push_back({ObligationKind::inbounds, "the index is within bounds"});
+    if (auto store = mlir::dyn_cast<StoreOp>(op);
+        store && store->hasAttr("pia.fills") &&
+        mlir::isa<SliceType>(store.getValue().getType()))
+      out.push_back(
+          {ObligationKind::emptyslot, "the element written over owns nothing"});
     if (mlir::isa<SliceOp>(op) && !boundsShared(op))
       out.push_back({ObligationKind::inbounds, "the slice is within bounds"});
     if (mlir::isa<AbortOp>(op))
@@ -1208,9 +1230,24 @@ class Encoder {
       // Replacing an element of a buffer of slices stores the slice's
       // contents and its length (ADR 0048).
       if (mlir::isa<SliceType>(store.getValue().getType())) {
+        // An element moved out keeps its contents, which the moved value
+        // may still read through, and owns none of them (ADR 0048,
+        // section 6).
+        if (store->hasAttr("pia.moved_out")) {
+          if (Value inner = innerLengths_.lookup(root))
+            innerLengths_[root] = create<mlir::smt::ArrayStoreOp>(
+                inner.getType(), inner, at, bv(0));
+          return true;
+        }
         Value sv = calleeArray(store.getValue());
         Value slen = lengths_.lookup(store.getValue());
         Value inner = innerLengths_.lookup(root);
+        // A box stored into a buffer goes where no box is: the element
+        // written over must own nothing (ADR 0048, section 6).
+        if (inner && store->hasAttr("pia.fills"))
+          goal(ObligationKind::emptyslot, op,
+               "the element written over owns nothing",
+               eq(create<mlir::smt::ArraySelectOp>(inner, at), bv(0)), false);
         if (sv && slen && inner) {
           setArray(root, create<mlir::smt::ArrayStoreOp>(arr.getType(), arr, at, sv));
           innerLengths_[root] = create<mlir::smt::ArrayStoreOp>(
@@ -2351,9 +2388,13 @@ class Encoder {
         Type sort = sortOf(r.getType());
         if (!sort) continue;
         arrays_[r] = declare(sort, "", false);
+        // A buffer lent as `out` holds nothing yet.
         if (holdsSlices(r.getType()))
-          innerLengths_[r] = declare(
-              mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
+          innerLengths_[r] =
+              callee && callee->hasAttr("pia.out_result")
+                  ? emptyLengths()
+                  : declare(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()),
+                            "", false);
         if (auto a = mlir::dyn_cast<ArrayType>(r.getType())) {
           lengths_[r] = bv(APInt(64, a.getLength()));
         } else {
