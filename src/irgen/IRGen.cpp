@@ -889,6 +889,10 @@ class Gen {
     if (auto m = theoryInfo_.modelOf.find(sig.name);
         m != theoryInfo_.modelOf.end())
       fn->setAttr("pia.model", b_.getStringAttr(m->second));
+    // An `@target(m)` function's proofs see m's values (ADR 0049).
+    if (auto t = theoryInfo_.targetOf.find(sig.name);
+        t != theoryInfo_.targetOf.end())
+      fn->setAttr("pia.target", b_.getStringAttr(t->second));
     if (auto w = theoryInfo_.witnesses.find(sig.name);
         w != theoryInfo_.witnesses.end())
       fn->setAttr("pia.witness_of", b_.getStringAttr(w->second));
@@ -9664,9 +9668,10 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
   // A program that names `Target` gets the built-in theory and the model
   // of the target it is compiled for (ADR 0049).
   syntax::NodePtr targeted;
+  std::map<std::string, std::string> targetOf;
   if (usesTargetTheory(erased ? *erased : program)) {
     targeted = syntax::clone(erased ? *erased : program);
-    if (!addTargetTheory(*targeted, options.triple, diags))
+    if (!addTargetTheory(*targeted, options.triple, diags, &targetOf))
       return nullptr;
   }
   const syntax::Node &source = targeted ? *targeted
@@ -9678,6 +9683,7 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
     TheoryInfo info;
     flattenTheories(*flat, diags, &info);
     if (diags.hasErrors()) return nullptr;
+    info.targetOf = std::move(targetOf);
     // Trust grants, `import T trusting`, for --trust-report.
     llvm::SmallVector<mlir::Attribute> grants;
     for (const auto &[theory, at] : info.trusting)
