@@ -6,7 +6,7 @@ Every integer overflow, every array index and every contract in a Pia program is
 
 The name is the second half of *Sophia*, and it stands for **Proved In Advance**.
 
-[Documentation](https://pia-lang.dev/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Stream delineation](docs/streams.pia.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [Status and roadmap](docs/status.md) · [Sponsor](https://github.com/sponsors/deanberris)
+[Documentation](https://pia-lang.dev/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Stream delineation](docs/streams.pia.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [Status and roadmap](docs/status.md) · [Contributing](CONTRIBUTORS.md) · [Sponsor](https://github.com/sponsors/deanberris)
 
 ## A first proof
 
@@ -122,6 +122,10 @@ CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs `bazel build //
 - [Architecture Decision Records](docs/adr/README.md): why Pia is the way it is
 
 Every example in this README and in the user documentation is a test: `bazel test //tests/docs:doc_examples_test` runs each one through `piac` and compares the output.
+
+## Contributing
+
+Contributions are welcome, including ones written with AI tools, with or without attribution. You own what you submit, and it must pass the proofs and tests. [CONTRIBUTORS.md](CONTRIBUTORS.md) has the details.
 
 ## Sponsoring Pia
 
