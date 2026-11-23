@@ -19,6 +19,20 @@ bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
 
 bazel_dep(name = "z3", version = "4.15.2")
 
+# Z3's QF_BV tactic simplifies and runs its AIG pass after bit-blasting only
+# while the whole process holds less than 300 MB (MEMLIMIT in
+# qfbv_tactic.cpp). A proof run with many threads holds more, so the same
+# query was searched differently, at a different rlimit cost, than with one
+# thread, which proof_bench's determinism check caught on
+# lib/Pia/Core/Charconv.pia. The patch always takes the branch a small
+# process takes, so every cost is what a single thread already measured.
+single_version_override(
+    module_name = "z3",
+    patch_strip = 1,
+    patches = ["//third_party/z3:qfbv_memory_independent.patch"],
+    version = "4.15.2",
+)
+
 # Z3's BCR module builds with rules_foreign_cc's CMake rule. On macOS,
 # apple_support's toolchain links with a different tool (wrapped_clang) from
 # the one it compiles with (wrapped_clang_pp). rules_foreign_cc hands CMake

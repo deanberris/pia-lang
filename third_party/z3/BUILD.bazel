@@ -1,0 +1,1 @@
+exports_files(["qfbv_memory_independent.patch"])
