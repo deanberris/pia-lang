@@ -31,6 +31,9 @@ struct Outcome {
   std::string method;  // "intervals" or "smt" when proved, else the reason
   std::vector<ModelValue> counterexample;
   unsigned long long cost = 0;  // Z3's resource count, with reportCost
+  // Wall-clock milliseconds spent solving it, 0 for a goal decided without
+  // the solver. It depends on the machine; `cost` does not.
+  double ms = 0;
   // Theories (ADR 0036): the axioms the goal's query was given, and
   // whether it was solved again with every axiom of its theories, in which
   // case `axioms` lists those.

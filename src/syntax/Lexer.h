@@ -17,6 +17,9 @@ struct LexOptions {
   // Read the buffer as a literate `.pia.md` file: Markdown prose, with code
   // only in fenced `pia` blocks (ADR 0029).
   bool literate = false;
+  // Read the buffer as REPL cells, where a line at column 1 can also start
+  // with a statement such as `if` or `match`, so it begins a new item.
+  bool cells = false;
   // Where to keep the comments (and, in a literate file, the prose). Null
   // drops them.
   std::vector<RawComment> *comments = nullptr;

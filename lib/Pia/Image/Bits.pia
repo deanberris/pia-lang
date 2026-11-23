@@ -1,0 +1,172 @@
+(* Pia.Image.Bits: LSB-first bit readers and writers over a byte slice,
+   as GIF's LZW and deflate (RFC 1951) read them (ADR 0054, step 1).
+
+   Bit k of a slice is bit k % 8 of byte k / 8, counting from the least
+   significant end (`bit`). An n-bit field at position pos is read least
+   significant bit first (`bits_at`): bit pos is its low bit. Fields are
+   at most 16 bits wide, which covers LZW's 12-bit codes and every
+   deflate field.
+
+   A bit position is a usize, so a slice has `nbits s` addressable bits:
+   8 * len s, or the largest usize for a slice too long for that (more
+   than 2^61 - 1 bytes, which no real input is).
+
+   `read_bits` loads the three bytes that can hold a field (`win`) and
+   shifts and masks them; the lemma `window_bits` proves that this is
+   `bits_at`, by induction on the field's width. `write_bits` writes the
+   field into those bytes, and proves both the read back and the frame:
+   no byte outside the field's bytes changes, and inside the window only
+   the field's bits do. *)
+module Pia.Image.Bits : Bits
+
+interface Bits = sig
+  let spec bit : (s : [u8]) -> (k : usize) -> int{0..1}
+  let spec pow2 : (n : int{0..16}) -> int{1..65536}
+  let spec nbits : (s : [u8]) -> usize
+  let spec bits_at : (s : [u8]) -> (pos : usize) -> (n : int{0..16}) -> u32
+  let spec byte_or0 : (s : [u8]) -> (j : usize) -> u8
+  let spec win : (s : [u8]) -> (q : usize) -> u32
+  let spec field : (n : int{0..16}) -> (r : int{0..7}) -> u32
+  let bit_len : (s : [u8]) -> usize
+    ensures result = nbits s
+  let read_bits : (s : [u8]) -> (pos : usize) -> (n : int{0..16}) -> u32
+    requires pos + n <= nbits s
+    ensures result = bits_at s pos n
+    ensures result < pow2 n
+  let write_bits : (dst : borrowed inout mutable [u8]) -> (pos : usize) -> (n : int{0..16}) -> (v : u32) -> unit
+    requires v < pow2 n
+    requires pos + n <= nbits dst
+    ensures bits_at dst pos n = v
+    ensures forall (k in 0 .. len dst). (k < pos / 8 || pos + n <= 8 * k) ==> dst.[k] = old (dst.[k])
+    ensures win dst (pos / 8) = ((old (win dst (pos / 8)) & ~(field n (pos % 8))) | (v << (pos % 8)))
+end
+
+(** Bit k of s: bit k % 8 of byte k / 8, from the least significant end. *)
+let spec bit (s : [u8]) (k : usize) : int{0..1}
+  requires k < 8 * len s
+= let b = s.[k / 8] in
+  let sh : int{0..7} = k % 8 in
+  let v : int{0..1} = (b >> sh) & 1 in v
+
+(** 2^n. *)
+let spec pow2 (n : int{0..16}) : int{1..65536} =
+  (let one : u32 = 1 in let v : int{1..65536} = one << n in v)
+
+(** The number of bit positions of s that a usize can address. *)
+let spec nbits (s : [u8]) : usize =
+  if len s <= 2305843009213693951 then 8 * len s else 18446744073709551615
+
+(** The n-bit field at bit pos, least significant bit first. *)
+let spec bits_at (s : [u8]) (pos : usize) (n : int{0..16}) : u32
+  requires pos + n <= nbits s
+  ensures result < pow2 n
+  decreases n
+= if n = 0 then 0
+  else (let m : int{0..15} = n - 1 in bit s pos + 2 * bits_at s (pos + 1) m)
+
+(** s.[j], or 0 past the end. *)
+let spec byte_or0 (s : [u8]) (j : usize) : u8 = if j < len s then s.[j] else 0
+
+(** The 24 bits of bytes q, q + 1 and q + 2, little endian, with 0 for a
+    byte past the end. *)
+let spec win (s : [u8]) (q : usize) : u32
+  requires q <= 2305843009213693951
+= let b0 : u32 = byte_or0 s q in
+  let b1 : u32 = byte_or0 s (q + 1) in
+  let b2 : u32 = byte_or0 s (q + 2) in
+  (b0 | (b1 << 8) | (b2 << 16))
+
+(** The mask of an n-bit field at bit r of a window. *)
+let spec field (n : int{0..16}) (r : int{0..7}) : u32 =
+  (let one : u32 = 1 in ((one << n) - 1) << r)
+
+(** A bit of s is the matching bit of the window that holds it. *)
+let lemma window_bit (s : [u8]) (k : usize) (q : usize) : unit
+  requires q <= 2305843009213693951 && 8 * q <= k && k - 8 * q < 24
+  requires k < nbits s
+  ensures bit s k = ((win s q >> (k - 8 * q)) & 1)
+= let j : usize = k - 8 * q in
+  if j < 8 then assert k / 8 = q && k % 8 = j
+  else if j < 16 then assert k / 8 = q + 1 && k % 8 = j - 8
+  else assert k / 8 = q + 2 && k % 8 = j - 16
+
+(* Masking with an odd mask splits off the low bit. *)
+let lemma and_step (u : u32) (m : u32) : unit
+  requires (m & 1) = 1
+  ensures (u & m) = (u & 1) + 2 * ((u >> 1) & (m >> 1))
+= ()
+
+let lemma pow2_step (n : int{1..16}) : unit
+  ensures pow2 n = 2 * pow2 (n - 1)
+= ()
+
+(* An n-bit field of a window is its low bit plus twice the (n - 1)-bit
+   field above it, as bits_at is defined. *)
+let lemma mask_step (w : u32) (r : usize) (n : int{1..16}) : unit
+  requires r + n <= 24
+  ensures ((w >> r) & (pow2 n - 1)) = ((w >> r) & 1) + 2 * ((w >> (r + 1)) & (pow2 (n - 1) - 1))
+= let u : u32 = w >> r in
+  let m : u32 = pow2 n - 1 in
+  pow2_step n;
+  assert (u >> 1) = (w >> (r + 1));
+  and_step u m
+
+(** A field inside a window is the window shifted and masked. *)
+let lemma window_bits (s : [u8]) (pos : usize) (n : int{0..16}) (q : usize) : unit
+  requires q <= 2305843009213693951 && 8 * q <= pos && pos - 8 * q + n <= 24
+  requires pos + n <= nbits s
+  ensures bits_at s pos n = ((win s q >> (pos - 8 * q)) & (pow2 n - 1))
+  decreases n
+= if n > 0 then (
+    let m : int{0..15} = n - 1 in
+    window_bits s (pos + 1) m q;
+    window_bit s pos q;
+    mask_step (win s q) (pos - 8 * q) n)
+
+(** The number of addressable bits of s. *)
+let bit_len (s : [u8]) : usize
+  ensures result = nbits s
+= if len s <= 2305843009213693951 then 8 * len s else 18446744073709551615
+
+(** The n-bit field at bit pos, least significant bit first. *)
+let read_bits (s : [u8]) (pos : usize) (n : int{0..16}) : u32
+  requires pos + n <= nbits s
+  ensures result = bits_at s pos n
+  ensures result < pow2 n
+= let q : usize = pos / 8 in
+  let r : int{0..7} = pos % 8 in
+  let b0 : u32 = if q < len s then s.[q] else 0 in
+  let b1 : u32 = if q + 1 < len s then s.[q + 1] else 0 in
+  let b2 : u32 = if q + 2 < len s then s.[q + 2] else 0 in
+  let w : u32 = (b0 | (b1 << 8) | (b2 << 16)) in
+  let one : u32 = 1 in
+  let mask : u32 = (one << n) - 1 in
+  window_bits s pos n q;
+  (w >> r) & mask
+
+(** Writes v as the n-bit field at bit pos, least significant bit first,
+    and leaves every other bit of dst as it was. *)
+let write_bits (dst : borrowed inout mutable [u8]) (pos : usize) (n : int{0..16}) (v : u32) : unit
+  requires v < pow2 n
+  requires pos + n <= nbits dst
+  ensures bits_at dst pos n = v
+  ensures forall (k in 0 .. len dst). (k < pos / 8 || pos + n <= 8 * k) ==> dst.[k] = old (dst.[k])
+  ensures win dst (pos / 8) = ((old (win dst (pos / 8)) & ~(field n (pos % 8))) | (v << (pos % 8)))
+= let q : usize = pos / 8 in
+  let r : int{0..7} = pos % 8 in
+  let one : u32 = 1 in
+  let mask : u32 = ((one << n) - 1) << r in
+  let val : u32 = v << r in
+  if q < len dst then (
+    let m : u8 = mask & 0xFF in
+    let x : u8 = val & 0xFF in
+    dst.[q] <- ((dst.[q] & ~m) | x)) else ();
+  if q + 1 < len dst then (
+    let m : u8 = (mask >> 8) & 0xFF in
+    let x : u8 = (val >> 8) & 0xFF in
+    dst.[q + 1] <- ((dst.[q + 1] & ~m) | x)) else ();
+  if q + 2 < len dst then (
+    let m : u8 = (mask >> 16) & 0xFF in
+    let x : u8 = (val >> 16) & 0xFF in
+    dst.[q + 2] <- ((dst.[q + 2] & ~m) | x)) else ();
+  window_bits dst pos n q

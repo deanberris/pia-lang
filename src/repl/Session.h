@@ -61,10 +61,42 @@ struct Event {
   Where where;
 };
 
+// One goal that took the solver a while, for ProofStats::costliest.
+struct GoalCost {
+  std::string function; // the definition it belongs to, if any
+  std::string claim;
+  std::string status;
+  Where where;
+  double ms = 0;
+  unsigned long long cost = 0; // Z3's resource count
+  bool mine = false; // the cell's own, not one the environment re-proved
+};
+
+// What proving a cell took. Each cell proves the whole environment again,
+// so the counts cover the cell's own goals and the environment's.
+struct ProofStats {
+  bool verified = false; // false for commands and cells that never got to
+                         // the verifier
+  double cellMs = 0;     // the whole cell, from parse to printed value
+  double verifyMs = 0;   // encoding and solving
+  double solveMs = 0;    // wall clock, with goals solved in parallel
+  unsigned threads = 0;  // solver threads
+  double runMs = 0;      // compiling and running expressions
+  unsigned goals = 0;    // every goal in the environment
+  unsigned cellGoals = 0, cellIntervals = 0, cellSmt = 0;     // this cell's
+  unsigned proved = 0, failed = 0, unproved = 0, allowed = 0; // every goal
+  unsigned smt = 0;            // goals that needed the solver
+  unsigned long long cost = 0; // Z3's resource count over every goal
+  // The slowest solver goals, slowest first: up to three of the cell's own,
+  // then up to three the environment re-proved.
+  std::vector<GoalCost> costliest;
+};
+
 struct CellResult {
   unsigned cell = 0; // the cell's number, counting from 1
   bool ok = true;    // false when anything in the cell failed
   std::vector<Event> events;
+  ProofStats stats;
 };
 
 struct Options {
@@ -109,6 +141,12 @@ private:
 
 // A cell's events as text, the way `pia repl` prints them.
 std::string render(const CellResult &result);
+
+// What a cell's proof took, in a few lines: time, goals by status and
+// method, and the slowest goals. Empty when the cell proved nothing. The
+// MCP server adds it to every result; `pia repl` does not print it, since
+// times differ between runs and its output is checked by the docs' tests.
+std::string renderStats(const ProofStats &stats);
 
 // A cell's events as JSON, the way `pia repl --json` and the MCP server
 // return them (docs/repl.md, "JSON output").

@@ -55,6 +55,11 @@ NodePtr parseProgram(std::string_view source, Diagnostics &diags,
 NodePtr parseProgram(std::string_view source, Diagnostics &diags,
                      bool literate = false);
 
+// The same, for REPL cells: a top-level expression may be any expression,
+// such as `1 + 2` or `count <- 7`, where a file allows only a metaprogram's
+// invocation there.
+NodePtr parseCells(std::string_view source, Diagnostics &diags);
+
 // Parses a sequence of contract clauses (`requires ...`, `ensures ...`) on
 // their own, as in a design-doc fragment. Returns a Contracts node.
 NodePtr parseContractFragment(std::string_view source, Diagnostics &diags);

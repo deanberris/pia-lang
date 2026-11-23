@@ -1,0 +1,34 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Image (ADR 0054): image and compression codecs, proved total and
+# proved against written specifications. Step 1 is the bit reader and
+# writer the codecs share (Bits) and the dimensions and indices of an image
+# (Raster). Each module is proved and compiled on its own, and importers
+# build against its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files([
+    "Bits.pia",
+    "Raster.pia",
+])
+
+# LSB-first bit fields over a byte slice: tests/std/image_bits.pia checks
+# its goals; tests/std/image_bits_edges.pia and :image_bits_run test it
+# through its interface.
+pia_library(
+    name = "bits",
+    src = "Bits.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Image dimensions, sample indices and rectangles:
+# tests/std/image_raster.pia checks its goals; tests/std/image_raster_edges.pia
+# and :image_raster_run test it through its interface.
+pia_library(
+    name = "raster",
+    src = "Raster.pia",
+    target_compatible_with = PIA_TARGETS,
+)

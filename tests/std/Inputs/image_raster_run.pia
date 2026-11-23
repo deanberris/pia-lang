@@ -1,0 +1,21 @@
+(* Runs Pia.Image.Raster's compiled code, linked by pia_binary: 0 when
+   index and row_start give the offsets of an RGB image laid out row by
+   row, and contains accepts the rectangles inside it and no other, and
+   otherwise the number of the first wrong one. *)
+import Pia.Image.Raster.Raster as R
+
+let main () : i32 =
+  let d : R.dims = { w = 640; h = 480; c = 3 } in
+  let inner : R.rect = { x0 = 10; y0 = 20; rw = 100; rh = 50 } in
+  let edge : R.rect = { x0 = 600; y0 = 0; rw = 40; rh = 480 } in
+  let over : R.rect = { x0 = 600; y0 = 0; rw = 41; rh = 1 } in
+  let tall : R.rect = { x0 = 0; y0 = 1; rw = 1; rh = 480 } in
+  if R.index d 0 0 0 <> 0 then 1
+  else if R.index d 1 0 2 <> 5 then 2
+  else if R.index d 639 479 2 <> 921599 then 3
+  else if R.index d 5 2 1 <> 3856 then 4
+  else if R.contains d inner = false || R.contains d edge = false then 5
+  else if R.contains d over || R.contains d tall then 6
+  else if R.row_start d inner 0 <> 38430 then 7
+  else if R.row_start d edge 479 <> 921480 then 8
+  else 0

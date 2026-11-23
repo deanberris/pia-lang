@@ -1,0 +1,28 @@
+(* Runs Pia.Image.Bits' compiled code on a buffer in an arena, linked by
+   pia_binary: 0 when fields written LSB first, as GIF's LZW and deflate
+   pack them, read back and land in the bytes they should, and otherwise
+   the number of the first wrong one. *)
+import Pia.Image.Bits.Bits as B
+
+let checks (b : borrowed inout mutable [u8]) : i32
+  requires len b = 4
+= b.[0] <- 0; b.[1] <- 0; b.[2] <- 0; b.[3] <- 0xFF;
+  (* Three 3-bit codes, 1, 2 and 5: 0b101_010_001 = 0x51, then bit 8 set. *)
+  B.write_bits b 0 3 1;
+  B.write_bits b 3 3 2;
+  B.write_bits b 6 3 5;
+  if b.[0] <> 0x51 || b.[1] <> 0x01 then 1
+  else if B.read_bits b 0 3 <> 1 || B.read_bits b 3 3 <> 2 || B.read_bits b 6 3 <> 5 then 2
+  else if B.read_bits b 0 9 <> 0x151 then 3
+  else (
+    (* A 16-bit field across three bytes, at bit 9. *)
+    B.write_bits b 9 16 0xBEEF;
+    if B.read_bits b 9 16 <> 0xBEEF then 4
+    else if B.read_bits b 0 9 <> 0x151 then 5
+    else if b.[3] <> 0xFF then 6
+    else if B.read_bits b 25 7 <> 0x7F then 7
+    else if B.bit_len b <> 32 then 8
+    else if B.read_bits b 32 0 <> 0 then 9
+    else 0)
+
+let main () : i32 = with_arena 4 (let (m) => checks m.mem)

@@ -131,3 +131,12 @@ All of these are designed in [ADR 0027](adr/0027-coroutines-and-race-freedom.md)
 | `<thread>`, `<stop_token>` | `Pia.Task`: structured scopes and cancellation tokens | Idiom | phase 5 |
 | `<mutex>`, `<shared_mutex>`, `<condition_variable>`, `<semaphore>`, `<latch>`, `<barrier>` | `Pia.Sync`: locks that own their data, with lock levels | Idiom | phase 5 |
 | `<future>` | `Pia.Task`'s `join`, and `Pia.Chan` | Idiom | phase 5 |
+
+## Pia-only modules
+
+These have no C++ standard header. They are listed here because they are library modules with the same three tests each in `tests/std`.
+
+| Module | What | Status |
+| --- | --- | --- |
+| `Pia.Image.Bits` | LSB-first bit fields over a byte slice, as GIF's LZW and deflate read them: `read_bits` and `write_bits` for fields of up to 16 bits, proved against `bits_at`, the field as its bits, with the write's frame proved ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md)) | done (173 goals) |
+| `Pia.Image.Raster` | image dimensions (`dims`), the index of a sample and the rows of a rectangle, each proved to lie below `size w h c` (ADR 0054) | done (50 goals) |
