@@ -14,7 +14,7 @@ let clamp (v : u8) (lo : u8) (hi : int{0..9}) : u8
 = if v < lo then lo else if v > hi then hi else v
 
 let dec (d : int{-2..2}) : int{-3..1}
-  ensures result + 1 = d
+  ensures result = d - 1
 = d - 1
 
 let meta conj (xs : list) : syntax = fold (let (a) (h) => `( $a && $h )) `( true ) xs
@@ -85,4 +85,7 @@ per_error parse_error
    AST:  (LetItem "seen_Empty"
    AST:  (LetItem "seen_TooLong"
    AST:  (LetItem "seen_NotDigit"
+   Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 15 proved, 0 failed, 0 skipped
 *)
