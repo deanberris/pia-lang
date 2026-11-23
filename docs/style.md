@@ -95,6 +95,8 @@ $ git clang-format origin/main
 
 The first line installs the same `clang-format` that CI uses, since versions differ in small ways. The second formats only the lines your branch changed since `main`. Format what you touch, and do not reformat whole files in a change that is about something else: it buries the real change in the diff and conflicts with other work in flight. A pull request that only reformats is welcome when nobody else is working in that file.
 
+A table laid out by hand, such as the X-macro list of token kinds in [`src/syntax/Token.h`](../src/syntax/Token.h), goes between `// clang-format off` and `// clang-format on`, with a comment saying why. clang-format would otherwise reflow it, and not always the same way twice.
+
 CI checks the lines a pull request changes with `git clang-format --diff` ([`.github/workflows/style.yml`](https://github.com/deanberris/pia-lang/blob/main/.github/workflows/style.yml)). Lines you did not touch are not checked.
 
 ### Naming

@@ -54,12 +54,12 @@ lsp::Json tools() {
   poll["description"] =
       "Wait for a job that execute returned, and get its state (queued, "
       "running, done) and, once done, its result.";
-  poll["inputSchema"] = schema(
-      {{"job", prop("number", "The job number from execute")},
-       {"wait_ms", prop("number", "How long to wait (default 10000)")},
-       {"json", prop("boolean", "Also return the result as JSON, in "
-                                "structuredContent (default false)")}},
-      {"job"});
+  poll["inputSchema"] =
+      schema({{"job", prop("number", "The job number from execute")},
+              {"wait_ms", prop("number", "How long to wait (default 10000)")},
+              {"json", prop("boolean", "Also return the result as JSON, in "
+                                       "structuredContent (default false)")}},
+             {"job"});
   lsp::Json result;
   result["tools"] = lsp::Json::Array{execute, poll};
   return result;
@@ -74,8 +74,10 @@ lsp::Json textContent(const std::string &text) {
 
 std::chrono::milliseconds waitOf(const lsp::Json &args) {
   double ms = args["wait_ms"].asNumber(kDefaultWaitMs);
-  if (ms < 0) ms = 0;
-  if (ms > kMaxWaitMs) ms = kMaxWaitMs;
+  if (ms < 0)
+    ms = 0;
+  if (ms > kMaxWaitMs)
+    ms = kMaxWaitMs;
   return std::chrono::milliseconds(static_cast<long long>(ms));
 }
 
@@ -91,7 +93,8 @@ lsp::Json reply(const lsp::Json &id, lsp::Json result) {
   return r;
 }
 
-lsp::Json errorReply(const lsp::Json &id, int code, const std::string &message) {
+lsp::Json errorReply(const lsp::Json &id, int code,
+                     const std::string &message) {
   lsp::Json e;
   e["code"] = code;
   e["message"] = message;
@@ -102,7 +105,7 @@ lsp::Json errorReply(const lsp::Json &id, int code, const std::string &message) 
   return r;
 }
 
-}  // namespace
+} // namespace
 
 // Some clients, Claude Code among them, show an agent the structured
 // content in place of the text when both are present, and the events are
@@ -118,7 +121,8 @@ lsp::Json McpServer::jobResult(const Kernel::Status &s, bool json) {
     lsp::Json cell = toJson(*s.result);
     structured["result"] = cell;
     text = render(*s.result);
-    if (text.empty()) text = s.result->ok ? "ok\n" : "failed\n";
+    if (text.empty())
+      text = s.result->ok ? "ok\n" : "failed\n";
     isError = !s.result->ok;
   } else if (s.state == Kernel::State::Unknown) {
     text = "there is no job " + std::to_string(s.job) + "\n";
@@ -128,7 +132,8 @@ lsp::Json McpServer::jobResult(const Kernel::Status &s, bool json) {
   }
   lsp::Json result;
   result["content"] = textContent(text);
-  if (json) result["structuredContent"] = std::move(structured);
+  if (json)
+    result["structuredContent"] = std::move(structured);
   result["isError"] = isError;
   return result;
 }
@@ -146,9 +151,9 @@ lsp::Json McpServer::callTool(const std::string &name, const lsp::Json &args) {
   }
   if (name == "poll") {
     double job = args["job"].asNumber(0);
-    return jobResult(kernel_.poll(job < 0 ? 0 : static_cast<uint64_t>(job),
-                                  waitOf(args)),
-                     wantsJson(args));
+    return jobResult(
+        kernel_.poll(job < 0 ? 0 : static_cast<uint64_t>(job), waitOf(args)),
+        wantsJson(args));
   }
   lsp::Json r;
   r["content"] = textContent("unknown tool " + name + "\n");
@@ -180,9 +185,12 @@ lsp::Json McpServer::handle(const lsp::Json &message) {
         "{\"code\": \":help\"}.";
     return reply(id, std::move(result));
   }
-  if (notification) return lsp::Json();
-  if (method == "ping") return reply(id, lsp::Json::Object{});
-  if (method == "tools/list") return reply(id, tools());
+  if (notification)
+    return lsp::Json();
+  if (method == "ping")
+    return reply(id, lsp::Json::Object{});
+  if (method == "tools/list")
+    return reply(id, tools());
   if (method == "tools/call") {
     const lsp::Json &params = message["params"];
     if (!params["name"].isString())
@@ -195,13 +203,16 @@ lsp::Json McpServer::handle(const lsp::Json &message) {
 void McpServer::serve(std::istream &in, std::ostream &out) {
   std::string line;
   while (std::getline(in, line)) {
-    if (line.find_first_not_of(" \t\r") == std::string::npos) continue;
+    if (line.find_first_not_of(" \t\r") == std::string::npos)
+      continue;
     std::optional<lsp::Json> msg = lsp::Json::parse(line);
-    lsp::Json r = msg ? handle(*msg) : errorReply(lsp::Json(), -32700, "parse error");
-    if (r.isNull()) continue;
+    lsp::Json r =
+        msg ? handle(*msg) : errorReply(lsp::Json(), -32700, "parse error");
+    if (r.isNull())
+      continue;
     out << r.dump() << "\n";
     out.flush();
   }
 }
 
-}  // namespace pia::repl
+} // namespace pia::repl

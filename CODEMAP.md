@@ -138,6 +138,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Search.pia` holds the non-modifying sequence algorithms. `lib/Pia/Core/Algo/Modify.pia` holds the modifying ones. `lib/Pia/Core/Algo/Remove.pia` is `remove`.
 - `lib/Pia/Core/Algo/Sort.pia`, `lib/Pia/Core/Algo/Heap.pia` and `lib/Pia/Core/Algo/BinarySearch.pia` hold sorting, the heap operations and the binary search family. `lib/Pia/Core/Algo/Permutation.pia` holds the multiset spec functions the sorts use.
 - `lib/Pia/Core/Algo/PartialSort.pia` holds `partial_sort` and `nth_element`. `lib/Pia/Core/Algo/Partition.pia` holds `is_partitioned`, `partition_point` and `partition`.
+- `lib/Pia/Core/Algo/Merge.pia` holds `merge`, from two sorted ranges into an out slice.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
 - `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it (ADR 0045).
 
