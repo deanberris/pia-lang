@@ -1,0 +1,85 @@
+(* Pia.Core.Algo.Partition: <algorithm>'s partitioning operations (ADR
+   0040, phase 1.7): is_partitioned, partition_point and partition, each
+   with a predicate and proved once, over the element type and any such
+   function (ADR 0043, ADR 0044).
+
+   partition is C++'s unstable partition: it moves every element p holds
+   for before every other, by Pia.Core.Algo.Sort's exchange, whose
+   contract keeps how often each value occurs, so the result is a
+   permutation of the input. stable_partition needs a buffer (phase 2). *)
+module Pia.Core.Algo.Partition : Partition
+
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+
+interface Partition = sig
+  let spec partitioned : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> bool
+  let is_partitioned : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> bool
+  let partition_point : (t : type) -> (xs : [t]) -> (p : (a : t) -> bool) -> usize
+  let partition : (t : type where Pia.Core.Order.Eq t) -> (xs : borrowed inout mutable [t]) -> (p : (a : t) -> bool) -> usize
+end
+
+(** Every element p holds for comes before every element it does not. *)
+let spec partitioned (t : type) (xs : [t]) (p : (a : t) -> bool) : bool =
+  forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && p xs.[j] ==> p xs.[i]
+
+(** C++: std::is_partitioned. *)
+let is_partitioned (t : type) (xs : [t]) (p : (a : t) -> bool) : bool
+  ensures result <==> partitioned xs p
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i]
+    invariant i <= len xs
+    invariant forall (k in 0 .. i). p xs.[k]
+    decreases len xs - i
+  do i <- i + 1 done;
+  let j : mutable usize = i in
+  while j < len xs && p xs.[j] = false
+    invariant i <= j && j <= len xs
+    invariant forall (k in 0 .. i). p xs.[k]
+    invariant forall (k in i .. j). p xs.[k] = false
+    decreases len xs - j
+  do j <- j + 1 done;
+  j = len xs
+
+(** C++: std::partition_point: in a partitioned range, the first
+    element p does not hold for, by binary search. *)
+let partition_point (t : type) (xs : [t]) (p : (a : t) -> bool) : usize
+  requires partitioned xs p
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). p xs.[k]
+  ensures forall (k in result .. len xs). p xs.[k] = false
+= let lo : mutable usize = 0 in
+  let hi : mutable usize = len xs in
+  while lo < hi
+    invariant lo <= hi && hi <= len xs
+    invariant forall (k in 0 .. lo). p xs.[k]
+    invariant forall (k in hi .. len xs). p xs.[k] = false
+    decreases hi - lo
+  do
+    let mid = lo + ((hi - lo) >> 1) in
+    assert lo <= mid && mid < hi;
+    if p xs.[mid] then lo <- mid + 1 else hi <- mid
+  done;
+  lo
+
+(** C++: std::partition: every element p holds for before every other,
+    a permutation of the input; the result is where the others start. *)
+let partition (t : type where Pia.Core.Order.Eq t) (xs : borrowed inout mutable [t]) (p : (a : t) -> bool) : usize
+  ensures result <= len xs
+  ensures forall (k in 0 .. result). p xs.[k]
+  ensures forall (k in result .. len xs). p xs.[k] = false
+  ensures forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+= let i : mutable usize = 0 in
+  for j in 0 .. len xs
+    invariant i <= j
+    invariant forall (k in 0 .. i). p xs.[k]
+    invariant forall (k in i .. j). p xs.[k] = false
+    invariant forall (v : t). P.occurrences xs v (len xs) = P.occurrences (old xs) v (len xs)
+  do
+    if p xs.[j] then (
+      (if i < j then S.exchange xs i j);
+      i <- i + 1)
+  done;
+  i

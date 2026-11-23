@@ -1,0 +1,22 @@
+(* Runs Pia.Core.Algo.Partition's compiled code on a buffer in an arena,
+   linked by pia_binary: 0 when every result is what C++'s partitioning
+   operations give, and otherwise the number of the first wrong one. *)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Partition.Partition as Q
+
+let checks (xs : borrowed inout mutable [u8]) : i32
+  requires len xs = 6
+= xs.[0] <- 7; xs.[1] <- 2; xs.[2] <- 9; xs.[3] <- 4; xs.[4] <- 6; xs.[5] <- 1;
+  if Q.is_partitioned xs (let (x : u8) : bool => x % 2 = 0) then 1
+  else (
+    let m = Q.partition xs (let (x : u8) : bool => x % 2 = 0) in
+    if m <> 3 then 2
+    else if xs.[0] % 2 <> 0 || xs.[1] % 2 <> 0 || xs.[2] % 2 <> 0 || xs.[3] % 2 = 0 || xs.[5] % 2 = 0 then 3
+    else if Q.is_partitioned xs (let (x : u8) : bool => x % 2 = 0) = false then 4
+    else if Q.partition_point xs (let (x : u8) : bool => x % 2 = 0) <> 3 then 5
+    else 0)
+
+let main () : i32 = with_arena 6 (let (m) => checks m.mem)

@@ -10,6 +10,7 @@ exports_files([
     "Heap.pia",
     "Modify.pia",
     "Numeric.pia",
+    "Partition.pia",
     "Permutation.pia",
     "Remove.pia",
     "Sort.pia",
@@ -109,6 +110,21 @@ pia_library(
     src = "BinarySearch.pia",
     target_compatible_with = APPLE_SILICON,
     deps = [
+        "//lib/Pia:fn",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+# is_partitioned, partition_point and partition, with a predicate:
+# tests/std/partition.pia checks its goals; tests/std/partition_edges.pia
+# and :partition_run test it through its interface.
+pia_library(
+    name = "partition",
+    src = "Partition.pia",
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        ":permutation",
+        ":sort",
         "//lib/Pia:fn",
         "//lib/Pia/Core:order",
     ],

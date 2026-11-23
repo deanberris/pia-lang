@@ -1,0 +1,38 @@
+(* Importers of Pia.Core.Algo.Partition partition with their own
+   predicates and know the result from the interface alone: the evens of
+   a u8 buffer come first, the rest after, a permutation of the input;
+   partition_point then finds where they split.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Partition.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Fn.Laws
+import Pia.Core.Order.Ops
+import Pia.Core.Algo.Permutation.Permutation as P
+import Pia.Core.Algo.Sort.Sort as S
+import Pia.Core.Algo.Partition.Partition as Q
+
+let evens_first (xs : borrowed inout mutable [u8]) : usize
+  ensures forall (k in 0 .. result). xs.[k] % 2 = 0
+  ensures forall (k in result .. len xs). xs.[k] % 2 <> 0
+  ensures result <= len xs
+= Q.partition xs (let (x : u8) : bool => x % 2 = 0)
+
+let split (xs : [u8]) : usize
+  requires forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && xs.[j] < 10 ==> xs.[i] < 10
+  ensures forall (k in 0 .. result). xs.[k] < 10
+  ensures forall (k in result .. len xs). xs.[k] >= 10
+= Q.partition_point xs (let (x : u8) : bool => x < 10)
+
+let small_first (xs : [u8]) : bool
+  ensures result <==> (forall (i in 0 .. len xs) (j in 0 .. len xs). i < j && xs.[j] < 10 ==> xs.[i] < 10)
+= Q.is_partitioned xs (let (x : u8) : bool => x < 10)
+
+(* Every goal is proved, and each call is an instance of its proof.
+// CHECK-NOT: failed
+// CHECK-DAG: 'Pia.Core.Algo.Partition.partition[lambda@partition_edges.pia:{{[0-9:]+}}]<u8>' is an instance of the generic proof of 'Pia.Core.Algo.Partition.partition#proof' [generic]
+// CHECK: 22 proved, 0 failed, 0 skipped
+*)
