@@ -30,6 +30,13 @@ let trusting (x : u8) : u8 =
   assume x < 10;
   x + 1
 
+(* A lemma's contract is the fact the lint asks for, proved once, so a
+   nonlinear one is left alone. *)
+let lemma bounded (w : u16) (h : u16) : unit
+  requires w * h <= 65535
+  ensures (w * h) / h <= w || h = 0
+= ()
+
 (* Expected lints, in order.
 // CHECK: decomposition.pia:8:12: warning: 'w * h' in a contract of 'area' is nonlinear, and the solver has no decision procedure for it, so every query that assumes or proves this clause may be slow; bound the factors with range types so intervals decide it, compute the product in a helper with @overflow(saturate) and a linear contract, or prove the fact once as a 'let lemma' [nonlinear_contract]
 // CHECK: decomposition.pia:17:21: warning: 'n / d' in a contract of 'per'

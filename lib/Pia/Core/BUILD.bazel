@@ -12,6 +12,8 @@ exports_files([
     "Ascii.pia",
     "Bit.pia",
     "Charconv.pia",
+    "Digits.pia",
+    "Hash.pia",
     "Int.pia",
     "Option.pia",
     "Order.pia",
@@ -76,6 +78,25 @@ pia_library(
 # UTF-8: sequence_length, decode, encode and valid, with both round trips
 # proved: tests/std/utf8.pia checks its goals; tests/std/utf8_edges.pia
 # and :utf8_run test it through its interface.
+# Digit strings: dval and pow, with the lemmas that number formatting and
+# parsing proofs call (#305): tests/std/digits.pia checks its goals;
+# tests/std/digits_edges.pia and :digits_run test it through its interface.
+pia_library(
+    name = "digits",
+    src = "Digits.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# std::hash: the Hash concept over Eq, with its law, integer instances,
+# FNV-1a for bytes and hash_all: tests/std/hash.pia checks its goals;
+# tests/std/hash_edges.pia and :hash_run test it through its interface.
+pia_library(
+    name = "hash",
+    src = "Hash.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":order"],
+)
+
 pia_library(
     name = "utf8",
     src = "Utf8.pia",

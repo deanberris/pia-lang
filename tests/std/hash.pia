@@ -1,0 +1,36 @@
+(* Pia.Core.Hash (ADR 0040, phase 1.10): std::hash, with the Hash concept
+   over Eq and its law, the integer instances, FNV-1a for bytes and
+   hash_all over any Hash type.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Hash.pia | FileCheck %s
+// RUN: mkdir -p %t/h && piac --emit=interface -o %t/h %S/../../lib/Pia/Core/Hash.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/h/Pia.Core.Hash.Hash.piai
+*)
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 81 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Hash{{$}}
+// IFACE-NEXT: {{^}}interface Hash = sig{{$}}
+// IFACE-NEXT: {{^}}  let meta Hash : concept{{$}}
+// IFACE-NEXT: {{^}}  let mix : (x : u64) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let fnv_step : (h : u64) -> (c : u8) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let spec fnv : (xs : [u8]) -> (n : usize) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let bytes : (xs : [u8]) -> u64 ensures result = fnv xs (len xs){{$}}
+// IFACE-NEXT: {{^}}  let combine : (seed : u64) -> (h : u64) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : u8) -> u64 ensures result = mix a{{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : u16) -> u64 ensures result = mix a{{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : u32) -> u64 ensures result = mix a{{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : u64) -> u64 ensures result = mix a{{$}}
+// IFACE-NEXT: {{^}}  let encode : (a : i64) -> u64 ensures a >= 0 ==> result = a ensures a < 0 ==> result - 18446744073709551615 - 1 = a{{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : i8) -> u64 ensures result = mix (encode a){{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : i16) -> u64 ensures result = mix (encode a){{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : i32) -> u64 ensures result = mix (encode a){{$}}
+// IFACE-NEXT: {{^}}  let hash : (a : i64) -> u64 ensures result = mix (encode a){{$}}
+// IFACE-NEXT: {{^}}  let spec hash_fold : (t : type where Hash t) -> (xs : [t]) -> (n : usize) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let hash_all : (t : type where Hash t) -> (xs : [t]) -> u64{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

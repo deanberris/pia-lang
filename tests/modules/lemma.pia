@@ -6,6 +6,10 @@
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Calc.Sums.Facts.piai
 // RUN: not piac --verify --iface-path=%t %s | FileCheck %s
 // RUN: not piac --verify %S/Inputs/sums_listed_wrong.pia 2>&1 | FileCheck --check-prefix=WRONG %s
+// RUN: not piac --verify %S/Inputs/sums_overclaims.pia | FileCheck --check-prefix=OVER %s
+   Its interface's contract is checked against a call of the lemma, so a
+   lemma proved by induction (tri_ge) meets it, and an interface that
+   claims more than the lemma proves does not.
 *)
 import Calc.Sums.Facts as F
 
@@ -18,12 +22,14 @@ let unguarded (a : int) (b : int) : unit
 = F.dbl_mono a b
 
 (*
+// LIB-NOT: failed
 // LIB: 0 failed, 0 skipped
 // IFACE: let lemma dbl_mono : (a : int) -> (b : int) -> unit requires a <= b ensures dbl a <= dbl b
-// CHECK-DAG: lemma.pia:14:3: proved: the postcondition holds
-// CHECK-DAG: lemma.pia:15:3: proved: the precondition of 'Calc.Sums.dbl_mono' holds
-// CHECK-DAG: lemma.pia:18:3: failed: the precondition of 'Calc.Sums.dbl_mono' holds
+// CHECK-DAG: lemma.pia:18:3: proved: the postcondition holds
+// CHECK-DAG: lemma.pia:19:3: proved: the precondition of 'Calc.Sums.dbl_mono' holds
+// CHECK-DAG: lemma.pia:22:3: failed: the precondition of 'Calc.Sums.dbl_mono' holds
 // CHECK: 1 failed
+// OVER: sums_overclaims.pia:7:5: failed: the postcondition holds
 // WRONG-DAG: 'id' is listed as a lemma but defined as a function
 // WRONG-DAG: 'fact' is a lemma, so the interface lists it as 'let lemma'
 *)
