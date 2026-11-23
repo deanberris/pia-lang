@@ -635,19 +635,34 @@ void countGoal(ProofStats &s, const verify::Outcome &o, const Event &e,
   g.where = e.where;
   g.ms = o.ms;
   g.cost = o.cost;
+  g.mine = mine;
   s.costliest.push_back(std::move(g));
 }
 
-// Keeps the slowest few goals, slowest first, ties by resource count.
+// Keeps the slowest few of the cell's own goals and of the environment's,
+// each slowest first, ties by resource count. They are kept apart because
+// a slow re-proof of an old definition is a different problem from a slow
+// goal just written.
 void keepCostliest(ProofStats &s) {
-  std::stable_sort(s.costliest.begin(), s.costliest.end(),
-                   [](const GoalCost &a, const GoalCost &b) {
-                     if (a.ms != b.ms)
-                       return a.ms > b.ms;
-                     return a.cost > b.cost;
-                   });
-  if (s.costliest.size() > kCostliest)
-    s.costliest.resize(kCostliest);
+  auto slowest = [&](bool mine) {
+    std::vector<GoalCost> v;
+    for (GoalCost &g : s.costliest)
+      if (g.mine == mine)
+        v.push_back(std::move(g));
+    std::stable_sort(v.begin(), v.end(),
+                     [](const GoalCost &a, const GoalCost &b) {
+                       if (a.ms != b.ms)
+                         return a.ms > b.ms;
+                       return a.cost > b.cost;
+                     });
+    if (v.size() > kCostliest)
+      v.resize(kCostliest);
+    return v;
+  };
+  std::vector<GoalCost> own = slowest(true);
+  std::vector<GoalCost> env = slowest(false);
+  own.insert(own.end(), env.begin(), env.end());
+  s.costliest = std::move(own);
 }
 
 } // namespace
@@ -2480,6 +2495,7 @@ lsp::Json toJson(const ProofStats &s) {
     c["status"] = g.status;
     c["ms"] = g.ms;
     c["cost"] = static_cast<double>(g.cost);
+    c["cell"] = g.mine;
     if (g.where.cell) {
       lsp::Json w;
       w["cell"] = g.where.cell;
@@ -2495,6 +2511,29 @@ lsp::Json toJson(const ProofStats &s) {
 
 } // namespace
 
+namespace {
+
+void renderGoals(std::string &out, const ProofStats &s, bool mine) {
+  bool first = true;
+  for (const GoalCost &g : s.costliest) {
+    if (g.mine != mine)
+      continue;
+    if (first)
+      out += mine ? "slowest in this cell:\n"
+                  : "slowest re-proofs from the environment:\n";
+    first = false;
+    out += "  " + formatMs(g.ms) + "  ";
+    if (g.where.cell)
+      out += formatWhere(g.where) + " ";
+    if (!g.function.empty())
+      out += g.function + ": ";
+    out +=
+        g.claim + " (" + g.status + ", cost " + std::to_string(g.cost) + ")\n";
+  }
+}
+
+} // namespace
+
 std::string renderStats(const ProofStats &s) {
   if (!s.verified)
     return "";
@@ -2503,12 +2542,17 @@ std::string renderStats(const ProofStats &s) {
                     ")";
   if (s.runMs > 0)
     out += ", running " + formatMs(s.runMs);
+  // The rest is parsing, expansion, IR generation and, for expressions,
+  // JIT compilation, which is often most of a cell that runs something.
+  double other = s.cellMs - s.verifyMs - s.runMs;
+  if (other >= 1)
+    out += ", parsing and compiling " + formatMs(other);
   out += "\n";
-  out += "goals: " + std::to_string(s.cellGoals) + " in this cell (" +
+  out += "goals: " + std::to_string(s.cellGoals) + " from this cell (" +
          std::to_string(s.cellIntervals) + " by intervals, " +
-         std::to_string(s.cellSmt) + " by the solver); " +
-         std::to_string(s.goals) +
-         " in the environment, all re-proved: " + std::to_string(s.proved) +
+         std::to_string(s.cellSmt) + " by the solver) and " +
+         std::to_string(s.goals - s.cellGoals) +
+         " re-proved from the environment: " + std::to_string(s.proved) +
          " proved";
   if (s.failed)
     out += ", " + std::to_string(s.failed) + " failed";
@@ -2517,18 +2561,8 @@ std::string renderStats(const ProofStats &s) {
   if (s.allowed)
     out += ", " + std::to_string(s.allowed) + " allowed";
   out += "\n";
-  if (!s.costliest.empty()) {
-    out += "slowest:\n";
-    for (const GoalCost &g : s.costliest) {
-      out += "  " + formatMs(g.ms) + "  ";
-      if (g.where.cell)
-        out += formatWhere(g.where) + " ";
-      if (!g.function.empty())
-        out += g.function + ": ";
-      out += g.claim + " (" + g.status + ", cost " + std::to_string(g.cost) +
-             ")\n";
-    }
-  }
+  renderGoals(out, s, true);
+  renderGoals(out, s, false);
   return out;
 }
 

@@ -59,13 +59,15 @@ An expression's value. Expressions are proved, then compiled and run. They never
 Every result that reached the verifier then says what the proof took:
 
 ```text
-took 41 ms: verifying 33 ms (solver 21 ms)
-goals: 1 in this cell (0 by intervals, 1 by the solver); 5 in the environment, all re-proved: 5 proved
-slowest:
-  14 ms  [2]:1:56 diff: '-' does not overflow u8 (proved, cost 1830)
+took 41 ms: verifying 37 ms (solver 33 ms)
+goals: 1 from this cell (0 by intervals, 1 by the solver) and 2 re-proved from the environment: 2 proved, 1 failed
+slowest in this cell:
+  14 ms  [4]:1:27 bad: '+' does not overflow u8 (failed, cost 2210)
+slowest re-proofs from the environment:
+  32 ms  [2]:1:53 diff: '-' does not overflow u8 (proved, cost 3289)
 ```
 
-Watch the environment count and the slowest goals: every cell proves the whole environment again, so one costly goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
+Times are wall clock and vary; `cost` is Z3's resource count, which does not. Watch the re-proofs: every cell proves the whole environment again, so one costly old goal slows every later cell. Split it with a helper, move the fact into a type, or `:forget` what you no longer need.
 
 ## The working loop
 

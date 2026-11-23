@@ -186,15 +186,26 @@ class McpTest(unittest.TestCase):
         r = self.server.call("execute", code="let sum (a : u8) (b : u8) : u16 = a + b")
         text = r["content"][0]["text"]
         self.assertIn("took ", text)
-        self.assertIn("goals: 1 in this cell (1 by intervals, 0 by the solver)", text)
+        self.assertIn("goals: 1 from this cell (1 by intervals, 0 by the solver) "
+                      "and 0 re-proved from the environment: 1 proved", text)
         # A relation between parameters needs the solver, so it is timed.
         r = self.server.call("execute",
                              code="let diff (a : u8) (b : u8) : u8 requires a <= b = b - a")
         text = r["content"][0]["text"]
-        self.assertIn("by the solver", text)
-        self.assertIn("slowest:", text)
+        self.assertIn("1 by the solver) and 1 re-proved from the environment", text)
+        self.assertIn("slowest in this cell:", text)
         self.assertIn("diff: '-' does not overflow u8 (proved, cost ", text)
-        self.assertIn("in the environment, all re-proved", text)
+        # A failed goal is the cell's own, listed before the environment's
+        # re-proofs, and has the cost of finding its counterexample.
+        r = self.server.call("execute", code="let bad (a : u8) : u8 = a + 1")
+        text = r["content"][0]["text"]
+        self.assertIn("1 from this cell", text)
+        self.assertIn("2 re-proved from the environment: 2 proved, 1 failed", text)
+        own = text.index("slowest in this cell:")
+        env = text.index("slowest re-proofs from the environment:")
+        self.assertLess(own, env)
+        self.assertIn("bad: '+' does not overflow u8 (failed, cost ", text)
+        self.assertNotIn("(failed, cost 0)", text)
 
     def test_stats_as_json(self):
         r = self.server.call("execute",
@@ -205,6 +216,7 @@ class McpTest(unittest.TestCase):
         self.assertGreaterEqual(stats["smt"], 1)
         self.assertEqual(stats["failed"], 0)
         self.assertEqual(stats["costliest"][0]["name"], "diff")
+        self.assertTrue(stats["costliest"][0]["cell"])
         self.assertGreater(stats["costliest"][0]["ms"], 0)
 
     def test_commands_have_no_stats(self):

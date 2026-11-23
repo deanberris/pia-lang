@@ -4106,6 +4106,10 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
       auto begin = std::chrono::steady_clock::now();
       Outcome &out = outcomes[jobs[i].outcome];
       solve(jobs[i], options, out, js[i]);
+      // A failed goal's cost is every query it took to find that it fails,
+      // which the proved paths do not record for it.
+      if (options.reportCost && out.status == Status::Failed && !out.cost)
+        out.cost = js[i].cost;
       out.ms = std::chrono::duration<double, std::milli>(
                    std::chrono::steady_clock::now() - begin)
                    .count();

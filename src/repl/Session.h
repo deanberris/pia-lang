@@ -69,6 +69,7 @@ struct GoalCost {
   Where where;
   double ms = 0;
   unsigned long long cost = 0; // Z3's resource count
+  bool mine = false; // the cell's own, not one the environment re-proved
 };
 
 // What proving a cell took. Each cell proves the whole environment again,
@@ -83,9 +84,11 @@ struct ProofStats {
   unsigned goals = 0; // every goal in the environment
   unsigned cellGoals = 0, cellIntervals = 0, cellSmt = 0;     // this cell's
   unsigned proved = 0, failed = 0, unproved = 0, allowed = 0; // every goal
-  unsigned smt = 0;                // goals that needed the solver
-  unsigned long long cost = 0;     // Z3's resource count over every goal
-  std::vector<GoalCost> costliest; // the slowest solver goals, slowest first
+  unsigned smt = 0;            // goals that needed the solver
+  unsigned long long cost = 0; // Z3's resource count over every goal
+  // The slowest solver goals, slowest first: up to three of the cell's own,
+  // then up to three the environment re-proved.
+  std::vector<GoalCost> costliest;
 };
 
 struct CellResult {
