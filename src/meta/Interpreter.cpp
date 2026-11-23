@@ -202,7 +202,7 @@ bool hasBinderText(NodeKind k) {
     case NodeKind::LetItem: case NodeKind::LetIn: case NodeKind::Param:
     case NodeKind::PVar: case NodeKind::PAs: case NodeKind::Binder:
     case NodeKind::RangeBinder: case NodeKind::Field: case NodeKind::FieldInit: case NodeKind::PField:
-    case NodeKind::QuotedDecl: case NodeKind::Ctor:
+    case NodeKind::QuotedDecl: case NodeKind::Ctor: case NodeKind::PCtor:
     // A theory's, a model's and a sort's names (ADR 0036): `let sort $s`.
     case NodeKind::Theory: case NodeKind::Model: case NodeKind::SortItem:
       return true;
@@ -902,7 +902,8 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     return listValue(std::move(out));
   }
   if (name == "fields") {
-    const Node *item = typeItem(*args[0]);
+    // A type item, or its name, as the other type builtins take.
+    const Node *item = findTypeItem(args[0]);
     const Node *record =
         item ? item->kids[3]->kids[0].get() : nullptr;
     if (!record || record->kind != NodeKind::RecordType)
@@ -1141,8 +1142,11 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   }
   if (name == "style") return strValue(syntax::commentStyle(needComment(args[0])));
   if (name == "place") return strValue(syntax::commentPlace(needComment(args[0])));
-  if (name == "kind")
+  if (name == "kind") {
+    // Unit, as `variants` gives for a constructor with no payload.
+    if (args[0]->kind == K::Unit) return strValue("Unit");
     return strValue(syntax::nodeKindName(needSyntax(args[0]).kind));
+  }
   // A goal is the lemma it is the goal of (ADR 0036, step 6): its
   // hypotheses are its `requires`, its conclusion its `ensures`.
   auto needGoal = [&](const ValuePtr &v) -> const Node & {
@@ -1520,6 +1524,30 @@ class QuoteBuilder {
             for (const NodePtr &k : p.kids) out->add(clone(*k));
           else
             out->add(clone(p));
+        }
+        continue;
+      }
+      // `type { $fs }`: a record type's fields, a list of [name; type]
+      // pairs, the type as syntax or its name.
+      if (n.kind == NodeKind::RecordType && n.kids[i]->kind == NodeKind::Splice &&
+          n.kids[i]->text.rfind("$!", 0) != 0) {
+        ValuePtr v = var(n.kids[i]->text);
+        auto bad = [&] {
+          return MetaError{site, "'type { $fields }' needs a list of [name; type] "
+                                 "pairs"};
+        };
+        if (v->kind != K::List) throw bad();
+        for (const ValuePtr &pair : v->list) {
+          if (pair->kind != K::List || pair->list.size() != 2 ||
+              pair->list[0]->kind != K::Str)
+            throw bad();
+          auto f = makeNode(NodeKind::FieldDecl, site, pair->list[0]->s);
+          auto annot = makeNode(NodeKind::Annot, site);
+          annot->add(makeNode(NodeKind::Modifiers, site));
+          annot->add(fromValue(pair->list[1], /*typePos=*/true));
+          annot->add(makeNode(NodeKind::None, site));
+          f->add(std::move(annot));
+          out->add(std::move(f));
         }
         continue;
       }

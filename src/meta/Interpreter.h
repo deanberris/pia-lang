@@ -135,6 +135,9 @@ class Interpreter {
     listing_ = std::move(items);
     program_ = program;
   }
+  // An item made during the pass, such as a lifted payload record, that
+  // the pass's later metaprograms can see.
+  void addToListing(const syntax::Node *item) { listing_.push_back(item); }
 
   // Makes the REPL-only builtins of Pia.Live available (ADR 0031).
   void setLive(bool live) { live_ = live; }

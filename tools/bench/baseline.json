@@ -128,13 +128,13 @@
       "wall_ms_n": 10618.7
     },
     "lib/Pia/Text/Json/Read.pia": {
-      "cost": 129723807,
-      "goals": 73,
-      "solve_ms_1": 22767,
-      "solve_ms_n": 10192,
-      "solved": 70,
-      "wall_ms_1": 27122.1,
-      "wall_ms_n": 14562.1
+      "cost": 157738361,
+      "goals": 90,
+      "solve_ms_1": 30715,
+      "solve_ms_n": 12743,
+      "solved": 87,
+      "wall_ms_1": 36358.7,
+      "wall_ms_n": 17984.6
     },
     "lib/Pia/Text/Json/Spec.pia": {
       "cost": 13158437,
@@ -274,10 +274,10 @@
   },
   "host": "BabyHouse-iMac",
   "total": {
-    "cost": 1387271273,
-    "goals": 3949,
-    "solved": 3620,
-    "wall_ms_1": 491240.3,
-    "wall_ms_n": 235391.7
+    "cost": 1415285827,
+    "goals": 3966,
+    "solved": 3637,
+    "wall_ms_1": 500476.9,
+    "wall_ms_n": 238814.2
   }
 }
