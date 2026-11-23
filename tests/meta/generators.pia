@@ -1,8 +1,9 @@
 (* Test-case generators (ADR 0056, step 1): a metaprogram reads a
    function's signature and contract, forms the product of each
    parameter's bounds, and returns one item per case, plus a runner. The
-   cases are proved like any other code, so for a proved unit every case
-   is decided at compile time.
+   cases are checked like any other code: each call's precondition is a
+   goal. Their results are not goals yet; offering each case to the
+   verifier is step 2.
 // RUN: piac --verify %s | FileCheck %s
 // RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=AST
 *)
