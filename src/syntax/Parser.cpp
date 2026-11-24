@@ -1338,7 +1338,7 @@ class Parser {
         } else {
           n->add(makeNode(N::None, loc()));
         }
-        n->add(loopAnnots());
+        n->add(loopAnnots(spread));
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
@@ -1394,10 +1394,14 @@ class Parser {
     return e;
   }
 
-  NodePtr loopAnnots() {
+  NodePtr loopAnnots(bool spread = false) {
     auto as = makeNode(N::LoopAnnots, loc());
-    while (at(K::Invariant) || at(K::Decreases)) {
-      auto a = makeNode(at(K::Invariant) ? N::Invariant : N::Decreases, loc());
+    while (at(K::Invariant) || at(K::Decreases) || (spread && at(K::Ensures))) {
+      // A spread's `ensures` holds for each iteration (ADR 0060).
+      auto a = makeNode(at(K::Invariant)   ? N::Invariant
+                        : at(K::Decreases) ? N::Decreases
+                                           : N::Ensures,
+                        loc());
       take();
       a->add(stmt());
       as->add(std::move(a));

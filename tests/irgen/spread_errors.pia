@@ -1,7 +1,7 @@
 (* What a spread refuses in its first version (ADR 0060): assigning a
    variable declared outside the body, passing a written buffer on, an
-   attribute other than @owns, an owner the body writes, and a nested
-   spread.
+   attribute other than @owns, an owner the body writes, a nested
+   spread, a loop invariant, and calls whose footprint does not match.
 // RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
 *)
 
@@ -27,10 +27,28 @@ let self_owned (label : borrowed inout mutable [usize]) : unit
 let nested (v : borrowed inout mutable [u32]) : unit
 = spread i in 0 .. 1 do spread j in 0 .. len v do v.[j] <- 0 done done
 
+let ordered (v : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len v invariant i <= len v do v.[i] <- 0 done
+
+let fill_basin (label : [usize]) (v : borrowed inout mutable [u32]) (b : usize) : unit @owns(v, label, b)
+  requires len label = len v
+= for c in 0 .. len v do if label.[c] = b then v.[c] <- 0 else () done
+
+let wrong_owner (label : [usize]) (other : [usize]) (v : borrowed inout mutable [u32]) (nb : usize) : unit
+  requires len label = len v && len other = len v
+= spread b in 0 .. nb @owns(v, label) do fill_basin other v b done
+
+let unowned_call (label : [usize]) (v : borrowed inout mutable [u32]) : unit
+  requires len label = len v
+= spread b in 0 .. len v do fill_basin label v b done
+
 (*
 // CHECK: spread_errors.pia:10:3: error: a spread body cannot assign 's', which is declared outside it: iterations run at the same time (ADR 0060)
 // CHECK: spread_errors.pia:15:51: error: 'v' is written in this spread, so it can only be indexed here: passing it on could reach a cell another iteration writes (ADR 0060)
 // CHECK: spread_errors.pia:22:26: error: the attribute @place is not supported on a spread yet
 // CHECK: spread_errors.pia:25:43: error: the owner array 'label' must not be written in the spread
 // CHECK: spread_errors.pia:28:25: error: a spread inside a spread is not supported yet
+// CHECK: spread_errors.pia:31:26: error: a spread takes 'ensures', not a loop invariant or a measure: its iterations are not in sequence
+// CHECK: spread_errors.pia:39:53: error: the footprint's owner must be 'label', the owner of 'v' here
+// CHECK: spread_errors.pia:43:46: error: 'v' has no owner array here, so it cannot be passed to a call with a footprint: give the spread @owns(v, owner) (ADR 0060)
 *)

@@ -69,6 +69,19 @@ def Contract_AssertOp : Contract_Op<"assert"> {
   let assemblyFormat = "$predicate attr-dict";
 }
 
+def Contract_HavocOthersOp : Contract_Op<"havoc_others"> {
+  let summary = "forget the cells of a buffer that another iteration owns";
+  let description = [{
+    At the end of a `spread` iteration (ADR 0060): every cell of `buffer`
+    that iteration `iv` does not own takes an unknown value, so that the
+    `spread`'s `ensures` is proved whatever the other iterations write.
+    Iteration `iv` owns cell `c` when `owner[c] = iv`, or, without an
+    owner, when `c = iv`.
+  }];
+  let arguments = (ins AnyType:$buffer, AnyType:$iv, Optional<AnyType>:$owner);
+  let assemblyFormat = "$buffer `,` $iv (`by` $owner^)? attr-dict `:` type($buffer) `,` type($iv) (`,` type($owner)^)?";
+}
+
 def Contract_AssumeOp : Contract_Op<"assume"> {
   let summary = "a fact the verifier may use without proof";
   let arguments = (ins I1:$predicate);

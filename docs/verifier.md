@@ -378,7 +378,9 @@ A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Li
 
 ## `spread`
 
-A `spread i in lo .. hi do ... done` runs its iterations at the same time ([ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md)). The verifier walks one arbitrary iteration, as for a `for` loop, and adds a goal at every access to a buffer the body writes: the iteration owns the cell. By default iteration `i` owns cell `i`; `@owns(buf, owner)` on the `spread` gives the cells of `buf` with `owner.[c] = i` instead. These goals imply that no two iterations touch the same cell, since an owner is a function, so no goal compares two iterations. The body may not assign a variable declared outside it, and may only index a buffer it writes (tests/verify/spread.pia, tests/irgen/spread_errors.pia).
+A `spread i in lo .. hi do ... done` runs its iterations at the same time ([ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md)). The verifier walks one arbitrary iteration, as for a `for` loop, and adds a goal at every access to a buffer the body writes: the iteration owns the cell. By default iteration `i` owns cell `i`; `@owns(buf, owner)` on the `spread` gives the cells of `buf` with `owner.[c] = i` instead. These goals imply that no two iterations touch the same cell, since an owner is a function, so no goal compares two iterations. The body may not assign a variable declared outside it, and may only index a buffer it writes.
+
+A `spread`'s `ensures p` is proved at the end of one iteration, after every cell that another iteration owns has been given an unknown value, so it holds whatever the other iterations write; after the loop, `forall (i in lo .. hi). p` is a fact. A function with `@owns(buf, owner, b)` after its return type touches only the cells of `buf` with `owner.[c] = b`: every access to `buf` in it is that goal. A `spread` may pass a buffer it writes to such a function, if its own `@owns` names the same owner, and the call's goal is that its `b` is the iteration (tests/verify/spread.pia, tests/verify/spread_ensures.pia, tests/irgen/spread_errors.pia).
 
 ## Solver strategies and tactics
 
