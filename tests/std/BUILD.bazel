@@ -510,6 +510,24 @@ sh_test(
 )
 
 pia_binary(
+    name = "calendar_run",
+    src = "Inputs/calendar_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "calendar_run_test",
+    srcs = ["calendar_run_test.sh"],
+    args = ["$(rootpath :calendar_run)"],
+    data = [":calendar_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
     name = "utf8_run",
     src = "Inputs/utf8_run.pia",
     target_compatible_with = PIA_TARGETS,
