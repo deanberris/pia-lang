@@ -14,6 +14,7 @@ interface Calls @abi(c) = sig
   let va_mix : (a : u32) -> (xs : [u8]) -> u64
   let plus_answer : (x : i32) -> i32
     requires x <= 1000
+  let counted : (x : i32) -> i32
 end
 
 let sum_bytes (xs : [u8]) (n : usize) : u32
@@ -67,3 +68,16 @@ let answer () : i32
 let plus_answer (x : i32) : i32
   requires x <= 1000
 = x + answer
+
+(* `@deref` (ADR 0057, section 5): C returns a pointer to the result, as
+   `__errno_location` does, and the call reads through it. `bump` adds one
+   to the counter, so the read must come after the call that changed it. *)
+let counter () : i32 @deref
+  ensures true
+= extern "counter_c"
+
+let bump (x : i32) : i32 = unsafe raw x
+
+let counted (x : i32) : i32 =
+  let y = bump x in
+  counter
