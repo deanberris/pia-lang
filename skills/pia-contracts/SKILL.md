@@ -128,6 +128,8 @@ let swap (xs : borrowed inout mutable [u8; 2]) : unit
 
 A **spec function** (`let spec`) is pure, total and erased by codegen. It is the way to name a property in contracts: to the solver it is a function with its `ensures` and one unfolding of its body. A **lemma** (`let lemma`, returns `unit`) is proved once, and a call to it adds its `ensures` as a fact; a recursive lemma with `decreases` is a proof by induction. `@fuel(n)` on a spec function's return type unfolds it `n` levels. See [docs/verifier.md](../../docs/verifier.md#spec-functions-and-lemmas).
 
+**Opaque spec functions** (ADR 0063). A spec over a whole stream or table, put in a loop's context, makes every goal of the loop slow, even ones that never needed it. Mark it `@opaque`: calls keep its range and `ensures`, but not its definition. Reveal it with `with f` after the contracts of the small lemma that needs it, or with `with f in e` for one expression. A failed goal's hint says when an unrevealed opaque function may be the reason.
+
 **Spec state** (`let spec`, ADR 0058) is a fixed array that code writes and only specification reads, for a proof that needs state that evolves with the loop: a reference implementation run beside the real one, or a trace of what was written. Invariants relate the code's state to it. A spec parameter, `(spec log : inout [u16; 64])`, shares it with a callee. See [docs/verifier.md](../../docs/verifier.md#spec-state).
 
 <!-- example: trace.pia -->

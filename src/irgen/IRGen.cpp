@@ -997,6 +997,7 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    opaque_ = false;
     owns_.clear();
     variadic_.reset();
     solver_.clear();
@@ -1094,6 +1095,12 @@ class Gen {
       fail(item, "@fuel applies only to a spec function or a lemma");
       return;
     }
+    if (opaque_ && !isSpec) {
+      fail(item, "@opaque applies only to a spec function (ADR 0063)");
+      return;
+    }
+    if (opaque_)
+      fn->setAttr("pia.opaque", b_.getUnitAttr());
     if (isSpec || isLemma) {
       // Specification code only says what other code means: it cannot
       // write through its parameters (docs/verification.md).
@@ -1135,6 +1142,13 @@ class Gen {
         R m = genContractExpr(*c->kids[0], Type());
         if (!m) return;
         create<contract::DecreasesOp>(loc(*c), m->value);
+      } else if (c->kind == NodeKind::Reveal) {
+        // `with f, g` after the contracts: revealed in the whole body.
+        auto fs = revealed(*c);
+        if (!fs)
+          return;
+        for (const std::string &f : *fs)
+          create<contract::RevealOp>(loc(*c), f);
       } else if (c->kind == NodeKind::Invariant) {
         fail(*c, "'invariant' belongs to a state, which only the REPL "
                  "supports yet (ADR 0031)");
@@ -1775,6 +1789,12 @@ class Gen {
         }
         continue;
       }
+      // `@opaque` (ADR 0063): the definition is a fact only where a proof
+      // reveals it.
+      if (a->text == "opaque" && a->kids.empty()) {
+        opaque_ = true;
+        continue;
+      }
       if (a->text == "fuel" && a->kids.size() == 1 &&
           a->kids[0]->kind == NodeKind::IntLit) {
         auto lit = sema::parseIntLiteral(a->kids[0]->text);
@@ -1998,6 +2018,8 @@ class Gen {
         return genCleanup(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
+      case NodeKind::Reveal:
+        return genReveal(n, expected);
       case NodeKind::Assert:
       case NodeKind::Assume: {
         // An assumption is never checked, so it is a trusted item, and
@@ -3442,6 +3464,60 @@ class Gen {
     auto neg = syntax::makeNode(NodeKind::Neg, n.loc);
     neg->add(std::move(lit));
     return genExpr(*keep(std::move(neg)), expected);
+  }
+
+  // The spec functions a `with f, g` names (ADR 0063), as symbols, or
+  // nothing after an error.
+  std::optional<std::vector<std::string>> revealed(const Node &n) {
+    std::vector<std::string> out;
+    // A clause has only names; an expression ends with its body.
+    size_t names = n.flags == "clause" ? n.kids.size() : n.kids.size() - 1;
+    for (size_t i = 0; i < names; ++i) {
+      const Node &f = *n.kids[i];
+      if (f.kind != NodeKind::Name) {
+        fail(f, "'with' takes the names of spec functions, as in 'with f, g'");
+        return std::nullopt;
+      }
+      auto set = overloadSet(f.text);
+      if (set.size() != 1 || !set[0]->item || !hasFlag(*set[0]->item, "spec")) {
+        fail(f, "'with' reveals spec functions, and '" + f.text +
+                    "' is not one (ADR 0063)");
+        return std::nullopt;
+      }
+      if (!isOpaqueItem(*set[0]->item)) {
+        fail(f, "'" + f.text +
+                    "' is not @opaque, so its definition is "
+                    "always a fact; drop it from 'with'");
+        return std::nullopt;
+      }
+      out.push_back(set[0]->name);
+    }
+    return out;
+  }
+
+  // `with f, g in e`: f and g revealed in e only (ADR 0063).
+  R genReveal(const Node &n, Type expected) {
+    auto fs = revealed(n);
+    if (!fs)
+      return std::nullopt;
+    Location l = loc(n);
+    for (const std::string &f : *fs)
+      create<contract::RevealOp>(l, f);
+    R body = genExpr(*n.kids.back(), expected);
+    for (const std::string &f : *fs)
+      create<contract::RevealOp>(l, f)->setAttr("pia.end", b_.getUnitAttr());
+    return body;
+  }
+
+  // Whether a spec function's definition says @opaque (ADR 0063).
+  static bool isOpaqueItem(const Node &item) {
+    if (item.kids.size() < 2 || item.kids[1]->kind != NodeKind::RetAnnot ||
+        item.kids[1]->kids.size() < 2)
+      return false;
+    for (const syntax::NodePtr &a : item.kids[1]->kids[1]->kids)
+      if (a->text == "opaque")
+        return true;
+    return false;
   }
 
   R genApply(const Node &n, Type expected) {
@@ -11095,6 +11171,7 @@ class Gen {
   const Node *statedNode_ = nullptr;
   std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  bool opaque_ = false; // @opaque on it (ADR 0063)
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;

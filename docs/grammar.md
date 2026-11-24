@@ -168,7 +168,7 @@ path      = IDENT { "." IDENT } ;
 ### Bindings
 
 ```ebnf
-let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
+let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } [ "with" names ] "=" handled ;   (* with: reveal, ADR 0063 *)
 let_in    = "let" [ "rec" ] [ "spec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
@@ -248,7 +248,8 @@ Constructs that extend as far right as possible sit at the sequence level. The r
 
 ```ebnf
 expr   = seq ;
-seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda ;
+seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda | "with" names "in" seq ;   (* reveal in one expression, ADR 0063 *)
+names  = IDENT { "." IDENT } { "," IDENT { "." IDENT } } ;
 elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argument elements *)
 
 stmt   = postfix "<-" stmt
