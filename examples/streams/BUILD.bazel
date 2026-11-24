@@ -1,6 +1,6 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//tools/piac:pia.bzl", "pia_object")
+load("//tools/piac:pia.bzl", "pia_library", "pia_object")
 load("//tools/piac:targets.bzl", "APPLE_SILICON", "PIA_TARGETS")
 
 # The stream delineation demo. The program is the literate pages
@@ -27,9 +27,26 @@ pia_object(
     target_compatible_with = PIA_TARGETS,
 )
 
+# The animated GIF of the evolving landscape: a C entry point for the
+# proved encoder of Pia.Image.Gif.Encode (ADR 0054).
+pia_library(
+    name = "gif",
+    src = "gif.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":sediment_obj", ":streams_obj"],
+    srcs = [":gif", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )

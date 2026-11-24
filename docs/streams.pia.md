@@ -96,7 +96,7 @@ wider bit-vectors, and loop proofs then time out
 instead: row offsets grow by `w`, and `3 * i` is `i + i + i`.
 
 The file is one module, `Streams` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
-Its interface lists the six functions the C program calls, with the
+Its interface lists the eight functions the C program calls, with the
 preconditions a caller must keep; everything else on this page is private
 to the module:
 
@@ -128,6 +128,13 @@ interface Delineation @abi(c) = sig
     requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
     requires len fill = len dem && len down = len dem && len acc = len dem
     requires len basin = len dem && len rgb = len dem + len dem + len dem
+  let palette : (pal : out mutable [u8]) -> unit
+    requires len pal = 768
+  let render_load_index : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
+      -> (basin : [usize]) -> (flux : [u32]) -> (threshold : u32)
+      -> (idx : out mutable [u8]) -> unit
+    requires len fill = len dem && len acc = len dem && len basin = len dem
+    requires len flux = len dem && len idx = len dem
   let render_load : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
       -> (basin : [usize]) -> (flux : [u32]) -> (threshold : u32)
       -> (rgb : out mutable [u8]) -> usize
@@ -773,6 +780,87 @@ let render_load (dem : [u16]) (fill : [u16]) (acc : [u32]) (basin : [usize])
   streams
 ```
 
+## 6. The animation's palette
+
+An animated GIF has one palette for all its frames, so for the evolution's
+animation each cell becomes an index into one fixed palette rather than a
+colour. `load_step` is the step of the load ramp, as in `load_colour`.
+
+```pia
+let load_step (f : u32) : int{0..7} =
+  let lz : u32 = clz f in
+  let l : u32 = 32 - lz in
+  if l < 6 then 0 else if l > 13 then 7 else l - 6
+```
+
+The palette index of one cell: the eight steps of the load ramp for
+streams, then the lake colour, then the six watershed tints in 32 shades of
+height each, 201 colours in all. `outlet mod 6` and `h >> 11` are both
+small, so the index is proved to be below 201 by its type.
+
+```pia
+let index_of (h : u16) (f : u16) (a : u32) (outlet : usize) (flux : u32)
+    (threshold : u32) : int{0..200} =
+  if a >= threshold then load_step flux
+  else if f > h then 8
+  else
+    (let k : int{0..5} = outlet mod 6 in
+     let s : int{0..31} = h >> 11 in
+     9 + (k << 5) + s)
+```
+
+The colour of each index: the ramp and the lake as above, and a watershed
+shade as `paint` mixes it, with the height taken at the middle of its
+shade. Indices from 201 up are unused and black.
+
+```pia
+let index_colour (i : u8) : colour =
+  if i < 8 then
+    (let m : u8 = i in
+     { red = 31 + (m << 5); green = 60 + (m << 4); blue = 230 - (m << 5) })
+  else if i = 8 then { red = 150; green = 205; blue = 235 }
+  else if i < 201 then
+    (let j : u8 = i - 9 in
+     let t = tint (j >> 5) in
+     let shade : u16 = ((j & 31) << 3) + 4 in
+     let r : u16 = t.red + shade in
+     let g : u16 = t.green + shade in
+     let b : u16 = t.blue + shade in
+     { red = r / 2; green = g / 2; blue = b / 2 })
+  else { red = 0; green = 0; blue = 0 }
+```
+
+The shared palette: 256 colours, three bytes each.
+
+```pia
+let palette (pal : out mutable [u8]) : unit
+  requires len pal = 768
+= for i in 0..256 do
+    let c = index_colour i in
+    let j = i + i + i in
+    pal.[j] <- c.red;
+    pal.[j + 1] <- c.green;
+    pal.[j + 2] <- c.blue
+  done
+```
+
+One frame of the animation: every cell's palette index, each proved to
+name one of the 201 colours `palette` fills.
+
+```pia
+let render_load_index (dem : [u16]) (fill : [u16]) (acc : [u32]) (basin : [usize])
+    (flux : [u32]) (threshold : u32) (idx : out mutable [u8]) : unit
+  requires len fill = len dem && len acc = len dem && len basin = len dem
+  requires len flux = len dem && len idx = len dem
+  ensures forall (k in 0..len idx). idx.[k] < 201
+=
+  for i in 0..len dem
+    invariant forall (k in 0..i). idx.[k] < 201
+  do
+    idx.[i] <- index_of (dem.[i]) (fill.[i]) (acc.[i]) (basin.[i]) (flux.[i]) threshold
+  done
+```
+
 ## Why the order matters
 
 Here is the walk without the downhill precondition. Nothing then stops
@@ -819,6 +907,7 @@ Every goal in this file is proved, by interval analysis or by Z3, before
 | Accumulation never exceeds the number of cells | `walk`, `accumulate` |
 | Every watershed label is an outlet | `walk`, `accumulate` |
 | The number of stream cells is at most the number of cells | `render`, `render_load` |
+| Every animation frame's index names one of the palette's 201 colours | `index_of`, `render_load_index` |
 
 What is *not* proved yet: that filling reaches a fixed point within
 `limit` sweeps (the result says whether it did), that a fixed point leaves
@@ -856,6 +945,3 @@ The demo works around parts of Pia that are not built yet:
   and some slices' element ranges are lost inside quantifiers
   ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
   code is shaped around both, as noted where it matters.
-- **An animated picture.** The landscape evolves under changing rain
-  ([sediment.pia.md](sediment.pia.md), section 6), and `main.c` writes one
-  PNG per epoch; an animated GIF waits for the GIF encoder of ADR 0054.
