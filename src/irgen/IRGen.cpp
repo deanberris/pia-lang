@@ -357,11 +357,30 @@ class Gen {
         notes.push_back(b_.getStringAttr(n.where + "\t" + n.generic + "\t" + n.why));
       (*module)->setAttr("pia.not_parametric", b_.getArrayAttr(notes));
     }
+    declareDatatypes();
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
   }
 
  private:
+  // A pia.datatype for each recursive variant made (ADR 0047), first in
+  // the module: its constructors in tag order and their payload types.
+  void declareDatatypes() {
+    OpBuilder::InsertionGuard guard(b_);
+    b_.setInsertionPointToStart(module_.getBody());
+    for (Type t : types_.datatypes()) {
+      auto rec = mlir::cast<RecType>(t);
+      llvm::SmallVector<mlir::Attribute> names, payloads;
+      for (const sema::Ctor *c : types_.ctorsOf(rec)) {
+        names.push_back(b_.getStringAttr(c->name));
+        payloads.push_back(
+            mlir::TypeAttr::get(c->payload ? c->payload : b_.getNoneType()));
+      }
+      create<DatatypeOp>(module_.getLoc(), b_.getStringAttr(rec.getName()),
+                         b_.getArrayAttr(names), b_.getArrayAttr(payloads));
+    }
+  }
+
   // --- helpers --------------------------------------------------------
 
   // `OpTy::create(builder, ...)` replaced `builder.create<OpTy>(...)` in
@@ -463,7 +482,8 @@ class Gen {
 
   // Why code cannot read the spec binding `b` (ADR 0058).
   static std::string specReadMessage(const Binding &b) {
-    return "'" + b.name + "' is spec state, which code may write but not "
+    return "'" + b.name +
+           "' is spec state, which code may write but not "
            "read: only contracts, loop invariants, asserts, lemma calls and "
            "spec parameters may read it, so that codegen can erase it "
            "(ADR 0058)";
@@ -725,6 +745,32 @@ class Gen {
     }
   }
 
+  // `v` with every array it holds, in fields of records at any depth,
+  // copied into storage of its own.
+  Value ownArrays(Location l, Value v) {
+    if (auto at = mlir::dyn_cast<ArrayType>(v.getType())) {
+      Value storage = create<RegionOp>(l, at);
+      create<CopyOp>(l, v, storage);
+      return storage;
+    }
+    auto rt = mlir::dyn_cast<RecordType>(v.getType());
+    if (!rt || types_.isVariant(rt) || !holdsArray(rt)) return v;
+    llvm::SmallVector<Value> fields;
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes()))
+      fields.push_back(ownArrays(l, create<FieldOp>(l, ft, v, name)));
+    return create<RecordOp>(l, rt, fields);
+  }
+
+  // Whether a record holds an array, in a field at any depth.
+  bool holdsArray(Type t) {
+    if (mlir::isa<ArrayType>(t)) return true;
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (!rt || types_.isVariant(rt)) return false;
+    for (Type ft : rt.getFieldTypes())
+      if (holdsArray(ft)) return true;
+    return false;
+  }
+
   // Whether every element of an array literal is an integer literal, so
   // it can be constant data.
   static bool constantElements(const Node &lit) {
@@ -742,7 +788,8 @@ class Gen {
     Location l = loc(value);
     Value storage = create<RegionOp>(l, arr);
     // A region's elements start as zero.
-    if (isZeros(value)) return TV{storage, arr};
+    if (isZeros(value))
+      return TV{storage, arr};
     Type elem = arr.getElementType();
     if (value.kind == NodeKind::ListLit) {
       if (value.kids.size() != arr.getLength())
@@ -917,8 +964,7 @@ class Gen {
       // Codegen erases a spec parameter, and the arguments calls pass for
       // it (ADR 0058).
       if (sig.params[i].spec)
-        fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(),
-                      b_.getUnitAttr());
+        fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(), b_.getUnitAttr());
     }
     Block *entry = fn.addEntryBlock();
     b_.setInsertionPointToStart(entry);
@@ -1907,6 +1953,9 @@ class Gen {
         if (!arr)
           return fail(n, "an array literal needs its type from the context, "
                          "as in 'let t : [u8; 3] = [1; 2; 3]'");
+        // Computed elements need storage of their own.
+        if (!contract_ && !ghost_ && !constantElements(n))
+          return genLocalArray(n, arr);
         auto values = constValues(n, arr);
         if (!values) return std::nullopt;
         auto op = create<ConstArrayOp>(loc(n), arr, *values,
@@ -2388,6 +2437,14 @@ class Gen {
   // fixed value in every other payload field, which nothing reads.
   R genCtor(const Node &n, const sema::Ctor &c, std::optional<TV> payload) {
     Location l = loc(n);
+    // A recursive variant (ADR 0047) is built by its constructor's name.
+    if (auto rec = mlir::dyn_cast<RecType>(c.variant)) {
+      llvm::SmallVector<Value> operands;
+      if (payload && c.payload) operands.push_back(payload->value);
+      return TV{create<RecMakeOp>(l, rec, b_.getStringAttr(c.name), operands)
+                    .getResult(),
+                rec};
+    }
     auto rt = mlir::cast<RecordType>(c.variant);
     llvm::SmallVector<Value> fields;
     for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
@@ -2430,6 +2487,24 @@ class Gen {
     }
     if (auto st = mlir::dyn_cast<SliceType>(t))
       return create<EmptyOp>(l, st).getResult();
+    // An array of integers: constant data of each element's default.
+    if (auto at = mlir::dyn_cast<ArrayType>(t)) {
+      Type et = at.getElementType();
+      llvm::SmallVector<mlir::Attribute> values;
+      llvm::APInt v(kWidth, 0);
+      if (auto it = mlir::dyn_cast<IntType>(et)) {
+        if (!it.contains(v)) v = it.getLo().sextOrTrunc(kWidth);
+      } else if (isBool(et)) {
+        // Constant data holds integers; zeroed storage is every `false`.
+        return create<RegionOp>(l, at).getResult();
+      } else {
+        return Value();
+      }
+      for (uint64_t i = 0; i < at.getLength(); ++i)
+        values.push_back(b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
+      return create<ConstArrayOp>(l, at, b_.getArrayAttr(values),
+                                  mlir::StringAttr()).getResult();
+    }
     if (auto rt = mlir::dyn_cast<RecordType>(t)) {
       llvm::SmallVector<Value> fields;
       for (Type ft : rt.getFieldTypes()) {
@@ -2772,8 +2847,24 @@ class Gen {
     BindingPtr b = lookup(n.kids[1]->text);
     const sema::Ctor *c = b ? types_.ctorIn(n.kids[2]->text, b->type) : nullptr;
     if (!b || !c) return fail(n, "internal error in 'match'");
-    auto rt = mlir::cast<RecordType>(b->type);
     Location l = loc(n);
+    if (auto rec = mlir::dyn_cast<RecType>(b->type)) {
+      if (n.kids[0]->text == "#is") {
+        size_t count = types_.ctorsOf(rec).size();
+        Type tt = IntType::get(&ctx_, llvm::APInt(kWidth, 0),
+                               llvm::APInt(kWidth, count - 1));
+        Value tag = create<RecTagOp>(l, tt, b->value);
+        Value k = create<ConstantOp>(
+            l, tt,
+            b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                              llvm::APInt(kWidth, c->tag)));
+        return TV{cmp(l, CmpPredicate::eq, tag, k), boolType()};
+      }
+      auto p = create<RecPayloadOp>(l, mlir::TypeRange{c->payload}, b->value,
+                                    b_.getStringAttr(c->name));
+      return TV{p->getResult(0), c->payload};
+    }
+    auto rt = mlir::cast<RecordType>(b->type);
     if (n.kids[0]->text == "#is") {
       Type tt = rt.getFieldTypes()[*rt.fieldIndex("tag")];
       Value tag = create<FieldOp>(l, tt, b->value, b_.getStringAttr("tag"));
@@ -3597,20 +3688,22 @@ class Gen {
       // the write: a code buffer would not change at run time.
       bool specArg = sig.params[i].spec && !contract_ && !ghost_;
       if (specArg && writes(sig.params[i])) {
-        BindingPtr sb = args[i]->kind == NodeKind::Name &&
-                                args[i]->flags.empty()
-                            ? lookup(args[i]->text)
-                            : nullptr;
+        BindingPtr sb =
+            args[i]->kind == NodeKind::Name && args[i]->flags.empty()
+                ? lookup(args[i]->text)
+                : nullptr;
         if (!sb || !sb->spec)
-          return fail(*args[i], "'" + sig.params[i].name + "' of '" +
-                                    sig.name + "' is a spec parameter that "
+          return fail(*args[i], "'" + sig.params[i].name + "' of '" + sig.name +
+                                    "' is a spec parameter that "
                                     "it may write, so pass a spec local or "
                                     "spec parameter by name (ADR 0058)");
       }
-      if (specArg) contract_ = true;
+      if (specArg)
+        contract_ = true;
       R a = early && (*early)[i] ? (*early)[i]
                                  : genExpr(*args[i], sig.params[i].type);
-      if (specArg) contract_ = false;
+      if (specArg)
+        contract_ = false;
       if (!a) return a;
       R c = coerce(*a, sig.params[i].type, *args[i]);
       if (!c) return c;
@@ -6849,7 +6942,9 @@ class Gen {
       // expansion has run and removed; the expander checks it is defined.
       if (r.flags == "meta") {
         const Node &t = *r.kids[0]->kids[1];
-        if (t.kind == NodeKind::TypeName && t.text != "concept")
+        // Only a concept is checked here; `: type` lists a type-level
+        // metaprogram, which the expander checks like any other.
+        if (t.kind != NodeKind::TypeName || t.text != "concept")
           continue;
         if (!concepts_.count(r.text))
           diags_.error(r.loc, unmet + "no concept '" + r.text + "'");
@@ -6982,7 +7077,8 @@ class Gen {
       const Node &annot = *p->kids[0];
       // A spec parameter is erased at the call, so both must agree on it
       // (ADR 0058).
-      if ((dom.flags == "spec") != (p->flags == "spec")) return false;
+      if ((dom.flags == "spec") != (p->flags == "spec"))
+        return false;
       if (dom.text != p->text || dom.kids.size() < 2 || annot.kids.size() < 2 ||
           !sameTree(*dom.kids[0], *annot.kids[0]) ||
           !sameTree(*dom.kids[1], *annot.kids[1]))
@@ -8428,6 +8524,16 @@ class Gen {
       if (!v) return v;
       R c = coerce(*v, ft, *init->kids[0]);
       if (!c) return c;
+      // An array field is the record's own: one read from a mutable local
+      // is copied, so a later write to the local does not reach it.
+      const Node &fv = *init->kids[0];
+      if (auto at = mlir::dyn_cast<ArrayType>(ft);
+          at && !contract_ && !ghost_ && fv.kind == NodeKind::Name)
+        if (BindingPtr fb = lookup(fv.text); fb && fb->writable && !fb->isParam) {
+          Value storage = create<RegionOp>(loc(fv), at);
+          create<CopyOp>(loc(fv), c->value, storage);
+          c = TV{storage, at};
+        }
       fields.push_back(c->value);
     }
     return TV{create<RecordOp>(loc(n), rt, fields), rt};
@@ -8561,6 +8667,15 @@ class Gen {
       if (!b->isMutable)
         return fail(place, "'" + place.text + "' is not mutable; declare it "
                            "as 'let " + place.text + " : mutable T = ...'");
+      // A whole array is copied into the local's own storage.
+      if (auto at = mlir::dyn_cast<ArrayType>(b->type); at && b->writable) {
+        R v = genExpr(valueNode, at);
+        if (!v) return v;
+        R c = coerce(*v, at, valueNode);
+        if (!c) return c;
+        create<CopyOp>(loc(n), c->value, b->value);
+        return unit();
+      }
       if (mlir::isa<ArrayType, SliceType>(b->type))
         return fail(place, "assigning a whole array is not supported yet");
       if (!notLent(b, place, "assigned")) return std::nullopt;
@@ -8568,7 +8683,10 @@ class Gen {
       if (!v) return v;
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
-      b->value = c->value;
+      // The arrays a record holds are copied into storage of this
+      // assignment's own: an array a call made in a loop lives in storage
+      // the next iteration's call reuses, and the local outlives it.
+      b->value = contract_ || ghost_ ? c->value : ownArrays(loc(n), c->value);
       addLenders(b->lenders, lendersOf(valueNode));
       moved_.erase(b);  // a moved local holds a value again
       return unit();
@@ -8640,7 +8758,8 @@ class Gen {
         R v = idx ? genExpr(valueNode, elem) : std::nullopt;
         R c = v ? coerce(*v, elem, valueNode) : std::nullopt;
         contract_ = false;
-        if (!c) return std::nullopt;
+        if (!c)
+          return std::nullopt;
         create<StoreOp>(loc(n), c->value, b->value, *idx);
         return unit();
       }
@@ -10665,8 +10784,8 @@ class Gen {
                            n.text + " : mutable [u8; 4096] = zeros'");
       if (!mlir::isa<ArrayType>(declared) && !isSpecScalar(declared))
         return fail(*ret.kids[0],
-                    "a spec local is a fixed array, as in 'let spec " +
-                        n.text + " : mutable [u8; 4096] = zeros', for now; "
+                    "a spec local is a fixed array, as in 'let spec " + n.text +
+                        " : mutable [u8; 4096] = zeros', for now; "
                         "a spec number is an 'int' (ADR 0058)");
     }
     // A local array that is `mutable`, or whose literal computes its
@@ -10700,6 +10819,17 @@ class Gen {
       contract_ = false;
     } else {
       v = genExpr(valueNode, declared);
+      // Arrays are values: a local bound to another array's storage, a
+      // name or a field of one, gets a copy, so a later write to the
+      // other does not reach it.
+      if (v && !contract_ && !ghost_ && mlir::isa<ArrayType>(v->type) &&
+          (valueNode.kind == NodeKind::Name || valueNode.kind == NodeKind::Field)) {
+        auto at = mlir::cast<ArrayType>(v->type);
+        Value storage = create<RegionOp>(loc(valueNode), at);
+        create<CopyOp>(loc(valueNode), v->value, storage);
+        v = TV{storage, at};
+        ownStorage = true;
+      }
     }
     if (!v) return v;
     if (declared) {
@@ -10736,13 +10866,10 @@ class Gen {
     }
     b->scope = n.kids[4].get();
     b->spec = isSpecLet;
-    // A local array's storage is on the stack, so it lends itself: it can
-    // be read, written when `mutable`, and passed on, but nothing holding
-    // it outlives the `let`.
-    if (ownStorage) {
-      b->lenders = {b};
-      b->writable = sema::hasModifier(modifiers, "mutable");
-    }
+    // A local array has storage of its own, written when `mutable`. A
+    // function's result that holds it is copied out to its caller
+    // (codegen's arrayResultsToBuffers), so it may be returned.
+    if (ownStorage) b->writable = sema::hasModifier(modifiers, "mutable");
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
     // `let` (#70).

@@ -1,6 +1,7 @@
 // Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
 
 #include "codegen/Codegen.h"
+#include "codegen/ArrayResults.h"
 #include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
@@ -18,8 +19,6 @@
 #include <vector>
 
 #include "dialect/ContractDialect.h"
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/SetVector.h"
 #include "dialect/PiaDialect.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/AsyncToLLVM/AsyncToLLVM.h"
@@ -54,6 +53,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -1254,7 +1255,8 @@ void eraseSpecState(mlir::ModuleOp module) {
   auto specArgs = [](mlir::func::FuncOp f) {
     llvm::BitVector out(f.getNumArguments());
     for (unsigned i = 0; i < f.getNumArguments(); ++i)
-      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName())) out.set(i);
+      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName()))
+        out.set(i);
     return out;
   };
   llvm::SetVector<mlir::Operation *> doomed;
@@ -1262,35 +1264,47 @@ void eraseSpecState(mlir::ModuleOp module) {
   module.walk([&](mlir::Operation *op) {
     if (op->hasAttr(PiaDialect::getSpecStateAttrName())) {
       doomed.insert(op);
-      for (Value r : op->getResults()) work.push_back(r);
+      for (Value r : op->getResults())
+        work.push_back(r);
     }
   });
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
-    if (f.isExternal()) continue;
+    if (f.isExternal())
+      continue;
     llvm::BitVector spec = specArgs(f);
-    for (unsigned i : spec.set_bits()) work.push_back(f.getArgument(i));
+    for (unsigned i : spec.set_bits())
+      work.push_back(f.getArgument(i));
   }
   while (!work.empty()) {
     Value v = work.pop_back_val();
     for (mlir::Operation *user : v.getUsers()) {
-      if (mlir::isa<mlir::func::CallOp>(user)) continue;  // dropped below
-      if (!doomed.insert(user)) continue;
-      for (Value r : user->getResults()) work.push_back(r);
+      if (mlir::isa<mlir::func::CallOp>(user))
+        continue; // dropped below
+      if (!doomed.insert(user))
+        continue;
+      for (Value r : user->getResults())
+        work.push_back(r);
     }
   }
   // Each call drops the arguments for its callee's spec parameters.
   module.walk([&](mlir::func::CallOp call) {
     auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
-    if (!f) return;
+    if (!f)
+      return;
     llvm::BitVector spec = specArgs(f);
-    if (spec.any()) call->eraseOperands(spec);
+    if (spec.any())
+      call->eraseOperands(spec);
   });
-  for (mlir::Operation *op : doomed) op->dropAllUses();
-  for (mlir::Operation *op : doomed) op->dropAllReferences();
-  for (mlir::Operation *op : doomed) op->erase();
+  for (mlir::Operation *op : doomed)
+    op->dropAllUses();
+  for (mlir::Operation *op : doomed)
+    op->dropAllReferences();
+  for (mlir::Operation *op : doomed)
+    op->erase();
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     llvm::BitVector spec = specArgs(f);
-    if (spec.none()) continue;
+    if (spec.none())
+      continue;
     if (f.isExternal()) {
       llvm::SmallVector<Type> inputs;
       llvm::SmallVector<mlir::DictionaryAttr> attrs;
@@ -1580,9 +1594,53 @@ static void lowerSpreads(mlir::ModuleOp module) {
   }
 }
 
+// Whether `t` is, or holds, a value of a recursive type (ADR 0047).
+static bool holdsRecursive(Type t) {
+  if (mlir::isa<RecType>(t)) return true;
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return holdsRecursive(a.getElementType());
+  if (auto sl = mlir::dyn_cast<SliceType>(t))
+    return holdsRecursive(sl.getElementType());
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    return llvm::any_of(r.getFieldTypes(), holdsRecursive);
+  return false;
+}
+
+// Recursive values have no layout until ADR 0047, step 3: a function
+// that uses one is an error, and the datatypes, which make no code, go.
+static LogicalResult rejectRecursive(mlir::ModuleOp module) {
+  bool ok = true;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    Type found;
+    auto note = [&](Type t) {
+      if (!found && holdsRecursive(t)) found = t;
+    };
+    for (Type t : f.getFunctionType().getInputs()) note(t);
+    for (Type t : f.getFunctionType().getResults()) note(t);
+    f.walk([&](mlir::Operation *op) {
+      for (Type t : op->getResultTypes()) note(t);
+      for (Type t : op->getOperandTypes()) note(t);
+    });
+    if (!found) continue;
+    f.emitError() << "'" << f.getSymName()
+                  << "' uses a recursive type, which has no code yet "
+                     "(ADR 0047, step 3)";
+    ok = false;
+  }
+  for (auto d : llvm::make_early_inc_range(module.getOps<DatatypeOp>()))
+    d.erase();
+  return mlir::success(ok);
+}
+
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+
+  if (mlir::failed(rejectRecursive(module))) return mlir::failure();
+
+  // An array result becomes an output buffer its caller makes.
+  if (mlir::failed(arrayResultsToBuffers(module)))
+    return mlir::failure();
 
   // A buffer whose elements are slices becomes a buffer of addresses and
   // one of lengths (ADR 0048, section 4).

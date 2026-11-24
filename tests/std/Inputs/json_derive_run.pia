@@ -8,6 +8,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json)
 
@@ -37,6 +38,19 @@ let level_is (e : level_json_error) (k : u8) (p : usize) : bool =
   | Range_level q -> k = 5 && q = p
 
 (* Reading s fails with the error of kind k at p. *)
+(* Json.read: the whole text is one value, so what follows it must be
+   whitespace; anything else is Syntax where the value ends (ADR 0045,
+   section 3). *)
+let whole (s : [u8]) : i32 =
+  match Json.read<point> s with
+  | Ok p -> p.x
+  | Err _ -> 0 - 1
+
+let trailing (s : [u8]) (p : usize) : bool =
+  match Json.read<point> s with
+  | Ok _ -> false
+  | Err e -> is e 1 p
+
 let fails (s : [u8]) (k : u8) (p : usize) : bool =
   match read_json_point s 0 with
   | Ok _ -> false
@@ -109,6 +123,10 @@ let doc (buf : borrowed inout mutable [u8]) : i32
     0x7B; 0x22; 0x78; 0x78; 0x22; 0x3A; 0x31; 0x2C; 0x22; 0x79;
     0x22; 0x3A; 0x2D; 0x31; 0x2C; 0x22; 0x6F; 0x6B; 0x22; 0x3A;
     0x74; 0x72; 0x75; 0x65; 0x7D ] in
+  let junk : [u8; 26] = [
+    0x7B; 0x22; 0x78; 0x78; 0x22; 0x3A; 0x31; 0x2C; 0x22; 0x79;
+    0x22; 0x3A; 0x32; 0x2C; 0x22; 0x6F; 0x6B; 0x22; 0x3A; 0x74;
+    0x72; 0x75; 0x65; 0x7D; 0x20; 0x78 ] in
   for k in 0 .. 64 do buf.[k] <- 0x20 done;
   let p = { x = -5; y = 200; ok = true } in
   let e = write_json_point buf 0 p in
@@ -154,6 +172,8 @@ let doc (buf : borrowed inout mutable [u8]) : i32
                                        else if fails frac 5 6 = false then 19
                                        else if fails neg 5 6 = false then 20
                                        else if fails ulow 5 12 = false then 21
+                                       else if whole other <> 2147483647 then 30
+                                       else if trailing junk 24 = false then 31
                                        else 0))))))
 
 let main () : i32 = with_arena 64 (let (m) => doc m.mem)

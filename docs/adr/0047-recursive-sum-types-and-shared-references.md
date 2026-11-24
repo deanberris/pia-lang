@@ -102,7 +102,7 @@ Dean asked (2026-11-22) for a `lease` method that gives a mutable reference to a
 ## Implementation order
 
 1. **`let rec` types** in the parser and Sema: the explicit-recursion rule, regular recursion, guardedness through `Indirect` types, the inhabitation check, `needless_rec`.
-2. **Verifier**: recursive variants as SMT-LIB datatypes, `box` and `vec` by their contents, structural termination, `depth` and `size`.
+2. **Verifier**: recursive variants as SMT-LIB datatypes, `box` and `vec` by their contents, structural termination, `depth` and `size`. It lands in two parts. First the dialect: a recursive variant is the leaf type `!pia.rec<"name">`, its constructors are in a module-level `pia.datatype`, and `pia.rec_make`, `pia.rec_tag` and `pia.rec_payload` build and take apart its values, which ScalarizeRecords leaves whole; until the encoding exists, a goal over a recursive value is unproved, a compile error by default ([irgen.md](../irgen.md)). Then the encoding.
 3. **Codegen**: layouts with pointer occurrences, construction, matching, and the constant-stack drop, proved. Needs `box t` (ADR 0046 step 1, built in `Pia.Mem` after the ADR 0042 region parameter decision).
 4. **Metaprograms**: `is_rec`, `rec_group`, the totality rule, and `@derive(eq)` on recursive types.
 5. **`ref` and `weak`** in `Pia.Mem.Ref`, with the uniqueness rule and the acyclicity lemma; [docs/cpp-std.md](../cpp-std.md) maps `shared_ptr` and `weak_ptr` to them. Then single-threaded leases with the `Lease` theory and its model, and the reachability goal for stores through a lease.

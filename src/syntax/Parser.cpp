@@ -543,7 +543,7 @@ class Parser {
         // `(spec ref : inout [u8; 4096])`: a spec parameter (ADR 0058),
         // which callers and the callee share as spec state.
         take();
-        take();  // spec
+        take(); // spec
         auto p = makeNode(N::Param, loc(), text());
         p->flags = "spec";
         take();
@@ -560,12 +560,14 @@ class Parser {
   // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
   // function type's contracts (ADR 0044), on its innermost arrow.
   void paramContracts(Node &p) {
-    if (p.kids[0]->kids[1]->kind != N::ArrowType || !atContract()) return;
+    if (p.kids[0]->kids[1]->kind != N::ArrowType || !atContract())
+      return;
     Node *arrow = p.kids[0]->kids[1].get();
     while (arrow->kids[1]->kind == N::ArrowType)
       arrow = arrow->kids[1].get();
     Node *cs = arrow->add(makeNode(N::Contracts, loc()));
-    while (atContract()) cs->add(contract());
+    while (atContract())
+      cs->add(contract());
   }
 
   // `(spec name :`, which opens a spec parameter (ADR 0058). `spec` is not
@@ -886,8 +888,8 @@ class Parser {
     SourceLoc start = loc();
     auto dom = makeNode(N::Domain, start);
     bool specDom = atSpecParam();
-    if (specDom || (at(K::LParen) && kind(1) == K::Ident &&
-                    kind(2) == K::Colon)) {
+    if (specDom ||
+        (at(K::LParen) && kind(1) == K::Ident && kind(2) == K::Colon)) {
       take();
       if (specDom) {
         // `(spec ref : inout [u8; 4096]) -> r` in a signature (ADR 0058).

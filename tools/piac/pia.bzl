@@ -3,6 +3,16 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 load(":targets.bzl", "PIAC_TARGET_FLAGS")
 
+# Solver threads for each piac action. By default piac uses one per core, so
+# a build running several Pia actions at once oversubscribed the machine many
+# times over. The result does not depend on it: the rlimit decides each goal.
+PIAC_JOBS = 2
+
+def _piac_resources(_os, _inputs):
+    # Tells Bazel's scheduler that a compile takes PIAC_JOBS cores, so
+    # --local_resources=cpu=N runs N / PIAC_JOBS of them at once.
+    return {"cpu": PIAC_JOBS}
+
 def pia_object(
         name,
         src,
@@ -32,7 +42,8 @@ def pia_object(
     """
     flags = " ".join(["--allow-unproved=" + spec for spec in allow_unproved] +
                      ["--solver-rlimit=%d" % solver_rlimit,
-                      "--solver-timeout=%d" % solver_timeout_ms])
+                      "--solver-timeout=%d" % solver_timeout_ms,
+                      "--jobs=%d" % PIAC_JOBS])
     native.genrule(
         name = name,
         srcs = [src],
@@ -85,6 +96,7 @@ def _pia_library_impl(ctx):
     args += [
         "--solver-rlimit=%d" % ctx.attr.solver_rlimit,
         "--solver-timeout=%d" % ctx.attr.solver_timeout_ms,
+        "--jobs=%d" % PIAC_JOBS,
         src.path,
     ]
     ctx.actions.run(
@@ -93,6 +105,7 @@ def _pia_library_impl(ctx):
         inputs = [src] + imported,
         outputs = [obj],
         mnemonic = "PiaCompile",
+        resource_set = _piac_resources,
         progress_message = "Proving and compiling %s" % src.short_path,
     )
     objects = depset([obj], transitive = [dep[PiaInfo].objects for dep in ctx.attr.deps])

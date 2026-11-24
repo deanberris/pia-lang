@@ -113,7 +113,7 @@ interface Delineation @abi(c) = sig
   let accumulate : (fill : [u16]) -> (down : [usize])
       -> (acc : out mutable [u32]) -> (basin : out mutable [usize]) -> unit
     requires len down = len fill && len acc = len fill && len basin = len fill
-    requires len fill < 4294967295
+    requires len fill < max u32
     requires forall (k in 0..len down).
                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   let render : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
@@ -125,7 +125,7 @@ interface Delineation @abi(c) = sig
       -> (threshold : u32) -> (fill : out mutable [u16])
       -> (down : out mutable [usize]) -> (acc : out mutable [u32])
       -> (basin : out mutable [usize]) -> (rgb : out mutable [u8]) -> usize
-    requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
+    requires w >= 3 && w + w + w <= len dem && len dem < max u32
     requires len fill = len dem && len down = len dem && len acc = len dem
     requires len basin = len dem && len rgb = len dem + len dem + len dem
   let palette : (pal : out mutable [u8]) -> unit
@@ -216,7 +216,7 @@ otherwise to just one unit above its lowest neighbour. Repeat until nothing
 changes. A pit ends up level with the point where it spills, plus one unit
 per cell back from that point, so even a filled lake slopes gently towards
 its outlet and the next stage always finds a way down. The `+ 1` saturates
-(`+|`) at 65535, so heights near the top of the range cannot overflow; a
+(`+|`) at `max u16`, so heights near the top of the range cannot overflow; a
 cell there may simply find no lower neighbour, which the later stages
 handle.
 
@@ -331,9 +331,9 @@ let sweep_up (dem : [u16]) (w : usize) (last : usize)
 ```
 
 Floods the interior of the row that starts at `r`: the starting surface.
-The flood level is written `higher (dem.[m]) 65535`, which is always
-65535, because the verifier does not yet know that a `u16` read from a
-slice inside a `forall` is at most 65535
+The flood level is written `higher (dem.[m]) (max u16)`, which is always
+`max u16`, because the verifier does not yet know that a `u16` read from a
+slice inside a `forall` is at most `max u16`
 ([issue #96](https://github.com/deanberris/pia-lang/issues/96)).
 `higher`'s postcondition says it is not below the ground.
 
@@ -347,7 +347,7 @@ let flood_row (dem : [u16]) (w : usize) (r : usize)
   for m in r + 1..r + w - 1
     invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
   do
-    fill.[m] <- higher (dem.[m]) 65535
+    fill.[m] <- higher (dem.[m]) (max u16)
   done
 ```
 
@@ -569,7 +569,7 @@ the `+ 1` cannot overflow, with no saturation and no run-time check.
 let walk (fill : [u16]) (down : [usize]) (start : usize) (bound : u32)
     (acc : inout mutable [u32]) : usize
   requires len down = len fill && len acc = len fill && start < len fill
-  requires bound < 4294967295
+  requires bound < max u32
   requires forall (k in 0..len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   requires forall (k in 0..len acc). acc.[k] <= bound
@@ -607,7 +607,7 @@ yet ([issue #86](https://github.com/deanberris/pia-lang/issues/86)).
 let accumulate (fill : [u16]) (down : [usize]) (acc : out mutable [u32])
     (basin : out mutable [usize]) : unit
   requires len down = len fill && len acc = len fill && len basin = len fill
-  requires len fill < 4294967295
+  requires len fill < max u32
   requires forall (k in 0..len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   ensures forall (k in 0..len acc). acc.[k] <= len fill
@@ -666,7 +666,7 @@ let major (a : u32) (threshold : u32) : bool =
 ```
 
 The colour of one cell: its height `h` before and `f` after filling, its
-flow `a`, and its watershed. A height is 0 to 65535, so `h / 256` is a
+flow `a`, and its watershed. A height is 0 to `max u16`, so `h / 256` is a
 byte, and the average of a byte and a byte is a byte: the verifier proves
 both narrowings.
 
@@ -723,7 +723,7 @@ let delineate (dem : [u16]) (w : usize) (limit : u32) (threshold : u32)
     (fill : out mutable [u16]) (down : out mutable [usize])
     (acc : out mutable [u32]) (basin : out mutable [usize])
     (rgb : out mutable [u8]) : usize
-  requires w >= 3 && w + w + w <= len dem && len dem < 4294967295
+  requires w >= 3 && w + w + w <= len dem && len dem < max u32
   requires len fill = len dem && len down = len dem && len acc = len dem
   requires len basin = len dem && len rgb = len dem + len dem + len dem
   ensures result <= len dem

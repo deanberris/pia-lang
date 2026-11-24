@@ -75,6 +75,7 @@ struct Generic {
   std::vector<std::string> params;
   const syntax::Node *value = nullptr;  // the TypeValue body
   syntax::SourceLoc loc;
+  bool rec = false;  // `let rec`: its variant instances are leaves (ADR 0047)
 };
 
 // What an instance was made from: `option<u8>` is `option` applied to u8.
@@ -116,6 +117,16 @@ class TypeResolver {
 
   // A named type from a `let name = type ...` item: a record or an alias.
   void define(const std::string &name, mlir::Type type) { named_[name] = type; }
+
+  // A `let rec` type that passed ADR 0047's checks but is not built, as
+  // a group of recursive records is not yet: a use of it says so rather
+  // than that it is unknown.
+  void markRecursive(const std::string &name) { recursive_.insert(name); }
+  // The leaf types of recursive variants, !pia.rec<"name">, in the order
+  // they were built: IRGen declares a pia.datatype for each.
+  void addDatatype(mlir::Type t) { datatypes_.push_back(t); }
+  const std::vector<mlir::Type> &datatypes() const { return datatypes_; }
+  bool isRecursive(const std::string &name) const { return recursive_.count(name) != 0; }
 
   // A record's field refinements, `{ p : real where 0 <= p }` (ADR 0036):
   // each field's name and its predicate, in which the name is the field.
@@ -241,6 +252,8 @@ class TypeResolver {
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
   std::map<std::string, mlir::Type> named_;
+  std::set<std::string> recursive_;
+  std::vector<mlir::Type> datatypes_;
   std::map<std::string, Refinements> refinements_;
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;

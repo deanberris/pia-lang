@@ -1,0 +1,78 @@
+(* Recursive types (ADR 0047, step 2): a `let rec` variant is the leaf
+   type !pia.rec<"name">, and the module's pia.datatype lists its
+   constructors and their payloads. Constructors are pia.rec_make, and
+   `match` tests pia.rec_tag and takes pia.rec_payload. The records of a
+   recursive group, such as lifted payloads, stay structural: they hold
+   the leaf inside a box or vec, so none contains itself.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let vec = let (t : type) => type { items : [t]; used : usize }
+
+(*
+// CHECK-DAG: !box3Ctree3E = !pia.record<"box<tree>", slot : !pia.slice<!pia.rec<"tree">>>
+// CHECK-DAG: !tree_Node = !pia.record<"tree_Node", left : !box3Ctree3E, key : !pia.int<0, 4294967295>, right : !box3Ctree3E>
+// CHECK: pia.datatype @tree ctors ["Leaf", "Node"] payloads [none, !tree_Node]
+// CHECK: pia.datatype @forest ctors ["Trees"] payloads [!vec3Crose3E]
+// CHECK: pia.datatype @rose ctors ["Rose"] payloads [!rose_Rose]
+// CHECK: pia.datatype @"list<u8>" ctors ["Nil", "Cons"] payloads [none, !cell3Cu83E]
+*)
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(* Mutual recursion: both marked, both leaves. *)
+let rec forest = type | Trees of vec rose
+let rec rose = type | Rose of { label : u8; kids : forest }
+
+(* Generic, regular: each instance is a leaf of its own, `list<u8>`. *)
+let rec list = let (t : type) => type | Nil | Cons of cell t
+let rec cell = let (t : type) => type { head : t; tail : box (list t) }
+
+(* Inhabited through vec: an empty vector needs no node. *)
+let rec bag = type | Bag of vec bag
+
+(*
+// CHECK-LABEL: func.func @leaf() -> !pia.rec<"tree">
+// CHECK: pia.rec_make "Leaf" : <"tree">
+*)
+let leaf () : tree = Leaf
+
+(*
+// CHECK-LABEL: func.func @node
+// CHECK: %[[P:.*]] = pia.record(%{{.*}}, %{{.*}}, %{{.*}} : {{.*}}) : !tree_Node
+// CHECK: pia.rec_make "Node"(%[[P]] : !tree_Node) : <"tree">
+*)
+let node (l : box tree) (k : u32) (r : box tree) : tree =
+  Node { left = l; key = k; right = r }
+
+(*
+// CHECK-LABEL: func.func @key
+// CHECK: %[[TAG:.*]] = pia.rec_tag %arg0 : <"tree"> -> <0, 1>
+// CHECK: pia.cmp eq %[[TAG]]
+// CHECK: pia.rec_payload %arg0, "Node" : <"tree"> -> (!tree_Node)
+*)
+let key (t : tree) : u32 =
+  match t with
+  | Leaf -> 0
+  | Node n -> n.key
+
+(*
+// CHECK-LABEL: func.func @head
+// CHECK: pia.rec_tag %arg0 : <"list<u8>"> -> <0, 1>
+// CHECK: pia.rec_payload %arg0, "Cons" : <"list<u8>"> -> (!cell3Cu83E)
+*)
+let head (l : list u8) : u8 =
+  match l with
+  | Nil -> 0
+  | Cons c -> c.head
+
+(* A recursive value in a record, a result and a mutable local.
+// CHECK-LABEL: func.func @keep
+*)
+let holder = type { t : tree; n : u8 }
+let keep (h : holder) : result tree u8 =
+  let x : mutable tree = h.t in
+  x <- Leaf;
+  Ok x

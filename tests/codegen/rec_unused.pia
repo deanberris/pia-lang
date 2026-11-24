@@ -1,0 +1,10 @@
+(* A recursive type that no function uses makes no code, and stops none.
+// RUN: piac --emit=core %s | FileCheck %s
+// CHECK-NOT: pia.datatype
+// CHECK: func.func @plain
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let rec tree = type | Leaf | Node of { left : box tree; key : u32; right : box tree }
+
+let plain (a : u8) (b : u8) : u16 = a + b

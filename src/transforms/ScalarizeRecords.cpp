@@ -160,6 +160,49 @@ struct FieldLowering : mlir::OpConversionPattern<FieldOp> {
   }
 };
 
+// A recursive value (ADR 0047) is a leaf and stays one; a record payload
+// is passed to its constructor as its fields, and taken out as them.
+struct RecMakeLowering : mlir::OpConversionPattern<RecMakeOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      RecMakeOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto made = make<RecMakeOp>(rw, op.getLoc(), op.getType(),
+                                op.getCtorAttr(), flatten(adaptor.getPayload()));
+    rw.replaceOp(op, made.getResult());
+    return mlir::success();
+  }
+};
+
+struct RecPayloadLowering : mlir::OpConversionPattern<RecPayloadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult matchAndRewrite(
+      RecPayloadOp op, OneToNOpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    llvm::SmallVector<Type> flat;
+    llvm::SmallVector<unsigned> counts;
+    for (Type t : op.getResultTypes()) {
+      size_t before = flat.size();
+      if (mlir::failed(getTypeConverter()->convertType(t, flat)))
+        return mlir::failure();
+      counts.push_back(flat.size() - before);
+    }
+    mlir::ValueRange input = adaptor.getInput();
+    if (input.size() != 1) return mlir::failure();
+    auto taken = make<RecPayloadOp>(rw, op.getLoc(), flat, input[0],
+                                    op.getCtorAttr());
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    unsigned at = 0;
+    for (unsigned n : counts) {
+      results.emplace_back(taken.getResults().begin() + at,
+                           taken.getResults().begin() + at + n);
+      at += n;
+    }
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
 // An arbitrary record, the result of an imported function (ADR 0039), is
 // an arbitrary value per field.
 struct ArbitraryLowering : mlir::OpConversionPattern<ArbitraryOp> {
@@ -492,7 +535,8 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
                OldLowering,
                LoadLowering,
-               StoreLowering, SliceLowering, LenLowering>(types, ctx);
+               StoreLowering, SliceLowering, LenLowering, RecMakeLowering,
+               RecPayloadLowering>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

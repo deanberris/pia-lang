@@ -22,7 +22,9 @@
    - `read_null` reads `null`, which an `option` field reads as None.
    - `read_str` reads a string token, a variant's tag, and `skip_scalar`
      passes over one value token, a variant's member to be read once its
-     constructor is known. *)
+     constructor is known.
+   - `open_array` and `after_element` read an array field's brackets
+     and commas. *)
 module Pia.Text.Json.Read : Reader
 
 import Pia.Text.Json.Spec.Grammar as Spec
@@ -110,6 +112,19 @@ let span = type { start : usize; stop : usize }
     requires pos <= len s
     ensures (match result with
       | Ok e -> pos < e && e <= len s
+      | Err p -> p <= len s)
+  (** `[` at or after pos: the position after it, or after `]` when the
+      array is empty. *)
+  let open_array : (s : [u8]) -> (pos : usize) -> result opened usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok o -> pos < o.next && o.next <= len s
+      | Err p -> p <= len s)
+  (** `,` (more) or `]` at or after pos, after an array's element. *)
+  let after_element : (s : [u8]) -> (pos : usize) -> result sep usize
+    requires pos <= len s
+    ensures (match result with
+      | Ok r -> pos < r.next && r.next <= len s
       | Err p -> p <= len s)
   (** `,` or `}` at or after pos. *)
   let after_member : (s : [u8]) -> (pos : usize) -> result sep usize
@@ -348,4 +363,35 @@ let skip_scalar (s : [u8]) (pos : usize) : result usize usize
        | True -> Ok t.stop
        | False -> Ok t.stop
        | Null -> Ok t.stop
+       | _ -> Err t.start)
+
+let open_array (s : [u8]) (pos : usize) : result opened usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok o -> pos < o.next && o.next <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | LBracket ->
+           (match Lex.next s t.stop with
+            | Ok u ->
+                (match u.kind with
+                 | RBracket -> Ok { next = u.stop; empty = true }
+                 | _ -> Ok { next = t.stop; empty = false })
+            | Err _ -> Ok { next = t.stop; empty = false })
+       | _ -> Err t.start)
+
+let after_element (s : [u8]) (pos : usize) : result sep usize
+  requires pos <= len s
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len s
+    | Err p -> p <= len s)
+= match Lex.next s pos with
+  | Err e -> Err (lex_pos e)
+  | Ok t ->
+      (match t.kind with
+       | Comma -> Ok { next = t.stop; more = true }
+       | RBracket -> Ok { next = t.stop; more = false }
        | _ -> Err t.start)

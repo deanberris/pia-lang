@@ -375,6 +375,43 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
 
 // The function at the heart of the verifier: a symbolic walk of one
 // function that encodes its ops in the smt dialect.
+// Why a goal over a recursive value is not proved yet.
+constexpr const char *kRecursiveNotVerified =
+    "recursive types are not verified yet (ADR 0047, step 2)";
+
+// Whether `t` is, or holds, a value of a recursive type (ADR 0047).
+bool holdsRecursive(Type t) {
+  if (mlir::isa<RecType>(t)) return true;
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return holdsRecursive(a.getElementType());
+  if (auto sl = mlir::dyn_cast<SliceType>(t))
+    return holdsRecursive(sl.getElementType());
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    return llvm::any_of(r.getFieldTypes(), holdsRecursive);
+  return false;
+}
+
+// Whether a function takes, makes or returns a recursive value.
+bool touchesRecursive(mlir::func::FuncOp fn) {
+  auto ft = fn.getFunctionType();
+  if (llvm::any_of(ft.getInputs(), holdsRecursive) ||
+      llvm::any_of(ft.getResults(), holdsRecursive))
+    return true;
+  return fn
+      .walk([](Operation *op) {
+        for (Type t : op->getResultTypes())
+          if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
+        for (Type t : op->getOperandTypes())
+          if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
+        for (mlir::Region &r : op->getRegions())
+          for (mlir::Block &b : r)
+            for (Type t : b.getArgumentTypes())
+              if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
+        return mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 class Encoder {
  public:
   // Lists the goals when `target` is negative; otherwise stops at goal
@@ -408,6 +445,16 @@ class Encoder {
   };
 
   void run() {
+    // Recursive values have no encoding yet (ADR 0047, step 2), so none
+    // of the function's goals is proved: each is unproved, which is a
+    // compile error unless --allow-unproved accepts it.
+    if (touchesRecursive(fn_)) {
+      fn_.walk([&](Operation *op) {
+        for (auto &[kind, claim] : describe(op))
+          skipped(kind, op, claim, kRecursiveNotVerified);
+      });
+      return;
+    }
     declareSpecFunctions();
     mlir::Block &entry = fn_.getBody().front();
     for (unsigned i = 0; i < entry.getNumArguments(); ++i) declareParam(entry.getArgument(i), i);
@@ -1881,8 +1928,7 @@ class Encoder {
       Value zero = mlir::isa<mlir::smt::IntType>(es)    ? intConst(APInt(64, 0))
                    : mlir::isa<mlir::smt::BoolType>(es) ? boolConst(false)
                                                         : bv(0);
-      arrays[r.getResult()] =
-          create<mlir::smt::ArrayBroadcastOp>(sort, zero);
+      arrays[r.getResult()] = create<mlir::smt::ArrayBroadcastOp>(sort, zero);
       lengths[r.getResult()] =
           bv(static_cast<int64_t>(r.getType().getLength()));
       out.push_back(bv(0));  // a placeholder: buffers are not terms

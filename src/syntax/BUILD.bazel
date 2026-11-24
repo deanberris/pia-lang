@@ -11,6 +11,7 @@ cc_library(
         "Lint.cpp",
         "Parser.cpp",
         "Prelude.cpp",
+        "RecTypes.cpp",
         "Syntax.cpp",
     ],
     hdrs = [
@@ -20,6 +21,7 @@ cc_library(
         "Lexer.h",
         "Lint.h",
         "Parser.h",
+        "RecTypes.h",
         "Syntax.h",
         "Token.h",
     ],

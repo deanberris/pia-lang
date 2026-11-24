@@ -1,6 +1,7 @@
 // Lints for idiomatic Pia (ADR 0037). See Lint.h and docs/idioms.md.
 
 #include "syntax/Lint.h"
+#include "syntax/RecTypes.h"
 
 #include <algorithm>
 #include <cctype>
@@ -363,6 +364,7 @@ public:
   std::vector<Lint> run(const Node &program) {
     walk(program, /*topLevel=*/true);
     families(program);
+    needlessRec(program);
     std::stable_sort(out_.begin(), out_.end(),
                      [](const Lint &a, const Lint &b) {
                        return a.loc.offset < b.loc.offset;
@@ -383,6 +385,25 @@ private:
     if (allow_.count(l.name))
       return;
     out_.push_back(std::move(l));
+  }
+
+  // A `let rec` type that refers to no type of its cycle needs no `rec`
+  // (ADR 0047).
+  void needlessRec(const Node &program) {
+    std::vector<TypeItem> items = typeItems(program);
+    std::set<const Node *> cyclic;
+    for (const std::vector<const TypeItem *> &g : typeCycles(items))
+      for (const TypeItem *t : g) cyclic.insert(t->item);
+    for (const TypeItem &t : items) {
+      if (!t.rec || cyclic.count(t.item)) continue;
+      Lint l;
+      l.name = "needless_rec";
+      l.loc = t.item->loc;
+      l.end = t.item->loc.offset;
+      l.message = "'" + t.item->text + "' is declared 'let rec' but does not "
+                  "refer to itself; drop 'rec'";
+      add(std::move(l));
+    }
   }
 
   void walk(const Node &n, bool topLevel) {
@@ -1086,7 +1107,8 @@ const std::vector<std::string_view> &lintNames() {
                                                       "nonlinear_contract",
                                                       "deep_fuel",
                                                       "assume",
-                                                      "costly_goal"};
+                                                      "costly_goal",
+                                                      "needless_rec"};
   return names;
 }
 

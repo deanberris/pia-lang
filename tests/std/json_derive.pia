@@ -8,8 +8,12 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Derive.pia 2>&1 | FileCheck %s --check-prefix=MODULE
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 // RUN: piac --dump-expanded --iface-path=%t %s | FileCheck %s --check-prefix=AST
+// MODULE: Derive.pia:{{[0-9]+}}:1: not proved generically: 'read' is proved at each instance, since its signature applies a type-level metaprogram to a type parameter [generic]
+// MODULE: 0 proved, 0 failed, 0 skipped
 // CHECK-NOT: failed
 // CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
 *)
@@ -17,6 +21,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 (* The error type has a constructor for each error, named for the type,
    since constructors are names of the module. Three names of length 2:
@@ -54,3 +59,15 @@ let first (s : [u8]) : bool
 = match read_json_flags s 0 with
   | Ok r -> r.value.a
   | Err _ -> false
+
+(* Json.read: a whole text as a point, through the derived instance of
+   Json; Json.json_errors point is point_json_error. *)
+let whole (s : [u8]) : bool =
+  match Json.read<point> s with
+  | Ok p -> p.ok
+  | Err e -> (match e with | Missing_point _ -> false | _ -> false)
+
+let kind (e : Json.json_errors point) : u8 =
+  match e with
+  | Syntax_point _ -> 1 | Unknown_point _ -> 2 | Duplicate_point _ -> 3
+  | Missing_point _ -> 4 | Range_point _ -> 5

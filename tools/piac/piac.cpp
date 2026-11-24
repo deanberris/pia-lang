@@ -20,8 +20,9 @@
 //                                   goal's Z3 resource count
 //   piac --goal-times file.pia      --verify, also printing how long each
 //                                   proved goal took to solve, in ms
-//   piac --jobs=N ...               solve goals on N threads (default: one
-//                                   per core; the report is the same)
+//   piac --jobs=N ...               solve goals on N threads (default:
+//                                   $PIA_JOBS if set, else one per core;
+//                                   the report is the same)
 //   piac --verify-only=SPEC ...     --verify only the goals SPEC selects: a
 //                                   function, a module (file.pia) or a
 //                                   location file:line[:col]; repeatable
@@ -747,6 +748,18 @@ int main(int argc, char **argv) {
   if (emitInterface && (output.empty() || verify || contracts ||
                         !ifacePaths.empty()))
     return usage();
+  // With no --jobs, $PIA_JOBS caps the solver threads, so a machine running
+  // many piac processes at once (a Bazel test suite, several worktrees) can
+  // keep their total near its core count. ~/.bazelrc on a shared machine
+  // passes it to tests with --test_env.
+  if (jobs == 0) {
+    if (const char *env = std::getenv("PIA_JOBS")) {
+      char *end = nullptr;
+      unsigned long n = std::strtoul(env, &end, 10);
+      if (*env != '\0' && *end == '\0' && n > 0 && n <= 4096)
+        jobs = static_cast<unsigned>(n);
+    }
+  }
   if (!output.empty() && !codegen && !emitInterface) return usage();
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();

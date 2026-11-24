@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <map>
 #include <set>
 
 #include "dialect/PiaDialect.h"
+#include "syntax/RecTypes.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -13,6 +16,13 @@ namespace pia::sema {
 
 using syntax::Node;
 using syntax::NodeKind;
+
+// Why a `let rec` type cannot be used yet.
+static std::string recursiveNotYet(const std::string &name) {
+  return "'" + name + "' is a recursive record, which is not supported "
+         "yet: only a recursive variant is (ADR 0047, step 2); make it one "
+         "with a single constructor";
+}
 
 namespace {
 
@@ -124,6 +134,7 @@ std::string typeName(mlir::Type t) {
   if (mlir::isa<UnboundedIntType>(t)) return "int";
   if (mlir::isa<RealType>(t)) return "real";
   if (auto so = mlir::dyn_cast<SortType>(t)) return so.getName().str();
+  if (auto r = mlir::dyn_cast<RecType>(t)) return r.getName().str();
   std::string out;
   llvm::raw_string_ostream os(out);
   t.print(os);
@@ -237,6 +248,10 @@ mlir::Type TypeResolver::resolve(const Node &type) {
                                    ", as in '" + type.text + " u8'");
         return {};
       }
+      if (isRecursive(type.text)) {
+        diags_.error(type.loc, recursiveNotYet(type.text));
+        return {};
+      }
       diags_.error(type.loc, "unknown type '" + type.text + "'");
       return {};
     }
@@ -253,6 +268,10 @@ mlir::Type TypeResolver::resolve(const Node &type) {
           args.push_back(a);
         }
         return callTypeFunction_(head.text, args, type.loc);
+      }
+      if (head.kind == NodeKind::TypeName && isRecursive(head.text)) {
+        diags_.error(head.loc, recursiveNotYet(head.text));
+        return {};
       }
       if (head.kind != NodeKind::TypeName || !generic(head.text)) {
         diags_.error(head.loc, "only a generic type can take type arguments");
@@ -335,6 +354,11 @@ mlir::Type TypeResolver::unionOf(llvm::ArrayRef<mlir::Type> in,
     if (!isVariant(m)) {
       diags_.error(at, "an error set is a union of variants, but " +
                            typeName(m) + " is not one");
+      return {};
+    }
+    if (mlir::isa<RecType>(m) && in.size() > 1) {
+      diags_.error(at, "'" + typeName(m) + "' is a recursive variant, which "
+                       "cannot be in an error set yet (ADR 0047)");
       return {};
     }
     members.push_back(m);
@@ -499,7 +523,7 @@ namespace {
 // field per payload (struct Ctor in Sema.h).
 mlir::Type buildVariant(const std::string &name, const Node &body,
                         TypeResolver &types, syntax::Diagnostics &diags,
-                        bool instance) {
+                        bool instance, mlir::Type rec) {
   mlir::MLIRContext *ctx = types.boolType().getContext();
   std::vector<std::pair<std::string, mlir::Type>> ctors;
   for (const syntax::NodePtr &c : body.kids) {
@@ -541,8 +565,12 @@ mlir::Type buildVariant(const std::string &name, const Node &body,
       names.push_back(mlir::StringAttr::get(ctx, name));
       fieldTypes.push_back(t);
     }
-  mlir::Type variant = RecordType::get(ctx, name, names, fieldTypes);
+  // A recursive variant (ADR 0047) is its leaf type, whose constructors
+  // the module's pia.datatype lists.
+  mlir::Type variant =
+      rec ? rec : mlir::Type(RecordType::get(ctx, name, names, fieldTypes));
   if (types.isVariant(variant)) return variant;  // made before
+  if (rec) types.addDatatype(rec);
   for (unsigned i = 0; i < ctors.size(); ++i)
     types.defineCtor(Ctor{ctors[i].first, variant, i, ctors[i].second},
                      !instance);
@@ -555,7 +583,7 @@ mlir::Type buildVariant(const std::string &name, const Node &body,
 // variant, or another type. An instance's constructors are not global.
 static mlir::Type buildType(const std::string &name, const Node &value,
                      TypeResolver &types, syntax::Diagnostics &diags,
-                     bool instance) {
+                     bool instance, mlir::Type rec = {}) {
   const Node &body = *value.kids[0];
   // `@linear` (#56) is read by IRGen; `@derive` is expanded before this.
   for (const syntax::NodePtr &attr : value.kids[1]->kids)
@@ -569,7 +597,7 @@ static mlir::Type buildType(const std::string &name, const Node &value,
   }
   mlir::MLIRContext *ctx = types.boolType().getContext();
   if (body.kind == NodeKind::Variants)
-    return buildVariant(name, body, types, diags, instance);
+    return buildVariant(name, body, types, diags, instance, rec);
   if (body.kind != NodeKind::RecordType) return types.resolve(body);
   llvm::SmallVector<mlir::StringAttr> names;
   llvm::SmallVector<mlir::Type> fieldTypes;
@@ -635,16 +663,32 @@ mlir::Type TypeResolver::instantiate(const std::string &name,
     return {};
   }
   instantiating_.insert(key);
+  // An instance of a recursive variant is a leaf, known before its body
+  // is built, so the body can refer to it (ADR 0047).
+  mlir::Type rec;
+  if (g->rec && g->value->kids[0]->kind == NodeKind::Variants) {
+    rec = RecType::get(context(), key);
+    instances_[key] = rec;
+    instanceOf_.try_emplace(
+        rec, Instance{name, std::vector<mlir::Type>(args.begin(), args.end())});
+  }
   std::map<std::string, mlir::Type> scope;
   for (size_t i = 0; i < args.size(); ++i) scope[g->params[i]] = args[i];
   // The body sees only its parameters and top-level names.
   std::vector<std::map<std::string, mlir::Type>> saved;
   saved.swap(typeScopes_);
   pushTypeScope(std::move(scope));
-  mlir::Type t = buildType(key, *g->value, *this, diags_, /*instance=*/true);
+  mlir::Type t =
+      buildType(key, *g->value, *this, diags_, /*instance=*/true, rec);
   typeScopes_.swap(saved);
   instantiating_.erase(key);
-  if (!t) return {};
+  if (!t) {
+    if (rec) {
+      instances_.erase(key);
+      instanceOf_.erase(rec);
+    }
+    return {};
+  }
   instances_[key] = t;
   // An alias such as `let id = let (t : type) => type t` makes no new type.
   if (auto r = mlir::dyn_cast<RecordType>(t); r && r.getName() == key)
@@ -686,6 +730,7 @@ void defineGenericType(const Node &item, TypeResolver &types,
   }
   const Node &value = *item.kids[3]->kids.back();
   Generic g{item.text, genericParams(item), &value, item.loc};
+  g.rec = item.flags.find("rec") != std::string::npos;
   std::set<std::string> seen;
   for (const std::string &p : g.params)
     if (!seen.insert(p).second) {
@@ -719,14 +764,250 @@ void typeNames(const Node &n, std::set<std::string> &out) {
 // Defines each type after the types it mentions, so a type may use one
 // defined later in the file, as metaprograms often produce. Types left in a
 // cycle are defined in source order, which reports the unknown name.
+namespace {
+
+// The last part of a qualified name: `box` of `Pia.Mem.Box.box`.
+std::string lastPart(const std::string &n) {
+  size_t dot = n.rfind('.');
+  return dot == std::string::npos ? n : n.substr(dot + 1);
+}
+
+// The indirections a recursive occurrence may sit in (ADR 0047, section
+// 2): they hold their argument behind a pointer, so the type's size is
+// known. The prelude's `Indirect` concept over type constructors waits for
+// concepts on them; until then these are the ones.
+bool isIndirect(const std::string &n) {
+  std::string b = lastPart(n);
+  return b == "box" || b == "vec" || b == "ref" || b == "weak";
+}
+
+// ADR 0047, step 1: explicit, regular, guarded and inhabited recursion.
+// Returns the names of the recursive types that pass, which are not built
+// yet.
+std::set<std::string> checkRecursion(const Node &program,
+                                     syntax::Diagnostics &diags) {
+  std::vector<syntax::TypeItem> items = syntax::typeItems(program);
+  std::set<std::string> out;
+  for (const std::vector<const syntax::TypeItem *> &group :
+       syntax::typeCycles(items)) {
+    std::set<std::string> names;
+    for (const syntax::TypeItem *t : group) names.insert(t->item->text);
+    auto list = [&] {
+      std::string s;
+      for (size_t i = 0; i < group.size(); ++i)
+        s += (i == 0 ? "'" : i + 1 == group.size() ? "' and '" : "', '") +
+             group[i]->item->text;
+      return s + "'";
+    };
+    bool ok = true;
+    // 1. Explicit: every type in the cycle is marked.
+    for (const syntax::TypeItem *t : group)
+      if (!t->rec) {
+        ok = false;
+        if (group.size() == 1)
+          diags.error(t->item->loc,
+                      "'" + t->item->text + "' refers to itself; declare it "
+                      "'let rec " + t->item->text + " = ...' (ADR 0047)");
+        else
+          diags.error(t->item->loc,
+                      list() + " refer to each other; declare '" +
+                          t->item->text + "' with 'let rec' too, as every "
+                          "type in the cycle must be (ADR 0047)");
+      }
+    // 2. Guarded and regular: every cycle goes through an indirection, so
+    // each type has a size, and a generic occurrence applies the type to
+    // its own parameters, in order. An occurrence outside an indirection
+    // is an edge of the "holds directly" graph, which must have no cycle.
+    struct Direct {
+      std::string from, to;
+      syntax::SourceLoc at;
+    };
+    std::vector<Direct> direct;
+    for (const syntax::TypeItem *t : group) {
+      std::function<void(const Node &, bool)> walk = [&](const Node &n,
+                                                         bool guarded) {
+        if (n.kind == NodeKind::TypeApp && !n.kids.empty() &&
+            n.kids[0]->kind == NodeKind::TypeName) {
+          const std::string &head = n.kids[0]->text;
+          if (names.count(head)) {
+            if (!guarded) direct.push_back({t->item->text, head, n.loc});
+            bool regular = n.kids.size() == t->params.size() + 1;
+            for (size_t i = 1; regular && i < n.kids.size(); ++i)
+              regular = n.kids[i]->kind == NodeKind::TypeName &&
+                        n.kids[i]->text == t->params[i - 1];
+            if (!regular) {
+              ok = false;
+              std::string own = head;
+              for (const std::string &p : t->params) own += " " + p;
+              diags.error(n.loc, "the recursive occurrence of '" + head +
+                                     "' must apply it to its own parameters "
+                                     "in order, as '" + own +
+                                     "' (regular recursion, ADR 0047)");
+            }
+            for (size_t i = 1; i < n.kids.size(); ++i) walk(*n.kids[i], guarded);
+            return;
+          }
+          bool inner = guarded || isIndirect(head);
+          for (size_t i = 1; i < n.kids.size(); ++i) walk(*n.kids[i], inner);
+          return;
+        }
+        if (n.kind == NodeKind::TypeName && names.count(n.text)) {
+          if (!t->params.empty()) {
+            ok = false;
+            std::string own = n.text;
+            for (const std::string &p : t->params) own += " " + p;
+            diags.error(n.loc, "the recursive occurrence of '" + n.text +
+                                   "' must apply it to its own parameters "
+                                   "in order, as '" + own +
+                                   "' (regular recursion, ADR 0047)");
+          } else if (!guarded) {
+            direct.push_back({t->item->text, n.text, n.loc});
+          }
+          return;
+        }
+        for (const syntax::NodePtr &k : n.kids) walk(*k, guarded);
+      };
+      walk(*t->body->kids[0], false);
+    }
+    // A direct edge from a to b on a cycle of direct edges: b reaches a.
+    auto reaches = [&](const std::string &from, const std::string &to) {
+      std::set<std::string> seen;
+      std::vector<std::string> todo{from};
+      while (!todo.empty()) {
+        std::string v = todo.back();
+        todo.pop_back();
+        if (v == to) return true;
+        if (!seen.insert(v).second) continue;
+        for (const Direct &d : direct)
+          if (d.from == v) todo.push_back(d.to);
+      }
+      return false;
+    };
+    for (const Direct &d : direct)
+      if (reaches(d.to, d.from)) {
+        ok = false;
+        if (d.from == d.to)
+          diags.error(d.at, "'" + d.from + "' holds '" + d.to +
+                                "' directly here, so it would have no size; "
+                                "a recursive occurrence must be inside an "
+                                "indirection, such as 'box " + d.to +
+                                "' or 'vec " + d.to + "' (ADR 0047)");
+        else
+          diags.error(d.at, "'" + d.from + "' holds '" + d.to +
+                                "' directly here, and '" + d.to + "' holds '" +
+                                d.from + "' the same way, so neither would "
+                                "have a size; put one inside an indirection, "
+                                "such as 'box " + d.to + "' (ADR 0047)");
+      }
+    // 3. Inhabited: some value can be built without already having one.
+    // A least fixed point over the group; outside types are inhabited.
+    std::map<std::string, bool> inhabited;
+    for (const std::string &n : names) inhabited[n] = false;
+    std::function<bool(const Node &)> inh = [&](const Node &n) -> bool {
+      switch (n.kind) {
+        case NodeKind::TypeName:
+          return names.count(n.text) ? inhabited[n.text] : true;
+        case NodeKind::TypeApp: {
+          if (n.kids.empty() || n.kids[0]->kind != NodeKind::TypeName) return true;
+          const std::string &head = n.kids[0]->text;
+          if (names.count(head)) return inhabited[head];
+          std::string b = lastPart(head);
+          // An empty vector, None and a dangling weak need nothing.
+          if (b == "vec" || b == "option" || b == "weak") return true;
+          for (size_t i = 1; i < n.kids.size(); ++i)
+            if (!inh(*n.kids[i])) return false;
+          return true;
+        }
+        case NodeKind::Variants:
+          for (const syntax::NodePtr &c : n.kids)
+            if (c->kids.empty() || c->kids[0]->kind == NodeKind::None ||
+                inh(*c->kids[0]))
+              return true;
+          return false;
+        default:
+          for (const syntax::NodePtr &k : n.kids)
+            if (!inh(*k)) return false;
+          return true;
+      }
+    };
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (const syntax::TypeItem *t : group)
+        if (!inhabited[t->item->text] && inh(*t->body->kids[0])) {
+          inhabited[t->item->text] = true;
+          changed = true;
+        }
+    }
+    for (const syntax::TypeItem *t : group)
+      if (!inhabited[t->item->text]) {
+        ok = false;
+        // A lifted payload record's variant says it.
+        if (t->item->flags.find("payload") != std::string::npos) continue;
+        diags.error(t->item->loc,
+                    "'" + t->item->text + "' has no values: each of its "
+                    "constructors needs a value of a recursive type to build "
+                    "one, and a box is never empty; add a constructor without "
+                    "one, or hold it in 'option' or 'vec' (ADR 0047)");
+      }
+    if (ok)
+      for (const std::string &n : names) out.insert(n);
+  }
+  return out;
+}
+
+}  // namespace
+
 void defineTypes(const Node &program, TypeResolver &types,
                  syntax::Diagnostics &diags) {
+  // Recursive types (ADR 0047): a group of `let rec` types that passes
+  // step 1's checks is built if it has a variant. Each variant of the
+  // group is a leaf type, !pia.rec<"name">, defined first, so the
+  // records of the group (such as lifted payloads) can hold it inside a
+  // box or vec; the variants' constructors are built last. A group that
+  // fails, or holds only records, is set aside.
+  std::set<std::string> asideNames, leafNames;
+  std::vector<const Node *> leaves;
+  std::vector<syntax::TypeItem> items = syntax::typeItems(program);
+  std::set<std::string> passing = checkRecursion(program, diags);
+  auto isVariantItem = [](const Node &item) {
+    const Node &value = isGenericTypeItem(item) ? *item.kids[3]->kids.back()
+                                                : *item.kids[3];
+    return value.kids[0]->kind == NodeKind::Variants;
+  };
+  for (const std::vector<const syntax::TypeItem *> &g : syntax::typeCycles(items)) {
+    bool pass = true, variant = false;
+    for (const syntax::TypeItem *t : g) {
+      if (!passing.count(t->item->text)) pass = false;
+      if (isVariantItem(*t->item)) variant = true;
+    }
+    for (const syntax::TypeItem *t : g) {
+      if (!pass || !variant) {
+        asideNames.insert(t->item->text);
+        if (pass) types.markRecursive(t->item->text);
+      } else if (isTypeItem(*t->item) && isVariantItem(*t->item)) {
+        leafNames.insert(t->item->text);
+      }
+    }
+  }
   for (const syntax::NodePtr &item : program.kids)
-    if (isGenericTypeItem(*item)) defineGenericType(*item, types, diags);
+    if (leafNames.count(item->text)) {
+      if (types.named(item->text) || types.builtin(item->text) ||
+          types.generic(item->text)) {
+        diags.error(item->loc,
+                    "the type '" + item->text + "' is already defined");
+        continue;
+      }
+      types.define(item->text, RecType::get(types.context(), item->text));
+      leaves.push_back(item.get());
+    }
+  for (const syntax::NodePtr &item : program.kids)
+    if (isGenericTypeItem(*item) && !asideNames.count(item->text))
+      defineGenericType(*item, types, diags);
   std::vector<const Node *> pending;
   std::set<std::string> declared;
   for (const syntax::NodePtr &item : program.kids)
-    if (isTypeItem(*item)) {
+    if (isTypeItem(*item) && !asideNames.count(item->text) &&
+        !leafNames.count(item->text)) {
       pending.push_back(item.get());
       declared.insert(item->text);
     }
@@ -753,6 +1034,9 @@ void defineTypes(const Node &program, TypeResolver &types,
     }
     pending = std::move(blocked);
   }
+  for (const Node *item : leaves)
+    buildType(item->text, *item->kids[3], types, diags, false,
+              types.named(item->text));
 }
 
 }  // namespace

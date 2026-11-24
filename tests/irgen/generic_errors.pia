@@ -4,19 +4,22 @@
 
 let option = let (t : type) => type | None | Some of t
 
-(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' is generic: it takes 1 type argument, as in 'option u8'
+(* CHECK-DAG: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' is generic: it takes 1 type argument, as in 'option u8'
 *)
 let bare (x : option) : u8 = 0
 
-(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' takes 1 type argument, given 2
+(* CHECK-DAG: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'option' takes 1 type argument, given 2
 *)
 let two (x : option u8 u16) : u8 = 0
 
-(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: only a generic type can take type arguments
+(* CHECK-DAG: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: only a generic type can take type arguments
 *)
 let applied (x : u8 u16) : u8 = 0
 
-(* CHECK: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the generic type 'loop' contains itself; recursive types are not supported yet
+(* Recursion needs `let rec` and an indirection (ADR 0047), and is
+   checked before the types are built, so its errors come first.
+// CHECK-DAG: generic_errors.pia:[[@LINE+3]]:1: error: 'loop' refers to itself; declare it 'let rec loop = ...' (ADR 0047)
+// CHECK-DAG: generic_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'loop' holds 'loop' directly here, so it would have no size
 *)
 let loop = let (t : type) => type | End | More of loop t
 let uses (x : loop u8) : u8 = 0

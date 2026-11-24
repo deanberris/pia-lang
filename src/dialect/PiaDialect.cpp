@@ -140,7 +140,8 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
   }
   // `{pia.spec_state}`: a spec parameter, which codegen erases (ADR 0058).
   if (attr.getName() == getSpecStateAttrName()) {
-    if (isa<UnitAttr>(attr.getValue())) return success();
+    if (isa<UnitAttr>(attr.getValue()))
+      return success();
     return op->emitError() << "'" << getSpecStateAttrName() << "' on argument "
                            << argIndex << " must be a unit attribute";
   }
@@ -402,6 +403,88 @@ LogicalResult SliceOp::verify() {
       elementTypeOf(getBuffer().getType()))
     return emitOpError("result must be a slice of the buffer's element type");
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Recursive types (ADR 0047)
+//===----------------------------------------------------------------------===//
+
+LogicalResult DatatypeOp::verify() {
+  if (getCtors().empty())
+    return emitOpError("needs at least one constructor");
+  if (getCtors().size() != getPayloads().size())
+    return emitOpError("needs one payload type per constructor");
+  for (size_t i = 0; i < getCtors().size(); ++i)
+    for (size_t j = 0; j < i; ++j)
+      if (getCtors()[i] == getCtors()[j])
+        return emitOpError("has two constructors named ")
+               << getCtors()[i];
+  return success();
+}
+
+std::optional<unsigned> DatatypeOp::tagOf(StringRef name) {
+  for (auto [i, c] : llvm::enumerate(getCtors().getAsValueRange<StringAttr>()))
+    if (c == name) return i;
+  return std::nullopt;
+}
+
+Type DatatypeOp::payloadOf(unsigned tag) {
+  Type t = cast<TypeAttr>(getPayloads()[tag]).getValue();
+  return isa<NoneType>(t) ? Type() : t;
+}
+
+// The datatype of `t`, if the module declares it.
+static DatatypeOp datatypeOf(Operation *at, RecType t) {
+  auto module = at->getParentOfType<ModuleOp>();
+  if (!module) return {};
+  for (DatatypeOp d : module.getOps<DatatypeOp>())
+    if (d.getSymName() == t.getName()) return d;
+  return {};
+}
+
+// A constructor's payload values: none, the payload itself, or, after
+// ScalarizeRecords, a record payload's fields.
+static LogicalResult checkPayload(Operation *op, DatatypeOp d,
+                                  StringRef ctor, TypeRange values) {
+  std::optional<unsigned> tag = d.tagOf(ctor);
+  if (!tag)
+    return op->emitOpError("'") << ctor << "' is not a constructor of @"
+                                << d.getSymName();
+  Type p = d.payloadOf(*tag);
+  if (!p) {
+    if (!values.empty())
+      return op->emitOpError("'") << ctor << "' has no payload";
+    return success();
+  }
+  if (values.size() == 1 && values[0] == p) return success();
+  if (isa<RecordType>(p) && !values.empty()) return success();
+  return op->emitOpError("the payload of '")
+         << ctor << "' is " << p << ", found " << values.size() << " values";
+}
+
+LogicalResult RecMakeOp::verify() {
+  DatatypeOp d = datatypeOf(*this, getType());
+  if (!d) return emitOpError("no pia.datatype @") << getType().getName();
+  return checkPayload(*this, d, getCtor(), getPayload().getTypes());
+}
+
+LogicalResult RecTagOp::verify() {
+  DatatypeOp d = datatypeOf(*this, getInput().getType());
+  if (!d)
+    return emitOpError("no pia.datatype @") << getInput().getType().getName();
+  IntType t = getType();
+  if (!t.contains(APInt(kBoundWidth, 0)) ||
+      !t.contains(APInt(kBoundWidth, d.getCtors().size() - 1)))
+    return emitOpError("the tag's type must hold 0 to ")
+           << d.getCtors().size() - 1;
+  return success();
+}
+
+LogicalResult RecPayloadOp::verify() {
+  DatatypeOp d = datatypeOf(*this, getInput().getType());
+  if (!d)
+    return emitOpError("no pia.datatype @") << getInput().getType().getName();
+  return checkPayload(*this, d, getCtor(), getResultTypes());
 }
 
 LogicalResult CopyOp::verify() {

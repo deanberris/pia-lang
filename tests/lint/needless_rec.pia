@@ -1,0 +1,6 @@
+(* `needless_rec` (ADR 0047): a `let rec` type that is in no cycle.
+// RUN: piac --verify %s 2>&1 | FileCheck %s
+// CHECK: needless_rec.pia:[[@LINE+3]]:1: warning: 'pair' is declared 'let rec' but does not refer to itself; drop 'rec' [needless_rec]
+// CHECK-NOT: needless_rec
+*)
+let rec pair = type { a : u8; b : u8 }

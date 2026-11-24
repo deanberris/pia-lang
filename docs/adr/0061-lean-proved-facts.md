@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed
+Status: Accepted (2026-11-24, with Dean's answers below; the Z3 half of cost proofs moved to [ADR 0062](0062-cost-bounds-in-contracts.md), which goes first)
 
 ## Context
 
@@ -100,28 +100,14 @@ A theory lemma proved in Lean is proved from the structure's axiom fields only, 
 
 Most complexity clauses are exact bounds, not asymptotics, and Z3 can prove exact bounds if cost is part of the contract. So cost comes in two layers.
 
-**Cost in contracts, proved by Z3.** A function may state `costs e`: under its cost model, a run of the function costs at most `e`, where `e` is a spec expression over the parameters. The default cost model counts one unit per loop iteration and per call, and a function's calls cost what their `costs` clauses say. `@counts(f)` counts calls to `f` instead (comparisons, for C++'s clauses). Inside the function, the spec-only value `spent` is the cost so far, so loops bound it with an invariant, and the goal at return is `spent <= e`:
+**Cost in contracts, proved by Z3.** A function bounds what it spends on a named counter with a `costs c <= e` clause, proved by Z3 like any other contract, with the spec-only value `spent c` bounded by loop invariants. That design is its own decision, [ADR 0062](0062-cost-bounds-in-contracts.md), and it needs no Lean. This section is only about what Lean adds to it.
 
-```ocaml
-let lower_bound (xs : [u32]) (v : u32) : usize @counts(less)
-  requires sorted xs
-  costs log2 (len xs) + 1
-= let lo : mutable usize = 0 in
-  let hi : mutable usize = len xs in
-  while lo < hi
-    invariant spent + log2 (hi - lo) + 1 <= log2 (len xs) + 1
-  do ... done;
-  lo
-```
+**Closed forms and asymptotics in Lean.** Some bounds are recurrences: a divide-and-conquer function's `costs` is a recursive spec function `t n = 2 * t (n / 2) + n`, which Z3 can check step by step but cannot solve. Two kinds of lemma about such a `t` are proved in Lean by part 1 of this ADR:
 
-`spent` is erased by codegen like any spec value. This is the time-credit and RAML style, and it needs only goals Z3 already proves (linear arithmetic, `log2` from a spec theory with its laws). It is the larger part of the work and comes first.
-
-**Closed forms and asymptotics in Lean.** Some bounds are recurrences: a divide-and-conquer function's `costs` is a recursive spec function `t n = 2 * t (n / 2) + n`, which Z3 can check step by step but cannot solve. Two kinds of lemma about such a `t` are proved in Lean by part 1:
-
-- a **closed form**, `t n <= 2 * n * log2 n + n`, which callers then use in their own `costs` clauses, so Z3 never sees the recurrence;
+- a **closed form**, `t n <= 2 * n * log2 n + n`, which callers then use in their own cost clauses, so Z3 never sees the recurrence;
 - an **asymptotic claim**, written with the spec-only form `t in O(fun n => n * log2 n)`, translated to Mathlib's `IsBigO atTop`. Mathlib's Akra–Bazzi theorem covers most divide-and-conquer recurrences. An asymptotic claim is documentation that is proved: no Pia goal can use it, since contracts are about concrete runs, but the interface publishes it, and the C++ library's complexity clauses become proved facts instead of comments.
 
-Amortised bounds (a `vec` push, union–find) use a potential as a spec function over the data structure's model, as in Charguéraud and Pottier's work: `costs 1 + potential (old v) - potential v`. Z3 proves the per-operation bound, and Lean proves any closed form of the potential that needs induction.
+Amortised bounds (a `vec` push, union–find) use a potential as a spec function over the data structure's model, as in Charguéraud and Pottier's work: `costs calls <= 1 + potential (old v) - potential v`. Z3 proves the per-operation bound (ADR 0062), and Lean proves any closed form of the potential that needs induction.
 
 ### 4. Certificates and trust
 
@@ -167,11 +153,11 @@ Lean proofs are checked in the Linux CI job of [ADR 0049](0049-targets-are-theor
 
 - Facts that are trusted today, such as ADR 0036's spectral norm bound, can become proved, and the theory can mean what its names say, not only be consistent.
 - Lemmas that Z3 cannot prove by one-step induction, such as the parked `next_permutation`, have a way forward that does not need more fuel or new solver strategies.
-- Pia gains cost proofs: exact bounds by Z3 for most functions, and closed forms and asymptotic claims in Lean, so the C++ library's complexity clauses become proved.
+- With ADR 0062's exact bounds, Pia gains closed forms and asymptotic claims proved in Lean, so the C++ library's complexity clauses become proved.
 - The trusted base gains one component, piac's translation of spec statements into Lean, which is listed in `--trust-report`. It is small and tested in both directions, but a mistake in it can make a Lean proof prove the wrong statement.
 - The build gains Lean and Mathlib, several gigabytes, but only in the targets that check Lean proofs, so the edit loop and the default test suite are unchanged.
 - Lean proofs are written, not found. Agents can write them, with Lean-auto, Lean-SMT and `grind` doing most of the work, but every Lean-proved lemma is something a person or an agent has to maintain across Lean and Mathlib upgrades.
-- New syntax: `by lean Name` as a lemma's or model's body, the `costs e` clause, the spec-only `spent`, `@counts(f)`, and the spec form `f in O(g)`. `lean` is a keyword only after `by`.
+- New syntax: `by lean Name` as a lemma's or model's body, and the spec form `f in O(g)`. `lean` is a keyword only after `by`.
 
 ### Implementation order
 
@@ -180,13 +166,16 @@ Each step is a PR with tests.
 1. **Toolchain and a receipt.** Lean as a Bazel module (pinned toolchain, no Mathlib), `piac --emit-lean` for spec functions over `int`, `bool` and records, `by lean` on lemmas, `pia_lean_proof` and receipts, and the round-trip tests. Measure the download size, the cold and warm build times and the disk used.
 2. **Certificates and trust report.** The `lean` status in certificates, axioms from `#print axioms`, `--trust-report` and `--why`, `pia-cert audit` replay.
 3. **The rest of the translation.** Machine integers as `BitVec`, slices and spec buffers, sums and `let rec` sums, `real` with Mathlib, `--emit-lean --goal`.
-4. **Cost in contracts.** `costs`, `spent`, `@counts`, the default cost model, a `log2` theory, and the first proved clauses in `Pia.Core.Algo` (binary search, heap operations). This step needs no Lean and can go before step 1.
-5. **Lean models of theories**, and the spectral norm as the first trusted axiom made proved.
-6. **Closed forms and `O(...)`**, with Akra–Bazzi, starting with merge sort and heap sort's bounds.
+4. **Lean models of theories**, and the spectral norm as the first trusted axiom made proved.
+5. **Closed forms and `O(...)`**, with Akra–Bazzi, starting with merge sort and heap sort's bounds. This needs ADR 0062's `costs` clauses.
 
-## Open questions
+Cost in contracts ([ADR 0062](0062-cost-bounds-in-contracts.md)) needs no Lean and goes first. Step 1 includes a `pia-lean` skill: how to read the generated statements, and which tactics to try first.
 
-1. **Is cost first?** Step 4 (cost bounds proved by Z3) needs no Lean and gives most of the value for complexity. It could be its own ADR and go first, leaving Lean for steps 1–3, 5 and 6.
-2. **Should Lean facts need an opt-in?** This ADR treats them as proved, so importers write no `trusting`, and `--trust-report` lists them separately. The alternative is to treat Lean's kernel and the translation like a trusted theory, which would need `trusting`.
-3. **Is Mathlib in scope from the start?** Without it, Lean has induction, `omega`, `grind` and `bv_decide`, which covers the parked algorithm lemmas, but not reals, linear algebra or asymptotics. Fetching Mathlib's cache costs several gigabytes on the iMac, whose disk has filled twice.
-4. **Who writes the Lean?** If agents write most Lean proofs, a `pia-lean` skill (how to read the generated statements, which tactics to try first) would be part of step 1.
+## Answers to the open questions
+
+Dean answered when he accepted it (2026-11-24):
+
+1. **Cost goes first, in its own ADR.** Cost bounds proved by Z3 are [ADR 0062](0062-cost-bounds-in-contracts.md), and they are built before Lean, since they need none of it.
+2. **Lean facts need no opt-in.** They are proved, so importers write no `trusting`. `--trust-report` lists them in their own section, with what they rest on (Lean's kernel, Mathlib and piac's translation), and `--why` names the goals that used each.
+3. **Mathlib is in scope from the start.** It is already on the iMac. Step 1 still keeps a target without Mathlib for proofs that need only Lean's core, so they stay fast, and it measures the disk Mathlib takes.
+4. **Lean is installed on the iMac** for step 1, and the Linux CI job fetches the same pinned toolchain.

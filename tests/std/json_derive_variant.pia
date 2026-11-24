@@ -9,6 +9,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 // RUN: piac --dump-expanded --iface-path=%t %s | FileCheck %s --check-prefix=AST
 // CHECK-NOT: failed
@@ -20,6 +21,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 (* A record, a number, a bool and `null`: kinds that differ, and two
    records that each require a member the other cannot have.
