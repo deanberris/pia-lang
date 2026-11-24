@@ -1,0 +1,48 @@
+(* Importers of Pia.Time make C++'s sys_days and sys_seconds with
+   `sys_days ()`, after the durations of `standard ()`, and prove what
+   C++ promises of time points: a point plus a duration minus the point
+   is the duration, order is the counts', the epoch is 1970-01-01, and a
+   date converts to a point and back to a valid date.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Time.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Durations as T
+import Pia.Time.Calendar as C
+
+T.standard ()
+T.sys_days ()
+
+let day_after (t : sys_days) : unit
+  requires t.since.count >= 0 && t.since.count < 1000000
+= let d : days = { count = 1 } in
+  let u = plus t d in
+  assert (minus u t).count = 1;
+  assert less t u;
+  assert (minus u d).since.count = t.since.count
+
+let epoch (x : u8) : unit
+= let c : C.ymd = { year = 1970; month = 1; day = 1 } in
+  let t = to_sys_days c in
+  assert t.since.count = 0;
+  assert (to_sys_seconds t).since.count = 0
+
+let back (t : sys_days) : unit
+  requires t.since.count >= -365962028 && t.since.count <= 364523337
+= let c = to_ymd t in
+  assert C.valid c
+
+(* A time point of minutes, made with time_point, and its cast. *)
+T.time_point "sys_minutes" "minutes"
+T.point_cast "to_sys_minutes" "sys_days" (Pia.Core.Ratio.reduce 86400 1) "sys_minutes" (Pia.Core.Ratio.reduce 60 1) "to_minutes"
+
+let in_minutes (t : sys_days) : unit
+  requires t.since.count >= 0 - 1000000 && t.since.count <= 1000000
+  ensures (to_sys_minutes t).since.count = t.since.count * 1440
+= ()
+
+(*
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

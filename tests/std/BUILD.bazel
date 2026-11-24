@@ -535,6 +535,24 @@ sh_test(
 )
 
 pia_binary(
+    name = "time_point_run",
+    src = "Inputs/time_point_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "time_point_run_test",
+    srcs = ["time_point_run_test.sh"],
+    args = ["$(rootpath :time_point_run)"],
+    data = [":time_point_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
     name = "utf8_run",
     src = "Inputs/utf8_run.pia",
     target_compatible_with = PIA_TARGETS,

@@ -23,6 +23,9 @@
 // IFACE-NEXT: {{^}}  let meta duration : list{{$}}
 // IFACE-NEXT: {{^}}  let meta cast : item{{$}}
 // IFACE-NEXT: {{^}}  let meta standard : list{{$}}
+// IFACE-NEXT: {{^}}  let meta time_point : list{{$}}
+// IFACE-NEXT: {{^}}  let meta point_cast : item{{$}}
+// IFACE-NEXT: {{^}}  let meta sys_days : list{{$}}
 // IFACE-NEXT: {{^}}end{{$}}
 // IFACE: {{^}}let meta duration (x : string) (p : list) : list{{$}}
 // IFACE: {{^}}let meta cast (name : string) (from : string) (fp : list) (to : string) (tp : list) : item{{$}}

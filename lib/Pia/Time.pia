@@ -20,6 +20,9 @@ interface Durations = sig
   let meta duration : list
   let meta cast : item
   let meta standard : list
+  let meta time_point : list
+  let meta point_cast : item
+  let meta sys_days : list
 end
 
 interface Calendar = sig
@@ -101,6 +104,59 @@ let meta standard (u : unit) : list =
           else concat acc2 [cast (concat "to_" (nth to 0)) (nth from 0) (nth from 1) (nth to 0) (nth to 1)])
         acc units) [] units in
   concat types casts
+
+(** The time point type x: a duration d since the clock's epoch, as C++'s
+    time_point<Clock, d>, with plus and minus of a duration, the duration
+    between two points, and order, overloaded on x. *)
+let meta time_point (x : string) (d : string) : list =
+  [ `( let $x = type { since : $d } );
+    `( let plus ($!t : $x) ($!e : $d) : $x
+         requires $!t.since.count + $!e.count >= -9223372036854775808 && $!t.since.count + $!e.count <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count + $!e.count
+       = { since = { count = $!t.since.count + $!e.count } } );
+    `( let minus ($!t : $x) ($!e : $d) : $x
+         requires $!t.since.count - $!e.count >= -9223372036854775808 && $!t.since.count - $!e.count <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count - $!e.count
+       = { since = { count = $!t.since.count - $!e.count } } );
+    `( let minus ($!a : $x) ($!b : $x) : $d
+         requires $!a.since.count - $!b.since.count >= -9223372036854775808 && $!a.since.count - $!b.since.count <= 9223372036854775807
+         ensures $!result.count = $!a.since.count - $!b.since.count
+       = { count = $!a.since.count - $!b.since.count } );
+    `( let less ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.since.count < $!b.since.count = $!a.since.count < $!b.since.count );
+    `( let same ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.since.count = $!b.since.count = $!a.since.count = $!b.since.count ) ]
+
+(** `name (t : from) : to`, std::chrono::time_point_cast: the point's
+    duration through the duration cast `via`, which `cast` made. *)
+let meta point_cast (name : string) (from : string) (fp : list) (to : string) (tp : list) (via : string) : item =
+  let f = Pia.Core.Ratio.divide fp tp in
+  let n = Pia.Core.Ratio.num f in
+  if Pia.Core.Ratio.den f = 1 then
+    `( let $name ($!t : $from) : $to
+         requires $!t.since.count * $n >= -9223372036854775808 && $!t.since.count * $n <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count * $n
+       = { since = $via $!t.since } )
+  else
+    `( let $name ($!t : $from) : $to
+         ensures $!result.since.count = $!t.since.count / Pia.Core.Ratio.den f
+       = { since = $via $!t.since } )
+
+(** C++'s sys_days, a time point of days since 1970-01-01, needing the
+    durations of `standard ()`, with to_sys_days and to_ymd converting
+    to and from Calendar's dates, and sys_seconds with a cast from
+    sys_days. *)
+let meta sys_days (u : unit) : list =
+  let sd = "sys_days" in
+  concat (time_point "sys_days" "days")
+    (concat (time_point "sys_seconds" "seconds")
+      [ `( let to_sys_days ($!c : Pia.Time.ymd) : $sd
+             requires $!c.day <= Pia.Time.last_day $!c.year $!c.month
+             ensures $!result.since.count = Pia.Time.civil_days $!c.year $!c.month $!c.day
+           = { since = { count = Pia.Time.days_from_civil $!c.year $!c.month $!c.day } } );
+        `( let to_ymd ($!t : $sd) : Pia.Time.ymd
+             requires $!t.since.count >= -365962028 && $!t.since.count <= 364523337
+             ensures Pia.Time.valid $!result && Pia.Time.maps_to $!result $!t.since.count
+           = let $!z : int{-365962028..364523337} = $!t.since.count in Pia.Time.civil_from_days $!z );
+        point_cast "to_sys_seconds" "sys_days" (Pia.Core.Ratio.reduce 86400 1) "sys_seconds" (Pia.Core.Ratio.reduce 1 1) "to_seconds" ])
 
 (* The civil calendar: Howard Hinnant's days_from_civil and
    civil_from_days, proved in levels. A day number splits into a 400-year
