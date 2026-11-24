@@ -39,3 +39,23 @@ let wide (n : u32) : pixels
 = pixels (length n)
 
 let one : length = length 1
+
+(* Expected report, in order.
+// CHECK: distinct_types.pia:8:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:8:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:9:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:9:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:10:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:10:1: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:16:9: proved: '*' does not overflow usize [intervals]
+// CHECK: distinct_types.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:25:17: proved: '+' does not overflow u32 [smt]
+// CHECK: distinct_types.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:30:18: proved: the divisor is not zero [intervals]
+// CHECK: distinct_types.pia:30:18: proved: '/' does not overflow int{0..100} [intervals]
+// CHECK: distinct_types.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: distinct_types.pia:38:3: proved: the postcondition holds [smt]
+// CHECK: 16 proved, 0 failed, 0 skipped
+*)

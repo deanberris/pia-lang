@@ -8,12 +8,22 @@
 let length = type u32
 let weight = type u32
 
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:24: error: expected length, found i32
+*)
 let literal : length = 5
 
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:30: error: expected length, found u32
+*)
 let raw (x : u32) : length = x
 
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:31: error: expected u32, found length
+*)
 let back (l : length) : u32 = l
 
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:33: error: expected length, found weight
+*)
 let mix (w : weight) : length = w
 
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:48: error: '+' needs integer operands, found length and length
+*)
 let sum (a : length) (b : length) : length = a + b
