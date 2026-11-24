@@ -143,7 +143,7 @@ Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` mak
 <!-- untested: needs a @trusted file; tests/codegen/lower_linalg.pia is the tested copy -->
 ```ocaml
 let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
-  @lower("%a = memref.expand_shape $a [[0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>  %b = memref.expand_shape $b [[0, 1]] output_shape [4, 4] : $b.type into memref<4x4xi8>  %c = memref.expand_shape $c [[0, 1]] output_shape [4, 4] : $c.type into memref<4x4xi32>  linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)")
+  @lower("%a = memref.expand_shape $a [[0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>  %b = memref.expand_shape $b [[0, 1]] output_shape [4, 4] : $b.type into memref<4x4xi8>  %c = memref.expand_shape $c [[0, 1]] output_shape [4, 4] : $c.type into memref<4x4xi32>  %zero = arith.constant 0 : i32  linalg.fill ins(%zero : i32) outs(%c : memref<4x4xi32>)  linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)")
 = for i in 0 .. 4 do
     for j in 0 .. 4 do
       c.[i * 4 + j] <- a.[i * 4] * b.[j] + a.[i * 4 + 1] * b.[4 + j]
@@ -157,7 +157,7 @@ let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
 - **Passes.** `linalg` on memrefs goes to `scf` loops with `convert-linalg-to-loops`, then `memref.expand_shape` and the other reshapes to plain descriptors with `expand-strided-metadata`, and `affine` to `arith` with `lower-affine`, before the usual passes. `tensor` ops parse, but nothing bufferises them yet (step 6 of the ADR), so a lowering works on the buffers' memrefs.
 - **Trust.** This is step 1 of ADR 0065: piac does not yet prove that the MLIR does what the body does, so `@lower` is allowed only in a file marked `@trusted`, on a function with a Pia body (not an `extern`, a spec function or a lemma), and every lowering is a trusted item. `piac --verify --trust-report` lists it with the ops it uses and the SHA-256 of its spliced text, and the object's certificate records the same hash ([abi.md](abi.md)). A named `linalg` op's own body is generated from its definition, so the ops in it are not listed; a `linalg.generic`'s are.
 
-tests/codegen/lower_linalg.pia is the matmul above, checked at `--emit=core` with and without `--lower=off`, in the trust report and in the certificate, and run from C in lower_linalg_test.c, once from each form. tests/codegen/lower_invalid.pia holds MLIR errors, and tests/irgen/lower_errors.pia and lower_untrusted.pia the rules.
+`linalg.matmul` adds to its output, so the lowering fills it with zero first, as the body's assignments do; without the fill the differential run below fails, which is the check a trusted lowering has. tests/codegen/lower_linalg.pia is the matmul above, checked at `--emit=core` with and without `--lower=off`, in the trust report and in the certificate, and run from C in lower_linalg_test.c, once from each form. tests/codegen/lower_invalid.pia holds MLIR errors, and tests/irgen/lower_errors.pia and lower_untrusted.pia the rules.
 
 ## Tests
 

@@ -1,6 +1,8 @@
 (* Lowerings written in Pia (ADR 0065, step 1): a 4 x 4 integer matmul whose
    Pia body is proved and whose code is `linalg.matmul` over the buffers
-   viewed as 4 x 4 with `memref.expand_shape`. lower_linalg_test.c runs it
+   viewed as 4 x 4 with `memref.expand_shape`, after a `linalg.fill` with
+   zero, since `linalg.matmul` adds to its output and the body assigns it
+   (the run test against the body caught this). lower_linalg_test.c runs it
    against C, and lower_linalg_body_test.c the same harness against the
    body, compiled with --lower=off.
 // RUN: piac --emit=core %s | FileCheck %s
@@ -25,7 +27,7 @@ end
 
 (* C = A B for row-major 4 x 4 matrices of bytes, with 32-bit sums. *)
 let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
-  @lower("%a = memref.expand_shape $a [[0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>  %b = memref.expand_shape $b [[0, 1]] output_shape [4, 4] : $b.type into memref<4x4xi8>  %c = memref.expand_shape $c [[0, 1]] output_shape [4, 4] : $c.type into memref<4x4xi32>  linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)")
+  @lower("%a = memref.expand_shape $a [[0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>  %b = memref.expand_shape $b [[0, 1]] output_shape [4, 4] : $b.type into memref<4x4xi8>  %c = memref.expand_shape $c [[0, 1]] output_shape [4, 4] : $c.type into memref<4x4xi32>  %zero = arith.constant 0 : i32  linalg.fill ins(%zero : i32) outs(%c : memref<4x4xi32>)  linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)")
 = for i in 0 .. 4 do
     for j in 0 .. 4 do
       c.[i * 4 + j] <- a.[i * 4] * b.[j] + a.[i * 4 + 1] * b.[4 + j]
@@ -38,6 +40,7 @@ let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
 // CHECK-NOT: pia.lower
 // CHECK: memref.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [4, 4] : memref<16xi8> into memref<4x4xi8>
 // CHECK: memref.expand_shape %arg2
+// CHECK: linalg.fill
 // CHECK-NEXT: linalg.matmul ins(%{{.*}}, %{{.*}} : memref<4x4xi8>, memref<4x4xi8>) outs(%{{.*}} : memref<4x4xi32>)
 // CHECK-NEXT: return
 // CHECK-NOT: scf.for
@@ -51,10 +54,10 @@ let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
 // LLVM-LABEL: define void @matmul(
 // LLVM-NOT: linalg
 
-// TRUST: lower_linalg.pia:[[@LINE-26]]:3: trusted: the lowering of 'matmul' to MLIR (linalg.matmul, memref.expand_shape; sha256 [[HASH:[0-9a-f]{64}]])
+// TRUST: lower_linalg.pia:[[@LINE-27]]:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.expand_shape; sha256 [[HASH:[0-9a-f]{64}]])
 // TRUST-NEXT: 1 trusted item
 // TRUST: module Matmul
-// TRUST: trusted lowering matmul [[HASH]] (linalg.matmul, memref.expand_shape)
+// TRUST: trusted lowering matmul [[HASH]] (arith.constant, linalg.fill, linalg.matmul, memref.expand_shape)
 
 // OFF: 0 trusted items
 

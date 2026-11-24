@@ -6,7 +6,7 @@
 *)
 @trusted
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:37: error: @lower applies only to a function that runs, not to a spec function, a lemma or an axiom
+(* CHECK: lower_errors.pia:[[@LINE+2]]:31: error: @lower applies only to a function that runs, not to a spec function, a lemma or an axiom
 *)
 let spec twice (x : u8) : u16 @lower("arith.addi $x, $x : $x.type") = x + x
 
@@ -17,7 +17,7 @@ let abs32 (x : i32) : i32
   requires x > -2147483648 ensures result >= 0
 = extern "abs"
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:44: error: @lower takes one string of MLIR, as in @lower("linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
+(* CHECK: lower_errors.pia:[[@LINE+2]]:46: error: @lower takes one string of MLIR, as in @lower("linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
 *)
 let named (a : [u8; 4]) (b : [u8; 4]) : unit @lower(linalg) = ()
 
@@ -35,14 +35,14 @@ let zero (a : out mutable [u8; 4]) (spec owner : u8) : unit
 
 let pixel = type { r : u8; g : u8 }
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:34: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, or a buffer of them, in this step
+(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, or a buffer of them, in this step
 *)
 let red (p : pixel) : u8 @lower("return $p : i8") = p.r
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:34: error: a '$' in @lower starts a splice: '$name' is the value of the parameter 'name', and '$name.type' its MLIR type
+(* CHECK: lower_errors.pia:[[@LINE+2]]:24: error: a '$' in @lower starts a splice: '$name' is the value of the parameter 'name', and '$name.type' its MLIR type
 *)
 let cost (x : u8) : u8 @lower("$ 1") = x
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:43: error: a lowered function returns unit, an integer or a bool; 'pair' returns pixel
+(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer or a bool; 'pair' returns pixel
 *)
 let pair (r : u8) (g : u8) : pixel @lower("") = { r = r; g = g }

@@ -306,7 +306,7 @@ bool isSpecBuffer(Type t) {
 }
 
 class CoreTypes : public mlir::TypeConverter {
- public:
+public:
   CoreTypes() {
     addConversion([](Type t) { return t; });
     addConversion([](IntType t) -> Type {
@@ -353,12 +353,13 @@ class CoreTypes : public mlir::TypeConverter {
   }
 
  private:
-  // Buffers hold scalars only in v0.
-  Type element(Type t) {
-    Type c = convertType(t);
-    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType>(c)) return c;
-    return {};
-  }
+   // Buffers hold scalars only in v0.
+   Type element(Type t) {
+     Type c = convertType(t);
+     if (c && mlir::isa<mlir::IntegerType, mlir::IndexType>(c))
+       return c;
+     return {};
+   }
 };
 
 //===----------------------------------------------------------------------===//
@@ -1752,7 +1753,8 @@ static void lowerSpreads(mlir::ModuleOp module) {
 
 // Whether `t` is, or holds, a value of a recursive type (ADR 0047).
 static bool holdsRecursive(Type t) {
-  if (mlir::isa<RecType>(t)) return true;
+  if (mlir::isa<RecType>(t))
+    return true;
   if (auto a = mlir::dyn_cast<ArrayType>(t))
     return holdsRecursive(a.getElementType());
   if (auto sl = mlir::dyn_cast<SliceType>(t))
@@ -1769,15 +1771,21 @@ static LogicalResult rejectRecursive(mlir::ModuleOp module) {
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     Type found;
     auto note = [&](Type t) {
-      if (!found && holdsRecursive(t)) found = t;
+      if (!found && holdsRecursive(t))
+        found = t;
     };
-    for (Type t : f.getFunctionType().getInputs()) note(t);
-    for (Type t : f.getFunctionType().getResults()) note(t);
+    for (Type t : f.getFunctionType().getInputs())
+      note(t);
+    for (Type t : f.getFunctionType().getResults())
+      note(t);
     f.walk([&](mlir::Operation *op) {
-      for (Type t : op->getResultTypes()) note(t);
-      for (Type t : op->getOperandTypes()) note(t);
+      for (Type t : op->getResultTypes())
+        note(t);
+      for (Type t : op->getOperandTypes())
+        note(t);
     });
-    if (!found) continue;
+    if (!found)
+      continue;
     f.emitError() << "'" << f.getSymName()
                   << "' uses a recursive type, which has no code yet "
                      "(ADR 0047, step 3)";
@@ -1792,7 +1800,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
 
-  if (mlir::failed(rejectRecursive(module))) return mlir::failure();
+  if (mlir::failed(rejectRecursive(module)))
+    return mlir::failure();
 
   // An array result becomes an output buffer its caller makes.
   if (mlir::failed(arrayResultsToBuffers(module)))
@@ -1924,20 +1933,19 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns
-      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
-           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
-           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
-           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
-           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
-           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
-          types, ctx);
+  patterns.add<
+      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
+      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
+      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
+      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
+      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
+      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
+      AbortLowering, ConstArrayLowering, ForeignLowering>(types, ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
                AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);
@@ -2231,7 +2239,8 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
       f.removeArgAttrsAttr();
       f.removeResAttrsAttr();
     }
-    if (f.isExternal() || !f.isPublic()) continue;
+    if (f.isExternal() || !f.isPublic())
+      continue;
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
             f, mlir::StringAttr::get(ctx, e.internal), module)))
       return mlir::failure();

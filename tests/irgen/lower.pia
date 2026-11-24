@@ -10,8 +10,8 @@
 // CHECK-LABEL: func.func @copy4(
 // CHECK-SAME: {pia.lower_name = "a"}
 // CHECK-SAME: {pia.lower_name = "b", pia.modifiers = "out mutable"}
-// CHECK-SAME: pia.lower = "memref.copy %a, %b : $a.type to $b.type\0A"
-// CHECK-SAME: pia.lower_at = loc("{{.*}}lower.pia":[[@LINE+4]]:3)
+// CHECK-SAME: pia.lower = "memref.copy {{.}}a, {{.}}b : {{.}}a.type to {{.}}b.type\0A"
+// CHECK-SAME: pia.lower_at = "{{.*}}lower.pia:[[@LINE+4]]:3"
 // CHECK: pia.store
 *)
 let copy4 (a : [u8; 4]) (b : out mutable [u8; 4]) : unit

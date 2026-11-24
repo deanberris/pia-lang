@@ -137,6 +137,13 @@ std::vector<std::string> opsOf(mlir::func::FuncOp tmp) {
   return {ops.begin(), ops.end()};
 }
 
+// Line `n` of `text`, counting from 1.
+std::string spliceLine(llvm::StringRef text, unsigned n) {
+  for (unsigned l = 1; l < n; ++l)
+    text = text.split('\n').second;
+  return text.split('\n').first.str();
+}
+
 std::string sha256(llvm::StringRef text) {
   std::array<uint8_t, 32> digest = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
       reinterpret_cast<const uint8_t *>(text.data()), text.size()));
@@ -147,8 +154,13 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
   mlir::MLIRContext *ctx = f.getContext();
   llvm::StringRef text = f->getAttrOfType<mlir::StringAttr>(kText).getValue();
   mlir::Location at = f.getLoc();
-  if (auto l = f->getAttrOfType<mlir::LocationAttr>(kAt))
-    at = mlir::Location(l);
+  if (auto a = f->getAttrOfType<mlir::StringAttr>(kAt)) {
+    auto [rest, column] = a.getValue().rsplit(':');
+    auto [file, line] = rest.rsplit(':');
+    unsigned l = 0, c = 0;
+    if (!line.getAsInteger(10, l) && !column.getAsInteger(10, c))
+      at = mlir::FileLineColLoc::get(ctx, file, l, c);
+  }
   mlir::FailureOr<std::string> spliced = splice(f, text, at);
   if (mlir::failed(spliced))
     return mlir::failure();
@@ -182,20 +194,22 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
                     : mlir::func::FuncOp();
   if (!tmp) {
     unsigned lines = 1 + llvm::count(*spliced, '\n');
-    mlir::InFlightDiagnostic e = mlir::emitError(at)
-                                 << "the @lower of '" << f.getSymName()
-                                 << "' is not valid MLIR: " << message;
-    if (line > 1 && line - 1 <= lines)
-      e.attachNote() << "at line " << line - 1 << ", column " << column
-                     << " of the MLIR after splicing:\n"
-                     << *spliced;
-    else
-      e.attachNote() << "the MLIR is the body of a function with the "
-                        "signature of '"
-                     << f.getSymName()
-                     << "', followed by 'return' when it returns nothing; "
-                        "one that returns a value ends with its own "
-                        "'return'";
+    // piac prints MLIR's diagnostics without their notes, so where the
+    // mistake is goes in the message itself.
+    std::string context;
+    if (line > 1 && line - 1 <= lines) {
+      context = " (line " + std::to_string(line - 1) + ", column " +
+                std::to_string(column) + " of the MLIR after splicing: '" +
+                spliceLine(*spliced, line - 1) + "')";
+    } else {
+      context = " (the MLIR is the body of a function with the signature "
+                "of '" +
+                f.getSymName().str() +
+                "', followed by 'return' when it returns nothing; one that "
+                "returns a value ends with its own 'return')";
+    }
+    mlir::emitError(at) << "the @lower of '" << f.getSymName()
+                        << "' is not valid MLIR: " << message << context;
     return mlir::failure();
   }
 

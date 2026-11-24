@@ -8437,8 +8437,8 @@ class Gen {
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
                                 a, b);
     if (isBool(t))
-      return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
-                                         a, b);
+      return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq, a,
+                                         b);
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt) return Value();
     auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
@@ -9094,9 +9094,9 @@ class Gen {
 
   // Checks `@lower` on `fn` and marks it for codegen: the MLIR text, with
   // escapes decoded, as `pia.lower`, the attribute's location as
-  // `pia.lower_at`, and each parameter's name as the argument attribute
-  // `pia.lower_name`, which the signature rewrites before codegen keep
-  // with the argument. Step 1 of ADR 0065 has trusted lowerings only, so
+  // `pia.lower_at` (file:line:col), and each parameter's name as the argument
+  // attribute `pia.lower_name`, which the signature rewrites before codegen
+  // keep with the argument. Step 1 of ADR 0065 has trusted lowerings only, so
   // the file must be @trusted, and the body stays: the verifier proves it,
   // and it is what `--lower=off` and the REPL run.
   bool markLowering(const Node &attr, const sema::FuncSig &sig,
@@ -9172,7 +9172,12 @@ class Gen {
       i = end - 1;
     }
     fn->setAttr("pia.lower", b_.getStringAttr(text));
-    fn->setAttr("pia.lower_at", loc(attr));
+    // As text: the printed IR leaves locations out, so a location attribute
+    // would print as an alias nothing defines.
+    fn->setAttr("pia.lower_at",
+                b_.getStringAttr(file_.str() + ":" +
+                                 std::to_string(attr.loc.line) + ":" +
+                                 std::to_string(attr.loc.column)));
     for (size_t i = 0; i < sig.params.size(); ++i)
       fn.setArgAttr(i, "pia.lower_name", b_.getStringAttr(sig.params[i].name));
     return true;
