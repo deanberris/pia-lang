@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed
+Status: Accepted (2026-11-24, with Dean's answers to its questions below)
 
 ## Context
 
@@ -147,7 +147,9 @@ The critical path is F1, F2, F3, F4, X2, K2, K3, M4, then E1 and E4 in parallel.
 - The trusted base grows by the GPU's float model and the Metal shim, both named in the trust report, as ADR 0038 and ADR 0065 already require.
 - Lean becomes part of the release path for `exp`, `sin` and `cos`, so ADR 0061's runner must work on the iMac and in CI by then.
 
-## Questions for review
+## Answers to the review questions
 
-1. **Which checkpoint is the 0.1.0 headline?** Recommended: `stories260K` for every test and proof report (all MIT, 1 MB, fits CI), and `stories15M` as the GPU benchmark, fetched rather than committed because of its Meta vocabulary. The alternatives are `stories260K` only, or GPT-2 124M.
-2. **Is the GPU path required for 0.1.0?** Recommended: yes, for the projections only, since the milestone is "floats and the linalg work" and the GPU is where linalg pays. The alternative is to ship 0.1.0 on CPU SIMD and make the GPU path 0.2.0, which takes ADR 0065 step 7 and the GPU ADR off the critical path.
+Dean accepted this ADR on 2026-11-24 and answered both questions. These answers are part of the decision.
+
+1. **The headline is `stories260K`, with `stories15M` on the GPU.** Every test, proof report and CI run uses `stories260K`. `stories15M` is fetched, not committed, for the GPU benchmark, and the place that fetches it states its vocabulary's licence.
+2. **The GPU path gates 0.1.0, for the matmuls.** The projections run on Metal through `@lower`, linalg, SPIR-V and SPIRV-Cross before the tag. ADR 0065 step 7 and the GPU ADR are on the critical path; softmax, RMSNorm and sampling stay on the CPU.
