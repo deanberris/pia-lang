@@ -18,120 +18,121 @@
 
 namespace pia::syntax {
 
-#define PIA_NODE_KINDS(X)                                                      \
-  X(None)                                                                      \
-  /* items */                                                                  \
-  X(Program)      /* item* */                                                  \
-  X(LetItem)      /* text=name, flags; Params, RetAnnot?, Contracts, body */   \
-  X(MetaOperator) /* text=op; Fixity?, for-type?, body */                      \
-  X(Fixity)       /* text="prec level assoc" */                                \
-  X(Interface)    /* text=name; Attrs, sig items */                            \
-  X(Module)       /* text=name; Paths, item* */                                \
-  X(ModuleHeader) /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */   \
-  X(Import)       /* text=path; flags="trusting"; Name[as]?, Name* */          \
-  X(ExprItem)     /* expr */                                                   \
-  X(SigVal)       /* text=name; Annot, Attrs, Contracts, shown value? */       \
-  X(SigType)      /* text=name; TypeValue, or Lambda for a generic type */     \
-  X(Sig)          /* a signature value: sig items */                           \
-  X(SigInclude)   /* text=concept; type arguments */                           \
-  X(SigLemma)     /* text=name; Params, Contracts */                           \
-  X(Adapter)      /* text=name; concept type, item* */                         \
-  X(Theory)       /* text=name; SortItem|LetItem* (ADR 0036) */                \
-  X(SortItem)     /* text=name; abbreviated type? */                           \
-  X(Model)        /* text=name; TypeName theory, SortItem|LetItem* */          \
-  X(FileAttr)     /* text=name: `@trusted` on its own line, for the file */    \
-  X(Paths)        /* Path* */                                                  \
-  X(Path)         /* text=A.B.C */                                             \
-  /* bindings */                                                               \
-  X(Params) /* Param* */                                                       \
-  X(Param)  /* text=name; Annot? */                                            \
-  X(ParamUnit)                                                                 \
-  X(ParamHole)                                                                 \
-  X(RetAnnot)  /* Annot?, Attrs */                                             \
-  X(Contracts) /* Requires|Ensures|Decreases* */                               \
-  X(Requires)  /* predicate */                                                 \
-  X(Ensures)   /* predicate */                                                 \
-  X(Reads)     /* a spec function's footprint, `xs.[a .. b]` (ADR 0060) */     \
-  X(Decreases) /* measure */                                                   \
-  X(Invariant) /* predicate */                                                 \
-  X(Attrs)     /* Attribute* */                                                \
-  X(Attribute) /* text=name; args */                                           \
-  X(NamedArg)  /* text=name; value */                                          \
-  /* annotations and types */                                                  \
-  X(Annot)          /* Modifiers, type, where-predicate? */                    \
-  X(Modifiers)      /* "borrowed in mutable"; Name? = lender of borrowed(m) */ \
-  X(TypeName)       /* text=name */                                            \
-  X(TypeKind)       /* the type of types */                                    \
-  X(TypeInst)       /* text=name; type arguments */                            \
-  X(RangeType)      /* text=name; lo, hi */                                    \
-  X(SliceType)      /* element */                                              \
-  X(ArrayType)      /* element, length */                                      \
-  X(RecordType)     /* FieldDecl* */                                           \
-  X(FieldDecl)      /* text=name; Annot */                                     \
-  X(RefinementType) /* text=name; type, predicate */                           \
-  X(UnitType)                                                                  \
-  X(UnionType) /* type* */                                                     \
-  X(ArrowType) /* Domain, result, Contracts? (innermost, ADR 0044) */          \
-  X(Domain)    /* text=parameter name or empty; Modifiers, type, where? */     \
-  X(TypeApp)   /* head, argument* */                                           \
-  X(TypeValue) /* body, Attrs, where-predicate? */                             \
-  X(Variants)  /* Ctor* */                                                     \
-  X(Ctor)      /* text=name; payload? */                                       \
-  /* expressions */                                                            \
-  X(Name) /* text=name */                                                      \
-  X(IntLit)                                                                    \
-  X(FloatLit) X(StringLit) X(BoolLit)  /* text=spelling */                     \
-      X(QuotedIdent)                   /* text=name */                         \
-      X(Hole) X(Unit) X(OperatorValue) /* text=op */                           \
-      X(ListLit)                       /* element* */                          \
-      X(RecordLit)                     /* FieldInit* */                        \
-      X(RecordUpdate)                  /* base, FieldInit* */                  \
-      X(FieldInit)                     /* text=name; value */                  \
-      X(Quote)            /* quoted items, QuotedDecl or expression */         \
-      X(QuotedDecl)       /* text=name; type */                                \
-      X(Splice)           /* text=name, or one expression child */             \
-      X(Apply)            /* function, argument+ */                            \
-      X(Field)            /* text=field (or $name); object */                  \
-      X(Index)            /* object, index */                                  \
-      X(Instantiate)      /* function, type argument+ */                       \
-      X(Binary)           /* text=op; lhs, rhs */                              \
-      X(Neg)              /* operand */                                        \
-      X(Range)            /* lo, hi */                                         \
-      X(Assign)           /* place, value */                                   \
-      X(If)               /* cond, then, else? */                              \
-      X(For)              /* pattern, iterable, step?, LoopAnnots, body */     \
-      X(Spread)           /* pattern, iterable, Attrs, LoopAnnots, body */     \
-      X(While)            /* cond, LoopAnnots, body */                         \
-      X(LoopAnnots)       /* Invariant|Decreases* */                           \
-      X(Quantifier)       /* text=forall|exists; Binder+, body */              \
-      X(Binder)           /* text=name; type? (typed) */                       \
-      X(RangeBinder)      /* text=name; range */                               \
-      X(Assert) X(Assume) /* predicate */                                      \
-      X(Try)              /* operand: `e?` (ADR 0028) */                       \
-      X(Handle)   /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */      \
-      X(Defer)    /* cleanup: `defer e`, first part of a Sequence */           \
-      X(Cleanup)  /* value, cleanup+: IRGen only, an exit running cleanup */   \
-      X(Sequence) /* stmt, stmt (right-nested) */                              \
-      X(LetIn)  /* text=name, flags; Params, RetAnnot?, Contracts, value, body \
-                 */                                                            \
-      X(Lambda) /* Captures?, LParam+, RetAnnot?, Contracts?, body */          \
-      X(Captures) /* Capture+: `[lo, borrowed keys, inout n]` (ADR 0044) */    \
-      X(Capture)  /* text=name; flags="" (copied), "borrowed" or "inout" */    \
-      X(LParam)   /* pattern, Annot? */                                        \
-      X(Match)    /* scrutinee, Arm+ */                                        \
-      X(Arm) /* pattern, body, Contracts? */ /* patterns */                    \
-      X(PVar)                                /* text=name */                   \
-      X(PLit)                                /* text=spelling */               \
-      X(PCtor)                               /* text=ctor; pattern+ */         \
-      X(PTyped)                              /* pattern, type */               \
-      X(PAs)                                 /* text=name; pattern */          \
-      X(PSlice)                              /* element pattern: `[e]` */      \
-      X(PArray)  /* element pattern, length pattern: `[e; n]` */               \
-      X(PRecord) /* PField* */                                                 \
-      X(PField)  /* text=field; pattern? */                                    \
-      X(PSplice) /* text=name */ /* comments, kept beside a node's children,   \
-                                    never among them */                        \
-      X(Comment) /* text=content; flags="<style> <place>" (ADR 0029) */
+#define PIA_NODE_KINDS(X)                                                    \
+  X(None)                                                                    \
+  /* items */                                                                \
+  X(Program)       /* item* */                                               \
+  X(LetItem)       /* text=name, flags; Params, RetAnnot?, Contracts, body */ \
+  X(MetaOperator)  /* text=op; Fixity?, for-type?, body */                   \
+  X(Fixity)        /* text="prec level assoc" */                             \
+  X(Interface)     /* text=name; Attrs, sig items */                         \
+  X(Module)        /* text=name; Paths, item* */                             \
+  X(ModuleHeader)  /* text=A.B; Attrs, Paths: the file's module (ADR 0039) */ \
+  X(Import)        /* text=path; flags="trusting"; Name[as]?, Name* */      \
+  X(ExprItem)      /* expr */                                                \
+  X(SigVal)        /* text=name; Annot, Attrs, Contracts, shown value? */   \
+  X(SigType)       /* text=name; TypeValue, or Lambda for a generic type */  \
+  X(Sig)           /* a signature value: sig items */                        \
+  X(SigInclude)    /* text=concept; type arguments */                        \
+  X(SigLemma)      /* text=name; Params, Contracts */                        \
+  X(Adapter)       /* text=name; concept type, item* */                      \
+  X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
+  X(SortItem)      /* text=name; abbreviated type? */                        \
+  X(Model)         /* text=name; TypeName theory, SortItem|LetItem* */       \
+  X(FileAttr)      /* text=name: `@trusted` on its own line, for the file */ \
+  X(Paths)         /* Path* */                                               \
+  X(Path)          /* text=A.B.C */                                          \
+  /* bindings */                                                             \
+  X(Params)        /* Param* */                                              \
+  X(Param)         /* text=name; Annot? */                                   \
+  X(ParamUnit)                                                               \
+  X(ParamHole)                                                               \
+  X(RetAnnot)      /* Annot?, Attrs */                                       \
+  X(Contracts)     /* Requires|Ensures|Decreases* */                         \
+  X(Requires)      /* predicate */                                           \
+  X(Ensures)       /* predicate */                                           \
+  X(Reads)         /* footprint: `xs.[lo .. hi]` (ADR 0060) */              \
+  X(Decreases)     /* measure */                                             \
+  X(Invariant)     /* predicate */                                           \
+  X(Attrs)         /* Attribute* */                                          \
+  X(Attribute)     /* text=name; args */                                     \
+  X(NamedArg)      /* text=name; value */                                    \
+  /* annotations and types */                                                \
+  X(Annot)         /* Modifiers, type, where-predicate? */                   \
+  X(Modifiers)     /* "borrowed in mutable"; Name? = lender of borrowed(m) */\
+  X(TypeName)      /* text=name */                                           \
+  X(TypeKind)      /* the type of types */                                   \
+  X(TypeInst)      /* text=name; type arguments */                           \
+  X(RangeType)     /* text=name; lo, hi */                                   \
+  X(SliceType)     /* element */                                             \
+  X(ArrayType)     /* element, length */                                     \
+  X(RecordType)    /* FieldDecl* */                                          \
+  X(FieldDecl)     /* text=name; Annot */                                    \
+  X(RefinementType) /* text=name; type, predicate */                         \
+  X(UnitType)                                                                \
+  X(UnionType)     /* type* */                                               \
+  X(ArrowType)     /* Domain, result, Contracts? (innermost, ADR 0044) */    \
+  X(Domain)        /* text=parameter name or empty; Modifiers, type, where? */ \
+  X(TypeApp)       /* head, argument* */                                     \
+  X(TypeValue)     /* body, Attrs, where-predicate? */                       \
+  X(Variants)      /* Ctor* */                                               \
+  X(Ctor)          /* text=name; payload? */                                 \
+  /* expressions */                                                          \
+  X(Name)          /* text=name */                                           \
+  X(IntLit) X(FloatLit) X(StringLit) X(BoolLit) /* text=spelling */          \
+  X(QuotedIdent)   /* text=name */                                           \
+  X(Hole)                                                                    \
+  X(Unit)                                                                    \
+  X(OperatorValue) /* text=op */                                             \
+  X(ListLit)       /* element* */                                            \
+  X(RecordLit)     /* FieldInit* */                                          \
+  X(RecordUpdate)  /* base, FieldInit* */                                    \
+  X(FieldInit)     /* text=name; value */                                    \
+  X(Quote)         /* quoted items, QuotedDecl or expression */              \
+  X(QuotedDecl)    /* text=name; type */                                     \
+  X(Splice)        /* text=name, or one expression child */                  \
+  X(Apply)         /* function, argument+ */                                 \
+  X(Field)         /* text=field (or $name); object */                       \
+  X(Index)         /* object, index */                                       \
+  X(Instantiate)   /* function, type argument+ */                            \
+  X(Binary)        /* text=op; lhs, rhs */                                   \
+  X(Neg)           /* operand */                                             \
+  X(Range)         /* lo, hi */                                              \
+  X(Assign)        /* place, value */                                        \
+  X(If)            /* cond, then, else? */                                   \
+  X(For)           /* pattern, iterable, step?, LoopAnnots, body */          \
+  X(Spread)        /* pattern, iterable, Attrs, LoopAnnots, body */          \
+  X(While)         /* cond, LoopAnnots, body */                              \
+  X(LoopAnnots)    /* Invariant|Decreases* */                                \
+  X(Quantifier)    /* text=forall|exists; Binder+, body */                   \
+  X(Binder)        /* text=name; type? (typed) */                            \
+  X(RangeBinder)   /* text=name; range */                                    \
+  X(Assert) X(Assume) /* predicate */                                        \
+  X(Try)           /* operand: `e?` (ADR 0028) */                            \
+  X(Handle)        /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */   \
+  X(Defer)         /* cleanup: `defer e`, first part of a Sequence */        \
+  X(Cleanup)       /* value, cleanup+: IRGen only, an exit running cleanup */ \
+  X(Sequence)      /* stmt, stmt (right-nested) */                           \
+  X(LetIn)         /* text=name, flags; Params, RetAnnot?, Contracts, value, body */ \
+  X(Lambda)        /* Captures?, LParam+, RetAnnot?, Contracts?, body */     \
+  X(Captures)      /* Capture+: `[lo, borrowed keys, inout n]` (ADR 0044) */ \
+  X(Capture)       /* text=name; flags="" (copied), "borrowed" or "inout" */ \
+  X(LParam)        /* pattern, Annot? */                                     \
+  X(Match)         /* scrutinee, Arm+ */                                     \
+  X(Arm)           /* pattern, body, Contracts? */                            \
+  /* patterns */                                                             \
+  X(PVar)          /* text=name */                                           \
+  X(PLit)          /* text=spelling */                                       \
+  X(PCtor)         /* text=ctor; pattern+ */                                 \
+  X(PTyped)        /* pattern, type */                                       \
+  X(PAs)           /* text=name; pattern */                                  \
+  X(PSlice)        /* element pattern: `[e]` */                              \
+  X(PArray)        /* element pattern, length pattern: `[e; n]` */           \
+  X(PRecord)       /* PField* */                                             \
+  X(PField)        /* text=field; pattern? */                                \
+  X(PSplice)       /* text=name */                                           \
+  /* comments, kept beside a node's children, never among them */            \
+  X(Comment)       /* text=content; flags="<style> <place>" (ADR 0029) */
 
 enum class NodeKind : uint8_t {
 #define PIA_NODE_ENUM(name) name,
