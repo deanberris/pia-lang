@@ -13,6 +13,7 @@ int64_t va_two(int64_t a, int64_t b);
 int64_t va_three(int64_t a, int64_t b, int64_t c);
 uint64_t va_mix(uint32_t a, const uint8_t *xs, uint64_t n);
 int32_t plus_answer(int32_t x);
+int32_t counted(int32_t x);
 
 uint32_t sum_bytes(const uint8_t *xs, uint64_t n) {
   uint32_t s = 0;
@@ -20,7 +21,13 @@ uint32_t sum_bytes(const uint8_t *xs, uint64_t n) {
   return s;
 }
 int32_t clamp_c(int32_t x) { return x < 0 ? 0 : x > 100 ? 100 : x; }
-int32_t raw_c(int32_t x) { return x * 2; }
+static int32_t count = 0;
+int32_t raw_c(int32_t x) {
+  ++count;
+  return x * 2;
+}
+// Like __errno_location: a pointer to a value that calls change.
+int32_t *counter_c(void) { return &count; }
 int32_t answer(void) { return 42; }
 
 // Variadic: n int64_t arguments follow.
@@ -63,6 +70,7 @@ int main(void) {
   EXPECT(pct(500), 100);
   EXPECT(pct(42), 42);
   EXPECT(twice_raw(21), 42);
+  EXPECT(counted(5), 2);
   EXPECT(va_two(40, 2), 42);
   EXPECT(va_three(1LL << 40, 2, -3), (1LL << 40) - 1);
   EXPECT(va_mix(1000, bytes, 4), 1256);

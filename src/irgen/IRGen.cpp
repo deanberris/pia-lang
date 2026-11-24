@@ -999,6 +999,7 @@ class Gen {
     fuel_ = 0;
     owns_.clear();
     variadic_.reset();
+    deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
     triggers_.clear();
@@ -1289,6 +1290,11 @@ class Gen {
     if (variadic_ && !isExtern) {
       fail(*variadicNode_, "@variadic is only for a foreign declaration, "
                            "'= extern \"symbol\"'");
+      return;
+    }
+    if (deref_ && !isExtern) {
+      fail(*deref_, "@deref is only for a foreign declaration, "
+                    "'= extern \"symbol\"'");
       return;
     }
     // A function with `@owns(buf, owner, b)` checks every access to `buf`
@@ -1829,6 +1835,13 @@ class Gen {
         }
         variadic_ = static_cast<unsigned>(lit->value.getZExtValue());
         variadicNode_ = a.get();
+        continue;
+      }
+      // `@deref` on a foreign declaration: the C function returns a
+      // pointer to the result, and the call reads through it, so the
+      // pointer never reaches Pia. errno is the case (ADR 0057, section 5).
+      if (a->text == "deref" && a->kids.empty()) {
+        deref_ = a.get();
         continue;
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
@@ -9038,6 +9051,9 @@ class Gen {
                         "bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
+    if (deref_ && !mlir::isa<IntType>(sig.result))
+      return fail(*deref_, "@deref reads an integer through the pointer C "
+                           "returns, so the result must be an integer");
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
@@ -9046,6 +9062,7 @@ class Gen {
                                 b_.getStringAttr(symbol), args);
     if (variadic_)
       op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
+    if (deref_) op->setAttr("pia.deref", b_.getUnitAttr());
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }
@@ -11076,6 +11093,8 @@ class Gen {
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
+  // `@deref` on the item being generated, or null.
+  const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   // While a spec write's place is generated, a spec field may be named
