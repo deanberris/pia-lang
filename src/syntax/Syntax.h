@@ -51,7 +51,7 @@ namespace pia::syntax {
   X(Contracts)     /* Requires|Ensures|Decreases* */                         \
   X(Requires)      /* predicate */                                           \
   X(Ensures)       /* predicate */                                           \
-  X(Reads)         /* footprint: `xs.[lo .. hi]` (ADR 0060) */              \
+  X(Reads)         /* footprint: `xs.[lo .. hi]` (ADR 0060) */               \
   X(Decreases)     /* measure */                                             \
   X(Invariant)     /* predicate */                                           \
   X(Attrs)         /* Attribute* */                                          \
