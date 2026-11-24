@@ -192,7 +192,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 
 ## 6. Docs and ADRs
 
-User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md` and `cases/`. Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
+User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md` and `cases/`; `docs/images/` holds images the pages show (`sediment-evolution.gif`, the demo's animation). Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
 
 ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topic:
 
