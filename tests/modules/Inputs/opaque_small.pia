@@ -1,0 +1,7 @@
+module Num.Small : Small
+
+interface Small = sig
+  let spec small : (x : u8) -> bool
+end
+
+let spec small (x : u8) : bool @opaque = x < 10

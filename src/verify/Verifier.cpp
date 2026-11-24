@@ -466,6 +466,7 @@ class Encoder {
   bool reachedTarget() const { return done_; }
   // Whether a recursive spec function was left uninterpreted at its fuel.
   bool truncated() const { return truncated_; }
+  const std::set<std::string> &opaqueHidden() const { return opaqueHidden_; }
   void setVacuity(bool v) { vacuity_ = v; }
 
   // The consistency check of a trusted theory (ADR 0036): every axiom of
@@ -1186,6 +1187,16 @@ class Encoder {
   // Encodes the ops of `block` in order. Returns false once the target
   // goal has been reached. `yields` receives an scf.yield's operands.
   bool walkBlock(mlir::Block &block, llvm::SmallVectorImpl<Value> *yields) {
+    // The reveals made in this block end with it (ADR 0063).
+    blockReveals_.push_back(0);
+    struct EndReveals {
+      Encoder &e;
+      ~EndReveals() {
+        for (unsigned i = 0; i < e.blockReveals_.back(); ++i)
+          e.revealed_.pop_back();
+        e.blockReveals_.pop_back();
+      }
+    } endReveals{*this};
     for (Operation &op : block) {
       if (auto y = mlir::dyn_cast<mlir::scf::YieldOp>(op)) {
         if (yields)
@@ -1209,6 +1220,36 @@ class Encoder {
   bool step(Operation *op) {
     using P = mlir::smt::BVCmpPredicate;
     bool spec = spec_.contains(op);
+
+    // `with f` (ADR 0063): f's definition is a fact for its calls from
+    // here to the end of the scope, and for the calls met before.
+    if (auto r = mlir::dyn_cast<contract::RevealOp>(op)) {
+      llvm::StringRef name = r.getCallee();
+      // The end of `with f in e`.
+      if (r->hasAttr("pia.end")) {
+        auto at = llvm::find(llvm::reverse(revealed_), name);
+        if (at != revealed_.rend()) {
+          revealed_.erase(std::next(at).base());
+          if (!blockReveals_.empty() && blockReveals_.back() > 0)
+            --blockReveals_.back();
+        }
+        return true;
+      }
+      revealed_.push_back(name);
+      if (blockReveals_.empty()) blockReveals_.push_back(0);
+      ++blockReveals_.back();
+      std::vector<Hidden> hidden = std::move(hiddenCalls_);
+      hiddenCalls_.clear();
+      for (Hidden &h : hidden) {
+        if (h.callee.getSymName() != name) {
+          hiddenCalls_.push_back(std::move(h));
+          continue;
+        }
+        if (Value again = specCall(h.callee, h.k, h.args))
+          define(eq(h.app, again));
+      }
+      return true;
+    }
 
     if (mlir::isa<mlir::func::ReturnOp>(op)) return true;
 
@@ -3038,6 +3079,15 @@ class Encoder {
     }
     // Its body is in its own module: the contract is all there is.
     if (contractOnly(callee)) return app;
+    // An @opaque function's definition is a fact only where a `reveal`
+    // asks for it (ADR 0063). A call met before the reveal gets it then.
+    if (callee->hasAttr("pia.opaque") &&
+        !llvm::is_contained(revealed_, callee.getSymName())) {
+      opaqueHidden_.insert(callee.getSymName().str());
+      if (quantifierDepth_ == 0)
+        hiddenCalls_.push_back({callee, k, args, app});
+      return app;
+    }
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
         std::max(fuelOf(callee), minFuel_)) {
       // Unfolded as far as the fuel allows: past here the function is
@@ -3490,6 +3540,20 @@ class Encoder {
   std::vector<std::string> sentAssumes_;
   unsigned minFuel_ = 0;  // a lemma's @fuel (ADR 0036, tactics)
   bool truncated_ = false;  // an unfolding stopped at the fuel (#188)
+  // ADR 0063: the opaque functions revealed where the walk is, how many
+  // each open block revealed, the calls whose definition an opaque
+  // function kept out (for a later reveal), and the opaque functions a
+  // query used without their definition, for the hint.
+  llvm::SmallVector<llvm::StringRef> revealed_;
+  llvm::SmallVector<unsigned> blockReveals_;
+  struct Hidden {
+    mlir::func::FuncOp callee;
+    unsigned k;
+    Demand args;
+    Value app;
+  };
+  std::vector<Hidden> hiddenCalls_;
+  std::set<std::string> opaqueHidden_;
   bool vacuity_ = false;  // the target's hypotheses, without its negation
 };
 
@@ -3561,6 +3625,7 @@ struct Query {
   bool reached = false;
   bool theories = false;            // it applies a theory function
   bool truncated = false;           // an unfolding stopped at the fuel
+  std::set<std::string> opaque;     // opaque functions left unrevealed
   std::vector<std::string> axioms;  // the axioms it was given
   std::vector<std::string> assumes;  // the `assume`s it asserts
   // A generic's proof over sorts (ADR 0043): its axioms are requirement
@@ -3710,6 +3775,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.reached = enc.reachedTarget();
   q.theories = enc.usesTheories();
   q.truncated = enc.truncated();
+  q.opaque = enc.opaqueHidden();
   q.axioms = enc.sentAxioms();
   q.genericProof = fn->hasAttr("pia.generic_proof");
   q.assumes = enc.sentAssumes();
@@ -4317,7 +4383,12 @@ void solve(const Job &job, const Options &options, Outcome &out,
   }
   // A query that stopped unfolding a recursive spec function at its fuel
   // may fail only for want of fuel (#188).
-  if (answer->truncated)
+  if (!answer->opaque.empty()) {
+    // The source name: a symbol may carry its module or overload.
+    std::string f = *answer->opaque.begin();
+    out.hint = "'" + f + "' is opaque here; 'with " + f +
+               "' may prove it (ADR 0063)";
+  } else if (answer->truncated)
     out.hint = "a recursive spec function was unfolded only as far as its "
                "@fuel allows, so this goal may hold; raise @fuel on the "
                "function or the lemma, or prove the fact by induction in a "
