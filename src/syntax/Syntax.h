@@ -18,6 +18,9 @@
 
 namespace pia::syntax {
 
+// The node kinds and what each holds, aligned by hand for reading: clang-format
+// would reflow the table, and does not reach a fixed point on it.
+// clang-format off
 #define PIA_NODE_KINDS(X)                                                    \
   X(None)                                                                    \
   /* items */                                                                \
@@ -133,6 +136,7 @@ namespace pia::syntax {
   X(PSplice)       /* text=name */                                           \
   /* comments, kept beside a node's children, never among them */            \
   X(Comment)       /* text=content; flags="<style> <place>" (ADR 0029) */
+// clang-format on
 
 enum class NodeKind : uint8_t {
 #define PIA_NODE_ENUM(name) name,
