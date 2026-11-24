@@ -1,4 +1,4 @@
-# 63. `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only through named functions, and inherits only what it derives
+# 64. `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only through named functions, and inherits only what it derives
 
 Date: 2026-11-24
 
