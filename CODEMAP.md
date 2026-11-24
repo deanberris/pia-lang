@@ -65,7 +65,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
-| an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
+| an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
 
 **A working example of almost every feature** is in `tests/verify/<feature>.pia`, for example `handlers.pia`, `defer.pia`, `lambda_captures.pia`, `concepts.pia`, `models.pia` and `vec_boxes.pia`. Run `ls tests/verify` and copy from the closest one.
 
@@ -172,7 +172,9 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `examples/edges` (`edges.pia`, `edges_buggy.pia` and the C harness) is the edge detection demo, and `docs/demo.md` describes it. `examples/streams` is the C harness for `docs/streams.pia.md`, the stream delineation demo, `docs/sediment.pia.md`, its sediment transport stage, and `docs/basins.pia.md`, sediment by basin in parallel; `examples/streams/gif.pia` is the C entry point for the animated GIF of the evolving landscape.
 - `grammar/pia.lark`, `grammar/pia_lexer.py` and `grammar/pia_grammar.py` are the reference grammar in Lark, checked against the C++ parser.
 - `editors/vscode` is the VS Code extension: TextMate grammars and an LSP client.
-- `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C++ correct?).
+- `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-porting` (a feature map from C, C++, Rust, OCaml, Zig and Go), `skills/pia-idioms` (acting on lints), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/piac-build` (compiling, linking, trust reports, certificates), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C, C++ or Rust correct?).
+- `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` make the repository a Claude Code plugin marketplace: the `pia` plugin installs the skills, `pia-lsp` as a language server and `pia mcp` as an MCP server (docs/agents.md).
+- `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
 
