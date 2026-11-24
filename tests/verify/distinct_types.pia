@@ -1,0 +1,41 @@
+(* Distinct types (ADR 0064, step 2): `type u32` makes a new type, and a
+   type applied to a value converts it, `length 5` in and `u32 l` out. The
+   underlying type's bounds carry over, the conversions read the same in
+   contracts, and a distinct type proves as the number it holds.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let length = type u32
+let percent = type int{0..100}
+let pixels = type length
+
+(* The product of two lengths is a number, not a length. *)
+let area (w : length) (h : length) : u64
+  requires u32 w * u32 h <= max u32
+  ensures result = u32 w * u32 h
+= u32 w * u32 h
+
+let longer (a : length) (b : length) : length
+  ensures u32 result >= u32 a && u32 result >= u32 b
+= if u32 a >= u32 b then a else b
+
+let grow (l : length) (by : u32) : length
+  requires u32 l + by <= max u32
+  ensures u32 result = u32 l + by
+= length (u32 l + by)
+
+(* The bounds of int{0..100} hold of every percent, for free. *)
+let half (p : percent) : percent
+  ensures int result * 2 <= int p
+= percent (int p / 2)
+
+let fits (p : percent) : u8
+  ensures result <= 100
+= int p
+
+(* One layer at a time: pixels wraps a length. *)
+let wide (n : u32) : pixels
+  ensures u32 (length result) = n
+= pixels (length n)
+
+let one : length = length 1

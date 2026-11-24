@@ -1,0 +1,19 @@
+(* What distinct types refuse (ADR 0064, section 3): every conversion is
+   written, so neither a literal nor a value of the underlying type
+   becomes a length, a length is not a u32, and two distinct types over
+   one type do not mix.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let length = type u32
+let weight = type u32
+
+let literal : length = 5
+
+let raw (x : u32) : length = x
+
+let back (l : length) : u32 = l
+
+let mix (w : weight) : length = w
+
+let sum (a : length) (b : length) : length = a + b
