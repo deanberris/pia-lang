@@ -34,6 +34,8 @@
 //                                   a buffer of records, and only when
 //                                   that drops a declaration)
 //   piac --no-slice ...             always solve each goal's full query
+//   piac --no-int-blast ...         bit-blast every goal, nonlinear ones
+//                                   too (ADR 0066)
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr; with
 //                                   theories, each axiom's triggers and the
@@ -121,6 +123,7 @@ int usage() {
          "             "
          "[--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
          "             [--proof-cache=<dir>] [--slice | --no-slice] "
+         "[--no-int-blast] "
          "[--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
          "             [--explain-overloads=<file:line>]\n"
          "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
@@ -282,20 +285,19 @@ std::string obligations(size_t n) {
 // One line, `verify-stats: key=value ...`, that tools/bench reads.
 void printStats(const pia::verify::Stats &st) {
   std::cerr << "verify-stats: goals=" << st.goals
-            << " unselected=" << st.unselected
-            << " intervals=" << st.intervals << " skipped=" << st.skipped
-            << " solved=" << st.solved << " cached=" << st.cached
-            << " sliced=" << st.sliced << " unsliced=" << st.unsliced
-            << " threads=" << st.threads << " cost=" << st.cost
+            << " unselected=" << st.unselected << " intervals=" << st.intervals
+            << " skipped=" << st.skipped << " solved=" << st.solved
+            << " cached=" << st.cached << " sliced=" << st.sliced
+            << " unsliced=" << st.unsliced << " threads=" << st.threads
+            << " cost=" << st.cost
             << " encode_ms=" << static_cast<long long>(st.encodeMs)
             << " solve_ms=" << static_cast<long long>(st.solveMs)
             << " type=" << st.typeGoals << " type_smt=" << st.typeSmt
-            << " type_cost=" << st.typeCost
-            << " contract=" << st.contractGoals
+            << " type_cost=" << st.typeCost << " contract=" << st.contractGoals
             << " contract_smt=" << st.contractSmt
             << " contract_cost=" << st.contractCost
             << " generic=" << st.genericGoals << " instances=" << st.instances
-            << "\n";
+            << " intblast=" << st.intBlasted << "\n";
   // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
   // line above the only `verify-stats:` line.
   // --check-vacuity's extra queries, on a line of their own.
@@ -571,6 +573,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> verifyOnly;
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
+  bool intBlast = true; // --no-int-blast turns it off (ADR 0066)
   bool verifyStats = false;
   bool checkVacuity = false;
   bool trustReport = false;
@@ -651,6 +654,8 @@ int main(int argc, char **argv) {
       slice = 1;
     else if (arg == "--no-slice")
       slice = -1;
+    else if (arg == "--no-int-blast")
+      intBlast = false;
     else if (arg == "--verify-stats")
       verifyStats = true;
     else if (arg == "--check-vacuity")
@@ -910,6 +915,7 @@ int main(int argc, char **argv) {
                       : slice < 0 ? pia::verify::Options::Slice::Off
                                   : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
+      options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
       // Which axioms each proof used is only reported by these, and kept

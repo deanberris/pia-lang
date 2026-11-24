@@ -139,6 +139,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).
+- `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Yices2, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
@@ -203,7 +204,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 
 - **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0059 (digit separators, `min t`/`max t`), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
 - **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings), 0057 (`Pia.Sys.Posix` per target behind one interface), 0064 (distinct types: `type` always makes a new type).
-- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions).
+- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions), 0066 (int-blasting for nonlinear goals).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).

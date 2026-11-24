@@ -4388,6 +4388,7 @@ struct Job {
 // What one job did, summed into Stats once every thread has finished.
 struct JobStats {
   bool solved = false, cached = false, sliced = false, unsliced = false;
+  bool intBlasted = false;
   unsigned long long cost = 0;
 };
 
@@ -4551,6 +4552,11 @@ unsigned long long rlimitCount(z3::solver &solver) {
 // reasoning it is for, and small beside the exact query it may save.
 constexpr unsigned long long kAbstractRlimit = 500000;
 
+// The budget of the int-blasting attempt in `solve` (ADR 0066). The
+// nonlinear goals of the benchmark take at most a few million; a goal that
+// needs more is left to the bit-blaster, which also finds counterexamples.
+constexpr unsigned long long kIntBlastRlimit = 50000000;
+
 // The end of the s-expression that starts at `at` in `s`.
 size_t sexprEnd(const std::string &s, size_t at) {
   while (at < s.size() && s[at] == ' ') ++at;
@@ -4567,20 +4573,43 @@ size_t sexprEnd(const std::string &s, size_t at) {
   return at;
 }
 
+// Whether the operand of `script` that starts at `at` is a literal
+// (`#x...`, `#b...` or `(_ bvN w)`).
+bool literalAt(const std::string &script, size_t at) {
+  while (at < script.size() && script[at] == ' ')
+    ++at;
+  if (at >= script.size())
+    return false;
+  return script[at] == '#' || script.compare(at, 4, "(_ b") == 0;
+}
+
 // Whether `script` has a `bvsdiv` or `bvsrem` whose divisor is not a
-// literal (`#x...`, `#b...` or `(_ bvN w)`).
+// literal.
 bool dividesByVariable(const std::string &script) {
   for (const char *op : {"(bvsdiv ", "(bvsrem "}) {
     std::string f(op);
     for (size_t at = script.find(f); at != std::string::npos;
-         at = script.find(f, at + 1)) {
-      size_t second = sexprEnd(script, at + f.size());
-      while (second < script.size() && script[second] == ' ') ++second;
-      if (second >= script.size()) continue;
-      bool literal = script[second] == '#' ||
-                     script.compare(second, 4, "(_ b") == 0;
-      if (!literal) return true;
-    }
+         at = script.find(f, at + 1))
+      if (!literalAt(script, sexprEnd(script, at + f.size())))
+        return true;
+  }
+  return false;
+}
+
+// Whether `script` is nonlinear: it multiplies two terms neither of which
+// is a literal, or divides by a term that is not one. Those are the goals
+// a bit-blasted multiplier or divider makes slow (ADR 0066).
+bool multipliesVariables(const std::string &script) {
+  if (dividesByVariable(script))
+    return true;
+  const std::string f = "(bvmul ";
+  for (size_t at = script.find(f); at != std::string::npos;
+       at = script.find(f, at + 1)) {
+    size_t first = at + f.size();
+    if (literalAt(script, first))
+      continue;
+    if (!literalAt(script, sexprEnd(script, first)))
+      return true;
   }
   return false;
 }
@@ -4772,6 +4801,49 @@ void solve(const Job &job, const Options &options, Outcome &out,
     } catch (const z3::exception &) {
     }
   }
+  // A nonlinear goal is next given to Z3's int-blasting solver (ADR 0066).
+  // Bit-blasting a 68- or 132-bit multiplier is what times out on goals
+  // such as `a <= b ==> a * c <= b * c`, while the same goal over integers
+  // is decided by nonlinear integer arithmetic in milliseconds. The
+  // translation is exact, both ways, so unsat is a proof. On sat or
+  // unknown the bit-blaster below decides as before, and gives the
+  // counterexample. A goal with a strategy of its own, with theory axioms
+  // or with assumptions is left as it is, since those need its solver, or
+  // an unsat core of it.
+  if (last != &witness && options.intBlast && job.strategy.empty() &&
+      q.axioms.empty() && q.assumes.empty() && first == &full &&
+      multipliesVariables(job.script))
+    try {
+      // In a context of its own, as for the abstract attempt above.
+      z3::context ictx;
+      z3::solver blast = z3::tactic(ictx, "smt").mk_solver();
+      z3::params ip(ictx);
+      ip.set("timeout", options.timeoutMs);
+      ip.set("rlimit", static_cast<unsigned>(
+                           options.rlimit ? std::min<unsigned long long>(
+                                                options.rlimit, kIntBlastRlimit)
+                                          : kIntBlastRlimit));
+      // 2 is int-blasting; the `smt` tactic is needed, since the default
+      // solver for bit-vectors runs the bit-blasting tactic first.
+      ip.set("smt.bv.solver", 2u);
+      blast.set(ip);
+      blast.from_string(job.script.c_str());
+      unsigned long long before = rlimitCount(blast);
+      z3::check_result r = blast.check();
+      unsigned long long now = rlimitCount(blast);
+      js.cost += now - before;
+      if (r == z3::unsat) {
+        js.intBlasted = true;
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost)
+          out.cost = now - before;
+        if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, key, now - before, &out.axiomsUsed);
+        return;
+      }
+    } catch (const z3::exception &) {
+    }
   if (last != &witness) try {
     unsigned long long before = rlimitCount(*first);
     result = first->check();
@@ -4955,6 +5027,7 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
     st.cached += j.cached;
     st.sliced += j.sliced;
     st.unsliced += j.unsliced;
+    st.intBlasted += j.intBlasted;
     st.cost += j.cost;
   }
   return threads;

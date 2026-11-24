@@ -1,0 +1,64 @@
+(* Int-blasting (ADR 0066). Each goal multiplies values that are not
+   constants. The verifier encodes 32- and 64-bit products at 68 or 132
+   bits, and bit-blasting those multipliers times out on every goal here
+   but the last, so before ADR 0066 each needed a lemma by induction under
+   `@solver(tactic = "(using-params smt :bv.solver 2)")`, as in
+   lib/Pia/Image/Raster.pia. Now a nonlinear goal is first given to Z3's
+   int-blasting solver, which decides it as integer arithmetic.
+// RUN: not piac --verify --verify-stats %s 2>&1 | FileCheck %s
+*)
+
+(* Monotonicity of a product, with no induction.
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma mul_mono (a : u64) (b : u64) (c : u64) : unit
+  requires a <= b
+  ensures a * c <= b * c
+= ()
+
+(* Sample k of pixel (x, y) lies inside a w by h image of c channels.
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma index_lt (x : u32) (y : u32) (w : u32) (h : u32) (c : u8) (k : u8) : unit
+  requires x < w && y < h && k < c
+  ensures (y * w + x) * c + k < w * h * c
+= ()
+
+(* Lemire's range reduction: the high half of x * s lies below s.
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma reduce_lt (x : u32) (s : u32) : unit
+  requires s > 0
+  ensures (x * s) / 4294967296 < s
+= ()
+
+(* A cost bound is monotone in n (ADR 0062).
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma triangle_mono (i : u32) (n : u32) : unit
+  requires i <= n
+  ensures i * (i + 1) <= n * (n + 1)
+= ()
+
+(* One step of writing digits: v = q * p + d, with the digit q mod b.
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma digit_step (q : u64) (p : u64) (d : u64) (b : int{2..36}) : unit
+  requires d < p && p * b <= 18446744073709551615
+  ensures q * p + d = (q / b) * (p * b) + ((q % b) * p + d)
+  ensures (q % b) * p + d < p * b
+= ()
+
+(* Without c >= 0 a product is not monotone, and the counterexample still
+   comes from the bit-blaster.
+// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let lemma signed_mono (a : i32) (b : i32) (c : i32) : unit
+  requires a <= b
+  ensures a * c <= b * c
+= ()
+
+(*
+// CHECK: 5 proved, 1 failed, 0 skipped
+// CHECK: verify-stats: {{.*}} intblast={{[1-9][0-9]*}}
+*)
