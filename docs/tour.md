@@ -176,7 +176,7 @@ let opaque (p : pixel) : pixel
 let luma (p : pixel) : u16 = p.r + p.g + p.b
 ```
 
-`let byte = type u8` gives another name to a type. A field of a mutable record can be assigned:
+`let byte = u8` gives another name to a type: a type is a value, so a `let` can name it. A field of a mutable record can be assigned:
 
 ```ocaml
 let pixel = type { r : u8; g : u8; b : u8; a : u8 }
@@ -569,7 +569,7 @@ let times : u16 = 2 * 3 ** 1
 A top-level call of a metaprogram is replaced by the items it returns, and `@derive(x)` on a type calls the metaprogram `derive_x`. Expansion runs to a fixed point, so a metaprogram can generate code that uses other metaprograms:
 
 ```ocaml
-let meta make_byte () : item = `( let byte = type u8 )
+let meta make_byte () : item = `( let byte = u8 )
 
 make_byte ()
 

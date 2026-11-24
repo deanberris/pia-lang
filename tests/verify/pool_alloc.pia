@@ -9,7 +9,7 @@
 *)
 
 let oom = type | OutOfMemory
-let blk = type int{0..63}
+let blk = int{0..63}
 
 let theory Alloc = sig
   let sort heap

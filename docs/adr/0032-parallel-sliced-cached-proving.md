@@ -34,7 +34,7 @@ The verifier (`src/verify/Verifier.cpp`, [docs/verifier.md](../verifier.md)) alr
 
 ### Amendment, 2026-11-24: CI runs the benchmark only when it can move
 
-Dean asked for the benchmark to run only when something that matters to it changes. It proves the corpus twice and takes about 35 minutes in each of CI's two jobs, which made it most of a cached CI run, and BuildBuddy's remote execution cannot help, because the benchmark times proofs on the runner itself.
+Dean asked for the benchmark to run only when something that matters to it changes. It proves the corpus twice and took 69 minutes on Linux and 56 on macOS in the run that added this (PR #407), against 8 to 11 minutes for the build and tests, so it was most of a cached CI run, and BuildBuddy's remote execution cannot help, because the benchmark times proofs on the runner itself.
 
 - A `what changed` job in `.github/workflows/ci.yml` passes the changed paths to `tools/bench/needs_bench.py`, and both jobs run the benchmark step only when it says yes. The jobs themselves, and their required checks, run as before; only the step is skipped.
 - What can move a gated cost: the files in `tools/bench/baseline.json` and the library modules they import, transitively; `src/` except the language server, the REPL, code generation and certificates, none of which runs under `piac --verify`; `tools/piac/piac.cpp`; `tools/bench/`; `third_party/`, the module files, `.bazelrc` and `.bazelversion`; and the CI workflow. A file that is not in the baseline is reported as new and never gated, so new library modules, demos and tests do not need a run until they join the baseline.

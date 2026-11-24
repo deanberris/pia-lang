@@ -758,10 +758,11 @@ class Parser {
         // type ...` (ADR 0039).
         if (at(K::Let) && kind(1) == K::LParen)
           t->add(lambda(/*elemBody=*/false));
-        else if (!at(K::Type))
-          fail("expected 'type' in a signature type definition");
-        else
+        else if (at(K::Type))
           t->add(typeValue());
+        else
+          // `let byte = u8`: another name for a type (ADR 0064).
+          t->add(aliasValue(type()));
         n.add(std::move(t));
       } else {
         fail("expected ':' or '=' after the name");
@@ -1137,6 +1138,18 @@ class Parser {
       into.add(t ? std::move(t) : elem());
     } while (accept(K::Comma));
     expect(K::TargsClose, "'>' to close the type arguments");
+  }
+
+  // The type `t` as a value that names it, `let byte = u8` (ADR 0064,
+  // section 1): the type item `type t`, marked as another name for `t`
+  // rather than a new type.
+  NodePtr aliasValue(NodePtr t) {
+    auto n = makeNode(N::TypeValue, t->loc);
+    n->flags = "alias";
+    n->add(std::move(t));
+    n->add(makeNode(N::Attrs, loc()));
+    n->add(makeNode(N::None, loc()));
+    return n;
   }
 
   NodePtr typeValue() {
@@ -1673,7 +1686,22 @@ class Parser {
   NodePtr atom() {
     SourceLoc start = loc();
     switch (kind()) {
-      case K::Ident: { auto n = makeNode(N::Name, start, text()); take(); return n; }
+    case K::Ident: {
+      // `int{0..100}`: a range type as a value, as in `let percent =
+      // int{0..100}` (ADR 0064). Anything else after `name{` is a
+      // record literal applied to the name.
+      if (kind(1) == K::LBraceAdj)
+        if (NodePtr r = attempt([&] {
+              NodePtr t = type();
+              if (t->kind != N::RangeType)
+                fail("not a range type");
+              return t;
+            }))
+          return aliasValue(std::move(r));
+      auto n = makeNode(N::Name, start, text());
+      take();
+      return n;
+    }
       case K::Int: { auto n = makeNode(N::IntLit, start, text()); take(); return n; }
       case K::Float: { auto n = makeNode(N::FloatLit, start, text()); take(); return n; }
       case K::String: { auto n = makeNode(N::StringLit, start, text()); take(); return n; }
