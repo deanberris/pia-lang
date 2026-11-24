@@ -165,3 +165,4 @@ nav:
       - adr/0058-spec-buffers.md
       - adr/0059-digit-separators-and-type-bounds.md
       - adr/0060-spread-v0-ownership-and-runtime.md
+      - adr/0061-lean-proved-facts.md
