@@ -1,0 +1,30 @@
+(* Pia.Format.Safetensors (ADR 0067, M1): every goal is proved, with
+   nothing accepted unproved. parse is total on every input: each read of
+   the header and of the tensor table is in bounds, its loops end, and on
+   success every tensor is placed (its name in the header, its bytes in the
+   data region, its count the product of its shape and its byte length that
+   count times its width) and the tensors tile the data region in order.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Format/Safetensors.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Format.Safetensors.Safetensors.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Format/Safetensors.pia | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: GOALS proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Format.Safetensors{{$}}
+// IFACE-NEXT: {{^}}interface Safetensors = sig{{$}}
+// IFACE:      {{^}}  let spec placed : (n : usize) -> (base : usize) -> (t : tensor) -> bool{{$}}
+// IFACE:      {{^}}  let parse : (s : [u8]) -> (ts : borrowed inout mutable [tensor]) -> result layout st_error
+// IFACE-SAME: forall (j in 0 .. l.count). placed (len s) l.data ts.[j]
+// IFACE:      {{^}}  let f32_word : (s : [u8]) -> (t : tensor) -> (i : usize) -> u32
+// IFACE:      {{^}}end{{$}}
+*)

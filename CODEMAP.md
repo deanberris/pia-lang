@@ -65,6 +65,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
+| a file format (safetensors) | `lib/Pia/Format`, ADR 0067 | `tests/std/safetensors*`; `tools/llm/export.py` converts a llama2.c checkpoint |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
@@ -146,6 +147,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
+- `tools/llm/export.py` converts a llama2.c checkpoint (karpathy/tinyllamas) to safetensors with the config in `__metadata__` (ADR 0067). It is not run by the build.
 - `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` and the rows of `lib/Pia/Sys/Posix.pia`, which it checks against the headers (ADRs 0051 and 0057). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
 
 ### lib: the standard library, written in Pia (ADR 0023, ADR 0040)
@@ -170,6 +172,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Image/Gif/LzwEncode.pia` is the LZW encoder and the sub-block writer. `lib/Pia/Image/Gif/Encode.pia` is the animated GIF encoder, `encode_animation`, with its proved size bound.
 - `lib/Pia/Image/Gif/Quantise.pia` maps RGB to a palette of at most 256 colours (exact when the input has few enough, else median cut), and holds `encode_rgb_animation`.
 - `lib/Pia/Compress/Huffman.pia` builds and decodes canonical Huffman codes. `lib/Pia/Compress/Inflate/Spec.pia` is RFC 1951's block parts as spec functions, `lib/Pia/Compress/Inflate.pia` decodes deflate, and `lib/Pia/Compress/Zlib.pia` is RFC 1950 with Adler-32 (ADR 0054).
+- `lib/Pia/Format/Safetensors.pia` reads the safetensors container the LLM demo's weights load from: the header's tensor table into a caller's buffer, proved total, with every tensor placed in the data region and the tensors tiling it in order (ADR 0067, M1). Its fixture and run test come from `tests/std/Inputs/safetensors_gen.py`.
 
 ### Elsewhere
 

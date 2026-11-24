@@ -45,6 +45,7 @@ lit_tests(
         "//lib/Pia/Compress:Inflate.pia",
         "//lib/Pia/Compress:Zlib.pia",
         "//lib/Pia/Compress/Inflate:Spec.pia",
+        "//lib/Pia/Format:Safetensors.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
         "//lib/Pia/Image/Gif:Decode.pia",
@@ -766,5 +767,25 @@ sh_test(
     srcs = ["zlib_run_test.sh"],
     args = ["$(rootpath :zlib_run)"],
     data = [":zlib_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "safetensors_run",
+    src = "Inputs/safetensors_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Format:safetensors",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+    ],
+)
+
+sh_test(
+    name = "safetensors_run_test",
+    srcs = ["safetensors_run_test.sh"],
+    args = ["$(rootpath :safetensors_run)"],
+    data = [":safetensors_run"],
     target_compatible_with = PIA_TARGETS,
 )
