@@ -487,6 +487,12 @@ LogicalResult RecPayloadOp::verify() {
   return checkPayload(*this, d, getCtor(), getResultTypes());
 }
 
+LogicalResult RecMeasureOp::verify() {
+  if (getKind() != "depth" && getKind() != "size")
+    return emitOpError("measures 'depth' or 'size', not '") << getKind() << "'";
+  return success();
+}
+
 LogicalResult CopyOp::verify() {
   if (getSrc().getType() != getDst().getType())
     return emitOpError("copies between arrays of one type, found ")

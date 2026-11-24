@@ -33,3 +33,13 @@ func.func @flat(%l: !pia.slice<!pia.rec<"tree">>, %k: !pia.int<0, 255>) -> !pia.
   %p:2 = pia.rec_payload %t, "Node" : !pia.rec<"tree"> -> (!pia.slice<!pia.rec<"tree">>, !pia.int<0, 255>)
   return %p#1 : !pia.int<0, 255>
 }
+
+// `depth t` and `size t`, spec-only ints.
+// CHECK-LABEL: func.func @measures
+// CHECK: pia.rec_measure "depth" %{{.*}} : <"tree">
+// CHECK: pia.rec_measure "size" %{{.*}} : <"tree">
+func.func @measures(%t: !pia.rec<"tree">) -> !pia.integer {
+  %d = pia.rec_measure "depth" %t : !pia.rec<"tree">
+  %s = pia.rec_measure "size" %t : !pia.rec<"tree">
+  return %d : !pia.integer
+}

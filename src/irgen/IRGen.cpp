@@ -3593,6 +3593,28 @@ class Gen {
         Type usize = types_.usize();
         return TV{create<FromIndexOp>(l, usize, i), usize};
       }
+      // `depth t` and `size t` of a recursive value (ADR 0047, section
+      // 3): spec-only `int`s, for `decreases` and other contracts.
+      if (fn.text == "depth" || fn.text == "size") {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        R v = genExpr(*n.kids[1], Type());
+        if (!v) return v;
+        unconsume(*n.kids[1]);
+        auto rec = mlir::dyn_cast<RecType>(v->type);
+        if (!rec)
+          return fail(*n.kids[1], "'" + fn.text + "' needs a value of a "
+                                  "recursive type, found " +
+                                      typeName(v->type));
+        if (!contract_ && !ghost_)
+          return fail(n, "'" + fn.text + "' is spec-only: use it in "
+                         "contracts, such as 'decreases " + fn.text +
+                         " t'");
+        Type t = UnboundedIntType::get(&ctx_);
+        return TV{create<RecMeasureOp>(l, t, b_.getStringAttr(fn.text),
+                                       v->value),
+                  t};
+      }
       if (fn.text == "old") {
         // A lemma's arguments are spec too: `occurrences_swapped (old xs)
         // xs i j` relates the state on entry to this one.

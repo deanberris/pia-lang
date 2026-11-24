@@ -583,4 +583,6 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   return mlir::success();
 }
 
+void recordLeaves(Type t, llvm::SmallVectorImpl<Type> &out) { leaves(t, out); }
+
 }  // namespace pia::transforms
