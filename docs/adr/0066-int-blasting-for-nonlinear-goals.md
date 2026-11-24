@@ -2,7 +2,7 @@
 
 Date: 2026-11-25
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-25, with the answers below)
 
 ## Context
 
@@ -69,3 +69,9 @@ No solver disagreed with another on any query: none proved a goal that another r
 - A nonlinear goal that int-blasting cannot prove pays for both attempts. The budget bounds the extra cost, and the benchmark (`tools/bench/proof_bench.py`) shows whether it ever matters. The baseline is regenerated in the PR that turns the attempt on.
 - **Risk: #371.** Z3 hit an assertion violation (`ast.cpp:388`) with `bv.solver 2` on the whole of `Gif.Encode.encode_animation`. Int-blasting is now automatic, so every nonlinear goal of that function takes this path. The PR that turns it on must verify the GIF modules. If the crash recurs, nonlinear goals in a function with records go back to bit-blasting until it is fixed upstream, and #371's last item becomes more pressing: piac should turn a solver crash into a goal failure.
 - The measurements and the scripts that produced them are in the PR. The hard nonlinear goals are a lit test, `tests/verify/int_blast.pia`.
+
+## Dean's answers (2026-11-25)
+
+1. **Int-blasting is on by default.** `--no-int-blast` stays, for comparison.
+2. **cvc5 is deferred.** It is not built now, and is revisited only if Z3's int-blasting stops being enough.
+3. **Nothing GPL, ever.** Pia does not bundle, link, call or script any GPL-licensed tool, so Yices2 is out entirely, in the pipeline and in the benchmark scripts.

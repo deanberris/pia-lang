@@ -16,9 +16,9 @@ how long they took, and what routing nonlinear queries to int-blasting
 
 Solvers: `z3` (Z3's default solver, as piac calls it), `z3-intblast` (the
 `smt` tactic with `smt.bv.solver=2`), and, if installed,
-`cvc5-intblast` (`--solve-bv-as-int=sum`), `cvc5`, `yices` (yices-smt2)
-and `bitwuzla`. Set Z3, CVC5, YICES and BITWUZLA to their binaries.
-Yices2 is GPLv3: run it as a separate program, never link it into piac.
+`cvc5-intblast` (`--solve-bv-as-int=sum`), `cvc5` and `bitwuzla`. Set
+Z3, CVC5 and BITWUZLA to their binaries. No GPL-licensed solver is
+supported (ADR 0066).
 """
 
 import argparse
@@ -92,12 +92,6 @@ def solve_one(solver, path, timeout):
         if solver == "cvc5-intblast":
             cmd.append("--solve-bv-as-int=sum")
         inp = plain if "(set-logic" in plain else "(set-logic ALL)\n" + plain
-    elif solver == "yices":
-        logic = "QF_BV" if "BitVec" in plain else "QF_NIA"
-        if "forall" in plain or "exists" in plain:
-            logic = "ALL"
-        cmd = [os.environ.get("YICES", "yices-smt2"), "--timeout=%d" % timeout]
-        inp = plain if "(set-logic" in plain else "(set-logic %s)\n" % logic + plain
     elif solver == "bitwuzla":
         cmd = [os.environ.get("BITWUZLA", "bitwuzla"), "--time-limit-per=%d" % (timeout * 1000)]
         inp = plain if "(set-logic" in plain else "(set-logic ALL)\n" + plain

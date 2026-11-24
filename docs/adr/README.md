@@ -68,4 +68,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0062](0062-cost-bounds-in-contracts.md) | Cost bounds are contracts: `costs c <= e` bounds what a function spends on a named counter, tracked by a spec-only `spent c` and proved by Z3 | Accepted |
 | [0063](0063-opaque-spec-functions.md) | Opaque spec functions: a spec function marked `@opaque` keeps its definition out of every goal until a proof reveals it | Accepted |
 | [0064](0064-distinct-types.md) | `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only by applying a type to a value, and inherits only what it derives | Proposed |
-| [0066](0066-int-blasting-for-nonlinear-goals.md) | Nonlinear goals are tried first with Z3's int-blasting solver; cvc5 is the fallback to revisit, and Yices2 is not bundled (GPLv3) | Proposed |
+| [0066](0066-int-blasting-for-nonlinear-goals.md) | Nonlinear goals are tried first with Z3's int-blasting solver; cvc5 is deferred, and nothing GPL is used | Accepted |
