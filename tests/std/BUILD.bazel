@@ -56,12 +56,12 @@ lit_tests(
     ],
     # These prove alone in 60-190 s on the iMac, so under a full parallel
     # `bazel test //tests/...` (and on the slower Linux CI runner) they went
-    # past the 300 s of a medium test.
+    # past the 300 s of a medium test. heap.pia and partial_sort.pia were
+    # here too, until the verifier stopped rescanning the module for each
+    # callee, which halved them (21 s and 17 s alone).
     sizes = {
-        "heap.pia": "large",
         "json_derive_variant.pia": "large",
         "json_write.pia": "large",
-        "partial_sort.pia": "large",
     },
     tools = ["//tools/piac"],
 )

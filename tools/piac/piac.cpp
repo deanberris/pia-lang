@@ -18,6 +18,8 @@
 //                                   1200000000, as pia_object passes)
 //   piac --solver-cost file.pia     --verify, also printing each proved
 //                                   goal's Z3 resource count
+//   piac --goal-times file.pia      --verify, also printing how long each
+//                                   proved goal took to solve, in ms
 //   piac --jobs=N ...               solve goals on N threads (default: one
 //                                   per core; the report is the same)
 //   piac --verify-only=SPEC ...     --verify only the goals SPEC selects: a
@@ -108,24 +110,28 @@
 namespace {
 
 int usage() {
-  std::cerr << "usage: piac (--verify | --emit=mlir | --dump-ast | "
-               "--dump-expanded | --dump-tokens | --check) "
-               "[--fragment=contracts] [--meta-cycles=N]\n"
-               "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
-               "             [--solver-rlimit=<n>] [--solver-cost] [--jobs=<n>]\n"
-               "             [--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
-               "             [--proof-cache=<dir>] [--slice | --no-slice] [--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
-               "             [--explain-overloads=<file:line>]\n"
-               "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
-               "             [--allow-unproved=<function>|<file:line[:col]>]... "
-               "<file.pia>\n"
-               "       piac --emit=interface -o <dir> <file.pia>\n"
-               "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
-               "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
-               "             [--allow-unproved=<function>|<file:line[:col]>]... "
-               "<file.pia>\n"
-               "       Every mode but --emit=interface takes "
-               "[--iface-path=<dir>]...\n";
+  std::cerr
+      << "usage: piac (--verify | --emit=mlir | --dump-ast | "
+         "--dump-expanded | --dump-tokens | --check) "
+         "[--fragment=contracts] [--meta-cycles=N]\n"
+         "             [--literate] [--comments] [--solver-timeout=<ms>]\n"
+         "             [--solver-rlimit=<n>] [--solver-cost] [--goal-times] "
+         "[--jobs=<n>]\n"
+         "             "
+         "[--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
+         "             [--proof-cache=<dir>] [--slice | --no-slice] "
+         "[--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
+         "             [--explain-overloads=<file:line>]\n"
+         "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
+         "             [--allow-unproved=<function>|<file:line[:col]>]... "
+         "<file.pia>\n"
+         "       piac --emit=interface -o <dir> <file.pia>\n"
+         "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
+         "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
+         "             [--allow-unproved=<function>|<file:line[:col]>]... "
+         "<file.pia>\n"
+         "       Every mode but --emit=interface takes "
+         "[--iface-path=<dir>]...\n";
   return 2;
 }
 
@@ -143,9 +149,9 @@ struct LintSwitch {
 
 #ifndef PIA_NO_MLIR
 // Prints one line per obligation and a summary. Returns whether any failed.
-bool report(const std::vector<pia::verify::Outcome> &outcomes,
-            std::ostream &os, bool showCost = false,
-            const pia::verify::Stats *stats = nullptr) {
+bool report(const std::vector<pia::verify::Outcome> &outcomes, std::ostream &os,
+            bool showCost = false, const pia::verify::Stats *stats = nullptr,
+            bool showMs = false) {
   using pia::verify::Status;
   int proved = 0, failed = 0, skipped = 0;
   for (const pia::verify::Outcome &o : outcomes) {
@@ -157,6 +163,10 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes,
         os << o.where << ": proved: " << o.claim << " ["
            << (o.generic ? "generic" : o.method) << "]";
         if (showCost && o.cost) os << " (cost " << o.cost << ")";
+        // Wall-clock time depends on the machine and the load; cost does
+        // not. Both are wanted when a proof is slow but cheap.
+        if (showMs && o.ms > 0)
+          os << " (" << static_cast<long long>(o.ms) << " ms)";
         os << "\n";
         break;
       case Status::Skipped:
@@ -555,6 +565,7 @@ int main(int argc, char **argv) {
   unsigned solverRlimit = 1200000000;
   unsigned memoryBallastMb = 0;
   bool solverCost = false;
+  bool goalTimes = false;
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
   std::string proofCache;
@@ -678,6 +689,8 @@ int main(int argc, char **argv) {
     }
     else if (arg == "--solver-cost")
       verify = solverCost = true;
+    else if (arg == "--goal-times")
+      verify = goalTimes = true;
     else if (arg == "--verify")
       verify = true;
     else if (arg == "--dump-smt")
@@ -723,6 +736,7 @@ int main(int argc, char **argv) {
   (void)solverTimeoutMs;
   (void)solverRlimit;
   (void)solverCost;
+  (void)goalTimes;
   (void)jobs;
   (void)slice;
   (void)verifyStats;
@@ -899,7 +913,7 @@ int main(int argc, char **argv) {
         }
         bool failed =
             report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout,
-                   solverCost, &stats);
+                   solverCost, &stats, goalTimes);
         if (lints.on("costly_goal"))
           warnCostly(outcomes,
                      costlyGoal >= 0 ? static_cast<unsigned long long>(costlyGoal)

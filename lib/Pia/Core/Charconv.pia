@@ -366,6 +366,7 @@ let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (
     do
       p <- p - 1;
       dst.[start + p] <- digit_char (q % b) base;
+      assert digit_of dst.[start + p] base < base;
       q <- q / b
     done;
     { used = n; ok = true })

@@ -2544,9 +2544,18 @@ class Encoder {
   }
   llvm::DenseMap<Operation *, bool> ensuresReadMemory_;
 
+  // A module's lookupSymbol scans its operations, and a query asks for
+  // the same callees again and again, so each encoder remembers them.
   mlir::func::FuncOp calleeOf(mlir::func::CallOp call) {
-    return module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    mlir::StringAttr name = call.getCalleeAttr().getAttr();
+    if (auto hit = callees_.find(name); hit != callees_.end())
+      return hit->second;
+    auto f = module_.lookupSymbol<mlir::func::FuncOp>(name);
+    if (f)
+      callees_[name] = f;
+    return f;
   }
+  llvm::DenseMap<mlir::StringAttr, mlir::func::FuncOp> callees_;
 
   static bool isSpecFunction(mlir::func::FuncOp f) {
     return f && !f.isExternal() && f->hasAttr(PiaDialect::getSpecAttrName());
