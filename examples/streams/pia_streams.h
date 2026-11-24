@@ -9,8 +9,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-uint32_t fill_sinks(const uint16_t *dem, uint64_t ndem, uint64_t w,
-                    uint32_t limit, uint16_t *fill, uint64_t nfill);
+uint64_t load_hgt(const uint8_t *raw, uint64_t nraw, uint16_t *dem,
+                  uint64_t ndem);
+uint64_t fill_sinks(const uint16_t *dem, uint64_t ndem, uint64_t w,
+                    uint16_t *fill, uint64_t nfill, uint64_t *parent,
+                    uint64_t nparent, uint64_t *rank, uint64_t nrank,
+                    uint64_t *next, uint64_t nnext, uint64_t *head,
+                    uint64_t nhead);
 void directions(const uint16_t *fill, uint64_t nfill, uint64_t w,
                 uint64_t *down, uint64_t ndown);
 void accumulate(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
@@ -21,8 +26,10 @@ uint64_t render(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                 const uint64_t *basin, uint64_t nbasin, uint32_t threshold,
                 uint8_t *rgb, uint64_t nrgb);
 uint64_t delineate(const uint16_t *dem, uint64_t ndem, uint64_t w,
-                   uint32_t limit, uint32_t threshold, uint16_t *fill,
-                   uint64_t nfill, uint64_t *down, uint64_t ndown,
+                   uint32_t threshold, uint16_t *fill, uint64_t nfill,
+                   uint64_t *parent, uint64_t nparent, uint64_t *rank,
+                   uint64_t nrank, uint64_t *next, uint64_t nnext,
+                   uint64_t *head, uint64_t nhead, uint64_t *down, uint64_t ndown,
                    uint32_t *acc, uint64_t nacc, uint64_t *basin,
                    uint64_t nbasin, uint8_t *rgb, uint64_t nrgb);
 

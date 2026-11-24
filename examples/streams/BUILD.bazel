@@ -9,6 +9,9 @@ load("//tools/piac:targets.bzl", "APPLE_SILICON", "PIA_TARGETS")
 #
 #   bazel run //examples/streams                     # a synthetic terrain
 #   bazel run //examples/streams -- in.png out.png [threshold]
+#   bazel run //examples/streams:srtm -- tile.hgt out.png   # an SRTM tile
+#
+# examples/streams/fetch_srtm.sh downloads a tile; it is not checked in.
 #
 # The Pia program and its C test build on every platform piac compiles for
 # (ADR 0049). The demo binary needs ImageIO, so it is Apple silicon only.
@@ -58,6 +61,22 @@ cc_library(
     target_compatible_with = PIA_TARGETS,
 )
 
+# Image and file I/O for the two programs, with ImageIO.
+cc_library(
+    name = "demo_io",
+    srcs = ["demo_io.c"],
+    hdrs = ["demo_io.h"],
+    linkopts = [
+        "-framework",
+        "ApplicationServices",
+        "-framework",
+        "ImageIO",
+        "-framework",
+        "CoreFoundation",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
 cc_binary(
     name = "streams",
     srcs = ["main.c"],
@@ -71,6 +90,19 @@ cc_binary(
     ],
     target_compatible_with = APPLE_SILICON,
     deps = [
+        ":demo_io",
+        ":streams_pia",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
+)
+
+# The pipeline on a real SRTM tile, timed stage by stage.
+cc_binary(
+    name = "srtm",
+    srcs = ["srtm.c"],
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        ":demo_io",
         ":streams_pia",
         "@llvm-project//mlir:mlir_async_runtime",
     ],
@@ -89,5 +121,20 @@ sh_test(
     srcs = ["streams_run_test.sh"],
     args = ["$(rootpath :streams)"],
     data = [":streams"],
+    target_compatible_with = APPLE_SILICON,
+)
+
+# The SRTM program on a 256 x 256 crop of a real tile (testdata/README.md).
+sh_test(
+    name = "srtm_run_test",
+    srcs = ["srtm_run_test.sh"],
+    args = [
+        "$(rootpath :srtm)",
+        "$(rootpath testdata/N46E008_crop256.hgt)",
+    ],
+    data = [
+        "testdata/N46E008_crop256.hgt",
+        ":srtm",
+    ],
     target_compatible_with = APPLE_SILICON,
 )

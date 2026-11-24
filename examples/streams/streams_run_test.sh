@@ -9,7 +9,7 @@ cat out.txt
 for f in streams-input.png streams-output.png streams-output-sediment.png; do
   [ "$(head -c 4 "$f" | tail -c 3)" = PNG ] || { echo "$f is not a PNG" >&2; exit 1; }
 done
-grep -q '^384x256 cells; sinks filled in ' out.txt
+grep -q '^384x256 cells; sinks filled, 0 cells unreached ' out.txt
 grep -q '^1276 outlets drain 98304 cells; ' out.txt
 grep -q '^map written to streams-output.png$' out.txt
 # Sediment transport ran, and the C side counts the same total it started
