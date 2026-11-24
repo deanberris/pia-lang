@@ -714,6 +714,32 @@ class Gen {
     }
   }
 
+  // `v` with every array it holds, in fields of records at any depth,
+  // copied into storage of its own.
+  Value ownArrays(Location l, Value v) {
+    if (auto at = mlir::dyn_cast<ArrayType>(v.getType())) {
+      Value storage = create<RegionOp>(l, at);
+      create<CopyOp>(l, v, storage);
+      return storage;
+    }
+    auto rt = mlir::dyn_cast<RecordType>(v.getType());
+    if (!rt || types_.isVariant(rt) || !holdsArray(rt)) return v;
+    llvm::SmallVector<Value> fields;
+    for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes()))
+      fields.push_back(ownArrays(l, create<FieldOp>(l, ft, v, name)));
+    return create<RecordOp>(l, rt, fields);
+  }
+
+  // Whether a record holds an array, in a field at any depth.
+  bool holdsArray(Type t) {
+    if (mlir::isa<ArrayType>(t)) return true;
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (!rt || types_.isVariant(rt)) return false;
+    for (Type ft : rt.getFieldTypes())
+      if (holdsArray(ft)) return true;
+    return false;
+  }
+
   // Whether every element of an array literal is an integer literal, so
   // it can be constant data.
   static bool constantElements(const Node &lit) {
@@ -1880,6 +1906,9 @@ class Gen {
         if (!arr)
           return fail(n, "an array literal needs its type from the context, "
                          "as in 'let t : [u8; 3] = [1; 2; 3]'");
+        // Computed elements need storage of their own.
+        if (!contract_ && !ghost_ && !constantElements(n))
+          return genLocalArray(n, arr);
         auto values = constValues(n, arr);
         if (!values) return std::nullopt;
         auto op = create<ConstArrayOp>(loc(n), arr, *values,
@@ -8379,6 +8408,16 @@ class Gen {
       if (!v) return v;
       R c = coerce(*v, ft, *init->kids[0]);
       if (!c) return c;
+      // An array field is the record's own: one read from a mutable local
+      // is copied, so a later write to the local does not reach it.
+      const Node &fv = *init->kids[0];
+      if (auto at = mlir::dyn_cast<ArrayType>(ft);
+          at && !contract_ && !ghost_ && fv.kind == NodeKind::Name)
+        if (BindingPtr fb = lookup(fv.text); fb && fb->writable && !fb->isParam) {
+          Value storage = create<RegionOp>(loc(fv), at);
+          create<CopyOp>(loc(fv), c->value, storage);
+          c = TV{storage, at};
+        }
       fields.push_back(c->value);
     }
     return TV{create<RecordOp>(loc(n), rt, fields), rt};
@@ -8509,6 +8548,15 @@ class Gen {
       if (!b->isMutable)
         return fail(place, "'" + place.text + "' is not mutable; declare it "
                            "as 'let " + place.text + " : mutable T = ...'");
+      // A whole array is copied into the local's own storage.
+      if (auto at = mlir::dyn_cast<ArrayType>(b->type); at && b->writable) {
+        R v = genExpr(valueNode, at);
+        if (!v) return v;
+        R c = coerce(*v, at, valueNode);
+        if (!c) return c;
+        create<CopyOp>(loc(n), c->value, b->value);
+        return unit();
+      }
       if (mlir::isa<ArrayType, SliceType>(b->type))
         return fail(place, "assigning a whole array is not supported yet");
       if (!notLent(b, place, "assigned")) return std::nullopt;
@@ -8516,7 +8564,10 @@ class Gen {
       if (!v) return v;
       R c = coerce(*v, b->type, valueNode);
       if (!c) return c;
-      b->value = c->value;
+      // The arrays a record holds are copied into storage of this
+      // assignment's own: an array a call made in a loop lives in storage
+      // the next iteration's call reuses, and the local outlives it.
+      b->value = contract_ || ghost_ ? c->value : ownArrays(loc(n), c->value);
       addLenders(b->lenders, lendersOf(valueNode));
       moved_.erase(b);  // a moved local holds a value again
       return unit();
@@ -10605,6 +10656,17 @@ class Gen {
       v = genLocalArray(valueNode, localArray);
     } else {
       v = genExpr(valueNode, declared);
+      // Arrays are values: a local bound to another array's storage, a
+      // name or a field of one, gets a copy, so a later write to the
+      // other does not reach it.
+      if (v && !contract_ && !ghost_ && mlir::isa<ArrayType>(v->type) &&
+          (valueNode.kind == NodeKind::Name || valueNode.kind == NodeKind::Field)) {
+        auto at = mlir::cast<ArrayType>(v->type);
+        Value storage = create<RegionOp>(loc(valueNode), at);
+        create<CopyOp>(loc(valueNode), v->value, storage);
+        v = TV{storage, at};
+        ownStorage = true;
+      }
     }
     if (!v) return v;
     if (declared) {
@@ -10640,13 +10702,10 @@ class Gen {
       b->isMutable = true;
     }
     b->scope = n.kids[4].get();
-    // A local array's storage is on the stack, so it lends itself: it can
-    // be read, written when `mutable`, and passed on, but nothing holding
-    // it outlives the `let`.
-    if (ownStorage) {
-      b->lenders = {b};
-      b->writable = sema::hasModifier(modifiers, "mutable");
-    }
+    // A local array has storage of its own, written when `mutable`. A
+    // function's result that holds it is copied out to its caller
+    // (codegen's arrayResultsToBuffers), so it may be returned.
+    if (ownStorage) b->writable = sema::hasModifier(modifiers, "mutable");
     // A `with_arena`'s arena lends its own memory: it is borrowed from
     // itself, so neither it nor anything allocated in it outlives the
     // `let` (#70).
