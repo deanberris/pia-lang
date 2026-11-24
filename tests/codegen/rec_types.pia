@@ -1,8 +1,8 @@
 (* Recursive values have no layout until ADR 0047, step 3: piac generates
    no code for a function that takes, makes or returns one, even with its
-   goals accepted, and says which. A module whose recursive types no
+   goals proved, and says which. A module whose recursive types no
    function uses compiles as before.
-// RUN: not piac --emit=core --allow-unproved=bump %s 2>&1 | FileCheck %s
+// RUN: not piac --emit=core %s 2>&1 | FileCheck %s
 *)
 
 let box = let (t : type) => type { slot : [t] }
@@ -21,7 +21,7 @@ let leaf () : tree = Leaf
 let bump (t : tree) : u32 =
   match t with
   | Leaf -> 0
-  | Node n -> n.key + 1
+  | Node n -> if n.key < 100 then n.key + 1 else n.key
 
 (*
 // CHECK-NOT: 'plain'
