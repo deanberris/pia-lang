@@ -5,10 +5,12 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "codegen",
     srcs = [
+        "ArrayResults.cpp",
         "Codegen.cpp",
         "SliceBuffers.cpp",
     ],
     hdrs = [
+        "ArrayResults.h",
         "Codegen.h",
         "SliceBuffers.h",
     ],

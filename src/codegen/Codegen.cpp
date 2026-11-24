@@ -1,6 +1,7 @@
 // Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
 
 #include "codegen/Codegen.h"
+#include "codegen/ArrayResults.h"
 #include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
@@ -1583,6 +1584,10 @@ static void lowerSpreads(mlir::ModuleOp module) {
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+
+  // An array result becomes an output buffer its caller makes.
+  if (mlir::failed(arrayResultsToBuffers(module)))
+    return mlir::failure();
 
   // A buffer whose elements are slices becomes a buffer of addresses and
   // one of lengths (ADR 0048, section 4).

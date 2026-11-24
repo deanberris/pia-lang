@@ -11,7 +11,7 @@ import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
 
 (* A slice field.
-// CHECK: json_derive_errors.pia:[[@LINE+2]]:41: error: @derive(json) on 'blob' failed: @derive(json): the field 'data' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one
+// CHECK: json_derive_errors.pia:[[@LINE+2]]:41: error: @derive(json) on 'blob' failed: @derive(json): the field 'data' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, and an option or a fixed array of one
 *)
 let blob = type { data : [u8]; n : u8 } @derive(json)
 

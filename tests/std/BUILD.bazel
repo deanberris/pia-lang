@@ -67,6 +67,7 @@ lit_tests(
     # here too, until the verifier stopped rescanning the module for each
     # callee, which halved them (21 s and 17 s alone).
     sizes = {
+        "json_derive_array.pia": "large",
         "json_derive_variant.pia": "large",
         "json_write.pia": "large",
     },
@@ -234,6 +235,28 @@ sh_test(
     srcs = ["json_variant_run_test.sh"],
     args = ["$(rootpath :json_variant_run)"],
     data = [":json_variant_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "json_array_run",
+    src = "Inputs/json_array_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+sh_test(
+    name = "json_array_run_test",
+    srcs = ["json_array_run_test.sh"],
+    args = ["$(rootpath :json_array_run)"],
+    data = [":json_array_run"],
     target_compatible_with = PIA_TARGETS,
 )
 
