@@ -65,3 +65,18 @@ The five goals still unproved, in `wip/lzw-whole-stream/Lzw.pia`, all timeouts a
 5. `Lzw.pia:369`: the loop invariant that every entry below nx is as `link` says, after an iteration
 
 What proves: `Ref.pia` (155 goals, about 3 s), `sym_is_x`, `emit_code`, and 229 of decode_ref's 234 goals. The GIF round trip, which needs the same kind of trace from the encoder, is not started.
+
+## Rounds A and B (2026-11-24)
+
+- A: the best version with a 300 s solver timeout instead of 20 s: the same
+  five goals time out (13 min on 4 threads). They need a different proof,
+  not more time.
+- B: emit_kwk and link_new call the proved `Ref.emit_entry` and
+  `Ref.emit_root` instead of unfolding emit_ok, with nothing else changed:
+  17 unproved, including loop invariants that proved before. Changing one
+  lemma's body moves which quantifier instances Z3 tries in the loop's
+  goals, so this proof is brittle as it stands.
+
+Not attempted: making the copy relation pointwise, a spec array `src` over
+output positions with `x.[i] = x.[src.[i]]` or a root, which would replace
+the `forall d` inside emit_ok and link with one cell per fact.
