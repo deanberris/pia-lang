@@ -262,7 +262,8 @@ qbinder: IDENT (COLON type)?                       -> qbinder_typed
         | postfix TARGS_OPEN targs TARGS_CLOSE   -> instantiate
         | atom
 
-?atom: IDENT                                   -> name
+?atom: IDENT LBRACE_ADJ add_e DOTDOT add_e RBRACE -> range_value
+     | IDENT                                   -> name
      | INT                                     -> int_lit
      | FLOAT                                   -> float_lit
      | STRING                                  -> string_lit
@@ -319,6 +320,7 @@ sig_item: LET binder COLON annot ret_attrs contract* (EQ handled)? -> sig_val
         | LET META binder COLON annot                  -> sig_meta
         | LET SPEC binder COLON annot ret_attrs contract* -> sig_spec
         | LET binder EQ type_value                     -> sig_type
+        | LET binder EQ type                           -> sig_alias
         | LET binder EQ LET lparam+ FATARROW type_value -> sig_generic_type
         | HOLE                                         -> sig_hole
 
