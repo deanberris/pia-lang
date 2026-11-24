@@ -1881,8 +1881,7 @@ class Encoder {
       Value zero = mlir::isa<mlir::smt::IntType>(es)    ? intConst(APInt(64, 0))
                    : mlir::isa<mlir::smt::BoolType>(es) ? boolConst(false)
                                                         : bv(0);
-      arrays[r.getResult()] =
-          create<mlir::smt::ArrayBroadcastOp>(sort, zero);
+      arrays[r.getResult()] = create<mlir::smt::ArrayBroadcastOp>(sort, zero);
       lengths[r.getResult()] =
           bv(static_cast<int64_t>(r.getType().getLength()));
       out.push_back(bv(0));  // a placeholder: buffers are not terms

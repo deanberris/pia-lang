@@ -140,7 +140,8 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
   }
   // `{pia.spec_state}`: a spec parameter, which codegen erases (ADR 0058).
   if (attr.getName() == getSpecStateAttrName()) {
-    if (isa<UnitAttr>(attr.getValue())) return success();
+    if (isa<UnitAttr>(attr.getValue()))
+      return success();
     return op->emitError() << "'" << getSpecStateAttrName() << "' on argument "
                            << argIndex << " must be a unit attribute";
   }

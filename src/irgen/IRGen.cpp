@@ -463,7 +463,8 @@ class Gen {
 
   // Why code cannot read the spec binding `b` (ADR 0058).
   static std::string specReadMessage(const Binding &b) {
-    return "'" + b.name + "' is spec state, which code may write but not "
+    return "'" + b.name +
+           "' is spec state, which code may write but not "
            "read: only contracts, loop invariants, asserts, lemma calls and "
            "spec parameters may read it, so that codegen can erase it "
            "(ADR 0058)";
@@ -768,7 +769,8 @@ class Gen {
     Location l = loc(value);
     Value storage = create<RegionOp>(l, arr);
     // A region's elements start as zero.
-    if (isZeros(value)) return TV{storage, arr};
+    if (isZeros(value))
+      return TV{storage, arr};
     Type elem = arr.getElementType();
     if (value.kind == NodeKind::ListLit) {
       if (value.kids.size() != arr.getLength())
@@ -943,8 +945,7 @@ class Gen {
       // Codegen erases a spec parameter, and the arguments calls pass for
       // it (ADR 0058).
       if (sig.params[i].spec)
-        fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(),
-                      b_.getUnitAttr());
+        fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(), b_.getUnitAttr());
     }
     Block *entry = fn.addEntryBlock();
     b_.setInsertionPointToStart(entry);
@@ -3644,20 +3645,22 @@ class Gen {
       // the write: a code buffer would not change at run time.
       bool specArg = sig.params[i].spec && !contract_ && !ghost_;
       if (specArg && writes(sig.params[i])) {
-        BindingPtr sb = args[i]->kind == NodeKind::Name &&
-                                args[i]->flags.empty()
-                            ? lookup(args[i]->text)
-                            : nullptr;
+        BindingPtr sb =
+            args[i]->kind == NodeKind::Name && args[i]->flags.empty()
+                ? lookup(args[i]->text)
+                : nullptr;
         if (!sb || !sb->spec)
-          return fail(*args[i], "'" + sig.params[i].name + "' of '" +
-                                    sig.name + "' is a spec parameter that "
+          return fail(*args[i], "'" + sig.params[i].name + "' of '" + sig.name +
+                                    "' is a spec parameter that "
                                     "it may write, so pass a spec local or "
                                     "spec parameter by name (ADR 0058)");
       }
-      if (specArg) contract_ = true;
+      if (specArg)
+        contract_ = true;
       R a = early && (*early)[i] ? (*early)[i]
                                  : genExpr(*args[i], sig.params[i].type);
-      if (specArg) contract_ = false;
+      if (specArg)
+        contract_ = false;
       if (!a) return a;
       R c = coerce(*a, sig.params[i].type, *args[i]);
       if (!c) return c;
@@ -7029,7 +7032,8 @@ class Gen {
       const Node &annot = *p->kids[0];
       // A spec parameter is erased at the call, so both must agree on it
       // (ADR 0058).
-      if ((dom.flags == "spec") != (p->flags == "spec")) return false;
+      if ((dom.flags == "spec") != (p->flags == "spec"))
+        return false;
       if (dom.text != p->text || dom.kids.size() < 2 || annot.kids.size() < 2 ||
           !sameTree(*dom.kids[0], *annot.kids[0]) ||
           !sameTree(*dom.kids[1], *annot.kids[1]))
@@ -8709,7 +8713,8 @@ class Gen {
         R v = idx ? genExpr(valueNode, elem) : std::nullopt;
         R c = v ? coerce(*v, elem, valueNode) : std::nullopt;
         contract_ = false;
-        if (!c) return std::nullopt;
+        if (!c)
+          return std::nullopt;
         create<StoreOp>(loc(n), c->value, b->value, *idx);
         return unit();
       }
@@ -10734,8 +10739,8 @@ class Gen {
                            n.text + " : mutable [u8; 4096] = zeros'");
       if (!mlir::isa<ArrayType>(declared) && !isSpecScalar(declared))
         return fail(*ret.kids[0],
-                    "a spec local is a fixed array, as in 'let spec " +
-                        n.text + " : mutable [u8; 4096] = zeros', for now; "
+                    "a spec local is a fixed array, as in 'let spec " + n.text +
+                        " : mutable [u8; 4096] = zeros', for now; "
                         "a spec number is an 'int' (ADR 0058)");
     }
     // A local array that is `mutable`, or whose literal computes its

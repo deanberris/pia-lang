@@ -19,8 +19,6 @@
 #include <vector>
 
 #include "dialect/ContractDialect.h"
-#include "llvm/ADT/BitVector.h"
-#include "llvm/ADT/SetVector.h"
 #include "dialect/PiaDialect.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/AsyncToLLVM/AsyncToLLVM.h"
@@ -55,6 +53,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -1255,7 +1255,8 @@ void eraseSpecState(mlir::ModuleOp module) {
   auto specArgs = [](mlir::func::FuncOp f) {
     llvm::BitVector out(f.getNumArguments());
     for (unsigned i = 0; i < f.getNumArguments(); ++i)
-      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName())) out.set(i);
+      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName()))
+        out.set(i);
     return out;
   };
   llvm::SetVector<mlir::Operation *> doomed;
@@ -1263,35 +1264,47 @@ void eraseSpecState(mlir::ModuleOp module) {
   module.walk([&](mlir::Operation *op) {
     if (op->hasAttr(PiaDialect::getSpecStateAttrName())) {
       doomed.insert(op);
-      for (Value r : op->getResults()) work.push_back(r);
+      for (Value r : op->getResults())
+        work.push_back(r);
     }
   });
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
-    if (f.isExternal()) continue;
+    if (f.isExternal())
+      continue;
     llvm::BitVector spec = specArgs(f);
-    for (unsigned i : spec.set_bits()) work.push_back(f.getArgument(i));
+    for (unsigned i : spec.set_bits())
+      work.push_back(f.getArgument(i));
   }
   while (!work.empty()) {
     Value v = work.pop_back_val();
     for (mlir::Operation *user : v.getUsers()) {
-      if (mlir::isa<mlir::func::CallOp>(user)) continue;  // dropped below
-      if (!doomed.insert(user)) continue;
-      for (Value r : user->getResults()) work.push_back(r);
+      if (mlir::isa<mlir::func::CallOp>(user))
+        continue; // dropped below
+      if (!doomed.insert(user))
+        continue;
+      for (Value r : user->getResults())
+        work.push_back(r);
     }
   }
   // Each call drops the arguments for its callee's spec parameters.
   module.walk([&](mlir::func::CallOp call) {
     auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
-    if (!f) return;
+    if (!f)
+      return;
     llvm::BitVector spec = specArgs(f);
-    if (spec.any()) call->eraseOperands(spec);
+    if (spec.any())
+      call->eraseOperands(spec);
   });
-  for (mlir::Operation *op : doomed) op->dropAllUses();
-  for (mlir::Operation *op : doomed) op->dropAllReferences();
-  for (mlir::Operation *op : doomed) op->erase();
+  for (mlir::Operation *op : doomed)
+    op->dropAllUses();
+  for (mlir::Operation *op : doomed)
+    op->dropAllReferences();
+  for (mlir::Operation *op : doomed)
+    op->erase();
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     llvm::BitVector spec = specArgs(f);
-    if (spec.none()) continue;
+    if (spec.none())
+      continue;
     if (f.isExternal()) {
       llvm::SmallVector<Type> inputs;
       llvm::SmallVector<mlir::DictionaryAttr> attrs;
