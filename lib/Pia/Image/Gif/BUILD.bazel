@@ -11,7 +11,9 @@ package(default_visibility = ["//visibility:public"])
 # Its tests read the source, to prove it and to write its interfaces.
 exports_files([
     "Decode.pia",
+    "Encode.pia",
     "Lzw.pia",
+    "LzwEncode.pia",
     "Spec.pia",
 ])
 
@@ -45,6 +47,32 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
     deps = [
         ":lzw",
+        ":spec",
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+    ],
+)
+
+# The LZW encoder and the sub-block writer: tests/std/gif_encode.pia checks
+# its goals; :gif_encode_run tests it through the container.
+pia_library(
+    name = "lzw_encode",
+    src = "LzwEncode.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Image:bits"],
+)
+
+# The animated GIF encoder: tests/std/gif_encode.pia checks its goals;
+# tests/std/gif_encode_edges.pia and :gif_encode_run test it through its
+# interface.
+pia_library(
+    name = "encode",
+    src = "Encode.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":decode",
+        ":lzw",
+        ":lzw_encode",
         ":spec",
         "//lib/Pia/Image:bits",
         "//lib/Pia/Image:raster",
