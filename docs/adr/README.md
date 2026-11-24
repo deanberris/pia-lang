@@ -63,3 +63,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0057](0057-posix-module-per-target-behind-one-interface.md) | `Pia.Sys.Posix` is one generated module per target behind one hand-written interface, and the generator joins the contract overlay | Proposed |
 | [0058](0058-ghost-buffers.md) | Ghost buffers: spec-only arrays that code writes, contracts read and codegen erases | Proposed |
 | [0059](0059-digit-separators-and-type-bounds.md) | Digits group with `'` or `_`; `min t` and `max t` are an integer type's bounds, folded to literals | Accepted |
+| [0060](0060-spread-v0-ownership-and-runtime.md) | `spread` v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them | Proposed |
