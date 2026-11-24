@@ -170,3 +170,4 @@ nav:
       - adr/0061-lean-proved-facts.md
       - adr/0062-cost-bounds-in-contracts.md
       - adr/0063-opaque-spec-functions.md
+      - adr/0064-distinct-types.md
