@@ -18,8 +18,10 @@ pia_library(
 )
 
 # <chrono>'s durations, as metaprograms over Pia.Core.Ratio that importers
-# run: tests/std/time.pia checks its interface; tests/std/time_edges.pia
-# and :time_run make and prove the standard durations in an importer.
+# run, and the civil calendar: tests/std/time.pia checks its goals and
+# interfaces; tests/std/time_edges.pia and :time_run make and prove the
+# standard durations in an importer; tests/std/calendar_edges.pia and
+# :calendar_run use the calendar.
 pia_library(
     name = "time",
     src = "Time.pia",

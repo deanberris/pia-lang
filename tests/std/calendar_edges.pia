@@ -1,0 +1,38 @@
+(* Importers of Pia.Time's Calendar know each date's day number from the
+   interface alone, as C++'s sys_days gives it, and civil_from_days's
+   contract gives back a valid date with the same day number.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Time.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Calendar as C
+
+let epoch (x : u8) : unit
+  ensures C.days_from_civil 1970 1 1 = 0
+  ensures C.days_from_civil 2000 3 1 = 11017
+  ensures C.days_from_civil 2000 2 29 = 11016
+  ensures C.days_from_civil 0 1 1 = 0 - 719528
+  ensures C.days_from_civil (0 - 1) 12 31 = 0 - 719529
+= ()
+
+let ends (x : u8) : unit
+  ensures C.days_from_civil (0 - 1000000) 1 1 = 0 - 365962028
+  ensures C.days_from_civil 1000000 12 31 = 364523337
+= ()
+
+let leap (x : u8) : unit
+  ensures C.is_leap 2000 && C.is_leap 2024 && C.is_leap (0 - 4)
+  ensures C.is_leap 1900 = false && C.is_leap 2023 = false
+  ensures C.last_day 2024 2 = 29 && C.last_day 2023 2 = 28 && C.last_day 2023 4 = 30
+= ()
+
+let back (z : int{-365962028..364523337}) : unit
+= let c = C.civil_from_days z in
+  assert C.valid c;
+  assert C.maps_to c z
+
+(*
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)
