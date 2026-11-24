@@ -96,7 +96,7 @@ interface Safetensors = sig
                 && (forall (j in 0 .. l.count). placed (len s) l.data ts.[j])
                 && (forall (j in 1 .. l.count). ts.[j - 1].stop = ts.[j].start)
                 && (l.count = 0 ==> l.data = len s)
-                && (l.count > 0 && l.count <= len ts ==> ts.[0].start = l.data && ts.[l.count - 1].stop = len s)
+                && (forall (j in 0 .. l.count). (j = 0 ==> ts.[j].start = l.data) && (j + 1 = l.count ==> ts.[j].stop = len s))
       | Err _ -> true)
     ensures len s < 8 ==> (match result with | Ok _ -> false | Err _ -> true)
   (** What find found. *)
@@ -270,6 +270,21 @@ let bytes (c : u64) (d : dtype) : result u64 problem
 (* A shape: rank dimensions, the rest 1, and the position after it. *)
 let shape = type { rank : int{0..4}; d0 : u64; d1 : u64; d2 : u64; d3 : u64; next : usize }
 
+(* One dimension of a shape and the `,` or `]` after it. *)
+let dim_read = type { value : u64; next : usize; more : bool }
+
+let dim (h : [u8]) (at : usize) : result dim_read usize
+  requires at <= len h
+  ensures (match result with
+    | Ok v -> at < v.next && v.next <= len h
+    | Err p -> p <= len h)
+= match J.read_uint h at (max u64) with
+  | Err _ -> Err at
+  | Ok v ->
+      (match J.after_element h v.stop with
+       | Err p -> Err p
+       | Ok e -> Ok { value = v.value; next = e.next; more = e.more })
+
 (* The array of at most four dimensions at or after pos. *)
 let read_shape (h : [u8]) (pos : usize) : result shape st_error
   requires pos <= len h
@@ -300,7 +315,7 @@ let read_shape (h : [u8]) (pos : usize) : result shape st_error
         do
           if k = 4 then (why <- BadShape; fail <- true; going <- false)
           else (
-            match J.read_uint h at (max u64) with
+            match dim h at with
             | Err _ -> (fail <- true; going <- false)
             | Ok v ->
                 if k = 0 then d0 <- v.value
@@ -308,9 +323,8 @@ let read_shape (h : [u8]) (pos : usize) : result shape st_error
                 else if k = 2 then d2 <- v.value
                 else d3 <- v.value;
                 k <- k + 1;
-                (match J.after_element h v.stop with
-                 | Err _ -> (fail <- true; going <- false)
-                 | Ok e -> (at <- e.next; going <- e.more)))
+                at <- v.next;
+                going <- v.more)
         done;
         if fail then Err { problem = why; at = at }
         else Ok { rank = k; d0 = d0; d1 = d1; d2 = d2; d3 = d3; next = at })
@@ -424,6 +438,19 @@ let read_entry (h : [u8]) (pos : usize) (lim : u64) : result entry st_error
                b = off.b; e = off.e; next = at }
         else Err { problem = BadMember; at = pos })
 
+(* One "name": "value" member of __metadata__ and the `,` or `}` after it. *)
+let meta_member (h : [u8]) (at : usize) : result J.sep usize
+  requires at <= len h
+  ensures (match result with
+    | Ok m -> at < m.next && m.next <= len h
+    | Err p -> p <= len h)
+= match J.read_key h at with
+  | Err p -> Err p
+  | Ok k ->
+      (match J.read_str h k.next with
+       | Err p -> Err p
+       | Ok t -> J.after_member h t.stop)
+
 (* The __metadata__ object at or after pos, whose values are strings:
    the position after it. *)
 let read_meta (h : [u8]) (pos : usize) : result usize st_error
@@ -444,15 +471,9 @@ let read_meta (h : [u8]) (pos : usize) : result usize st_error
           invariant pos < at && at <= len h && bad <= len h
           decreases len h - at + (if going then 1 else 0)
         do
-          match J.read_key h at with
+          match meta_member h at with
           | Err p -> (bad <- p; fail <- true; going <- false)
-          | Ok k ->
-              (match J.read_str h k.next with
-               | Err p -> (bad <- p; fail <- true; going <- false)
-               | Ok t ->
-                   (match J.after_member h t.stop with
-                    | Err p -> (bad <- p; fail <- true; going <- false)
-                    | Ok m -> (at <- m.next; going <- m.more)))
+          | Ok m -> (at <- m.next; going <- m.more)
         done;
         if fail then Err { problem = Syntax; at = bad } else Ok at)
 
@@ -514,7 +535,7 @@ let parse (s : [u8]) (ts : borrowed inout mutable [tensor]) : result layout st_e
               && (forall (j in 0 .. l.count). placed (len s) l.data ts.[j])
               && (forall (j in 1 .. l.count). ts.[j - 1].stop = ts.[j].start)
               && (l.count = 0 ==> l.data = len s)
-              && (l.count > 0 && l.count <= len ts ==> ts.[0].start = l.data && ts.[l.count - 1].stop = len s)
+              && (forall (j in 0 .. l.count). (j = 0 ==> ts.[j].start = l.data) && (j + 1 = l.count ==> ts.[j].stop = len s))
     | Err _ -> true)
   ensures len s < 8 ==> (match result with | Ok _ -> false | Err _ -> true)
 = if len s < 8 then Err { problem = Short; at = len s }
