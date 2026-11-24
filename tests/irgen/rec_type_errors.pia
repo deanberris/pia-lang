@@ -37,3 +37,10 @@ let rec stream = type | More of { head : u8; rest : box stream }
 *)
 let rec left = type | L | Lr of right
 let rec right = type | R | Rl of left
+
+(* A recursive group of records alone, with no variant, is not built yet.
+// CHECK: rec_type_errors.pia:[[@LINE+4]]:16: error: 'rnode' is a recursive record, which is not supported yet: only a recursive variant is (ADR 0047, step 2); make it one with a single constructor
+*)
+let vec = let (t : type) => type { items : [t]; used : usize }
+let rec rnode = type { v : u8; kids : vec rnode }
+let first (n : rnode) : u8 = n.v

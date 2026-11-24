@@ -1594,9 +1594,49 @@ static void lowerSpreads(mlir::ModuleOp module) {
   }
 }
 
+// Whether `t` is, or holds, a value of a recursive type (ADR 0047).
+static bool holdsRecursive(Type t) {
+  if (mlir::isa<RecType>(t)) return true;
+  if (auto a = mlir::dyn_cast<ArrayType>(t))
+    return holdsRecursive(a.getElementType());
+  if (auto sl = mlir::dyn_cast<SliceType>(t))
+    return holdsRecursive(sl.getElementType());
+  if (auto r = mlir::dyn_cast<RecordType>(t))
+    return llvm::any_of(r.getFieldTypes(), holdsRecursive);
+  return false;
+}
+
+// Recursive values have no layout until ADR 0047, step 3: a function
+// that uses one is an error, and the datatypes, which make no code, go.
+static LogicalResult rejectRecursive(mlir::ModuleOp module) {
+  bool ok = true;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    Type found;
+    auto note = [&](Type t) {
+      if (!found && holdsRecursive(t)) found = t;
+    };
+    for (Type t : f.getFunctionType().getInputs()) note(t);
+    for (Type t : f.getFunctionType().getResults()) note(t);
+    f.walk([&](mlir::Operation *op) {
+      for (Type t : op->getResultTypes()) note(t);
+      for (Type t : op->getOperandTypes()) note(t);
+    });
+    if (!found) continue;
+    f.emitError() << "'" << f.getSymName()
+                  << "' uses a recursive type, which has no code yet "
+                     "(ADR 0047, step 3)";
+    ok = false;
+  }
+  for (auto d : llvm::make_early_inc_range(module.getOps<DatatypeOp>()))
+    d.erase();
+  return mlir::success(ok);
+}
+
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+
+  if (mlir::failed(rejectRecursive(module))) return mlir::failure();
 
   // An array result becomes an output buffer its caller makes.
   if (mlir::failed(arrayResultsToBuffers(module)))
