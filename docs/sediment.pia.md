@@ -60,20 +60,20 @@ interface Transport @abi(c) = sig
     requires len down = len fill && len acc = len fill
     requires len bed = len fill && len load = len fill && len inflow = len fill
     requires len flux = len fill && len order = len fill && len pos = len fill
-    requires len owner = len fill && len fill < 4294967295
-    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires len owner = len fill && len fill < max u32
+    requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
     requires forall (k in 0..len down).
                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   let surface : (rock : [u16]) -> (bed : [u32]) -> (height : out mutable [u16])
       -> unit
     requires len bed = len rock && len height = len rock
   let rain_uniform : (r : u8) -> (rain : out mutable [u32]) -> unit
-    requires len rain <= 16777215
+    requires len rain <= 16'777'215
   let rain_band : (w : usize) -> (lo : usize) -> (hi : usize) -> (inside : u8)
       -> (outside : u8) -> (rain : out mutable [u32]) -> unit
-    requires w > 0 && len rain <= 16777215
+    requires w > 0 && len rain <= 16'777'215
   let rain_season : (wet : bool) -> (r : u8) -> (rain : out mutable [u32]) -> unit
-    requires len rain <= 16777215
+    requires len rain <= 16'777'215
   let drainage : (fill : [u16]) -> (down : [usize]) -> (acc : out mutable [u32])
       -> (basin : out mutable [usize]) -> (rain : out mutable [u32])
       -> (pend : out mutable [u32]) -> (order : out mutable [usize])
@@ -83,8 +83,8 @@ interface Transport @abi(c) = sig
     requires len down = len fill && len acc = len fill && len basin = len fill
     requires len rain = len fill && len pend = len fill
     requires len order = len fill && len pos = len fill && len owner = len fill
-    requires len fill < 4294967295
-    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires len fill < max u32
+    requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
     requires forall (j in 0..len down).
                down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
   let evolve : (fill : [u16]) -> (down : [usize]) -> (rain : [u32]) -> (k : u32)
@@ -99,8 +99,8 @@ interface Transport @abi(c) = sig
     requires len bed = len fill && len load = len fill && len inflow = len fill
     requires len flux = len fill && len flow = len fill && len pend = len fill
     requires len order = len fill && len pos = len fill && len owner = len fill
-    requires len fill < 4294967295
-    requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+    requires len fill < max u32
+    requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
     requires forall (j in 0..len down).
                down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
 end
@@ -123,8 +123,8 @@ encoding only for the functions that use `sum` (docs/verifier.md,
 
 ```pia
 let spec sum (xs : [u32]) (n : usize) : u64
-  requires n <= len xs && n <= 4294967296
-  ensures result <= 4294967296 * n
+  requires n <= len xs && n <= max u32 + 1
+  ensures result <= (max u32 + 1) * n
   decreases n
 = if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
 ```
@@ -136,7 +136,7 @@ by itself.
 
 ```pia
 let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
-  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
+  requires 0 < n && n <= len xs && n <= len ys && n <= max u32 + 1
   requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
   ensures sum ys n = sum xs n
 = ()
@@ -144,7 +144,7 @@ let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
 
 ```pia
 let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= max u32 + 1
   requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
   ensures sum ys n + xs.[i] = sum xs n + ys.[i]
 = ()
@@ -152,7 +152,7 @@ let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
 
 ```pia
 let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
-  requires i < len xs && i < len ys && i < 4294967296
+  requires i < len xs && i < len ys && i < max u32 + 1
   requires sum ys i = sum xs i
   ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
 = ()
@@ -162,7 +162,7 @@ If `ys` is `xs` except at `i`, the prefixes before `i` have the same sum.
 
 ```pia
 let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
+  requires len xs = len ys && n <= i && i < len xs && len xs <= max u32 + 1
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures sum ys n = sum xs n
   decreases n
@@ -175,7 +175,7 @@ is a pair of such writes.
 
 ```pia
 let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
+  requires len xs = len ys && i < n && n <= len xs && len xs <= max u32 + 1
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures sum ys n + xs.[i] = sum xs n + ys.[i]
   decreases n
@@ -185,7 +185,7 @@ let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
 
 ```pia
 let lemma at_le (xs : [u32]) (i : usize) : unit
-  requires i < len xs && i < 4294967296
+  requires i < len xs && i < max u32 + 1
   ensures xs.[i] <= sum xs (i + 1)
 = ()
 ```
@@ -194,7 +194,7 @@ A longer prefix has a larger sum.
 
 ```pia
 let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
-  requires m <= n && n <= len xs && n <= 4294967296
+  requires m <= n && n <= len xs && n <= max u32 + 1
   ensures sum xs m <= sum xs n
   decreases n
 = if n > m then mono xs m (n - 1)
@@ -205,7 +205,7 @@ This is what proves that no cell overflows when mass arrives.
 
 ```pia
 let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
-  requires i < n && n <= len xs && n <= 4294967296
+  requires i < n && n <= len xs && n <= max u32 + 1
   ensures xs.[i] <= sum xs n
 = at_le xs i; mono xs (i + 1) n
 ```
@@ -214,7 +214,7 @@ An all-zero prefix sums to zero.
 
 ```pia
 let lemma zero (xs : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= 4294967296
+  requires n <= len xs && n <= max u32 + 1
   requires forall (k in 0 .. n). xs.[k] = 0
   ensures sum xs n = 0
   decreases n
@@ -227,7 +227,7 @@ solver that `old (xs.[i])` is a `u32`.
 
 ```pia
 let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
-  requires i < len xs && len xs <= 4294967296
+  requires i < len xs && len xs <= max u32 + 1
   ensures xs.[i] = v
   ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
   ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
@@ -247,7 +247,7 @@ none is created.
 
 ```pia
 let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
-  requires bed + inflow <= 4294967295
+  requires bed + inflow <= max u32
   ensures result.bed + result.load = bed + inflow
   ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
   ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
@@ -262,8 +262,8 @@ let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
 
 ```pia
 let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) : unit
-  requires a < len load && b < len inflow && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum load (len load) + sum inflow (len inflow) <= 4294967295
+  requires a < len load && b < len inflow && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum load (len load) + sum inflow (len inflow) <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures sum load (len load) + sum inflow (len inflow) = sum (old load) (len load) + sum (old inflow) (len inflow)
@@ -279,8 +279,8 @@ let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable 
 
 ```pia
 let drain (load : borrowed inout mutable [u32]) (a : usize) (gone : u64) : u64
-  requires a < len load && len load <= 4294967296
-  requires sum load (len load) + gone <= 4294967295
+  requires a < len load && len load <= max u32 + 1
+  requires sum load (len load) + gone <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures sum load (len load) + result = sum (old load) (len load) + gone
@@ -308,8 +308,8 @@ load are rewritten and its inflow is spent.
 ```pia
 let erode_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) (capacity : u32) : unit
   requires c < len bed && c < len load && c < len inflow
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum bed (len bed) + sum inflow (len inflow) <= 4294967295
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum bed (len bed) + sum inflow (len inflow) <= max u32
   requires load.[c] = 0
   ensures inflow.[c] = 0
   ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
@@ -338,8 +338,8 @@ loop invariant of the step to come (ADR 0055, step 4).
 ```pia
 let transfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64
   requires a < len load && b < len inflow
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
@@ -354,14 +354,14 @@ The bound before `transfer`, from the totals around `erode_cell`.
 
 ```pia
 let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i1 : u64) : unit
-  requires b + l + i + g <= 4294967295 && b1 + l1 + i1 = b + l + i
-  ensures b1 + l1 + i1 + g <= 4294967295
+  requires b + l + i + g <= max u32 && b1 + l1 + i1 = b + l + i
+  ensures b1 + l1 + i1 + g <= max u32
 = ()
 ```
 
 The transport capacity of the water leaving a cell grows with its flow and
 with the drop to the cell below: a sixteenth of the flow plus four times
-the drop, at most 65535 units. It is shifts and adds, so the proof stays
+the drop, at most `max u16` units. It is shifts and adds, so the proof stays
 linear, and the shifts spread capacities over a range wide enough that the
 picture's colour ramp, over the number of bits of the load, shows the
 difference between a brook and a river.
@@ -370,7 +370,7 @@ difference between a brook and a river.
 let capacity_of (a : u32) (drop : u16) : u32 =
   let d : u32 = drop in
   let c : u64 = (a >> 4) + (d << 2) in
-  if c < 65535 then c else 65535
+  if c < max u16 then c else max u16
 ```
 
 One cell of a step: erode or deposit, record the load leaving the cell in
@@ -379,9 +379,9 @@ flux for the picture, and carry it on.
 ```pia
 let visit (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (c : usize) (d : usize) (capacity : u32) (gone : u64) : u64
   requires c < len bed && c < len load && c < len inflow && d < len inflow && c < len flux
-  requires len bed <= 4294967296 && len load <= 4294967296 && len inflow <= 4294967296
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
   requires load.[c] = 0
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
   ensures load.[c] = 0
   ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
@@ -400,12 +400,12 @@ One time step over the map, highest cells first.
 let transport (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (gone : u64) : u64
   requires len down = len fill && len order = len fill && len acc = len fill
   requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
-  requires len fill <= 4294967296
+  requires len fill <= max u32 + 1
   requires forall (k in 0 .. len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   requires forall (q in 0 .. len order). order.[q] < len fill
   requires forall (k in 0 .. len load). load.[k] = 0
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= 4294967295
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
   ensures forall (k in 0 .. len load). load.[k] = 0
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
     sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
@@ -429,7 +429,7 @@ checked at run time.
 
 ```pia
 let total (xs : [u32]) : u64
-  requires len xs <= 4294967296
+  requires len xs <= max u32 + 1
   ensures result = sum xs (len xs)
 =
   let t : mutable u64 = 0 in
@@ -444,8 +444,8 @@ let total (xs : [u32]) : u64
 ## 4. The height order
 
 A step visits the cells from highest to lowest. `height_order` sorts them
-by filled height with a counting sort over the 65536 heights, in time
-O(n + 65536). It writes `order`, the cells from highest to lowest, and
+by filled height with a counting sort over the `max u16 + 1` heights, in time
+O(n + `max u16 + 1`). It writes `order`, the cells from highest to lowest, and
 `pos`, its inverse, and proves that `order` is a permutation, each cell
 exactly once, and that height never increases along it. `cnt`, `first`,
 `next`, `last` and `owner` are scratch the caller passes, since Pia cannot
@@ -473,20 +473,20 @@ cnt.[h] is the number of cells of height h, and cnt sums to n.
 
 ```pia
 let histogram (fill : [u16]) (cnt : out mutable [u32]) : unit
-  requires len cnt = 65536 && len fill <= 4294967295
-  ensures forall (h in 0 .. 65536). cnt.[h] = count_from fill h 0
-  ensures sum cnt 65536 = len fill
-= for h in 0 .. 65536
+  requires len cnt = max u16 + 1 && len fill <= max u32
+  ensures forall (h in 0 .. 65'536). cnt.[h] = count_from fill h 0
+  ensures sum cnt (max u16 + 1) = len fill
+= for h in 0 .. 65'536
     invariant forall (j in 0 .. h). cnt.[j] = 0
   do cnt.[h] <- 0 done;
-  zero cnt 65536;
+  zero cnt (max u16 + 1);
   for k in 0 .. len fill
-    invariant sum cnt 65536 = k
-    invariant forall (h in 0 .. 65536). cnt.[h] + count_from fill h k = count_from fill h 0
+    invariant sum cnt (max u16 + 1) = k
+    invariant forall (h in 0 .. 65'536). cnt.[h] + count_from fill h k = count_from fill h 0
   do
     let h : usize = fill.[k] in
     let c = cnt.[h] in
-    elt_le cnt h 65536;
+    elt_le cnt h (max u16 + 1);
     set cnt h (c + 1)
   done
 ```
@@ -497,20 +497,20 @@ is stated by its neighbour.
 
 ```pia
 let offsets (n : usize) (cnt : [u32]) (first : out mutable [usize]) (next : out mutable [usize]) (last : out mutable [usize]) : unit
-  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
-  requires sum cnt 65536 = n
-  ensures last.[0] = n && first.[65535] = 0
-  ensures forall (h in 0 .. 65536). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
-  ensures forall (h in 0 .. 65535). first.[h] = last.[h + 1]
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
+  requires sum cnt (max u16 + 1) = n
+  ensures last.[0] = n && first.[max u16] = 0
+  ensures forall (h in 0 .. 65'536). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  ensures forall (h in 0 .. 65'535). first.[h] = last.[h + 1]
 = let acc : mutable u64 = 0 in
-  for t in 0 .. 65536
+  for t in 0 .. 65'536
     invariant acc = sum cnt t && acc <= n
     invariant t > 0 ==> last.[0] = n
     invariant t > 0 ==> first.[t - 1] + acc = n
     invariant forall (h in 0 .. t). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
     invariant forall (h in 0 .. t). h + 1 < t ==> first.[h] = last.[h + 1]
   do
-    mono cnt (t + 1) 65536;
+    mono cnt (t + 1) (max u16 + 1);
     let c = cnt.[t] in
     last.[t] <- n - acc;
     acc <- acc + c;
@@ -548,18 +548,18 @@ it: that is the only order fact this needs.
 
 ```pia
 let owners (n : usize) (cnt : [u32]) (first : [usize]) (last : [usize]) (owner : out mutable [u16]) : unit
-  requires len cnt = 65536 && len first = 65536 && len last = 65536 && len owner = n
-  requires last.[0] = n && first.[65535] = 0
-  requires forall (h in 0 .. 65536). first.[h] + cnt.[h] = last.[h] && last.[h] <= n
-  requires forall (h in 0 .. 65535). first.[h] = last.[h + 1]
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len last = max u16 + 1 && len owner = n
+  requires last.[0] = n && first.[max u16] = 0
+  requires forall (h in 0 .. 65'536). first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  requires forall (h in 0 .. 65'535). first.[h] = last.[h + 1]
   ensures forall (q in 0 .. n). first.[own owner q] <= q && q < last.[own owner q]
-  ensures forall (h in 0 .. 65536) (q in 0 .. n). first.[h] <= q && q < last.[h] ==> own owner q = h
+  ensures forall (h in 0 .. 65'536) (q in 0 .. n). first.[h] <= q && q < last.[h] ==> own owner q = h
   ensures forall (a in 0 .. n) (b in 0 .. n). a < b ==> own owner b <= own owner a
 = let w : mutable usize = n in
-  for t in 0 .. 65536
+  for t in 0 .. 65'536
     invariant w <= n
-    invariant t < 65536 ==> w = last.[t]
-    invariant t = 65536 ==> w = 0
+    invariant t < max u16 + 1 ==> w = last.[t]
+    invariant t = max u16 + 1 ==> w = 0
     invariant forall (h in 0 .. t). w <= first.[h]
     invariant forall (q in w .. n). own owner q < t && first.[own owner q] <= q && q < last.[own owner q]
     invariant forall (h in 0 .. t) (q in w .. n). first.[h] <= q && q < last.[h] ==> owner.[q] = h
@@ -570,7 +570,7 @@ let owners (n : usize) (cnt : [u32]) (first : [usize]) (last : [usize]) (owner :
     let ht : u16 = t in
     mark owner lo w ht;
     w <- lo;
-    if t + 1 < 65536 then assert lo = last.[t + 1] else ()
+    if t + 1 < max u16 + 1 then assert lo = last.[t + 1] else ()
   done
 ```
 
@@ -589,18 +589,18 @@ taken when it is before next.[owner.[q]], and free (holding n) otherwise.
 
 ```pia
 let place (fill : [u16]) (first : [usize]) (last : [usize]) (owner : [u16]) (next : borrowed inout mutable [usize]) (order : out mutable [usize]) (pos : out mutable [usize]) : unit
-  requires len first = 65536 && len last = 65536 && len next = 65536
+  requires len first = max u16 + 1 && len last = max u16 + 1 && len next = max u16 + 1
   requires len owner = len fill && len order = len fill && len pos = len fill
-  requires forall (h in 0 .. 65536). next.[h] = first.[h] && first.[h] + count_from fill h 0 = last.[h] && last.[h] <= len fill
+  requires forall (h in 0 .. 65'536). next.[h] = first.[h] && first.[h] + count_from fill h 0 = last.[h] && last.[h] <= len fill
   requires forall (q in 0 .. len fill). first.[own owner q] <= q && q < last.[own owner q]
-  requires forall (h in 0 .. 65536) (q in 0 .. len fill). first.[h] <= q && q < last.[h] ==> own owner q = h
+  requires forall (h in 0 .. 65'536) (q in 0 .. len fill). first.[h] <= q && q < last.[h] ==> own owner q = h
   ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q && fill.[order.[q]] = own owner q
   ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
 = blank order (len fill);
   assert (forall (q in 0 .. len fill). next.[own owner q] = first.[own owner q]);
   assert (forall (q in 0 .. len fill). next.[own owner q] <= q);
   for k in 0 .. len fill
-    invariant forall (h in 0 .. 65536). first.[h] <= next.[h] && next.[h] + count_from fill h k = last.[h]
+    invariant forall (h in 0 .. 65'536). first.[h] <= next.[h] && next.[h] + count_from fill h k = last.[h]
     invariant forall (q in 0 .. len fill).
       (q < next.[own owner q] ==> order.[q] < k && pos.[order.[q]] = q && fill.[order.[q]] = own owner q)
       && (next.[own owner q] <= q ==> order.[q] = len fill)
@@ -615,7 +615,7 @@ let place (fill : [u16]) (first : [usize]) (last : [usize]) (owner : [u16]) (nex
     pos.[k] <- p;
     next.[h] <- p + 1
   done;
-  assert (forall (h in 0 .. 65536). next.[h] = last.[h]);
+  assert (forall (h in 0 .. 65'536). next.[h] = last.[h]);
   assert (forall (q in 0 .. len fill). q < next.[own owner q])
 ```
 
@@ -632,7 +632,7 @@ let sorted_from_owner (fill : [u16]) (owner : [u16]) (order : [usize]) (pos : [u
 ```
 
 The cells by decreasing fill, in linear time: a counting sort over the
-65536 heights. order is a permutation with inverse pos, and a cell comes
+`max u16 + 1` heights. order is a permutation with inverse pos, and a cell comes
 after every cell higher than it, the contract the selection sort had. cnt,
 first, next, last and owner are scratch.
 
@@ -641,8 +641,8 @@ let height_order (fill : [u16]) (order : out mutable [usize]) (pos : out mutable
     (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
     (last : out mutable [usize]) (owner : out mutable [u16]) : unit
   requires len order = len fill && len pos = len fill && len owner = len fill
-  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
-  requires len fill <= 4294967295
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
+  requires len fill <= max u32
   ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
   ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
   ensures forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
@@ -670,11 +670,11 @@ let sediment (fill : [u16]) (down : [usize]) (acc : [u32]) (n : u32)
   requires len down = len fill && len acc = len fill
   requires len bed = len fill && len load = len fill && len inflow = len fill
   requires len flux = len fill && len order = len fill && len pos = len fill
-  requires len owner = len fill && len fill < 4294967295
-  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires len owner = len fill && len fill < max u32
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
   requires forall (k in 0 .. len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
-  ensures result = 18446744073709551615 ||
+  ensures result = max u64 ||
     sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result = sum (old bed) (len bed)
 =
   height_order fill order pos cnt first next last owner;
@@ -688,7 +688,7 @@ let sediment (fill : [u16]) (down : [usize]) (acc : [u32]) (n : u32)
   zero load (len load);
   zero inflow (len inflow);
   let t = total bed in
-  if t > 4294967295 then 18446744073709551615
+  if t > max u32 then max u64
   else
     (let g : mutable u64 = 0 in
      for s in 0 .. n
@@ -722,7 +722,7 @@ Two buffers equal on a prefix have the same sum over it.
 
 ```pia
 let lemma same_sum (xs : [u32]) (ys : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= len ys && n <= 4294967296
+  requires n <= len xs && n <= len ys && n <= max u32 + 1
   requires forall (k in 0 .. n). ys.[k] = xs.[k]
   ensures sum ys n = sum xs n
   decreases n
@@ -750,8 +750,8 @@ and leaves no water carrying anything.
 
 ```pia
 let fold (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) : unit
-  requires len load = len bed && len inflow = len bed && len bed <= 4294967296
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= 4294967295
+  requires len load = len bed && len inflow = len bed && len bed <= max u32 + 1
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= max u32
   ensures forall (k in 0 .. len load). load.[k] = 0 && inflow.[k] = 0
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
     sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
@@ -768,8 +768,8 @@ One cell of `fold`.
 
 ```pia
 let fold_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) : unit
-  requires len load = len bed && len inflow = len bed && len bed <= 4294967296 && c < len bed
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= 4294967295
+  requires len load = len bed && len inflow = len bed && len bed <= max u32 + 1 && c < len bed
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= max u32
   ensures load.[c] = 0 && inflow.[c] = 0
   ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k]) && inflow.[k] = old (inflow.[k])
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
@@ -793,7 +793,7 @@ pend starts as a copy of rain, and flow at zero.
 
 ```pia
 let start_rain (rain : [u32]) (flow : out mutable [u32]) (pend : out mutable [u32]) : unit
-  requires len flow = len rain && len pend = len rain && len rain <= 4294967296
+  requires len flow = len rain && len pend = len rain && len rain <= max u32 + 1
   ensures forall (k in 0 .. len flow). flow.[k] = 0 && pend.[k] = rain.[k]
   ensures sum pend (len pend) = sum rain (len rain)
 = for i in 0 .. len rain
@@ -813,8 +813,8 @@ the total rain.
 ```pia
 let accumulate_rain (down : [usize]) (order : [usize]) (pos : [usize]) (rain : [u32]) (flow : out mutable [u32]) (pend : out mutable [u32]) : unit
   requires len order = len down && len pos = len down && len rain = len down
-  requires len flow = len down && len pend = len down && len down <= 4294967296
-  requires sum rain (len rain) <= 4294967295
+  requires len flow = len down && len pend = len down && len down <= max u32 + 1
+  requires sum rain (len rain) <= max u32
   requires forall (k in 0 .. len down). down.[k] < len down
   requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
   requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
@@ -842,7 +842,7 @@ let accumulate_rain (down : [usize]) (order : [usize]) (pos : [usize]) (rain : [
 ```
 
 The terrain the water sees: the rock, raised by the sediment resting on it,
-a height unit per 64 units of bed, at most 65535.
+a height unit per 64 units of bed, at most `max u16`.
 
 ```pia
 let surface (rock : [u16]) (bed : [u32]) (height : out mutable [u16]) : unit
@@ -851,7 +851,7 @@ let surface (rock : [u16]) (bed : [u32]) (height : out mutable [u16]) : unit
   do
     let r : u64 = rock.[c] in
     let h : u64 = r + (bed.[c] >> 6) in
-    height.[c] <- (if h < 65535 then h else 65535)
+    height.[c] <- (if h < max u16 then h else max u16)
   done
 ```
 
@@ -875,11 +875,11 @@ let evolve (fill : [u16]) (down : [usize]) (rain : [u32]) (k : u32)
   requires len bed = len fill && len load = len fill && len inflow = len fill
   requires len flux = len fill && len flow = len fill && len pend = len fill
   requires len order = len fill && len pos = len fill && len owner = len fill
-  requires len fill < 4294967295
-  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires len fill < max u32
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
   requires forall (j in 0 .. len down).
              down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
-  ensures result = 18446744073709551615 ||
+  ensures result = max u64 ||
     sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
       sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
 =
@@ -891,8 +891,8 @@ let evolve (fill : [u16]) (down : [usize]) (rain : [u32]) (k : u32)
   let tb = total bed in
   let tl = total load in
   let ti = total inflow in
-  if r > 4294967295 || tb > 4294967295 || tl > 4294967295 || ti > 4294967295
-     || tb + tl + ti > 4294967295 then 18446744073709551615
+  if r > max u32 || tb > max u32 || tl > max u32 || ti > max u32
+     || tb + tl + ti > max u32 then max u64
   else
     (accumulate_rain down order pos rain flow pend;
      fold bed load inflow;
@@ -910,30 +910,30 @@ let evolve (fill : [u16]) (down : [usize]) (rain : [u32]) (k : u32)
 ### Rainfall fields
 
 The C program asks for the rain of each epoch from these. Each cell gets at
-most 255 units, and a map has at most 16777215 cells (a 4096 by 4096 map
-less one cell), so the total rain is at most 255 times 16777215, which fits
+most `max u8` units, and a map has at most 16'777'215 cells (a 4096 by 4096 map
+less one cell), so the total rain is at most `max u8` times 16'777'215, which fits
 in a `u32`: each field's postcondition says so, which is exactly what
 `evolve` checks before it moves anything, so with these fields its guard
 never trips.
 
-A prefix whose cells hold at most 255 sums to at most 256 per cell.
+A prefix whose cells hold at most `max u8` sums to at most 256 per cell.
 
 ```pia
 let lemma sum_le (xs : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= 4294967296
-  requires forall (k in 0 .. n). xs.[k] <= 255
+  requires n <= len xs && n <= max u32 + 1
+  requires forall (k in 0 .. n). xs.[k] <= max u8
   ensures sum xs n <= n << 8
   decreases n
-= if n > 0 then (sum_le xs (n - 1); assert xs.[n - 1] <= 255)
+= if n > 0 then (sum_le xs (n - 1); assert xs.[n - 1] <= max u8)
 ```
 
 The same rain r on every cell.
 
 ```pia
 let rain_uniform (r : u8) (rain : out mutable [u32]) : unit
-  requires len rain <= 16777215
+  requires len rain <= 16'777'215
   ensures forall (k in 0 .. len rain). rain.[k] = r
-  ensures sum rain (len rain) <= 4294967295
+  ensures sum rain (len rain) <= max u32
 = for i in 0 .. len rain
     invariant forall (k in 0 .. i). rain.[k] = r
   do rain.[i] <- r done;
@@ -945,9 +945,9 @@ outside.
 
 ```pia
 let rain_band (w : usize) (lo : usize) (hi : usize) (inside : u8) (outside : u8) (rain : out mutable [u32]) : unit
-  requires w > 0 && len rain <= 16777215
+  requires w > 0 && len rain <= 16'777'215
   ensures forall (k in 0 .. len rain). rain.[k] = inside || rain.[k] = outside
-  ensures sum rain (len rain) <= 4294967295
+  ensures sum rain (len rain) <= max u32
 =
   let row : mutable usize = 0 in
   let col : mutable usize = 0 in
@@ -958,7 +958,7 @@ let rain_band (w : usize) (lo : usize) (hi : usize) (inside : u8) (outside : u8)
     rain.[i] <- (if lo <= row && row < hi then inside else outside);
     if col + 1 = w then (col <- 0; row <- row + 1) else col <- col + 1
   done;
-  assert (forall (k in 0 .. len rain). rain.[k] <= 255);
+  assert (forall (k in 0 .. len rain). rain.[k] <= max u8);
   sum_le rain (len rain)
 ```
 
@@ -966,9 +966,9 @@ A season: rain r everywhere when wet, none when dry.
 
 ```pia
 let rain_season (wet : bool) (r : u8) (rain : out mutable [u32]) : unit
-  requires len rain <= 16777215
+  requires len rain <= 16'777'215
   ensures forall (k in 0 .. len rain). rain.[k] = (if wet then r else 0)
-  ensures sum rain (len rain) <= 4294967295
+  ensures sum rain (len rain) <= max u32
 = rain_uniform (if wet then r else 0) rain
 ```
 
@@ -988,7 +988,7 @@ An all-one prefix sums to its length.
 
 ```pia
 let lemma ones (xs : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= 4294967296
+  requires n <= len xs && n <= max u32 + 1
   requires forall (k in 0 .. n). xs.[k] = 1
   ensures sum xs n = n
   decreases n
@@ -1056,8 +1056,8 @@ let drainage (fill : [u16]) (down : [usize]) (acc : out mutable [u32]) (basin : 
   requires len down = len fill && len acc = len fill && len basin = len fill
   requires len rain = len fill && len pend = len fill
   requires len order = len fill && len pos = len fill && len owner = len fill
-  requires len fill < 4294967295
-  requires len cnt = 65536 && len first = 65536 && len next = 65536 && len last = 65536
+  requires len fill < max u32
+  requires len cnt = max u16 + 1 && len first = max u16 + 1 && len next = max u16 + 1 && len last = max u16 + 1
   requires forall (j in 0 .. len down).
              down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
   ensures forall (k in 0 .. len acc). 1 <= acc.[k] && acc.[k] <= len fill
@@ -1086,7 +1086,7 @@ Every goal in this file is proved before `piac` generates code:
 | Sediment transport conserves the total mass exactly | `push` and `drain` up to `transport`, `sediment` and `evolve` |
 | Settling the water's load into the bed conserves the total | `fold_cell`, `fold` |
 | The flow through every cell is at least its own rain and at most the total rain | `accumulate_rain` |
-| Every rainfall field gives each cell at most 255 units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
+| Every rainfall field gives each cell at most `max u8` units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
 | A cell's downstream neighbour comes later in the height order | `later` |
 | A cell and the cell it drains to have the same watershed, so a basin's water stays in it | `label_outlets` |
 | Accumulation is between 1 and the number of cells, and every watershed label is an outlet, in linear time | `label_outlets`, `drainage` |

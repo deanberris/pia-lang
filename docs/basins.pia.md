@@ -35,7 +35,7 @@ interface BasinTransport @abi(c) = sig
     requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill && len gone_by = len fill
     requires len border = len fill && len keys = len fill && len place2 = len fill && len pos2 = len fill
     requires len cnt = len fill && len first = len fill && len next = len fill && len last = len fill && len gowner = len fill
-    requires len fill >= 1 && len fill < 4294967295
+    requires len fill >= 1 && len fill < max u32
     requires forall (k in 0..len down).
                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
     requires forall (k in 0..len label). label.[at down k] = label.[k] && at label k < len fill
@@ -57,38 +57,38 @@ let spec elt (xs : [u32]) (i : usize) : u32
 = xs.[i]
 
 let spec sum (xs : [u32]) (n : usize) : u64
-  requires n <= len xs && n <= 4294967296
-  ensures result <= 4294967296 * n
+  requires n <= len xs && n <= max u32 + 1
+  ensures result <= (max u32 + 1) * n
   decreases n
 = if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
 
 let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
-  requires 0 < n && n <= len xs && n <= len ys && n <= 4294967296
+  requires 0 < n && n <= len xs && n <= len ys && n <= max u32 + 1
   requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
   ensures sum ys n = sum xs n
 = ()
 
 let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires i < n - 1 && n <= len xs && n <= len ys && n <= 4294967296
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= max u32 + 1
   requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
   ensures sum ys n + xs.[i] = sum xs n + ys.[i]
 = ()
 
 let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
-  requires i < len xs && i < len ys && i < 4294967296
+  requires i < len xs && i < len ys && i < max u32 + 1
   requires sum ys i = sum xs i
   ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
 = ()
 
 let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && n <= i && i < len xs && len xs <= 4294967296
+  requires len xs = len ys && n <= i && i < len xs && len xs <= max u32 + 1
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures sum ys n = sum xs n
   decreases n
 = if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
 
 let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
-  requires len xs = len ys && i < n && n <= len xs && len xs <= 4294967296
+  requires len xs = len ys && i < n && n <= len xs && len xs <= max u32 + 1
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures sum ys n + xs.[i] = sum xs n + ys.[i]
   decreases n
@@ -96,30 +96,30 @@ let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
   else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
 
 let lemma at_le (xs : [u32]) (i : usize) : unit
-  requires i < len xs && i < 4294967296
+  requires i < len xs && i < max u32 + 1
   ensures xs.[i] <= sum xs (i + 1)
 = ()
 
 let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
-  requires m <= n && n <= len xs && n <= 4294967296
+  requires m <= n && n <= len xs && n <= max u32 + 1
   ensures sum xs m <= sum xs n
   decreases n
 = if n > m then mono xs m (n - 1)
 
 let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
-  requires i < n && n <= len xs && n <= 4294967296
+  requires i < n && n <= len xs && n <= max u32 + 1
   ensures xs.[i] <= sum xs n
 = at_le xs i; mono xs (i + 1) n
 
 let lemma zero (xs : [u32]) (n : usize) : unit
-  requires n <= len xs && n <= 4294967296
+  requires n <= len xs && n <= max u32 + 1
   requires forall (k in 0 .. n). xs.[k] = 0
   ensures sum xs n = 0
   decreases n
 = if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
 
 let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
-  requires i < len xs && len xs <= 4294967296
+  requires i < len xs && len xs <= max u32 + 1
   ensures xs.[i] = v
   ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
   ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
@@ -135,7 +135,7 @@ let spec at (xs : [usize]) (k : usize) : usize
 let cell = type { bed : u32; load : u32 }
 
 let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
-  requires bed + inflow <= 4294967295
+  requires bed + inflow <= max u32
   ensures result.bed + result.load = bed + inflow
   ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
   ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
@@ -151,17 +151,17 @@ let lemma balance (a : u64) (b : u64) (c : u64) (a0 : u64) (b0 : u64) (c0 : u64)
 = ()
 
 let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i1 : u64) : unit
-  requires b + l + i + g <= 4294967295 && b1 + l1 + i1 = b + l + i
-  ensures b1 + l1 + i1 + g <= 4294967295
+  requires b + l + i + g <= max u32 && b1 + l1 + i1 = b + l + i
+  ensures b1 + l1 + i1 + g <= max u32
 = ()
 
 let capacity_of (a : u32) (drop : u16) : u32 =
   let d : u32 = drop in
   let c : u64 = (a >> 4) + (d << 2) in
-  if c < 65535 then c else 65535
+  if c < max u16 then c else max u16
 
 let total (xs : [u32]) : u64
-  requires len xs <= 4294967296
+  requires len xs <= max u32 + 1
   ensures result = sum xs (len xs)
 =
   let t : mutable u64 = 0 in
@@ -201,7 +201,7 @@ cnt.[h] is the number of keys equal to h, and cnt sums to n.
 
 ```pia
 let ghistogram (keys : [usize]) (nb : usize) (cnt : out mutable [u32]) : unit
-  requires len cnt = nb && nb >= 1 && nb <= 4294967295 && len keys <= 4294967295
+  requires len cnt = nb && nb >= 1 && nb <= max u32 && len keys <= max u32
   requires forall (k in 0 .. len keys). at keys k < nb
   ensures forall (h in 0 .. nb). cnt.[h] = kcount keys h 0
   ensures sum cnt nb = len keys
@@ -226,7 +226,7 @@ neighbour.
 ```pia
 let goffsets (n : usize) (nb : usize) (cnt : [u32]) (first : out mutable [usize]) (next : out mutable [usize]) (last : out mutable [usize]) : unit
   requires len cnt = nb && len first = nb && len next = nb && len last = nb
-  requires nb >= 1 && nb <= 4294967295 && sum cnt nb = n
+  requires nb >= 1 && nb <= max u32 && sum cnt nb = n
   ensures last.[0] = n && first.[nb - 1] = 0
   ensures forall (h in 0 .. nb). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
   ensures forall (h in 0 .. nb - 1). first.[h] = last.[h + 1]
@@ -352,7 +352,7 @@ let basin_order (label : [usize]) (order : [usize]) (border : out mutable [usize
   requires len order = len label && len border = len label && len keys = len label
   requires len place2 = len label && len pos2 = len label && len owner = len label
   requires len cnt = len label && len first = len label && len next = len label && len last = len label
-  requires len label >= 1 && len label <= 4294967295
+  requires len label >= 1 && len label <= max u32
   requires forall (q in 0 .. len order). order.[q] < len label
   requires forall (k in 0 .. len label). at label k < len label
   ensures forall (b in 0 .. len label). first.[b] <= last.[b] && last.[b] <= len label
@@ -384,16 +384,16 @@ The sum of basin b's cells among xs.[0 .. n].
 
 ```pia
 let spec bsum (xs : [u32]) (label : [usize]) (b : usize) (n : usize) : u64
-  requires n <= len xs && len label = len xs && n <= 4294967296
+  requires n <= len xs && len label = len xs && n <= max u32 + 1
   reads xs.[c] where label.[c] = b
-  ensures result <= 4294967296 * n
+  ensures result <= (max u32 + 1) * n
   decreases n
 = if n = 0 then 0 else bsum xs label b (n - 1) + (if label.[n - 1] = b then elt xs (n - 1) else 0)
 ```
 
 ```pia
 let lemma bstep (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (n : usize) : unit
-  requires 0 < n && n <= len xs && len ys = len xs && len label = len xs && n <= 4294967296
+  requires 0 < n && n <= len xs && len ys = len xs && len label = len xs && n <= max u32 + 1
   requires bsum ys label b (n - 1) = bsum xs label b (n - 1) && ys.[n - 1] = xs.[n - 1]
   ensures bsum ys label b n = bsum xs label b n
 = ()
@@ -401,7 +401,7 @@ let lemma bstep (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (n : usi
 
 ```pia
 let lemma bstep_after (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : usize) (n : usize) : unit
-  requires i < n - 1 && n <= len xs && len ys = len xs && len label = len xs && n <= 4294967296
+  requires i < n - 1 && n <= len xs && len ys = len xs && len label = len xs && n <= max u32 + 1
   requires bsum ys label b (n - 1) + xs.[i] = bsum xs label b (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
   ensures bsum ys label b n + xs.[i] = bsum xs label b n + ys.[i]
 = ()
@@ -409,7 +409,7 @@ let lemma bstep_after (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i
 
 ```pia
 let lemma bstep_at (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : usize) : unit
-  requires i < len xs && len ys = len xs && len label = len xs && i < 4294967296 && label.[i] = b
+  requires i < len xs && len ys = len xs && len label = len xs && i < max u32 + 1 && label.[i] = b
   requires bsum ys label b i = bsum xs label b i
   ensures bsum ys label b (i + 1) + xs.[i] = bsum xs label b (i + 1) + ys.[i]
 = ()
@@ -417,7 +417,7 @@ let lemma bstep_at (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : 
 
 ```pia
 let lemma bframe (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : usize) (n : usize) : unit
-  requires len ys = len xs && len label = len xs && n <= i && i < len xs && len xs <= 4294967296
+  requires len ys = len xs && len label = len xs && n <= i && i < len xs && len xs <= max u32 + 1
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures bsum ys label b n = bsum xs label b n
   decreases n
@@ -428,7 +428,7 @@ The point update for a cell of basin b.
 
 ```pia
 let lemma bupdate (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : usize) (n : usize) : unit
-  requires len ys = len xs && len label = len xs && i < n && n <= len xs && len xs <= 4294967296
+  requires len ys = len xs && len label = len xs && i < n && n <= len xs && len xs <= max u32 + 1
   requires label.[i] = b
   requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
   ensures bsum ys label b n + xs.[i] = bsum xs label b n + ys.[i]
@@ -439,14 +439,14 @@ let lemma bupdate (xs : [u32]) (ys : [u32]) (label : [usize]) (b : usize) (i : u
 
 ```pia
 let lemma bat_le (xs : [u32]) (label : [usize]) (b : usize) (i : usize) : unit
-  requires i < len xs && len label = len xs && i < 4294967296 && label.[i] = b
+  requires i < len xs && len label = len xs && i < max u32 + 1 && label.[i] = b
   ensures xs.[i] <= bsum xs label b (i + 1)
 = ()
 ```
 
 ```pia
 let lemma bmono (xs : [u32]) (label : [usize]) (b : usize) (m : usize) (n : usize) : unit
-  requires m <= n && n <= len xs && len label = len xs && n <= 4294967296
+  requires m <= n && n <= len xs && len label = len xs && n <= max u32 + 1
   ensures bsum xs label b m <= bsum xs label b n
   decreases n
 = if n > m then bmono xs label b m (n - 1)
@@ -456,7 +456,7 @@ A cell of basin b is at most the basin's sum.
 
 ```pia
 let lemma belt_le (xs : [u32]) (label : [usize]) (b : usize) (i : usize) (n : usize) : unit
-  requires i < n && n <= len xs && len label = len xs && n <= 4294967296 && label.[i] = b
+  requires i < n && n <= len xs && len label = len xs && n <= max u32 + 1 && label.[i] = b
   ensures xs.[i] <= bsum xs label b n
 = bat_le xs label b i; bmono xs label b (i + 1) n
 ```
@@ -466,7 +466,7 @@ basin's sum; it touches only that cell.
 
 ```pia
 let bset (xs : borrowed inout mutable [u32]) (label : [usize]) (b : usize) (i : usize) (v : u32) : unit @owns(xs, label, b)
-  requires i < len xs && len label = len xs && len xs <= 4294967296 && label.[i] = b
+  requires i < len xs && len label = len xs && len xs <= max u32 + 1 && label.[i] = b
   ensures xs.[i] = v
   ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
   ensures bsum xs label b (len xs) + old (xs.[i]) = bsum (old xs) label b (len xs) + v
@@ -487,9 +487,9 @@ The load of cell a moves into the inflow of cell b, both in basin bas.
 
 ```pia
 let bpush (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (label : [usize]) (bas : usize) (a : usize) (b : usize) : unit @owns(load, label, bas) @owns(inflow, label, bas)
-  requires a < len load && b < len inflow && len load <= 4294967296 && len inflow = len load && len label = len load
+  requires a < len load && b < len inflow && len load <= max u32 + 1 && len inflow = len load && len label = len load
   requires label.[a] = bas && label.[b] = bas
-  requires bsum load label bas (len load) + bsum inflow label bas (len inflow) <= 4294967295
+  requires bsum load label bas (len load) + bsum inflow label bas (len inflow) <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures bsum load label bas (len load) + bsum inflow label bas (len inflow) = bsum (old load) label bas (len load) + bsum (old inflow) label bas (len inflow)
@@ -505,8 +505,8 @@ The load of an outlet of basin bas leaves the map.
 
 ```pia
 let bdrain (load : borrowed inout mutable [u32]) (label : [usize]) (bas : usize) (a : usize) (gone : u64) : u64 @owns(load, label, bas)
-  requires a < len load && len load <= 4294967296 && len label = len load && label.[a] = bas
-  requires bsum load label bas (len load) + gone <= 4294967295
+  requires a < len load && len load <= max u32 + 1 && len label = len load && label.[a] = bas
+  requires bsum load label bas (len load) + gone <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures bsum load label bas (len load) + result = bsum (old load) label bas (len load) + gone
@@ -521,8 +521,8 @@ A cell of basin bas takes its inflow and erodes or deposits.
 ```pia
 let berode (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (label : [usize]) (bas : usize) (c : usize) (capacity : u32) : unit @owns(bed, label, bas) @owns(load, label, bas) @owns(inflow, label, bas)
   requires c < len bed && len load = len bed && len inflow = len bed && len label = len bed
-  requires len bed <= 4294967296 && label.[c] = bas
-  requires bsum bed label bas (len bed) + bsum inflow label bas (len inflow) <= 4294967295
+  requires len bed <= max u32 + 1 && label.[c] = bas
+  requires bsum bed label bas (len bed) + bsum inflow label bas (len inflow) <= max u32
   requires load.[c] = 0
   ensures inflow.[c] = 0
   ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
@@ -549,8 +549,8 @@ One transfer within basin bas.
 ```pia
 let btransfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (label : [usize]) (bas : usize) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64 @owns(bed, label, bas) @owns(load, label, bas) @owns(inflow, label, bas)
   requires a < len load && b < len inflow && len bed = len load && len inflow = len load && len label = len load
-  requires len load <= 4294967296 && label.[a] = bas && label.[b] = bas
-  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= 4294967295
+  requires len load <= max u32 + 1 && label.[a] = bas && label.[b] = bas
+  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= max u32
   ensures load.[a] = 0
   ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
   ensures bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + result =
@@ -564,9 +564,9 @@ One cell of a step within basin bas.
 ```pia
 let bvisit (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (label : [usize]) (bas : usize) (c : usize) (d : usize) (capacity : u32) (gone : u64) : u64 @owns(bed, label, bas) @owns(load, label, bas) @owns(inflow, label, bas) @owns(flux, label, bas)
   requires c < len bed && d < len bed && len load = len bed && len inflow = len bed && len flux = len bed && len label = len bed
-  requires len bed <= 4294967296 && label.[c] = bas && label.[d] = bas
+  requires len bed <= max u32 + 1 && label.[c] = bas && label.[d] = bas
   requires load.[c] = 0
-  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= 4294967295
+  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= max u32
   ensures load.[c] = 0
   ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
   ensures bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + result =
@@ -588,13 +588,13 @@ let btransport (fill : [u16]) (down : [usize]) (acc : [u32]) (border : [usize]) 
     @owns(bed, label, bas) @owns(load, label, bas) @owns(inflow, label, bas) @owns(flux, label, bas)
   requires len down = len fill && len acc = len fill && len border = len fill && len label = len fill
   requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
-  requires len fill <= 4294967296 && lo <= hi && hi <= len border
+  requires len fill <= max u32 + 1 && lo <= hi && hi <= len border
   requires forall (k in 0 .. len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   requires forall (k in 0 .. len label). label.[at down k] = label.[k]
   requires forall (q in lo .. hi). border.[q] < len fill && label.[border.[q]] = bas
   requires forall (k in 0 .. len load). label.[k] = bas ==> load.[k] = 0
-  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= 4294967295
+  requires bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + gone <= max u32
   ensures forall (k in 0 .. len load). label.[k] = bas ==> load.[k] = 0
   ensures bsum bed label bas (len bed) + bsum load label bas (len load) + bsum inflow label bas (len inflow) + result =
     bsum (old bed) label bas (len bed) + bsum (old load) label bas (len load) + bsum (old inflow) label bas (len inflow) + gone
@@ -625,7 +625,7 @@ The sum of the cells among xs.[0 .. n] whose label is below nb.
 
 ```pia
 let spec lsum (xs : [u32]) (label : [usize]) (nb : usize) (n : usize) : u64
-  requires n <= len xs && len label = len xs && n <= 4294967296
+  requires n <= len xs && len label = len xs && n <= max u32 + 1
   ensures result <= sum xs n
   decreases n
 = if n = 0 then 0 else lsum xs label nb (n - 1) + (if label.[n - 1] < nb then elt xs (n - 1) else 0)
@@ -636,7 +636,7 @@ those of basin nb - 1.
 
 ```pia
 let lemma lsum_split (xs : [u32]) (label : [usize]) (nb : usize) (n : usize) : unit
-  requires 0 < nb && n <= len xs && len label = len xs && n <= 4294967296
+  requires 0 < nb && n <= len xs && len label = len xs && n <= max u32 + 1
   ensures lsum xs label nb n = lsum xs label (nb - 1) n + bsum xs label (nb - 1) n
   decreases n
 = if n > 0 then lsum_split xs label nb (n - 1)
@@ -646,7 +646,7 @@ When every label is below nb, the cells below nb are all of them.
 
 ```pia
 let lemma lsum_all (xs : [u32]) (label : [usize]) (nb : usize) (n : usize) : unit
-  requires n <= len xs && len label = len xs && n <= 4294967296
+  requires n <= len xs && len label = len xs && n <= max u32 + 1
   requires forall (k in 0 .. n). at label k < nb
   ensures lsum xs label nb n = sum xs n
   decreases n
@@ -673,8 +673,8 @@ One basin more, without the quantifier.
 let lemma balance_step (bed : [u32]) (load : [u32]) (inflow : [u32]) (bed0 : [u32]) (load0 : [u32]) (inflow0 : [u32])
     (gone : [u32]) (label : [usize]) (nb : usize) : unit
   requires len load = len bed && len inflow = len bed && len bed0 = len bed && len load0 = len bed
-  requires len inflow0 = len bed && len label = len bed && len bed <= 4294967296
-  requires 0 < nb && nb <= len gone && len gone <= 4294967296
+  requires len inflow0 = len bed && len label = len bed && len bed <= max u32 + 1
+  requires 0 < nb && nb <= len gone && len gone <= max u32 + 1
   requires lsum bed label (nb - 1) (len bed) + lsum load label (nb - 1) (len bed) + lsum inflow label (nb - 1) (len bed) + sum gone (nb - 1) =
     lsum bed0 label (nb - 1) (len bed) + lsum load0 label (nb - 1) (len bed) + lsum inflow0 label (nb - 1) (len bed)
   requires bsum bed label (nb - 1) (len bed) + bsum load label (nb - 1) (len bed) + bsum inflow label (nb - 1) (len bed) + gone.[nb - 1] =
@@ -698,8 +698,8 @@ The per-basin laws, summed over the basins below nb.
 let lemma lsum_balance (bed : [u32]) (load : [u32]) (inflow : [u32]) (bed0 : [u32]) (load0 : [u32]) (inflow0 : [u32])
     (gone : [u32]) (label : [usize]) (nb : usize) : unit
   requires len load = len bed && len inflow = len bed && len bed0 = len bed && len load0 = len bed
-  requires len inflow0 = len bed && len label = len bed && len bed <= 4294967296
-  requires nb <= len gone && len gone <= 4294967296
+  requires len inflow0 = len bed && len label = len bed && len bed <= max u32 + 1
+  requires nb <= len gone && len gone <= max u32 + 1
   requires forall (b in 0 .. nb).
     bsum bed label b (len bed) + bsum load label b (len bed) + bsum inflow label b (len bed) + gone.[b] =
     bsum bed0 label b (len bed) + bsum load0 label b (len bed) + bsum inflow0 label b (len bed)
@@ -717,7 +717,7 @@ A basin's sum is at most the whole sum.
 
 ```pia
 let lemma bsum_le (xs : [u32]) (label : [usize]) (b : usize) (n : usize) : unit
-  requires n <= len xs && len label = len xs && n <= 4294967296
+  requires n <= len xs && len label = len xs && n <= max u32 + 1
   ensures bsum xs label b n <= sum xs n
   decreases n
 = if n > 0 then bsum_le xs label b (n - 1)
@@ -728,8 +728,8 @@ A basin's outflow is at most the whole map's total.
 ```pia
 let lemma outflow_fits (a : u64) (b : u64) (c : u64) (g : u64) (a0 : u64) (b0 : u64) (c0 : u64) (s1 : u64) (s2 : u64) (s3 : u64) : unit
   requires a + b + c + g = a0 + b0 + c0
-  requires a0 <= s1 && b0 <= s2 && c0 <= s3 && s1 + s2 + s3 <= 4294967295
-  ensures g <= 4294967295
+  requires a0 <= s1 && b0 <= s2 && c0 <= s3 && s1 + s2 + s3 <= max u32
+  ensures g <= max u32
 = ()
 ```
 
@@ -746,7 +746,7 @@ let transport_basins (fill : [u16]) (down : [usize]) (acc : [u32]) (border : [us
   requires len down = len fill && len acc = len fill && len border = len fill && len label = len fill
   requires len first = len fill && len last = len fill && len gowner = len fill && len gone_by = len fill
   requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
-  requires len fill <= 4294967295
+  requires len fill <= max u32
   requires forall (k in 0 .. len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   requires forall (k in 0 .. len label). label.[at down k] = label.[k] && at label k < len fill
@@ -754,7 +754,7 @@ let transport_basins (fill : [u16]) (down : [usize]) (acc : [u32]) (border : [us
   requires forall (q in 0 .. len border). border.[q] < len fill && label.[border.[q]] = at gowner q
   requires forall (b in 0 .. len fill) (q in 0 .. len border). first.[b] <= q && q < last.[b] ==> at gowner q = b
   requires forall (k in 0 .. len load). load.[k] = 0
-  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= 4294967295
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) <= max u32
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + sum gone_by (len gone_by) =
     sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
 = let n = len fill in
@@ -804,12 +804,12 @@ let sediment_basins (fill : [u16]) (down : [usize]) (acc : [u32]) (label : [usiz
   requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill && len gone_by = len fill
   requires len border = len fill && len keys = len fill && len place2 = len fill && len pos2 = len fill
   requires len cnt = len fill && len first = len fill && len next = len fill && len last = len fill && len gowner = len fill
-  requires len fill >= 1 && len fill < 4294967295
+  requires len fill >= 1 && len fill < max u32
   requires forall (k in 0 .. len down).
              down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
   requires forall (k in 0 .. len label). label.[at down k] = label.[k] && at label k < len fill
   requires forall (q in 0 .. len order). order.[q] < len fill
-  ensures result = 18446744073709551615 ||
+  ensures result = max u64 ||
     sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result = sum (old bed) (len bed)
 =
   for i in 0 .. len fill
@@ -823,7 +823,7 @@ let sediment_basins (fill : [u16]) (down : [usize]) (acc : [u32]) (label : [usiz
   zero load (len load);
   zero inflow (len inflow);
   let t = total bed in
-  if t > 4294967295 then 18446744073709551615
+  if t > max u32 then max u64
   else (
     basin_order label order border keys place2 pos2 cnt first next last gowner;
     transport_basins fill down acc border label first last gowner steps bed load inflow flux gone_by;
