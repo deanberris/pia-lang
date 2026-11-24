@@ -556,7 +556,10 @@ class Expander {
         continue;
       std::string name = item.text + "_" + c->text;
       auto rec = makeNode(NodeKind::LetItem, c->kids[0]->loc, name);
-      rec->flags = "payload";
+      // A recursive variant's payload is in its cycle, and `rec` too
+      // (ADR 0047).
+      rec->flags = item.flags.find("rec") != std::string::npos ? "rec payload"
+                                                               : "payload";
       rec->add(makeNode(NodeKind::Params, c->loc));
       rec->add(makeNode(NodeKind::None, c->loc));
       rec->add(makeNode(NodeKind::Contracts, c->loc));
