@@ -1,4 +1,5 @@
-// The C entry points of docs/streams.pia.md and docs/sediment.pia.md, compiled
+// The C entry points of docs/streams.pia.md, docs/sediment.pia.md and
+// docs/basins.pia.md, compiled
 // by piac --emit=obj (docs/codegen.md, "C ABI"): a slice is a pointer and a
 // length, and `usize` is uint64_t.
 
@@ -64,6 +65,18 @@ uint64_t render_load(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                      const uint32_t *flux, uint64_t nflux, uint32_t threshold,
                      uint8_t *rgb, uint64_t nrgb);
 
+// docs/basins.pia.md.
+uint64_t sediment_basins(
+    const uint16_t *fill, uint64_t nfill, const uint64_t *down, uint64_t ndown,
+    const uint32_t *acc, uint64_t nacc, const uint64_t *label, uint64_t nlabel,
+    const uint64_t *order, uint64_t norder, uint32_t steps, uint32_t *bed,
+    uint64_t nbed, uint32_t *load, uint64_t nload, uint32_t *inflow,
+    uint64_t ninflow, uint32_t *flux, uint64_t nflux, uint32_t *gone_by,
+    uint64_t ngone_by, uint64_t *border, uint64_t nborder, uint64_t *keys,
+    uint64_t nkeys, uint64_t *place2, uint64_t nplace2, uint64_t *pos2,
+    uint64_t npos2, uint32_t *cnt, uint64_t ncnt, uint64_t *first,
+    uint64_t nfirst, uint64_t *next, uint64_t nnext, uint64_t *last,
+    uint64_t nlast, uint64_t *gowner, uint64_t ngowner);
 // examples/streams/gif.pia.
 uint64_t gif_bound(uint16_t w, uint16_t h, uint16_t nf);
 uint64_t gif_animation(uint16_t w, uint16_t h, const uint8_t *pal,

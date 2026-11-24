@@ -77,5 +77,5 @@ With frames, a basin's conservation law `rsum bed lo hi + rsum load lo hi + ... 
 ## Questions for Dean
 
 1. The ownership rule (section 1): one predicate per written buffer, the identity by default and `@owns(buf, owner)` for an owner array. Is `@owns` the spelling you want, or would you rather write it in the header, as in `spread b in 0 .. nb owning label do`?
-2. The runtime (section 2): MLIR's async runtime as a trusted v0, replaced by `Pia.Task` later, or a small pthreads runtime of our own now?
-3. Frames (section 3): `reads` clauses on spec functions, with a generated frame lemma, or (the weaker choice) per-iteration totals computed at run time, so that the global conservation law becomes a run-time check rather than a proof?
+2. ~~The runtime (section 2): MLIR's async runtime as a trusted v0, replaced by `Pia.Task` later, or a small pthreads runtime of our own now?~~ Answered 2026-11-24: MLIR's async runtime, trusted.
+3. ~~Frames (section 3): `reads` clauses on spec functions, with a generated frame lemma, or (the weaker choice) per-iteration totals computed at run time, so that the global conservation law becomes a run-time check rather than a proof?~~ Answered 2026-11-24: `reads` frames on spec functions.

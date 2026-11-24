@@ -26,6 +26,9 @@ for e in 0 1 2 3 4 5 6 7; do
   [ "$(head -c 4 "$f" | tail -c 3)" = PNG ] || { echo "$f is not a PNG" >&2; exit 1; }
 done
 grep -q '^evolution: [0-9]* units left, [0-9]* out, 9830400 in all; 9830400 at the start$' out.txt
+# Sediment by basin, in parallel, agrees with the sequential run cell for
+# cell (main.c also exits 1 if it does not).
+grep -q '^basins: 16 steps, .* 0 cells differ$' out.txt
 # Every epoch is a frame of the animated GIF.
 [ "$(head -c 6 streams-output-evolution.gif)" = GIF89a ]
 grep -q '^animation: 24 frames, [0-9]* bytes, .* written to streams-output-evolution.gif$' out.txt

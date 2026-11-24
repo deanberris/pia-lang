@@ -24,6 +24,22 @@ exactly, in whole units, with no tolerance. It is the postcondition of
 every function below, from a single write to `n` time steps over the whole
 map, and it bounds every cell, so nothing overflows.
 
+Here is the result: three "years" of rain over the demo's 384×256 test
+terrain. Each year has uniform rain, then a storm band moving down the map,
+then a wet season and a dry one, and each frame is one epoch of 4 steps
+(section 6). Streams are coloured blue to orange by the sediment they carry,
+lakes are pale blue, and every other cell takes its watershed's tint, shaded
+by height. Before each epoch, the ground is the rock plus the deposited
+sediment, and the flow is recomputed over it. The whole animation conserves
+mass exactly: 7,276,468 units stay on the map and 2,553,932 leave through
+outlets, the 9,830,400 it started with.
+
+![Sediment moving over the test terrain for 24 epochs](images/sediment-evolution.gif)
+
+The proved GIF encoder ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md))
+writes the animation. To make it yourself, run `bazel run //examples/streams`
+with no arguments, which writes `streams-output-evolution.gif`.
+
 This page is the program, a literate Pia file like
 [`streams.pia.md`](streams.pia.md) and its own module, so the two prove in
 parallel. The C program in `examples/streams` calls `sediment` with the
@@ -1046,6 +1062,7 @@ let drainage (fill : [u16]) (down : [usize]) (acc : out mutable [u32]) (basin : 
              down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
   ensures forall (k in 0 .. len acc). 1 <= acc.[k] && acc.[k] <= len fill
   ensures forall (k in 0 .. len basin). basin.[k] < len fill && down.[basin.[k]] = basin.[k]
+  ensures forall (k in 0 .. len basin). basin.[at down k] = basin.[k]
 =
   height_order fill order pos cnt first next last owner;
   for i in 0 .. len rain

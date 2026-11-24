@@ -164,7 +164,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 
 ### Elsewhere
 
-- `examples/edges` (`edges.pia`, `edges_buggy.pia` and the C harness) is the edge detection demo, and `docs/demo.md` describes it. `examples/streams` is the C harness for `docs/streams.pia.md`, the stream delineation demo, and `docs/sediment.pia.md`, its sediment transport stage; `examples/streams/gif.pia` is the C entry point for the animated GIF of the evolving landscape.
+- `examples/edges` (`edges.pia`, `edges_buggy.pia` and the C harness) is the edge detection demo, and `docs/demo.md` describes it. `examples/streams` is the C harness for `docs/streams.pia.md`, the stream delineation demo, `docs/sediment.pia.md`, its sediment transport stage, and `docs/basins.pia.md`, sediment by basin in parallel; `examples/streams/gif.pia` is the C entry point for the animated GIF of the evolving landscape.
 - `grammar/pia.lark`, `grammar/pia_lexer.py` and `grammar/pia_grammar.py` are the reference grammar in Lark, checked against the C++ parser.
 - `editors/vscode` is the VS Code extension: TextMate grammars and an LSP client.
 - `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C++ correct?).
@@ -192,13 +192,13 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 
 ## 6. Docs and ADRs
 
-User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md` and `cases/`. Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
+User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `comparison.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md`, `basins.pia.md` and `cases/`; `docs/images/` holds images the pages show (`sediment-evolution.gif`, the demo's animation). Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
 
 ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topic:
 
 - **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0059 (digit separators, `min t`/`max t`), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
 - **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings), 0057 (`Pia.Sys.Posix` per target behind one interface).
-- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (ghost buffers).
+- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, cost bounds).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).

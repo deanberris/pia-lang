@@ -157,7 +157,7 @@ end
 | `a \| b` parses as match arms | `\|` is bitwise or only inside brackets | `x <- (a \| b)` |
 | a parse error after `then`, or after the last `ensures` | `if c then let ...` and a body starting `=` right after `ensures` can misparse | wrap the inner `let`, or the body, in parentheses |
 | a contract mentions `limit` or `f x` and the solver knows nothing about it | calls to ordinary functions, and `let` constants, are unknown values inside contracts | a literal, `max u32` for a type's bound, or a `let spec` function |
-| a fact is lost after a call | callers see only the callee's `ensures` | state it in the callee's `ensures`, or better, in its return type |
+| a fact is lost after a call | callers see only the callee's `ensures` (a loop-free function of scalars unfolds, but anything with a loop, a buffer or recursion does not) | state it in the callee's `ensures`, or better, in its return type |
 | slow or nonlinear goals | `w * h` or `/ n` in a `requires`, a `forall` in a `requires`, or `@fuel` above 4 | range-typed factors, ranged element types, a lemma, or a helper with its own contract |
 | `requires x < 100` still costs a solver query at each call | a precondition is always sent to Z3 | `int{0..99}` instead |
 | `=` on two records is rejected | records have no built-in equality | `@derive(eq)` on the type |
