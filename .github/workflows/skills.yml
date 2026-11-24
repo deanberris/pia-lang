@@ -1,0 +1,30 @@
+# Checks that the agent skill pack (skills/, .claude-plugin/) is complete:
+# every skill is wired into the tests, tables and plugin, and every keyword
+# the lexer knows and every flag piac accepts is taught by some skill
+# (tools/skills/check.py). The examples inside the skills are proved by
+# //tests/docs:skills_test in the Bazel suite. Plain Python: seconds.
+name: skills
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: skills-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/skills/check.py

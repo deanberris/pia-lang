@@ -66,7 +66,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
-| an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
+| an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
 
 **A working example of almost every feature** is in `tests/verify/<feature>.pia`, for example `handlers.pia`, `defer.pia`, `lambda_captures.pia`, `concepts.pia`, `models.pia` and `vec_boxes.pia`. Run `ls tests/verify` and copy from the closest one.
 
@@ -174,7 +174,9 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `examples/edges` (`edges.pia`, `edges_buggy.pia` and the C harness) is the edge detection demo, and `docs/demo.md` describes it. `examples/streams` is the C harness for `docs/streams.pia.md`, the stream delineation demo, `docs/sediment.pia.md`, its sediment transport stage, and `docs/basins.pia.md`, sediment by basin in parallel; `examples/streams/gif.pia` is the C entry point for the animated GIF of the evolving landscape. `examples/streams/srtm.c` runs the pipeline on a real SRTM tile, which `examples/streams/fetch_srtm.sh` downloads; `examples/streams/demo_io.c` is the image and file I/O both programs share, and `examples/streams/testdata` holds a 256 × 256 crop of a tile for the tests, with its source and attribution.
 - `grammar/pia.lark`, `grammar/pia_lexer.py` and `grammar/pia_grammar.py` are the reference grammar in Lark, checked against the C++ parser.
 - `editors/vscode` is the VS Code extension: TextMate grammars and an LSP client.
-- `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C++ correct?).
+- `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-porting` (a feature map from C, C++, Rust, OCaml, Zig and Go), `skills/pia-idioms` (acting on lints), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/piac-build` (compiling, linking, trust reports, certificates), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C, C++ or Rust correct?).
+- `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` make the repository a Claude Code plugin marketplace: the `pia` plugin installs the skills, `pia-lsp` as a language server and `pia mcp` as an MCP server (docs/agents.md).
+- `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
 
@@ -210,7 +212,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).
 - **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories).
-- **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime).
+- **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0068 (GPU compute: SPIR-V, SPIRV-Cross, Metal shim, `@place(gpu)`), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point), 0067 (0.1.0: a proved small LLM on the M3).
 
 ## 7. Keeping this map current
