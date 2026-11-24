@@ -1,4 +1,4 @@
-# 64. Pia code extends the compiler's lowering: `@lower` gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
+# 65. Pia code extends the compiler's lowering: `@lower` gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted
 
 Date: 2026-11-24
 
