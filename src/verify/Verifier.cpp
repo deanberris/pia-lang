@@ -465,11 +465,24 @@ std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
             return true;
         return false;
       };
+      // A write comes first when it dominates the value's construction,
+      // or when it is nested in an op that comes before the construction
+      // in the construction's block, as a write in a loop that fills a
+      // buffer before the value is built from it.
+      auto before = [&](Operation *m) {
+        if (dom.properlyDominates(op, m)) return true;
+        // The innermost block that holds both: there, the op holding the
+        // write must come before the op holding the construction.
+        for (Operation *mm = m; mm && mm != fn.getOperation();
+             mm = mm->getParentOp())
+          if (Operation *a = mm->getBlock()->findAncestorOpInBlock(*op))
+            return a != mm && a->isBeforeInBlock(mm);
+        return false;
+      };
       for (RecMakeOp m : makes)
         if (llvm::any_of(m.getPayload(),
                          [&](Value p) { return rootBuffer(p) == root; }) &&
-            (!dom.properlyDominates(op, m.getOperation()) ||
-             inSameLoop(m.getOperation()))) {
+            (!before(m.getOperation()) || inSameLoop(m.getOperation()))) {
           why = "it writes a buffer after building a recursive value "
                 "with it, which the verifier sees as the buffer's contents "
                 "when it was built";
@@ -2734,7 +2747,15 @@ class Encoder {
     Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
     Value st = term(forOp.getStep());
     llvm::SmallVector<Value> inits;
-    for (Value v : forOp.getInitArgs()) inits.push_back(term(v));
+    // A buffer a loop carries, such as the memory of an allocator it
+    // passes on from call to call, has no term: it is tracked by its
+    // contents and length, which `at` reads from the value carried.
+    auto isBuffer = [](Value v) { return mlir::isa<ArrayType, SliceType>(v.getType()); };
+    for (Value v : forOp.getInitArgs()) {
+      inits.push_back(term(v));
+      if (isBuffer(v) && arrays_.count(v) && lengths_.count(v))
+        inits.back() = bv(0);  // a placeholder: buffers are not terms
+    }
     if (!lb || !ub || !st || llvm::is_contained(inits, Value()))
       return skipLoop(forOp);
     mlir::Block &body = *forOp.getBody();
@@ -2751,14 +2772,24 @@ class Encoder {
            notOf(eq(st, bv(0))), nonzero);
       if (done_) return false;
     }
-    // The values the body's arguments take at iteration `i`.
-    auto at = [&](Value i, llvm::ArrayRef<Value> carried) {
+    // The values the body's arguments take at iteration `i`: `carried`
+    // are their terms, and `from` the values they come from, whose
+    // buffers' contents and lengths a carried buffer has.
+    auto at = [&](Value i, llvm::ArrayRef<Value> carried,
+                  mlir::ValueRange from) {
       Demand d;
       d.values[forOp.getInductionVar()] = i;
-      for (auto [arg, v] : llvm::zip(forOp.getRegionIterArgs(), carried))
-        if (v) d.values[arg] = v;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      for (auto [arg, v, src] :
+           llvm::zip(forOp.getRegionIterArgs(), carried, from)) {
+        if (isBuffer(arg)) {
+          if (Value a = arrays_.lookup(src)) d.arrays[arg] = a;
+          if (Value l = lengths_.lookup(src)) d.lengths[arg] = l;
+          continue;
+        }
+        if (v) d.values[arg] = v;
+      }
       // `old` inside reads the memory on entry, as it does outside.
       d.oldArrays = entryArrays_;
       d.envOutside = forOp;
@@ -2766,7 +2797,7 @@ class Encoder {
     };
 
     for (auto inv : invariants) {
-      Demand d = at(lb, inits);
+      Demand d = at(lb, inits, forOp.getInitArgs());
       goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
            demandPredicate(inv.getPredicate(), d), false);
       if (done_) return false;
@@ -2790,13 +2821,28 @@ class Encoder {
     env_[forOp.getInductionVar()] = i;
     for (Value arg : forOp.getRegionIterArgs())
       if (auto v = havoc(arg.getType())) env_[arg] = *v;
+    // A carried buffer is a new one in an arbitrary iteration, whose
+    // contents and length the invariants say what they know of.
+    auto freshBuffer = [&](Value b) {
+      Type sort = sortOf(b.getType());
+      if (!sort) return;
+      arrays_[b] = declare(sort, "", false);
+      Value len = declare(bvType(), "", false);
+      assertTerm(inRange(len, indexRange()));
+      lengths_[b] = len;
+      if (holdsSlices(b.getType()))
+        innerLengths_[b] =
+            declare(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
+    };
+    for (Value arg : forOp.getRegionIterArgs())
+      if (isBuffer(arg)) freshBuffer(arg);
     havocBuffers(written);
     llvm::SmallVector<Value> yields;
     bool ok = walkBlock(body, &yields);
     if (ok) {
       Value next = bvBin("add", i, st);
       for (auto inv : invariants) {
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::invariant, inv,
              "the loop invariant holds after each iteration",
              demandPredicate(inv.getPredicate(), d), false);
@@ -2804,7 +2850,7 @@ class Encoder {
       }
       for (auto m : measures) {
         if (done_) break;
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::decreases, m, "the measure decreases",
              decreasesTerm(term(m.getMeasure()), demand(m.getMeasure(), d)),
              false);
@@ -2819,6 +2865,7 @@ class Encoder {
     havocBuffers(written);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
+      if (isBuffer(r)) freshBuffer(r);
       auto v = havoc(r.getType());
       if (v) env_[r] = *v;
       results.push_back(v ? *v : Value());
@@ -2831,7 +2878,7 @@ class Encoder {
                               eq(bvBin("srem", bvBin("sub", exit, lb), st),
                                  bv(0)))));
     for (auto inv : invariants) {
-      Demand d = at(exit, results);
+      Demand d = at(exit, results, forOp.getResults());
       if (Value p = demand(inv.getPredicate(), d)) assume(p);
     }
     return true;
