@@ -9,6 +9,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 let shape = type
   | Circle of { r : u16 @json(name = "radius") }

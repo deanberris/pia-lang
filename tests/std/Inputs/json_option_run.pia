@@ -8,6 +8,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 let cfg = type { port : u16; debug : O.option bool; limit : O.option u8 } @derive(json)
 

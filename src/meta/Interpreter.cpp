@@ -117,7 +117,7 @@ const std::map<std::string, size_t> &metaBuiltins() {
       // Pia.Live, in the REPL only (ADR 0031).
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
-      {"size_of", 1}, {"type_kind", 1}, {"element", 1},
+      {"size_of", 1}, {"type_kind", 1}, {"element", 1}, {"type_named", 1},
       {"field_types", 1}, {"type_args", 1},
       // The core builtins that operators expand to, so a `where`
       // predicate, which is expanded code, can run (ADR 0035).
@@ -1062,6 +1062,20 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
   };
   if (auto op = ops.find(name); op != ops.end())
     return binop(op->second, args[0], args[1]);
+  // The type a name names, as a type-level metaprogram builds a derived
+  // type's name: `type_named (concat (name t) "_json_error")` (ADR 0045).
+  if (name == "type_named") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'type_named' needs a type's name as "
+                                         "a string, found ") +
+                                 kindName(args[0]->kind)};
+    if (!host_.named)
+      throw MetaError{site_, "'type_named' is only available in types and "
+                             "constraints"};
+    if (std::optional<std::string> t = host_.named(args[0]->s))
+      return typeValue(*t);
+    throw MetaError{site_, "there is no type named '" + args[0]->s + "'"};
+  }
   if (name == "size_of" || name == "type_kind" || name == "element" ||
       name == "field_types" || name == "type_args") {
     if (args[0]->kind != K::Type)

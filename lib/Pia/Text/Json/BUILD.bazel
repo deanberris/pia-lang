@@ -12,6 +12,7 @@ package(default_visibility = ["//visibility:public"])
 
 # Its tests read the source, to prove it and to write its interfaces.
 exports_files([
+    "Derive.pia",
     "Lex.pia",
     "Read.pia",
     "Spec.pia",
@@ -57,4 +58,12 @@ pia_library(
         ":lex",
         ":spec",
     ],
+)
+
+# @derive(json), exported with its definitions (ADR 0039): the code it
+# writes calls Read and Write, which its importers link.
+pia_library(
+    name = "derive",
+    src = "Derive.pia",
+    target_compatible_with = PIA_TARGETS,
 )

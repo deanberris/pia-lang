@@ -6899,7 +6899,9 @@ class Gen {
       // expansion has run and removed; the expander checks it is defined.
       if (r.flags == "meta") {
         const Node &t = *r.kids[0]->kids[1];
-        if (t.kind == NodeKind::TypeName && t.text != "concept")
+        // Only a concept is checked here; `: type` lists a type-level
+        // metaprogram, which the expander checks like any other.
+        if (t.kind != NodeKind::TypeName || t.text != "concept")
           continue;
         if (!concepts_.count(r.text))
           diags_.error(r.loc, unmet + "no concept '" + r.text + "'");
