@@ -125,7 +125,7 @@ let codes (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usiz
     invariant st = 1 ==> p0 < p
     decreases nb - p + (if st = 0 then 1 else 0)
   do
-    match H.decode s p ltab nl with
+    match H.decode s p ltab nl ltab false with
     | Err e -> (at' <- p; if e >= nb then st <- 2 else st <- 3)
     | Ok d -> (
         let here = p in
@@ -143,7 +143,7 @@ let codes (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usiz
           else (
             let ln : usize = len_base_of c + field s p e in
             p <- p + e;
-            match H.decode s p dtab nd with
+            match H.decode s p dtab nd dtab false with
             | Err e2 -> (at' <- p; if e2 >= nb then st <- 2 else st <- 3)
             | Ok dd -> (
                 p <- dd.pos;
@@ -233,7 +233,7 @@ let dynamic (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (ltab : b
             invariant k <= total && p0 < p && p <= nb
             decreases nb - p + (if st = 0 then 1 else 0)
           do
-            match H.decode s p ltab 19 with
+            match H.decode s p ltab 19 lb false with
             | Err e -> (at' <- p; if e >= nb then st <- 1 else st <- 2)
             | Ok d -> (
                 p <- d.pos;
