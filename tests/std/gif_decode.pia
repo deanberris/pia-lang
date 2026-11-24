@@ -1,0 +1,54 @@
+(* Pia.Image.Gif.Spec's block grammar and Pia.Image.Gif.Decode (ADR 0054,
+   step 2): every goal is proved, with nothing accepted unproved. The
+   walkers are proved equal to the grammar, info is proved to accept
+   exactly what the grammar accepts, the interlaced row order is proved a
+   permutation, and decode_frame's reads and writes are in bounds and its
+   loops end.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: FileCheck --check-prefix=BLOCKS %s < %t/Pia.Image.Gif.Spec.Blocks.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Decode.pia | FileCheck %s
+// RUN: FileCheck --check-prefix=DECODE %s < %t/Pia.Image.Gif.Decode.Decode.piai
+*)
+
+(* The container, the interlace permutation among its lemmas.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 333 proved, 0 failed, 0 skipped
+*)
+
+(*
+// BLOCKS:      {{^}}module Pia.Image.Gif.Spec{{$}}
+// BLOCKS-NEXT: {{^}}interface Blocks = sig{{$}}
+// BLOCKS-NEXT: {{^}}  let spec u16le : (s : [u8]) -> (i : usize) -> u16{{$}}
+// BLOCKS-NEXT: {{^}}  let spec header_ok : (s : [u8]) -> bool{{$}}
+// BLOCKS-NEXT: {{^}}  let spec ctab_len : (packed : u8) -> int{0..768}{{$}}
+// BLOCKS-NEXT: {{^}}  let spec first_block : (s : [u8]) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec chain_end : (s : [u8]) -> (p : usize) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec block_end : (s : [u8]) -> (p : usize) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec blocks_ok : (s : [u8]) -> (p : usize) -> bool{{$}}
+// BLOCKS-NEXT: {{^}}  let spec frames_from : (s : [u8]) -> (p : usize) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec pass_rows : (h : int{1..65535}) -> (k : int{0..3}) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec row_of : (h : int{1..65535}) -> (r : usize) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}  let spec rank_of : (h : int{1..65535}) -> (y : usize) -> usize{{$}}
+// BLOCKS-NEXT: {{^}}end{{$}}
+*)
+
+(*
+// DECODE:      {{^}}module Pia.Image.Gif.Decode{{$}}
+// DECODE-NEXT: {{^}}interface Decode = sig{{$}}
+// DECODE-NEXT: {{^}}  let gif_error = type | Ends of usize | NotGif of usize | BadBlock of usize | BadData of usize | TooLarge of usize | NoFrame of usize{{$}}
+// DECODE-NEXT: {{^}}  let gif_info = type { w : int{1..65535}; h : int{1..65535}; frames : usize; loops : int{0..65536}; start : usize }{{$}}
+// DECODE-NEXT: {{^}}  let frame = type { x0 : u16; y0 : u16; fw : u16; fh : u16; delay : u16; disposal : int{0..7}; transparent : int{0..256} }{{$}}
+// DECODE-NEXT: {{^}}  let lemma row_rank : (h : int{1..65535}) -> (r : usize) -> unit requires r < h ensures G.row_of h r < h && G.rank_of h (G.row_of h r) = r{{$}}
+// DECODE-NEXT: {{^}}  let lemma rank_row : (h : int{1..65535}) -> (y : usize) -> unit requires y < h ensures G.rank_of h y < h && G.row_of h (G.rank_of h y) = y{{$}}
+// DECODE-NEXT: {{^}}  let chain_skip : (s : [u8]) -> (p : usize) -> usize ensures result = G.chain_end s p{{$}}
+// DECODE-NEXT: {{^}}  let block_skip : (s : [u8]) -> (p : usize) -> usize requires p < len s ensures result = G.block_end s p{{$}}
+// DECODE-NEXT: {{^}}  let info : (s : [u8]) -> result gif_info gif_error ensures (match result with | Ok i -> (if G.header_ok s then i.start = G.first_block s && G.blocks_ok s i.start && i.frames = G.frames_from s i.start && i.w = G.u16le s 6 && i.h = G.u16le s 8 else false) | Err _ -> (if G.header_ok s then G.u16le s 6 = 0 || G.u16le s 8 = 0 || G.blocks_ok s (G.first_block s) = false else true)){{$}}
+// DECODE-NEXT: {{^}}  let decode_frame : (s : [u8]) -> (i : gif_info) -> (k : usize) -> (canvas : borrowed inout mutable [u8]) -> (save : borrowed inout mutable [u8]) -> (idx : borrowed inout mutable [u8]) -> (data : borrowed inout mutable [u8]) -> (t : borrowed inout mutable [u8]) -> (pal : borrowed inout mutable [u8]) -> result frame gif_error requires len canvas = R.size i.w i.h 4 && len save = len canvas && len idx = R.size i.w i.h 1 requires len data >= len s && len t = 12288 && len pal = 768{{$}}
+// DECODE-NEXT: {{^}}end{{$}}
+*)

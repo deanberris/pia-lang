@@ -1,0 +1,52 @@
+(* Importers of Pia.Image.Gif.Decode see only its interface and the
+   grammar's definitions, and that is enough to know what info accepted,
+   that input too short for a header is refused, that a screen of zero
+   width is refused, and that the interlaced row order is a permutation.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+
+(* What info accepts is a GIF by the grammar, up to its trailer. *)
+let accepted (s : [u8]) : unit
+= match D.info s with
+  | Ok i -> assert G.header_ok s && G.blocks_ok s i.start && i.frames = G.frames_from s i.start
+  | Err _ -> ()
+
+(* Fewer bytes than a header and screen descriptor. *)
+let short (s : [u8]) : unit
+  requires len s < 13
+= match D.info s with
+  | Ok i -> assert false
+  | Err _ -> ()
+
+(* GIF89a with a screen 0 pixels wide. *)
+let zero_width (s : [u8]) : unit
+  requires len s >= 13 && s.[0] = 0x47 && s.[1] = 0x49 && s.[2] = 0x46 && s.[3] = 0x38
+  requires s.[4] = 0x39 && s.[5] = 0x61 && s.[6] = 0 && s.[7] = 0
+= match D.info s with
+  | Ok i -> assert false
+  | Err _ -> ()
+
+(* Interlaced data fills each row of a frame exactly once. *)
+let each_row_once (h : int{1..65535}) (y : usize) (r : usize) : unit
+  requires y < h && r < h
+  ensures G.row_of h (G.rank_of h y) = y
+  ensures G.row_of h r = y ==> r = G.rank_of h y
+= D.rank_row h y;
+  D.row_rank h r
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 11 proved, 0 failed, 0 skipped
+*)

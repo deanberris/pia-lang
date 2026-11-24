@@ -16,7 +16,7 @@
 (* The spec's own goals: its reads are in bounds and the prefix chains
    it follows end.
 // SPEC-NOT: failed
-// SPEC: 29 proved, 0 failed, 0 skipped
+// SPEC: 128 proved, 0 failed, 0 skipped
 *)
 
 (* The decoder.
