@@ -26,7 +26,7 @@ let claim (owner : borrowed atomic u32) (me : u32) : bool
 let mix (a : u8) (b : u8) : u8 = @wrap (a + b)
 
 (* A refined cell: at most 64 free slots. A value read is in range. *)
-let slots = type int{0..64}
+let slots = int{0..64}
 
 let free (c : borrowed atomic slots) : bool
   ensures result
