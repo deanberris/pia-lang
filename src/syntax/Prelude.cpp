@@ -1011,10 +1011,11 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
     if isw a && isw b && sloc a b && ix a < ix b then
       (if init a then [ mo a b ] else [ `( $!mo.[$(ix a)] <> $!mo.[$(ix b)] ) ])
     else []) in
-  (* Release sequences, lower bounds: rs w x when x continues w's. *)
+  (* Release sequences, lower bounds: rs w x when x continues w's, by a
+     chain of read-modify-writes, as in C++20 (P0982R1). *)
   let c_rs = concat
     (each (let (w) (x) =>
-       if isw w && isw x && sloc w x && atomic x && (same w x || po w x) then [ `( $!rs.[$(p w x)] ) ] else []))
+       if isw w && atomic w && same w x then [ `( $!rs.[$(p w x)] ) ] else []))
     (each (let (w) (x) =>
        if isw w = false || isw x = false || sloc w x = false then [] else
        each (let (r) (y) => if rmw r y && cand x r && sloc w r then [ `( $!rs.[$(p w x)] && $(rf x r) ==> $!rs.[$(p w y)] ) ] else []))) in

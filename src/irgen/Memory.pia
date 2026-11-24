@@ -53,11 +53,11 @@ let theory Memory = sig
   let axiom eco_trans (a : event) (b : event) (c : event) @trigger(eco a b, eco b c)
     requires eco a b && eco b c ensures eco a c
 
-  (* Release sequences and synchronises-with. *)
+  (* Release sequences and synchronises-with. A release sequence is a
+     release store and the chain of read-modify-writes that read it, as in
+     C++20 (P0982R1), not later stores of the same thread as well: Armv8
+     does not order those (ADR 0052, notes from step 3). *)
   let axiom rs_self (w : event) requires is_write w && is_atomic w ensures rs w w
-  let axiom rs_po (w : event) (x : event)
-    requires is_write w && is_write x && same_loc w x && is_atomic x && po w x
-    ensures rs w x
   let axiom rs_rmw (w : event) (x : event) (r : event) (y : event)
       @trigger(rs w x, rf x r, rmw r y)
     requires rs w x && rf x r && rmw r y ensures rs w y

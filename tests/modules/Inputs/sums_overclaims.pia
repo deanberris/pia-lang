@@ -1,0 +1,13 @@
+(* The interface claims more than the lemma proves. *)
+module Calc.Over : Facts
+
+interface Facts = sig
+  let lemma pos : (a : int) -> unit
+    requires a > 0
+    ensures a > 1
+end
+
+let lemma pos (a : int) : unit
+  requires a > 0
+  ensures a >= 1
+= ()

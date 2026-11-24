@@ -1,0 +1,45 @@
+(* Importers of Pia.Core.Hash know from its interface what each hash is:
+   equal values hash alike, the empty slice's FNV-1a is the offset basis,
+   and a signed value hashes by its two's complement encoding, so -1 of
+   every width hashes alike. hash_all at u8 and i32 checks that their
+   instances meet the Hash concept's laws (ADR 0034).
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Hash.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Hash.Hash as H
+
+let agree (a : u32) (b : u32) : unit
+  requires a = b
+  ensures H.hash a = H.hash b
+= ()
+
+let empty (none : [u8]) : unit
+  requires len none = 0
+  ensures H.bytes none = 14695981039346656037
+= ()
+
+let minus_one (a : i8) (b : i64) : unit
+  requires a = -1 && b = -1
+  ensures H.hash a = H.hash b
+  ensures H.encode b = 18446744073709551615
+= ()
+
+let small (a : u8) (b : u64) : unit
+  requires a = b
+  ensures H.hash a = H.hash b
+= ()
+
+let all_bytes (xs : [u8]) : u64 = H.hash_all<u8> xs
+
+let all_ints (xs : [i32]) : unit
+  requires len xs = 1
+  ensures H.hash_all<i32> xs = H.combine (H.hash_fold<i32> xs 0) (H.hash xs.[0])
+= ()
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

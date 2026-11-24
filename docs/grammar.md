@@ -62,7 +62,7 @@ interface sig module struct end import operator true false
 borrowed moved out inout fixed mutable mod handle defer as
 ```
 
-`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
+`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
 `theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
 
@@ -77,7 +77,7 @@ suffix = ( "u" | "i" | "f" ) digits | "usize" | "isize" ;     (* 42u8, 1i64, 0.5
 STRING = '"' { char | escape } '"' ;
 ```
 
-Digits may contain `_` separators (`1_000_000`). A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
+Digits may be grouped with `'` or `_` (`100'000`, `0xFFFF'FFFF`, `1_000_000`), which mean nothing to the value. A `'` must sit between two digits of the literal's base, as in C++14, so `100'` and `1'_0` are errors. `,` cannot group digits, because it already separates tuple elements and arguments: `f (1,000)` would be ambiguous. A `'` after a name is a prime, as in `x'`, which is part of the name. A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
 
 ### Operators
 
@@ -176,7 +176,8 @@ param     = IDENT | SPLICE_IDENT
           | "(" ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
-contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
+contract  = "requires" stmt | "ensures" stmt | "decreases" stmt
+          | "reads" stmt ;   (* a spec function's footprint, ADR 0060 *)
 
 lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 captures  = "[" capture { "," capture } "]" ;

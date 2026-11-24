@@ -8,7 +8,7 @@
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 428 proved, 0 failed, 0 skipped
+// CHECK: 421 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -24,19 +24,19 @@
 // IFACE-NEXT: {{^}}  let spec signed_parse : (s : [u8]) -> (base : int{2..36}) -> (pos : u64) -> (neg : u64) -> (value : i64) -> (count : usize) -> (ec : errc) -> (got : i64) -> bool{{$}}
 // IFACE-NEXT: {{^}}  let digit_value : (b : u8) -> (base : int{2..36}) -> u32 ensures result = digit_of b base{{$}}
 // IFACE-NEXT: {{^}}  let digits = type { mag : u64; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let parse_digits : (s : [u8]) -> (start : usize) -> (base : int{2..36}) -> (max : u64) -> digits requires start <= len s && max <= 4294967295 ensures result.used = run s start base ensures result.used = 0 ==> is_invalid (result.ec) ensures result.used > 0 && num s start (start + result.used) base (max + 1) <= max ==> is_ok (result.ec) && result.mag = num s start (start + result.used) base (max + 1) ensures result.used > 0 && num s start (start + result.used) base (max + 1) > max ==> is_out_of_range (result.ec) ensures is_ok (result.ec) ==> result.mag <= max{{$}}
+// IFACE-NEXT: {{^}}  let parse_digits : (s : [u8]) -> (start : usize) -> (base : int{2..36}) -> (limit : u64) -> digits requires start <= len s && limit <= max u32 ensures result.used = run s start base ensures result.used = 0 ==> is_invalid (result.ec) ensures result.used > 0 && num s start (start + result.used) base (limit + 1) <= limit ==> is_ok (result.ec) && result.mag = num s start (start + result.used) base (limit + 1) ensures result.used > 0 && num s start (start + result.used) base (limit + 1) > limit ==> is_out_of_range (result.ec) ensures is_ok (result.ec) ==> result.mag <= limit{{$}}
 // IFACE-NEXT: {{^}}  let parsed_u8 = type { value : u8; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u8) -> parsed_u8 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (255 + 1) <= 255 ==> is_ok (result.ec) && result.value = num s 0 result.used base (255 + 1) ensures result.used > 0 && num s 0 result.used base (255 + 1) > 255 ==> is_out_of_range (result.ec) && result.value = value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u8) -> parsed_u8 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (max u8 + 1) <= max u8 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u8 + 1) ensures result.used > 0 && num s 0 result.used base (max u8 + 1) > max u8 ==> is_out_of_range (result.ec) && result.value = value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_u16 = type { value : u16; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u16) -> parsed_u16 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (65535 + 1) <= 65535 ==> is_ok (result.ec) && result.value = num s 0 result.used base (65535 + 1) ensures result.used > 0 && num s 0 result.used base (65535 + 1) > 65535 ==> is_out_of_range (result.ec) && result.value = value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u16) -> parsed_u16 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (max u16 + 1) <= max u16 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u16 + 1) ensures result.used > 0 && num s 0 result.used base (max u16 + 1) > max u16 ==> is_out_of_range (result.ec) && result.value = value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_u32 = type { value : u32; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u32) -> parsed_u32 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) <= 4294967295 ==> is_ok (result.ec) && result.value = num s 0 result.used base (4294967295 + 1) ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) > 4294967295 ==> is_out_of_range (result.ec) && result.value = value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u32) -> parsed_u32 ensures result.used = run s 0 base ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value ensures result.used > 0 && num s 0 result.used base (max u32 + 1) <= max u32 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u32 + 1) ensures result.used > 0 && num s 0 result.used base (max u32 + 1) > max u32 ==> is_out_of_range (result.ec) && result.value = value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_i8 = type { value : i8; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i8) -> parsed_i8 ensures signed_parse s base ((1 << 7) - 1) (1 << 7) value result.used result.ec result.value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i8) -> parsed_i8 ensures signed_parse s base (max i8) (max i8 + 1) value result.used result.ec result.value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_i16 = type { value : i16; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i16) -> parsed_i16 ensures signed_parse s base ((1 << 15) - 1) (1 << 15) value result.used result.ec result.value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i16) -> parsed_i16 ensures signed_parse s base (max i16) (max i16 + 1) value result.used result.ec result.value{{$}}
 // IFACE-NEXT: {{^}}  let parsed_i32 = type { value : i32; used : usize; ec : errc }{{$}}
-// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32 ensures signed_parse s base ((1 << 31) - 1) (1 << 31) value result.used result.ec result.value{{$}}
+// IFACE-NEXT: {{^}}  let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32 ensures signed_parse s base (max i32) (max i32 + 1) value result.used result.ec result.value{{$}}
 // IFACE-NEXT: {{^}}  let spec ndig : (t : u64) -> (base : int{2..36}) -> (n : usize) -> usize{{$}}
 // IFACE-NEXT: {{^}}  let digit_char : (d : u64) -> (base : int{2..36}) -> u8 requires d < base ensures digit_of result base = d{{$}}
 // IFACE-NEXT: {{^}}  let chars = type { used : usize; ok : bool }{{$}}

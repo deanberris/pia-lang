@@ -1,0 +1,45 @@
+(* Importers of Pia.Image.Gif.Encode see only its interface, and that is
+   enough to size the output so it never runs out, and to know that what
+   Ok returns is a GIF by the grammar, with the frames and screen asked
+   for; and of Pia.Image.Gif.LzwEncode, that a stream fits in 3 n + 5
+   bytes.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+import Pia.Image.Gif.LzwEncode.LzwEncode as E
+import Pia.Image.Gif.Encode.Encode as X
+
+(* A dst of size_bound bytes never fills, and Ok is a GIF of nf frames. *)
+let sized (w : int{1..65535}) (h : int{1..65535}) (pal : [u8]) (frames : [u8]) (nf : u16) (dst : borrowed inout mutable [u8]) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : unit
+  requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960
+  requires len dst >= 800 + X.anim_bound (X.frame_bound (R.size w h 1)) nf
+= match X.encode_animation w h pal frames nf 4 0 dst rect lz hash with
+  | Ok n -> assert G.header_ok dst && G.frames_from dst (G.first_block dst) = nf && n <= len dst
+  | Err e -> (match e with
+      | DstFull p -> assert false
+      | _ -> ())
+
+(* An LZW stream of n indices fits in 3 n + 5 bytes. *)
+let lzw_fits (px : [u8]) (h : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : unit
+  requires len h = 40960 && len px <= 1000000 && len dst = 3 * len px + 5
+= match E.encode px 8 h dst with
+  | Ok n -> assert n <= 3 * len px + 5
+  | Err _ -> ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 7 proved, 0 failed, 0 skipped
+*)

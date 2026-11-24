@@ -53,7 +53,8 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   }
   std::string digits;
   for (char c : s)
-    if (c != '_') digits.push_back(c);
+    if (!syntax::isDigitSeparator(c))
+      digits.push_back(c);
   if (digits.empty()) return std::nullopt;
   llvm::APInt v(kWidth, 0);
   llvm::APInt base(kWidth, radix);
@@ -588,11 +589,6 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     }
     if (types.isUnit(t)) {
       diags.error(f->loc, "a field cannot have type unit");
-      return {};
-    }
-    if (mlir::isa<ArrayType>(t)) {
-      diags.error(f->loc, "a record field cannot be an array yet; a slice "
-                          "field can hold one");
       return {};
     }
     if (mlir::isa<AtomicType>(t)) {

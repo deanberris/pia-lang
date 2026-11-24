@@ -35,6 +35,21 @@ def Contract_RequiresOp : Contract_Op<"requires"> {
   let assemblyFormat = "$predicate attr-dict";
 }
 
+def Contract_ReadsOp : Contract_Op<"reads"> {
+  let summary = "a spec function's footprint: the cells lo up to hi of a buffer";
+  let description = [{
+    `reads xs.[lo .. hi]` on a spec function (ADR 0060, section 3). Where a
+    buffer's contents change only outside the footprint, a call on the new
+    contents equals the call on the old; the generated frame lemma
+    `f'frame` proves it.
+  }];
+  // With an owner, the footprint is the cells c with owner[c] = lo, and
+  // hi is unused: `reads xs.[c] where owner.[c] = v`.
+  let arguments = (ins AnyType:$buffer, AnyType:$lo, AnyType:$hi,
+                       Optional<AnyType>:$owner);
+  let assemblyFormat = "$buffer `[` $lo `,` $hi `]` (`by` $owner^)? attr-dict `:` type($buffer) `,` type($lo) `,` type($hi) (`,` type($owner)^)?";
+}
+
 def Contract_EnsuresOp : Contract_Op<"ensures"> {
   let summary = "a postcondition the body must establish at every return";
   let arguments = (ins I1:$predicate);
@@ -67,6 +82,19 @@ def Contract_AssertOp : Contract_Op<"assert"> {
   let summary = "a goal the verifier must prove at this point";
   let arguments = (ins I1:$predicate);
   let assemblyFormat = "$predicate attr-dict";
+}
+
+def Contract_HavocOthersOp : Contract_Op<"havoc_others"> {
+  let summary = "forget the cells of a buffer that another iteration owns";
+  let description = [{
+    At the end of a `spread` iteration (ADR 0060): every cell of `buffer`
+    that iteration `iv` does not own takes an unknown value, so that the
+    `spread`'s `ensures` is proved whatever the other iterations write.
+    Iteration `iv` owns cell `c` when `owner[c] = iv`, or, without an
+    owner, when `c = iv`.
+  }];
+  let arguments = (ins AnyType:$buffer, AnyType:$iv, Optional<AnyType>:$owner);
+  let assemblyFormat = "$buffer `,` $iv (`by` $owner^)? attr-dict `:` type($buffer) `,` type($iv) (`,` type($owner)^)?";
 }
 
 def Contract_AssumeOp : Contract_Op<"assume"> {

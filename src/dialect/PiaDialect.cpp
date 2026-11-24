@@ -398,6 +398,13 @@ LogicalResult SliceOp::verify() {
   return success();
 }
 
+LogicalResult CopyOp::verify() {
+  if (getSrc().getType() != getDst().getType())
+    return emitOpError("copies between arrays of one type, found ")
+           << getSrc().getType() << " and " << getDst().getType();
+  return success();
+}
+
 LogicalResult StoreOp::verify() {
   if (getValue().getType() != elementTypeOf(getBuffer().getType()))
     return emitOpError("stored value must have the buffer's element type");

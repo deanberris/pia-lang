@@ -1,0 +1,406 @@
+(* Pia.Time: C++'s <chrono> durations (ADR 0040, phase 1.10,
+   docs/cpp-std.md).
+
+   C++'s std::chrono::duration<Rep, Period> is a class template. Here a
+   duration is a type a metaprogram makes: `duration x p` makes the
+   record type x, a count of i64 ticks of the period p, a Pia.Core.Ratio
+   ratio folded at compile time, with plus, minus, times, less and same
+   overloaded on it. `cast name from fp to tp` makes duration_cast from
+   one to another: the count times the folded factor fp / tp, truncated
+   toward zero as C++'s is, with a precondition that a widening cast does
+   not overflow. `standard ()` makes C++'s nanoseconds to weeks, with
+   `to_<unit>` from every other unit. Everything is proved where it is
+   made, in the importer; this module has no goals of its own.
+   The civil calendar (year_month_day) comes later. *)
+module Pia.Time : Durations, Calendar
+
+import Pia.Core.Ratio.Ratio
+
+interface Durations = sig
+  let meta duration : list
+  let meta cast : item
+  let meta standard : list
+  let meta time_point : list
+  let meta point_cast : item
+  let meta sys_days : list
+end
+
+interface Calendar = sig
+  let ymd = type { year : int{-1000000..1000000}; month : int{1..12}; day : int{1..31} }
+  let is_leap : (y : int{-1000000..1000000}) -> bool
+    ensures result <==> y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
+  let last_day : (y : int{-1000000..1000000}) -> (m : int{1..12}) -> int{28..31}
+    ensures m = 2 ==> (result = 29 <==> is_leap y)
+    ensures m = 2 ==> result >= 28 && result <= 29
+    ensures m = 4 || m = 6 || m = 9 || m = 11 ==> result = 30
+    ensures m <> 2 && m <> 4 && m <> 6 && m <> 9 && m <> 11 ==> result = 31
+  let spec valid : (c : ymd) -> bool
+  let spec civil_days : (y0 : int{-1000000..1000000}) -> (m : int{1..12}) -> (d : int{1..31}) -> i64
+  let days_from_civil : (y0 : int{-1000000..1000000}) -> (m : int{1..12}) -> (d : int{1..31}) -> i64
+    requires d <= last_day y0 m
+    ensures result = civil_days y0 m d
+  let spec maps_to : (c : ymd) -> (z : i64) -> bool
+  let civil_from_days : (z : int{-365962028..364523337}) -> ymd
+    ensures valid result
+    ensures maps_to result z
+  let lemma in_range : (y0 : int{-1000000..1000000}) -> (m : int{1..12}) -> (d : int{1..31}) -> unit
+    requires d <= last_day y0 m
+    ensures civil_days y0 m d >= -365962028 && civil_days y0 m d <= 364523337
+  let lemma unique : (c : ymd) -> (y0 : int{-1000000..1000000}) -> (m : int{1..12}) -> (d : int{1..31}) -> unit
+    requires d <= last_day y0 m
+    requires maps_to c (civil_days y0 m d)
+    ensures c.year = y0 && c.month = m && c.day = d
+end
+
+(** The duration type x, a count of ticks of the period p (a Ratio list),
+    with its arithmetic and order, overloaded on x. *)
+let meta duration (x : string) (p : list) : list =
+  let n = Pia.Core.Ratio.num p in
+  let d = Pia.Core.Ratio.den p in
+  [ `( let $x = type { count : i64 } );
+    `( let plus ($!a : $x) ($!b : $x) : $x
+         requires $!a.count + $!b.count >= -9223372036854775808 && $!a.count + $!b.count <= 9223372036854775807
+         ensures $!result.count = $!a.count + $!b.count
+       = { count = $!a.count + $!b.count } );
+    `( let minus ($!a : $x) ($!b : $x) : $x
+         requires $!a.count - $!b.count >= -9223372036854775808 && $!a.count - $!b.count <= 9223372036854775807
+         ensures $!result.count = $!a.count - $!b.count
+       = { count = $!a.count - $!b.count } );
+    `( let times ($!a : $x) ($!k : i64) : $x
+         requires $!a.count * $!k >= -9223372036854775808 && $!a.count * $!k <= 9223372036854775807
+         ensures $!result.count = $!a.count * $!k
+       = { count = $!a.count * $!k } );
+    `( let less ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.count < $!b.count = $!a.count < $!b.count );
+    `( let same ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.count = $!b.count = $!a.count = $!b.count ) ]
+
+(** `name (a : from) : to`, std::duration_cast: the count times the
+    factor from's period / to's period, truncated toward zero. *)
+let meta cast (name : string) (from : string) (fp : list) (to : string) (tp : list) : item =
+  let f = Pia.Core.Ratio.divide fp tp in
+  let n = Pia.Core.Ratio.num f in
+  let d = Pia.Core.Ratio.den f in
+  if d = 1 then
+    `( let $name ($!a : $from) : $to
+         requires $!a.count * $n >= -9223372036854775808 && $!a.count * $n <= 9223372036854775807
+         ensures $!result.count = $!a.count * $n
+       = { count = $!a.count * $n } )
+  else if n = 1 then
+    `( let $name ($!a : $from) : $to
+         ensures $!result.count = $!a.count / $d
+       = { count = $!a.count / $d } )
+  else fail "a cast between periods that do not divide each other is not supported yet"
+
+(** C++'s std::chrono durations, nanoseconds to weeks, each with a cast
+    `to_<unit>` from every other, overloaded on the argument's type. *)
+let meta standard (u : unit) : list =
+  let units = [ ["nanoseconds"; Pia.Core.Ratio.si "nano"]; ["microseconds"; Pia.Core.Ratio.si "micro"];
+                ["milliseconds"; Pia.Core.Ratio.si "milli"]; ["seconds"; Pia.Core.Ratio.reduce 1 1];
+                ["minutes"; Pia.Core.Ratio.reduce 60 1]; ["hours"; Pia.Core.Ratio.reduce 3600 1];
+                ["days"; Pia.Core.Ratio.reduce 86400 1]; ["weeks"; Pia.Core.Ratio.reduce 604800 1] ] in
+  let types = fold (let (acc) (x) => concat acc (duration (nth x 0) (nth x 1))) [] units in
+  let casts = fold (let (acc) (to) =>
+      fold (let (acc2) (from) =>
+          if nth from 0 = nth to 0 then acc2
+          else concat acc2 [cast (concat "to_" (nth to 0)) (nth from 0) (nth from 1) (nth to 0) (nth to 1)])
+        acc units) [] units in
+  concat types casts
+
+(** The time point type x: a duration d since the clock's epoch, as C++'s
+    time_point<Clock, d>, with plus and minus of a duration, the duration
+    between two points, and order, overloaded on x. *)
+let meta time_point (x : string) (d : string) : list =
+  [ `( let $x = type { since : $d } );
+    `( let plus ($!t : $x) ($!e : $d) : $x
+         requires $!t.since.count + $!e.count >= -9223372036854775808 && $!t.since.count + $!e.count <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count + $!e.count
+       = { since = { count = $!t.since.count + $!e.count } } );
+    `( let minus ($!t : $x) ($!e : $d) : $x
+         requires $!t.since.count - $!e.count >= -9223372036854775808 && $!t.since.count - $!e.count <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count - $!e.count
+       = { since = { count = $!t.since.count - $!e.count } } );
+    `( let minus ($!a : $x) ($!b : $x) : $d
+         requires $!a.since.count - $!b.since.count >= -9223372036854775808 && $!a.since.count - $!b.since.count <= 9223372036854775807
+         ensures $!result.count = $!a.since.count - $!b.since.count
+       = { count = $!a.since.count - $!b.since.count } );
+    `( let less ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.since.count < $!b.since.count = $!a.since.count < $!b.since.count );
+    `( let same ($!a : $x) ($!b : $x) : bool ensures $!result <==> $!a.since.count = $!b.since.count = $!a.since.count = $!b.since.count ) ]
+
+(** `name (t : from) : to`, std::chrono::time_point_cast: the point's
+    duration through the duration cast `via`, which `cast` made. *)
+let meta point_cast (name : string) (from : string) (fp : list) (to : string) (tp : list) (via : string) : item =
+  let f = Pia.Core.Ratio.divide fp tp in
+  let n = Pia.Core.Ratio.num f in
+  if Pia.Core.Ratio.den f = 1 then
+    `( let $name ($!t : $from) : $to
+         requires $!t.since.count * $n >= -9223372036854775808 && $!t.since.count * $n <= 9223372036854775807
+         ensures $!result.since.count = $!t.since.count * $n
+       = { since = $via $!t.since } )
+  else
+    `( let $name ($!t : $from) : $to
+         ensures $!result.since.count = $!t.since.count / Pia.Core.Ratio.den f
+       = { since = $via $!t.since } )
+
+(** C++'s sys_days, a time point of days since 1970-01-01, needing the
+    durations of `standard ()`, with to_sys_days and to_ymd converting
+    to and from Calendar's dates, and sys_seconds with a cast from
+    sys_days. *)
+let meta sys_days (u : unit) : list =
+  let sd = "sys_days" in
+  concat (time_point "sys_days" "days")
+    (concat (time_point "sys_seconds" "seconds")
+      [ `( let to_sys_days ($!c : Pia.Time.ymd) : $sd
+             requires $!c.day <= Pia.Time.last_day $!c.year $!c.month
+             ensures $!result.since.count = Pia.Time.civil_days $!c.year $!c.month $!c.day
+           = { since = { count = Pia.Time.days_from_civil $!c.year $!c.month $!c.day } } );
+        `( let to_ymd ($!t : $sd) : Pia.Time.ymd
+             requires $!t.since.count >= -365962028 && $!t.since.count <= 364523337
+             ensures Pia.Time.valid $!result && Pia.Time.maps_to $!result $!t.since.count
+           = let $!z : int{-365962028..364523337} = $!t.since.count in Pia.Time.civil_from_days $!z );
+        point_cast "to_sys_seconds" "sys_days" (Pia.Core.Ratio.reduce 86400 1) "sys_seconds" (Pia.Core.Ratio.reduce 1 1) "to_seconds" ])
+
+(* The civil calendar: Howard Hinnant's days_from_civil and
+   civil_from_days, proved in levels. A day number splits into a 400-year
+   era and a day of the era; a day of the era into a March-based year of
+   the era and a day of that year; a day of the year into a month and a
+   day. Each level's round trip is a lemma over small ranges, and the
+   linking lemmas say where February and leap years fall. *)
+
+let month_of (doy : int{0..365}) : int{0..11}
+  ensures result = (let x : u32 = doy in (5 * x + 2) / 153)
+= let x : u32 = doy in (5 * x + 2) / 153
+let day_of (doy : int{0..365}) : int{1..31}
+  ensures result = (let q : u32 = month_of doy in let x : u32 = doy in x - (153 * q + 2) / 5 + 1)
+= let x : u32 = doy in
+  let m : u32 = month_of doy in
+  x - (153 * m + 2) / 5 + 1
+let doy_of (mp : int{0..11}) (d : int{1..31}) : int{0..396}
+  ensures result = (let q : u32 = mp in let e : u32 = d in (153 * q + 2) / 5 + e - 1)
+= let m : u32 = mp in
+  let e : u32 = d in
+  (153 * m + 2) / 5 + e - 1
+let spec mlen (mp : int{0..11}) (leap : bool) : int
+= if mp = 11 then (if leap then 29 else 28)
+  else if mp = 1 || mp = 3 || mp = 6 || mp = 8 then 30 else 31
+let lemma md_round_trip (mp : int{0..11}) (d : int{1..31}) (leap : bool) : unit
+  requires d <= mlen mp leap
+  ensures doy_of mp d <= 365 && month_of (doy_of mp d) = mp && day_of (doy_of mp d) = d
+= ()
+let lemma doy_round_trip (doy : int{0..365}) : unit
+  ensures doy_of (month_of doy) (day_of doy) = doy
+= ()
+let lemma day_fits (doy : int{0..365}) (leap : bool) : unit
+  requires doy < 365 || leap
+  ensures day_of doy <= mlen (month_of doy) leap
+= ()
+let doe_of (yoe : int{0..399}) (doy : int{0..365}) : int{0..146096}
+  ensures result = (let y : u32 = yoe in let e : u32 = doy in y * 365 + y / 4 - y / 100 + e)
+= let y : u32 = yoe in
+  let e : u32 = doy in
+  y * 365 + y / 4 - y / 100 + e
+let yoe_of (doe : int{0..146096}) : int{0..399}
+  ensures result = (let x : u32 = doe in (x - x / 1460 + x / 36524 - x / 146096) / 365)
+= let x : u32 = doe in (x - x / 1460 + x / 36524 - x / 146096) / 365
+let spec leap_yoe (yoe : int{0..399}) : bool
+= yoe % 4 = 3 && (yoe % 100 <> 99 || yoe = 399)
+let lemma yd_round_trip (yoe : int{0..399}) (doy : int{0..365}) : unit
+  requires doy < 365 || leap_yoe yoe
+  ensures yoe_of (doe_of yoe doy) = yoe
+= ()
+let lemma doe_round_trip (doe : int{0..146096}) : unit
+  ensures doe_of (yoe_of doe) 0 <= doe
+  ensures doe - doe_of (yoe_of doe) 0 < 365 || (doe - doe_of (yoe_of doe) 0 = 365 && leap_yoe (yoe_of doe))
+= ()
+let lemma split_days (z : i64) : unit
+  requires z >= -400000000 && z <= 400000000
+  ensures (if z >= 0 then z else z - 146096) / 146097 * 146097 <= z
+  ensures z - (if z >= 0 then z else z - 146096) / 146097 * 146097 < 146097
+= ()
+let lemma split_years (y : i64) : unit
+  requires y >= -1000001 && y <= 1000000
+  ensures (if y >= 0 then y else y - 399) / 400 * 400 <= y
+  ensures y - (if y >= 0 then y else y - 399) / 400 * 400 < 400
+= ()
+(** C++: year_month_day, of the proleptic Gregorian calendar. *)
+let ymd = type { year : int{-1000000..1000000}; month : int{1..12}; day : int{1..31} }
+(** Whether y is a leap year of the proleptic Gregorian calendar. *)
+let is_leap (y : int{-1000000..1000000}) : bool
+  ensures result <==> y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
+= y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
+(** C++: year_month_day_last's day: the number of days in month m of y. *)
+let last_day (y : int{-1000000..1000000}) (m : int{1..12}) : int{28..31}
+  ensures m = 2 ==> (result = 29 <==> is_leap y)
+  ensures m = 2 ==> result >= 28 && result <= 29
+  ensures m = 4 || m = 6 || m = 9 || m = 11 ==> result = 30
+  ensures m <> 2 && m <> 4 && m <> 6 && m <> 9 && m <> 11 ==> result = 31
+= if m = 2 then (if is_leap y then 29 else 28)
+  else if m = 4 || m = 6 || m = 9 || m = 11 then 30 else 31
+let lemma leap_link (y : int{-1000000..1000000}) (era : i64) (yoe : int{0..399}) : unit
+  requires y = era * 400 + yoe + 1
+  ensures is_leap y = leap_yoe yoe
+= ()
+let lemma month_link (y : int{-1000000..1000000}) (mp : int{0..11}) (m : int{1..12}) : unit
+  requires m = (if mp < 10 then mp + 3 else mp - 9)
+  ensures last_day y m = mlen mp (is_leap y)
+= ()
+let lemma fits (y : int{-1000000..1000000}) (era : i64) (yoe : int{0..399}) (mp : int{0..11}) (m : int{1..12}) (d : int{1..31}) : unit
+  requires m = (if mp < 10 then mp + 3 else mp - 9)
+  requires m <= 2 ==> y = era * 400 + yoe + 1
+  requires d <= mlen mp (leap_yoe yoe)
+  ensures d <= last_day y m
+= month_link y mp m;
+  if m = 2 then leap_link y era yoe
+let lemma years_unique (y : i64) (e : i64) (r : int{0..399}) : unit
+  requires y >= -1000001 && y <= 1000000
+  requires y = e * 400 + r
+  ensures (if y >= 0 then y else y - 399) / 400 = e
+= split_years y
+let lemma doe_linear (yoe : int{0..399}) (doy : int{0..365}) : unit
+  ensures doe_of yoe doy = doe_of yoe 0 + doy
+= ()
+let lemma unfits (y : int{-1000000..1000000}) (era : i64) (yoe : int{0..399}) (mp : int{0..11}) (m : int{1..12}) (d : int{1..31}) : unit
+  requires m = (if mp < 10 then mp + 3 else mp - 9)
+  requires m <= 2 ==> y = era * 400 + yoe + 1
+  requires d <= last_day y m
+  ensures d <= mlen mp (leap_yoe yoe)
+= month_link y mp m;
+  if m = 2 then leap_link y era yoe
+(** Howard Hinnant's day number of y0-m-d, exactly. *)
+let spec civil_days (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : i64
+= (let y : i64 = (if m <= 2 then y0 - 1 else y0) in let era : i64 = (if y >= 0 then y else y - 399) / 400 in let mp : i64 = (if m > 2 then m - 3 else m + 9) in let yoe : i64 = y - era * 400 in era * 146097 + (yoe * 365 + yoe / 4 - yoe / 100 + ((153 * mp + 2) / 5 + d - 1)) - 719468)
+
+(** The days from 1970-01-01 to y0-m-d, as C++'s sys_days of it. *)
+let days_from_civil (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : i64
+  requires d <= last_day y0 m
+  ensures result = civil_days y0 m d
+= let y : i64 = if m <= 2 then y0 - 1 else y0 in
+  split_years y;
+  let era : i64 = (if y >= 0 then y else y - 399) / 400 in
+  let yoe : int{0..399} = y - era * 400 in
+  let mp : int{0..11} = if m > 2 then m - 3 else m + 9 in
+  unfits y0 era yoe mp m d;
+  md_round_trip mp d (leap_yoe yoe);
+  let doy : int{0..365} = doy_of mp d in
+  era * 146097 + doe_of yoe doy - 719468
+(** C++: year_month_day::ok, for years -1000000 to 1000000. *)
+let spec valid (c : ymd) : bool
+= c.day <= last_day c.year c.month
+(** The date z days after 1970-01-01, as C++'s year_month_day of a
+    sys_days: always a valid date, whose day number is z again. *)
+(** c is a valid date whose day number is z. A spec function, so that a
+    contract names its date once. *)
+let spec maps_to (c : ymd) (z : i64) : bool
+= if c.day <= last_day c.year c.month then civil_days c.year c.month c.day = z else false
+
+let civil_from_days (z : int{-365962028..364523337}) : ymd
+  ensures valid result
+  ensures maps_to result z
+= let w : i64 = z in
+  let s : i64 = w + 719468 in
+  split_days s;
+  let era : i64 = (if s >= 0 then s else s - 146096) / 146097 in
+  assert era >= -2502 && era <= 2500;
+  let doe : int{0..146096} = s - era * 146097 in
+  let yoe : int{0..399} = yoe_of doe in
+  doe_round_trip doe;
+  let doy : int{0..365} = doe - doe_of yoe 0 in
+  let mp : int{0..11} = month_of doy in
+  let d : int{1..31} = day_of doy in
+  doy_round_trip doy;
+  day_fits doy (leap_yoe yoe);
+  let m : int{1..12} = if mp < 10 then mp + 3 else mp - 9 in
+  let y : i64 = yoe + era * 400 + (if m <= 2 then 1 else 0) in
+  assert y >= -1000000 && y <= 1000000;
+  let yy : int{-1000000..1000000} = y in
+  assert d <= mlen mp (leap_yoe yoe);
+  fits yy era yoe mp m d;
+  years_unique (y - (if m <= 2 then 1 else 0)) era yoe;
+  doe_linear yoe doy;
+  { year = yy; month = m; day = d }
+
+(** A valid date's day number is one that civil_from_days takes. *)
+let lemma in_range (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : unit
+  requires d <= last_day y0 m
+  ensures civil_days y0 m d >= -365962028 && civil_days y0 m d <= 364523337
+= let y : i64 = if m <= 2 then y0 - 1 else y0 in
+  split_years y;
+  let era : i64 = (if y >= 0 then y else y - 399) / 400 in
+  assert era >= -2501 && era <= 2500;
+  assert era = -2501 ==> y - era * 400 = 399 && m <= 2;
+  assert era = 2500 ==> m > 2 || y - era * 400 = 0
+
+let lemma days_unique (s : i64) (e : int{-2502..2500}) (r : int{0..146096}) : unit
+  requires s >= -365243560 && s <= 365242805
+  requires s = (let w : i64 = e in w * 146097 + r)
+  ensures (if s >= 0 then s else s - 146096) / 146097 = e
+= split_days s
+
+let lemma yd_unique (ya : int{0..399}) (da : int{0..365}) (yb : int{0..399}) (db : int{0..365}) : unit
+  requires da < 365 || leap_yoe ya
+  requires db < 365 || leap_yoe yb
+  requires doe_of ya da = doe_of yb db
+  ensures ya = yb && da = db
+= yd_round_trip ya da;
+  yd_round_trip yb db;
+  doe_linear ya da;
+  doe_linear yb db
+
+let lemma md_unique (pa : int{0..11}) (da : int{1..31}) (pb : int{0..11}) (db : int{1..31}) (leap : bool) : unit
+  requires da <= mlen pa leap && db <= mlen pb leap
+  requires doy_of pa da = doy_of pb db
+  ensures pa = pb && da = db
+= md_round_trip pa da leap;
+  md_round_trip pb db leap
+
+let parts = type { era : int{-2502..2500}; yoe : int{0..399}; mp : int{0..11}; doy : int{0..365} }
+
+(** A valid date's era, year of era, March-based month and day of year. *)
+let decompose (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : parts
+  requires d <= last_day y0 m
+  ensures result.mp = (if m > 2 then m - 3 else m + 9)
+  ensures (if m <= 2 then y0 - 1 else y0) = result.era * 400 + result.yoe
+  ensures d <= mlen result.mp (leap_yoe result.yoe)
+  ensures result.doy = doy_of result.mp d
+  ensures result.doy < 365 || leap_yoe result.yoe
+  ensures civil_days y0 m d = (let w : i64 = result.era in w * 146097 + doe_of result.yoe result.doy - 719468)
+= let y : i64 = if m <= 2 then y0 - 1 else y0 in
+  split_years y;
+  let e : i64 = (if y >= 0 then y else y - 399) / 400 in
+  let era : int{-2502..2500} = e in
+  let yoe : int{0..399} = y - e * 400 in
+  let mp : int{0..11} = if m > 2 then m - 3 else m + 9 in
+  unfits y0 era yoe mp m d;
+  md_round_trip mp d (leap_yoe yoe);
+  let doy : int{0..365} = doy_of mp d in
+  { era = era; yoe = yoe; mp = mp; doy = doy }
+
+(** Two valid dates with the same day number are the same date. *)
+let lemma injective (y1 : int{-1000000..1000000}) (m1 : int{1..12}) (d1 : int{1..31}) (y2 : int{-1000000..1000000}) (m2 : int{1..12}) (d2 : int{1..31}) : unit
+  requires d1 <= last_day y1 m1
+  requires d2 <= last_day y2 m2
+  requires civil_days y1 m1 d1 = civil_days y2 m2 d2
+  ensures y1 = y2 && m1 = m2 && d1 = d2
+= let a : parts = decompose y1 m1 d1 in
+  let b : parts = decompose y2 m2 d2 in
+  let ea : i64 = a.era in
+  let s : i64 = ea * 146097 + doe_of a.yoe a.doy in
+  days_unique s a.era (doe_of a.yoe a.doy);
+  days_unique s b.era (doe_of b.yoe b.doy);
+  yd_unique a.yoe a.doy b.yoe b.doy;
+  assert a.era = b.era;
+  assert a.yoe = b.yoe && a.doy = b.doy;
+  md_unique a.mp d1 b.mp d2 (leap_yoe a.yoe);
+  assert a.mp = b.mp && d1 = d2 && m1 = m2;
+  let sa : i64 = if m1 <= 2 then y1 - 1 else y1 in
+  let sb : i64 = if m2 <= 2 then y2 - 1 else y2 in
+  assert sa = a.era * 400 + a.yoe && sb = b.era * 400 + b.yoe;
+  assert sa = sb;
+  assert y1 = y2
+
+(** C++'s round trip, from the other side: a valid date whose day number
+    is that of y0-m-d is y0-m-d. So civil_from_days (days_from_civil y0 m
+    d), which maps_to that day number, is y0-m-d. *)
+let lemma unique (c : ymd) (y0 : int{-1000000..1000000}) (m : int{1..12}) (d : int{1..31}) : unit
+  requires d <= last_day y0 m
+  requires maps_to c (civil_days y0 m d)
+  ensures c.year = y0 && c.month = m && c.day = d
+= injective c.year c.month c.day y0 m d

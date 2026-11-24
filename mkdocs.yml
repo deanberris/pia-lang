@@ -67,6 +67,7 @@ nav:
   - Getting started: getting-started.md
   - "Demo: edge detection": demo.md
   - "Demo: stream delineation": streams.pia.md
+  - "Demo: sediment transport": sediment.pia.md
   - A tour of Pia: tour.md
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
@@ -84,6 +85,8 @@ nav:
       - "Rust VecDeque::reserve": cases/rust-vecdeque.pia.md
       - "libwebp Huffman tables": cases/libwebp.pia.md
       - "Bun readFile on Windows": cases/bun-readfile.pia.md
+      - "zlib gzip extra field": cases/zlib-gzip-extra.pia.md
+      - "giflib background colour": cases/giflib-background.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md
@@ -159,3 +162,6 @@ nav:
       - adr/0055-sediment-transport-in-fixed-point.md
       - adr/0056-tests-generated-from-contracts-and-theories.md
       - adr/0057-posix-module-per-target-behind-one-interface.md
+      - adr/0058-ghost-buffers.md
+      - adr/0059-digit-separators-and-type-bounds.md
+      - adr/0060-spread-v0-ownership-and-runtime.md

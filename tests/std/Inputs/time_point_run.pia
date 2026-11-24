@@ -1,0 +1,22 @@
+(* Runs code made by Pia.Time's time point metaprograms, linked by
+   pia_binary: 0 when each point and date is what C++'s std::chrono
+   gives, and otherwise the number of the first wrong one. *)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Durations as T
+import Pia.Time.Calendar as C
+
+T.standard ()
+T.sys_days ()
+
+let main () : i32 =
+  let c : C.ymd = { year = 2024; month = 2; day = 29 } in
+  let t = to_sys_days c in
+  let week : days = { count = 7 } in
+  let u = plus t week in
+  if t.since.count <> 19782 then 1
+  else if (to_sys_seconds t).since.count <> 1709164800 then 2
+  else if (minus u t).count <> 7 then 3
+  else (
+    let w : int{-365962028..364523337} = 19789 in
+    let d = C.civil_from_days w in
+    if d.year <> 2024 || d.month <> 3 || d.day <> 7 then 4 else 0)

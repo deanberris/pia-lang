@@ -1,0 +1,16 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Compress.Inflate.Spec (ADR 0054, step 5): the parts of RFC 1951 a
+# deflate block is made of, as spec functions.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Spec.pia"])
+
+# tests/std/inflate.pia checks its goals.
+pia_library(
+    name = "spec",
+    src = "Spec.pia",
+    target_compatible_with = PIA_TARGETS,
+)

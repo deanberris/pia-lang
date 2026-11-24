@@ -2,7 +2,8 @@
 // random and hand-made terrains, and checks them against C references and
 // against the properties the hydrology needs: filling never digs, settles
 // to the reference surface, directions point downhill, every cell's flow is
-// one plus its upstream neighbours', and watershed labels agree along flow.
+// one plus its upstream neighbours', and watershed labels agree along flow;
+// and docs/sediment.pia.md's linear-time drainage agrees with accumulate.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -123,6 +124,27 @@ static void check(const char *name, const uint16_t *dem, long w, long h) {
   for (long i = 0; i < n; ++i) want_streams += acc[i] >= threshold;
   CHECK(streams == want_streams, "%s: %llu stream cells, want %llu", name,
         (unsigned long long)streams, (unsigned long long)want_streams);
+
+  // docs/sediment.pia.md's drainage gives the same counts and labels in
+  // linear time, over the height order.
+  uint32_t *acc2 = malloc(n * 4), *rain = malloc(n * 4), *pend = malloc(n * 4);
+  uint64_t *basin2 = malloc(n * 8), *order = malloc(n * 8),
+           *pos = malloc(n * 8);
+  uint32_t *cnt = malloc(65536 * 4);
+  uint64_t *first = malloc(65536 * 8), *next = malloc(65536 * 8),
+           *last = malloc(65536 * 8);
+  uint16_t *owner = malloc(n * 2);
+  drainage(fill, n, down, n, acc2, n, basin2, n, rain, n, pend, n, order, n,
+           pos, n, cnt, 65536, first, 65536, next, 65536, last, 65536, owner,
+           n);
+  for (long i = 0; i < n; ++i) {
+    CHECK(acc2[i] == acc[i], "%s: drainage gives cell %ld flow %u, want %u",
+          name, i, acc2[i], acc[i]);
+    CHECK(basin2[i] == basin[i], "%s: drainage labels cell %ld %llu, want %llu",
+          name, i, (unsigned long long)basin2[i], (unsigned long long)basin[i]);
+  }
+  free(acc2), free(rain), free(pend), free(basin2), free(order), free(pos);
+  free(cnt), free(first), free(next), free(last), free(owner);
 
   // The whole pipeline in one call gives the same picture.
   uint8_t *rgb2 = malloc(3 * n);

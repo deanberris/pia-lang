@@ -42,40 +42,40 @@ interface Charconv = sig
   let digit_value : (b : u8) -> (base : int{2..36}) -> u32
     ensures result = digit_of b base
   let digits = type { mag : u64; used : usize; ec : errc }
-  let parse_digits : (s : [u8]) -> (start : usize) -> (base : int{2..36}) -> (max : u64) -> digits
-    requires start <= len s && max <= 4294967295
+  let parse_digits : (s : [u8]) -> (start : usize) -> (base : int{2..36}) -> (limit : u64) -> digits
+    requires start <= len s && limit <= max u32
     ensures result.used = run s start base
     ensures result.used = 0 ==> is_invalid (result.ec)
-    ensures result.used > 0 && num s start (start + result.used) base (max + 1) <= max ==> is_ok (result.ec) && result.mag = num s start (start + result.used) base (max + 1)
-    ensures result.used > 0 && num s start (start + result.used) base (max + 1) > max ==> is_out_of_range (result.ec)
-    ensures is_ok (result.ec) ==> result.mag <= max
+    ensures result.used > 0 && num s start (start + result.used) base (limit + 1) <= limit ==> is_ok (result.ec) && result.mag = num s start (start + result.used) base (limit + 1)
+    ensures result.used > 0 && num s start (start + result.used) base (limit + 1) > limit ==> is_out_of_range (result.ec)
+    ensures is_ok (result.ec) ==> result.mag <= limit
   let parsed_u8 = type { value : u8; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u8) -> parsed_u8
     ensures result.used = run s 0 base
     ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
-    ensures result.used > 0 && num s 0 result.used base (255 + 1) <= 255 ==> is_ok (result.ec) && result.value = num s 0 result.used base (255 + 1)
-    ensures result.used > 0 && num s 0 result.used base (255 + 1) > 255 ==> is_out_of_range (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (max u8 + 1) <= max u8 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u8 + 1)
+    ensures result.used > 0 && num s 0 result.used base (max u8 + 1) > max u8 ==> is_out_of_range (result.ec) && result.value = value
   let parsed_u16 = type { value : u16; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u16) -> parsed_u16
     ensures result.used = run s 0 base
     ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
-    ensures result.used > 0 && num s 0 result.used base (65535 + 1) <= 65535 ==> is_ok (result.ec) && result.value = num s 0 result.used base (65535 + 1)
-    ensures result.used > 0 && num s 0 result.used base (65535 + 1) > 65535 ==> is_out_of_range (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (max u16 + 1) <= max u16 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u16 + 1)
+    ensures result.used > 0 && num s 0 result.used base (max u16 + 1) > max u16 ==> is_out_of_range (result.ec) && result.value = value
   let parsed_u32 = type { value : u32; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : u32) -> parsed_u32
     ensures result.used = run s 0 base
     ensures result.used = 0 ==> is_invalid (result.ec) && result.value = value
-    ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) <= 4294967295 ==> is_ok (result.ec) && result.value = num s 0 result.used base (4294967295 + 1)
-    ensures result.used > 0 && num s 0 result.used base (4294967295 + 1) > 4294967295 ==> is_out_of_range (result.ec) && result.value = value
+    ensures result.used > 0 && num s 0 result.used base (max u32 + 1) <= max u32 ==> is_ok (result.ec) && result.value = num s 0 result.used base (max u32 + 1)
+    ensures result.used > 0 && num s 0 result.used base (max u32 + 1) > max u32 ==> is_out_of_range (result.ec) && result.value = value
   let parsed_i8 = type { value : i8; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i8) -> parsed_i8
-    ensures signed_parse s base ((1 << 7) - 1) (1 << 7) value result.used result.ec result.value
+    ensures signed_parse s base (max i8) (max i8 + 1) value result.used result.ec result.value
   let parsed_i16 = type { value : i16; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i16) -> parsed_i16
-    ensures signed_parse s base ((1 << 15) - 1) (1 << 15) value result.used result.ec result.value
+    ensures signed_parse s base (max i16) (max i16 + 1) value result.used result.ec result.value
   let parsed_i32 = type { value : i32; used : usize; ec : errc }
   let from_chars : (s : [u8]) -> (base : int{2..36}) -> (value : i32) -> parsed_i32
-    ensures signed_parse s base ((1 << 31) - 1) (1 << 31) value result.used result.ec result.value
+    ensures signed_parse s base (max i32) (max i32 + 1) value result.used result.ec result.value
   let spec ndig : (t : u64) -> (base : int{2..36}) -> (n : usize) -> usize
   let digit_char : (d : u64) -> (base : int{2..36}) -> u8
     requires d < base
@@ -165,7 +165,7 @@ let spec digit_of (b : u8) (base : int{2..36}) : u32
 (** The value of s.[i .. j] in base `base`, saturated at cap: every
     value from cap up means "too big". *)
 let spec num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) : u64
-  requires i <= j && j <= len s && cap <= 4294967296
+  requires i <= j && j <= len s && cap <= max u32 + 1
   ensures result <= cap
   decreases j - i
 = if i = j then 0
@@ -194,19 +194,19 @@ let digit_value (b : u8) (base : int{2..36}) : u32
 
 (** The digits are those s.[start ..] begins with, the magnitude their
     value, and ec says whether there were any and whether the value is
-    at most max. *)
+    at most limit. *)
 let digits = type { mag : u64; used : usize; ec : errc }
 
 (** Scans the digits of base `base` at s.[start ..]: how many there are,
-    their value when it is at most max, and the error otherwise. *)
-let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (max : u64) : digits
-  requires start <= len s && max <= 4294967295
+    their value when it is at most limit, and the error otherwise. *)
+let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (limit : u64) : digits
+  requires start <= len s && limit <= max u32
   ensures result.used = run s start base
   ensures result.used = 0 ==> is_invalid (result.ec)
-  ensures result.used > 0 && num s start (start + result.used) base (max + 1) <= max ==>
-    is_ok (result.ec) && result.mag = num s start (start + result.used) base (max + 1)
-  ensures result.used > 0 && num s start (start + result.used) base (max + 1) > max ==> is_out_of_range (result.ec)
-  ensures is_ok (result.ec) ==> result.mag <= max
+  ensures result.used > 0 && num s start (start + result.used) base (limit + 1) <= limit ==>
+    is_ok (result.ec) && result.mag = num s start (start + result.used) base (limit + 1)
+  ensures result.used > 0 && num s start (start + result.used) base (limit + 1) > limit ==> is_out_of_range (result.ec)
+  ensures is_ok (result.ec) ==> result.mag <= limit
 = let acc : mutable u64 = 0 in
   let over : mutable bool = false in
   let i : mutable usize = start in
@@ -216,8 +216,8 @@ let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (max : u64) : di
     invariant start <= i && i <= len s
     invariant run s start base + start = i + run s i base
     invariant going = false ==> run s i base = 0
-    invariant over = false ==> acc = num s start i base (max + 1) && acc <= max
-    invariant over ==> num s start i base (max + 1) > max
+    invariant over = false ==> acc = num s start i base (limit + 1) && acc <= limit
+    invariant over ==> num s start i base (limit + 1) > limit
     decreases len s - i + (if going then 1 else 0)
   do
     let dv = digit_value s.[i] base in
@@ -225,15 +225,15 @@ let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (max : u64) : di
       let d : u64 = dv in
       assert run s i base = run s (i + 1) base + 1;
       if over then (
-        assert num s start (i + 1) base (max + 1) > max;
+        assert num s start (i + 1) base (limit + 1) > limit;
         i <- i + 1)
       else (
         let next = acc * b + d in
         assert d = (if digit_of s.[i] base < base then digit_of s.[i] base else 0);
-        assert next = num s start i base (max + 1) * b + d;
-        assert next <= max ==> num s start (i + 1) base (max + 1) = next;
-        if next > max then (
-          assert num s start (i + 1) base (max + 1) > max;
+        assert next = num s start i base (limit + 1) * b + d;
+        assert next <= limit ==> num s start (i + 1) base (limit + 1) = next;
+        if next > limit then (
+          assert num s start (i + 1) base (limit + 1) > limit;
           over <- true)
         else acc <- next;
         i <- i + 1))
@@ -244,20 +244,20 @@ let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (max : u64) : di
   else if over then { mag = 0; used = i - start; ec = OutOfRange }
   else { mag = acc; used = i - start; ec = Ok }
 
-(* from_chars for the unsigned type `t`, whose largest value is `max`,
+(* from_chars for the unsigned type `t`,
    returning the record `r`. As C++'s, it leaves `value` as it was on an
    error. *)
-let meta unsigned_from_chars (t : string) (r : string) (max : int) : item =
+let meta unsigned_from_chars (t : string) (r : string) : item =
   `( let $r = type { value : $t; used : usize; ec : errc }
 
      let from_chars ($!s : [u8]) ($!base : int{2..36}) ($!value : $t) : $r
        ensures $!result.used = run $!s 0 $!base
        ensures $!result.used = 0 ==> is_invalid ($!result.ec) && $!result.value = $!value
-       ensures $!result.used > 0 && num $!s 0 $!result.used $!base ($max + 1) <= $max ==>
-         is_ok ($!result.ec) && $!result.value = num $!s 0 $!result.used $!base ($max + 1)
-       ensures $!result.used > 0 && num $!s 0 $!result.used $!base ($max + 1) > $max ==>
+       ensures $!result.used > 0 && num $!s 0 $!result.used $!base (max $t + 1) <= max $t ==>
+         is_ok ($!result.ec) && $!result.value = num $!s 0 $!result.used $!base (max $t + 1)
+       ensures $!result.used > 0 && num $!s 0 $!result.used $!base (max $t + 1) > max $t ==>
          is_out_of_range ($!result.ec) && $!result.value = $!value
-     = let $!d = parse_digits $!s 0 $!base $max in
+     = let $!d = parse_digits $!s 0 $!base (max $t) in
        if is_ok ($!d.ec) then (let $!v : $t = $!d.mag in { value = $!v; used = $!d.used; ec = Ok })
        else { value = $!value; used = $!d.used; ec = $!d.ec } )
 
@@ -266,7 +266,7 @@ let meta unsigned_from_chars (t : string) (r : string) (max : int) : item =
     an optional '-', then digits, a '-' alone being Invalid with nothing
     used, and value kept on any error. *)
 let spec signed_parse (s : [u8]) (base : int{2..36}) (pos : u64) (neg : u64) (value : i64) (count : usize) (ec : errc) (got : i64) : bool
-  requires pos <= 4294967295 && neg <= 4294967295
+  requires pos <= max u32 && neg <= max u32
 = if count > len s then false
   else if count = 0 && (is_invalid ec = false || got <> value) then false
   else if len s > 0 then (
@@ -287,13 +287,13 @@ let spec signed_parse (s : [u8]) (base : int{2..36}) (pos : u64) (neg : u64) (va
 (* from_chars for the signed type `t` of `w` bits, returning the record
    `r`: an optional '-', then digits. A '-' with no digits after it is
    Invalid, with nothing used, as C++'s. *)
-let meta signed_from_chars (t : string) (r : string) (w : int) : item =
+let meta signed_from_chars (t : string) (r : string) : item =
   `( let $r = type { value : $t; used : usize; ec : errc }
 
      let from_chars ($!s : [u8]) ($!base : int{2..36}) ($!value : $t) : $r
-       ensures signed_parse $!s $!base ((1 << $(w - 1)) - 1) (1 << $(w - 1)) $!value $!result.used $!result.ec $!result.value
+       ensures signed_parse $!s $!base (max $t) (max $t + 1) $!value $!result.used $!result.ec $!result.value
      = if len $!s > 0 && $!s.[0] = 45 then (
-         let $!d = parse_digits $!s 1 $!base (1 << $(w - 1)) in
+         let $!d = parse_digits $!s 1 $!base (max $t + 1) in
          if $!d.used = 0 then { value = $!value; used = 0; ec = Invalid }
          else if is_ok ($!d.ec) then (
            let $!m : i64 = $!d.mag in
@@ -301,16 +301,16 @@ let meta signed_from_chars (t : string) (r : string) (w : int) : item =
            { value = $!v; used = $!d.used + 1; ec = Ok })
          else { value = $!value; used = $!d.used + 1; ec = $!d.ec })
        else (
-         let $!d = parse_digits $!s 0 $!base ((1 << $(w - 1)) - 1) in
+         let $!d = parse_digits $!s 0 $!base (max $t) in
          if is_ok ($!d.ec) then (let $!v : $t = $!d.mag in { value = $!v; used = $!d.used; ec = Ok })
          else { value = $!value; used = $!d.used; ec = $!d.ec }) )
 
-unsigned_from_chars "u8" "parsed_u8" 255
-unsigned_from_chars "u16" "parsed_u16" 65535
-unsigned_from_chars "u32" "parsed_u32" 4294967295
-signed_from_chars "i8" "parsed_i8" 8
-signed_from_chars "i16" "parsed_i16" 16
-signed_from_chars "i32" "parsed_i32" 32
+unsigned_from_chars "u8" "parsed_u8"
+unsigned_from_chars "u16" "parsed_u16"
+unsigned_from_chars "u32" "parsed_u32"
+signed_from_chars "i8" "parsed_i8"
+signed_from_chars "i16" "parsed_i16"
+signed_from_chars "i32" "parsed_i32"
 
 (** n plus how many more digits t has in base `base` past its last: the
     digit count of v is ndig v base 1. Capped at 64, which no u64
@@ -366,6 +366,7 @@ let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (
     do
       p <- p - 1;
       dst.[start + p] <- digit_char (q % b) base;
+      assert digit_of dst.[start + p] base < base;
       q <- q / b
     done;
     { used = n; ok = true })
@@ -394,7 +395,7 @@ let meta signed_to_chars (t : string) : item =
        if $!w >= 0 then (let $!m : u64 = $!w in write_digits $!dst 0 $!m $!base)
        else if len $!dst = 0 then { used = 0; ok = false }
        else (
-         let $!m : u64 = if $!w = -9223372036854775808 then 9223372036854775808 else (let $!p : i64 = 0 - $!w in $!p) in
+         let $!m : u64 = if $!w = min i64 then max i64 + 1 else (let $!p : i64 = 0 - $!w in $!p) in
          let $!r = write_digits $!dst 1 $!m $!base in
          if $!r.ok then ($!dst.[0] <- 45; { used = $!r.used + 1; ok = true })
          else { used = 0; ok = false }) )

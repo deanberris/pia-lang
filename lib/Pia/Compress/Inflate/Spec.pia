@@ -1,0 +1,71 @@
+(* Pia.Compress.Inflate.Spec: the parts of deflate (RFC 1951) a block is
+   made of, as spec functions (ADR 0054, step 5): the base length and
+   extra bits of each length code (3.2.5), the same for each distance
+   code, the fixed Huffman code's lengths (3.2.6), the order the code
+   length code's lengths come in (3.2.7), and a stored block's header
+   (3.2.4). The tables are written as the formulas they follow, so each
+   entry is checked by the run tests against RFC 1951's tables through
+   the decoder. *)
+module Pia.Compress.Inflate.Spec : Deflate
+
+interface Deflate = sig
+  let spec len_extra : (c : int{0..28}) -> int{0..5}
+  let spec len_base : (c : int{0..28}) -> int{3..258}
+  let spec dist_extra : (c : int{0..29}) -> int{0..13}
+  let spec dist_base : (c : int{0..29}) -> int{1..24577}
+  let spec fixed_length : (sym : int{0..319}) -> int{5..9}
+  let spec clen_order : (i : int{0..18}) -> int{0..18}
+  let spec stored_ok : (s : [u8]) -> (q : usize) -> bool
+  let spec stored_len : (s : [u8]) -> (q : usize) -> u16
+end
+
+(** Extra bits of length code 257 + c. *)
+let spec len_extra (c : int{0..28}) : int{0..5} =
+  if c < 8 || c = 28 then 0 else (let e : int{0..5} = c / 4 - 1 in e)
+
+(** Base length of length code 257 + c: 3 to 10, then (4 + c mod 4) << e
+    plus 3, then 258. *)
+let spec len_base (c : int{0..28}) : int{3..258} =
+  if c < 8 then 3 + c
+  else if c = 28 then 258
+  else (let e : u16 = c / 4 - 1 in let m : u16 = 4 + (c & 3) in let v : int{3..258} = (m << e) + 3 in v)
+
+(** Extra bits of distance code c. *)
+let spec dist_extra (c : int{0..29}) : int{0..13} =
+  if c < 4 then 0 else (let e : int{0..13} = c / 2 - 1 in e)
+
+(** Base distance of distance code c: 1 to 4, then (2 + c mod 2) << e
+    plus 1. *)
+let spec dist_base (c : int{0..29}) : int{1..24577} =
+  if c < 4 then 1 + c
+  else (let e : u16 = c / 2 - 1 in let m : u16 = 2 + (c & 1) in let v : int{1..24577} = (m << e) + 1 in v)
+
+(** The fixed code's lengths: literal/length symbols 0 to 287, then the
+    30 (and 2 unused) distance symbols at 288 to 319. *)
+let spec fixed_length (sym : int{0..319}) : int{5..9} =
+  if sym < 144 then 8 else if sym < 256 then 9 else if sym < 280 then 7 else if sym < 288 then 8 else 5
+
+(** The symbol whose code length comes i-th in a dynamic block's code
+    length code. *)
+let spec clen_order (i : int{0..18}) : int{0..18} =
+  if i = 0 then 16 else if i = 1 then 17 else if i = 2 then 18 else if i = 3 then 0
+  else if i = 4 then 8 else if i = 5 then 7 else if i = 6 then 9 else if i = 7 then 6
+  else if i = 8 then 10 else if i = 9 then 5 else if i = 10 then 11 else if i = 11 then 4
+  else if i = 12 then 12 else if i = 13 then 3 else if i = 14 then 13 else if i = 15 then 2
+  else if i = 16 then 14 else if i = 17 then 1 else 15
+
+(** A stored block's LEN at byte q. *)
+let spec stored_len (s : [u8]) (q : usize) : u16
+  requires q < len s && 1 < len s - q
+= let lo : u16 = s.[q] in let hi : u16 = s.[q + 1] in (lo | (hi << 8))
+
+(** A stored block's header at byte q: LEN, and NLEN its one's
+    complement. *)
+let spec stored_ok (s : [u8]) (q : usize) : bool =
+  if q >= len s then false
+  else if len s - q < 4 then false
+  else (
+    let lo : u16 = s.[q + 2] in
+    let hi : u16 = s.[q + 3] in
+    let nlen : u16 = (lo | (hi << 8)) in
+    (stored_len s q ^ nlen) = 65535)

@@ -9,7 +9,7 @@
 (* Every goal is proved, with no warning.
 // CHECK-NOT: warning
 // CHECK-NOT: failed
-// CHECK: 173 proved, 0 failed, 0 skipped
+// CHECK: 177 proved, 0 failed, 0 skipped
 *)
 
 (*

@@ -568,20 +568,26 @@ class Parser {
   // `invariant` is a contract of a state (ADR 0031); loops read their own.
   bool atContract() const {
     return at(K::Requires) || at(K::Ensures) || at(K::Decreases) ||
-           at(K::Invariant);
+           at(K::Invariant) || at(K::Reads);
   }
 
   NodePtr contract() {
-    N k = at(K::Requires)   ? N::Requires
-          : at(K::Ensures)  ? N::Ensures
+    N k = at(K::Requires)    ? N::Requires
+          : at(K::Ensures)   ? N::Ensures
           : at(K::Invariant) ? N::Invariant
-                            : N::Decreases;
+          : at(K::Reads)     ? N::Reads
+                             : N::Decreases;
     auto c = makeNode(k, loc());
     take();
     bool savedContract = contractMode_, savedEnded = clauseEnded_;
     contractMode_ = true;
     clauseEnded_ = false;
     c->add(stmt());
+    // `reads xs.[c] where owner.[c] = v` (ADR 0060, section 3).
+    if (k == N::Reads && accept(K::Where)) {
+      clauseEnded_ = false;
+      c->add(stmt());
+    }
     contractMode_ = savedContract;
     clauseEnded_ = savedEnded;
     return c;
@@ -1338,7 +1344,7 @@ class Parser {
         } else {
           n->add(makeNode(N::None, loc()));
         }
-        n->add(loopAnnots());
+        n->add(loopAnnots(spread));
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
@@ -1394,10 +1400,14 @@ class Parser {
     return e;
   }
 
-  NodePtr loopAnnots() {
+  NodePtr loopAnnots(bool spread = false) {
     auto as = makeNode(N::LoopAnnots, loc());
-    while (at(K::Invariant) || at(K::Decreases)) {
-      auto a = makeNode(at(K::Invariant) ? N::Invariant : N::Decreases, loc());
+    while (at(K::Invariant) || at(K::Decreases) || (spread && at(K::Ensures))) {
+      // A spread's `ensures` holds for each iteration (ADR 0060).
+      auto a = makeNode(at(K::Invariant)   ? N::Invariant
+                        : at(K::Decreases) ? N::Decreases
+                                           : N::Ensures,
+                        loc());
       take();
       a->add(stmt());
       as->add(std::move(a));

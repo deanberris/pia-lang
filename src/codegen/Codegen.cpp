@@ -20,6 +20,7 @@
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/AsyncToLLVM/AsyncToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
@@ -27,6 +28,8 @@
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Async/IR/Async.h"
+#include "mlir/Dialect/Async/Passes.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
@@ -696,6 +699,18 @@ struct ErasedLowering : mlir::OpConversionPattern<ErasedOp> {
   }
 };
 
+// `pia.copy src, dst`: memref.copy of every element.
+struct CopyLowering : mlir::OpConversionPattern<CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      CopyOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::memref::CopyOp>(op, adaptor.getSrc(),
+                                                adaptor.getDst());
+    return mlir::success();
+  }
+};
+
 struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1209,7 +1224,7 @@ void loadDialects(mlir::MLIRContext &ctx) {
   ctx.loadDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                   mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::LLVM::LLVMDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect>();
+                  mlir::scf::SCFDialect, mlir::async::AsyncDialect>();
   mlir::registerBuiltinDialectTranslation(ctx);
   mlir::registerLLVMDialectTranslation(ctx);
 }
@@ -1472,6 +1487,31 @@ void eraseContracts(mlir::ModuleOp module) {
       f.erase();
 }
 
+// A `spread` (ADR 0060) reaches codegen as an `scf.for` marked
+// `pia.spread`, so that the verifier sees an ordinary loop. Its iterations
+// own disjoint cells, which the verifier proved, so here it becomes an
+// `scf.parallel`, which MLIR's async lowering runs on all cores.
+static void lowerSpreads(mlir::ModuleOp module) {
+  llvm::SmallVector<mlir::scf::ForOp> spreads;
+  module.walk([&](mlir::scf::ForOp f) {
+    if (f->hasAttr("pia.spread"))
+      spreads.push_back(f);
+  });
+  for (mlir::scf::ForOp f : spreads) {
+    mlir::OpBuilder b(f);
+    auto par = b.create<mlir::scf::ParallelOp>(
+        f.getLoc(), mlir::ValueRange{f.getLowerBound()},
+        mlir::ValueRange{f.getUpperBound()}, mlir::ValueRange{f.getStep()});
+    mlir::Block *src = f.getBody();
+    mlir::Block *dst = par.getBody();
+    src->getArgument(0).replaceAllUsesWith(par.getInductionVars()[0]);
+    dst->getOperations().splice(mlir::Block::iterator(dst->getTerminator()),
+                                src->getOperations(), src->begin(),
+                                std::prev(src->end()));
+    f.erase();
+  }
+}
+
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
@@ -1613,7 +1653,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
            CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
            LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, ViewLowering, AtAddressLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
            AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
           types, ctx);
   // Atomics (ADR 0052).
@@ -1628,6 +1668,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
     return mlir::failure();
+  lowerSpreads(module);
   // Tidy the casts and constants the conversion leaves behind.
   mlir::PassManager pm(ctx);
   pm.addPass(mlir::createCanonicalizerPass());
@@ -1913,6 +1954,22 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   }
 
   mlir::PassManager pm(ctx);
+  // A spread runs on MLIR's async runtime, a trusted v0 (ADR 0060): the
+  // range is split into blocks, at least one iteration each, on as many
+  // workers as the runtime has.
+  bool parallel = false;
+  module.walk([&](mlir::scf::ParallelOp) { parallel = true; });
+  if (parallel) {
+    mlir::AsyncParallelForPassOptions par;
+    par.asyncDispatch = true;
+    par.numWorkerThreads = -1;
+    par.minTaskSize = 1;
+    pm.addPass(mlir::createAsyncParallelForPass(par));
+    pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+    pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
+    pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
+    pm.addPass(mlir::createConvertAsyncToLLVMPass());
+  }
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(mlir::createConvertControlFlowToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());

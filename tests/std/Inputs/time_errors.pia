@@ -1,0 +1,7 @@
+(* A cast between periods that do not divide each other is an error. *)
+import Pia.Core.Ratio.Ratio as R
+import Pia.Time.Durations as T
+
+T.standard ()
+T.duration "thirds" (R.reduce 1 3)
+T.cast "to_thirds" "milliseconds" (R.si "milli") "thirds" (R.reduce 1 3)

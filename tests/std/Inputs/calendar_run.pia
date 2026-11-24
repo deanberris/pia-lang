@@ -1,0 +1,62 @@
+(* Runs Pia.Time's calendar, linked by pia_binary: 0 when every day number
+   sampled across the whole range maps to a valid date and back, each
+   date read back gives the same date again, and every day of 1900 to
+   2100 follows the one before; otherwise the number of the first check
+   that failed. *)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Calendar as C
+
+let next (a : C.ymd) (b : C.ymd) : bool =
+  if a.day < C.last_day a.year a.month then b.year = a.year && b.month = a.month && b.day = a.day + 1
+  else if a.month < 12 then b.year = a.year && b.month = a.month + 1 && b.day = 1
+  else a.year < 1000000 && b.year = a.year + 1 && b.month = 1 && b.day = 1
+
+(* 0 when day number w maps to a date that maps back to w, and reads
+   back as the same date. *)
+let check_day (w : int{-365962028..364523337}) : i32 =
+  let c = C.civil_from_days w in
+  let back = C.days_from_civil c.year c.month c.day in
+  if back <> w then 1
+  else (
+    let c2 = C.civil_from_days w in
+    if c2.year <> c.year || c2.month <> c.month || c2.day <> c.day then 2 else 0)
+
+(* 0 when day w + 1 is the day after day w. *)
+let check_next (w : int{-365962028..364523336}) : i32 =
+  let v : int{-365962028..364523337} = w + 1 in
+  if next (C.civil_from_days w) (C.civil_from_days v) then 0 else 3
+
+(* Every 9973rd day number from the first to the last. *)
+let sweep (x : u8) : i32 =
+  let k : mutable u32 = 0 in
+  let bad : mutable i32 = 0 in
+  while k <= 73246 && bad = 0
+    decreases 73247 - k
+  do
+    let n : i64 = k in
+    bad <- check_day (n * 9973 - 365962028);
+    k <- k + 1
+  done;
+  bad
+
+(* Every day of 1900 to 2100 follows the one before. *)
+let walk (x : u8) : i32 =
+  let k : mutable u32 = 0 in
+  let bad : mutable i32 = 0 in
+  while k < 73413 && bad = 0
+    decreases 73413 - k
+  do
+    let n : i64 = k in
+    bad <- check_next (n - 25567);
+    k <- k + 1
+  done;
+  bad
+
+let main () : i32 =
+  let a = sweep 0 in
+  if a <> 0 then a
+  else (
+    let b = walk 0 in
+    if b <> 0 then b
+    else if C.days_from_civil 2024 2 29 <> 19782 then 4
+    else 0)
