@@ -1,7 +1,8 @@
 // The stream demo on a real SRTM tile: reads a .hgt file, turns it into
 // heights with Pia's load_hgt, and runs the hydrology of
 // docs/streams.pia.md, docs/sediment.pia.md and docs/basins.pia.md over the
-// whole tile, timing every stage.
+// whole tile, timing every stage, with sediment three ways: sequential,
+// by basin in parallel, and in pull form.
 //
 //   srtm tile.hgt [output.png [threshold]]
 //
@@ -143,7 +144,7 @@ int main(int argc, char **argv) {
   drainage(fill, n, down, n, ac, n, lab, n, rain, n, pend, n, ord, n, ps, n,
            cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS, last, HEIGHTS, owner2,
            n);
-  free(owner2), free(ps), free(pend), free(rain);
+  free(owner2), free(pend), free(rain);
   uint32_t *bp = malloc(n * 4), *lp = malloc(n * 4), *ip = malloc(n * 4),
            *fp = malloc(n * 4), *gb = malloc(n * 4);
   uint64_t *border = malloc(n * 8), *keys = malloc(n * 8),
@@ -165,8 +166,35 @@ int main(int argc, char **argv) {
          "%llu cells differ\n",
          steps, (unsigned long long)outlets, ms(p0, p1),
          (unsigned long long)gone_p, (unsigned long long)differ);
+
+  // Sediment in pull form (docs/pull.pia.md): wave after wave of equal
+  // height, each a spread, proved equal to the sequential step. It runs
+  // the same steps from the same bed, over the same height order, and must
+  // agree with `sediment` cell for cell.
+  uint32_t *bq = malloc(n * 4), *b0 = malloc(n * 4), *fq = malloc(n * 4),
+           *nb = malloc(n * 4), *no = malloc(n * 4);
+  uint64_t *seen = malloc(n * 8), *gath = malloc(n * 8);
+  for (uint64_t i = 0; i < n; ++i) bq[i] = seed;
+  uint64_t gone_q = 0;
+  double q0 = seconds();
+  for (uint32_t s = 0; s < steps; ++s) {
+    memcpy(b0, bq, n * 4);
+    gone_q = pull_step(fill, n, down, n, ac, n, ord, n, ps, n, w, b0, n, bq, n,
+                       fq, n, seen, n, gath, n, nb, n, no, n, gone_q);
+  }
+  double q1 = seconds();
+  uint64_t differ_q = 0;
+  for (uint64_t i = 0; i < n; ++i) differ_q += bs[i] != bq[i] || fs[i] != fq[i];
+  printf("pull: %u steps, in waves of equal height, %.1f ms; %llu out; "
+         "%llu cells differ\n",
+         steps, ms(q0, q1), (unsigned long long)gone_q,
+         (unsigned long long)differ_q);
+  free(bq), free(b0), free(fq), free(nb), free(no), free(seen), free(gath);
+  free(ps);
+
   printf("memory: %.0f MiB at peak\n", peak_mib());
-  if (total_s != n * seed || gone_s != gone_p || differ) {
+  if (total_s != n * seed || gone_s != gone_p || differ || gone_q != gone_s ||
+      differ_q) {
     fprintf(stderr, "sediment: the runs disagree or the total changed\n");
     return 1;
   }
