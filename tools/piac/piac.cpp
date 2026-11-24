@@ -709,7 +709,25 @@ int main(int argc, char **argv) {
     }
     else if (!arg.empty() && arg[0] == '-')
       return usage();
-    else
+    else if (!file.empty()) {
+      // A second input would silently replace the first, and an argument
+      // like " --verify-only=f", a flag after a space, is one: a shell
+      // that does not split a variable passes it so, and the selection
+      // is lost without a word (#376).
+      std::cerr << "piac: error: more than one input file: '" << file
+                << "' and '" << arg << "'";
+      for (const std::string &a : {file, arg}) {
+        size_t first = a.find_first_not_of(" \t");
+        if (first != std::string::npos && first > 0 && a[first] == '-') {
+          std::cerr << "; '" << a.substr(first)
+                    << "' looks like a flag with a space before it, as an "
+                       "unsplit shell variable passes it";
+          break;
+        }
+      }
+      std::cerr << "\n";
+      return 2;
+    } else
       file = arg;
   }
   if (verify && mode.empty()) mode = "--verify";

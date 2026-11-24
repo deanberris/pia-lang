@@ -11,6 +11,8 @@
 // RUN: diff "$TEST_TMPDIR/one" "$TEST_TMPDIR/warm"
 // RUN: piac --verify-only=mix --verify-stats %s 2>&1 | FileCheck %s --check-prefix=ONLY
 // RUN: not piac --verify-only=nothing_here %s 2>&1 | FileCheck %s --check-prefix=NONE
+// RUN: not piac --verify " --verify-only=mix" %s 2>&1 | FileCheck %s --check-prefix=SPACED
+// RUN: not piac --verify %s %s 2>&1 | FileCheck %s --check-prefix=TWO
 
    The first sum's goal needs only `x < 100`, so its slice leaves out `b`
    and its precondition; the divisor's goal needs only `b <> 0`.
@@ -24,6 +26,10 @@
 // ONLY: verify-stats: goals={{[1-9][0-9]*}} unselected={{[1-9][0-9]*}}
 // ONLY: {{[0-9]+}} proved, 0 failed, 0 skipped
 // NONE: piac: error: --verify-only selects no goal
+// A second input file, or a flag after a space (an unsplit shell variable),
+// is an error, not a silent replacement of the first (#376).
+// SPACED: piac: error: more than one input file: ' --verify-only=mix' and '{{.*}}parallel.pia'; '--verify-only=mix' looks like a flag with a space before it
+// TWO: piac: error: more than one input file: '{{.*}}parallel.pia' and '{{.*}}parallel.pia'
 *)
 
 let mix (b : u8) (x : u8) : u8
