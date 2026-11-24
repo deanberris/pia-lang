@@ -339,7 +339,7 @@ genrule(
 )
 
 cc_test(
-    name = "lower_linalg_test",
+    name = "lower_linalg_run_test",
     srcs = [
         "lower_linalg_test.c",
         ":lower_linalg_obj",
@@ -357,7 +357,7 @@ genrule(
 )
 
 cc_test(
-    name = "lower_linalg_body_test",
+    name = "lower_linalg_body_run_test",
     srcs = [
         "lower_linalg_test.c",
         ":lower_linalg_body_obj",
