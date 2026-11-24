@@ -54,6 +54,78 @@ bool isBuiltinType(const std::string &name) {
   return names.count(name);
 }
 
+// `let name = let (t : type) ... => type ...`: a generic type.
+bool isGenericTypeItem(const Node &item) {
+  return item.kind == NodeKind::LetItem && item.kids.size() > 3 &&
+         item.kids[0]->kids.empty() && item.kids[3]->kind == NodeKind::Lambda &&
+         !item.kids[3]->kids.empty() &&
+         item.kids[3]->kids.back()->kind == NodeKind::TypeValue;
+}
+
+// The dotted name of `a.b.c`, or "" when `e` is not a chain of names.
+std::string dottedName(const Node &e) {
+  if (e.kind == NodeKind::Name)
+    return e.text;
+  if (e.kind != NodeKind::Field || e.kids.size() != 1)
+    return "";
+  std::string base = dottedName(*e.kids[0]);
+  return base.empty() ? "" : base + "." + e.text;
+}
+
+// The type that the expression `e` names, written as a type, or null when
+// it names none of `types` (ADR 0064, section 1): `u8`, `byte`,
+// `option u8`, `Pia.Core.Option.option u8`, `[u8; 4]` and `[u8]`. A type
+// is a value, so `let byte = u8` is another name for `u8`, while
+// `let length = type u32` makes a new type.
+NodePtr asType(const Node &e, const std::set<std::string> &types,
+               const std::set<std::string> &generics) {
+  if (e.kind == NodeKind::TypeValue && e.flags == "alias")
+    return clone(*e.kids[0]);
+  std::string name = dottedName(e);
+  if (!name.empty()) {
+    if (!isBuiltinType(name) && !types.count(name))
+      return nullptr;
+    return makeNode(NodeKind::TypeName, e.loc, name);
+  }
+  if (e.kind == NodeKind::Apply && e.kids.size() > 1) {
+    std::string head = dottedName(*e.kids[0]);
+    if (head.empty() || !generics.count(head))
+      return nullptr;
+    auto app = makeNode(NodeKind::TypeApp, e.loc);
+    app->add(makeNode(NodeKind::TypeName, e.kids[0]->loc, head));
+    for (size_t i = 1; i < e.kids.size(); ++i) {
+      const Node &a = *e.kids[i];
+      if (a.kind == NodeKind::IntLit) {
+        app->add(clone(a));
+        continue;
+      }
+      NodePtr t = asType(a, types, generics);
+      if (!t)
+        return nullptr;
+      app->add(std::move(t));
+    }
+    return app;
+  }
+  if (e.kind == NodeKind::ListLit &&
+      (e.kids.size() == 1 || e.kids.size() == 2)) {
+    NodePtr elem = asType(*e.kids[0], types, generics);
+    if (!elem)
+      return nullptr;
+    if (e.kids.size() == 1) {
+      auto slice = makeNode(NodeKind::SliceType, e.loc);
+      slice->add(std::move(elem));
+      return slice;
+    }
+    if (e.kids[1]->kind != NodeKind::IntLit)
+      return nullptr;
+    auto array = makeNode(NodeKind::ArrayType, e.loc);
+    array->add(std::move(elem));
+    array->add(clone(*e.kids[1]));
+    return array;
+  }
+  return nullptr;
+}
+
 // A metaprogram that asked for a type that is not defined yet.
 struct Waiting {
   std::string what;  // "@derive(eq) on 'pixel'" or "the call of 'gen'"
@@ -86,6 +158,7 @@ class Expander {
       producerLoc_ = program_.loc;
       waiting_.clear();
       types_.clear();
+      nameAliases();
       for (const NodePtr &item : program_.kids)
         if (isTypeItem(*item)) types_.insert(item->text);
       bool changed = runPass();
@@ -120,6 +193,45 @@ class Expander {
   }
 
  private:
+   // `let byte = u8`, and `let buf = option byte` after it: a `let` with
+   // no parameters, annotation or contracts whose value names a type is
+   // another name for that type, the type item `let byte = type u8` marked
+   // "alias" (ADR 0064, section 1). Repeated until nothing changes, so a
+   // chain of aliases resolves in any order.
+   void nameAliases() {
+     std::set<std::string> types, generics;
+     for (const Node *program :
+          {&preludeProgram(), static_cast<const Node *>(&program_)})
+       for (const NodePtr &item : program->kids) {
+         if (isTypeItem(*item))
+           types.insert(item->text);
+         if (isGenericTypeItem(*item))
+           generics.insert(item->text);
+       }
+     for (bool changed = true; changed;) {
+       changed = false;
+       for (NodePtr &item : program_.kids) {
+         if (item->kind != NodeKind::LetItem || item->kids.size() != 4 ||
+             isTypeItem(*item) || isMetaItem(*item) ||
+             !item->kids[0]->kids.empty() ||
+             item->kids[1]->kind != NodeKind::None ||
+             !item->kids[2]->kids.empty())
+           continue;
+         NodePtr t = asType(*item->kids[3], types, generics);
+         if (!t)
+           continue;
+         auto value = makeNode(NodeKind::TypeValue, item->kids[3]->loc);
+         value->flags = "alias";
+         value->add(std::move(t));
+         value->add(makeNode(NodeKind::Attrs, item->kids[3]->loc));
+         value->add(makeNode(NodeKind::None, item->kids[3]->loc));
+         item->kids[3] = std::move(value);
+         types.insert(item->text);
+         changed = true;
+       }
+     }
+   }
+
    // An interface's `let meta m : item` (any result but `concept`) lists a
    // metaprogram, which the module must define (ADR 0039).
    void checkListedMetaprograms() {

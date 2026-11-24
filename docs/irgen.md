@@ -26,7 +26,7 @@ Status: implemented in M4 ([#5](https://github.com/deanberris/pia-lang/issues/5)
 | `unit` | no value; a function returning unit has no results |
 | `let pixel = type { r : u8; ... }` | `!pia.record<"pixel", r : !pia.int<0, 255>, ...>`, printed as `!pixel` |
 
-Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`. Records are the exception: they are named, so two record types with the same fields are different types. `let byte = type u8` is another name for `u8`.
+Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`. Records are the exception: they are named, so two record types with the same fields are different types. `let byte = u8` is another name for `u8`, and `let percent = int{0..100}` for that range: a `let` whose value is a type names it (ADR 0064). `let byte = type u8` still means the same until ADR 0064, step 2, makes it a new type.
 
 ## Integers
 

@@ -7,7 +7,7 @@
 *)
 
 let oom = type | OutOfMemory
-let blk = type int{0..63}
+let blk = int{0..63}
 
 let theory Alloc = sig
   let sort heap
@@ -81,7 +81,7 @@ let give_slot (p : borrowed inout mutable pool) (b : moved block) : unit
     p.heap <- Alloc.give p.heap i
 
 (* The size classes: class 0 has 16-byte blocks and class 1 64-byte ones. *)
-let class = type int{0..1}
+let class = int{0..1}
 let spec bytes (c : class) : usize = if c = 0 then 16 else 64
 
 let general = type { small : pool; large : pool }

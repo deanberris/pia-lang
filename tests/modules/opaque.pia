@@ -1,0 +1,28 @@
+(* An imported opaque spec function stays opaque (ADR 0063): the interface
+   carries @opaque with the definition, so an importer proves a goal about
+   it only where it says `with S.small`.
+// RUN: piac --emit=interface -o %t %S/Inputs/opaque_small.pia
+// RUN: FileCheck --check-prefix=PIAI %s < %t/Num.Small.Small.piai
+// RUN: not piac --verify --no-lint --iface-path=%t %s | FileCheck %s
+*)
+import Num.Small.Small as S
+
+(* Wrong: the definition is not a fact here. *)
+let hidden (x : u8) : u8
+  requires S.small x
+  ensures result < 20
+= x + x
+
+let shown (x : u8) : u8
+  requires S.small x
+  ensures result < 20
+  with S.small
+= x + x
+
+(*
+// PIAI: let spec small (x : u8) : bool @opaque
+// CHECK: opaque.pia:14:5: failed: '+' does not overflow u8
+// CHECK: hint: 'Num.Small.small' is opaque here; 'with Num.Small.small' may prove it (ADR 0063)
+// CHECK: opaque.pia:13:3: failed: the postcondition holds
+// CHECK: 2 proved, 2 failed, 0 skipped
+*)

@@ -1,0 +1,46 @@
+(* A `let` whose value names a type is another name for it (ADR 0064,
+   section 1): a type is a value, so `let byte = u8` binds it as
+   `let y = x` binds a value. Aliases mix freely with the type they name,
+   in any order, through generics, arrays and range types.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let pair = let (t : type) => type { a : t; b : t }
+
+(* Used before it is defined, and an alias of an alias. *)
+let wide = pair octet
+let octet = byte
+let byte = u8
+let percent = int{0..100}
+let quad = [byte; 4]
+
+let same (x : byte) : u8
+  ensures result = x
+= x
+
+let swap (p : wide) : pair u8
+  ensures result.a = p.b && result.b = p.a
+= { a = p.b; b = p.a }
+
+let half (p : percent) : int{0..50}
+  ensures result * 2 <= p
+= p / 2
+
+let first (q : quad) : octet
+  ensures result = q.[0]
+= q.[0]
+
+let top : u16 = max octet + 1
+
+(* Expected report, in order.
+// CHECK: type_aliases.pia:18:3: proved: the postcondition holds [smt]
+// CHECK: type_aliases.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: type_aliases.pia:27:5: proved: the divisor is not zero [intervals]
+// CHECK: type_aliases.pia:27:5: proved: '/' does not overflow int{0..100} [intervals]
+// CHECK: type_aliases.pia:27:5: proved: the value fits in int{0..50} [smt]
+// CHECK: type_aliases.pia:26:3: proved: the postcondition holds [smt]
+// CHECK: type_aliases.pia:31:3: proved: the index is within bounds [intervals]
+// CHECK: type_aliases.pia:30:3: proved: the postcondition holds [smt]
+// CHECK: type_aliases.pia:33:27: proved: '+' does not overflow u16 [intervals]
+// CHECK: 9 proved, 0 failed, 0 skipped
+*)

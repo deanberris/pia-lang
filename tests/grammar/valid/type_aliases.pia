@@ -1,0 +1,15 @@
+(* A `let` whose value is a type names it; `type` makes a new type
+   (ADR 0064). *)
+module Units : Names
+
+interface Names = sig
+  let byte = u8
+  let percent = int{0..100}
+  let length = type u32
+end
+
+let byte = u8
+let percent = int{0..100}
+let bytes = option byte
+let block = [byte; 4]
+let length = type u32
