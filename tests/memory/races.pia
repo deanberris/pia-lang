@@ -32,11 +32,11 @@ litmus "all_atomic"
   "race" []
 
 (* Expected report, in order.
-// CHECK: races.pia:10:1: failed: the postcondition holds
+// CHECK: races.pia:10:1: failed: no RC11 execution of 'mp_rlx_flag' has a data race
 // CHECK-NEXT: counterexample: r1 = {{-?[0-9]+}}, r2 = {{-?[0-9]+}}
-// CHECK: races.pia:17:1: failed: the postcondition holds
+// CHECK: races.pia:17:1: failed: no RC11 execution of 'mp_unguarded' has a data race
 // CHECK-NEXT: counterexample: r1 = {{-?[0-9]+}}, r2 = {{-?[0-9]+}}
-// CHECK: races.pia:23:1: proved: the postcondition holds [smt]
-// CHECK: races.pia:29:1: proved: the postcondition holds [smt]
+// CHECK: races.pia:23:1: proved: no RC11 execution of 'one_thread' has a data race [smt]
+// CHECK: races.pia:29:1: proved: no RC11 execution of 'all_atomic' has a data race [smt]
 // CHECK: 2 proved, 2 failed, 0 skipped
 *)

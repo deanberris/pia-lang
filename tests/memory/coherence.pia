@@ -28,11 +28,23 @@ litmus "cowr_allowed"
   "allowed" [ is "r1" 2; final "x" 2 ]
 
 (* Expected report, in order.
-// CHECK: coherence.pia:6:1: proved: the postcondition holds [smt]
-// CHECK: coherence.pia:11:1: proved: the postcondition holds [smt]
-// CHECK: coherence.pia:16:1: proved: the postcondition holds [smt]
-// CHECK: coherence.pia:21:1: proved: the postcondition holds [smt]
-// CHECK: coherence.pia:25:1: failed: the postcondition holds
+// CHECK: coherence.pia:6:1: proved: no RC11 execution of 'corr' ends with the outcome [smt]
+// CHECK: coherence.pia:6:1: proved: no x86-TSO execution of 'corr' ends with the outcome [smt]
+// CHECK: coherence.pia:6:1: proved: no Armv8 execution of 'corr' ends with the outcome [smt]
+// CHECK: coherence.pia:11:1: proved: no RC11 execution of 'corw' ends with the outcome [smt]
+// CHECK: coherence.pia:11:1: proved: no x86-TSO execution of 'corw' ends with the outcome [smt]
+// CHECK: coherence.pia:11:1: proved: no Armv8 execution of 'corw' ends with the outcome [smt]
+// CHECK: coherence.pia:16:1: proved: no RC11 execution of 'cowr' ends with the outcome [smt]
+// CHECK: coherence.pia:16:1: proved: no x86-TSO execution of 'cowr' ends with the outcome [smt]
+// CHECK: coherence.pia:16:1: proved: no Armv8 execution of 'cowr' ends with the outcome [smt]
+// CHECK: coherence.pia:21:1: proved: no RC11 execution of 'coww' ends with the outcome [smt]
+// CHECK: coherence.pia:21:1: proved: no x86-TSO execution of 'coww' ends with the outcome [smt]
+// CHECK: coherence.pia:21:1: proved: no Armv8 execution of 'coww' ends with the outcome [smt]
+// CHECK: coherence.pia:25:1: failed: no RC11 execution of 'cowr_allowed' ends with the outcome
 // CHECK-NEXT: counterexample: r1 = 2, x_final = 2
-// CHECK: 4 proved, 1 failed, 0 skipped
+// CHECK: coherence.pia:25:1: failed: no x86-TSO execution of 'cowr_allowed' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 2, x_final = 2
+// CHECK: coherence.pia:25:1: failed: no Armv8 execution of 'cowr_allowed' ends with the outcome
+// CHECK-NEXT: counterexample: r1 = 2, x_final = 2
+// CHECK: 12 proved, 3 failed, 0 skipped
 *)

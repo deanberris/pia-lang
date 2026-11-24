@@ -17,6 +17,7 @@ cc_library(
     deps = [
         "//src/cert",
         "//src/dialect",
+        "@llvm-project//llvm:AllTargetsAsmParsers",
         "@llvm-project//llvm:AllTargetsCodeGens",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:MC",

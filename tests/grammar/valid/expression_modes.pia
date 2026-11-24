@@ -3,3 +3,6 @@
 let mix (a : u8) (b : u8) : u8 = @wrap (a + b) ^ @saturate (a - b)
 
 let bump (c : borrowed atomic u32) : u32 = @wrap (atomic_add relaxed c 1)
+
+let pass_on (x : borrowed atomic u32) (y : borrowed atomic u32) : unit =
+  atomic_store relaxed y (@ordered (atomic_load relaxed x))

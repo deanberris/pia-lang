@@ -24,6 +24,7 @@ let theory Memory = sig
   let spec releases : (e : event) -> bool   \ release, acq_rel or seq_cst
   let spec acquires : (e : event) -> bool   \ acquire, acq_rel or seq_cst
   let spec is_sc : (e : event) -> bool      \ seq_cst
+  let spec ordered : (e : event) -> bool    \ a relaxed load written @ordered
   let spec same_loc : (a : event) -> (b : event) -> bool
 
   let spec po : (a : event) -> (b : event) -> bool
@@ -41,7 +42,7 @@ let theory Memory = sig
   let spec scb : (a : event) -> (b : event) -> bool
   let spec lsc : (a : event) -> (y : event) -> bool  \ psc's left half and scb
   let spec psc : (a : event) -> (b : event) -> bool
-  let spec air : (e : event) -> int      \ a rank: po ∪ rf is acyclic
+  let spec air : (e : event) -> int      \ a rank: ord ∪ rf is acyclic
   let spec sc_rank : (e : event) -> int  \ a rank: psc is acyclic
 
   (* From-reads, and the extended coherence order. *)
@@ -53,11 +54,11 @@ let theory Memory = sig
   let axiom eco_trans (a : event) (b : event) (c : event) @trigger(eco a b, eco b c)
     requires eco a b && eco b c ensures eco a c
 
-  (* Release sequences and synchronises-with. *)
+  (* Release sequences and synchronises-with. A release sequence is a
+     release store and the chain of read-modify-writes that read it, as in
+     C++20 (P0982R1), not later stores of the same thread as well: Armv8
+     does not order those (ADR 0052, notes from step 3). *)
   let axiom rs_self (w : event) requires is_write w && is_atomic w ensures rs w w
-  let axiom rs_po (w : event) (x : event)
-    requires is_write w && is_write x && same_loc w x && is_atomic x && po w x
-    ensures rs w x
   let axiom rs_rmw (w : event) (x : event) (r : event) (y : event)
       @trigger(rs w x, rf x r, rmw r y)
     requires rs w x && rf x r && rmw r y ensures rs w y
@@ -112,8 +113,14 @@ let theory Memory = sig
     ensures psc a b
   let axiom psc_acyclic (a : event) (b : event) requires psc a b ensures sc_rank a < sc_rank b
 
-  (* No thin air: po ∪ rf is acyclic. *)
-  let axiom air_po (a : event) (b : event) requires po a b ensures air a < air b
+  (* No thin air, where the program asks for it (Dean, 2026-11-24): ord ∪ rf
+     is acyclic, where ord is program order from a load that acquires or is
+     written @ordered. RC11 makes all of po ∪ rf acyclic, which plain ldr
+     and str on Armv8 do not give, so a relaxed load that is not @ordered
+     does not order what follows it (ADR 0052, notes from step 3). *)
+  let axiom air_ord (a : event) (b : event)
+    requires po a b && is_read a && (acquires a || ordered a)
+    ensures air a < air b
   let axiom air_rf (a : event) (b : event) requires rf a b ensures air a < air b
 end
 
@@ -131,6 +138,7 @@ let model timeline : Memory = struct
   let spec releases (e : stamp) : bool = e.ord = 3 || e.ord = 4 || e.ord = 5
   let spec acquires (e : stamp) : bool = e.ord = 2 || e.ord = 4 || e.ord = 5
   let spec is_sc (e : stamp) : bool = e.ord = 5
+  let spec ordered (e : stamp) : bool = e.ord = 1
   let spec same_loc (a : stamp) (b : stamp) : bool = a.loc = b.loc && a.kind < 2 && b.kind < 2
   let spec po (a : stamp) (b : stamp) : bool = a.thread = b.thread && a.time < b.time
   let spec rf (w : stamp) (r : stamp) : bool =
@@ -152,4 +160,146 @@ let model timeline : Memory = struct
   let spec psc (a : stamp) (b : stamp) : bool = a.time < b.time
   let spec air (e : stamp) : int = e.time
   let spec sc_rank (e : stamp) : int = e.time
+end
+
+(* The hardware models (ADR 0052, section 5), in the same shape: each
+   relation a program's events can have, and the orders that must be
+   acyclic, as ranks. `litmus` states them for the compiled instructions of
+   one test. Each model below proves its theory consistent. *)
+
+(* x86-TSO (Owens, Sarkar and Sewell, 2009): program order is kept except
+   from a write to a later read, unless a locked instruction or mfence is
+   between, and a write is seen by other threads in one order. *)
+let theory Tso = sig
+  let sort event
+  let spec is_read : (e : event) -> bool
+  let spec is_write : (e : event) -> bool
+  let spec locked : (e : event) -> bool    \ part of a lock-prefixed instruction, or mfence
+  let spec same_loc : (a : event) -> (b : event) -> bool
+  let spec same_thread : (a : event) -> (b : event) -> bool
+  let spec po : (a : event) -> (b : event) -> bool
+  let spec rf : (w : event) -> (r : event) -> bool
+  let spec co : (a : event) -> (b : event) -> bool
+  let spec rmw : (r : event) -> (w : event) -> bool
+  let spec fr : (r : event) -> (w : event) -> bool
+  let spec uni : (e : event) -> int    \ a rank: coherence per location
+  let spec ghb : (e : event) -> int    \ a rank: the global order
+
+  let axiom one_kind (e : event) ensures (is_read e && is_write e) = false
+  let axiom fr_def (w : event) (r : event) (x : event) @trigger(rf w r, co w x)
+    requires rf w r && co w x ensures fr r x
+  let axiom uni_po (a : event) (b : event) requires po a b && same_loc a b ensures uni a < uni b
+  let axiom uni_rf (a : event) (b : event) requires rf a b ensures uni a < uni b
+  let axiom uni_fr (a : event) (b : event) requires fr a b ensures uni a < uni b
+  let axiom uni_co (a : event) (b : event) requires co a b ensures uni a < uni b
+  let axiom atomicity (r : event) (w : event) (x : event) @trigger(rmw r w, fr r x)
+    requires rmw r w && fr r x && same_thread x r = false ensures co x w = false
+  let axiom ghb_ppo (a : event) (b : event)
+    requires po a b && (is_write a && is_read b && locked a = false && locked b = false) = false
+    ensures ghb a < ghb b
+  let axiom ghb_rfe (a : event) (b : event)
+    requires rf a b && same_thread a b = false ensures ghb a < ghb b
+  let axiom ghb_fr (a : event) (b : event) requires fr a b ensures ghb a < ghb b
+  let axiom ghb_co (a : event) (b : event) requires co a b ensures ghb a < ghb b
+end
+
+(* Armv8 (Pulte, Flur, Deacon and others, 2018), multi-copy atomic, with
+   LSE and RCpc: A is ldar and an acquire read-modify-write's read, Q is
+   ldapr, L is stlr and a release read-modify-write's write. *)
+let theory Armv8 = sig
+  let sort event
+  let spec is_read : (e : event) -> bool
+  let spec is_write : (e : event) -> bool
+  let spec acq : (e : event) -> bool       \ A
+  let spec acq_pc : (e : event) -> bool    \ Q
+  let spec rel : (e : event) -> bool       \ L
+  let spec dmb_full : (e : event) -> bool  \ dmb ish
+  let spec dmb_ld : (e : event) -> bool    \ dmb ishld
+  let spec same_loc : (a : event) -> (b : event) -> bool
+  let spec same_thread : (a : event) -> (b : event) -> bool
+  let spec po : (a : event) -> (b : event) -> bool
+  let spec rf : (w : event) -> (r : event) -> bool
+  let spec co : (a : event) -> (b : event) -> bool
+  let spec rmw : (r : event) -> (w : event) -> bool
+  let spec fr : (r : event) -> (w : event) -> bool
+  let spec uni : (e : event) -> int    \ a rank: internal visibility
+  let spec ob : (e : event) -> int     \ a rank: ordered-before
+
+  let axiom one_kind (e : event) ensures (is_read e && is_write e) = false
+  let axiom fr_def (w : event) (r : event) (x : event) @trigger(rf w r, co w x)
+    requires rf w r && co w x ensures fr r x
+  let axiom uni_po (a : event) (b : event) requires po a b && same_loc a b ensures uni a < uni b
+  let axiom uni_rf (a : event) (b : event) requires rf a b ensures uni a < uni b
+  let axiom uni_fr (a : event) (b : event) requires fr a b ensures uni a < uni b
+  let axiom uni_co (a : event) (b : event) requires co a b ensures uni a < uni b
+  let axiom atomicity (r : event) (w : event) (x : event) @trigger(rmw r w, fr r x)
+    requires rmw r w && fr r x && same_thread x r = false ensures co x w = false
+  (* Observed-by: external rf, co and fr. *)
+  let axiom obs_rf (a : event) (b : event)
+    requires rf a b && same_thread a b = false ensures ob a < ob b
+  let axiom obs_co (a : event) (b : event)
+    requires co a b && same_thread a b = false ensures ob a < ob b
+  let axiom obs_fr (a : event) (b : event)
+    requires fr a b && same_thread a b = false ensures ob a < ob b
+  (* Atomic-ordered-before. *)
+  let axiom aob_rmw (a : event) (b : event) requires rmw a b ensures ob a < ob b
+  let axiom aob_rfi (w : event) (r : event) (x : event) @trigger(rmw x w, rf w r)
+    requires rmw x w && rf w r && same_thread w r && (acq r || acq_pc r)
+    ensures ob w < ob r
+  (* Barrier-ordered-before. *)
+  let axiom bob_full (a : event) (b : event)
+    requires po a b && (dmb_full a || dmb_full b) ensures ob a < ob b
+  let axiom bob_ld (a : event) (b : event)
+    requires po a b && (dmb_ld a || (is_read a && dmb_ld b)) ensures ob a < ob b
+  let axiom bob_acq (a : event) (b : event)
+    requires po a b && (acq a || acq_pc a) ensures ob a < ob b
+  let axiom bob_rel (a : event) (b : event) requires po a b && rel b ensures ob a < ob b
+  let axiom bob_rel_acq (a : event) (b : event)
+    requires po a b && rel a && acq b ensures ob a < ob b
+end
+
+(* A sequentially consistent execution is one of each hardware model's
+   too, so the same stamps model both. *)
+let model tso_timeline : Tso = struct
+  let sort event = stamp
+  let spec is_read (e : stamp) : bool = e.kind = 0 && e.time = 2 * e.half + 1
+  let spec is_write (e : stamp) : bool = e.kind = 1 && e.time = 2 * e.half
+  let spec locked (e : stamp) : bool = e.ord = 5
+  let spec same_loc (a : stamp) (b : stamp) : bool = a.loc = b.loc && a.kind < 2 && b.kind < 2
+  let spec same_thread (a : stamp) (b : stamp) : bool = a.thread = b.thread
+  let spec po (a : stamp) (b : stamp) : bool = a.thread = b.thread && a.time < b.time
+  let spec rf (w : stamp) (r : stamp) : bool =
+    is_write w && is_read r && same_loc w r && w.time + 1 = r.time
+  let spec co (a : stamp) (b : stamp) : bool =
+    is_write a && is_write b && same_loc a b && a.time < b.time
+  let spec rmw (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.thread = w.thread && r.time + 1 = w.time
+  let spec fr (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.time < w.time
+  let spec uni (e : stamp) : int = e.time
+  let spec ghb (e : stamp) : int = e.time
+end
+
+let model arm_timeline : Armv8 = struct
+  let sort event = stamp
+  let spec is_read (e : stamp) : bool = e.kind = 0 && e.time = 2 * e.half + 1
+  let spec is_write (e : stamp) : bool = e.kind = 1 && e.time = 2 * e.half
+  let spec acq (e : stamp) : bool = e.ord = 5
+  let spec acq_pc (e : stamp) : bool = e.ord = 2
+  let spec rel (e : stamp) : bool = e.ord = 3 || e.ord = 5
+  let spec dmb_full (e : stamp) : bool = e.kind = 2 && e.ord <> 2
+  let spec dmb_ld (e : stamp) : bool = e.kind = 2 && e.ord = 2
+  let spec same_loc (a : stamp) (b : stamp) : bool = a.loc = b.loc && a.kind < 2 && b.kind < 2
+  let spec same_thread (a : stamp) (b : stamp) : bool = a.thread = b.thread
+  let spec po (a : stamp) (b : stamp) : bool = a.thread = b.thread && a.time < b.time
+  let spec rf (w : stamp) (r : stamp) : bool =
+    is_write w && is_read r && same_loc w r && w.time + 1 = r.time
+  let spec co (a : stamp) (b : stamp) : bool =
+    is_write a && is_write b && same_loc a b && a.time < b.time
+  let spec rmw (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.thread = w.thread && r.time + 1 = w.time
+  let spec fr (r : stamp) (w : stamp) : bool =
+    is_read r && is_write w && same_loc r w && r.time < w.time
+  let spec uni (e : stamp) : int = e.time
+  let spec ob (e : stamp) : int = e.time
 end

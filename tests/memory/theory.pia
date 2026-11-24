@@ -1,11 +1,12 @@
-(* The built-in theory Memory (ADR 0052, section 4) is consistent: its
-   model `timeline` meets every axiom. Programs that use Memory do not
+(* The built-in theory Memory (ADR 0052, section 4) and the hardware
+   models Tso and Armv8 (section 5) are consistent: each model meets
+   every axiom of its theory. Programs that use Memory do not
    prove this again. The file it checks is the one compiled into piac,
    src/irgen/Memory.pia.
 // RUN: piac --verify --trust-report %S/../../src/irgen/Memory.pia | FileCheck %s --check-prefix=MODEL
 // RUN: not piac --verify %s | FileCheck %s
 // MODEL: 0 trusted items
-// MODEL: 33 proved, 0 failed, 0 skipped
+// MODEL: 60 proved, 0 failed, 0 skipped
 *)
 
 (* Message passing, from the axioms: a release store read by an acquire
@@ -37,10 +38,32 @@ let lemma publish_relaxed (dw : Memory.event) (fw : Memory.event)
   ensures Memory.hb dw dr
 = ()
 
+(* On x86, plain message passing is ordered: TSO keeps write-to-write and
+   read-to-read order. *)
+let lemma tso_publish (dw : Tso.event) (fw : Tso.event) (fr : Tso.event)
+                      (dr : Tso.event) : unit
+  requires Tso.po dw fw && Tso.is_write dw && Tso.is_write fw
+  requires Tso.rf fw fr && Tso.same_thread fw fr = false
+  requires Tso.po fr dr && Tso.is_read fr && Tso.is_read dr
+  ensures Tso.ghb dw < Tso.ghb dr
+= ()
+
+(* On Armv8 it is not, without stlr and ldapr. *)
+let lemma arm_publish (dw : Armv8.event) (fw : Armv8.event) (fr : Armv8.event)
+                      (dr : Armv8.event) : unit
+  requires Armv8.po dw fw && Armv8.is_write dw && Armv8.is_write fw
+  requires Armv8.rf fw fr && Armv8.same_thread fw fr = false
+  requires Armv8.po fr dr && Armv8.is_read fr && Armv8.is_read dr
+  ensures Armv8.ob dw < Armv8.ob dr
+= ()
+
 (* Expected report, in order.
-// CHECK: theory.pia:18:3: proved: the postcondition holds [smt]
-// CHECK: theory.pia:28:3: proved: the postcondition holds [smt]
-// CHECK: theory.pia:37:3: failed: the postcondition holds
-// CHECK-NEXT: counterexample: dw = {{.*}}
-// CHECK: 2 proved, 1 failed, 0 skipped
+// CHECK: theory.pia:19:3: proved: the postcondition holds [smt]
+// CHECK: theory.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: theory.pia:38:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: dw = Memory.event!val!0, fw = Memory.event!val!1, fr = Memory.event!val!2, dr = Memory.event!val!3
+// CHECK: theory.pia:48:3: proved: the postcondition holds [smt]
+// CHECK: theory.pia:57:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: dw = Armv8.event!val!0, fw = Armv8.event!val!1, fr = Armv8.event!val!2, dr = Armv8.event!val!3
+// CHECK: 3 proved, 2 failed, 0 skipped
 *)

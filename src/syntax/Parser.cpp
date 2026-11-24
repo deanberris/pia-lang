@@ -1535,6 +1535,17 @@ class Parser {
       n->add(unary());
       return n;
     }
+    // `@ordered e`: a relaxed load the program asks to be ordered before
+    // the rest of its thread (ADR 0052). It is the builtin `#ordered e`.
+    if (at(K::Attr) && tok().text == "@ordered") {
+      auto n = makeNode(N::Apply, loc());
+      auto fn = makeNode(N::Name, loc(), "#ordered");
+      fn->flags = "prelude";
+      n->add(std::move(fn));
+      take();
+      n->add(unary());
+      return n;
+    }
     return application();
   }
 

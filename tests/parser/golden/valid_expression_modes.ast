@@ -77,4 +77,50 @@
       )
     )
   )
+  (LetItem "pass_on"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers "borrowed")
+          (TypeApp
+            (TypeName "atomic")
+            (TypeName "u32")
+          )
+          (None)
+        )
+      )
+      (Param "y"
+        (Annot
+          (Modifiers "borrowed")
+          (TypeApp
+            (TypeName "atomic")
+            (TypeName "u32")
+          )
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Apply
+      (Name "atomic_store")
+      (Name "relaxed")
+      (Name "y")
+      (Apply
+        (Name "#ordered" [prelude])
+        (Apply
+          (Name "atomic_load")
+          (Name "relaxed")
+          (Name "x")
+        )
+      )
+    )
+  )
 )

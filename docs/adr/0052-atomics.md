@@ -179,6 +179,15 @@ Building step 1 changed four details, none of which changes the design:
 - **Derived relations are lower bounds,** in the theory and in each test. Every RC11 axiom only forbids, so the least relations that meet the bounds decide every verdict, including races, and no relation needs to be computed as a closure.
 - **The battery is a first family of tests,** 43 of them, not yet every combination of orders, and the expected results are RC11's published ones, not yet checked against `herd7`. `cas`, which writes only when it succeeds, is not in the litmus vocabulary yet.
 
+## Notes from step 3 (2026-11-23)
+
+- **The hardware models live in `Memory.pia`,** as the theories `Tso` and `Armv8` beside `Memory`, not in `Target.pia`, since they share its events and its model. `litmus` states each one for a test's compiled instructions, so every test gives three lemmas, named in the report by `@claim`.
+- **x86_64 is sound for the whole battery.** Every outcome RC11 forbids, x86-TSO forbids for the compiled code.
+- **arm64 had two mismatches,** which Dean decided on 2026-11-24:
+  1. *Load buffering* (`lb_rlx`). Armv8 allows it for plain `ldr` and `str`, and RC11's no-thin-air axiom, `po ∪ rf` acyclic, forbids it. Dean: "maybe this should be explicitly required from the program so that we don't need to guess." So `Memory` makes only `ord ∪ rf` acyclic, where `ord` is program order from a load that acquires or that the program writes `@ordered (atomic_load relaxed c)`. A plain relaxed load orders nothing after it, so load buffering is allowed, as Armv8 allows it, and so are values out of thin air when nothing orders the loads (`oota_rlx`), though neither target produces them. With `@ordered` loads both are forbidden (`lb_ordered`, `oota_ordered`). `@ordered` lowers to `ldr` and a branch on the value to the next instruction on arm64, a control dependency that orders the load before later stores, emitted as inline assembly so LLVM keeps it, and to a plain `mov` on x86_64, where TSO already gives the order. It is an expression attribute, like `@wrap`, since it is a property of one load, not of its order: an `ordered` memory order would have to fit every operation's order table.
+  2. *Release sequences through program order* (`release_po`). Armv8 does not order `stlr x` before a later `str x` for other threads. Dean chose C++20's release sequences (P0982R1): a release store and the chain of read-modify-writes that read it, and no later stores of the same thread. `release_po` is now allowed, on every model.
+- **The battery has no mismatch left.** Wherever `Memory` forbids an outcome, both hardware models forbid it for the compiled instructions.
+
 ## Answers (Dean, 2026-11-23)
 
 1. **`relaxed` as acquire and release on x86_64:** yes, only inside `@target(x86_64_linux)` items (section 6). Elsewhere it stays LLVM `monotonic`.

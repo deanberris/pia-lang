@@ -253,7 +253,7 @@ The model checker supports sequential consistency and release/acquire from the s
 - `relaxed` operations whose results never create an ordering, such as a statistics counter or the histogram bins above, are accepted by the type checker. The rule is that the value read is not used to decide whether to touch other shared data.
 - Any other use of `relaxed` is an unproved obligation, so it is an error by default, until the model checker gains an RC11 mode. GenMC and CDSChecker show it can be done.
 
-[ADR 0052](adr/0052-atomics.md) replaces this plan: the language memory model is RC11 from the start (`Pia.Memory`), checked by a battery of litmus tests, so every order, `relaxed` included, is reasoned about under the same axioms.
+[ADR 0052](adr/0052-atomics.md) replaces this plan: the language memory model is RC11 from the start (`Pia.Memory`), checked by a battery of litmus tests, so every order, `relaxed` included, is reasoned about under the same axioms. Where a `relaxed` load must be ordered before the rest of its thread, which is what keeps values out of thin air, the program says so: `@ordered (atomic_load relaxed c)`. A plain `relaxed` load orders nothing after it, so load buffering is allowed, as on Armv8, while an `@ordered` load costs a branch on arm64 and nothing on x86_64. Release sequences are C++20's: a release store and the read-modify-writes that read it.
 
 ### Resources other than memory
 

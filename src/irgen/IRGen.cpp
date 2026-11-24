@@ -921,6 +921,7 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    claim_.clear();
     owns_.clear();
     variadic_.reset();
     solver_.clear();
@@ -1036,6 +1037,14 @@ class Gen {
       if (fuel_)
         fn->setAttr(PiaDialect::getFuelAttrName(),
                     b_.getI64IntegerAttr(fuel_));
+      // `@claim("...")` names what a lemma's postcondition says, for the
+      // report, as a litmus test's lemmas do (ADR 0052).
+      if (!claim_.empty())
+        fn->setAttr("pia.obligation", b_.getStringAttr(claim_));
+    }
+    if (!claim_.empty() && !isLemma) {
+      fail(item, "@claim applies only to a lemma");
+      return;
     }
 
     // A parameter whose record type refines its fields holds them: the
@@ -1697,6 +1706,16 @@ class Gen {
           fail(*a, "@overflow takes proof, wrap, saturate or trap");
           return false;
         }
+        continue;
+      }
+      // A string, or the name a metaprogram splices from one.
+      if (a->text == "claim" && a->kids.size() == 1 &&
+          (a->kids[0]->kind == NodeKind::StringLit ||
+           a->kids[0]->kind == NodeKind::Name)) {
+        const std::string &t = a->kids[0]->text;
+        claim_ = a->kids[0]->kind == NodeKind::StringLit && t.size() >= 2
+                     ? t.substr(1, t.size() - 2)
+                     : t;
         continue;
       }
       if (a->text == "fuel" && a->kids.size() == 1 &&
@@ -3013,7 +3032,11 @@ class Gen {
       if (!c)
         return std::nullopt;
       Type elem = c->second.getElementType();
-      return TV{create<AtomicLoadOp>(l, elem, *o, c->first).getResult(), elem};
+      auto load = create<AtomicLoadOp>(l, elem, *o, c->first);
+      // `@ordered` asks for what acquire and seq_cst already give.
+      if (orderedNode_ == &n && *o == O::relaxed)
+        load.setOrdered(true);
+      return TV{load.getResult(), elem};
     }
     if (name == "atomic_store") {
       if (!arity(3, "atomic_store release c v"))
@@ -3148,6 +3171,23 @@ class Gen {
 
   // `@wrap e`, `@trap e`, `@saturate e`, `@proof e`: `e` under that
   // overflow mode (docs/design.md). The parser writes it `#overflow m e`.
+  // `@ordered (atomic_load relaxed c)`: the load is ordered before every
+  // later access of its thread (ADR 0052, notes from step 3). The parser
+  // writes it `#ordered e`, and it applies to an atomic load only.
+  R genOrderedExpr(const Node &n, Type expected) {
+    const Node &inner = *n.kids[1];
+    if (inner.kind != NodeKind::Apply || inner.kids.empty() ||
+        inner.kids[0]->kind != NodeKind::Name ||
+        inner.kids[0]->text != "atomic_load")
+      return fail(n, "'@ordered' applies to an atomic load, as in "
+                     "'@ordered (atomic_load relaxed c)'");
+    const Node *saved = orderedNode_;
+    orderedNode_ = &inner;
+    R r = genExpr(inner, expected);
+    orderedNode_ = saved;
+    return r;
+  }
+
   R genModeExpr(const Node &n, Type expected) {
     auto m = symbolizeOverflowMode(n.kids[1]->text);
     if (!m)
@@ -3436,6 +3476,8 @@ class Gen {
       return genMatchBuiltin(n);
     if (fn.flags == "prelude" && fn.text == "#overflow" && argc == 2)
       return genModeExpr(n, expected);
+    if (fn.flags == "prelude" && fn.text == "#ordered" && argc == 1)
+      return genOrderedExpr(n, expected);
     if (!local && isAtomicBuiltin(fn.text))
       return genAtomic(n, fn.text, expected,
                        statedNode_ == &n ? statedMode_ : std::nullopt);
@@ -10782,8 +10824,10 @@ class Gen {
   // The expression an `@wrap`-style mode was written on, and the mode: an
   // atomic add takes only a mode stated on itself (ADR 0052).
   const Node *statedNode_ = nullptr;
+  const Node *orderedNode_ = nullptr; // the load `@ordered` was written on
   std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  std::string claim_;  // @claim("...") on the lemma being generated
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;

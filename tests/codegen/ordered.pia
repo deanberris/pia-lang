@@ -1,0 +1,39 @@
+(* `@ordered (atomic_load relaxed c)` (ADR 0052, notes from step 3): a
+   relaxed load the program asks to be ordered before every later access
+   of its thread, which is what keeps values out of thin air. On arm64 it
+   is ldr and a branch on the value to the next instruction, a control
+   dependency that orders it before later stores; on x86_64, where TSO
+   already keeps that order, it is a plain mov.
+// RUN: piac --emit=asm %s | FileCheck %s --check-prefix=ARM
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=X86
+*)
+module Ordered : Ops
+
+interface Ops @abi(c) = sig
+  let pass_on : (x : borrowed atomic u32) -> (y : borrowed atomic u32) -> unit
+  let plain : (x : borrowed atomic u32) -> (y : borrowed atomic u32) -> unit
+end
+
+let pass_on (x : borrowed atomic u32) (y : borrowed atomic u32) : unit
+= let v = @ordered (atomic_load relaxed x) in
+  atomic_store relaxed y v
+
+let plain (x : borrowed atomic u32) (y : borrowed atomic u32) : unit
+= let v = atomic_load relaxed x in
+  atomic_store relaxed y v
+
+(*
+// ARM-LABEL: {{^_?}}pass_on:
+// ARM: ldr w[[R:[0-9]+]], [x0]
+// ARM: cbz x[[R]], [[L:[A-Za-z0-9_]+]]
+// ARM-NEXT: [[L]]:
+// ARM: str w[[R]], [x1]
+// ARM-LABEL: {{^_?}}plain:
+// ARM-NOT: cbz
+// ARM: ret
+
+// X86-LABEL: {{^_?}}pass_on:
+// X86: movl (%rdi), %eax
+// X86-NOT: lock
+// X86: movl %eax, (%rsi)
+*)
