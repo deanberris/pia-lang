@@ -71,7 +71,7 @@ Times are wall clock and vary; `cost` is Z3's resource count, which does not. Go
 
 ## The working loop
 
-1. **Send the smallest piece that can be proved alone**, usually one function. Callers come later, since they are proved against the callee's contract, not its body.
+1. **Send the smallest piece that can be proved alone**, usually one function. Callers come later, since they are proved against the callee's contract, not its body. (A loop-free function of scalars is the exception: its body unfolds at each call, so a `:redef` of it proves its callers again against the new body.)
 2. **Read every failure before changing anything.** Decide for each one whether it is a missing assumption (add `requires`), a real bug (change the body), or a mistake in your port (fix the port). The `pia-proof-debugging` skill covers this in detail.
 3. **Resend with one change.** A name that is already defined cannot be defined again (Pia has no shadowing), so either resend after a failure (a failed cell defined nothing), or use `:redef let ...` to replace a definition that was committed.
 4. **Use `:redef` to ask "who relies on this?".** It proves every definition that uses the replaced one again. If one breaks, the redefinition is refused and the error points at the caller.
