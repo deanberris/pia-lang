@@ -1,0 +1,26 @@
+(* spread (ADR 0060), compiled and run by spread_test.c: a map that writes
+   each iteration's own cell, and a loop over basins that writes the cells
+   an owner array gives each one. *)
+module Spread : Loops
+
+interface Loops @abi(c) = sig
+  let square : (xs : [u32]) -> (ys : out mutable [u64]) -> unit
+    requires len ys = len xs
+  let zero_basins : (label : [usize]) -> (v : borrowed inout mutable [u32]) -> (nb : usize) -> unit
+    requires len label = len v
+end
+
+let square (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do
+    let x : u64 = xs.[i] in
+    ys.[i] <- x * x
+  done
+
+let zero_basins (label : [usize]) (v : borrowed inout mutable [u32]) (nb : usize) : unit
+  requires len label = len v
+= spread b in 0 .. nb @owns(v, label) do
+    for c in 0 .. len v do
+      if label.[c] = b then v.[c] <- v.[c] + (if v.[c] < 4294967295 then 1 else 0) else ()
+    done
+  done

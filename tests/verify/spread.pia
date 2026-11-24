@@ -1,0 +1,96 @@
+(* spread (ADR 0060): every access to a buffer the body writes is a goal
+   that the iteration owns the cell, `c = i` by default and `owner.[c] = i`
+   under @owns. Reads of buffers nobody writes are free. A shifted write
+   fails: iteration i writes the cell iteration i + 1 owns.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let copy (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do ys.[i] <- xs.[i] done
+
+(* A stencil reads its neighbours in a buffer no iteration writes. *)
+let smooth (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs && len xs >= 2
+= spread i in 1 .. len xs - 1 do
+    let s : u64 = xs.[i - 1] in
+    let t : u64 = s + xs.[i] + xs.[i + 1] in
+    ys.[i] <- (if t / 3 < 4294967295 then t / 3 else 4294967295)
+  done
+
+(* Reading its own cell of a written buffer is fine. *)
+let bump (v : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len v do
+    if v.[i] < 4294967295 then v.[i] <- v.[i] + 1 else ()
+  done
+
+(* Basins: iteration b owns the cells labelled b. *)
+let clear_basins (label : [usize]) (v : borrowed inout mutable [u32]) (nb : usize) : unit
+  requires len label = len v
+= spread b in 0 .. nb @owns(v, label) do
+    for c in 0 .. len v do
+      if label.[c] = b then v.[c] <- 0 else ()
+    done
+  done
+
+(* Writing the next cell: iterations i and i + 1 would both write it. *)
+let shifted (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs && len xs > 0
+= spread i in 0 .. len xs - 1 do ys.[i + 1] <- xs.[i] done
+
+(* Reading a neighbour of a written buffer races with its owner's write. *)
+let blur (v : borrowed inout mutable [u32]) : unit
+  requires len v >= 2
+= spread i in 1 .. len v do v.[i] <- v.[i - 1] done
+
+(* A basin writing a cell without checking its label. *)
+let unchecked (label : [usize]) (v : borrowed inout mutable [u32]) (nb : usize) : unit
+  requires len label = len v && len v > 0
+= spread b in 0 .. nb @owns(v, label) do v.[0] <- 1 done
+
+(* Expected report, in order.
+// CHECK: spread.pia:10:30: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
+// CHECK: spread.pia:10:40: proved: the index is within bounds [smt]
+// CHECK: spread.pia:10:30: proved: the index is within bounds [smt]
+// CHECK: spread.pia:15:27: proved: '-' does not overflow usize [smt]
+// CHECK: spread.pia:16:25: proved: '-' does not overflow usize [smt]
+// CHECK: spread.pia:16:19: proved: the index is within bounds [smt]
+// CHECK: spread.pia:17:23: proved: the index is within bounds [smt]
+// CHECK: spread.pia:17:21: proved: '+' does not overflow usize [intervals]
+// CHECK: spread.pia:17:38: proved: '+' does not overflow usize [smt]
+// CHECK: spread.pia:17:32: proved: the index is within bounds [smt]
+// CHECK: spread.pia:17:30: proved: '+' does not overflow usize [intervals]
+// CHECK: spread.pia:18:5: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
+// CHECK: spread.pia:18:21: proved: the divisor is not zero [intervals]
+// CHECK: spread.pia:18:21: proved: '/' does not overflow usize [intervals]
+// CHECK: spread.pia:18:45: proved: the divisor is not zero [intervals]
+// CHECK: spread.pia:18:45: proved: '/' does not overflow usize [intervals]
+// CHECK: spread.pia:18:16: proved: the value fits in u32 [smt]
+// CHECK: spread.pia:18:5: proved: the index is within bounds [smt]
+// CHECK: spread.pia:24:8: proved: the iteration owns the cell it reads in 'v' (c = i) [smt]
+// CHECK: spread.pia:24:8: proved: the index is within bounds [smt]
+// CHECK: spread.pia:24:32: proved: the iteration owns the cell it writes in 'v' (c = i) [smt]
+// CHECK: spread.pia:24:41: proved: the iteration owns the cell it reads in 'v' (c = i) [smt]
+// CHECK: spread.pia:24:41: proved: the index is within bounds [smt]
+// CHECK: spread.pia:24:47: proved: '+' does not overflow u32 [smt]
+// CHECK: spread.pia:24:32: proved: the index is within bounds [smt]
+// CHECK: spread.pia:32:10: proved: the index is within bounds [smt]
+// CHECK: spread.pia:32:29: proved: the iteration owns the cell it writes in 'v' (label.[c] = b) [smt]
+// CHECK: spread.pia:32:29: proved: the index is within bounds [smt]
+// CHECK: spread.pia:39:27: proved: '-' does not overflow usize [smt]
+// CHECK: spread.pia:39:40: proved: '+' does not overflow usize [smt]
+// CHECK: spread.pia:39:34: failed: the iteration owns the cell it writes in 'ys' (c = i)
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len ys = {{-?[0-9]+}}
+// CHECK: spread.pia:39:48: proved: the index is within bounds [smt]
+// CHECK: spread.pia:39:34: proved: the index is within bounds [smt]
+// CHECK: spread.pia:44:29: proved: the iteration owns the cell it writes in 'v' (c = i) [smt]
+// CHECK: spread.pia:44:43: proved: '-' does not overflow usize [smt]
+// CHECK: spread.pia:44:38: failed: the iteration owns the cell it reads in 'v' (c = i)
+// CHECK-NEXT: counterexample: len v = {{-?[0-9]+}}
+// CHECK: spread.pia:44:38: proved: the index is within bounds [smt]
+// CHECK: spread.pia:44:29: proved: the index is within bounds [smt]
+// CHECK: spread.pia:49:42: failed: the iteration owns the cell it writes in 'v' (label.[c] = b)
+// CHECK-NEXT: counterexample: len label = {{-?[0-9]+}}, len v = {{-?[0-9]+}}, nb = {{-?[0-9]+}}
+// CHECK: spread.pia:49:42: proved: the index is within bounds [smt]
+// CHECK: 37 proved, 3 failed, 0 skipped
+*)
