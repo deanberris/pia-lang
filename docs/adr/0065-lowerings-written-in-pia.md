@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed
+Status: Accepted (2026-11-24, with Dean's answers below)
 
 ## Context
 
@@ -149,8 +149,10 @@ Each step is one PR, and each is useful on its own.
 - piac links more of MLIR, which costs build time, a tracked benchmark ([ADR 0032](0032-parallel-sliced-cached-proving.md)); step 1 measures it.
 - MLIR's textual syntax becomes part of Pia libraries' source, so an LLVM upgrade that changes an op's syntax breaks the lowerings that use it, at expansion time with MLIR's diagnostic. The generated `Pia.Linalg` is regenerated on each upgrade, as the POSIX bindings are on each SDK.
 
-## Questions for Dean
+## Answers to the open questions
 
-1. **The surface** (section 1): one attribute, `@lower`, carrying MLIR text (or a metaprogram that returns it) on an ordinary `let`, or MLIR ops as values in a quote language of their own, or Mojo-style ops inline in expressions?
-2. **The body** (section 1): must every lowered function keep a Pia body, as its specification and fallback, or may a function in a `@trusted` module have only a contract and a lowering, like `extern`?
-3. **Schedules** (section 2): a separate `@schedule` with transform-dialect scripts, trusted as compiler passes until step 8 validates them, or schedules only as metaprograms over a small Pia vocabulary (`tile`, `vectorize`, `map_to_threads`) that piac translates?
+Dean answered all three on 2026-11-24, each with the recommended option:
+
+1. **The surface:** one attribute, `@lower`, carrying MLIR text with `$` splices, or a metaprogram that returns it, on an ordinary `let` (section 1). There is no MLIR quote language, and no MLIR ops inline in expressions.
+2. **The body:** every lowered function keeps a Pia body, as its specification and its fallback. There are no lowerings with only a contract, not even in `@trusted` modules. A foreign function without a body stays an `extern`.
+3. **Schedules:** `@schedule` holds transform-dialect scripts, trusted as compiler passes and listed in the trust report until step 8 validates them (section 2). A friendlier Pia vocabulary, if one is wanted later, is metaprograms that write these scripts.
