@@ -187,7 +187,11 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type: case K::Sig: case K::Defer:
+      case K::Assume:
+      case K::Type:
+      case K::Sig:
+      case K::Defer:
+      case K::With:
         return true;
       default:
         return false;
@@ -460,6 +464,9 @@ class Parser {
     n->add(retAnnot());
     Node *contracts = n->add(makeNode(N::Contracts, loc()));
     while (atContract()) contracts->add(contract());
+    // `with f, g`: reveal opaque spec functions in the body (ADR 0063).
+    if (at(K::With))
+      contracts->add(reveal(/*clause=*/true));
 
     NodePtr body;
     if (bodyless == Bodyless::Axiom) {
@@ -751,10 +758,11 @@ class Parser {
         // type ...` (ADR 0039).
         if (at(K::Let) && kind(1) == K::LParen)
           t->add(lambda(/*elemBody=*/false));
-        else if (!at(K::Type))
-          fail("expected 'type' in a signature type definition");
-        else
+        else if (at(K::Type))
           t->add(typeValue());
+        else
+          // `let byte = u8`: another name for a type (ADR 0064).
+          t->add(aliasValue(type()));
         n.add(std::move(t));
       } else {
         fail("expected ':' or '=' after the name");
@@ -1090,7 +1098,15 @@ class Parser {
       return rec;
     }
     while (!at(K::RBrace)) {
+      // `spec hist : [u8; 64]`: a spec field (ADR 0058). `spec` is a
+      // keyword only before a name and a colon.
+      bool spec = at(K::Ident) && tok().text == "spec" && kind(1) == K::Ident &&
+                  kind(2) == K::Colon;
+      if (spec)
+        take();
       auto f = makeNode(N::FieldDecl, loc(), std::string(expect(K::Ident, "a field name").text));
+      if (spec)
+        f->flags = "spec";
       expect(K::Colon, "':' after the field name");
       f->add(annot());
       // `x : i32 @json(name = "x")`: attributes a derive reads (ADR 0045).
@@ -1122,6 +1138,18 @@ class Parser {
       into.add(t ? std::move(t) : elem());
     } while (accept(K::Comma));
     expect(K::TargsClose, "'>' to close the type arguments");
+  }
+
+  // The type `t` as a value that names it, `let byte = u8` (ADR 0064,
+  // section 1): the type item `type t`, marked as another name for `t`
+  // rather than a new type.
+  NodePtr aliasValue(NodePtr t) {
+    auto n = makeNode(N::TypeValue, t->loc);
+    n->flags = "alias";
+    n->add(std::move(t));
+    n->add(makeNode(N::Attrs, loc()));
+    n->add(makeNode(N::None, loc()));
+    return n;
   }
 
   NodePtr typeValue() {
@@ -1213,6 +1241,8 @@ class Parser {
       return let(/*allowItem=*/false, /*allowIn=*/true);
     }
     if (at(K::Match)) return match();
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     NodePtr s = stmt();
     if (at(K::Semi)) {
       take();
@@ -1346,8 +1376,40 @@ class Parser {
     return h;
   }
 
+  // `with f, g in e` (ADR 0063): the opaque spec functions f and g are
+  // revealed in e. As a clause after a function's contracts, `with f, g`
+  // reveals them in its whole body, and has no `in`.
+  NodePtr reveal(bool clause) {
+    auto n = makeNode(N::Reveal, loc());
+    expect(K::With, "'with'");
+    do {
+      if (!at(K::Ident))
+        fail("expected the name of a spec function after 'with'");
+      NodePtr f = makeNode(N::Name, loc(), text());
+      take();
+      // `M.f`, an imported function, as an expression writes it.
+      while (at(K::Dot) && kind(1) == K::Ident) {
+        take();
+        auto field = makeNode(N::Field, f->loc, text());
+        take();
+        field->add(std::move(f));
+        f = std::move(field);
+      }
+      n->add(std::move(f));
+    } while (accept(K::Comma));
+    if (clause) {
+      n->flags = "clause";
+      return n;
+    }
+    expect(K::In, "'in' after the functions 'with' reveals");
+    n->add(seq());
+    return n;
+  }
+
   NodePtr stmt() {
     SourceLoc start = loc();
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     switch (kind()) {
       case K::If: {
         take();
@@ -1624,7 +1686,22 @@ class Parser {
   NodePtr atom() {
     SourceLoc start = loc();
     switch (kind()) {
-      case K::Ident: { auto n = makeNode(N::Name, start, text()); take(); return n; }
+    case K::Ident: {
+      // `int{0..100}`: a range type as a value, as in `let percent =
+      // int{0..100}` (ADR 0064). Anything else after `name{` is a
+      // record literal applied to the name.
+      if (kind(1) == K::LBraceAdj)
+        if (NodePtr r = attempt([&] {
+              NodePtr t = type();
+              if (t->kind != N::RangeType)
+                fail("not a range type");
+              return t;
+            }))
+          return aliasValue(std::move(r));
+      auto n = makeNode(N::Name, start, text());
+      take();
+      return n;
+    }
       case K::Int: { auto n = makeNode(N::IntLit, start, text()); take(); return n; }
       case K::Float: { auto n = makeNode(N::FloatLit, start, text()); take(); return n; }
       case K::String: { auto n = makeNode(N::StringLit, start, text()); take(); return n; }

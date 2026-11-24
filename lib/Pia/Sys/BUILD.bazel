@@ -1,0 +1,20 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Sys.Posix (ADR 0057): one generated module per target, picked by the
+# platform being built for, behind the one interface in Posix.pia. That
+# file is not compiled itself: tools/bindings/gen.py copies it into each
+# generated module.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Posix.pia"])
+
+pia_library(
+    name = "posix",
+    src = select({
+        "//tools/piac:linux_x86_64": "//lib/Pia/Sys/Gen:x86_64_linux.pia",
+        "//conditions:default": "//lib/Pia/Sys/Gen:arm64_macos.pia",
+    }),
+    target_compatible_with = PIA_TARGETS,
+)

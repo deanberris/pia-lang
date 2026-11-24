@@ -273,9 +273,10 @@ class Lexer:
                         self.out[-1].type in ("LET", "REC") and \
                         self.name_follows():
                     kind = word.upper()
-                # `(spec ref : t)`: a spec parameter (ADR 0058).
+                # `(spec ref : t)`: a spec parameter, and `{ spec f : t }`
+                # or `; spec f : t`: a spec field (ADR 0058).
                 if word == "spec" and self.out and \
-                        self.out[-1].type == "LPAREN" and \
+                        self.out[-1].type in ("LPAREN", "LBRACE", "SEMI") and \
                         self.name_then_colon_follows():
                     kind = "SPEC"
                 # `theory`, `sort` and `axiom` are keywords only between

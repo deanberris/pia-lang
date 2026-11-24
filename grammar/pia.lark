@@ -46,7 +46,7 @@ path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
 
-let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* EQ handled
+let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* reveal_clause? EQ handled
 
 binder: IDENT | SPLICE_IDENT
 
@@ -136,7 +136,7 @@ targ: type
 named_targ.2: IDENT EQ elem
 
 field_decls: field_decl (SEMI field_decl)* SEMI?
-field_decl: IDENT COLON annot
+field_decl: SPEC? IDENT COLON annot
 
 // A type value: `type | A | B of t`, `type { ... } where p`, `type t @fp(reassoc)`.
 type_value: TYPE type_body attribute* (WHERE stmt)? attribute*
@@ -162,6 +162,13 @@ named_attr_arg.2: IDENT EQ stmt
     | let_in
     | match_e
     | lambda
+    | reveal_in
+
+// `with f, g`: reveal opaque spec functions in a body, or in one
+// expression with `with f, g in e` (ADR 0063).
+reveal_names: postfix (COMMA postfix)*
+reveal_clause: WITH reveal_names
+reveal_in: WITH reveal_names IN seq
 
 let_in: LET REC? SPEC? binder param* ret_annot? contract* EQ handled IN seq
 
@@ -262,7 +269,8 @@ qbinder: IDENT (COLON type)?                       -> qbinder_typed
         | postfix TARGS_OPEN targs TARGS_CLOSE   -> instantiate
         | atom
 
-?atom: IDENT                                   -> name
+?atom: IDENT LBRACE_ADJ add_e DOTDOT add_e RBRACE -> range_value
+     | IDENT                                   -> name
      | INT                                     -> int_lit
      | FLOAT                                   -> float_lit
      | STRING                                  -> string_lit
@@ -319,6 +327,7 @@ sig_item: LET binder COLON annot ret_attrs contract* (EQ handled)? -> sig_val
         | LET META binder COLON annot                  -> sig_meta
         | LET SPEC binder COLON annot ret_attrs contract* -> sig_spec
         | LET binder EQ type_value                     -> sig_type
+        | LET binder EQ type                           -> sig_alias
         | LET binder EQ LET lparam+ FATARROW type_value -> sig_generic_type
         | HOLE                                         -> sig_hole
 

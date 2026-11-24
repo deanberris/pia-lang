@@ -99,7 +99,7 @@ let when_all_op (r : type) (ss : ...type where All Sender ss) = type {
 **A sum over a pack** is `one_of ts`, C++'s `std::variant<Ts...>`: a value that holds exactly one element of the pack, and knows which. It is a core anonymous sum, with no constructor names, because types are values and the type of the active element is enough to tell the alternatives apart:
 
 ```ocaml
-let reading = type one_of u32 str (option u8)
+let reading = one_of u32 str (option u8)
 
 let describe (w : borrowed inout writer) (r : reading) : unit =
   match r with

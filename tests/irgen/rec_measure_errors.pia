@@ -1,0 +1,16 @@
+(* `depth t` and `size t` of a recursive value (ADR 0047) are spec-only.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let rec maze = type | Exit | Room of box maze
+
+(*
+// CHECK: rec_measure_errors.pia:[[@LINE+2]]:30: error: 'depth' is spec-only: use it in contracts, such as 'decreases depth t'
+*)
+let deep (m : maze) : bool = depth m = 0
+
+(*
+// CHECK: rec_measure_errors.pia:[[@LINE+2]]:40: error: 'size' needs a value of a recursive type, found u8
+*)
+let small (x : u8) : bool ensures size x = 1 = true

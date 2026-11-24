@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted (2026-11-24)
 
 ## Context
 
@@ -80,6 +80,6 @@ The join is done by the generator, so the metaprogram planned in ADR 0051, secti
 - The trusted surface is the interface file, one row per symbol, each citing its manual page. The trust report lists the rows.
 - The header checks are done in Python, at generation, rather than in a metaprogram. They are stronger, since they see C's `const` and its exact types, but they run only when the file is regenerated, which CI does on every pull request.
 
-## Question for Dean
+## Dean's answer
 
-1. **Where should the overlay be joined?** The recommendation is the generator (section 2): it can check C's `const`-ness and exact types, and a metaprogram cannot see across the per-target files. The alternative is to keep the metaprogram planned in ADR 0051. That needs both targets' declarations in one file under distinct names, every row stamped twice, and a dispatch through `if Target.is` in every target-generic caller.
+1. **Where should the overlay be joined?** In the generator (2026-11-24), as section 2 says.

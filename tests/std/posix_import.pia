@@ -1,0 +1,19 @@
+(* An importer of Pia.Sys.Posix sees only its interface (ADR 0057): it
+   proves calls against the rows' contracts, and the constants' values
+   are hidden, so nothing here depends on the target.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Sys/Gen/arm64_macos.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK: 0 failed, 0 skipped
+*)
+import Pia.Sys.Posix.Posix
+
+(* At most n bytes come back, so the count fits the buffer. *)
+let read_into (fd : i32) (buf : out mutable [u8]) : isize
+  ensures result <= len buf
+= Pia.Sys.Posix.read fd buf (len buf)
+
+(* A path must end in a NUL: this one does. *)
+let open_tmp (path : [u8]) : i32
+  requires len path >= 1 && path.[len path - 1] = 0
+  ensures result >= -1
+= Pia.Sys.Posix.open path Pia.Sys.Posix.o_rdonly

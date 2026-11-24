@@ -64,7 +64,7 @@ borrowed moved out inout fixed mutable mod handle defer as
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
-`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`. Inside a body, `let spec ref : mutable [u8; 4096] = zeros in ...` binds spec state, and `(spec log : inout [u16; 64])` is a spec parameter, where `spec` is a keyword only when a name and a colon follow it, so `(spec : u8)` is still a parameter called `spec` ([verifier.md](verifier.md#spec-state), ADR 0058).
+`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`. Inside a body, `let spec ref : mutable [u8; 4096] = zeros in ...` binds spec state, and `(spec log : inout [u16; 64])` is a spec parameter, where `spec` is a keyword only when a name and a colon follow it, so `(spec : u8)` is still a parameter called `spec`; likewise `spec seen : [u8; 256]` in a record type is a spec field ([verifier.md](verifier.md#spec-state), ADR 0058).
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -168,7 +168,7 @@ path      = IDENT { "." IDENT } ;
 ### Bindings
 
 ```ebnf
-let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
+let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } [ "with" names ] "=" handled ;   (* with: reveal, ADR 0063 *)
 let_in    = "let" [ "rec" ] [ "spec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
@@ -221,14 +221,16 @@ type_atom  = IDENT
            | "(" type ")" | "(" ")"
            | SPLICE_IDENT | "$(" expr ")" ;
 targ       = type | elem | IDENT "=" elem ;
-field_decl = IDENT ":" annot { attribute } ;   (* attributes a derive reads *)
+field_decl = [ "spec" ] IDENT ":" annot { attribute } ;   (* attributes a derive reads; spec: ADR 0058 *)
 ```
 
 Modifiers come in a fixed order: ownership, then access, then mutability. Each one is optional. Before a function type they belong to its first parameter: `borrowed in [pixel] -> [u8]` takes a borrowed input slice.
 
 `borrowed(m)` in a function's result type names the parameter `m` that the result is borrowed from, as in `let alloc (m : borrowed arena) (n : usize) : result (borrowed(m) out mutable [u8]) OutOfMemory` (#70). It is written with no space before the parenthesis: `borrowed (t)` is `borrowed` before a parenthesised type. Inside a type argument, such as `result`'s, the parenthesised argument carries the modifiers.
 
-A type value is an expression:
+A type value is an expression. A `let` whose value names a type, such as `let byte = u8`, `let percent = int{0..100}` or `let bytes = option byte`, is another name for that type, and `type` makes a new one ([ADR 0064](adr/0064-distinct-types.md)). Until step 2 of that ADR lands, `type u8` is still an alias too.
+
+The type value:
 
 ```ebnf
 type_value = "type" ( variants | type ) { attribute } [ "where" stmt ] { attribute } ;
@@ -248,7 +250,8 @@ Constructs that extend as far right as possible sit at the sequence level. The r
 
 ```ebnf
 expr   = seq ;
-seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda ;
+seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda | "with" names "in" seq ;   (* reveal in one expression, ADR 0063 *)
+names  = IDENT { "." IDENT } { "," IDENT { "." IDENT } } ;
 elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argument elements *)
 
 stmt   = postfix "<-" stmt
@@ -285,6 +288,7 @@ postfix = atom
         | postfix "<" targ { "," targ } ">" ;     (* sum<i64> *)
 
 atom = IDENT | INT | FLOAT | STRING | "true" | "false"
+     | IDENT "{" add_e ".." add_e "}"                (* a range type as a value: let percent = int{0..100} *)
      | QIDENT | "..."
      | "(" handled ")" | "(" ")" | "(" operator ")"
      | "[" [ elem { ";" elem } [ ";" ] ] "]"
@@ -326,6 +330,7 @@ sig_item  = "let" binder ":" annot { attribute } { contract } [ "=" seq ]   (* e
           | "let" "meta" binder ":" annot                         (* exported concept, "let meta Ord : concept" *)
           | "let" "spec" binder ":" annot { attribute } { contract }   (* exported spec function, with its definition *)
           | "let" binder "=" type_value                           (* exported type *)
+          | "let" binder "=" type                                 (* exported alias, "let byte = u8" (ADR 0064) *)
           | "let" binder "=" "let" lparam { lparam } "=>" type_value   (* exported generic type *)
           | "..." ;
 sig_value = "sig" { sig_item | concept_item } "end" ;          (* a concept's body *)

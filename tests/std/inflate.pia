@@ -1,6 +1,7 @@
 (* Pia.Compress.Huffman, Pia.Compress.Inflate.Spec, Pia.Compress.Inflate
    and Pia.Compress.Zlib (ADR 0054, step 5): every goal is proved, with
-   nothing accepted unproved. The Kraft sum decides completeness, decoding
+   nothing accepted unproved. The canonical code is RFC 1951's (its
+   example is proved), the Kraft sum decides completeness, decoding
    stays inside the tables and the input, every distance is at most the
    bytes written, and Adler-32 is RFC 1950's.
 // RUN: mkdir -p %t
@@ -20,7 +21,7 @@
 
 (*
 // HUFF-NOT: failed
-// HUFF: 104 proved, 0 failed, 0 skipped
+// HUFF: 133 proved, 0 failed, 0 skipped
 // SPEC-NOT: failed
 // SPEC: 46 proved, 0 failed, 0 skipped
 // INFL-NOT: warning
@@ -39,6 +40,10 @@
 // HI-NEXT: {{^}}  let spec weight : (l : u8) -> int{0..32768}{{$}}
 // HI-NEXT: {{^}}  let spec kcap : (k : int{0..320}) -> u32{{$}}
 // HI-NEXT: {{^}}  let spec kraft : (l : [u8]) -> (k : int{0..320}) -> u32{{$}}
+// HI-NEXT: {{^}}  let spec len_count : (l : [u8]) -> (k : int{0..320}) -> (bits : int{1..15}) -> int{0..320}{{$}}
+// HI-NEXT: {{^}}  let spec first_code : (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> int{{$}}
+// HI-NEXT: {{^}}  let spec code_of : (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> int{{$}}
+// HI-NEXT: {{^}}  let spec hbits : (s : [u8]) -> (pos : usize) -> (k : int{0..15}) -> int{{$}}
 // HI-NEXT: {{^}}  let build : (l : [u8]) -> (n : int{0..320}) -> (t : borrowed inout mutable [u8]) -> fill requires len t = 704 && n <= len l ensures result = Complete <==> kraft l n = 32768 ensures result = Oversubscribed <==> kraft l n > 32768{{$}}
 // HI-NEXT: {{^}}  let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> result decoded usize requires len t = 704 && pos <= B.nbits s ensures (match result with | Ok d -> pos < d.pos && d.pos - pos <= 15 && d.pos <= B.nbits s && d.sym < n | Err p -> p <= B.nbits s){{$}}
 // HI-NEXT: {{^}}end{{$}}

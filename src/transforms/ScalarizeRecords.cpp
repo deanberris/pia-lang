@@ -61,6 +61,20 @@ unsigned leafCount(Type t) {
   return out.size();
 }
 
+// Which of `t`'s leaves, in leaves' order, are spec state: the leaves of
+// a spec field, at any depth (ADR 0058).
+void leafSpec(Type t, bool spec, llvm::SmallVectorImpl<bool> &out) {
+  auto r = mlir::dyn_cast<RecordType>(t);
+  if (!r)
+    r = elementRecord(t);
+  if (!r) {
+    out.push_back(spec);
+    return;
+  }
+  for (auto [i, ft] : llvm::enumerate(r.getFieldTypes()))
+    leafSpec(ft, spec || r.isSpecField(i), out);
+}
+
 // The names of `t`'s leaves under `prefix`: `p.r`, `p.g`, ...
 void leafNames(Type t, const std::string &prefix,
                std::vector<std::string> &out) {
@@ -355,8 +369,17 @@ struct LenLowering : mlir::OpConversionPattern<LenOp> {
       mlir::ConversionPatternRewriter &rw) const override {
     if (!elementRecord(op.getBuffer().getType())) return mlir::failure();
     mlir::ValueRange buffers = adaptor.getBuffer();
-    Value len = make<LenOp>(rw, op.getLoc(), rw.getIndexType(),
-                            buffers[lengthCarrier(buffers)]);
+    // Not a spec field's buffer, which codegen erases (ADR 0058).
+    llvm::SmallVector<bool> spec;
+    leafSpec(op.getBuffer().getType(), false, spec);
+    unsigned carrier = lengthCarrier(buffers);
+    for (unsigned i = 0; i < buffers.size(); ++i)
+      if (!spec[i] && !specOnlyLeaf(buffers[i].getType())) {
+        carrier = i;
+        break;
+      }
+    Value len =
+        make<LenOp>(rw, op.getLoc(), rw.getIndexType(), buffers[carrier]);
     rw.replaceOp(op, len);
     return mlir::success();
   }
@@ -467,6 +490,23 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
     mlir::Location loc;
   };
   std::vector<std::pair<mlir::func::FuncOp, std::vector<Named>>> params;
+  // The results' leaves that are spec fields (ADR 0058), for every
+  // function, declarations included.
+  std::vector<std::pair<mlir::func::FuncOp, llvm::SmallVector<bool>>>
+      specResults;
+  // A declaration's arguments, likewise.
+  std::vector<std::pair<mlir::func::FuncOp, llvm::SmallVector<Type>>> declArgs;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (f->hasAttr("pia.generic_proof"))
+      continue;
+    llvm::SmallVector<bool> rs;
+    for (Type t : f.getResultTypes())
+      leafSpec(t, false, rs);
+    if (llvm::is_contained(rs, true))
+      specResults.emplace_back(f, rs);
+    if (f.isExternal())
+      declArgs.emplace_back(f, llvm::SmallVector<Type>(f.getArgumentTypes()));
+  }
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     // A generic's proof keeps its parameters (ADR 0043).
     if (f.isExternal() || f->hasAttr("pia.generic_proof")) continue;
@@ -558,9 +598,11 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
       leafNames(ps[i].type, ps[i].name, names);
       // The field buffers of a slice of records share one length, which
       // pia.length_of records for the verifier and the C entry point.
-      unsigned first = next;
+      unsigned base = next, first = next;
       bool slice = mlir::isa<SliceType>(ps[i].type) &&
                    static_cast<bool>(elementRecord(ps[i].type));
+      llvm::SmallVector<bool> spec;
+      leafSpec(ps[i].type, false, spec);
       for (const std::string &name : names) {
         mlir::BlockArgument a = f.getArgument(next);
         a.setLoc(name.empty() ? ps[i].loc
@@ -574,13 +616,36 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
                    mlir::IntegerAttr::get(mlir::IntegerType::get(ctx, 64), first));
           d = list.getDictionary(ctx);
         }
+        // A spec field's leaf is a spec parameter, which codegen erases.
+        if (spec[next - base]) {
+          mlir::NamedAttrList list(d);
+          list.set(PiaDialect::getSpecStateAttrName(),
+                   mlir::UnitAttr::get(ctx));
+          d = list.getDictionary(ctx);
+        }
         attrs.push_back(d);
         ++next;
       }
     }
     f.setAllArgAttrs(attrs);
   }
+  for (auto &[f, ts] : declArgs) {
+    llvm::SmallVector<bool> spec;
+    for (Type t : ts)
+      leafSpec(t, false, spec);
+    for (auto [i, sp] : llvm::enumerate(spec))
+      if (sp && i < f.getNumArguments())
+        f.setArgAttr(i, PiaDialect::getSpecStateAttrName(),
+                     mlir::UnitAttr::get(ctx));
+  }
+  for (auto &[f, rs] : specResults)
+    for (auto [i, sp] : llvm::enumerate(rs))
+      if (sp && i < f.getNumResults())
+        f.setResultAttr(i, PiaDialect::getSpecStateAttrName(),
+                        mlir::UnitAttr::get(ctx));
   return mlir::success();
 }
+
+void recordLeaves(Type t, llvm::SmallVectorImpl<Type> &out) { leaves(t, out); }
 
 }  // namespace pia::transforms

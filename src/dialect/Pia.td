@@ -200,12 +200,26 @@ def Pia_RecordType : Pia_Type<"Record", "record"> {
   }];
   let parameters = (ins StringRefParameter<"the record's name">:$name,
                         ArrayRefParameter<"::mlir::StringAttr", "field names">:$fieldNames,
-                        ArrayRefParameter<"::mlir::Type", "field types">:$fieldTypes);
+                        ArrayRefParameter<"::mlir::Type", "field types">:$fieldTypes,
+                        OptionalArrayRefParameter<"unsigned", "the positions of its spec fields (ADR 0058), in order">:$specFields);
+  let builders = [
+    TypeBuilder<(ins "::llvm::StringRef":$name,
+                     "::llvm::ArrayRef<::mlir::StringAttr>":$fieldNames,
+                     "::llvm::ArrayRef<::mlir::Type>":$fieldTypes), [{
+      return $_get($_ctxt, name, fieldNames, fieldTypes,
+                   ::llvm::ArrayRef<unsigned>{});
+    }]>
+  ];
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
   let extraClassDeclaration = [{
     /// The position of the field called `name`, if there is one.
     std::optional<unsigned> fieldIndex(::llvm::StringRef name) const;
+    /// Whether field `i` is a spec field (ADR 0058): spec state, which code
+    /// writes, only specification reads, and codegen erases.
+    bool isSpecField(unsigned i) const {
+      return ::llvm::is_contained(getSpecFields(), i);
+    }
   }];
 }
 
@@ -752,6 +766,21 @@ def Pia_RecPayloadOp : Pia_Op<"rec_payload", [NoMemoryEffect]> {
   let assemblyFormat = [{
     $input `,` $ctor attr-dict `:` type($input) `->` `(` type($results) `)`
   }];
+  let hasVerifier = 1;
+}
+
+def Pia_RecMeasureOp : Pia_Op<"rec_measure", [Pure]> {
+  let summary = "the depth or size of a recursive value, spec-only";
+  let description = [{
+    `%d = pia.rec_measure "depth" %t : !pia.rec<"tree">` is `depth t`, and
+    `"size"` is `size t` (ADR 0047, section 3): an `int`, for `decreases`
+    and other contracts. The verifier knows only that each is at least 0
+    (size at least 1) and that a component's is smaller than its
+    holder's, which is what a measure needs.
+  }];
+  let arguments = (ins StrAttr:$kind, Pia_Rec:$input);
+  let results = (outs Pia_UnboundedIntType:$result);
+  let assemblyFormat = "$kind $input attr-dict `:` type($input)";
   let hasVerifier = 1;
 }
 

@@ -4,8 +4,8 @@
 // RUN: piac --verify %s | FileCheck %s
 *)
 
-let byte = type u8
-let percent = type int{0..100}
+let byte = u8
+let percent = int{0..100}
 
 let top (x : u8) : u32
   ensures result = max u32

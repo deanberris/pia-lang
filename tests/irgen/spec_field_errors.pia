@@ -1,0 +1,27 @@
+(* What spec fields refuse (ADR 0058): code reading a spec field, as a
+   value, in a condition or as an argument, and assigning a whole spec
+   array field.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let cell = type { v : u8; spec owner : u8 }
+
+(* CHECK: spec_field_errors.pia:[[@LINE+2]]:28: error: '.owner' is a spec field of cell, which code may write but not read: only contracts, loop invariants, asserts, lemma calls and spec parameters may read it, so that codegen can erase it (ADR 0058)
+*)
+let leak (c : cell) : u8 = c.owner
+
+(* CHECK: spec_field_errors.pia:[[@LINE+2]]:33: error: '.owner' is a spec field of cell
+*)
+let branch (c : cell) : u8 = if c.owner = 0 then c.v else 0
+
+let hist = type { n : u8; spec seen : [u8; 4] }
+
+let sum4 (a : [u8; 4]) : u16 = a.[0] + a.[1] + a.[2] + a.[3]
+
+(* CHECK: spec_field_errors.pia:[[@LINE+2]]:34: error: '.seen' is a spec field of hist
+*)
+let pass (h : hist) : u16 = sum4 h.seen
+
+(* CHECK: spec_field_errors.pia:[[@LINE+2]]:59: error: assigning a whole spec array is not supported yet; write its elements
+*)
+let whole (h : inout mutable hist) (a : [u8; 4]) : unit = h.seen <- a

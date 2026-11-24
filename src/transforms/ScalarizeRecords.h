@@ -17,6 +17,11 @@ namespace pia::transforms {
 // Does nothing to a module without records.
 mlir::LogicalResult scalarizeRecords(mlir::ModuleOp module);
 
+// The types a value of `t` becomes, in order: a record's fields, depth
+// first, a buffer of records as one buffer per field, or `t` itself. A
+// recursive value's payload (ADR 0047) is passed as these.
+void recordLeaves(mlir::Type t, llvm::SmallVectorImpl<mlir::Type> &out);
+
 }  // namespace pia::transforms
 
 #endif  // PIA_TRANSFORMS_SCALARIZERECORDS_H

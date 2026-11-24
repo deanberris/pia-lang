@@ -15,3 +15,7 @@ let id (spec : u8) : u8 = spec
 interface Trace = sig
   let record : (spec log : inout [u16; 64]) -> (i : int{0..63}) -> (v : u16) -> unit
 end
+
+(* Spec fields: `spec` before a field's name. *)
+let counter = type { n : u8; spec seen : [u8; 256]; spec total : int }
+let cell = type { spec owner : u8; v : u8 }
