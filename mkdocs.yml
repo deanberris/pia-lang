@@ -65,6 +65,9 @@ validation:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - The REPL: repl.md
+  - Agent skills and MCP: agents.md
+  - Pia and other verified languages: comparison.md
   - "Demo: edge detection": demo.md
   - "Demo: stream delineation": streams.pia.md
   - "Demo: sediment transport": sediment.pia.md
@@ -72,9 +75,7 @@ nav:
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
   - "Theories: teaching the verifier a domain": theories.md
-  - The REPL: repl.md
   - Debugging C++ with the REPL: repl-debugging.md
-  - Agent skills: agents.md
   - Case studies:
       - Famous bugs, proved away: cases/index.md
       - Heartbleed: cases/heartbleed.pia.md
