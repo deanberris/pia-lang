@@ -149,7 +149,7 @@ end
 
 `import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/cpp-std.md` and three tests in `tests/std`.
 
-**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`.
+**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`. `@variadic(n)` after the return type declares a C variadic function with `n` named parameters, and `@deref` one that returns a pointer to its integer result, which the call reads (`Pia.Sys.Posix.errno`). For POSIX, import `Pia.Sys.Posix.Posix` rather than declaring externs.
 
 ## Pitfalls
 

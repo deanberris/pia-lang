@@ -47,6 +47,8 @@ let pct (x : i32) : i32
 
 An `extern` with no contract can only be called as `unsafe f x`, and nothing is known about its result.
 
+Two attributes after the return type change how the call is made. `@variadic(n)` is a C variadic function with `n` named parameters, such as `open`. `@deref` is a C function that returns a pointer to the integer result, which the call reads, such as `__errno_location`. POSIX is already declared, per target, in `Pia.Sys.Posix` (`lib/Pia/Sys/Posix.pia`): import its interface rather than writing externs.
+
 ## Modules
 
 One file is one module, with a `module M : I` header; only what an interface lists is visible outside. Build the dependency's interfaces first, then the importer against them:
