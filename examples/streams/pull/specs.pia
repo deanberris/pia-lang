@@ -1,0 +1,335 @@
+let spec step_of (w : usize) (a : usize) (b : usize) : bool
+  requires w >= 1 && w < max usize
+= if a < b then (b - a = 1 || b - a = w - 1 || b - a = w || b - a = w + 1) else false
+let spec adjacent (w : usize) (k : usize) (p : usize) : bool
+  requires w >= 1 && w < max usize
+= step_of w p k || step_of w k p
+let spec nbr (n : usize) (w : usize) (c : usize) (d : int{0..7}) : usize
+= if w < 3 || w = max usize || c >= n then n
+  else if d = 0 then (if c >= w + 1 then c - (w + 1) else n)
+  else if d = 1 then (if c >= w then c - w else n)
+  else if d = 2 then (if c >= w - 1 then c - (w - 1) else n)
+  else if d = 3 then (if c >= 1 then c - 1 else n)
+  else if d = 4 then (if 1 < n - c then c + 1 else n)
+  else if d = 5 then (if w - 1 < n - c then c + (w - 1) else n)
+  else if d = 6 then (if w < n - c then c + w else n)
+  else (if w + 1 < n - c then c + (w + 1) else n)
+
+let spec from (down : [usize]) (flux : [u32]) (w : usize) (c : usize) (d : int{0..7}) : u64 @opaque
+  ensures result <= max u32
+= let nb = nbr (len down) w c d in
+  if nb < len down && nb < len flux then (if nb <> c && down.[nb] = c then flux.[nb] else 0) else 0
+
+let spec pair (down : [usize]) (flux : [u32]) (w : usize) (c : usize) (h : int{0..3}) : u64
+  ensures result <= 8'589'934'590
+= if h = 0 then from down flux w c 0 + from down flux w c 1
+  else if h = 1 then from down flux w c 2 + from down flux w c 3
+  else if h = 2 then from down flux w c 4 + from down flux w c 5
+  else from down flux w c 6 + from down flux w c 7
+
+let spec half (down : [usize]) (flux : [u32]) (w : usize) (c : usize) (g : int{0..1}) : u64
+  ensures result <= 17'179'869'180
+= if g = 0 then pair down flux w c 0 + pair down flux w c 1 else pair down flux w c 2 + pair down flux w c 3
+
+let spec inflow_of (down : [usize]) (flux : [u32]) (w : usize) (c : usize) : u64
+  ensures result <= 34'359'738'360
+= half down flux w c 0 + half down flux w c 1
+
+let spec el (i : u64) (cap : u32) (bed : u32) : u64
+  requires i <= 34'359'738'360
+= if i < cap then (if cap - i < bed then cap else i + bed) else cap
+let spec eb (i : u64) (cap : u32) (bed : u32) : u64
+  requires i <= 34'359'738'360
+= if i < cap then (if cap - i < bed then bed - (cap - i) else 0) else bed + (i - cap)
+let spec cap_rule (a : u32) (drop : u16) : u32
+= let d : u64 = drop in
+  let c : u64 = (a >> 4) + (d << 2) in
+  if c < max u16 then c else max u16
+let spec cap_of (fill : [u16]) (down : [usize]) (acc : [u32]) (c : usize) : u32
+  requires len down = len fill && len acc = len fill && c < len fill && down.[c] < len fill
+= let d = down.[c] in
+  cap_rule (acc.[c]) (if d <> c && fill.[d] < fill.[c] then fill.[c] - fill.[d] else 0)
+let spec holds (fill : [u16]) (down : [usize]) (acc : [u32]) (bed0 : [u32]) (bed : [u32]) (flux : [u32]) (seen : [u64]) (c : usize) : bool
+  requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill && len seen = len fill
+  requires c < len fill && down.[c] < len fill
+= if seen.[c] > max u32 then false
+  else if seen.[c] + bed0.[c] > max u32 then false
+  else bed.[c] = eb (seen.[c]) (cap_of fill down acc c) (bed0.[c])
+       && flux.[c] = el (seen.[c]) (cap_of fill down acc c) (bed0.[c])
+let spec at (xs : [usize]) (k : usize) : usize
+  requires k < len xs
+= xs.[k]
+
+let spec pterm (down : [usize]) (flux : [u32]) (pos : [usize]) (p : usize) (w : usize) (k : usize) (d : int{0..7}) : u64 @opaque
+  ensures result <= max u32
+= let nb = nbr (len down) w k d in
+  if nb < len down && nb < len flux && nb < len pos then (if nb <> k && down.[nb] = k && pos.[nb] < p then flux.[nb] else 0) else 0
+
+let spec ppair (down : [usize]) (flux : [u32]) (pos : [usize]) (p : usize) (w : usize) (k : usize) (h : int{0..3}) : u64
+  ensures result <= 8'589'934'590
+= if h = 0 then pterm down flux pos p w k 0 + pterm down flux pos p w k 1
+  else if h = 1 then pterm down flux pos p w k 2 + pterm down flux pos p w k 3
+  else if h = 2 then pterm down flux pos p w k 4 + pterm down flux pos p w k 5
+  else pterm down flux pos p w k 6 + pterm down flux pos p w k 7
+
+let spec phalf (down : [usize]) (flux : [u32]) (pos : [usize]) (p : usize) (w : usize) (k : usize) (g : int{0..1}) : u64
+  ensures result <= 17'179'869'180
+= if g = 0 then ppair down flux pos p w k 0 + ppair down flux pos p w k 1 else ppair down flux pos p w k 2 + ppair down flux pos p w k 3
+
+let spec pinflow (down : [usize]) (flux : [u32]) (pos : [usize]) (p : usize) (w : usize) (k : usize) : u64
+  ensures result <= 34'359'738'360
+= phalf down flux pos p w k 0 + phalf down flux pos p w k 1
+
+let lemma later (fill : [u16]) (order : [usize]) (pos : [usize]) (c : usize) (d : usize) : unit
+  requires len order = len fill && len pos = len fill && c < len fill && d < len fill
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  requires fill.[d] < fill.[c]
+  ensures pos.[c] < pos.[d]
+= let a = pos.[c] in
+  let b = pos.[d] in
+  assert order.[a] = c && order.[b] = d;
+  assert b < a ==> fill.[order.[a]] <= fill.[order.[b]]
+
+let lemma all_in_dir (fill : [u16]) (down : [usize]) (order : [usize]) (pos : [usize]) (flux : [u32]) (w : usize) (k : usize) (p : usize) (d : int{0..7}) : unit
+  requires len down = len fill && len order = len fill && len pos = len fill && len flux = len fill
+  requires k < len fill && w >= 3 && w < max usize && pos.[k] <= p
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (j in 0 .. len pos). pos.[j] < len order && order.[pos.[j]] = j
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  requires forall (j in 0 .. len down). down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
+  ensures pterm down flux pos p w k d = from down flux w k d
+  with from, pterm
+= let nb = nbr (len fill) w k d in
+  if nb < len fill then (if nb <> k && down.[nb] = k then later fill order pos nb k else ()) else ()
+
+\ Once every upstream neighbour of k is processed, the partial inflow is the inflow.
+let lemma all_in (fill : [u16]) (down : [usize]) (order : [usize]) (pos : [usize]) (flux : [u32]) (w : usize) (k : usize) (p : usize) : unit
+  requires len down = len fill && len order = len fill && len pos = len fill && len flux = len fill
+  requires k < len fill && w >= 3 && w < max usize && pos.[k] <= p
+  requires forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q
+  requires forall (j in 0 .. len pos). pos.[j] < len order && order.[pos.[j]] = j
+  requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+  requires forall (j in 0 .. len down). down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
+  ensures pinflow down flux pos p w k = inflow_of down flux w k
+= all_in_dir fill down order pos flux w k p 0;
+  all_in_dir fill down order pos flux w k p 1;
+  all_in_dir fill down order pos flux w k p 2;
+  all_in_dir fill down order pos flux w k p 3;
+  all_in_dir fill down order pos flux w k p 4;
+  all_in_dir fill down order pos flux w k p 5;
+  all_in_dir fill down order pos flux w k p 6;
+  all_in_dir fill down order pos flux w k p 7
+
+let lemma frame_from (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) (k : usize) (d : int{0..7}) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down && k < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires k = c || down.[c] <> k
+  ensures from down flux2 w k d = from down flux w k d
+  with from
+= let nb = nbr (len down) w k d in
+  if nb < len down then assert (nb = c ==> (nb = k || down.[nb] <> k)) else ()
+
+let lemma frame_inflow (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) (k : usize) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down && k < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires k = c || down.[c] <> k
+  ensures inflow_of down flux2 w k = inflow_of down flux w k
+= frame_from down flux flux2 w c k 0; frame_from down flux flux2 w c k 1;
+  frame_from down flux flux2 w c k 2; frame_from down flux flux2 w c k 3;
+  frame_from down flux flux2 w c k 4; frame_from down flux flux2 w c k 5;
+  frame_from down flux flux2 w c k 6; frame_from down flux flux2 w c k 7
+
+let lemma frame_dir (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) (d : int{0..7}) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  ensures forall (k in 0 .. len down). (k = c || down.[c] <> k) ==> from down flux2 w k d = from down flux w k d
+  with from
+= ()
+
+let lemma frame_pair (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) (h : int{0..3}) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  ensures forall (k in 0 .. len down). (k = c || down.[c] <> k) ==> pair down flux2 w k h = pair down flux w k h
+= if h = 0 then (frame_dir down flux flux2 w c 0; frame_dir down flux flux2 w c 1)
+  else if h = 1 then (frame_dir down flux flux2 w c 2; frame_dir down flux flux2 w c 3)
+  else if h = 2 then (frame_dir down flux flux2 w c 4; frame_dir down flux flux2 w c 5)
+  else (frame_dir down flux flux2 w c 6; frame_dir down flux flux2 w c 7)
+
+let lemma frame_half (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) (g : int{0..1}) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  ensures forall (k in 0 .. len down). (k = c || down.[c] <> k) ==> half down flux2 w k g = half down flux w k g
+= if g = 0 then (frame_pair down flux flux2 w c 0; frame_pair down flux flux2 w c 1)
+  else (frame_pair down flux flux2 w c 2; frame_pair down flux flux2 w c 3)
+
+let lemma frame_all (down : [usize]) (flux : [u32]) (flux2 : [u32]) (w : usize) (c : usize) : unit
+  requires len flux = len down && len flux2 = len down && w >= 3 && w < max usize && c < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  ensures forall (k in 0 .. len down). (k = c || down.[c] <> k) ==> inflow_of down flux2 w k = inflow_of down flux w k
+= frame_half down flux flux2 w c 0; frame_half down flux flux2 w c 1
+
+let spec linked_upto (down : [usize]) (flux : [u32]) (seen : [u64]) (pos : [usize]) (p : usize) (w : usize) : bool @opaque
+  requires len flux = len down && len seen = len down && len pos = len down && w >= 3 && w < max usize
+= forall (k in 0 .. len down). at pos k < p ==> seen.[k] = inflow_of down flux w k
+
+\ Processing c changes flux and seen at c only. The cells done before c
+\ are not below c, so their inflow does not read flux at c.
+let lemma linked_step (down : [usize]) (flux : [u32]) (seen : [u64]) (flux2 : [u32]) (seen2 : [u64])
+    (pos : [usize]) (p : usize) (w : usize) (c : usize) : unit
+  requires len flux = len down && len seen = len down && len pos = len down
+  requires len flux2 = len down && len seen2 = len down && w >= 3 && w < max usize
+  requires c < len down && pos.[c] = p
+  requires forall (k in 0 .. len down). k = c || (flux2.[k] = flux.[k] && seen2.[k] = seen.[k])
+  requires forall (k in 0 .. len down). at pos k < p ==> down.[c] <> k
+  requires forall (k in 0 .. len down). at pos k = p ==> k = c
+  requires linked_upto down flux seen pos p w
+  requires seen2.[c] = inflow_of down flux2 w c
+  ensures linked_upto down flux2 seen2 pos (p + 1) w
+  with linked_upto
+= frame_all down flux flux2 w c
+
+\ Away from the cell c drains into, processing c leaves every partial inflow as it was.
+let lemma pstep_dir (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) (d : int{0..7}) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  ensures forall (k in 0 .. len down). (k <> c && down.[c] <> k) ==> pterm down flux2 pos (p + 1) w k d = pterm down flux pos p w k d
+  with pterm
+= ()
+
+let lemma pstep_pair (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) (h : int{0..3}) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  ensures forall (k in 0 .. len down). (k <> c && down.[c] <> k) ==> ppair down flux2 pos (p + 1) w k h = ppair down flux pos p w k h
+= if h = 0 then (pstep_dir down flux flux2 pos p w c 0; pstep_dir down flux flux2 pos p w c 1)
+  else if h = 1 then (pstep_dir down flux flux2 pos p w c 2; pstep_dir down flux flux2 pos p w c 3)
+  else if h = 2 then (pstep_dir down flux flux2 pos p w c 4; pstep_dir down flux flux2 pos p w c 5)
+  else (pstep_dir down flux flux2 pos p w c 6; pstep_dir down flux flux2 pos p w c 7)
+
+let lemma pstep_half (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) (g : int{0..1}) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  ensures forall (k in 0 .. len down). (k <> c && down.[c] <> k) ==> phalf down flux2 pos (p + 1) w k g = phalf down flux pos p w k g
+= if g = 0 then (pstep_pair down flux flux2 pos p w c 0; pstep_pair down flux flux2 pos p w c 1)
+  else (pstep_pair down flux flux2 pos p w c 2; pstep_pair down flux flux2 pos p w c 3)
+
+let lemma pstep_all (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  ensures forall (k in 0 .. len down). (k <> c && down.[c] <> k) ==> pinflow down flux2 pos (p + 1) w k = pinflow down flux pos p w k
+= pstep_half down flux flux2 pos p w c 0; pstep_half down flux flux2 pos p w c 1
+
+\ At the cell c drains into, the term for the direction that names c gains c's load.
+let lemma hit_dir (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) (d : int{0..7}) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  requires down.[c] < len down && down.[c] <> c
+  ensures pterm down flux2 pos (p + 1) w (down.[c]) d =
+    pterm down flux pos p w (down.[c]) d + (if nbr (len down) w (down.[c]) d = c then flux2.[c] else 0)
+  with pterm
+= ()
+
+let spec named (n : usize) (w : usize) (k : usize) (c : usize) (x : u32) (d : int{0..7}) : u64
+  ensures result <= max u32
+= if nbr n w k d = c then x else 0
+
+\ A neighbour is named by exactly one of the eight directions.
+let lemma named_once (n : usize) (w : usize) (k : usize) (c : usize) (x : u32) : unit
+  requires w >= 3 && w < max usize && k < n && c < n && k <> c && adjacent w c k
+  ensures (named n w k c x 0 + named n w k c x 1) + (named n w k c x 2 + named n w k c x 3)
+    + ((named n w k c x 4 + named n w k c x 5) + (named n w k c x 6 + named n w k c x 7)) = x
+= ()
+
+\ (x0 + a) + (x1 + b) = (x0 + x1) + (a + b), on its own, away from the quantifiers.
+let lemma regroup (x0 : u64) (x1 : u64) (y0 : u64) (y1 : u64) (a : u64) (b : u64) (y : u64) (x : u64) : unit
+  requires x0 <= 17'179'869'180 && x1 <= 17'179'869'180 && a <= 17'179'869'180 && b <= 17'179'869'180
+  requires y0 = x0 + a && y1 = x1 + b && y = y0 + y1 && x = x0 + x1
+  ensures y = x + (a + b)
+= ()
+
+let lemma pstep_hit (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize]) (p : usize) (w : usize) (c : usize) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down && c < len down && pos.[c] = p && p < len down
+  requires w >= 3 && w < max usize
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  requires down.[c] < len down && down.[c] <> c && adjacent w c (down.[c])
+  ensures pinflow down flux2 pos (p + 1) w (down.[c]) = pinflow down flux pos p w (down.[c]) + flux2.[c]
+= let k = down.[c] in
+  hit_dir down flux flux2 pos p w c 0; hit_dir down flux flux2 pos p w c 1;
+  hit_dir down flux flux2 pos p w c 2; hit_dir down flux flux2 pos p w c 3;
+  hit_dir down flux flux2 pos p w c 4; hit_dir down flux flux2 pos p w c 5;
+  hit_dir down flux flux2 pos p w c 6; hit_dir down flux flux2 pos p w c 7;
+  named_once (len down) w k c (flux2.[c]);
+  let x = flux2.[c] in
+  let n = len down in
+  assert ppair down flux2 pos (p + 1) w k 0 = ppair down flux pos p w k 0 + (named n w k c x 0 + named n w k c x 1);
+  assert ppair down flux2 pos (p + 1) w k 1 = ppair down flux pos p w k 1 + (named n w k c x 2 + named n w k c x 3);
+  assert ppair down flux2 pos (p + 1) w k 2 = ppair down flux pos p w k 2 + (named n w k c x 4 + named n w k c x 5);
+  assert ppair down flux2 pos (p + 1) w k 3 = ppair down flux pos p w k 3 + (named n w k c x 6 + named n w k c x 7);
+  assert phalf down flux2 pos (p + 1) w k 0 = phalf down flux pos p w k 0
+    + ((named n w k c x 0 + named n w k c x 1) + (named n w k c x 2 + named n w k c x 3));
+  assert phalf down flux2 pos (p + 1) w k 1 = phalf down flux pos p w k 1
+    + ((named n w k c x 4 + named n w k c x 5) + (named n w k c x 6 + named n w k c x 7));
+  let ab = ((named n w k c x 0 + named n w k c x 1) + (named n w k c x 2 + named n w k c x 3))
+    + ((named n w k c x 4 + named n w k c x 5) + (named n w k c x 6 + named n w k c x 7)) in
+  assert ab = x;
+  let a0 = (named n w k c x 0 + named n w k c x 1) + (named n w k c x 2 + named n w k c x 3) in
+  let b0 = (named n w k c x 4 + named n w k c x 5) + (named n w k c x 6 + named n w k c x 7) in
+  regroup (phalf down flux pos p w k 0) (phalf down flux pos p w k 1)
+    (phalf down flux2 pos (p + 1) w k 0) (phalf down flux2 pos (p + 1) w k 1) a0 b0
+    (pinflow down flux2 pos (p + 1) w k) (pinflow down flux pos p w k)
+
+\ Every cell not processed yet has received exactly the loads of its processed upstream neighbours.
+let spec pending (down : [usize]) (flux : [u32]) (pos : [usize]) (inflow : [u32]) (bed : [u32]) (bed0 : [u32]) (p : usize) (w : usize) : bool @opaque
+  requires len flux = len down && len pos = len down && len inflow = len down && len bed = len down && len bed0 = len down
+  requires w >= 3 && w < max usize
+= forall (k in 0 .. len down). at pos k >= p ==> inflow.[k] = pinflow down flux pos p w k && bed.[k] = bed0.[k]
+
+let lemma pending_step (down : [usize]) (flux : [u32]) (flux2 : [u32]) (pos : [usize])
+    (inflow : [u32]) (inflow2 : [u32]) (bed : [u32]) (bed2 : [u32]) (bed0 : [u32]) (p : usize) (w : usize) (c : usize) : unit
+  requires len flux = len down && len flux2 = len down && len pos = len down
+  requires len inflow = len down && len inflow2 = len down && len bed = len down && len bed2 = len down && len bed0 = len down
+  requires w >= 3 && w < max usize && c < len down && pos.[c] = p && p < len down
+  requires forall (j in 0 .. len down). j = c || flux2.[j] = flux.[j]
+  requires forall (j in 0 .. len down). j = c || bed2.[j] = bed.[j]
+  requires forall (j in 0 .. len down). j = c || j = down.[c] || inflow2.[j] = inflow.[j]
+  requires forall (j in 0 .. len down). at pos j = p ==> j = c
+  requires down.[c] < len down
+  requires down.[c] = c || (adjacent w c (down.[c]) && inflow2.[down.[c]] = inflow.[down.[c]] + flux2.[c])
+  requires pending down flux pos inflow bed bed0 p w
+  ensures pending down flux2 pos inflow2 bed2 bed0 (p + 1) w
+  with pending
+= pstep_all down flux flux2 pos p w c;
+  if down.[c] <> c then pstep_hit down flux flux2 pos p w c else ()
+
+\ Every processed cell has settled, and has no inflow left.
+let spec done_upto (fill : [u16]) (down : [usize]) (acc : [u32]) (bed0 : [u32]) (bed : [u32]) (flux : [u32]) (seen : [u64])
+    (inflow : [u32]) (pos : [usize]) (p : usize) : bool @opaque
+  requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
+  requires len seen = len fill && len inflow = len fill && len pos = len fill
+  requires forall (k in 0 .. len down). down.[k] < len fill
+= forall (k in 0 .. len fill). at pos k < p ==> holds fill down acc bed0 bed flux seen k && inflow.[k] = 0
+
+let lemma done_step (fill : [u16]) (down : [usize]) (acc : [u32]) (bed0 : [u32])
+    (bed : [u32]) (flux : [u32]) (seen : [u64]) (inflow : [u32])
+    (bed2 : [u32]) (flux2 : [u32]) (seen2 : [u64]) (inflow2 : [u32]) (pos : [usize]) (p : usize) (c : usize) : unit
+  requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
+  requires len seen = len fill && len inflow = len fill && len pos = len fill
+  requires len bed2 = len fill && len flux2 = len fill && len seen2 = len fill && len inflow2 = len fill
+  requires forall (k in 0 .. len down). down.[k] < len fill
+  requires c < len fill && pos.[c] = p
+  requires forall (j in 0 .. len fill). j = c || (bed2.[j] = bed.[j] && flux2.[j] = flux.[j] && seen2.[j] = seen.[j])
+  requires forall (j in 0 .. len fill). j = c || j = down.[c] || inflow2.[j] = inflow.[j]
+  requires forall (j in 0 .. len fill). at pos j < p ==> j <> down.[c]
+  requires forall (j in 0 .. len fill). at pos j = p ==> j = c
+  requires holds fill down acc bed0 bed2 flux2 seen2 c && inflow2.[c] = 0
+  requires done_upto fill down acc bed0 bed flux seen inflow pos p
+  ensures done_upto fill down acc bed0 bed2 flux2 seen2 inflow2 pos (p + 1)
+  with done_upto
+= ()

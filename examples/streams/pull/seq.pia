@@ -1,0 +1,204 @@
+let spec elt (xs : [u32]) (i : usize) : u32
+  requires i < len xs
+= xs.[i]
+
+let spec sum (xs : [u32]) (n : usize) : u64
+  requires n <= len xs && n <= max u32 + 1
+  ensures result <= (max u32 + 1) * n
+  decreases n
+= if n = 0 then 0 else sum xs (n - 1) + elt xs (n - 1)
+
+let lemma step (xs : [u32]) (ys : [u32]) (n : usize) : unit
+  requires 0 < n && n <= len xs && n <= len ys && n <= max u32 + 1
+  requires sum ys (n - 1) = sum xs (n - 1) && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n = sum xs n
+= ()
+
+let lemma step_after (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires i < n - 1 && n <= len xs && n <= len ys && n <= max u32 + 1
+  requires sum ys (n - 1) + xs.[i] = sum xs (n - 1) + ys.[i] && ys.[n - 1] = xs.[n - 1]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+= ()
+
+let lemma step_at (xs : [u32]) (ys : [u32]) (i : usize) : unit
+  requires i < len xs && i < len ys && i < max u32 + 1
+  requires sum ys i = sum xs i
+  ensures sum ys (i + 1) + xs.[i] = sum xs (i + 1) + ys.[i]
+= ()
+
+let lemma frame (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && n <= i && i < len xs && len xs <= max u32 + 1
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n = sum xs n
+  decreases n
+= if n > 0 then (frame xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step xs ys n)
+
+let lemma update (xs : [u32]) (ys : [u32]) (i : usize) (n : usize) : unit
+  requires len xs = len ys && i < n && n <= len xs && len xs <= max u32 + 1
+  requires forall (k in 0 .. len xs). k <> i ==> ys.[k] = xs.[k]
+  ensures sum ys n + xs.[i] = sum xs n + ys.[i]
+  decreases n
+= if n > i + 1 then (update xs ys i (n - 1); assert ys.[n - 1] = xs.[n - 1]; step_after xs ys i n)
+  else (frame xs ys i i; step_at xs ys i; assert n = i + 1)
+
+let lemma at_le (xs : [u32]) (i : usize) : unit
+  requires i < len xs && i < max u32 + 1
+  ensures xs.[i] <= sum xs (i + 1)
+= ()
+
+let lemma mono (xs : [u32]) (m : usize) (n : usize) : unit
+  requires m <= n && n <= len xs && n <= max u32 + 1
+  ensures sum xs m <= sum xs n
+  decreases n
+= if n > m then mono xs m (n - 1)
+
+let lemma elt_le (xs : [u32]) (i : usize) (n : usize) : unit
+  requires i < n && n <= len xs && n <= max u32 + 1
+  ensures xs.[i] <= sum xs n
+= at_le xs i; mono xs (i + 1) n
+
+let lemma zero (xs : [u32]) (n : usize) : unit
+  requires n <= len xs && n <= max u32 + 1
+  requires forall (k in 0 .. n). xs.[k] = 0
+  ensures sum xs n = 0
+  decreases n
+= if n > 0 then (zero xs (n - 1); assert xs.[n - 1] = 0)
+
+let set (xs : borrowed inout mutable [u32]) (i : usize) (v : u32) : unit
+  requires i < len xs && len xs <= max u32 + 1
+  ensures xs.[i] = v
+  ensures forall (k in 0 .. len xs). k <> i ==> xs.[k] = old (xs.[k])
+  ensures sum xs (len xs) + old (xs.[i]) = sum (old xs) (len xs) + v
+= let w = xs.[i] in
+  xs.[i] <- v;
+  update (old xs) xs i (len xs);
+  assert w = old (xs.[i])
+
+let cell = type { bed : u32; load : u32 }
+
+let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
+  requires bed + inflow <= max u32
+  ensures result.bed + result.load = bed + inflow
+  ensures inflow < capacity ==> result.bed <= bed && inflow <= result.load && result.load <= capacity
+  ensures capacity <= inflow ==> bed <= result.bed && result.load = capacity
+= if inflow < capacity then
+    (let room = capacity - inflow in
+     let e = if room < bed then room else bed in
+     { bed = bed - e; load = inflow + e })
+  else { bed = bed + (inflow - capacity); load = capacity }
+
+let push (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) : unit
+  requires a < len load && b < len inflow && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum load (len load) + sum inflow (len inflow) <= max u32
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum load (len load) + sum inflow (len inflow) = sum (old load) (len load) + sum (old inflow) (len inflow)
+= let m = load.[a] in
+  let w = inflow.[b] in
+  elt_le load a (len load);
+  elt_le inflow b (len inflow);
+  set load a 0;
+  set inflow b (w + m)
+
+let drain (load : borrowed inout mutable [u32]) (a : usize) (gone : u64) : u64
+  requires a < len load && len load <= max u32 + 1
+  requires sum load (len load) + gone <= max u32
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum load (len load) + result = sum (old load) (len load) + gone
+= let m = load.[a] in
+  elt_le load a (len load);
+  set load a 0;
+  gone + m
+
+let lemma balance (a : u64) (b : u64) (c : u64) (a0 : u64) (b0 : u64) (c0 : u64) (d : u32) (i : u32) (rb : u32) (rl : u32) : unit
+  requires a + d = a0 + rb && b = b0 + rl && c + i = c0 && rb + rl = d + i
+  ensures a + b + c = a0 + b0 + c0
+= ()
+
+let erode_cell (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (c : usize) (capacity : u32) : unit
+  requires c < len bed && c < len load && c < len inflow
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum bed (len bed) + sum inflow (len inflow) <= max u32
+  requires load.[c] = 0
+  ensures inflow.[c] = 0
+  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow)
+= let i = inflow.[c] in
+  let d = bed.[c] in
+  elt_le bed c (len bed);
+  elt_le inflow c (len inflow);
+  let r = erode_or_deposit i capacity d in
+  set bed c r.bed;
+  assert sum bed (len bed) + d = sum (old bed) (len bed) + r.bed;
+  set load c r.load;
+  assert sum load (len load) = sum (old load) (len load) + r.load;
+  set inflow c 0;
+  assert sum inflow (len inflow) + i = sum (old inflow) (len inflow);
+  balance (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow))
+    (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow))
+    d i r.bed r.load
+
+let transfer (bed : [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (a : usize) (b : usize) (outlet : bool) (gone : u64) : u64
+  requires a < len load && b < len inflow
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
+  ensures load.[a] = 0
+  ensures forall (k in 0 .. len load). k <> a ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum bed (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+= if outlet then drain load a gone
+  else (push load inflow a b; gone)
+
+let lemma chain (b : u64) (l : u64) (i : u64) (g : u64) (b1 : u64) (l1 : u64) (i1 : u64) : unit
+  requires b + l + i + g <= max u32 && b1 + l1 + i1 = b + l + i
+  ensures b1 + l1 + i1 + g <= max u32
+= ()
+
+let capacity_of (a : u32) (drop : u16) : u32 =
+  let d : u32 = drop in
+  let c : u64 = (a >> 4) + (d << 2) in
+  if c < max u16 then c else max u16
+
+let visit (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (c : usize) (d : usize) (capacity : u32) (gone : u64) : u64
+  requires c < len bed && c < len load && c < len inflow && d < len inflow && c < len flux
+  requires len bed <= max u32 + 1 && len load <= max u32 + 1 && len inflow <= max u32 + 1
+  requires load.[c] = 0
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
+  ensures load.[c] = 0
+  ensures forall (k in 0 .. len load). k <> c ==> load.[k] = old (load.[k])
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+= erode_cell bed load inflow c capacity;
+  chain (sum (old bed) (len bed)) (sum (old load) (len load)) (sum (old inflow) (len inflow)) gone
+    (sum bed (len bed)) (sum load (len load)) (sum inflow (len inflow));
+  flux.[c] <- load.[c];
+  let r = transfer bed load inflow c d (d = c) gone in
+  r
+
+let transport (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (bed : borrowed inout mutable [u32]) (load : borrowed inout mutable [u32]) (inflow : borrowed inout mutable [u32]) (flux : borrowed inout mutable [u32]) (gone : u64) : u64
+  requires len down = len fill && len order = len fill && len acc = len fill
+  requires len bed = len fill && len load = len fill && len inflow = len fill && len flux = len fill
+  requires len fill <= max u32 + 1
+  requires forall (k in 0 .. len down).
+             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  requires forall (q in 0 .. len order). order.[q] < len fill
+  requires forall (k in 0 .. len load). load.[k] = 0
+  requires sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + gone <= max u32
+  ensures forall (k in 0 .. len load). load.[k] = 0
+  ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
+    sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+=
+  let g : mutable u64 = gone in
+  for p in 0 .. len order
+    invariant forall (k in 0 .. len load). load.[k] = 0
+    invariant sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + g =
+      sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
+  do
+    let c = order.[p] in
+    let d = down.[c] in
+    let drop : u16 = if d = c then 0 else fill.[c] - fill.[d] in
+    g <- visit bed load inflow flux c d (capacity_of acc.[c] drop) g
+  done;
+  g
