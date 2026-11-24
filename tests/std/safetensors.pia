@@ -16,7 +16,7 @@
 (*
 // CHECK-NOT: warning
 // CHECK-NOT: failed
-// CHECK: GOALS proved, 0 failed, 0 skipped
+// CHECK: 228 proved, 0 failed, 0 skipped
 *)
 
 (*
