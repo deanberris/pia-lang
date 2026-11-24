@@ -2430,6 +2430,24 @@ class Gen {
     }
     if (auto st = mlir::dyn_cast<SliceType>(t))
       return create<EmptyOp>(l, st).getResult();
+    // An array of integers: constant data of each element's default.
+    if (auto at = mlir::dyn_cast<ArrayType>(t)) {
+      Type et = at.getElementType();
+      llvm::SmallVector<mlir::Attribute> values;
+      llvm::APInt v(kWidth, 0);
+      if (auto it = mlir::dyn_cast<IntType>(et)) {
+        if (!it.contains(v)) v = it.getLo().sextOrTrunc(kWidth);
+      } else if (isBool(et)) {
+        // Constant data holds integers; zeroed storage is every `false`.
+        return create<RegionOp>(l, at).getResult();
+      } else {
+        return Value();
+      }
+      for (uint64_t i = 0; i < at.getLength(); ++i)
+        values.push_back(b_.getIntegerAttr(b_.getIntegerType(kWidth), v));
+      return create<ConstArrayOp>(l, at, b_.getArrayAttr(values),
+                                  mlir::StringAttr()).getResult();
+    }
     if (auto rt = mlir::dyn_cast<RecordType>(t)) {
       llvm::SmallVector<Value> fields;
       for (Type ft : rt.getFieldTypes()) {

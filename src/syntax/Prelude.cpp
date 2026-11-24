@@ -89,7 +89,11 @@ let meta json_variant (t : type_decl) : list =
     if eq (kind ty) "TypeApp" then
       (let h = name (nth (children ty) 0) in or (eq h "option") (eq h "Pia.Core.Option.option"))
     else false in
-  let base_type = let (ty) => if is_opt_type ty then nth (children ty) 1 else ty in
+  let is_arr_type = let (ty) => eq (kind ty) "ArrayType" in
+  let base_type = let (ty) =>
+    if is_opt_type ty then nth (children ty) 1
+    else if is_arr_type ty then nth (children ty) 0
+    else ty in
   (* A value's writer and the room it needs. *)
   let writer_of = let (ty) =>
     let bt = base_type ty in
@@ -105,7 +109,10 @@ let meta json_variant (t : type_decl) : list =
         else
           (if and (ge lo (-128)) (le hi 127) then [ "write_i8"; 4 ] else if and (ge lo (-32768)) (le hi 32767) then [ "write_i16"; 6 ]
            else if and (ge lo (-2147483648)) (le hi 2147483647) then [ "write_i32"; 11 ] else [ "write_i64"; 20 ])) in
-    if and (is_opt_type ty) (lt (nth w 1) 4) then [ nth w 0; 4 ] else w in
+    if is_arr_type ty then
+      (let n = value (nth (children ty) 1) in
+       [ nth w 0; add 2 (add (mul n (nth w 1)) (if gt n 0 then sub n 1 else 0)) ])
+    else if and (is_opt_type ty) (lt (nth w 1) 4) then [ nth w 0; 4 ] else w in
   let key_from = let (attrs) (dflt) =>
     fold (let (acc) (a) =>
             if eq (nth a 0) "json" then
@@ -175,6 +182,7 @@ let meta json_variant (t : type_decl) : list =
   let rkeys = let (i) => if eq (shape i) "object" then map (rkey i) (rfields i) else [] in
   let ropt = let (i) (f) => is_opt_type (field_type (rec_of i) f) in
   let rreq = let (i) => if eq (shape i) "object" then map (rkey i) (filter (let (f) => eq (ropt i f) false) (rfields i)) else [] in
+  let rhas_arr = let (i) => fold (let (acc) (f) => or acc (is_arr_type (field_type (rec_of i) f))) false (rfields i) in
   let rhas_int = let (i) => fold (let (acc) (f) => or acc (eq (is_bool_type (base_type (field_type (rec_of i) f))) false)) false (rfields i) in
   (* Untagged constructors must be told apart by structure: a different
      JSON kind, a required member the other cannot have, or disjoint
@@ -212,8 +220,15 @@ let meta json_variant (t : type_decl) : list =
   let erng = ctor "Range" in
   let ename = concat tn "_json_error" in
   let has_int = fold (let (acc) (i) => or acc (if eq (shape i) "number" then true else if eq (shape i) "object" then rhas_int i else false)) false cidx in
+  let elen = ctor "Length" in
+  let has_len = fold (let (acc) (i) => or acc (if eq (shape i) "object" then rhas_arr i else false)) false cidx in
   let error_type =
-    if has_int then
+    if has_len then
+      (if has_int then
+         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize | $elen of usize )
+       else
+         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $elen of usize ))
+    else if has_int then
       `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize )
     else
       `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize ) in
@@ -232,7 +247,19 @@ let meta json_variant (t : type_decl) : list =
     let rd = rc "Duplicate" in
     let rm = rc "Missing" in
     let rr = rc "Range" in
-    if rhas_int ri then
+    let rl = rc "Length" in
+    if rhas_arr ri then
+      (if rhas_int ri then
+         `( let $fname ($!e : $rerr) : $ename =
+              match $!e with
+              | $rs $!p -> $esyn $!p | $ru $!p -> $eunk $!p | $rd $!p -> $edup $!p
+              | $rm $!p -> $emis $!p | $rr $!p -> $erng $!p | $rl $!p -> $elen $!p )
+       else
+         `( let $fname ($!e : $rerr) : $ename =
+              match $!e with
+              | $rs $!p -> $esyn $!p | $ru $!p -> $eunk $!p | $rd $!p -> $edup $!p
+              | $rm $!p -> $emis $!p | $rl $!p -> $elen $!p ))
+    else if rhas_int ri then
       `( let $fname ($!e : $rerr) : $ename =
            match $!e with
            | $rs $!p -> $esyn $!p | $ru $!p -> $eunk $!p | $rd $!p -> $edup $!p
@@ -380,8 +407,11 @@ let meta json_variant (t : type_decl) : list =
       let decls = fold (let (acc) (f) =>
           let ft = field_type r f in
           let fvn = fv f in
+          let one = let (et) => if is_bool_type et then `( false ) else nth (range_of et) 0 in
           let init = if is_opt_type ft then `( None )
-                     else if is_bool_type ft then `( false ) else nth (range_of ft) 0 in
+                     else if is_arr_type ft then
+                       (let inits = map (let (k) => one (base_type ft)) (range (value (nth (children ft) 1))) in `( [ $inits ] ))
+                     else one ft in
           `( let $fvn : mutable $ft = $init in $acc ))
         `( $reads;
            if $okn then Ok { value = $c { $fields_lit }; stop = $!m.at } else Err $ern )
@@ -589,7 +619,14 @@ let meta json_record (t : type_decl) : list =
     if eq (kind ft) "TypeApp" then
       (let h = name (nth (children ft) 0) in or (eq h "option") (eq h "Pia.Core.Option.option"))
     else false in
-  let base = let (f) => if is_opt f then nth (children (field_type t f)) 1 else field_type t f in
+  (* A fixed array field, `[t; n]`, is a JSON array of exactly n values
+     of t (ADR 0045, step 5). *)
+  let is_arr = let (f) => eq (kind (field_type t f)) "ArrayType" in
+  let arr_len = let (f) => value (nth (children (field_type t f)) 1) in
+  let base = let (f) =>
+    if is_opt f then nth (children (field_type t f)) 1
+    else if is_arr f then nth (children (field_type t f)) 0
+    else field_type t f in
   (* What a field's value is: "bool", or an integer with its bounds. *)
   let is_bool = let (f) =>
     let ft = base f in if eq (kind ft) "TypeName" then eq (name ft) "bool" else false in
@@ -602,8 +639,8 @@ let meta json_record (t : type_decl) : list =
       else if eq (kind ft) "RangeType" then true
       else if eq (kind ft) "TypeName" then
         (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
-         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one")))
-      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool and an option of one")))
+         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, and an option or a fixed array of one")))
+      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, and an option or a fixed array of one")))
     fs in
   let bounds = let (f) => range_of (base f) in
   (* The writer of a field's value, and the room it needs. *)
@@ -622,7 +659,10 @@ let meta json_record (t : type_decl) : list =
   (* A member's room: its key with quotes, the colon and its value. *)
   (* None writes `null`, four bytes. *)
   let value_room = let (f) =>
-    let r = nth (writer f) 1 in if and (is_opt f) (lt r 4) then 4 else r in
+    let r = nth (writer f) 1 in
+    if is_arr f then
+      (let n = arr_len f in add 2 (add (mul n r) (if gt n 0 then sub n 1 else 0)))
+    else if and (is_opt f) (lt r 4) then 4 else r in
   let member_room = let (i) => add (add (length (bytes (nth checked i))) 3) (value_room (nth fs i)) in
   let room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
   let wname = concat "write_json_" tn in
@@ -646,6 +686,12 @@ let meta json_record (t : type_decl) : list =
              `( match $!v with
                 | $!None -> $(json_write "write_null") $!dst $!p2
                 | Some $!x -> $w $!dst $!p2 $!x )
+           else if is_arr f then
+             (let elems = fold (let (acc) (k) =>
+                  if eq k 0 then `( $w $!dst $acc $!v.[0] )
+                  else `( $w $!dst ($(json_write "write_comma") $!dst $acc) $!v.[$k] ))
+                `( $(json_write "write_lbracket") $!dst $!p2 ) (range (arr_len f)) in
+              `( $(json_write "write_rbracket") $!dst ($elems) ))
            else `( $w $!dst $!p2 $!v )) ) in
   (* The object: `{`, the members with commas between, `}`. *)
   let body = fold (let (acc) (i) =>
@@ -669,8 +715,16 @@ let meta json_record (t : type_decl) : list =
   let erng = ctor "Range" in
   let ename = concat tn "_json_error" in
   (* The error set is exact: Range only when there is an integer field. *)
+  (* Length only when there is an array field. *)
+  let has_arr = fold (let (acc) (f) => or acc (is_arr f)) false fs in
+  let elen = ctor "Length" in
   let error_type =
-    if has_int then
+    if has_arr then
+      (if has_int then
+         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize | $elen of usize )
+       else
+         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $elen of usize ))
+    else if has_int then
       `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize )
     else
       `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize ) in
@@ -681,7 +735,7 @@ let meta json_record (t : type_decl) : list =
   (* One reader per field's value, with its range checked as it reads. *)
   let field_reader = let (i) =>
     let f = nth fs i in
-    let opt = is_opt f in
+    let opt = or (is_opt f) (is_arr f) in
     let fn = if opt then concat (fread i) "_value" else fread i in
     let rt = if opt then concat (ftype i) "_value" else ftype i in
     let ft = base f in
@@ -718,7 +772,50 @@ let meta json_record (t : type_decl) : list =
              | Ok $!q -> $!pos < $!q.stop && $!q.stop <= len $!s
              | Err _ -> true)
          = $body ) ]
-      (if opt then (
+      (if is_arr f then (
+         (* `[`, exactly n values with commas between, `]`: too few or too
+            many is Length, at the `]` or at the value past the last. *)
+         let ofn = fread i in
+         let ort = ftype i in
+         let full = field_type t f in
+         let n = arr_len f in
+         let et = base f in
+         let einit = if is_bool f then `( false ) else nth (bounds f) 0 in
+         let inits = map (let (k) => einit) (range n) in
+         [ `( let $ort = type { value : $full; stop : usize } );
+           `( let $ofn ($!s : [u8]) ($!pos : usize) : result $ort $ename
+                requires $!pos <= len $!s
+                ensures (match $!result with
+                  | Ok $!q -> $!pos < $!q.stop && $!q.stop <= len $!s
+                  | Err _ -> true)
+              = match $(json_read "open_array") $!s $!pos with
+                | Err $!p -> Err ($esyn $!p)
+                | Ok $!o ->
+                    let $!a : mutable $full = [ $inits ] in
+                    let $!i : mutable usize = 0 in
+                    let $!at : mutable usize = $!o.next in
+                    let $!ok : mutable bool = true in
+                    let $!err : mutable $ename = $esyn $!pos in
+                    let $!going : mutable bool = $!o.empty = false in
+                    while $!going
+                      invariant $!i <= $n && $!pos < $!at && $!at <= len $!s
+                      decreases len $!s - $!at + (if $!going then 1 else 0)
+                    do
+                      if $!i >= $n then ($!err <- $elen $!at; $!ok <- false; $!going <- false)
+                      else
+                        (match $fn $!s $!at with
+                         | Err $!e -> ($!err <- $!e; $!ok <- false; $!going <- false)
+                         | Ok $!q ->
+                             ($!a.[$!i] <- $!q.value;
+                              $!i <- $!i + 1;
+                              match $(json_read "after_element") $!s $!q.stop with
+                              | Ok $!sp -> ($!at <- $!sp.next; $!going <- $!sp.more)
+                              | Err $!p -> ($!err <- $esyn $!p; $!ok <- false; $!going <- false)))
+                    done;
+                    if $!ok = false then Err $!err
+                    else if $!i <> $n then Err ($elen $!at)
+                    else Ok { value = $!a; stop = $!at } ) ])
+       else if is_opt f then (
          (* `null` is None; anything else is the value, as Some. *)
          let ofn = fread i in
          let ort = ftype i in
@@ -817,8 +914,11 @@ let meta json_record (t : type_decl) : list =
       let sn = seen i in
       let vn = val i in
       let ft = field_type t (nth fs i) in
+      let one = if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
       let init = if is_opt (nth fs i) then `( None )
-                 else if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
+                 else if is_arr (nth fs i) then
+                   (let inits = map (let (k) => one) (range (arr_len (nth fs i))) in `( [ $inits ] ))
+                 else one in
       `( let $sn : mutable bool = false in let $vn : mutable $ft = $init in $acc ))
     loop (reverse idx) in
   let rfn = concat "read_json_" tn in
