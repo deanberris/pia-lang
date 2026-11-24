@@ -100,14 +100,14 @@ A theory lemma proved in Lean is proved from the structure's axiom fields only, 
 
 Most complexity clauses are exact bounds, not asymptotics, and Z3 can prove exact bounds if cost is part of the contract. So cost comes in two layers.
 
-**Cost in contracts, proved by Z3.** A function states its exact cost with a `costs e` clause, proved by Z3 like any other contract, with the spec-only value `spent` bounded by loop invariants. That design is its own decision, [ADR 0062](0062-cost-bounds-in-contracts.md), and it needs no Lean. This section is only about what Lean adds to it.
+**Cost in contracts, proved by Z3.** A function bounds what it spends on a named counter with a `costs c <= e` clause, proved by Z3 like any other contract, with the spec-only value `spent c` bounded by loop invariants. That design is its own decision, [ADR 0062](0062-cost-bounds-in-contracts.md), and it needs no Lean. This section is only about what Lean adds to it.
 
 **Closed forms and asymptotics in Lean.** Some bounds are recurrences: a divide-and-conquer function's `costs` is a recursive spec function `t n = 2 * t (n / 2) + n`, which Z3 can check step by step but cannot solve. Two kinds of lemma about such a `t` are proved in Lean by part 1 of this ADR:
 
-- a **closed form**, `t n <= 2 * n * log2 n + n`, which callers then use in their own `costs` clauses, so Z3 never sees the recurrence;
+- a **closed form**, `t n <= 2 * n * log2 n + n`, which callers then use in their own cost clauses, so Z3 never sees the recurrence;
 - an **asymptotic claim**, written with the spec-only form `t in O(fun n => n * log2 n)`, translated to Mathlib's `IsBigO atTop`. Mathlib's Akra–Bazzi theorem covers most divide-and-conquer recurrences. An asymptotic claim is documentation that is proved: no Pia goal can use it, since contracts are about concrete runs, but the interface publishes it, and the C++ library's complexity clauses become proved facts instead of comments.
 
-Amortised bounds (a `vec` push, union–find) use a potential as a spec function over the data structure's model, as in Charguéraud and Pottier's work: `costs 1 + potential (old v) - potential v`. Z3 proves the per-operation bound (ADR 0062), and Lean proves any closed form of the potential that needs induction.
+Amortised bounds (a `vec` push, union–find) use a potential as a spec function over the data structure's model, as in Charguéraud and Pottier's work: `costs calls <= 1 + potential (old v) - potential v`. Z3 proves the per-operation bound (ADR 0062), and Lean proves any closed form of the potential that needs induction.
 
 ### 4. Certificates and trust
 
