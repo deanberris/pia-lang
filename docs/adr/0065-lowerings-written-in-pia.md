@@ -118,7 +118,13 @@ The same function with no `@place(gpu)` lowers through the same `linalg` and a C
 
 ### Prototype
 
-A 4x4 integer matmul, with `dot` written as the spec linalg's generalised `matmul` gives the verifier, a client proving a corner cell from the contract alone, and an all-parallel `add`, was run on the iMac with `piac --verify`. Results: _(filled in from the iMac run)_.
+A 4x4 integer matmul (`u8 × u8 → u32`, row-major), with `dot` written as the spec that linalg's generalised `matmul` would give the verifier, a client `corner` that proves one cell from the contract alone, and an all-parallel elementwise add were run on the iMac with `piac --verify --verify-stats --jobs=4` (piac at `436306d`).
+
+- **The fixed-shape case proves: 51 of 51 goals in 17.5 s** (48 by Z3, 3 by intervals, cost 102M). The costliest goals are `corner`'s last step relating `dot … 4` to the written-out sum (cost 53.9M, 10.5 s), the inner loop's invariant (20.7M, 10.6 s), `corner`'s postcondition (14.9M, 2.1 s), and the `+` in the constant-stride index `i * 4 + j` (7.1M, 4.4 s), which intervals should own. The elementwise add is trivial: 7 goals, cost 37K, under 10 ms each.
+- **A generated reduction spec gets `@fuel(1)`.** With `@fuel(4)` the same file took 522 s and failed two goals, because Z3 unfolded `dot` under the nested quantifiers. Each loop step needs exactly one unfolding, so the generated spec and the loop invariants it implies are written for fuel 1.
+- **Clients need an unrolling lemma for static extents.** Relating `dot … 4` to a closed form takes five unfoldings, which `corner` got from a chain of five `assert`s. The generator emits that lemma (`dot_unroll4`) for each static reduction extent instead.
+- **Names collide with core builtins.** `add`, `sub`, `mul`, `div` and `max` are core builtins, and Pia has no shadowing ([ADR 0022](0022-metaprogram-hygiene.md)), so `Pia.Linalg` cannot use those op names. The generator names elementwise ops `ewise_<op>`, as linalg's own `elementwise` op does by kind.
+- **Symbolic shapes do not prove as written.** With `m`, `n` and `k` as parameters and slices of length `m * k`, every nonlinear index goal (`i * k + p < len a`, the overflow of `i * k`) timed out at 30 s: 16 of 33 proved, cost 3.7G. So the generator proves each indexing map's bounds once, as a lemma per map (`i < m && p < k ==> i * k + p < m * k`, proved with range-typed dimensions, or in Lean by ADR 0061), and states the op's contract over an accessor that uses it, rather than leaving the products to every goal.
 
 ### Implementation order
 
@@ -126,7 +132,7 @@ Each step is one PR, and each is useful on its own.
 
 1. **Link `linalg`, `tensor`, `bufferization` and `transform`** into piac, and lower a function marked `@lower` with a trusted lowering (state 2) only, on CPU: `linalg` to loops, then the existing path. The `lowering` trusted item, in the trust report and the certificate. `--lower=off`.
 2. **The splice-and-parse check** at expansion, metaprograms that compute lowerings, and the operand-effect check.
-3. **Proved lowerings for integer `linalg.generic`** and named ops through `generalizeNamedOp`: the meaning as spec functions, the refinement goal, and the reference-lowering test suite for piac's encodings.
+3. **Proved lowerings for integer `linalg.generic`** and named ops through `generalizeNamedOp`: the meaning as spec functions at fuel 1, a bounds lemma per indexing map and an unrolling lemma per static extent (see the prototype), the refinement goal, and the reference-lowering test suite for piac's encodings.
 4. **`Pia.Linalg`**, generated, starting with `matmul`, `batch_matmul`, `add`, `fill`, `conv_2d_nhwc_hwcf` and the poolings.
 5. **`@schedule` on CPU**: tile and vectorise, the reassociation check, the `schedule` trusted item. Benchmarked against the Pia body's own codegen.
 6. **`@lower` on types**: ranked `memref` and `tensor` over one buffer field, one-shot bufferisation fed by ownership facts.
