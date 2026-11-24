@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed
+Status: Accepted (2026-11-24)
 
 ## Context
 
@@ -67,7 +67,7 @@ Default unfolding stays as it is, so every existing proof keeps its meaning and 
 
 ## Dean's answers (2026-11-24)
 
-1. **No new keyword.** Dean asked: "Can we use a normal `with` or `let ... in` instead of having a new keyword?" Section 2 uses `with`: a `with f` clause for a whole body, and `with f in e` for one expression. `let ... in` binds a name, and a reveal binds nothing, so it would need a placeholder such as `let _ = f in`. Status stays Proposed until Dean confirms this form.
+1. **No new keyword.** Dean asked: "Can we use a normal `with` or `let ... in` instead of having a new keyword?" Section 2 uses `with`: a `with f` clause for a whole body, and `with f in e` for one expression. `let ... in` binds a name, and a reveal binds nothing, so it would need a placeholder such as `let _ = f in`. Dean confirmed it: "`with` looks like the right call."
 2. **Opt-in.** "Opaque as an opt-in sounds better." A spec function is opaque only when it is marked `@opaque`.
 
 ## Consequences
