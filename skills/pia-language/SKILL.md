@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, floats, `vec<T, k>`, refinement types, recursive types and `spread` are designed but not built yet, and piac says "not supported yet".
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, floats, `vec<T, k>`, refinement types, cost bounds (`costs`, ADR 0062) and distinct types (`type u8` as a new type, ADR 0064 step 2) are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -49,7 +49,7 @@ let count_bright (ys : [u16]) : usize
 
 | Form | Meaning |
 | --- | --- |
-| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one |
+| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, an alias; `type` will always make a new type (ADR 0064, step 2) |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
 | `100'000`, `0xFFFF'FFFF`, `1_000_000`, `42u8` | digits group with `'` (between two digits) or `_`; `,` never groups. A suffix gives a literal its type |
@@ -58,8 +58,13 @@ let count_bright (ys : [u16]) : usize
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
+| `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). See `tests/verify/spread.pia` |
+| `let rec tree = type \| Leaf \| Node of { l : box tree; k : u32 }` | a recursive type (ADR 0047): proved, with structural recursion needing no `decreases`, but not compiled yet. See `tests/verify/rec_types.pia` |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
 | `@overflow(proof\|wrap\|saturate\|trap)`, `+\|`, `-\|` | after the return type. `proof` is the default. The `+\|` operators always saturate |
+| `for i in 0 .. n step 2 do ... done` | a half-open range with a stride |
+| `let spec rsum (xs : [u32]) (lo : usize) (hi : usize) : u64 ... reads xs.[lo .. hi]` | a spec function's frame (ADR 0060): which cells it reads, so a write elsewhere keeps its value. See `tests/verify/frames.pia` |
+| `let meta operator ( ==> ) : prec 1 right = ...` | operators are metaprograms with a precedence; the prelude defines `==>`, `<==>`, `\|\|` and the rest this way |
 | `(* *)` (nests), `\` to the end of the line, `(** *)` doc | comments are syntax. `//` is **not** a comment |
 | `abort ()` | proved unreachable |
 

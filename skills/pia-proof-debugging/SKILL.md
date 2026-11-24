@@ -1,6 +1,6 @@
 ---
 name: pia-proof-debugging
-description: Find out whether C, C++ or other code is correct by porting it into Pia REPL cells and working through counterexamples one assumption at a time, then report a verdict and a fix. Use when asked if code has an overflow, out-of-bounds access or contract bug, or when a Pia proof fails and you need to find out why.
+description: Find out whether C, C++, Rust or other code is correct by porting it into Pia REPL cells and working through counterexamples one assumption at a time, then report a verdict and a fix. Use when asked if code has an overflow, out-of-bounds access or contract bug, or when a Pia proof fails and you need to find out why.
 ---
 
 # The proof-debugging loop
@@ -25,6 +25,24 @@ Port the callee first, line for line, with no contracts. Callers come later, bec
 | unsigned arithmetic that is meant to wrap | the function marked `@overflow(wrap)` after its result type |
 
 Keep the port's arithmetic as written. Do not "fix" it while porting: a wraparound in the original should show up as a failed goal.
+
+| Rust | Pia |
+| --- | --- |
+| `&[T]`, `&mut [T]` | `[T]`, `borrowed inout mutable [T]` |
+| `xs[i]` (panics) | `xs.[i]` (a goal: the panic path becomes a proof obligation) |
+| `a + b` on `usize` | a goal. Release builds wrap and debug builds panic, so a failure here is a bug in one of them |
+| `wrapping_add`, `Wrapping<u32>` | `@overflow(wrap)` on the function |
+| `x as u8` | `let y : u8 = x` (a goal), or `x & 255` if the truncation is meant |
+| `unsafe { get_unchecked(i) }` with a `// SAFETY:` comment | `xs.[i]`, and the comment's claim as a `requires`: the cell proves or refutes the comment |
+| `Option<T>`, `Result<T, E>`, `?` | a variant, `result t e`, `?` |
+
+Rules that differ by source language, which decide whether a failure is a porting artifact:
+
+- **C and C++** promote `uint8_t` and `uint16_t` to `int` before arithmetic and shifts, signed overflow is undefined (a real bug even if it "works"), and unsigned overflow wraps (defined, often meant).
+- **Rust** has no promotion and no undefined arithmetic: overflow panics in debug and wraps in release, so a failed overflow goal is a bug in at least one build profile unless the code uses `wrapping_*`.
+- **Zig** treats overflow as illegal behaviour (checked in safe builds), like Rust's debug profile; `+%` wraps.
+
+`pia-porting` has the full feature map for each language.
 
 ## 2. Classify every failure before changing anything
 
