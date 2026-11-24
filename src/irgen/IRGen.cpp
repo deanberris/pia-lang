@@ -961,6 +961,20 @@ class Gen {
                   b_.getStringAttr("the model '" + o->second.first +
                                    "' meets the axiom '" + o->second.second +
                                    "'"));
+    // A frame lemma that piac wrote for a `reads` clause (ADR 0060,
+    // section 3) says what it checks.
+    if (llvm::StringRef(sig.name).ends_with("'frame") &&
+        hasFlag(item, "lemma")) {
+      std::string f = llvm::StringRef(sig.name).drop_back(6).str();
+      fn->setAttr("pia.obligation",
+                  b_.getStringAttr("'" + f +
+                                   "' gives the same result for "
+                                   "buffers that agree on what it reads"));
+      fn->setAttr("pia.assert_claim",
+                  b_.getStringAttr("'" + f +
+                                   "' reads only the cells its "
+                                   "'reads' clause names"));
+    }
     if (!triggers_.empty() && !isAxiom) {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
@@ -1049,6 +1063,31 @@ class Gen {
         fail(*c, "'invariant' belongs to a state, which only the REPL "
                  "supports yet (ADR 0031)");
         return;
+      } else if (c->kind == NodeKind::Reads) {
+        // `reads xs.[lo .. hi]`: the spec function's footprint (ADR 0060,
+        // section 3).
+        const Node &e = *c->kids[0];
+        if (!hasFlag(item, "spec")) {
+          fail(*c, "only a spec function says what it reads");
+          return;
+        }
+        if (e.kind != NodeKind::Index || e.kids[0]->kind != NodeKind::Name ||
+            e.kids[1]->kind != NodeKind::Range) {
+          fail(e, "a footprint is a range of a buffer parameter, as in "
+                  "'reads xs.[lo .. hi]'");
+          return;
+        }
+        BindingPtr buf = lookup(e.kids[0]->text);
+        if (!buf || !buf->isParam || !elementType(buf->type)) {
+          fail(*e.kids[0], "a footprint names a buffer parameter");
+          return;
+        }
+        R lo = genContractExpr(*e.kids[1]->kids[0], types_.usize());
+        R hi = lo ? genContractExpr(*e.kids[1]->kids[1], types_.usize())
+                  : std::nullopt;
+        if (!lo || !hi)
+          return;
+        create<contract::ReadsOp>(loc(*c), buf->value, lo->value, hi->value);
       }
     }
 

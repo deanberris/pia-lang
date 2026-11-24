@@ -1221,6 +1221,7 @@ class Encoder {
                create<mlir::smt::ArraySelectOp>(at.getRangeType(), old, c)));
       });
       assume(keep);
+      derived_[fresh] = {old, Value(), owner, iv};
       setArray(root, fresh);
       return true;
     }
@@ -1312,9 +1313,12 @@ class Encoder {
         return true;
       }
       Value v = term(store.getValue());
-      if (v)
-        setArray(root, create<mlir::smt::ArrayStoreOp>(arr.getType(), arr,
-                                                       at, v));
+      if (v) {
+        Value stored =
+            create<mlir::smt::ArrayStoreOp>(arr.getType(), arr, at, v);
+        derived_[stored] = {arr, at, Value(), Value()};
+        setArray(root, stored);
+      }
       return true;
     }
 
@@ -2779,6 +2783,64 @@ class Encoder {
   }
 
   // `f a`, result `k`, where `args` maps f's parameters to the arguments.
+  // How a buffer's contents came from earlier ones: a store at one index,
+  // or a spread's forgetting of the cells other iterations own (owner and
+  // iteration; no owner for the identity).
+  struct Derived {
+    Value old, at, owner, iv;
+  };
+  llvm::DenseMap<Value, Derived> derived_;
+
+  // A call of a spec function that says what it reads (ADR 0060, section
+  // 3), on contents that came from older ones by a change outside its
+  // footprint, equals the call on the older contents: the frame lemma
+  // `f'frame`, proved where f is, as a fact here. The older call gets its
+  // own facts, and is linked to the contents before it in turn.
+  void frameLink(mlir::func::FuncOp callee, unsigned k, Demand &args,
+                 Value app) {
+    using P = mlir::smt::BVCmpPredicate;
+    mlir::Block &entry = callee.getBody().front();
+    for (auto r : entry.getOps<contract::ReadsOp>()) {
+      Value formal = r.getBuffer();
+      Value arr = args.arrays.lookup(formal);
+      auto d = derived_.find(arr);
+      if (!arr || d == derived_.end())
+        continue;
+      Derived from = d->second;
+      Demand bounds;
+      bounds.values = args.values;
+      bounds.arrays = args.arrays;
+      bounds.lengths = args.lengths;
+      bounds.inner = args.inner;
+      Value lo = demand(r.getLo(), bounds), hi = demand(r.getHi(), bounds);
+      if (!lo || !hi)
+        continue;
+      Value outside;
+      if (from.at) {
+        outside = orOf(cmp(P::slt, from.at, lo), cmp(P::sge, from.at, hi));
+      } else {
+        outside = forallIndex([&](Value c) {
+          Value in = andOf(cmp(P::sge, c, lo), cmp(P::slt, c, hi));
+          Value own;
+          if (from.owner) {
+            auto ot = mlir::cast<mlir::smt::ArrayType>(from.owner.getType());
+            own = eq(create<mlir::smt::ArraySelectOp>(ot.getRangeType(),
+                                                      from.owner, c),
+                     from.iv);
+          } else {
+            own = eq(c, from.iv);
+          }
+          return implies(in, own);
+        });
+      }
+      Demand older = args;
+      older.arrays[formal] = from.old;
+      Value prev = specCall(callee, k, older);
+      if (prev)
+        define(implies(outside, eq(app, prev)));
+    }
+  }
+
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
     if (it == specFuns_.end()) return Value();
@@ -2808,6 +2870,7 @@ class Encoder {
     Value app = flat.empty() ? fun
                              : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
                                                               mlir::ValueRange(flat));
+    frameLink(callee, k, args, app);
     // A pure function's call is its body, where its precondition holds:
     // it has no recursion, so the body is a term, and a fact inside a
     // quantifier about it needs no definition, which an assumed `forall`

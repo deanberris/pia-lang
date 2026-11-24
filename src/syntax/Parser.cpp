@@ -568,14 +568,15 @@ class Parser {
   // `invariant` is a contract of a state (ADR 0031); loops read their own.
   bool atContract() const {
     return at(K::Requires) || at(K::Ensures) || at(K::Decreases) ||
-           at(K::Invariant);
+           at(K::Invariant) || at(K::Reads);
   }
 
   NodePtr contract() {
-    N k = at(K::Requires)   ? N::Requires
-          : at(K::Ensures)  ? N::Ensures
+    N k = at(K::Requires)    ? N::Requires
+          : at(K::Ensures)   ? N::Ensures
           : at(K::Invariant) ? N::Invariant
-                            : N::Decreases;
+          : at(K::Reads)     ? N::Reads
+                             : N::Decreases;
     auto c = makeNode(k, loc());
     take();
     bool savedContract = contractMode_, savedEnded = clauseEnded_;

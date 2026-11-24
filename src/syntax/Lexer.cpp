@@ -591,6 +591,12 @@ private:
          out_.back().kind == TokenKind::Rec) &&
         nameFollows())
       kind = word == "spec" ? TokenKind::Spec : TokenKind::Lemma;
+    // `reads` is a keyword only where a contract clause starts: first on
+    // its line, before the buffer it names (ADR 0060, section 3), so it
+    // stays a usable name elsewhere.
+    if (word == "reads" &&
+        (out_.empty() || out_.back().loc.line < start.line) && nameFollows())
+      kind = TokenKind::Reads;
     // `step` is a keyword only in the header of a `for` or `spread`, between
     // it and its `do` at the same bracket depth, so it stays a usable name
     // elsewhere.
