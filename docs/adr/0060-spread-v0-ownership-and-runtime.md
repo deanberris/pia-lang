@@ -38,6 +38,26 @@ IRGen lowers `spread i in lo .. hi` to `scf.parallel`, and codegen runs MLIR's `
 
 This is temporary in the way ADR 0027 already plans: when `Pia.Task` exists, `spread` lowers to it instead, and the trust item goes. The language-level rule of section 1 does not change.
 
+### 3. Spec functions say what they read (amendment, 2026-11-24)
+
+A `spread`'s `ensures` is proved after every cell that another iteration owns has been given an unknown value (section 1). A sum over the cells an iteration owns, which is what a conservation law per basin needs, is a spec function, and the solver cannot see that its value is unchanged when only cells it does not read changed: that is an induction. So such an `ensures` could not be proved.
+
+A spec function over a buffer may say which cells it reads:
+
+```ocaml
+let spec rsum (xs : [u32]) (lo : usize) (hi : usize) : u64
+  requires lo <= hi && hi <= len xs
+  reads xs.[lo .. hi]
+  decreases hi - lo
+= if lo = hi then 0 else rsum xs lo (hi - 1) + xs.[hi - 1]
+```
+
+- **The footprint is `reads xs.[a .. b]`**, a range of a buffer parameter, or `reads xs where p`, the cells `c` of `xs` with `p` (for example `owner.[c] = b`). A spec function with no `reads` reads all of every buffer it takes, as today.
+- **The frame lemma is a goal.** piac proves, once, for the spec function: for two arrays that agree on the footprint, it gives the same result. It is proved by induction on the function's own `decreases`, with the function unfolded once on each side, so it needs no lemma from the user; if it fails, the `reads` clause is wrong and the error says so.
+- **The verifier uses the frame.** Wherever a buffer's contents change, by a write, a call, a loop or a `spread`'s forgetting of other iterations' cells, a call of a framed spec function on the new contents equals the same call on the old contents when every changed cell is outside its footprint. The verifier states this as a fact for the calls it meets, the way it unfolds a spec function's definition once, so a goal never needs a frame lemma by hand.
+
+With frames, a basin's conservation law `rsum bed lo hi + rsum load lo hi + ... = old (...)`, over the range of the basin's cells in a basin-major layout, is stable under the other basins' writes, and a `spread` over basins proves it per basin. The sum over all basins is then a telescoping lemma over the ranges.
+
 ### Alternatives
 
 - **Two iterations encoded at once**, asking Z3 for `i <> j` writing the same cell: general, but it encodes the body twice, with every value it computes, and a model mixes two iterations' states. Rejected for v0; FPL takes the affine cases, and owner arrays take the rest.
@@ -52,8 +72,10 @@ This is temporary in the way ADR 0027 already plans: when `Pia.Task` exists, `sp
 - Sediment transport can run basin by basin in parallel, with the basin labels of `drainage` as the owner array.
 - Programs that use `spread` link the MLIR async runtime and say so in their trust report, until `Pia.Task` replaces it.
 - Calls that write a shared buffer wait for footprints. `spread` over tiles (the `pia_par` grid op) and the collectives are still to come.
+- With `reads` frames (section 3), a spec function's value is known to survive writes outside what it reads. This helps sequential code too: the frame lemmas written by hand today, such as the sediment sum's `frame`, become facts the verifier states itself.
 
 ## Questions for Dean
 
 1. The ownership rule (section 1): one predicate per written buffer, the identity by default and `@owns(buf, owner)` for an owner array. Is `@owns` the spelling you want, or would you rather write it in the header, as in `spread b in 0 .. nb owning label do`?
 2. The runtime (section 2): MLIR's async runtime as a trusted v0, replaced by `Pia.Task` later, or a small pthreads runtime of our own now?
+3. Frames (section 3): `reads` clauses on spec functions, with a generated frame lemma, or (the weaker choice) per-iteration totals computed at run time, so that the global conservation law becomes a run-time check rather than a proof?
