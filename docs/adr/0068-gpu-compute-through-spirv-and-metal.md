@@ -2,7 +2,7 @@
 
 Date: 2026-11-25
 
-Status: Proposed
+Status: Accepted (2026-11-25, with Dean's answers below)
 
 ## Context
 
@@ -118,8 +118,10 @@ Each step is one PR and useful on its own. Steps 1 to 4 are integer-only.
 - Building GPU code needs Xcode's Metal toolchain on macOS. Linux builds the SPIR-V and MSL but cannot run them.
 - `Pia.Gpu.buffer` is a new resource type, and the type checker gains device rules for GPU-placed bodies.
 
-## Open questions for review
+## Answers to the review questions
 
-1. **Explicit placement and failure.** Should `@place(gpu)` add `Gpu.error` to the function's error set, as proposed, or fall back to the CPU silently when no GPU is available? This ADR proposes the error, and leaves fallback to `@place(auto, prefer = gpu)`.
-2. **Where MSL is compiled.** At build time into an embedded `.metallib`, as proposed, which needs Xcode's Metal toolchain in the build? Or at run time from embedded MSL text with `newLibraryWithSource`, which needs no toolchain but costs time on the first launch and moves a compiler into the trusted run time?
-3. **The shim's language.** Objective-C with ARC, as proposed, which needs nothing but clang? Or C++ over Apple's `metal-cpp` headers, which matches the compiler's language but adds a dependency that isn't in the Bazel Central Registry?
+Dean answered on 2026-11-25. Each answer is the proposed option:
+
+1. ~~Explicit placement and failure?~~ **`@place(gpu)` adds `Gpu.error` to the function's error set.** An explicit placement never runs silently on the CPU. Only `@place(auto, prefer = gpu)` may fall back.
+2. ~~Where is MSL compiled?~~ **At build time**, by `xcrun metal` and `metallib`, into a `.metallib` embedded in the object file. No compiler runs or is trusted at run time, and GPU builds need Xcode's Metal toolchain.
+3. ~~The shim's language?~~ **Objective-C with ARC.** It is one small file compiled by clang, with no extra dependency.
