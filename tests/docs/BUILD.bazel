@@ -54,6 +54,8 @@ CASES = [
     "//docs:cases/rust-vecdeque.pia.md",
     "//docs:cases/libwebp.pia.md",
     "//docs:cases/bun-readfile.pia.md",
+    "//docs:cases/zlib-gzip-extra.pia.md",
+    "//docs:cases/giflib-background.pia.md",
 ]
 
 py_test(

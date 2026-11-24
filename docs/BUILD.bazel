@@ -8,6 +8,8 @@ exports_files([
     "cases/index.md",
     "cases/libwebp.pia.md",
     "cases/bun-readfile.pia.md",
+    "cases/giflib-background.pia.md",
+    "cases/zlib-gzip-extra.pia.md",
     "demo.md",
     "design.md",
     "getting-started.md",
