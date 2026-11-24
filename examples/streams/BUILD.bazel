@@ -54,9 +54,17 @@ pia_object(
     target_compatible_with = PIA_TARGETS,
 )
 
+# Sediment in pull form, waves of a spread, proved equal to the sequential
+# step (docs/pull.pia.md).
+pia_object(
+    name = "pull_obj",
+    src = "//docs:pull.pia.md",
+    target_compatible_with = PIA_TARGETS,
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":basins_obj", ":gif", ":sediment_obj", ":streams_obj"],
+    srcs = [":basins_obj", ":gif", ":pull_obj", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )

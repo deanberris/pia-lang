@@ -20,6 +20,7 @@ exports_files([
     "status.md",
     "theories.md",
     "basins.pia.md",
+    "pull.pia.md",
     "sediment.pia.md",
     "streams.pia.md",
     "tour.md",
