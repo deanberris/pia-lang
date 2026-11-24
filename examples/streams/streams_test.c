@@ -1,7 +1,8 @@
 // Runs the stages of docs/streams.pia.md, compiled by piac --emit=obj, over
 // random and hand-made terrains, and checks them against C references and
 // against the properties the hydrology needs: filling never digs, settles
-// to the reference surface, directions point downhill, every cell's flow is
+// to the reference surface, every cell drains through its parent,
+// directions point downhill, every cell's flow is
 // one plus its upstream neighbours', and watershed labels agree along flow;
 // and docs/sediment.pia.md's linear-time drainage agrees with accumulate.
 
@@ -82,15 +83,31 @@ static void check(const char *name, const uint16_t *dem, long w, long h) {
   uint64_t *down = malloc(n * 8), *basin = malloc(n * 8), *want_down = malloc(n * 8);
   uint32_t *acc = malloc(n * 4), *sum = calloc(n, 4);
   uint8_t *rgb = malloc(3 * n);
-  const uint32_t threshold = 4, limit = 100000;
+  uint64_t *parent = malloc(n * 8), *rank = malloc(n * 8), *link = malloc(n * 8);
+  uint64_t *head = malloc(65536 * 8);
+  const uint32_t threshold = 4;
 
-  uint32_t passes = fill_sinks(dem, n, w, limit, fill, n);
-  CHECK(passes < limit, "%s: filling did not settle", name);
+  uint64_t unreached =
+      fill_sinks(dem, n, w, fill, n, parent, n, rank, n, link, n, head, 65536);
+  CHECK(unreached == 0, "%s: the flood missed %llu cells", name,
+        (unsigned long long)unreached);
   ref_fill(dem, w, h, want);
   for (long i = 0; i < n; ++i) {
     CHECK(fill[i] >= dem[i], "%s: cell %ld was dug", name, i);
     CHECK(fill[i] == want[i], "%s: cell %ld filled to %u, want %u", name, i,
           fill[i], want[i]);
+    // The theorem, at run time: the border cells are the outlets, and every
+    // other cell's parent is a neighbour, reached earlier, and no higher.
+    if (border(i, w, h)) {
+      CHECK(parent[i] == (uint64_t)i, "%s: border cell %ld is not an outlet",
+            name, i);
+    } else {
+      long p = (long)parent[i], dx = p % w - i % w, dy = p / w - i / w;
+      CHECK(p != i && dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1,
+            "%s: cell %ld's parent %ld is not a neighbour", name, i, p);
+      CHECK(rank[p] < rank[i] && fill[p] <= fill[i],
+            "%s: cell %ld's parent %ld is later or higher", name, i, p);
+    }
   }
 
   directions(fill, n, w, down, n);
@@ -148,14 +165,19 @@ static void check(const char *name, const uint16_t *dem, long w, long h) {
 
   // The whole pipeline in one call gives the same picture.
   uint8_t *rgb2 = malloc(3 * n);
-  uint64_t streams2 = delineate(dem, n, w, limit, threshold, fill, n, down, n,
-                                acc, n, basin, n, rgb2, 3 * n);
+  uint64_t streams2 =
+      delineate(dem, n, w, threshold, fill, n, parent, n, rank, n, link, n, head,
+                65536, down, n, acc, n, basin, n, rgb2, 3 * n);
   CHECK(streams2 == streams && memcmp(rgb, rgb2, 3 * n) == 0,
         "%s: delineate differs from the stages", name);
 
   free(fill), free(want), free(down), free(basin), free(want_down);
   free(acc), free(sum), free(rgb), free(rgb2);
+  free(parent), free(rank), free(link), free(head);
 }
+
+// Priority-flood's scratch for the hand-made maps below.
+static uint64_t sp[121], sr[121], sn[121], sh[65536];
 
 int main(void) {
   static const long sizes[][2] = {{3, 3}, {4, 3}, {3, 7}, {17, 5}, {64, 48}, {100, 101}};
@@ -184,7 +206,7 @@ int main(void) {
     uint16_t fill[63];
     uint64_t down[63], basin[63];
     uint32_t acc[63];
-    fill_sinks(dem, 63, w, 100, fill, 63);
+    fill_sinks(dem, 63, w, fill, 63, sp, 63, sr, 63, sn, 63, sh, 65536);
     directions(fill, 63, w, down, 63);
     accumulate(fill, 63, down, 63, acc, 63, basin, 63);
     for (long x = 1; x + 1 < w; ++x)
@@ -203,9 +225,29 @@ int main(void) {
     }
     dem[5 * w + 5] = 0;  // the bottom of the pit
     check("bowl", dem, w, h);
-    fill_sinks(dem, 121, w, 100, fill, 121);
+    fill_sinks(dem, 121, w, fill, 121, sp, 121, sr, 121, sn, 121, sh, 65536);
     CHECK(fill[5 * w + 5] > dem[5 * w + 5], "bowl: the pit was not filled");
     CHECK(fill[5 * w + 5] >= 6000, "bowl: the lake is below the rim");
+  }
+
+  // An SRTM tile, as a 256 x 256 crop: big-endian i16, with heights below
+  // sea level and a void. The lowest real height becomes 0, and so does
+  // the void.
+  {
+    enum { SIDE = 256, N = SIDE * SIDE };
+    static uint8_t raw[2 * N];
+    static uint16_t dem[N];
+    for (long i = 0; i < N; ++i) {
+      int16_t v = (int16_t)(i % 3000 - 100);
+      if (i == 777) v = INT16_MIN;
+      raw[2 * i] = (uint8_t)((uint16_t)v >> 8), raw[2 * i + 1] = (uint8_t)v;
+    }
+    CHECK(load_hgt(raw, 2 * N, dem, N) == SIDE, "hgt: the side is not %d", SIDE);
+    for (long i = 0; i < N; ++i) {
+      uint16_t want = i == 777 ? 0 : (uint16_t)(i % 3000);
+      CHECK(dem[i] == want, "hgt: cell %ld is %u, want %u", i, dem[i], want);
+    }
+    CHECK(load_hgt(raw, 2 * 100, dem, 100) == 0, "hgt: 100 cells is not a tile");
   }
 
   if (failures) return 1;

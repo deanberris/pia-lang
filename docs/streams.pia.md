@@ -36,6 +36,21 @@ where you can: an 8-bit one has only 256 levels, so its terraces become
 flats, and filling slopes each flat gently towards its outlet, which the
 map shows as lake.
 
+Or run it on real terrain, an SRTM tile (see [Reading an SRTM
+tile](#reading-an-srtm-tile)):
+
+```console
+$ examples/streams/fetch_srtm.sh /tmp/srtm
+$ bazel run //examples/streams:srtm -- /tmp/srtm/N46E008.hgt ~/Desktop/alps.png
+$ bazel run //examples/streams -- ~/Desktop/alps-quarter.png ~/Desktop/alps-map.png
+```
+
+The first command downloads the 1″ tile N46E008, in the Swiss Alps, and
+checks it. The second runs the pipeline on all 13 million cells, timing
+each stage. It writes the map, and a quarter-size view of the heights,
+which the third command turns into the animation of the evolving
+landscape.
+
 ## The pipeline
 
 ```mermaid
@@ -69,7 +84,9 @@ What the verifier proves, function by function, is summed up
 [at the end](#what-is-proved). The headline results are three theorems
 about the whole grid, each a postcondition with a `forall`:
 
-- filling never lowers the ground: `fill.[k] >= dem.[k]` for every cell;
+- filling never lowers the ground, `fill.[k] >= dem.[k]` for every cell,
+  and every cell that is not an outlet has a neighbour that is lower, or
+  as high and closer to an outlet;
 - every flow direction points strictly downhill, or nowhere;
 - no cell's accumulation exceeds the number of cells, and every watershed
   label is an outlet;
@@ -96,7 +113,7 @@ wider bit-vectors, and loop proofs then time out
 instead: row offsets grow by `w`, and `3 * i` is `i + i + i`.
 
 The file is one module, `Streams` ([ADR 0039](adr/0039-module-and-interface-syntax.md)).
-Its interface lists the eight functions the C program calls, with the
+Its interface lists the nine functions the C program calls, with the
 preconditions a caller must keep; everything else on this page is private
 to the module:
 
@@ -104,9 +121,14 @@ to the module:
 module Streams : Delineation
 
 interface Delineation @abi(c) = sig
-  let fill_sinks : (dem : [u16]) -> (w : usize) -> (limit : u32)
-      -> (fill : out mutable [u16]) -> u32
-    requires len fill = len dem && w >= 3 && w + w + w <= len dem
+  let load_hgt : (raw : [u8]) -> (dem : out mutable [u16]) -> usize
+    requires len dem + len dem = len raw
+  let fill_sinks : (dem : [u16]) -> (w : usize) -> (fill : out mutable [u16])
+      -> (parent : out mutable [usize]) -> (rank : out mutable [usize])
+      -> (next : out mutable [usize]) -> (head : out mutable [usize]) -> usize
+    requires len fill = len dem && len parent = len dem && len rank = len dem
+    requires len next = len dem && len head = 65536
+    requires w >= 3 && w + w + w <= len dem && len dem < max u32
   let directions : (fill : [u16]) -> (w : usize)
       -> (down : out mutable [usize]) -> unit
     requires len down = len fill && w >= 3 && w + w + w <= len fill
@@ -121,13 +143,17 @@ interface Delineation @abi(c) = sig
       -> usize
     requires len fill = len dem && len acc = len dem && len basin = len dem
     requires len rgb = len dem + len dem + len dem
-  let delineate : (dem : [u16]) -> (w : usize) -> (limit : u32)
-      -> (threshold : u32) -> (fill : out mutable [u16])
+  let delineate : (dem : [u16]) -> (w : usize) -> (threshold : u32)
+      -> (fill : out mutable [u16]) -> (parent : out mutable [usize])
+      -> (rank : out mutable [usize]) -> (next : out mutable [usize])
+      -> (head : out mutable [usize])
       -> (down : out mutable [usize]) -> (acc : out mutable [u32])
       -> (basin : out mutable [usize]) -> (rgb : out mutable [u8]) -> usize
     requires w >= 3 && w + w + w <= len dem && len dem < max u32
     requires len fill = len dem && len down = len dem && len acc = len dem
     requires len basin = len dem && len rgb = len dem + len dem + len dem
+    requires len parent = len dem && len rank = len dem && len next = len dem
+    requires len head = 65536
   let palette : (pal : out mutable [u8]) -> unit
     requires len pal = 768
   let render_load_index : (dem : [u16]) -> (fill : [u16]) -> (acc : [u32])
@@ -143,41 +169,13 @@ interface Delineation @abi(c) = sig
 end
 ```
 
-Heights are compared through two small helpers whose postconditions say
-exactly what they return, so callers can reason about the result:
-
-```pia
-let lower (a : u16) (b : u16) : u16
-  ensures result <= a && result <= b && (result = a || result = b)
-= if a < b then a else b
-```
-
-`higher` is its mirror image.
+Heights are compared through a small helper whose postcondition says
+exactly what it returns, so callers can reason about the result:
 
 ```pia
 let higher (a : u16) (b : u16) : u16
   ensures result >= a && result >= b && (result = a || result = b)
 = if a > b then a else b
-```
-
-The lowest of the eight neighbours of cell `m`, which is in the interior
-of the row that starts at `r`. Every function that looks at a cell's
-neighbours takes this precondition, *row form*: `r` is an interior row
-(`w <= r` and another row fits below it) and `m` is neither its first
-cell nor its last. It is exactly what a loop over the row knows, and it
-gives the bounds of all eight reads.
-
-```pia
-let lowest_around (fill : [u16]) (w : usize) (r : usize) (m : usize) : u16
-  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
-=
-  assert w < m && m + w + 1 < len fill;
-  let a = m - w in
-  let b = m + w in
-  let above = lower (lower (fill.[a - 1]) (fill.[a])) (fill.[a + 1]) in
-  let beside = lower (fill.[m - 1]) (fill.[m + 1]) in
-  let below = lower (lower (fill.[b - 1]) (fill.[b])) (fill.[b + 1]) in
-  lower (lower above beside) below
 ```
 
 The offset of the last interior row: the last row that has a row after it.
@@ -199,202 +197,514 @@ let last_row (n : usize) (w : usize) : usize
   r
 ```
 
+## Reading an SRTM tile
+
+The heights can come from the Shuttle Radar Topography Mission. An SRTM
+tile, a `.hgt` file, covers one degree of latitude and longitude. It holds
+nothing but its heights, in metres, as big-endian `i16`, row by row from
+the north-west corner. A 1″ tile is 3601 × 3601 cells, a 3″ tile 1201 ×
+1201, and the size follows from the length of the file. Cells the radar
+did not see hold -32768, a *void*.
+
+Two bytes make one height. The high byte comes first, and a value of
+32768 or more is negative.
+
+```pia
+let sample (hi : u8) (lo : u8) : i32
+  ensures result >= min i16 && result <= max i16
+= let h : i32 = hi in
+  let l : i32 = lo in
+  let u : i32 = ((h << 8) | l) in
+  if u >= 32768 then u - 65536 else u
+```
+
+The width of a tile from its length in bytes: 3601 or 1201, or 256 for the
+256 × 256 crops the tests use. Anything else is not a tile, and the result
+is 0.
+
+```pia
+let hgt_side (bytes : usize) : usize
+  ensures result = 0 || result = 256 || result = 1201 || result = 3601
+=
+  if bytes = 25'934'402 then 3601
+  else if bytes = 2'884'802 then 1201
+  else if bytes = 131'072 then 256
+  else 0
+```
+
+`load_hgt` turns a tile into the `u16` heights the rest of the page uses,
+and returns its width, or 0 if the bytes are not a tile. It shifts every
+height up by the lowest one in the tile, so the lowest becomes 0. A tile
+spans at most 65535 metres, so every height fits. A void becomes 0 as well,
+a pit as deep as the lowest ground, and filling raises it to the level
+where it spills. So a void ends up filled from its neighbours, by the
+stage that fills every other pit, and the loader needs no rule of its
+own.
+
+The postcondition is what the next stage requires, whenever the result is
+not 0: at least three rows of at least three cells. The `if d < 0` cannot
+happen once `base` is the lowest height. The loop does not prove that, so
+the clamp keeps the narrowing to `u16` safe without it.
+
+```pia
+let load_hgt (raw : [u8]) (dem : out mutable [u16]) : usize
+  requires len dem + len dem = len raw
+  ensures result = 0 || (result >= 3 && result + result + result <= len dem)
+=
+  let w = hgt_side (len raw) in
+  let lowest : mutable i32 = max i16 in
+  let b : mutable usize = 0 in
+  for i in 0 .. len dem
+    invariant b = i + i
+    invariant lowest >= min i16 && lowest <= max i16
+  do
+    let v = sample (raw.[b]) (raw.[b + 1]) in
+    if v <> min i16 && v < lowest then lowest <- v else ();
+    b <- b + 2
+  done;
+  let base = lowest in
+  b <- 0;
+  for i in 0 .. len dem
+    invariant b = i + i
+  do
+    let v = sample (raw.[b]) (raw.[b + 1]) in
+    let d : i32 = if v = min i16 then 0 else v - base in
+    dem.[i] <- if d < 0 then 0 else d;
+    b <- b + 2
+  done;
+  w
+```
+
 ## 1. Filling sinks
 
-The method is Planchon and Darboux's
-([2001](https://doi.org/10.1016/S0341-8162(01)00164-3)). Start from a
-surface `fill` that equals the terrain on the border and is as high as
-possible everywhere else, as if the map were flooded. Then let the water
-drain: each interior cell is lowered to
+The method is *priority-flood* (Barnes, Lehman and Mulla,
+[2014](https://doi.org/10.1016/j.cageo.2013.04.024)). Water enters the map
+at the border, which is the edge of the world: every border cell is an
+*outlet*, at its own height. The flood then grows inwards, always from the
+lowest cell it has reached so far. Each cell it reaches for the first time
+takes the height
 
 ```text
-higher (dem.[m]) (lowest_around fill w r m + 1)
+higher (dem.[nb]) (fill.[c] +| 1)
 ```
 
-that is, to the ground if the ground already sits above a neighbour, and
-otherwise to just one unit above its lowest neighbour. Repeat until nothing
-changes. A pit ends up level with the point where it spills, plus one unit
-per cell back from that point, so even a filled lake slopes gently towards
-its outlet and the next stage always finds a way down. The `+ 1` saturates
-(`+|`) at `max u16`, so heights near the top of the range cannot overflow; a
-cell there may simply find no lower neighbour, which the later stages
-handle.
+where `c` is the cell it came from. That is the ground if the ground
+already sits above `c`. Otherwise it is one unit above `c`, so a pit fills
+up to the point where it spills, plus one unit per cell back from that
+point. Even a filled lake slopes gently towards its outlet, and the next
+stage always finds a way down. The `+ 1` saturates at `max u16`, so heights
+near the top of the range cannot overflow. A cell there may find no lower
+neighbour, which the later stages handle.
 
-`settle` lowers one cell and says whether it changed. Its contract carries
-the first theorem through the whole stage: if no cell of `fill` is below the
-ground before, none is after. That holds because the new value is the lower
-of the old value and a value above the ground, and `lower` returns one of
-its arguments.
+Because the flood always grows from its lowest cell, the heights it gives
+are the lowest that drain: the same surface as Planchon and Darboux's
+iteration ([2001](https://doi.org/10.1016/S0341-8162(01)00164-3)), which
+this page used before. That method sweeps the map until nothing changes,
+which takes a few sweeps on a small map and hundreds on a real one.
+Priority-flood visits each cell once. The C tests check the two against
+each other.
+
+The theorem is about the cell each cell was reached from, its `parent`,
+and the order cells were reached in, their `rank`. Rank 0 means not
+reached yet. A cell that is its own parent is an outlet. For every other
+cell that has been reached:
+
+- its parent is one of its eight neighbours;
+- its parent was reached earlier, so it has a lower rank;
+- its parent's height is at most its own.
+
+Every cell also sits at or above the ground. So every cell that is not an
+outlet has a neighbour that is lower, or as high and closer to an outlet.
+Following parents from any cell, the rank falls at every step, so the
+path ends, and it ends at an outlet. That is the invariant
+[the design](design.md#stress-test-stream-delineation) asks of this
+stage. With the `+ 1`, the parent is in fact strictly lower, until heights
+reach `max u16`.
+
+A neighbour is one of eight offsets away. The check is in `usize`, with no
+overflow: `a` comes before `b` in the grid, one cell or about one row
+apart.
 
 ```pia
-let settle (dem : [u16]) (w : usize) (r : usize) (m : usize)
-    (fill : inout mutable [u16]) : bool
-  requires len fill = len dem
-  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-=
-  let here = fill.[m] in
-  let spill = higher (dem.[m]) (lowest_around fill w r m +| 1) in
-  fill.[m] <- lower spill here;
-  spill < here
+let spec step_of (w : usize) (a : usize) (b : usize) : bool
+  requires w >= 1 && w < max usize
+= if a < b then (b - a = 1 || b - a = w - 1 || b - a = w || b - a = w + 1) else false
+
+let spec adjacent (w : usize) (k : usize) (p : usize) : bool
+  requires w >= 1 && w < max usize
+= step_of w p k || step_of w k p
 ```
 
-Settles the interior of the row that starts at `r`, left to right. Each
-cell sees the new values of the cells before it, which is why the method
-converges in few sweeps (a Gauss-Seidel iteration), and also why this loop
-cannot be vectorised: each cell depends on the one just written. The loop
-runs over the cell offsets `m` themselves, so its bounds are `settle`'s
-row-form precondition. The call comes before `||`, so it runs even once
-`changed` is true.
+`drained` is the theorem, as four `forall`s. Each one is kept separate,
+because Z3 instantiates small quantifiers more readily than one large one.
 
 ```pia
-let settle_row (dem : [u16]) (w : usize) (r : usize)
-    (fill : inout mutable [u16]) : bool
-  requires len fill = len dem && w >= 3 && w <= r && r + w + w <= len fill
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
+let spec drained (dem : [u16]) (fill : [u16]) (parent : [usize]) (rank : [usize]) (w : usize) : bool
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires w >= 1 && w < max usize
+= (forall (k in 0 .. len dem). rank.[k] > 0 ==> fill.[k] >= dem.[k] && parent.[k] < len dem)
+  && (forall (k in 0 .. len dem). rank.[k] > 0 && parent.[k] <> k ==> adjacent w k (parent.[k]))
+  && (forall (k in 0 .. len dem). rank.[k] > 0 && parent.[k] <> k ==> rank.[parent.[k]] > 0 && rank.[parent.[k]] < rank.[k])
+  && (forall (k in 0 .. len dem). rank.[k] > 0 && parent.[k] <> k ==> fill.[parent.[k]] <= fill.[k])
+```
+
+The flood's queue is a *bucket queue*: one list of cells for each of the
+65536 heights, so taking the lowest cell is a walk up the buckets, and the
+flood is linear in the number of cells. `head.[h]` is the first cell of
+height `h`'s list and `next.[k]` the cell after `k`, with `len dem`
+meaning the end of a list. `queued` says every link is a cell or the end,
+which is all the indexing needs.
+
+```pia
+let spec queued (next : [usize]) (head : [usize]) : bool
+  requires len head = 65536
+= (forall (k in 0 .. len next). next.[k] <= len next)
+  && (forall (j in 0 .. 65536). head.[j] <= len next)
+```
+
+Reaches `nb` from `c`: its height, its parent and its rank. The ensures
+keeps the theorem. Every other cell keeps its rank, which the callers need
+to know that `c` is still reached afterwards.
+
+```pia
+let settle_cell (dem : [u16]) (w : usize) (c : usize) (nb : usize) (r : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) : u16
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires w >= 1 && w < max usize
+  requires c < len dem && nb < len dem && rank.[c] > 0 && rank.[nb] = 0
+  requires adjacent w nb c && rank.[c] < r
+  requires drained dem fill parent rank w
+  ensures drained dem fill parent rank w
+  ensures forall (k in 0 .. len dem). k = nb || rank.[k] = old (rank.[k])
+  ensures rank.[nb] = r && result = fill.[nb]
 =
-  let changed : mutable bool = false in
-  for m in r + 1..r + w - 1
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
+  let v = higher (dem.[nb]) (fill.[c] +| 1) in
+  fill.[nb] <- v;
+  parent.[nb] <- c;
+  rank.[nb] <- r;
+  v
+```
+
+Puts `nb` at the front of the list for height `v`.
+
+```pia
+let push (nb : usize) (v : u16) (next : inout mutable [usize]) (head : inout mutable [usize]) : unit
+  requires nb < len next && len head = 65536
+  requires queued next head
+  ensures queued next head
+=
+  next.[nb] <- head.[v];
+  head.[v] <- nb
+```
+
+Looks at `nb` from `c`. A cell not reached yet is reached and queued. Every
+rank is below `count`, which grows by one each time, so a new cell's rank
+is above its parent's. If `count` ever reached `max usize`, which would
+take more cells than any machine has memory for, the cell would be left
+for the last pass to make an outlet.
+
+```pia
+let visit (dem : [u16]) (w : usize) (c : usize) (nb : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : inout mutable usize) : unit
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 1 && w < max usize
+  requires c < len dem && nb < len dem && rank.[c] > 0 && adjacent w nb c
+  requires forall (k in 0 .. len dem). rank.[k] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures forall (k in 0 .. len dem). rank.[k] < count
+  ensures drained dem fill parent rank w && queued next head
+  ensures rank.[c] > 0 && count >= old count
+=
+  if rank.[nb] = 0 && count < max usize then (
+    let v = settle_cell dem w c nb count fill parent rank in
+    push nb v next head;
+    count <- count + 1
+  ) else ()
+```
+
+The neighbour `d` cells before or after `c`, or `n` if that is off the
+slice. The `assert`s name the step for the solver, which then proves the
+postcondition at once.
+
+```pia
+let before (n : usize) (w : usize) (c : usize) (d : usize) : usize
+  requires w >= 3 && w < max usize && c < n && (d = 1 || d = w - 1 || d = w || d = w + 1)
+  ensures result = n || (result < n && adjacent w result c)
+= if c >= d then (
+    let nb = c - d in
+    assert c - nb = d;
+    assert step_of w nb c;
+    nb
+  ) else n
+
+let after (n : usize) (w : usize) (c : usize) (d : usize) : usize
+  requires w >= 3 && w < max usize && c < n && (d = 1 || d = w - 1 || d = w || d = w + 1)
+  ensures result = n || (result < n && adjacent w result c)
+= if d < n - c then (
+    let nb = c + d in
+    assert nb - c = d;
+    assert step_of w c nb;
+    nb
+  ) else n
+```
+
+The eight neighbours, numbered in row order. A border cell's offsets can
+wrap around to the other side of the map. Those cells are on the border
+too, and every border cell is an outlet before the flood starts, so the
+flood never reaches one through a wrap.
+
+```pia
+let neighbour (n : usize) (w : usize) (c : usize) (d : int{0..7}) : usize
+  requires w >= 3 && w < max usize && c < n
+  ensures result = n || (result < n && adjacent w result c)
+=
+  if d = 0 then before n w c (w + 1)
+  else if d = 1 then before n w c w
+  else if d = 2 then before n w c (w - 1)
+  else if d = 3 then before n w c 1
+  else if d = 4 then after n w c 1
+  else if d = 5 then after n w c (w - 1)
+  else if d = 6 then after n w c w
+  else after n w c (w + 1)
+```
+
+Looks at all eight neighbours of `c`.
+
+```pia
+let expand (dem : [u16]) (w : usize) (c : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : inout mutable usize) : unit
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w < max usize
+  requires c < len dem && rank.[c] > 0
+  requires forall (k in 0 .. len dem). rank.[k] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures forall (k in 0 .. len dem). rank.[k] < count
+  ensures drained dem fill parent rank w && queued next head
+  ensures count >= old count
+=
+  for d in 0 .. 8
+    invariant forall (k in 0 .. len dem). rank.[k] < count
+    invariant drained dem fill parent rank w && queued next head
+    invariant rank.[c] > 0 && count >= old count
   do
-    changed <- settle dem w r m fill || changed
-  done;
-  changed
-```
-
-The same, right to left. Water can only travel against the direction of a
-sweep one cell per sweep, so sweeps alternate direction.
-
-```pia
-let settle_row_back (dem : [u16]) (w : usize) (r : usize)
-    (fill : inout mutable [u16]) : bool
-  requires len fill = len dem && w >= 3 && w <= r && r + w + w <= len fill
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-=
-  let changed : mutable bool = false in
-  for i in 0..w - 2
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-  do
-    changed <- settle dem w r (r + w - 2 - i) fill || changed
-  done;
-  changed
-```
-
-One sweep over the interior rows, top to bottom. This loop is the edge
-detector's: the condition says another row fits below this one, and the
-measure is the distance to the end.
-
-```pia
-let sweep_down (dem : [u16]) (w : usize) (fill : inout mutable [u16]) : bool
-  requires len fill = len dem && w >= 3 && w + w + w <= len fill
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-=
-  let changed : mutable bool = false in
-  let r : mutable usize = w in
-  while w <= len fill - (r + w)
-    invariant w <= r && r + w <= len fill
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-    decreases len fill - r
-  do
-    changed <- settle_row_back dem w r fill || changed;
-    r <- r + w
-  done;
-  changed
-```
-
-One sweep bottom to top, from the last interior row. `next` is the offset
-of the row after the one being settled, so the loop stops after row `w`
-without `r` ever going below it.
-
-```pia
-let sweep_up (dem : [u16]) (w : usize) (last : usize)
-    (fill : inout mutable [u16]) : bool
-  requires len fill = len dem && w >= 3 && w <= last && last + w + w <= len fill
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-=
-  let changed : mutable bool = false in
-  let next : mutable usize = last + w in
-  while next >= w + w
-    invariant next + w <= len fill
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-    decreases next
-  do
-    changed <- settle_row dem w (next - w) fill || changed;
-    next <- next - w
-  done;
-  changed
-```
-
-Floods the interior of the row that starts at `r`: the starting surface.
-The flood level is written `higher (dem.[m]) (max u16)`, which is always
-`max u16`, because the verifier does not yet know that a `u16` read from a
-slice inside a `forall` is at most `max u16`
-([issue #96](https://github.com/deanberris/pia-lang/issues/96)).
-`higher`'s postcondition says it is not below the ground.
-
-```pia
-let flood_row (dem : [u16]) (w : usize) (r : usize)
-    (fill : inout mutable [u16]) : unit
-  requires len fill = len dem && w >= 3 && w <= r && r + w + w <= len fill
-  requires forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-=
-  for m in r + 1..r + w - 1
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-  do
-    fill.[m] <- higher (dem.[m]) (max u16)
+    let nb = neighbour (len dem) w c d in
+    if nb < len dem then visit dem w c nb fill parent rank next head count else ()
   done
 ```
 
-The whole stage. It copies the terrain, floods the interior, then sweeps
-down and up until a pair of sweeps changes nothing, or `limit` pairs have
-run. It returns the number of pairs. The loop's measure is the number of
-pairs left, so it ends even on a terrain that would take longer to settle;
-when the result is `limit`, the surface may not have settled, and the later
-stages are still correct on it, only less useful. The `ensures` is the
-first theorem: the filled surface is nowhere below the ground. The copy
-loop is a straight copy, which LLVM turns into NEON loads and stores.
+Makes `k` an outlet at its own height, rank 1, and queues it, unless it
+has been reached already. The result says whether it was new.
 
 ```pia
-let fill_sinks (dem : [u16]) (w : usize) (limit : u32)
-    (fill : out mutable [u16]) : u32
-  requires len fill = len dem && w >= 3 && w + w + w <= len dem
-  ensures forall (k in 0..len fill). fill.[k] >= dem.[k]
-  ensures result <= limit
+let seed (dem : [u16]) (w : usize) (k : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : usize) : bool
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w < max usize && k < len dem && count >= 2
+  requires forall (j in 0 .. len dem). rank.[j] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures forall (j in 0 .. len dem). rank.[j] < count
+  ensures drained dem fill parent rank w && queued next head
+  ensures rank.[k] > 0
+  ensures forall (j in 0 .. len dem). j = k || rank.[j] = old (rank.[j])
 =
-  for i in 0..len dem
-    invariant forall (k in 0..i). fill.[k] >= dem.[k]
+  if rank.[k] = 0 then (
+    fill.[k] <- dem.[k];
+    parent.[k] <- k;
+    rank.[k] <- 1;
+    push k (dem.[k]) next head;
+    true
+  ) else false
+```
+
+Takes the first cell off the list for `level`, or returns `len next` if
+the list is empty.
+
+```pia
+let pop (level : u16) (next : [usize]) (head : inout mutable [usize]) : usize
+  requires len head = 65536 && queued next head
+  ensures queued next head && result <= len next
+=
+  let c = head.[level] in
+  if c < len next then (head.[level] <- next.[c]; c) else len next
+```
+
+The start: every cell unreached, every list empty. With no cell reached,
+`drained` holds trivially.
+
+```pia
+let clear_flood (dem : [u16]) (w : usize)
+    (fill : out mutable [u16]) (parent : out mutable [usize])
+    (rank : out mutable [usize]) (next : out mutable [usize])
+    (head : out mutable [usize]) : unit
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w < max usize
+  ensures forall (k in 0 .. len dem). rank.[k] = 0
+  ensures queued next head
+  ensures drained dem fill parent rank w
+=
+  let n = len dem in
+  for k in 0 .. n
+    invariant forall (j in 0 .. k). rank.[j] = 0 && next.[j] <= n
   do
-    fill.[i] <- dem.[i]
+    fill.[k] <- dem.[k];
+    parent.[k] <- k;
+    rank.[k] <- 0;
+    next.[k] <- n
+  done;
+  for j in 0 .. 65536
+    invariant forall (i in 0 .. j). head.[i] <= n
+  do
+    head.[j] <- n
+  done
+```
+
+The border's outlets: the first and last rows, then both ends of every row
+between.
+
+```pia
+let seed_border (dem : [u16]) (w : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : usize) : unit
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w + w + w <= len dem && count >= 2
+  requires forall (j in 0 .. len dem). rank.[j] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures forall (j in 0 .. len dem). rank.[j] < count
+  ensures drained dem fill parent rank w && queued next head
+=
+  let n = len dem in
+  for k in 0 .. w
+    invariant forall (j in 0 .. n). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+  do
+    let s0 = seed dem w k fill parent rank next head count in ()
+  done;
+  for k in n - w .. n
+    invariant forall (j in 0 .. n). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+  do
+    let s1 = seed dem w k fill parent rank next head count in ()
   done;
   let r : mutable usize = w in
-  while w <= len fill - (r + w)
-    invariant w <= r && r + w <= len fill
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-    decreases len fill - r
+  while r < n - w
+    invariant w <= r
+    invariant forall (j in 0 .. n). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+    decreases n - r
   do
-    flood_row dem w r fill;
+    let s2 = seed dem w r fill parent rank next head count in
+    let s3 = seed dem w (r + w - 1) fill parent rank next head count in
     r <- r + w
-  done;
-  let last = last_row (len fill) w in
-  let passes : mutable u32 = 0 in
-  let changed : mutable bool = true in
-  while changed && passes < limit
-    invariant passes <= limit
-    invariant forall (k in 0..len fill). fill.[k] >= dem.[k]
-    decreases limit - passes
+  done
+```
+
+Empties the bucket for one height. A cell reached from this level lands
+in a higher bucket, or in this one at `max u16`. The measure counts the
+cells taken, at most `len dem` per level. A list could only be longer if it
+had a cycle, which it cannot, but the loop does not need to know that.
+
+```pia
+let drain_level (dem : [u16]) (w : usize) (level : u16)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : inout mutable usize) : unit
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w < max usize
+  requires forall (j in 0 .. len dem). rank.[j] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures forall (j in 0 .. len dem). rank.[j] < count
+  ensures drained dem fill parent rank w && queued next head
+  ensures count >= old count
+=
+  let n = len dem in
+  let pops : mutable usize = 0 in
+  let more : mutable bool = true in
+  while more && pops < n
+    invariant pops <= n && count >= old count
+    invariant forall (j in 0 .. n). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+    decreases n - pops
   do
-    let downwards = sweep_down dem w fill in
-    let upwards = sweep_up dem w last fill in
-    changed <- downwards || upwards;
-    passes <- passes + 1
+    let c = pop level next head in
+    pops <- pops + 1;
+    if c = n then more <- false
+    else if rank.[c] > 0 then expand dem w c fill parent rank next head count
+    else ()
+  done
+```
+
+After the flood, any cell still unreached becomes an outlet of its own.
+On a grid every cell is reached from the border, so this finds none. The
+result counts them, and the tests check that it is 0. This last pass is
+what lets the postcondition say that *every* cell has been reached, with
+no proof that the flood itself gets everywhere.
+
+```pia
+let finish (dem : [u16]) (w : usize)
+    (fill : inout mutable [u16]) (parent : inout mutable [usize])
+    (rank : inout mutable [usize]) (next : inout mutable [usize])
+    (head : inout mutable [usize]) (count : usize) : usize
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w < max usize && count >= 2
+  requires forall (j in 0 .. len dem). rank.[j] < count
+  requires drained dem fill parent rank w && queued next head
+  ensures drained dem fill parent rank w
+  ensures forall (k in 0 .. len dem). rank.[k] > 0
+  ensures result <= len dem
+=
+  let extra : mutable usize = 0 in
+  for k in 0 .. len dem
+    invariant extra <= k
+    invariant forall (j in 0 .. k). rank.[j] > 0
+    invariant forall (j in 0 .. len dem). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+  do
+    if seed dem w k fill parent rank next head count then extra <- extra + 1 else ()
   done;
-  passes
+  extra
+```
+
+The whole stage. The caller passes the scratch buffers, since Pia cannot
+allocate yet. The `ensures` is the theorem for every cell of the map.
+
+```pia
+let fill_sinks (dem : [u16]) (w : usize)
+    (fill : out mutable [u16]) (parent : out mutable [usize])
+    (rank : out mutable [usize]) (next : out mutable [usize])
+    (head : out mutable [usize]) : usize
+  requires len fill = len dem && len parent = len dem && len rank = len dem
+  requires len next = len dem && len head = 65536
+  requires w >= 3 && w + w + w <= len dem && len dem < max u32
+  ensures drained dem fill parent rank w
+  ensures forall (k in 0 .. len dem). rank.[k] > 0
+  ensures result <= len dem
+=
+  clear_flood dem w fill parent rank next head;
+  let count : mutable usize = 2 in
+  seed_border dem w fill parent rank next head count;
+  for level in 0 .. 65536
+    invariant count >= 2
+    invariant forall (j in 0 .. len dem). rank.[j] < count
+    invariant drained dem fill parent rank w && queued next head
+  do
+    drain_level dem w level fill parent rank next head count
+  done;
+  finish dem w fill parent rank next head count
 ```
 
 ## 2. D8 flow directions
@@ -719,16 +1029,20 @@ the downhill theorem, which only `directions` provides. Swap the two calls
 and the program no longer compiles.
 
 ```pia
-let delineate (dem : [u16]) (w : usize) (limit : u32) (threshold : u32)
-    (fill : out mutable [u16]) (down : out mutable [usize])
+let delineate (dem : [u16]) (w : usize) (threshold : u32)
+    (fill : out mutable [u16]) (parent : out mutable [usize])
+    (rank : out mutable [usize]) (next : out mutable [usize])
+    (head : out mutable [usize]) (down : out mutable [usize])
     (acc : out mutable [u32]) (basin : out mutable [usize])
     (rgb : out mutable [u8]) : usize
   requires w >= 3 && w + w + w <= len dem && len dem < max u32
   requires len fill = len dem && len down = len dem && len acc = len dem
   requires len basin = len dem && len rgb = len dem + len dem + len dem
+  requires len parent = len dem && len rank = len dem && len next = len dem
+  requires len head = 65536
   ensures result <= len dem
 =
-  let passes = fill_sinks dem w limit fill in
+  let outlets = fill_sinks dem w fill parent rank next head in
   directions fill w down;
   accumulate fill down acc basin;
   render dem fill acc basin threshold rgb
@@ -902,17 +1216,19 @@ Every goal in this file is proved, by interval analysis or by Z3, before
 | Every slice index is in bounds | every function |
 | No arithmetic overflows, and every narrowing fits | every function; `walk`'s `+ 1` by its invariant |
 | Every loop ends | `for` loops always; `while` loops by `decreases`; `walk` by the height of the drop |
-| Filling never lowers the ground | `settle` up to `fill_sinks` |
+| An SRTM tile's heights fit in `u16`, and a tile is at least 3 × 3 | `sample`, `load_hgt` |
+| Filling never lowers the ground | `settle_cell` up to `fill_sinks` |
+| Every cell drains: its parent is a neighbour, reached earlier, and no higher | `settle_cell` up to `fill_sinks` (`drained`) |
 | Every direction points strictly downhill or nowhere | `consider` up to `directions` |
 | Accumulation never exceeds the number of cells | `walk`, `accumulate` |
 | Every watershed label is an outlet | `walk`, `accumulate` |
 | The number of stream cells is at most the number of cells | `render`, `render_load` |
 | Every animation frame's index names one of the palette's 201 colours | `index_of`, `render_load_index` |
 
-What is *not* proved yet: that filling reaches a fixed point within
-`limit` sweeps (the result says whether it did), that a fixed point leaves
-no interior pits, and that the D8 choice is the steepest, rather than just
-downhill. None of these affect safety or termination.
+What is *not* proved yet: that the flood reaches every cell from the
+border, so that `fill_sinks` returns 0 (the tests check that it does), that
+its surface is the lowest that drains, and that the D8 choice is the
+steepest, rather than just downhill. None of these affect safety or termination.
 
 ## What is missing
 
@@ -933,14 +1249,15 @@ The demo works around parts of Pia that are not built yet:
 - **Floats** ([M11](https://github.com/deanberris/pia-lang/issues/12))
   would give true slopes in place of the 10:7 weights.
 - **Vectorisation and parallelism.** Today LLVM vectorises only the
-  simple loops: the copy in `fill_sinks` and `down.[i] <- i` in
+  simple loops: the copies in `clear_flood` and `down.[i] <- i` in
   `directions` become NEON loads, stores and adds. The stencil kernels
   (`settle`, `steepest`) and the walks are scalar. `steepest` and `paint`
   are branch-free enough to vectorise once proved facts drive it
   ([M10](https://github.com/deanberris/pia-lang/issues/11)), and
   `directions` and `render` are independent per row and per cell, so
   `spread` ([M12](https://github.com/deanberris/pia-lang/issues/13)) can
-  run them across cores. Gauss-Seidel filling stays sequential by design.
+  run them across cores. Priority-flood fills in height order, so it stays
+  sequential.
 - **Solver robustness.** Goals beside a `forall` are slow for the solver,
   and some slices' element ranges are lost inside quantifiers
   ([issue #96](https://github.com/deanberris/pia-lang/issues/96)); the
