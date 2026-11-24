@@ -37,6 +37,7 @@ let in_bounds (s : [u8]) (ts : borrowed inout mutable [T.tensor]) (k : usize) : 
 
 (* A matrix's count is rows times columns, exactly. *)
 let matrix (s : [u8]) (ts : borrowed inout mutable [T.tensor]) (k : usize) : unit
+  with T.times
 = match T.parse s ts with
   | Ok l ->
       if k < l.count then (
