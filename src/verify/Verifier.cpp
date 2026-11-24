@@ -96,7 +96,8 @@ std::string interpretedSMTLIB(const std::string &smtlib) {
     if (line == ("(declare-sort " + kRealSort + " 0)").str()) continue;
     // A datatype and its functions are declared together (withDatatypes).
     if (line.starts_with(("(declare-sort " + kRecPrefix).str()) ||
-        line.starts_with(("(declare-fun " + kRecPrefix).str()))
+        line.starts_with(("(declare-fun " + kRecPrefix).str()) ||
+        line.starts_with(("(declare-const " + kRecPrefix).str()))
       continue;
     bool drop = false;
     for (llvm::StringRef f : kInterpreted)
