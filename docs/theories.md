@@ -42,7 +42,7 @@ The steps are the implementation order of ADR 0036: (1) spec-only `real` and `in
 <!-- example: levels.pia -->
 <!-- expect: fail -->
 ```ocaml
-let level = type int{0..63}
+let level = int{0..63}
 
 let theory Levels = sig
   let sort held
@@ -615,7 +615,7 @@ An allocator promises a few things about the blocks it hands out: a block it han
 <!-- example: alloc.pia -->
 <!-- expect: fail -->
 ```ocaml
-let blk = type int{0..63}
+let blk = int{0..63}
 
 let theory Alloc = sig
   let sort heap

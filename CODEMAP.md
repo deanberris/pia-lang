@@ -47,6 +47,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | an operator or a core builtin | `src/syntax/Prelude.cpp` (operators, `derive_eq`, `machine`) | `isCoreBuiltin` in `src/sema/Sema.cpp`, the lowering in `IRGen.cpp` (`genBinary`, `genBitBuiltin`) |
 | the memory model, litmus tests (ADR 0052) | `src/irgen/Memory.pia`, `litmus` in `src/syntax/Prelude.cpp` | `tests/memory`; docs/theories.md, "The memory model" |
 | `spread`: parallel loops, ownership goals, the async runtime (ADR 0060) | `genSpread`, `ownedHere`, `footprintScope` and `checkFootprintCall` in `src/irgen/IRGen.cpp`; `HavocOthersOp` in `src/dialect/Contract.td` and the verifier; `reads` frames: `ReadsOp`, `addFrameLemmas` in `src/meta/Expand.cpp`, `frameLink` in `src/verify/Verifier.cpp` | `lowerSpreads` and the async passes in `src/codegen/Codegen.cpp`; tests in `tests/verify/spread.pia`, `tests/verify/spread_ensures.pia`, `tests/verify/frames.pia`, `tests/irgen/spread_errors.pia`, `tests/codegen/spread.pia` (run by `spread_test`) |
+| opaque spec functions: `@opaque` and `with f` (ADR 0063) | `reveal` in `src/syntax/Parser.cpp`; `genReveal`, `revealed` and `@opaque` in `genAttributes`, in `src/irgen/IRGen.cpp`; `RevealOp` in `src/dialect/Contract.td` | `specCall` (the opaque check), the `RevealOp` step and `walkBlock`'s scope in `src/verify/Verifier.cpp`; tests in `tests/verify/opaque.pia`, `tests/modules/opaque.pia` |
 | spec state: `let spec` locals, spec parameters and spec fields (ADR 0058) | `genLetIn`, `genName` and `genField` (the read checks), `genAssign` and `genRecordLit` (spec writes) and the spec arguments in `genCall`, in `src/irgen/IRGen.cpp`; `RecordType`'s `specFields` in `src/dialect/Pia.td` | `leafSpec` in `src/transforms/ScalarizeRecords.cpp`, `eraseSpecState` in `src/codegen/Codegen.cpp`; tests in `tests/verify/spec_locals.pia`, `tests/verify/spec_fields.pia`, `tests/irgen/spec_local_errors.pia`, `tests/irgen/spec_field_errors.pia`, `tests/codegen/spec_state.pia` |
 | atomics: cells, orders, overflow modes (ADR 0052) | `genAtomic` in `src/irgen/IRGen.cpp`, the `pia.atomic.*` ops in `src/dialect/Pia.td` | the `Atomic*Lowering` patterns in `src/codegen/Codegen.cpp`; tests in `tests/verify/atomics.pia`, `tests/irgen/atomic_errors.pia`, `tests/codegen/atomics.pia` |
 | a metaprogram builtin or expansion | `src/meta/Interpreter.cpp`, `Expand.cpp` | `docs/meta.md`; tests in `tests/meta` |
@@ -138,7 +139,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
-- `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).
+- `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it.
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
@@ -209,7 +210,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).
-- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories).
+- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point).
 

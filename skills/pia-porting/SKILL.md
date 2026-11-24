@@ -49,7 +49,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): floats, `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds with `costs` (ADR 0062), opaque spec functions with `@opaque` and `with` (ADR 0063), `type u32` making a distinct type with `let byte = u8` as the alias (ADR 0064), and `spread` on the GPU.
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): floats, `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds with `costs` (ADR 0062), `type u32` making a distinct type (ADR 0064 step 2; `let byte = u8` is already the alias spelling), and `spread` on the GPU.
 
 ## From C and C++
 
@@ -121,7 +121,7 @@ Zig is the nearest in spirit: explicit allocators, `defer`, error sets, no shado
 
 - **Go:** multiple returns with `err` become `result t e`; `defer` is the same word but runs at every exit of its sequence, not only the function's; goroutines over disjoint data become `spread`; slices are views as in Go, but cannot grow (a `vec` does).
 - **Python, JavaScript:** dynamic values become variants; port the type each value really has, and the bounds the code assumes become range types.
-- **Ada/SPARK, Dafny, F\*:** contracts carry over almost directly (`requires`, `ensures`, `invariant`, `decreases`, ghost state as `spec`); see [docs/comparison.md](../../docs/comparison.md).
+- **Ada/SPARK, Dafny, F\*:** contracts carry over almost directly (`requires`, `ensures`, `invariant`, `decreases`, ghost state as `spec`, and Dafny's `opaque` and `reveal` as `@opaque` on a spec function and `with f`); see [docs/comparison.md](../../docs/comparison.md).
 
 ## After the port
 

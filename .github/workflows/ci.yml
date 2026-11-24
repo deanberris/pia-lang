@@ -8,6 +8,11 @@
 # job on the merged result, and the `merge queue gate` job is the check the
 # queue requires. The macOS job runs on pull requests and on main, but not in
 # the queue, because macOS runners wait a long time for a machine.
+#
+# The proof benchmark (ADR 0032) adds about 35 minutes to each job, so it
+# runs only when the `changes` job finds a change that can move a gated
+# cost (tools/bench/needs_bench.py), and every night on main whatever
+# changed. Running the workflow by hand runs it too.
 name: CI
 
 on:
@@ -15,6 +20,10 @@ on:
     branches: [main]
   pull_request:
   merge_group:
+  schedule:
+    # 16:00 UTC is 2 or 3 in the morning in Sydney.
+    - cron: "0 16 * * *"
+  workflow_dispatch:
 
 # A new push to a pull request makes its older run worthless, so that run is
 # cancelled. Runs on main are not: each one checks a commit that landed and
@@ -25,9 +34,53 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # Says whether this run needs the proof benchmark. When it cannot tell, it
+  # says yes: the benchmark is skipped only when nothing it gates changed.
+  changes:
+    name: what changed
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      bench: ${{ steps.bench.outputs.bench }}
+      idle: ${{ steps.bench.outputs.idle }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does the proof benchmark need to run?
+        id: bench
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          case "$EVENT" in
+            # A pull request checks out its merge into the base branch, so
+            # the merge's first parent is the base it is compared with.
+            pull_request) base=$(git rev-parse HEAD^1) ;;
+            push) base="$PUSH_BEFORE" ;;
+            merge_group) base="$QUEUE_BASE" ;;
+            *) base="" ;;  # nightly or by hand: everything
+          esac
+          bench=true
+          idle=false
+          # A night with no new commits on main has nothing new to check,
+          # so the nightly run builds nothing.
+          if [ "$EVENT" = schedule ] && [ -z "$(git log --since='25 hours ago' --format=%H -1)" ]; then
+            bench=false
+            idle=true
+          elif [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            bench=$(git diff --name-only "$base" HEAD | python3 tools/bench/needs_bench.py) || bench=true
+          fi
+          echo "bench=$bench" >> "$GITHUB_OUTPUT"
+          echo "idle=$idle" >> "$GITHUB_OUTPUT"
+          echo "Proof benchmark: $bench ($EVENT)" | tee -a "$GITHUB_STEP_SUMMARY"
+
   test:
     name: bazel test (macOS arm64)
-    if: github.event_name != 'merge_group'
+    if: github.event_name != 'merge_group' && needs.changes.outputs.idle != 'true'
+    needs: changes
     runs-on: macos-15
     timeout-minutes: 350
     steps:
@@ -82,7 +135,7 @@ jobs:
       # in the job summary and kept as an artifact.
       - name: Proof build-time benchmark
         id: bench
-        if: steps.test.outcome == 'success'
+        if: steps.test.outcome == 'success' && needs.changes.outputs.bench == 'true'
         # The corpus proves twice (1 thread, then several), about 35 min on
         # macos-15 since the set algorithms (#288). The gate is the solver
         # cost, not the wall time, so the limit only stops a hang.
@@ -135,6 +188,8 @@ jobs:
   # Pia file, and its proof benchmark has its own baseline.
   linux:
     name: bazel test (Linux x86_64)
+    if: needs.changes.outputs.idle != 'true'
+    needs: changes
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     env:
@@ -201,7 +256,7 @@ jobs:
       # baseline was recorded on another host.
       - name: Proof build-time benchmark
         id: bench
-        if: steps.test.outcome == 'success'
+        if: steps.test.outcome == 'success' && needs.changes.outputs.bench == 'true'
         # The corpus proves twice (1 thread, then several), about 35 min on
         # macos-15 since the set algorithms (#288). The gate is the solver
         # cost, not the wall time, so the limit only stops a hang.
