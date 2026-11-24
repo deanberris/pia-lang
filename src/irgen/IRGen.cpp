@@ -109,6 +109,9 @@ struct Binding {
   // A local's scope, the body of its `let`: a loan it holds ends at its
   // last use there (ADR 0042).
   const syntax::Node *scope = nullptr;
+  // A `let spec` local or a spec parameter (ADR 0058): code may write it,
+  // and only contracts, invariants, asserts and lemma calls may read it.
+  bool spec = false;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -458,6 +461,15 @@ class Gen {
            "lemmas, contracts and quantifiers, not in code (ADR 0036)";
   }
 
+  // Why code cannot read the spec binding `b` (ADR 0058).
+  static std::string specReadMessage(const Binding &b) {
+    return "'" + b.name +
+           "' is spec state, which code may write but not "
+           "read: only contracts, loop invariants, asserts, lemma calls and "
+           "spec parameters may read it, so that codegen can erase it "
+           "(ADR 0058)";
+  }
+
   // The smallest range type holding both.
   IntType join(IntType a, IntType b) {
     llvm::APInt alo = widen(a.getLo()), blo = widen(b.getLo());
@@ -756,6 +768,9 @@ class Gen {
   R genLocalArray(const Node &value, ArrayType arr) {
     Location l = loc(value);
     Value storage = create<RegionOp>(l, arr);
+    // A region's elements start as zero.
+    if (isZeros(value))
+      return TV{storage, arr};
     Type elem = arr.getElementType();
     if (value.kind == NodeKind::ListLit) {
       if (value.kids.size() != arr.getLength())
@@ -780,6 +795,13 @@ class Gen {
     if (!c) return c;
     create<CopyOp>(l, c->value, storage);
     return TV{storage, arr};
+  }
+
+  // `zeros`, an array of zero elements of the type it is bound at, unless
+  // the program defines the name itself (ADR 0058).
+  bool isZeros(const Node &n) {
+    return n.kind == NodeKind::Name && n.flags.empty() && n.text == "zeros" &&
+           !lookup("zeros") && overloadSet("zeros").empty();
   }
 
   // The values of an array literal of integer literals, checked against
@@ -916,10 +938,15 @@ class Gen {
       if (auto n = linkNames_.find(sig.name); n != linkNames_.end())
         fn->setAttr("pia.link_name", b_.getStringAttr(n->second));
     }
-    for (size_t i = 0; i < sig.params.size(); ++i)
+    for (size_t i = 0; i < sig.params.size(); ++i) {
       if (!sig.params[i].modifiers.empty())
         fn.setArgAttr(i, PiaDialect::getModifiersAttrName(),
                       b_.getStringAttr(sig.params[i].modifiers));
+      // Codegen erases a spec parameter, and the arguments calls pass for
+      // it (ADR 0058).
+      if (sig.params[i].spec)
+        fn.setArgAttr(i, PiaDialect::getSpecStateAttrName(), b_.getUnitAttr());
+    }
     Block *entry = fn.addEntryBlock();
     b_.setInsertionPointToStart(entry);
 
@@ -937,6 +964,7 @@ class Gen {
                           sema::hasModifier(p.modifiers, "mutable"));
       b->modifiers = p.modifiers;
       b->isParam = true;
+      b->spec = p.spec;
       b->entry = entry->getArgument(i);
       for (const std::string &r : p.regions) b->lenders.push_back(regionBinding(r));
       // A parameter of a type with regions, which names none, has one of
@@ -1029,7 +1057,7 @@ class Gen {
     // not in a buffer (ADR 0041).
     if (!ghost_) {
       for (const sema::Param &p : sig.params)
-        if (specInBuffer(p.type)) {
+        if (!p.spec && specInBuffer(p.type)) {
           diags_.error(p.loc, "the parameter '" + p.name + "' has " +
                                   specInBufferMessage(p.type));
           return;
@@ -2040,6 +2068,8 @@ class Gen {
     if (n.flags.empty())
       if (BindingPtr b = lookup(n.text)) {
         if (!usable(b, n)) return std::nullopt;
+        if (b->spec && !contract_ && !ghost_)
+          return fail(n, specReadMessage(*b));
         // A referenced capture is the lambda's alone while it is live.
         if (!contract_ && !ghost_)
           if (auto [x, use] = writerOf(b, n); x)
@@ -3610,8 +3640,27 @@ class Gen {
     } restoreGhost{ghost_, savedGhost};
     llvm::SmallVector<Value> operands;
     for (size_t i = 0; i < args.size(); ++i) {
+      // A spec parameter's argument is specification (ADR 0058). One the
+      // callee may write must be spec state itself, since codegen erases
+      // the write: a code buffer would not change at run time.
+      bool specArg = sig.params[i].spec && !contract_ && !ghost_;
+      if (specArg && writes(sig.params[i])) {
+        BindingPtr sb =
+            args[i]->kind == NodeKind::Name && args[i]->flags.empty()
+                ? lookup(args[i]->text)
+                : nullptr;
+        if (!sb || !sb->spec)
+          return fail(*args[i], "'" + sig.params[i].name + "' of '" + sig.name +
+                                    "' is a spec parameter that "
+                                    "it may write, so pass a spec local or "
+                                    "spec parameter by name (ADR 0058)");
+      }
+      if (specArg)
+        contract_ = true;
       R a = early && (*early)[i] ? (*early)[i]
                                  : genExpr(*args[i], sig.params[i].type);
+      if (specArg)
+        contract_ = false;
       if (!a) return a;
       R c = coerce(*a, sig.params[i].type, *args[i]);
       if (!c) return c;
@@ -6981,6 +7030,10 @@ class Gen {
         return false;
       const Node &dom = *cur->kids[0];
       const Node &annot = *p->kids[0];
+      // A spec parameter is erased at the call, so both must agree on it
+      // (ADR 0058).
+      if ((dom.flags == "spec") != (p->flags == "spec"))
+        return false;
       if (dom.text != p->text || dom.kids.size() < 2 || annot.kids.size() < 2 ||
           !sameTree(*dom.kids[0], *annot.kids[0]) ||
           !sameTree(*dom.kids[1], *annot.kids[1]))
@@ -8563,6 +8616,9 @@ class Gen {
     if (place.kind == NodeKind::Name) {
       BindingPtr b = lookup(place.text);
       if (!b) return fail(place, "unknown name '" + place.text + "'");
+      if (b->spec && !isSpecScalar(b->type))
+        return fail(place, "assigning a whole spec array is not supported "
+                           "yet; write its elements");
       if (!b->isMutable)
         return fail(place, "'" + place.text + "' is not mutable; declare it "
                            "as 'let " + place.text + " : mutable T = ...'");
@@ -8648,6 +8704,20 @@ class Gen {
                                      stillUsed(x, obj, use) +
                                      ", and a borrow lasts until its last "
                                      "use");
+      // A write to spec state is specification: its index and value may
+      // read spec state, and codegen erases it (ADR 0058). A spec write
+      // is per-thread state, so it is no spread's ownership goal.
+      if (b->spec && !contract_ && !ghost_) {
+        contract_ = true;
+        auto idx = genIndexValue(*place.kids[1]);
+        R v = idx ? genExpr(valueNode, elem) : std::nullopt;
+        R c = v ? coerce(*v, elem, valueNode) : std::nullopt;
+        contract_ = false;
+        if (!c)
+          return std::nullopt;
+        create<StoreOp>(loc(n), c->value, b->value, *idx);
+        return unit();
+      }
       auto idx = genIndexValue(*place.kids[1]);
       if (!idx) return std::nullopt;
       if (!ownedHere(place, b, *idx, true))
@@ -10641,6 +10711,8 @@ class Gen {
       renameNames(*body, rename, nullptr);
       return genExpr(*keep(std::move(body)), expected);
     }
+    // `let spec ref : mutable [u8; 4096] = zeros`: spec state (ADR 0058).
+    bool isSpecLet = hasFlag(n, "spec");
     Type declared;
     std::string modifiers;
     if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
@@ -10648,7 +10720,7 @@ class Gen {
       modifiers = ret.kids[0]->kids[0]->text;
       declared = types_.resolveAnnot(*ret.kids[0]);
       if (!declared) return std::nullopt;
-      if (!contract_ && !ghost_)
+      if (!contract_ && !ghost_ && !isSpecLet)
         if (specInBuffer(declared))
           return fail(*ret.kids[0], "'" + n.text + "' has " +
                                         specInBufferMessage(declared));
@@ -10657,21 +10729,49 @@ class Gen {
                     "attributes on a local 'let' are not supported yet");
     }
     const Node &valueNode = *n.kids[3];
+    if (isSpecLet) {
+      if (contract_ || ghost_)
+        return fail(n, "'let spec' makes spec state in code; in a contract, "
+                       "spec function or lemma everything is already spec, "
+                       "so drop 'spec'");
+      if (!declared)
+        return fail(n, "a spec local needs its type, as in 'let spec " +
+                           n.text + " : mutable [u8; 4096] = zeros'");
+      if (!mlir::isa<ArrayType>(declared) && !isSpecScalar(declared))
+        return fail(*ret.kids[0],
+                    "a spec local is a fixed array, as in 'let spec " + n.text +
+                        " : mutable [u8; 4096] = zeros', for now; "
+                        "a spec number is an 'int' (ADR 0058)");
+    }
     // A local array that is `mutable`, or whose literal computes its
     // elements, has storage of its own: a fresh array, filled from the
     // literal's elements or copied from the value. Arrays are values, so
-    // a write through it reaches nothing else.
+    // a write through it reaches nothing else. So does a spec array, and
+    // one made with `zeros`.
     auto localArray = mlir::dyn_cast_or_null<ArrayType>(declared);
     bool ownStorage = false;
     if (localArray && !contract_ && !ghost_) {
       bool isMut = sema::hasModifier(modifiers, "mutable");
       bool computed = valueNode.kind == NodeKind::ListLit &&
                       !constantElements(valueNode);
-      ownStorage = isMut || computed;
+      ownStorage = isMut || computed || isSpecLet || isZeros(valueNode);
     }
     R v;
-    if (ownStorage) {
+    if (ownStorage && isSpecLet) {
+      // Its value is specification, which may read other spec state, and
+      // its storage is marked for codegen to erase.
+      contract_ = true;
       v = genLocalArray(valueNode, localArray);
+      contract_ = false;
+      if (v)
+        v->value.getDefiningOp()->setAttr(PiaDialect::getSpecStateAttrName(),
+                                          b_.getUnitAttr());
+    } else if (ownStorage) {
+      v = genLocalArray(valueNode, localArray);
+    } else if (isSpecLet) {
+      contract_ = true;
+      v = genExpr(valueNode, declared);
+      contract_ = false;
     } else {
       v = genExpr(valueNode, declared);
       // Arrays are values: a local bound to another array's storage, a
@@ -10720,6 +10820,7 @@ class Gen {
       b->isMutable = true;
     }
     b->scope = n.kids[4].get();
+    b->spec = isSpecLet;
     // A local array has storage of its own, written when `mutable`. A
     // function's result that holds it is copied out to its caller
     // (codegen's arrayResultsToBuffers), so it may be returned.

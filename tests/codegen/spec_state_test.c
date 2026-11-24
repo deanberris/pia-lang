@@ -14,6 +14,10 @@ uint8_t skip(uint8_t x);
 uint8_t count_up(uint8_t x);
 // tagged's steps are spec-only: C passes the vs and their length.
 void mark_all(uint8_t *v, int64_t n);
+// Spec state is erased (ADR 0058): record's spec log is not passed.
+void traced_copy(const uint8_t *src, int64_t ns, uint8_t *dst, int64_t nd);
+void record(uint8_t i, uint16_t v);
+uint16_t first_of_two(uint16_t a, uint16_t b);
 
 static int failures = 0;
 
@@ -40,6 +44,12 @@ int main(void) {
   uint8_t vs[5] = {1, 2, 3, 4, 5};
   mark_all(vs, 5);
   for (int i = 0; i < 5; ++i) EXPECT(vs[i] == 7, "mark_all: vs[%d] = %u", i, vs[i]);
+  uint8_t src[8] = {9, 8, 7, 6, 5, 4, 3, 2}, dst[8] = {0};
+  traced_copy(src, 8, dst, 8);
+  for (int i = 0; i < 8; ++i)
+    EXPECT(dst[i] == src[i], "traced_copy: dst[%d] = %u", i, dst[i]);
+  record(3, 42);
+  EXPECT(first_of_two(5, 6) == 5, "first_of_two(5, 6) = %u", first_of_two(5, 6));
   if (failures) return 1;
   puts("spec_state: ok");
   return 0;

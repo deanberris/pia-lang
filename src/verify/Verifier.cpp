@@ -1875,8 +1875,13 @@ class Encoder {
       auto sort = mlir::dyn_cast_or_null<mlir::smt::ArrayType>(
           sortOf(r.getType()));
       if (!sort) return false;
-      arrays[r.getResult()] =
-          create<mlir::smt::ArrayBroadcastOp>(sort, bv(0));
+      // Zero of the element's sort: a spec array may hold `int` or `bool`
+      // (ADR 0058).
+      Type es = sort.getRangeType();
+      Value zero = mlir::isa<mlir::smt::IntType>(es)    ? intConst(APInt(64, 0))
+                   : mlir::isa<mlir::smt::BoolType>(es) ? boolConst(false)
+                                                        : bv(0);
+      arrays[r.getResult()] = create<mlir::smt::ArrayBroadcastOp>(sort, zero);
       lengths[r.getResult()] =
           bv(static_cast<int64_t>(r.getType().getLength()));
       out.push_back(bv(0));  // a placeholder: buffers are not terms

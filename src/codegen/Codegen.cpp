@@ -53,6 +53,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -1242,6 +1244,84 @@ std::string linkSymbol(llvm::StringRef path, llvm::StringRef name) {
 }
 }  // namespace
 
+// Spec state (ADR 0058): the storage of each `let spec` local and each
+// spec parameter, both marked `pia.spec_state`. IRGen lets code write spec
+// state but read it only in contracts, which are gone by now, and in other
+// spec writes. So every op that uses spec state, and every op that uses
+// one of those, only computes spec state: all of it goes. A call passes
+// spec state only for a spec parameter, and those parameters go too, with
+// the arguments every call passes for them.
+void eraseSpecState(mlir::ModuleOp module) {
+  auto specArgs = [](mlir::func::FuncOp f) {
+    llvm::BitVector out(f.getNumArguments());
+    for (unsigned i = 0; i < f.getNumArguments(); ++i)
+      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName()))
+        out.set(i);
+    return out;
+  };
+  llvm::SetVector<mlir::Operation *> doomed;
+  llvm::SmallVector<Value> work;
+  module.walk([&](mlir::Operation *op) {
+    if (op->hasAttr(PiaDialect::getSpecStateAttrName())) {
+      doomed.insert(op);
+      for (Value r : op->getResults())
+        work.push_back(r);
+    }
+  });
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (f.isExternal())
+      continue;
+    llvm::BitVector spec = specArgs(f);
+    for (unsigned i : spec.set_bits())
+      work.push_back(f.getArgument(i));
+  }
+  while (!work.empty()) {
+    Value v = work.pop_back_val();
+    for (mlir::Operation *user : v.getUsers()) {
+      if (mlir::isa<mlir::func::CallOp>(user))
+        continue; // dropped below
+      if (!doomed.insert(user))
+        continue;
+      for (Value r : user->getResults())
+        work.push_back(r);
+    }
+  }
+  // Each call drops the arguments for its callee's spec parameters.
+  module.walk([&](mlir::func::CallOp call) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    if (!f)
+      return;
+    llvm::BitVector spec = specArgs(f);
+    if (spec.any())
+      call->eraseOperands(spec);
+  });
+  for (mlir::Operation *op : doomed)
+    op->dropAllUses();
+  for (mlir::Operation *op : doomed)
+    op->dropAllReferences();
+  for (mlir::Operation *op : doomed)
+    op->erase();
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    llvm::BitVector spec = specArgs(f);
+    if (spec.none())
+      continue;
+    if (f.isExternal()) {
+      llvm::SmallVector<Type> inputs;
+      llvm::SmallVector<mlir::DictionaryAttr> attrs;
+      for (unsigned i = 0; i < f.getNumArguments(); ++i)
+        if (!spec.test(i)) {
+          inputs.push_back(f.getFunctionType().getInput(i));
+          attrs.push_back(f.getArgAttrDict(i));
+        }
+      f.setType(mlir::FunctionType::get(module.getContext(), inputs,
+                                        f.getFunctionType().getResults()));
+      f.setAllArgAttrs(attrs);
+      continue;
+    }
+    (void)f.eraseArguments(spec);
+  }
+}
+
 void eraseContracts(mlir::ModuleOp module) {
   // A generic's proof over sorts (ADR 0043) is for the verifier only.
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>()))
@@ -1380,6 +1460,7 @@ void eraseContracts(mlir::ModuleOp module) {
   // Users come after definitions, so the last goes first.
   for (mlir::Operation *op : llvm::reverse(feeders))
     if (op->use_empty()) op->erase();
+  eraseSpecState(module);
   // Spec-only state (ADR 0041): code may store a spec value in a
   // parameter, local or field of a spec-only type, but never computes with
   // one, so each spec computation still in code only feeds such places.

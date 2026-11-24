@@ -29,6 +29,14 @@ def Pia_Dialect : Dialect {
       return ::llvm::StringLiteral("pia.modifiers");
     }
 
+    /// The unit attribute on spec state (ADR 0058): the `pia.region` of a
+    /// `let spec` local, and a spec parameter's argument. Code writes it
+    /// and only contracts read it, so codegen erases it, every op that
+    /// uses it, and the arguments calls pass for a spec parameter.
+    static constexpr ::llvm::StringLiteral getSpecStateAttrName() {
+      return ::llvm::StringLiteral("pia.spec_state");
+    }
+
     /// The argument attribute on a field buffer of a slice of records
     /// naming the argument whose length it shares: `{pia.length_of = 0}`
     /// (docs/irgen.md, "Records").

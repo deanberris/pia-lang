@@ -57,6 +57,7 @@ let count_bright (ys : [u16]) : usize
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
+| `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
 | `@overflow(proof\|wrap\|saturate\|trap)`, `+\|`, `-\|` | after the return type. `proof` is the default. The `+\|` operators always saturate |
 | `(* *)` (nests), `\` to the end of the line, `(** *)` doc | comments are syntax. `//` is **not** a comment |

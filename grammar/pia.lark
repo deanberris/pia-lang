@@ -52,7 +52,7 @@ binder: IDENT | SPLICE_IDENT
 
 param: IDENT                              -> param_bare
      | SPLICE_IDENT                       -> param_bare
-     | LPAREN IDENT COLON annot contract* RPAREN    -> param_typed
+     | LPAREN SPEC? IDENT COLON annot contract* RPAREN    -> param_typed
      | LPAREN SPLICE_IDENT COLON annot contract* RPAREN -> param_typed
      | LPAREN RPAREN                      -> param_unit
      | LPAREN HOLE RPAREN                 -> param_hole
@@ -102,7 +102,7 @@ mutability: FIXED | MUTABLE
 arrow: arrow_dom ARROW arrow_type
 
 arrow_dom: modifiers union_type
-         | LPAREN IDENT COLON annot RPAREN   -> named_dom
+         | LPAREN SPEC? IDENT COLON annot RPAREN   -> named_dom
 
 ?union_type: app_type (BAR app_type)+ -> union
            | app_type
@@ -163,7 +163,7 @@ named_attr_arg.2: IDENT EQ stmt
     | match_e
     | lambda
 
-let_in: LET REC? binder param* ret_annot? contract* EQ handled IN seq
+let_in: LET REC? SPEC? binder param* ret_annot? contract* EQ handled IN seq
 
 // `body handle | p -> e ...` (ADR 0028) ends a function body, a `let`
 // value, a parenthesised expression or a loop body.

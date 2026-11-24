@@ -536,21 +536,46 @@ class Parser {
         take();
         take();
         p->add(annot());
-        // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
-        // function type's contracts (ADR 0044), on its innermost arrow.
-        if (p->kids[0]->kids[1]->kind == N::ArrowType && atContract()) {
-          Node *arrow = p->kids[0]->kids[1].get();
-          while (arrow->kids[1]->kind == N::ArrowType)
-            arrow = arrow->kids[1].get();
-          Node *cs = arrow->add(makeNode(N::Contracts, loc()));
-          while (atContract()) cs->add(contract());
-        }
+        paramContracts(*p);
+        expect(K::RParen, "')' after the parameter's type");
+        ps->add(std::move(p));
+      } else if (atSpecParam()) {
+        // `(spec ref : inout [u8; 4096])`: a spec parameter (ADR 0058),
+        // which callers and the callee share as spec state.
+        take();
+        take(); // spec
+        auto p = makeNode(N::Param, loc(), text());
+        p->flags = "spec";
+        take();
+        take();
+        p->add(annot());
         expect(K::RParen, "')' after the parameter's type");
         ps->add(std::move(p));
       } else {
         return ps;
       }
     }
+  }
+
+  // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
+  // function type's contracts (ADR 0044), on its innermost arrow.
+  void paramContracts(Node &p) {
+    if (p.kids[0]->kids[1]->kind != N::ArrowType || !atContract())
+      return;
+    Node *arrow = p.kids[0]->kids[1].get();
+    while (arrow->kids[1]->kind == N::ArrowType)
+      arrow = arrow->kids[1].get();
+    Node *cs = arrow->add(makeNode(N::Contracts, loc()));
+    while (atContract())
+      cs->add(contract());
+  }
+
+  // `(spec name :`, which opens a spec parameter (ADR 0058). `spec` is not
+  // a keyword here, so a parameter may still be named `spec`.
+  bool atSpecParam() const {
+    return at(K::LParen) && kind(1) == K::Ident && tok(1).text == "spec" &&
+           (kind(2) == K::Ident || kind(2) == K::SpliceIdent) &&
+           kind(3) == K::Colon;
   }
 
   NodePtr retAnnot() {
@@ -862,8 +887,15 @@ class Parser {
   NodePtr type() {
     SourceLoc start = loc();
     auto dom = makeNode(N::Domain, start);
-    if (at(K::LParen) && kind(1) == K::Ident && kind(2) == K::Colon) {
+    bool specDom = atSpecParam();
+    if (specDom ||
+        (at(K::LParen) && kind(1) == K::Ident && kind(2) == K::Colon)) {
       take();
+      if (specDom) {
+        // `(spec ref : inout [u8; 4096]) -> r` in a signature (ADR 0058).
+        take();
+        dom->flags = "spec";
+      }
       dom->text = text();
       take();
       take();

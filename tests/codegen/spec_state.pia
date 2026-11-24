@@ -1,7 +1,8 @@
 (* Spec-only state (ADR 0041), compiled for Apple Silicon and run by
    spec_state_test.c. A parameter, local or record field whose type is
    spec-only (int, real or a theory's sort) is seen by the verifier and
-   erased by codegen, so the C entry points leave it out. Every goal here
+   erased by codegen, so the C entry points leave it out. So is spec state
+   (ADR 0058): a `let spec` local and a spec parameter. Every goal here
    must be proved.
 *)
 module SpecState : Tracked
@@ -20,6 +21,10 @@ interface Tracked @abi(c) = sig
     requires x < 200
   let tagged = type { steps : int; v : u8 }
   let mark_all : (xs : inout [tagged]) -> unit
+  let traced_copy : (src : [u8]) -> (dst : out [u8]) -> unit
+    requires len src = 8 && len dst = 8
+  let record : (spec log : inout [u16; 64]) -> (i : int{0..63}) -> (v : u16) -> unit
+  let first_of_two : (a : u16) -> (b : u16) -> u16
 end
 
 let blk = type int{0..63}
@@ -92,3 +97,31 @@ let mark_all (xs : inout [tagged]) : unit
     invariant forall (j : usize). j < i ==> xs.[j].v = 7 && xs.[j].steps = 1
     decreases len xs - i
   do xs.[i].steps <- 1; xs.[i].v <- 7; i <- i + 1 done
+
+
+(* Spec state (ADR 0058): a spec local that the loop writes and only its
+   invariant reads. Codegen erases it, so the loop only copies. *)
+let traced_copy (src : [u8]) (dst : out [u8]) : unit
+  requires len src = 8 && len dst = 8
+  ensures forall (k in 0 .. 8). dst.[k] = src.[k]
+= let spec seen : mutable [u8; 8] = zeros in
+  for i in 0 .. 8
+    invariant forall (k in 0 .. i). seen.[k] = src.[k] && dst.[k] = seen.[k]
+  do
+    dst.[i] <- src.[i];
+    seen.[i] <- src.[i]
+  done
+
+(* A spec parameter: C passes only i and v. *)
+let record (spec log : inout [u16; 64]) (i : int{0..63}) (v : u16) : unit
+  ensures log.[i] = v
+  ensures forall (k in 0 .. 64). k <> i ==> log.[k] = old (log.[k])
+= log.[i] <- v
+
+let first_of_two (a : u16) (b : u16) : u16
+  ensures result = a
+= let spec log : mutable [u16; 64] = zeros in
+  record log 0 a;
+  record log 1 b;
+  assert log.[0] = a && log.[1] = b;
+  a

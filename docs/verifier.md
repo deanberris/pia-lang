@@ -204,7 +204,7 @@ let halve (x : u8) : u8
 
 `product` is nonlinear, and Z3 decides it with its nonlinear real arithmetic; with `x * y < 3.0` it fails with the counterexample `x = 3/2, y = 2`. A counterexample shows a real as a fraction, and an irrational value from a nonlinear model as a decimal approximation marked `~`.
 
-**Spec-only.** `int` and `real` may appear in spec functions, lemmas, contracts and quantifiers (`forall (y : real). y * y >= 0.0`), and in the arguments of a lemma call. Code may not compute with them. It may only store one in a spec-only place: a parameter, local or record field of a spec-only type, as in `let steps : int = 10` or `t.heap <- Alloc.take t.heap b` ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). The expression stored is checked as spec code, so it may call spec functions. A field of a buffer's records may be spec-only, as `state` is in a buffer of `{ slot : [u16]; state : int }`: it is a buffer of its own, which the verifier sees and codegen erases, so C passes only the other fields (tests/verify/spec_buffers.pia, tests/codegen/spec_state.pia). A buffer whose elements are wholly spec-only, such as `[int]`, is an error, since its length is in code. Any other expression of such a type in code is an error. `let positive (x : u8) : bool = real x > 0.5` gives:
+**Spec-only.** `int` and `real` may appear in spec functions, lemmas, contracts and quantifiers (`forall (y : real). y * y >= 0.0`), and in the arguments of a lemma call. Code may not compute with them. It may only store one in a spec-only place: a parameter, local or record field of a spec-only type, as in `let steps : int = 10` or `t.heap <- Alloc.take t.heap b` ([ADR 0041](adr/0041-allocator-semantics-as-a-theory.md)). The expression stored is checked as spec code, so it may call spec functions. A field of a buffer's records may be spec-only, as `state` is in a buffer of `{ slot : [u16]; state : int }`: it is a buffer of its own, which the verifier sees and codegen erases, so C passes only the other fields (tests/verify/spec_buffers.pia, tests/codegen/spec_state.pia). A buffer whose elements are wholly spec-only, such as `[int]`, is an error, since its length is in code; a spec local of fixed length, `let spec sums : mutable [int; 9] = zeros`, is not ([Spec state](#spec-state)). Any other expression of such a type in code is an error. `let positive (x : u8) : bool = real x > 0.5` gives:
 
 ```
 positive.pia:1:32: error: this expression has the spec-only type real; int and real can be used only in spec functions, lemmas, contracts and quantifiers, not in code (ADR 0036); code can only store it in a spec-only place, such as a field, local or parameter of that type (ADR 0041)
@@ -213,6 +213,33 @@ positive.pia:1:32: error: this expression has the spec-only type real; int and r
 So nothing the program computes depends on a spec-only value. The verifier sees spec-only state like any other, and codegen erases it, along with spec functions, lemmas and contracts (see [codegen.md](codegen.md), "Spec-only state").
 
 **Encoding.** `int` uses the upstream `smt` dialect's `Int` sort and its operations. The dialect has no `Real` sort at our LLVM pin, so the verifier extends it in the smallest way that keeps it the one encoding: `real` is written as a sort named `Real`, and the operations the dialect lacks (Real `+ - * /` and comparisons, `to_real`, and `bv2int` for converting a bit-vector) are declared as functions under their SMT-LIB names and applied with `smt.apply_func`. When the query is exported to SMT-LIB, those declarations and the sort's `declare-sort` are dropped, so Z3 reads each use as SMT-LIB's own interpreted symbol. A machine integer becomes an `Int` as `bv2int` of its bit-vector, less `2^w` when it is negative, since `bv2int` reads a bit-vector as unsigned. A real literal `n/d` is `(/ (to_real n) (to_real d))`.
+
+## Spec state
+
+`spec` marks a local or a parameter as spec-only whatever its type ([ADR 0058](adr/0058-spec-buffers.md)). It is how a proof keeps state that evolves with the code, such as a reference implementation run beside a fast one, or the trace of what a loop has written. For now a spec local is a fixed array `[t; n]`, whose length is a constant, and its elements may be machine integers, `bool`, `int` or `real`. `zeros` makes an array of zero elements of the type it is bound at, in code too.
+
+```ocaml
+let record (spec log : inout [u16; 64]) (i : int{0..63}) (v : u16) : unit
+  ensures log.[i] = v
+  ensures forall (k in 0 .. 64). k <> i ==> log.[k] = old (log.[k])
+= log.[i] <- v
+
+let twice (a : u16) (b : u16) : u16
+  ensures result = a
+= let spec log : mutable [u16; 64] = zeros in
+  record log 0 a;
+  record log 1 b;
+  assert (log.[0] = a && log.[1] = b);
+  a
+```
+
+The rule is the one for `int`: a spec value flows only into spec places and into contracts.
+
+- **Code may write spec state.** `log.[i] <- v` is a spec write. Its index and value are specification, so they may read spec state too, as in `sums.[i + 1] <- sums.[i] + xs.[i]`, and its index is still a goal. A spec local's initial value may be any value of its type, so `let spec snap : [u8; 4] = a` keeps a snapshot of a code array.
+- **Only specification may read it**: contracts, loop invariants, `assert`s, lemma calls, and the argument for a spec parameter. Anything else is an error, such as `s.[0]` as a function's result, `sum4 s`, or `if s.[0] = 0 then ...`.
+- **A spec parameter the callee writes** (`out` or `inout`) takes a spec local or spec parameter by name, since codegen erases the write: a code buffer passed there would not change at run time, though the proof would say it does. An `in` spec parameter takes any value.
+
+The verifier sees spec state as it sees any buffer: an SMT array, fresh at its `let` (an array of zeros for `zeros`), updated by each store, and fresh after a loop or a call that may write it. A spec write is no effect for a `spread`'s ownership goals: spec state is per-thread. An interface lists a spec parameter as `(spec log : inout [u16; 64]) -> ...`, and it must agree with the definition. Codegen erases a spec local's storage, every write to it, each spec parameter and the arguments calls pass for it, so `record` above is `void record(uint8_t i, uint16_t v)` to C ([codegen.md](codegen.md#spec-only-state); tests/verify/spec_locals.pia, tests/irgen/spec_local_errors.pia, tests/codegen/spec_state.pia).
 
 ## Theories
 
