@@ -9062,7 +9062,8 @@ class Gen {
                                 b_.getStringAttr(symbol), args);
     if (variadic_)
       op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
-    if (deref_) op->setAttr("pia.deref", b_.getUnitAttr());
+    if (deref_)
+      op->setAttr("pia.deref", b_.getUnitAttr());
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }

@@ -1887,10 +1887,12 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       // A @deref function returns a pointer in C, so it is an llvm.func
       // too, and its call loads the result through it.
       if (named || deref) {
-        if (named) args.resize(*named);
+        if (named)
+          args.resize(*named);
         Type result = results.empty() ? Type(mlir::LLVM::LLVMVoidType::get(ctx))
                                       : results.front();
-        if (deref) result = ptr;
+        if (deref)
+          result = ptr;
         auto decl = make<mlir::LLVM::LLVMFuncOp>(
             b, op.getLoc(), sym,
             mlir::LLVM::LLVMFunctionType::get(result, args,
