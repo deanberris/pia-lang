@@ -979,13 +979,21 @@ struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
       }
       args.push_back(v);
     }
-    if (op->hasAttr("pia.variadic")) {
+    if (op->hasAttr("pia.variadic") || op->hasAttr("pia.deref")) {
       auto module = op->getParentOfType<mlir::ModuleOp>();
       auto callee = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(op.getSymbol());
       if (!callee)
-        return rw.notifyMatchFailure(op, "no variadic declaration");
+        return rw.notifyMatchFailure(op, "no llvm.func declaration");
       auto call = make<mlir::LLVM::CallOp>(rw, loc, callee, args);
-      rw.replaceOp(op, call->getResults());
+      if (!op->hasAttr("pia.deref")) {
+        rw.replaceOp(op, call->getResults());
+        return mlir::success();
+      }
+      // C returned a pointer to the result: read it here, so that the
+      // pointer never reaches Pia (ADR 0057, section 5).
+      Type result = getTypeConverter()->convertType(op.getResult(0).getType());
+      auto load = make<mlir::LLVM::LoadOp>(rw, loc, result, call.getResult());
+      rw.replaceOp(op, load.getResult());
       return mlir::success();
     }
     llvm::SmallVector<Type> results;
@@ -1956,20 +1964,24 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
     llvm::SmallVector<ForeignOp> foreign;
     module.walk([&](ForeignOp op) { foreign.push_back(op); });
     std::set<std::string> declared;
-    // A variadic symbol's named parameters, so that every call of it
-    // agrees on them (ADR 0051).
-    std::map<std::string, std::optional<int64_t>> variadicOf;
+    // A symbol's named parameters if it is variadic (ADR 0051), and
+    // whether it is @deref, so that every call of it agrees.
+    std::map<std::string, std::pair<std::optional<int64_t>, bool>> shapeOf;
     for (ForeignOp op : foreign) {
       std::string sym = op.getSymbol().str();
       std::optional<int64_t> named;
       if (auto v = op->getAttrOfType<mlir::IntegerAttr>("pia.variadic"))
         named = v.getInt();
-      if (auto [it, fresh] = variadicOf.try_emplace(sym, named);
-          !fresh && it->second != named)
+      bool deref = op->hasAttr("pia.deref");
+      if (auto [it, fresh] = shapeOf.try_emplace(sym, named, deref);
+          !fresh && it->second.first != named)
         return op.emitError()
                << "the C symbol '" << sym
                << "' is declared both with and without @variadic, or with "
                   "different numbers of named parameters";
+      else if (!fresh && it->second.second != deref)
+        return op.emitError() << "the C symbol '" << sym
+                              << "' is declared both with and without @deref";
       if (auto own = module.lookupSymbol<mlir::func::FuncOp>(sym);
           own && !own->hasAttr("pia.c")) {
         if (!own->hasAttr("pia.extern"))
@@ -2007,22 +2019,28 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       // func.func cannot say so, and the calling convention differs:
       // Apple arm64 passes the variadic arguments on the stack, and
       // x86_64 System V counts vector registers in %al.
-      if (named) {
-        args.resize(*named);
+      // A @deref function returns a pointer in C, so it is an llvm.func
+      // too, and its call loads the result through it.
+      if (named || deref) {
+        if (named)
+          args.resize(*named);
         Type result = results.empty() ? Type(mlir::LLVM::LLVMVoidType::get(ctx))
                                       : results.front();
+        if (deref)
+          result = ptr;
         auto decl = make<mlir::LLVM::LLVMFuncOp>(
             b, op.getLoc(), sym,
             mlir::LLVM::LLVMFunctionType::get(result, args,
-                                              /*isVarArg=*/true));
+                                              /*isVarArg=*/named.has_value()));
         decl->setAttr("pia.c", b.getUnitAttr());
         for (auto [i, a] : llvm::enumerate(op.getArgs()))
-          if (static_cast<int64_t>(i) < *named)
+          if (!named || static_cast<int64_t>(i) < *named)
             if (auto e = ext(a.getType()))
               decl.setArgAttr(i, *e, b.getUnitAttr());
-        for (Type t : op.getResultTypes())
-          if (auto e = ext(t))
-            decl.setResultAttr(0, *e, b.getUnitAttr());
+        if (!deref)
+          for (Type t : op.getResultTypes())
+            if (auto e = ext(t))
+              decl.setResultAttr(0, *e, b.getUnitAttr());
         continue;
       }
       auto decl = make<mlir::func::FuncOp>(

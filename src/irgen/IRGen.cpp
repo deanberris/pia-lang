@@ -1002,6 +1002,7 @@ class Gen {
     owns_.clear();
     variadic_.reset();
     lower_ = nullptr;
+    deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
     triggers_.clear();
@@ -1309,6 +1310,11 @@ class Gen {
     }
     if (lower_ && !markLowering(*lower_, sig, fn, isExtern))
       return;
+    if (deref_ && !isExtern) {
+      fail(*deref_, "@deref is only for a foreign declaration, "
+                    "'= extern \"symbol\"'");
+      return;
+    }
     // A function with `@owns(buf, owner, b)` checks every access to `buf`
     // as a spread iteration `b` would (ADR 0060).
     if (!owns_.empty() && !footprintScope(item))
@@ -1866,6 +1872,13 @@ class Gen {
           return false;
         }
         lower_ = a.get();
+        continue;
+      }
+      // `@deref` on a foreign declaration: the C function returns a
+      // pointer to the result, and the call reads through it, so the
+      // pointer never reaches Pia. errno is the case (ADR 0057, section 5).
+      if (a->text == "deref" && a->kids.empty()) {
+        deref_ = a.get();
         continue;
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
@@ -9319,6 +9332,9 @@ class Gen {
                         "bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
+    if (deref_ && !mlir::isa<IntType>(sig.result))
+      return fail(*deref_, "@deref reads an integer through the pointer C "
+                           "returns, so the result must be an integer");
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
@@ -9327,6 +9343,8 @@ class Gen {
                                 b_.getStringAttr(symbol), args);
     if (variadic_)
       op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
+    if (deref_)
+      op->setAttr("pia.deref", b_.getUnitAttr());
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }
@@ -11359,6 +11377,8 @@ class Gen {
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
   const Node *lower_ = nullptr; // the function's @lower (ADR 0065)
+  // `@deref` on the item being generated, or null.
+  const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   // While a spec write's place is generated, a spec field may be named

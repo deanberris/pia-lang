@@ -17,6 +17,7 @@ DOCS = [
     "//docs:streams.pia.md",
     "//docs:sediment.pia.md",
     "//docs:basins.pia.md",
+    "//docs:pull.pia.md",
     "//docs:theories.md",
 ]
 
