@@ -1440,7 +1440,7 @@ void eraseSpecState(mlir::ModuleOp module) {
     for (unsigned i = 0, k = 0; i < f.getNumArguments(); ++i)
       if (!spec.test(i))
         newIndex[i] = k++;
-    llvm::DenseMap<unsigned, unsigned> carrier;  // old carrier -> new one
+    llvm::DenseMap<unsigned, unsigned> carrier; // old carrier -> new one
     for (unsigned i = 0; i < f.getNumArguments(); ++i) {
       if (spec.test(i))
         continue;

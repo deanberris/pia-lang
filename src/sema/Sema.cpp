@@ -601,7 +601,7 @@ static mlir::Type buildType(const std::string &name, const Node &value,
   if (body.kind != NodeKind::RecordType) return types.resolve(body);
   llvm::SmallVector<mlir::StringAttr> names;
   llvm::SmallVector<mlir::Type> fieldTypes;
-  llvm::SmallVector<unsigned> spec;  // spec fields (ADR 0058)
+  llvm::SmallVector<unsigned> spec; // spec fields (ADR 0058)
   std::vector<std::pair<std::string, const Node *>> refined;
   for (const syntax::NodePtr &f : body.kids) {
     // `p : real where 0.0 <= p && p <= 1.0`: the predicate holds of every
@@ -631,7 +631,8 @@ static mlir::Type buildType(const std::string &name, const Node &value,
         diags.error(f->loc, "the field '" + f->text + "' is already declared");
         return {};
       }
-    if (f->flags == "spec") spec.push_back(names.size());
+    if (f->flags == "spec")
+      spec.push_back(names.size());
     names.push_back(mlir::StringAttr::get(ctx, f->text));
     fieldTypes.push_back(t);
   }

@@ -1094,9 +1094,11 @@ class Parser {
       // keyword only before a name and a colon.
       bool spec = at(K::Ident) && tok().text == "spec" && kind(1) == K::Ident &&
                   kind(2) == K::Colon;
-      if (spec) take();
+      if (spec)
+        take();
       auto f = makeNode(N::FieldDecl, loc(), std::string(expect(K::Ident, "a field name").text));
-      if (spec) f->flags = "spec";
+      if (spec)
+        f->flags = "spec";
       expect(K::Colon, "':' after the field name");
       f->add(annot());
       // `x : i32 @json(name = "x")`: attributes a derive reads (ADR 0045).

@@ -65,7 +65,8 @@ unsigned leafCount(Type t) {
 // a spec field, at any depth (ADR 0058).
 void leafSpec(Type t, bool spec, llvm::SmallVectorImpl<bool> &out) {
   auto r = mlir::dyn_cast<RecordType>(t);
-  if (!r) r = elementRecord(t);
+  if (!r)
+    r = elementRecord(t);
   if (!r) {
     out.push_back(spec);
     return;
@@ -377,8 +378,8 @@ struct LenLowering : mlir::OpConversionPattern<LenOp> {
         carrier = i;
         break;
       }
-    Value len = make<LenOp>(rw, op.getLoc(), rw.getIndexType(),
-                            buffers[carrier]);
+    Value len =
+        make<LenOp>(rw, op.getLoc(), rw.getIndexType(), buffers[carrier]);
     rw.replaceOp(op, len);
     return mlir::success();
   }
@@ -496,10 +497,13 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   // A declaration's arguments, likewise.
   std::vector<std::pair<mlir::func::FuncOp, llvm::SmallVector<Type>>> declArgs;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
-    if (f->hasAttr("pia.generic_proof")) continue;
+    if (f->hasAttr("pia.generic_proof"))
+      continue;
     llvm::SmallVector<bool> rs;
-    for (Type t : f.getResultTypes()) leafSpec(t, false, rs);
-    if (llvm::is_contained(rs, true)) specResults.emplace_back(f, rs);
+    for (Type t : f.getResultTypes())
+      leafSpec(t, false, rs);
+    if (llvm::is_contained(rs, true))
+      specResults.emplace_back(f, rs);
     if (f.isExternal())
       declArgs.emplace_back(f, llvm::SmallVector<Type>(f.getArgumentTypes()));
   }
@@ -627,7 +631,8 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   }
   for (auto &[f, ts] : declArgs) {
     llvm::SmallVector<bool> spec;
-    for (Type t : ts) leafSpec(t, false, spec);
+    for (Type t : ts)
+      leafSpec(t, false, spec);
     for (auto [i, sp] : llvm::enumerate(spec))
       if (sp && i < f.getNumArguments())
         f.setArgAttr(i, PiaDialect::getSpecStateAttrName(),

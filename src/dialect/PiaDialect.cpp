@@ -263,13 +263,16 @@ Type RecordType::parse(AsmParser &parser) {
   // `, spec [1, 3]`: the spec fields' positions (ADR 0058).
   SmallVector<unsigned> spec;
   if (succeeded(parser.parseOptionalKeyword("spec"))) {
-    if (parser.parseLSquare()) return {};
+    if (parser.parseLSquare())
+      return {};
     do {
       unsigned i;
-      if (parser.parseInteger(i)) return {};
+      if (parser.parseInteger(i))
+        return {};
       spec.push_back(i);
     } while (succeeded(parser.parseOptionalComma()));
-    if (parser.parseRSquare()) return {};
+    if (parser.parseRSquare())
+      return {};
   }
   if (parser.parseGreater()) return {};
   return parser.getChecked<RecordType>(loc, parser.getContext(), name, names,

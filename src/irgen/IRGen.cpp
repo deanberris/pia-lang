@@ -448,7 +448,8 @@ class Gen {
     if (auto r = mlir::dyn_cast<RecordType>(t))
       for (auto [i, f] : llvm::enumerate(r.getFieldTypes()))
         if (!r.isSpecField(i))
-          if (Type x = specInBuffer(f)) return x;
+          if (Type x = specInBuffer(f))
+            return x;
     return {};
   }
   std::string specInBufferMessage(Type t) {
@@ -8533,7 +8534,8 @@ class Gen {
         if (sv && !mlir::isa<ArrayType>(ft))
           sv = coerce(*sv, ft, *init->kids[0]);
         contract_ = false;
-        if (!sv) return sv;
+        if (!sv)
+          return sv;
         if (mlir::isa<ArrayType>(ft))
           sv->value.getDefiningOp()->setAttr(PiaDialect::getSpecStateAttrName(),
                                              b_.getUnitAttr());
@@ -8594,7 +8596,8 @@ class Gen {
                          "contracts, loop invariants, asserts, lemma calls "
                          "and spec parameters may read it, so that codegen "
                          "can erase it (ADR 0058)");
-    if (rt.isSpecField(*i)) specFieldSeen_ = true;
+    if (rt.isSpecField(*i))
+      specFieldSeen_ = true;
     Value v = create<FieldOp>(loc(n), ft, obj->value, b_.getStringAttr(n.text));
     return TV{v, ft};
   }
@@ -8628,11 +8631,14 @@ class Gen {
     Type ft = rt.getFieldTypes()[*i];
     // A spec field's new value is specification (ADR 0058).
     bool specValue = rt.isSpecField(*i) && !contract_ && !ghost_;
-    if (specValue) contract_ = true;
+    if (specValue)
+      contract_ = true;
     R v = genExpr(*n.kids[1], ft);
     R c = v ? coerce(*v, ft, *n.kids[1]) : std::nullopt;
-    if (specValue) contract_ = false;
-    if (!c) return std::nullopt;
+    if (specValue)
+      contract_ = false;
+    if (!c)
+      return std::nullopt;
     Location l = loc(n);
     Value old = create<LoadOp>(l, rt, b->value, *idx);
     llvm::SmallVector<Value> fields;
@@ -8681,11 +8687,14 @@ class Gen {
       if (specValue && mlir::isa<ArrayType>(ft))
         return fail(place, "assigning a whole spec array is not supported "
                            "yet; write its elements");
-      if (specValue) contract_ = true;
+      if (specValue)
+        contract_ = true;
       R v = genExpr(valueNode, ft);
       R c = v ? coerce(*v, ft, valueNode) : std::nullopt;
-      if (specValue) contract_ = false;
-      if (!c) return std::nullopt;
+      if (specValue)
+        contract_ = false;
+      if (!c)
+        return std::nullopt;
       Location l = loc(n);
       llvm::SmallVector<Value> fields;
       for (auto [j, name] : llvm::enumerate(rt.getFieldNames()))
@@ -8769,7 +8778,8 @@ class Gen {
           R v = idx ? genExpr(valueNode, elem) : std::nullopt;
           R c = v ? coerce(*v, elem, valueNode) : std::nullopt;
           contract_ = false;
-          if (!c) return std::nullopt;
+          if (!c)
+            return std::nullopt;
           create<StoreOp>(loc(n), c->value, buf->value, *idx);
           return unit();
         }
