@@ -38,3 +38,4 @@ Wall-clock times ("wall_incl_queue" includes waiting in the iMac's bazelq build 
   int smt rc=0 wall_incl_queue=1516s
   int report rc=0 wall_incl_queue=278s
   remove smt rc=0 wall_incl_queue=1174s piac_run=5s
+  remove report rc=0 wall_incl_queue=3558s piac_run=5s
