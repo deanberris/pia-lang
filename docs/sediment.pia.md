@@ -1062,6 +1062,7 @@ let drainage (fill : [u16]) (down : [usize]) (acc : out mutable [u32]) (basin : 
              down.[j] = j || (down.[j] < len fill && fill.[down.[j]] < fill.[j])
   ensures forall (k in 0 .. len acc). 1 <= acc.[k] && acc.[k] <= len fill
   ensures forall (k in 0 .. len basin). basin.[k] < len fill && down.[basin.[k]] = basin.[k]
+  ensures forall (k in 0 .. len basin). basin.[at down k] = basin.[k]
 =
   height_order fill order pos cnt first next last owner;
   for i in 0 .. len rain

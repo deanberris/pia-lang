@@ -44,9 +44,16 @@ pia_library(
     ],
 )
 
+# Sediment by basin, a spread over the basins (ADR 0060).
+pia_object(
+    name = "basins_obj",
+    src = "//docs:basins.pia.md",
+    target_compatible_with = PIA_TARGETS,
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":gif", ":sediment_obj", ":streams_obj"],
+    srcs = [":basins_obj", ":gif", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )
@@ -63,7 +70,10 @@ cc_binary(
         "CoreFoundation",
     ],
     target_compatible_with = APPLE_SILICON,
-    deps = [":streams_pia"],
+    deps = [
+        ":streams_pia",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
 )
 
 cc_test(

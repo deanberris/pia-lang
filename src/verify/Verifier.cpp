@@ -1188,6 +1188,40 @@ class Encoder {
            term(e.getPredicate()), false);
       return true;
     }
+    if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+        h && h->hasAttr("pia.from_start")) {
+      // At the start of a spread's iteration: the cells it owns hold what
+      // they held before the loop.
+      using P = mlir::smt::BVCmpPredicate;
+      Value root = rootBuffer(h.getBuffer());
+      Value cur = arrays_.lookup(root), before = spreadBefore_.lookup(root);
+      Value len = lengths_.lookup(root);
+      Value iv = term(h.getIv());
+      Value owner =
+          h.getOwner() ? arrays_.lookup(rootBuffer(h.getOwner())) : Value();
+      if (!cur || !before || !len || !iv || (h.getOwner() && !owner))
+        return true;
+      auto at = mlir::cast<mlir::smt::ArrayType>(cur.getType());
+      Value keep = forallIndex([&](Value c) {
+        Value in = andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len));
+        Value own;
+        if (owner) {
+          auto ot = mlir::cast<mlir::smt::ArrayType>(owner.getType());
+          own =
+              eq(create<mlir::smt::ArraySelectOp>(ot.getRangeType(), owner, c),
+                 iv);
+        } else {
+          own = eq(c, iv);
+        }
+        return implies(
+            andOf(in, own),
+            eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), cur, c),
+               create<mlir::smt::ArraySelectOp>(at.getRangeType(), before, c)));
+      });
+      assume(keep);
+      derived_[cur] = {before, Value(), owner, iv};
+      return true;
+    }
     if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op)) {
       // The cells of a spread's buffer that other iterations own take
       // unknown values (ADR 0060): forall c, if the iteration owns c,
@@ -2168,6 +2202,10 @@ class Encoder {
     // One arbitrary iteration. Its assumptions hold under a fresh guard, so
     // they say nothing about the code after the loop.
     auto beforeArrays = arrays_;
+    // A spread's iteration starts with its own cells as they were before
+    // the loop (ADR 0060): no other iteration writes them.
+    if (forOp->hasAttr("pia.spread"))
+      spreadBefore_ = beforeArrays;
     auto written = writtenBuffers(forOp);
     Value i = declare(bvType(), "", false);
     Value iteration = andOf(declare(boolType(), "", false),
@@ -2790,6 +2828,8 @@ class Encoder {
     Value old, at, owner, iv;
   };
   llvm::DenseMap<Value, Derived> derived_;
+  // The buffers' contents before the spread being walked.
+  llvm::DenseMap<Value, Value> spreadBefore_;
 
   // A call of a spec function that says what it reads (ADR 0060, section
   // 3), on contents that came from older ones by a change outside its
