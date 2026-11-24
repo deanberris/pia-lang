@@ -8,7 +8,7 @@
 
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 420 proved, 0 failed, 0 skipped
+// CHECK: 421 proved, 0 failed, 0 skipped
 *)
 
 (*
