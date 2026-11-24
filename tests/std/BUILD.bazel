@@ -43,6 +43,7 @@ lit_tests(
         "//lib/Pia:Fn.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
+        "//lib/Pia/Image/Gif:Decode.pia",
         "//lib/Pia/Image/Gif:Lzw.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
         "//lib/Pia/Mem:Alloc.pia",
@@ -603,5 +604,26 @@ sh_test(
     srcs = ["mem_run_test.sh"],
     args = ["$(rootpath :mem_run)"],
     data = [":mem_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_decode_run",
+    src = "Inputs/gif_decode_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_decode_run_test",
+    srcs = ["gif_decode_run_test.sh"],
+    args = ["$(rootpath :gif_decode_run)"],
+    data = [":gif_decode_run"],
     target_compatible_with = PIA_TARGETS,
 )
