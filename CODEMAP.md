@@ -59,7 +59,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | REPL or MCP | `src/repl/Session.cpp`, `Mcp.cpp` | `docs/repl.md`; `tests/repl` |
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
-| an image or compression codec | `lib/Pia/Image`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*` |
+| an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` |
@@ -158,6 +158,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
 - `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions: the LZW dictionary and the block grammar. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it. `lib/Pia/Image/Gif/Decode.pia` is the container: `info`, proved to accept exactly what the grammar accepts, and `decode_frame`, which composites frames.
 - `lib/Pia/Image/Gif/LzwEncode.pia` is the LZW encoder and the sub-block writer. `lib/Pia/Image/Gif/Encode.pia` is the animated GIF encoder, `encode_animation`, with its proved size bound.
+- `lib/Pia/Compress/Huffman.pia` builds and decodes canonical Huffman codes. `lib/Pia/Compress/Inflate/Spec.pia` is RFC 1951's block parts as spec functions, `lib/Pia/Compress/Inflate.pia` decodes deflate, and `lib/Pia/Compress/Zlib.pia` is RFC 1950 with Adler-32 (ADR 0054).
 
 ### Elsewhere
 
