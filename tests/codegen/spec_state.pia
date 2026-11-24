@@ -2,7 +2,8 @@
    spec_state_test.c. A parameter, local or record field whose type is
    spec-only (int, real or a theory's sort) is seen by the verifier and
    erased by codegen, so the C entry points leave it out. So is spec state
-   (ADR 0058): a `let spec` local and a spec parameter. Every goal here
+   (ADR 0058): a `let spec` local, a spec parameter and a spec field.
+   Every goal here
    must be proved.
 *)
 module SpecState : Tracked
@@ -25,6 +26,10 @@ interface Tracked @abi(c) = sig
     requires len src = 8 && len dst = 8
   let record : (spec log : inout [u16; 64]) -> (i : int{0..63}) -> (v : u16) -> unit
   let first_of_two : (a : u16) -> (b : u16) -> u16
+  let owned = type { spec owner : u8; v : u8 }
+  let mark_owned : (xs : inout [owned]) -> unit
+  let counted = type { n : u8; spec seen : [u8; 16] }
+  let count_from : (z : int{0..15}) -> counted
 end
 
 let blk = type int{0..63}
@@ -125,3 +130,27 @@ let first_of_two (a : u16) (b : u16) : u16
   record log 1 b;
   assert log.[0] = a && log.[1] = b;
   a
+
+(* Spec fields (ADR 0058): owner is spec state in a buffer of records, so
+   C passes only the vs and their length, though owner comes first. *)
+let owned = type { spec owner : u8; v : u8 }
+
+let mark_owned (xs : inout [owned]) : unit
+  ensures len xs = old (len xs)
+  ensures forall (j : usize). j < len xs ==> xs.[j].v = 9 && xs.[j].owner = 2
+= let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs && len xs = old (len xs)
+    invariant forall (j : usize). j < i ==> xs.[j].v = 9 && xs.[j].owner = 2
+    decreases len xs - i
+  do xs.[i].owner <- 2; xs.[i].v <- 9; i <- i + 1 done
+
+(* A record result with a spec array field: C gets only n. *)
+let counted = type { n : u8; spec seen : [u8; 16] }
+
+let count_from (z : int{0..15}) : counted
+  ensures result.n = z + 1 && result.seen.[z] = 1
+= let c : mutable counted = { n = z; seen = zeros } in
+  c.seen.[z] <- 1;
+  c.n <- c.n + 1;
+  c

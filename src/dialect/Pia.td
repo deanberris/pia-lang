@@ -200,12 +200,26 @@ def Pia_RecordType : Pia_Type<"Record", "record"> {
   }];
   let parameters = (ins StringRefParameter<"the record's name">:$name,
                         ArrayRefParameter<"::mlir::StringAttr", "field names">:$fieldNames,
-                        ArrayRefParameter<"::mlir::Type", "field types">:$fieldTypes);
+                        ArrayRefParameter<"::mlir::Type", "field types">:$fieldTypes,
+                        OptionalArrayRefParameter<"unsigned", "the positions of its spec fields (ADR 0058), in order">:$specFields);
+  let builders = [
+    TypeBuilder<(ins "::llvm::StringRef":$name,
+                     "::llvm::ArrayRef<::mlir::StringAttr>":$fieldNames,
+                     "::llvm::ArrayRef<::mlir::Type>":$fieldTypes), [{
+      return $_get($_ctxt, name, fieldNames, fieldTypes,
+                   ::llvm::ArrayRef<unsigned>{});
+    }]>
+  ];
   let hasCustomAssemblyFormat = 1;
   let genVerifyDecl = 1;
   let extraClassDeclaration = [{
     /// The position of the field called `name`, if there is one.
     std::optional<unsigned> fieldIndex(::llvm::StringRef name) const;
+    /// Whether field `i` is a spec field (ADR 0058): spec state, which code
+    /// writes, only specification reads, and codegen erases.
+    bool isSpecField(unsigned i) const {
+      return ::llvm::is_contained(getSpecFields(), i);
+    }
   }];
 }
 

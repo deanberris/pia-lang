@@ -18,6 +18,9 @@ void mark_all(uint8_t *v, int64_t n);
 void traced_copy(const uint8_t *src, int64_t ns, uint8_t *dst, int64_t nd);
 void record(uint8_t i, uint16_t v);
 uint16_t first_of_two(uint16_t a, uint16_t b);
+// owned's owner and counted's seen are spec fields: C sees neither.
+void mark_owned(uint8_t *v, int64_t n);
+uint8_t count_from(uint8_t z);
 
 static int failures = 0;
 
@@ -50,6 +53,12 @@ int main(void) {
     EXPECT(dst[i] == src[i], "traced_copy: dst[%d] = %u", i, dst[i]);
   record(3, 42);
   EXPECT(first_of_two(5, 6) == 5, "first_of_two(5, 6) = %u", first_of_two(5, 6));
+  uint8_t ws[4] = {0, 1, 2, 3};
+  mark_owned(ws, 4);
+  for (int i = 0; i < 4; ++i) EXPECT(ws[i] == 9, "mark_owned: ws[%d] = %u", i, ws[i]);
+  for (unsigned z = 0; z < 16; ++z)
+    EXPECT(count_from((uint8_t)z) == z + 1, "count_from(%u) = %u", z,
+           count_from((uint8_t)z));
   if (failures) return 1;
   puts("spec_state: ok");
   return 0;

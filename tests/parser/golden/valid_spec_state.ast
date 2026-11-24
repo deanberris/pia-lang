@@ -168,4 +168,64 @@
       (Contracts)
     )
   )
+  (LetItem "counter"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "n"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "seen" [spec]
+          (Annot
+            (Modifiers)
+            (ArrayType
+              (TypeName "u8")
+              (IntLit "256")
+            )
+            (None)
+          )
+        )
+        (FieldDecl "total" [spec]
+          (Annot
+            (Modifiers)
+            (TypeName "int")
+            (None)
+          )
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (LetItem "cell"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (RecordType
+        (FieldDecl "owner" [spec]
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+        (FieldDecl "v"
+          (Annot
+            (Modifiers)
+            (TypeName "u8")
+            (None)
+          )
+        )
+      )
+      (Attrs)
+      (None)
+    )
+  )
 )

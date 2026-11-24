@@ -136,7 +136,7 @@ targ: type
 named_targ.2: IDENT EQ elem
 
 field_decls: field_decl (SEMI field_decl)* SEMI?
-field_decl: IDENT COLON annot
+field_decl: SPEC? IDENT COLON annot
 
 // A type value: `type | A | B of t`, `type { ... } where p`, `type t @fp(reassoc)`.
 type_value: TYPE type_body attribute* (WHERE stmt)? attribute*

@@ -260,9 +260,23 @@ Type RecordType::parse(AsmParser &parser) {
     names.push_back(StringAttr::get(parser.getContext(), field));
     types.push_back(type);
   }
+  // `, spec [1, 3]`: the spec fields' positions (ADR 0058).
+  SmallVector<unsigned> spec;
+  if (succeeded(parser.parseOptionalKeyword("spec"))) {
+    if (parser.parseLSquare())
+      return {};
+    do {
+      unsigned i;
+      if (parser.parseInteger(i))
+        return {};
+      spec.push_back(i);
+    } while (succeeded(parser.parseOptionalComma()));
+    if (parser.parseRSquare())
+      return {};
+  }
   if (parser.parseGreater()) return {};
   return parser.getChecked<RecordType>(loc, parser.getContext(), name, names,
-                                       types);
+                                       types, spec);
 }
 
 void RecordType::print(AsmPrinter &printer) const {
@@ -272,14 +286,25 @@ void RecordType::print(AsmPrinter &printer) const {
     printer.printKeywordOrString(n.getValue());
     printer << " : " << t;
   }
+  if (!getSpecFields().empty()) {
+    printer << " spec [";
+    llvm::interleaveComma(getSpecFields(), printer);
+    printer << "]";
+  }
   printer << ">";
 }
 
 LogicalResult RecordType::verify(function_ref<InFlightDiagnostic()> emitError,
                                  StringRef name, ArrayRef<StringAttr> names,
-                                 ArrayRef<Type> types) {
+                                 ArrayRef<Type> types,
+                                 ArrayRef<unsigned> spec) {
   if (names.size() != types.size())
     return emitError() << "a record needs one type per field";
+  for (size_t i = 0; i < spec.size(); ++i)
+    if (spec[i] >= names.size() || (i > 0 && spec[i] <= spec[i - 1]))
+      return emitError() << "record '" << name
+                         << "' lists its spec fields out of order or past "
+                            "its fields";
   for (size_t i = 0; i < names.size(); ++i)
     for (size_t j = 0; j < i; ++j)
       if (names[i] == names[j])

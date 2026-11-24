@@ -1,0 +1,114 @@
+(* Spec fields (ADR 0058, step 3): a record field marked `spec` is spec
+   state whatever its type, as a `let spec` local is. Code may write it;
+   only contracts, loop invariants, asserts and lemma calls may read it,
+   and codegen erases it, from records and from buffers of records alike.
+   This generalises ADR 0048's spec-only fields, whose types were spec-only.
+   The flows IRGen rejects are in tests/irgen/spec_field_errors.pia.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+(* A counter that keeps, in spec fields, the values it has seen and
+   their sum. *)
+let counter = type { n : u8; spec seen : [u8; 256]; spec total : int }
+
+let start (z : u8) : counter
+  ensures result.n = 0 && result.total = 0
+= { n = 0 * z; seen = zeros; total = 0 }
+
+let bump (c : inout mutable counter) (v : u8) : unit
+  requires c.n < 255
+  ensures c.n = old c.n + 1
+  ensures c.seen.[old c.n] = v
+  ensures forall (k in 0 .. 256). k <> old c.n ==> c.seen.[k] = old (c.seen.[k])
+  ensures c.total = old c.total + v
+= c.seen.[c.n] <- v;
+  c.total <- c.total + v;
+  c.n <- c.n + 1
+
+let three (a : u8) (b : u8) (d : u8) : u8
+  ensures result = 3
+= let c : mutable counter = start 0 in
+  bump c a;
+  bump c b;
+  bump c d;
+  assert c.seen.[1] = b && c.total = a + b + d;
+  c.n
+
+(* In a loop: a record with a spec number is carried, spec field and all. *)
+let tally = type { k : u8; spec sum : int }
+
+let add_all (xs : [u8; 8]) : u8
+  ensures result = 8
+= let t : mutable tally = { k = 0; sum = 0 } in
+  for i in 0 .. 8
+    invariant t.k = i && t.sum >= 0
+  do t.k <- t.k + 1; t.sum <- t.sum + xs.[i] done;
+  t.k
+
+let cell = type { spec owner : u8; v : u8 }
+
+let claim_cell (xs : inout [cell]) (i : usize) (who : u8) : unit
+  requires i < len xs
+  ensures xs.[i].owner = who && xs.[i].v = old (xs.[i].v)
+  ensures len xs = old (len xs)
+= xs.[i].owner <- who
+
+let mark_cells (xs : inout [cell]) : unit
+  ensures len xs = old (len xs)
+  ensures forall (j : usize). j < len xs ==> xs.[j].v = 7 && xs.[j].owner = 1
+= let i : mutable usize = 0 in
+  while i < len xs
+    invariant i <= len xs && len xs = old (len xs)
+    invariant forall (j : usize). j < i ==> xs.[j].v = 7 && xs.[j].owner = 1
+    decreases len xs - i
+  do xs.[i].owner <- 1; xs.[i].v <- 7; i <- i + 1 done
+
+(* Wrong: bump leaves the seen value at the old count, not the new one. *)
+let wrong (v : u8) : u8
+  ensures result = 1
+= let c : mutable counter = start 0 in
+  bump c v;
+  assert c.seen.[1] = v;
+  c.n
+
+(* Expected report, in order.
+// CHECK: spec_fields.pia:16:11: proved: '*' does not overflow u8 [intervals]
+// CHECK: spec_fields.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:24:3: proved: the index is within bounds [intervals]
+// CHECK: spec_fields.pia:26:14: proved: '+' does not overflow u8 [smt]
+// CHECK: spec_fields.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:21:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:31:3: proved: the precondition of 'bump' holds [smt]
+// CHECK: spec_fields.pia:32:3: proved: the precondition of 'bump' holds [smt]
+// CHECK: spec_fields.pia:33:3: proved: the precondition of 'bump' holds [smt]
+// CHECK: spec_fields.pia:34:3: proved: the assertion holds [smt]
+// CHECK: spec_fields.pia:29:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:44:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_fields.pia:45:17: proved: '+' does not overflow u8 [smt]
+// CHECK: spec_fields.pia:45:39: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:44:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_fields.pia:41:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:54:3: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:54:3: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:53:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:61:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_fields.pia:62:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_fields.pia:64:6: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:64:6: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:64:25: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:64:25: proved: the index is within bounds [smt]
+// CHECK: spec_fields.pia:64:47: proved: '+' does not overflow usize [smt]
+// CHECK: spec_fields.pia:61:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_fields.pia:62:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_fields.pia:63:5: proved: the measure decreases [smt]
+// CHECK: spec_fields.pia:57:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: spec_fields.pia:70:3: proved: the precondition of 'bump' holds [smt]
+// CHECK: spec_fields.pia:71:3: failed: the assertion holds
+// CHECK-NEXT: counterexample: v = {{-?[0-9]+}}
+// CHECK: spec_fields.pia:68:3: proved: the postcondition holds [smt]
+// CHECK: 36 proved, 1 failed, 0 skipped
+*)
