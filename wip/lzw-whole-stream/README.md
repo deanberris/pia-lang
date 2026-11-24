@@ -53,3 +53,15 @@ match each other's terms poorly. What may work instead: state the copy
 relation with an explicit witness index per byte (a spec function `src j d`
 for "byte d of code j comes from position ..."), so every fact is about one
 array cell and no proof needs to match two foralls.
+
+## For issue #339 (not posted)
+
+The five goals still unproved, in `wip/lzw-whole-stream/Lzw.pia`, all timeouts at 20 s:
+
+1. `Lzw.pia:289`: emit_kwk's postcondition `S.elen t clear p + 1 = to.[q + 1] - to.[q]`
+2. `Lzw.pia:296`: emit_kwk's assert `to.[q + 1] - to.[q] = to.[q] - to.[q - 1] + 1`
+3. `Lzw.pia:313`: link_new's postcondition `link t clear x tc to te.[q] nx`
+4. `Lzw.pia:361`: the loop invariant `h ==> forall (i in 0 .. o). dst.[i] = x.[i]`, after an iteration
+5. `Lzw.pia:369`: the loop invariant that every entry below nx is as `link` says, after an iteration
+
+What proves: `Ref.pia` (155 goals, about 3 s), `sym_is_x`, `emit_code`, and 229 of decode_ref's 234 goals. The GIF round trip, which needs the same kind of trace from the encoder, is not started.
