@@ -1,0 +1,82 @@
+(Program
+  (ModuleHeader "Units"
+    (Attrs)
+    (Paths
+      (Path "Names")
+    )
+  )
+  (Interface "Names"
+    (Attrs)
+    (SigType "byte"
+      (TypeValue [alias]
+        (TypeName "u8")
+        (Attrs)
+        (None)
+      )
+    )
+    (SigType "percent"
+      (TypeValue [alias]
+        (RangeType "int"
+          (IntLit "0")
+          (IntLit "100")
+        )
+        (Attrs)
+        (None)
+      )
+    )
+    (SigType "length"
+      (TypeValue
+        (TypeName "u32")
+        (Attrs)
+        (None)
+      )
+    )
+  )
+  (LetItem "byte"
+    (Params)
+    (None)
+    (Contracts)
+    (Name "u8")
+  )
+  (LetItem "percent"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue [alias]
+      (RangeType "int"
+        (IntLit "0")
+        (IntLit "100")
+      )
+      (Attrs)
+      (None)
+    )
+  )
+  (LetItem "bytes"
+    (Params)
+    (None)
+    (Contracts)
+    (Apply
+      (Name "option")
+      (Name "byte")
+    )
+  )
+  (LetItem "block"
+    (Params)
+    (None)
+    (Contracts)
+    (ListLit
+      (Name "byte")
+      (IntLit "4")
+    )
+  )
+  (LetItem "length"
+    (Params)
+    (None)
+    (Contracts)
+    (TypeValue
+      (TypeName "u32")
+      (Attrs)
+      (None)
+    )
+  )
+)
