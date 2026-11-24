@@ -85,6 +85,8 @@ nav:
       - "Rust VecDeque::reserve": cases/rust-vecdeque.pia.md
       - "libwebp Huffman tables": cases/libwebp.pia.md
       - "Bun readFile on Windows": cases/bun-readfile.pia.md
+      - "zlib gzip extra field": cases/zlib-gzip-extra.pia.md
+      - "giflib background colour": cases/giflib-background.pia.md
   - Status and roadmap: status.md
   - Design:
       - Language design: design.md
