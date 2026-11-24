@@ -1056,6 +1056,201 @@ let drainage (fill : [u16]) (down : [usize]) (acc : out mutable [u32]) (basin : 
   label_outlets fill down order pos basin
 ```
 
+## 8. Basins
+
+Cells in different basins never exchange sediment: a cell and the cell
+it drains to have the same watershed (`label_outlets`). So each basin can
+run its steps on its own core, in a `spread` over basins (ADR 0060). To
+visit a basin's cells in height order without scanning the whole map,
+the height order is grouped by basin: the same counting sort as
+`height_order`'s, with the basin labels as keys and one bucket per cell
+that can be an outlet, so that the places `first.[b]` up to `last.[b]` of
+`border` are the cells of basin `b`, highest first.
+
+How many of keys.[k ..] are h.
+
+```pia
+let spec kcount (keys : [usize]) (h : usize) (k : usize) : usize
+  requires k <= len keys
+  ensures result <= len keys - k
+  decreases len keys - k
+= if k = len keys then 0 else (if keys.[k] = h then 1 else 0) + kcount keys h (k + 1)
+```
+
+cnt.[h] is the number of keys equal to h, and cnt sums to n.
+
+```pia
+let ghistogram (keys : [usize]) (nb : usize) (cnt : out mutable [u32]) : unit
+  requires len cnt = nb && nb >= 1 && nb <= 4294967295 && len keys <= 4294967295
+  requires forall (k in 0 .. len keys). at keys k < nb
+  ensures forall (h in 0 .. nb). cnt.[h] = kcount keys h 0
+  ensures sum cnt nb = len keys
+= for h in 0 .. nb
+    invariant forall (j in 0 .. h). cnt.[j] = 0
+  do cnt.[h] <- 0 done;
+  zero cnt nb;
+  for k in 0 .. len keys
+    invariant sum cnt nb = k
+    invariant forall (h in 0 .. nb). cnt.[h] + kcount keys h k = kcount keys h 0
+  do
+    let h : usize = keys.[k] in
+    let c = cnt.[h] in
+    elt_le cnt h nb;
+    set cnt h (c + 1)
+  done
+```
+
+Each key's bucket of places, the highest key first, stated by its
+neighbour.
+
+```pia
+let goffsets (n : usize) (nb : usize) (cnt : [u32]) (first : out mutable [usize]) (next : out mutable [usize]) (last : out mutable [usize]) : unit
+  requires len cnt = nb && len first = nb && len next = nb && len last = nb
+  requires nb >= 1 && nb <= 4294967295 && sum cnt nb = n
+  ensures last.[0] = n && first.[nb - 1] = 0
+  ensures forall (h in 0 .. nb). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  ensures forall (h in 0 .. nb - 1). first.[h] = last.[h + 1]
+= let acc : mutable u64 = 0 in
+  for t in 0 .. nb
+    invariant acc = sum cnt t && acc <= n
+    invariant t > 0 ==> last.[0] = n
+    invariant t > 0 ==> first.[t - 1] + acc = n
+    invariant forall (h in 0 .. t). next.[h] = first.[h] && first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+    invariant forall (h in 0 .. t). h + 1 < t ==> first.[h] = last.[h + 1]
+  do
+    mono cnt (t + 1) nb;
+    let c = cnt.[t] in
+    last.[t] <- n - acc;
+    acc <- acc + c;
+    first.[t] <- n - acc;
+    next.[t] <- n - acc
+  done
+```
+
+Writes t into owner.[lo .. hi] and nothing else.
+
+```pia
+let gmark (owner : borrowed inout mutable [usize]) (lo : usize) (hi : usize) (t : usize) : unit
+  requires lo <= hi && hi <= len owner
+  ensures forall (j in 0 .. len owner). (lo <= j && j < hi ==> owner.[j] = t) && (j < lo || hi <= j ==> owner.[j] = old (owner.[j]))
+= for q in lo .. hi
+    invariant forall (j in 0 .. len owner). (lo <= j && j < q ==> owner.[j] = t) && (j < lo || q <= j ==> owner.[j] = old (owner.[j]))
+  do
+    owner.[q] <- t
+  done
+```
+
+owner.[q] is the key whose bucket holds place q.
+
+```pia
+let gowners (n : usize) (nb : usize) (cnt : [u32]) (first : [usize]) (last : [usize]) (owner : out mutable [usize]) : unit
+  requires len cnt = nb && len first = nb && len last = nb && len owner = n && nb >= 1
+  requires last.[0] = n && first.[nb - 1] = 0
+  requires forall (h in 0 .. nb). first.[h] + cnt.[h] = last.[h] && last.[h] <= n
+  requires forall (h in 0 .. nb - 1). first.[h] = last.[h + 1]
+  ensures forall (q in 0 .. n). at owner q < nb && first.[at owner q] <= q && q < last.[at owner q]
+  ensures forall (h in 0 .. nb) (q in 0 .. n). first.[h] <= q && q < last.[h] ==> at owner q = h
+  ensures forall (a in 0 .. n) (b in 0 .. n). a < b ==> at owner b <= at owner a
+= let w : mutable usize = n in
+  for t in 0 .. nb
+    invariant w <= n
+    invariant t < nb ==> w = last.[t]
+    invariant t = nb ==> w = 0
+    invariant forall (h in 0 .. t). w <= first.[h]
+    invariant forall (q in w .. n). at owner q < t && first.[at owner q] <= q && q < last.[at owner q]
+    invariant forall (h in 0 .. t) (q in w .. n). first.[h] <= q && q < last.[h] ==> owner.[q] = h
+    invariant forall (a in w .. n) (b in w .. n). a < b ==> at owner b <= at owner a
+  do
+    let lo = first.[t] in
+    assert lo + cnt.[t] = last.[t] && lo <= w;
+        gmark owner lo w t;
+    w <- lo;
+    if t + 1 < nb then assert lo = last.[t + 1] else ()
+  done
+```
+
+Each place gets the next key's index, in key order; a place q holds a key
+equal to owner.[q].
+
+```pia
+let gplace (keys : [usize]) (nb : usize) (first : [usize]) (last : [usize]) (owner : [usize]) (next : borrowed inout mutable [usize]) (order : out mutable [usize]) (pos : out mutable [usize]) : unit
+  requires len first = nb && len last = nb && len next = nb
+  requires len owner = len keys && len order = len keys && len pos = len keys
+  requires forall (h in 0 .. nb). next.[h] = first.[h] && first.[h] + kcount keys h 0 = last.[h] && last.[h] <= len keys
+  requires forall (k in 0 .. len keys). at keys k < nb
+  requires forall (q in 0 .. len keys). at owner q < nb && first.[at owner q] <= q && q < last.[at owner q]
+  requires forall (h in 0 .. nb) (q in 0 .. len keys). first.[h] <= q && q < last.[h] ==> at owner q = h
+  ensures forall (q in 0 .. len order). order.[q] < len pos && pos.[order.[q]] = q && keys.[order.[q]] = at owner q
+  ensures forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+= blank order (len keys);
+  assert (forall (q in 0 .. len keys). next.[at owner q] = first.[at owner q]);
+  assert (forall (q in 0 .. len keys). next.[at owner q] <= q);
+  for k in 0 .. len keys
+    invariant forall (h in 0 .. nb). first.[h] <= next.[h] && next.[h] + kcount keys h k = last.[h]
+    invariant forall (q in 0 .. len keys).
+      (q < next.[at owner q] ==> order.[q] < k && pos.[order.[q]] = q && keys.[order.[q]] = at owner q)
+      && (next.[at owner q] <= q ==> order.[q] = len keys)
+    invariant forall (j in 0 .. k). pos.[j] < len keys && order.[pos.[j]] = j
+  do
+    let h : usize = keys.[k] in
+    let p = next.[h] in
+    assert kcount keys h k = 1 + kcount keys h (k + 1);
+    assert p < last.[h] && last.[h] <= len keys;
+    assert at owner p = h;
+    order.[p] <- k;
+    pos.[k] <- p;
+    next.[h] <- p + 1
+  done;
+  assert (forall (h in 0 .. nb). next.[h] = last.[h]);
+  assert (forall (q in 0 .. len keys). q < next.[at owner q])
+```
+
+The keys of the grouping: each place of the height order, labelled by its
+cell's basin.
+
+```pia
+let basin_keys (label : [usize]) (order : [usize]) (keys : out mutable [usize]) : unit
+  requires len order = len label && len keys = len label
+  requires forall (q in 0 .. len order). order.[q] < len label
+  requires forall (k in 0 .. len label). at label k < len label
+  ensures forall (q in 0 .. len keys). keys.[q] = label.[order.[q]] && at keys q < len label
+= for q in 0 .. len order
+    invariant forall (j in 0 .. q). keys.[j] = label.[order.[j]] && at keys j < len label
+  do
+    keys.[q] <- label.[order.[q]]
+  done
+```
+
+The cells grouped by basin, each basin's cells in the height order: the
+places first.[b] up to last.[b] of `border` are basin b's cells.
+
+```pia
+let basin_order (label : [usize]) (order : [usize]) (border : out mutable [usize])
+    (keys : out mutable [usize]) (place2 : out mutable [usize]) (pos2 : out mutable [usize])
+    (cnt : out mutable [u32]) (first : out mutable [usize]) (next : out mutable [usize])
+    (last : out mutable [usize]) (owner : out mutable [usize]) : unit
+  requires len order = len label && len border = len label && len keys = len label
+  requires len place2 = len label && len pos2 = len label && len owner = len label
+  requires len cnt = len label && len first = len label && len next = len label && len last = len label
+  requires len label >= 1 && len label <= 4294967295
+  requires forall (q in 0 .. len order). order.[q] < len label
+  requires forall (k in 0 .. len label). at label k < len label
+  ensures forall (b in 0 .. len label). first.[b] <= last.[b] && last.[b] <= len label
+  ensures forall (q in 0 .. len border). border.[q] < len label && label.[border.[q]] = at owner q
+  ensures forall (b in 0 .. len label) (q in 0 .. len border). first.[b] <= q && q < last.[b] ==> at owner q = b
+= let n = len label in
+  basin_keys label order keys;
+  ghistogram keys n cnt;
+  goffsets n n cnt first next last;
+  gowners n n cnt first last owner;
+  gplace keys n first last owner next place2 pos2;
+  for q in 0 .. n
+    invariant forall (j in 0 .. q). border.[j] < n && label.[border.[j]] = at owner j
+  do
+    border.[q] <- order.[place2.[q]]
+  done
+```
+
 ## What is proved
 
 Every goal in this file is proved before `piac` generates code:
@@ -1072,6 +1267,7 @@ Every goal in this file is proved before `piac` generates code:
 | Every rainfall field gives each cell at most 255 units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
 | A cell's downstream neighbour comes later in the height order | `later` |
 | A cell and the cell it drains to have the same watershed, so a basin's water stays in it | `label_outlets` |
+| Grouping by basin puts exactly basin b's cells in its range of places | `ghistogram` up to `basin_order` |
 | Accumulation is between 1 and the number of cells, and every watershed label is an outlet, in linear time | `label_outlets`, `drainage` |
 | No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
