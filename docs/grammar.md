@@ -62,7 +62,7 @@ interface sig module struct end import operator true false
 borrowed moved out inout fixed mutable mod handle defer as
 ```
 
-`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
+`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
 `theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
 
@@ -176,7 +176,8 @@ param     = IDENT | SPLICE_IDENT
           | "(" ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
-contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
+contract  = "requires" stmt | "ensures" stmt | "decreases" stmt
+          | "reads" stmt ;   (* a spec function's footprint, ADR 0060 *)
 
 lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 captures  = "[" capture { "," capture } "]" ;

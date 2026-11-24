@@ -27,7 +27,7 @@ struct SourceLoc {
   X(Let) X(Rec) X(Meta) X(In) X(Type) X(Of) X(Where) X(If) X(Then) X(Else)     \
   X(Match) X(With) X(For) X(Spread) X(While) X(Step) X(Do) X(Done) X(Spec)     \
   X(Lemma)                                                                     \
-  X(Requires) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume)         \
+  X(Requires) X(Reads) X(Ensures) X(Invariant) X(Decreases) X(Assert) X(Assume)         \
   X(Forall) X(Exists) X(Interface) X(Sig) X(Module) X(Struct) X(End)           \
   X(Import) X(Operator) X(True) X(False) X(Borrowed) X(Moved) X(Out)           \
   X(Inout) X(Fixed) X(Mutable) X(Handle) X(Defer) X(As)                        \

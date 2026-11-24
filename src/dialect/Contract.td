@@ -35,6 +35,18 @@ def Contract_RequiresOp : Contract_Op<"requires"> {
   let assemblyFormat = "$predicate attr-dict";
 }
 
+def Contract_ReadsOp : Contract_Op<"reads"> {
+  let summary = "a spec function's footprint: the cells lo up to hi of a buffer";
+  let description = [{
+    `reads xs.[lo .. hi]` on a spec function (ADR 0060, section 3). Where a
+    buffer's contents change only outside the footprint, a call on the new
+    contents equals the call on the old; the generated frame lemma
+    `f'frame` proves it.
+  }];
+  let arguments = (ins AnyType:$buffer, AnyType:$lo, AnyType:$hi);
+  let assemblyFormat = "$buffer `[` $lo `,` $hi `]` attr-dict `:` type($buffer) `,` type($lo) `,` type($hi)";
+}
+
 def Contract_EnsuresOp : Contract_Op<"ensures"> {
   let summary = "a postcondition the body must establish at every return";
   let arguments = (ins I1:$predicate);

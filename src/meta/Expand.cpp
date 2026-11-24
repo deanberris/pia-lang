@@ -763,9 +763,231 @@ class Expander {
 
 }  // namespace
 
+// --- frame lemmas (ADR 0060, section 3) -----------------------------------
+
+// `f'frame`, the frame lemma of a spec function `f` that says
+// `reads xs.[a .. b]`: for xs and xs' that agree on xs.[a .. b], f gives the
+// same result. It is proved by induction on f's own `decreases`: its body
+// follows f's, calling itself where f calls f, and asserting that each
+// element f reads is in the footprint.
+namespace frames {
+
+NodePtr name(const std::string &n, SourceLoc l) {
+  return makeNode(NodeKind::Name, l, n);
+}
+
+NodePtr binary(const std::string &op, NodePtr a, NodePtr b, SourceLoc l) {
+  NodePtr n = makeNode(NodeKind::Binary, l, op);
+  n->add(std::move(a));
+  n->add(std::move(b));
+  return n;
+}
+
+NodePtr apply(NodePtr f, std::vector<NodePtr> args, SourceLoc l) {
+  NodePtr n = makeNode(NodeKind::Apply, l);
+  n->add(std::move(f));
+  for (NodePtr &a : args)
+    n->add(std::move(a));
+  return n;
+}
+
+// A copy of `n` with the name `from` renamed `to`.
+NodePtr renamed(const Node &n, const std::string &from, const std::string &to) {
+  NodePtr c = clone(n);
+  std::function<void(Node &)> walk = [&](Node &m) {
+    if (m.kind == NodeKind::Name && m.text == from)
+      m.text = to;
+    for (NodePtr &k : m.kids)
+      if (k)
+        walk(*k);
+  };
+  walk(*c);
+  return c;
+}
+
+NodePtr sequence(std::vector<NodePtr> stmts, SourceLoc l) {
+  NodePtr tail = makeNode(NodeKind::Unit, l);
+  for (auto it = stmts.rbegin(); it != stmts.rend(); ++it) {
+    NodePtr s = makeNode(NodeKind::Sequence, l);
+    s->add(std::move(*it));
+    s->add(std::move(tail));
+    tail = std::move(s);
+  }
+  return tail;
+}
+
+struct Builder {
+  const Node &fn;
+  std::string xs, ys, lemma;
+  size_t at; // xs's position among the parameters
+  Diagnostics &diags;
+  bool ok = true;
+
+  // The lemma calls and element assertions for `e`, an expression of f's
+  // body that is not an `if`.
+  void collect(const Node &e, std::vector<NodePtr> &out) {
+    if (e.kind == NodeKind::Apply && e.kids[0]->kind == NodeKind::Name &&
+        e.kids[0]->text == fn.text) {
+      std::vector<NodePtr> args;
+      for (size_t k = 1; k < e.kids.size(); ++k) {
+        args.push_back(clone(*e.kids[k]));
+        if (k - 1 == at) {
+          if (e.kids[k]->kind != NodeKind::Name || e.kids[k]->text != xs) {
+            diags.error(e.kids[k]->loc,
+                        "a spec function that says what it reads must pass '" +
+                            xs + "' itself to its recursive calls");
+            ok = false;
+          }
+          args.push_back(name(ys, e.loc));
+        }
+      }
+      out.push_back(apply(name(lemma, e.loc), std::move(args), e.loc));
+      for (size_t k = 1; k < e.kids.size(); ++k)
+        collect(*e.kids[k], out);
+      return;
+    }
+    if (e.kind == NodeKind::Index && e.kids[0]->kind == NodeKind::Name &&
+        e.kids[0]->text == xs && e.kids[1]->kind != NodeKind::Range) {
+      NodePtr a = makeNode(NodeKind::Assert, e.loc);
+      NodePtr l = makeNode(NodeKind::Index, e.loc);
+      l->add(name(ys, e.loc));
+      l->add(clone(*e.kids[1]));
+      a->add(binary("=", std::move(l), clone(e), e.loc));
+      out.push_back(std::move(a));
+    }
+    for (const NodePtr &k : e.kids)
+      if (k)
+        collect(*k, out);
+  }
+
+  NodePtr body(const Node &e) {
+    if (e.kind == NodeKind::If && e.kids.size() >= 3 && e.kids[2] &&
+        e.kids[2]->kind != NodeKind::None) {
+      NodePtr n = makeNode(NodeKind::If, e.loc);
+      n->add(clone(*e.kids[0]));
+      n->add(body(*e.kids[1]));
+      n->add(body(*e.kids[2]));
+      return n;
+    }
+    std::vector<NodePtr> stmts;
+    collect(e, stmts);
+    return sequence(std::move(stmts), e.loc);
+  }
+};
+
+} // namespace frames
+
+void addFrameLemmas(Node &program, Diagnostics &diags) {
+  using namespace frames;
+  for (size_t i = 0; i < program.kids.size(); ++i) {
+    const Node &fn = *program.kids[i];
+    if (fn.kind != NodeKind::LetItem || fn.kids.size() < 4)
+      continue;
+    if (fn.flags.find("spec") == std::string::npos)
+      continue;
+    const Node &params = *fn.kids[0], &ret = *fn.kids[1];
+    const Node &contracts = *fn.kids[2], &value = *fn.kids[3];
+    const Node *reads = nullptr, *measure = nullptr;
+    for (const NodePtr &c : contracts.kids) {
+      if (c->kind == NodeKind::Reads)
+        reads = c.get();
+      if (c->kind == NodeKind::Decreases)
+        measure = c.get();
+    }
+    if (!reads)
+      continue;
+    const Node &view = *reads->kids[0];
+    if (view.kind != NodeKind::Index || view.kids[0]->kind != NodeKind::Name ||
+        view.kids[1]->kind != NodeKind::Range)
+      continue; // IRGen reports it
+    Builder b{fn,
+              view.kids[0]->text,
+              view.kids[0]->text + "'",
+              fn.text + "'frame",
+              0,
+              diags};
+    bool found = false;
+    for (size_t k = 0; k < params.kids.size(); ++k)
+      if (params.kids[k]->text == b.xs)
+        b.at = k, found = true;
+    if (!found)
+      continue; // IRGen reports it
+    SourceLoc l = reads->loc;
+    NodePtr item = makeNode(NodeKind::LetItem, l, b.lemma);
+    item->flags = "lemma";
+    NodePtr ps = makeNode(NodeKind::Params, params.loc);
+    for (size_t k = 0; k < params.kids.size(); ++k) {
+      ps->add(clone(*params.kids[k]));
+      if (k == b.at) {
+        NodePtr p = clone(*params.kids[k]);
+        p->text = b.ys;
+        ps->add(std::move(p));
+      }
+    }
+    item->add(std::move(ps));
+    NodePtr r = makeNode(NodeKind::RetAnnot, ret.loc);
+    NodePtr annot = makeNode(NodeKind::Annot, ret.loc);
+    annot->add(makeNode(NodeKind::Modifiers, ret.loc));
+    annot->add(makeNode(NodeKind::TypeName, ret.loc, "unit"));
+    annot->add(makeNode(NodeKind::None, ret.loc));
+    r->add(std::move(annot));
+    r->add(makeNode(NodeKind::Attrs, ret.loc));
+    item->add(std::move(r));
+    NodePtr cs = makeNode(NodeKind::Contracts, contracts.loc);
+    for (const NodePtr &c : contracts.kids)
+      if (c->kind == NodeKind::Requires) {
+        cs->add(clone(*c));
+        cs->add(renamed(*c, b.xs, b.ys));
+      }
+    auto lenOf = [&](const std::string &x) {
+      std::vector<NodePtr> a;
+      a.push_back(name(x, l));
+      return apply(name("len", l), std::move(a), l);
+    };
+    NodePtr sameLen = makeNode(NodeKind::Requires, l);
+    sameLen->add(binary("=", lenOf(b.ys), lenOf(b.xs), l));
+    cs->add(std::move(sameLen));
+    // forall (c in a .. b). xs'.[c] = xs.[c]
+    std::string c = "c'frame";
+    NodePtr q = makeNode(NodeKind::Quantifier, l, "forall");
+    NodePtr binder = makeNode(NodeKind::RangeBinder, l, c);
+    binder->add(clone(*view.kids[1]));
+    q->add(std::move(binder));
+    NodePtr lhs = makeNode(NodeKind::Index, l);
+    lhs->add(name(b.ys, l));
+    lhs->add(name(c, l));
+    NodePtr rhs = makeNode(NodeKind::Index, l);
+    rhs->add(name(b.xs, l));
+    rhs->add(name(c, l));
+    q->add(binary("=", std::move(lhs), std::move(rhs), l));
+    NodePtr agree = makeNode(NodeKind::Requires, l);
+    agree->add(std::move(q));
+    cs->add(std::move(agree));
+    auto call = [&](const std::string &x) {
+      std::vector<NodePtr> a;
+      for (const NodePtr &p : params.kids)
+        a.push_back(name(p->text == b.xs ? x : p->text, l));
+      return apply(name(fn.text, l), std::move(a), l);
+    };
+    NodePtr same = makeNode(NodeKind::Ensures, l);
+    same->add(binary("=", call(b.ys), call(b.xs), l));
+    cs->add(std::move(same));
+    if (measure)
+      cs->add(clone(*measure));
+    item->add(std::move(cs));
+    item->add(b.body(value));
+    if (!b.ok)
+      continue;
+    program.kids.insert(program.kids.begin() + i + 1, std::move(item));
+    ++i;
+  }
+}
+
 bool expand(Node &program, Diagnostics &diags, const Options &options) {
   size_t before = diags.errors().size();
   Expander(program, diags, options).run();
+  if (diags.errors().size() == before)
+    addFrameLemmas(program, diags);
   return diags.errors().size() == before;
 }
 
