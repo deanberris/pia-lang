@@ -1,0 +1,52 @@
+(* Arrays are values that functions return (docs/irgen.md, codegen.md): a
+   function may return a local array, a literal of computed elements, or a
+   record holding one, and its contract speaks of the result's elements.
+   Binding, assigning and building a record copy, so a later write to one
+   array reaches no other.
+// RUN: piac --verify %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+
+let rgb = type { c : [u8; 3]; alpha : u8 }
+
+let make (x : int{0..254}) : [u8; 2]
+  ensures result.[0] = x && result.[1] = x + 1
+= [x; x + 1]
+
+let grey (v : u8) : rgb
+  ensures result.c.[2] = v && result.c.[0] = 0 && result.alpha = 7
+= let a : mutable [u8; 3] = [0; 0; 0] in
+  a.[2] <- v;
+  { c = a; alpha = 7 }
+
+(* Results used by the caller. *)
+let both (v : int{0..254}) : u16
+  ensures result = v + v + 1 + v
+= let m = make v in
+  let g = grey v in
+  m.[0] + m.[1] + g.c.[2]
+
+(* `let b = a` copies, so writing a leaves b as it was. *)
+let alias (v : u8) : u8
+  ensures result = 0
+= let a : mutable [u8; 2] = [0; 0] in
+  let b = a in
+  a.[0] <- v;
+  b.[0]
+
+(* Assigning a whole array copies it in. *)
+let reassign (v : u8) : u8
+  ensures result = v
+= let a : mutable [u8; 2] = [0; 0] in
+  let b : [u8; 2] = [v; v] in
+  a <- b;
+  a.[1]
+
+(* A record built from a mutable local holds a copy. *)
+let snapshot (v : u8) : u8
+  ensures result = 0
+= let a : mutable [u8; 3] = [0; 0; 0] in
+  let p : rgb = { c = a; alpha = 0 } in
+  a.[0] <- v;
+  p.c.[0]
