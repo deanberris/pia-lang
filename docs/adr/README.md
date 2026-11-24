@@ -64,4 +64,5 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0058](0058-spec-buffers.md) | Spec buffers: spec-only arrays that code writes, contracts read and codegen erases | Accepted |
 | [0059](0059-digit-separators-and-type-bounds.md) | Digits group with `'` or `_`; `min t` and `max t` are an integer type's bounds, folded to literals | Accepted |
 | [0060](0060-spread-v0-ownership-and-runtime.md) | `spread` v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them | Proposed |
-| [0061](0061-lean-proved-facts.md) | Lean proves the facts Z3 cannot: lemmas and theory models proved in Lean against generated statements, recorded by statement hash, checked outside the edit loop; cost bounds proved by Z3, their asymptotics in Lean | Proposed |
+| [0061](0061-lean-proved-facts.md) | Lean proves the facts Z3 cannot: lemmas and theory models proved in Lean against generated statements, recorded by statement hash, checked outside the edit loop; cost bounds proved by Z3, their asymptotics in Lean | Accepted |
+| [0062](0062-cost-bounds-in-contracts.md) | Cost bounds are contracts: `costs e` bounds a function's steps, counted by a spec-only `spent` and proved by Z3 | Proposed |
