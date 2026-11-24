@@ -80,3 +80,21 @@ What proves: `Ref.pia` (155 goals, about 3 s), `sym_is_x`, `emit_code`, and 229 
 Not attempted: making the copy relation pointwise, a spec array `src` over
 output positions with `x.[i] = x.[src.[i]]` or a root, which would replace
 the `forall d` inside emit_ok and link with one cell per fact.
+
+## With @opaque (ADR 0063), 2026-11-24
+
+`lzw_ok`, `lzw_from`, `emit_ok` and `link_tr` are opaque, revealed only in
+small lemmas (`Ref.from_step`, `ok_start`, `emit_entry`, `emit_root`,
+`emit_overrun`; `sym_is_x`, `link_new`). The loop takes each code's facts
+from `step_when` and `emit_when`, and the wrappers `put_entry_x`,
+`append_kwk_x` and `add_entry_x` carry its `dst = x` and `link`
+invariants through each call.
+
+- Before opaque: 289 of 301 goals, cost 1.33e9, 3 min.
+- Now: 477 of 481, cost 1.24e9, 2.5 min. Both loop invariants, and the
+  postconditions of `sym_is_x` and `link_new`, prove.
+- Left: four stepping asserts those postconditions rest on.
+  - `Lzw.pia:299` and `:300`, in `sym_is_x`: the copy relation from `link_tr`,
+    and its chain to `S.sym`.
+  - `Lzw.pia:387` and `:394`, in `link_new`: `link_tr` for the new entry,
+    in the root and entry branches.
