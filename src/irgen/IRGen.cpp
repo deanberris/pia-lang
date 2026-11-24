@@ -8437,8 +8437,8 @@ class Gen {
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
                                 a, b);
     if (isBool(t))
-      return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq, a,
-                                         b);
+      return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
+                                         a, b);
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt) return Value();
     auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
