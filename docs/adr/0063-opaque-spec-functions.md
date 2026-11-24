@@ -29,19 +29,30 @@ let spec lzw_ok (s : [u8]) (x : [u8]) (k : usize) : bool @opaque
 - `f`'s own goals are unchanged: its body is still checked, and its `ensures` are proved from its body.
 - An imported opaque spec function stays opaque in the importer. The interface carries the attribute.
 
-### 2. `reveal f` makes the definition a fact, from that point to the end of the enclosing block
+### 2. `with f` reveals the definition, reusing the existing `with` and `in`
+
+There is no new keyword. `with` already appears in `match ... with` and in `{ r with ... }`.
+
+As a clause after a function's or lemma's contracts, `with f` reveals `f` in that whole body. This is the common case:
 
 ```ocaml
 let lemma emit_kwk (s : [u8]) ... : unit
   requires lzw_ok s x k
   ensures ...
-= reveal lzw_ok;
-  ...
+  with lzw_ok
+= ...
 ```
 
-- `reveal f` is a statement in a lemma, a function body or a loop body. Codegen erases it, as it erases lemma calls.
-- After it, calls to `f` in that scope get the definition fact as if `f` were not opaque, with the usual `@fuel` depth.
-- The intended pattern is to reveal inside small step lemmas, never in the loop of the code itself. The loop then sees only `lzw_ok s x k` as an atom, and the lemmas' contracts.
+As an expression, `with f in e` reveals `f` only in `e`, for a narrower scope inside a body:
+
+```ocaml
+(with lzw_ok, lzw_from in step_facts s x q);
+```
+
+- Either form may name several functions, separated by commas. Codegen erases the clause and the expression's wrapper, leaving `e`.
+- Inside the scope, calls to `f` get the definition fact as if `f` were not opaque, with the usual `@fuel` depth. Outside it, they do not.
+- The intended pattern is to reveal in small step lemmas, never in the loop of the code itself. The loop then sees `lzw_ok s x k` only as an atom, together with the lemmas' contracts.
+- `match e with` still parses as before: a `with` that follows `match`'s scrutinee belongs to the `match`, so the expression form starts only where an expression can start.
 
 ### 3. Nothing changes for spec functions that are not marked
 
@@ -49,21 +60,21 @@ Default unfolding stays as it is, so every existing proof keeps its meaning and 
 
 ### 4. Build order
 
-1. `@opaque` and `reveal`, with a test `tests/verify/opaque.pia`. The test covers a goal that fails without `reveal` and proves with it, a reveal scoped to a block, and an imported opaque function.
+1. `@opaque` and `with f`, with a test `tests/verify/opaque.pia`. The test covers a goal that fails without `with` and proves with it, the clause form and the `with f in e` form, and an imported opaque function.
 2. Retry LZW (#339) with `lzw_ok` and the trace functions opaque, revealed only in the step lemmas.
 3. Retry Huffman step 2 with `kraft`, `tab_from` and `room` opaque.
 4. Record the per-file goal counts and costs before and after, as the ADR 0032 benchmark does.
 
-## Questions for Dean
+## Dean's answers (2026-11-24)
 
-1. **Should `reveal` be a keyword?** I recommend `reveal f` as a statement, a single imperative word like `assert`. The alternative needs no keyword: an attribute on the lemma or loop, `@reveal(lzw_ok)`, which reveals it in that whole body.
-2. **Opt-in, or opaque by default?** I recommend opt-in `@opaque`. Opaque by default (F*'s later choice for big definitions) would change every existing proof, and most of Pia's spec functions are small enough to unfold for free.
+1. **No new keyword.** Dean asked: "Can we use a normal `with` or `let ... in` instead of having a new keyword?" Section 2 uses `with`: a `with f` clause for a whole body, and `with f in e` for one expression. `let ... in` binds a name, and a reveal binds nothing, so it would need a placeholder such as `let _ = f in`. Status stays Proposed until Dean confirms this form.
+2. **Opt-in.** "Opaque as an opt-in sounds better." A spec function is opaque only when it is marked `@opaque`.
 
 ## Consequences
 
 - Whole-stream proofs can keep the spec as an atom in loops. A lemma's cost depends on the definitions it reveals, not on everything in scope.
 - Proofs become less brittle: changing an opaque function's body affects only the lemmas that reveal it.
-- One more attribute, and possibly one more keyword. A proof that forgets to reveal a definition fails with an unproved goal, so the error report should hint "`f` is opaque here; `reveal f` may prove it".
+- One more attribute and no new keyword. A proof that forgets to reveal a definition fails with an unproved goal, so the error report should hint "`f` is opaque here; `with f` may prove it".
 
 ## Prior art
 
