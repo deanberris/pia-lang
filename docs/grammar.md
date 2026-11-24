@@ -168,7 +168,7 @@ path      = IDENT { "." IDENT } ;
 ### Bindings
 
 ```ebnf
-let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
+let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } [ "with" names ] "=" handled ;   (* with: reveal, ADR 0063 *)
 let_in    = "let" [ "rec" ] [ "spec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
@@ -228,7 +228,9 @@ Modifiers come in a fixed order: ownership, then access, then mutability. Each o
 
 `borrowed(m)` in a function's result type names the parameter `m` that the result is borrowed from, as in `let alloc (m : borrowed arena) (n : usize) : result (borrowed(m) out mutable [u8]) OutOfMemory` (#70). It is written with no space before the parenthesis: `borrowed (t)` is `borrowed` before a parenthesised type. Inside a type argument, such as `result`'s, the parenthesised argument carries the modifiers.
 
-A type value is an expression:
+A type value is an expression. A `let` whose value names a type, such as `let byte = u8`, `let percent = int{0..100}` or `let bytes = option byte`, is another name for that type, and `type` makes a new one ([ADR 0064](adr/0064-distinct-types.md)). Until step 2 of that ADR lands, `type u8` is still an alias too.
+
+The type value:
 
 ```ebnf
 type_value = "type" ( variants | type ) { attribute } [ "where" stmt ] { attribute } ;
@@ -248,7 +250,8 @@ Constructs that extend as far right as possible sit at the sequence level. The r
 
 ```ebnf
 expr   = seq ;
-seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda ;
+seq    = stmt [ ";" [ seq ] ] | let_in | match | lambda | "with" names "in" seq ;   (* reveal in one expression, ADR 0063 *)
+names  = IDENT { "." IDENT } { "," IDENT { "." IDENT } } ;
 elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argument elements *)
 
 stmt   = postfix "<-" stmt
@@ -285,6 +288,7 @@ postfix = atom
         | postfix "<" targ { "," targ } ">" ;     (* sum<i64> *)
 
 atom = IDENT | INT | FLOAT | STRING | "true" | "false"
+     | IDENT "{" add_e ".." add_e "}"                (* a range type as a value: let percent = int{0..100} *)
      | QIDENT | "..."
      | "(" handled ")" | "(" ")" | "(" operator ")"
      | "[" [ elem { ";" elem } [ ";" ] ] "]"
@@ -326,6 +330,7 @@ sig_item  = "let" binder ":" annot { attribute } { contract } [ "=" seq ]   (* e
           | "let" "meta" binder ":" annot                         (* exported concept, "let meta Ord : concept" *)
           | "let" "spec" binder ":" annot { attribute } { contract }   (* exported spec function, with its definition *)
           | "let" binder "=" type_value                           (* exported type *)
+          | "let" binder "=" type                                 (* exported alias, "let byte = u8" (ADR 0064) *)
           | "let" binder "=" "let" lparam { lparam } "=>" type_value   (* exported generic type *)
           | "..." ;
 sig_value = "sig" { sig_item | concept_item } "end" ;          (* a concept's body *)

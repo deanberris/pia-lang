@@ -136,7 +136,19 @@ A `while` loop's invariant is written before `do` and holds each time the condit
 
 A `for` loop always ends. A `while` loop ends when it has a measure, `decreases m`, that is never negative and goes down on each iteration. That is a `decreases` goal at the end of the body, `m >= 0 && m' < m`, where `m'` is the measure after the iteration. A function's `decreases` is checked the same way at each call of the function by itself: `gcd b (a mod b)` with `decreases b` needs `b >= 0` and `a mod b < b`, under the path condition `b <> 0`.
 
-A `while` loop or a recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So `piac --verify` fails, and piac generates no code, unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
+A recursive call on a value of a recursive type needs no measure when it is structural: its first argument of a recursive type is a component of the parameter, as a name a `match` binds below the top is, or an element of a box or vec such a name holds ([recursive types](#recursive-types)). Its goal, "the recursion terminates: 't' is smaller in each recursive call", is that the argument's `depth` is smaller than the parameter's.
+
+Any other `while` loop or recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So `piac --verify` fails, and piac generates no code, unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
+
+## Recursive types
+
+A value of a `let rec` variant ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)) is a value of an SMT-LIB datatype: mutually recursive types and the types they hold are declared as one `declare-datatypes`, a generic one once per instance, and each constructor holds its payload's fields. A constructor, a `match` and its payload names are the datatype's constructor, tester and selectors, so the proof sees what a value was built from, as it does for a variant.
+
+- **A buffer in a payload,** such as a `box`'s slot or a `vec`'s items, holds what it held when the value was built: since `box` and `vec` own their contents uniquely, the proof sees a recursive value as a value, not as a heap. That holds while only the value owns the buffer, so a function that writes a buffer after building a value with it, or writes a buffer taken out of a value, is not verified: each of its goals is unproved, with that reason. Z3 does not decide datatypes whose constructors hold arrays well, so the field is a handle, an element of an uninterpreted sort, and the array is a function of the handle.
+- **`depth t` and `size t`** are spec-only `int`s, for `decreases` and other contracts. The verifier knows only that a depth is at least 0 and a size at least 1, and that a component's, including each element of a box or vec in the payload, is smaller than its holder's. That is what a measure needs; their exact values are not known.
+- **Structural recursion** is a `decreases depth t` on the function's first parameter of a recursive type ([termination](#termination)).
+
+A counterexample shows a recursive value as its constructor and its payload's fields in order, `Node {_, 7, 4294967295, _, 0}`, where `_` is a buffer (tests/verify/rec_types.pia, tests/verify/rec_aliasing.pia). Equality of recursive values, `@derive(eq)` and structural lemmas come with metaprograms over recursive types (step 4).
 
 ## Spec functions and lemmas
 
@@ -169,6 +181,18 @@ let lemma split (xs : [u8]) (n : usize) (v : u8) (w : u8) : unit
 ```
 
 One unfolding proves each step: the lemma's call for `n - 1`, plus `count`'s definition at `n`. Without the lemma, a goal about every `n` needs more unfoldings than any fixed fuel gives.
+
+**Opaque spec functions** ([ADR 0063](adr/0063-opaque-spec-functions.md)). A spec function marked `@opaque` keeps its definition out of every goal: a call `f a` still gets its result type's range and `pre(a) ==> post(a, F a)` from f's `ensures`, but not `F a = body(a)`. f's own goals are unchanged. This is for a spec over a whole stream or table, whose unfolded body would otherwise sit in every goal of a loop that mentions it, including goals that never needed it. `with f, g` after a function's or lemma's contracts reveals f and g in its whole body, and the expression `with f in e` reveals f only in e. A revealed definition is a fact for every call met in the scope, and for the calls already met before it, such as one in the precondition; after the scope, a call with new arguments is opaque again. The intended pattern is to reveal in small step lemmas, never in the loop itself. An imported opaque function stays opaque, since the interface carries `@opaque` with its definition. A goal that fails while an opaque function was left unrevealed has the hint "'f' is opaque here; 'with f' may prove it". Codegen erases `with` (tests/verify/opaque.pia, tests/modules/opaque.pia).
+
+```ocaml
+let spec small (x : u8) : bool @opaque = x < 10
+
+let shown (x : u8) : u8
+  requires small x
+  ensures result < 20
+  with small
+= x + x
+```
 
 Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `spec` and `lemma` are keywords only between `let` (or `let rec`) and the name ([grammar.md](grammar.md#identifiers-and-keywords)).
 

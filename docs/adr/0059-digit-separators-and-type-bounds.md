@@ -25,7 +25,7 @@ Two facts constrain the design. Pia has no shadowing at all ([ADR 0022](0022-met
 
 ### 2. `min t` and `max t`
 
-`min t` and `max t` are the least and greatest values of the integer type `t`: `min u8 = 0`, `max u16 = 65535`, `min i64 = -9223372036854775808`, `max byte` for `let byte = type u8`, and the bounds of a range type named by a `let`.
+`min t` and `max t` are the least and greatest values of the integer type `t`: `min u8 = 0`, `max u16 = 65535`, `min i64 = -9223372036854775808`, `max byte` for `let byte = u8`, and the bounds of a range type named by a `let`.
 
 - **They overload `min` and `max` by argument.** A call of `min` or `max` with one argument that names an integer type is a bound. Every other call, such as `Order.max a b`, resolves as before. Neither name is reserved, so `Pia.Core.Order` keeps its functions and Charconv's local `max` stays; where a local `max` is in scope, `max u8` is that local applied to `u8`, which is an error, as shadowing would have been.
 - **They fold to literals.** IRGen replaces `max u16` with the literal `65535` before overload resolution, so it takes its context's type like any literal, and works in contracts, where a `let` constant would be unknown. `ensures a * b > max u16 ==> result = max u16` reads as the number did and proves the same way, with no cost.

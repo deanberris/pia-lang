@@ -1,0 +1,30 @@
+(* The proof sees a recursive value as a value (ADR 0047, step 2): a
+   buffer in its payload holds what it held when the value was built,
+   which is what memory holds while only the value owns the buffer. So a
+   function that writes a buffer after building a value with it is not
+   verified: each of its goals is unproved, which is an error unless
+   --allow-unproved accepts it. (Writing a buffer taken out of a value
+   is refused before the proof: a payload is not a writable borrow.)
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+// RUN: piac --verify --allow-unproved=after %s 2>&1 | FileCheck %s --check-prefix=ALLOW
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(*
+// CHECK: rec_aliasing.pia:[[@LINE+4]]:3: skipped: the postcondition holds [not verified: it writes a buffer after building a recursive value with it, which the verifier sees as the buffer's contents when it was built]
+*)
+let after (l : inout box tree) (r : box tree) : u32
+  requires len l.slot = 1
+  ensures result = 0
+= let t = Node { left = l; key = 7; right = r } in
+  l.slot.[0] <- t;
+  0
+
+(*
+// CHECK: piac: error: {{[0-9]+}} obligations not proved
+// ALLOW-NOT: error
+*)

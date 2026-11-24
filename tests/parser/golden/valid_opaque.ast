@@ -1,0 +1,113 @@
+(Program
+  (LetItem "small" [spec]
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "bool")
+        (None)
+      )
+      (Attrs
+        (Attribute "opaque")
+      )
+    )
+    (Contracts)
+    (Binary "<"
+      (Name "x")
+      (IntLit "10")
+    )
+  )
+  (LetItem "shown"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Requires
+        (Apply
+          (Name "small")
+          (Name "x")
+        )
+      )
+      (Ensures
+        (Binary "<"
+          (Name "result")
+          (IntLit "20")
+        )
+      )
+      (Reveal [clause]
+        (Name "small")
+        (Field "big"
+          (Name "M")
+        )
+      )
+    )
+    (Binary "+"
+      (Name "x")
+      (Name "x")
+    )
+  )
+  (LetItem "scoped"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Sequence
+      (Reveal
+        (Name "small")
+        (Assert
+          (Binary "<"
+            (Name "x")
+            (IntLit "10")
+          )
+        )
+      )
+      (Match
+        (Name "x")
+        (Arm
+          (PLit "0")
+          (IntLit "1")
+        )
+        (Arm
+          (PVar "_")
+          (Name "x")
+        )
+      )
+    )
+  )
+)
