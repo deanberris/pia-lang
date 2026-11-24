@@ -1,4 +1,4 @@
-# 64. `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only through named functions, and inherits only what it derives
+# 64. `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only by applying a type to a value, and inherits only what it derives
 
 Date: 2026-11-24
 
@@ -34,22 +34,23 @@ The expander rewrites `let n = type e`, where `e` is not a record or variant lit
 
 ```ocaml
 let length = type { raw#length : u32 } @distinct
-let to_length (x : u32) : length ensures from_length result = x = { raw#length = x }
-let from_length (x : length) : u32 ensures result = x.raw#length = x.raw#length
+let length#make (x : u32) : length ensures length#raw result = x = { raw#length = x }
+let length#raw (x : length) : u32 ensures result = x.raw#length = x.raw#length
 ```
 
-- **A one-field record.** Records are already nominal through Sema, IRGen, generics, interfaces and certificates, so a distinct type reuses all of it. The field's name carries a `#`, which no source name can, so the only ways in and out are the two functions; no program can write `l.raw`.
-- **`to_n` and `from_n`.** The names follow the library's `to_chars` and `from_chars`: `to_length` makes a `length`, `from_length` takes one apart. They are ordinary functions, so they can be passed as values, and a module may leave them out of its interface to keep the type's values under its own control (section 6).
+- **A one-field record.** Records are already nominal through Sema, IRGen, generics, interfaces and certificates, so a distinct type reuses all of it. The field's and the functions' names carry a `#`, which no source name can, so no program can write `l.raw`; the only ways in and out are the conversions below.
+- **A type is called to convert (Dean, 2026-11-24).** Types are values, and applying one to a value converts it: `length 5` makes a `length`, IRGen's call of `length#make`, and `u32 l` takes one apart, a call of `length#raw`. Both are explicit, both read the same in code and in contracts, and no new names are made. Applying the underlying type unwraps exactly one layer: for `let width = type length`, `length w` gives the `length` and `u32 (length w)` the number. The result of `u32 l` widens implicitly like any `u32`, so `u64 l` is `u32 l` widened; applying a narrower type, `u8 l`, is the narrowing goal it would be for the `u32`. Applying a type to a value that is neither of the type's underlying type nor of a distinct type over it is an error. A module may leave the conversions out of its interface (section 6), and a type is not a function value yet: `map length xs` is an error that suggests `map (let (x) => length x) xs`.
+- **Names.** Named functions, `to_length` and `from_length` after the library's `to_chars`, were the first proposal. Dean chose calling the type (2026-11-24), which adds no names and reads the same both ways.
 - **`@distinct`** marks the record so that the rest of the compiler can tell a distinct type from a hand-written one-field record: diagnostics print `length (distinct u32)`, derives write the underlying value (section 4), and the metaprogram builtin `underlying t` returns `e` for a distinct type and unit for any other.
 
 `distinct` is ordinary Pia in `src/syntax/Prelude.cpp`, like `derive_eq` and `machine`, and a program can call it itself.
 
 ### 3. Bounds and contracts carry over; conversions are explicit both ways
 
-- **Bounds.** The field has the underlying type, so a `percent` holds 0 to 100 and the prover knows it about every `percent`, for free, as for the range itself. `to_percent x` has the narrowing goal `x` fits `int{0..100}` at its argument, as any call does, and `from_percent p` returns an `int{0..100}`, which widens implicitly to anything larger.
-- **Contracts.** `from_length` is a pure function of scalars, so in a contract it means its body ([tests/verify/pure_calls.pia](../../tests/verify/pure_calls.pia)), and `requires from_length w * from_length h <= max u32` reads and proves as the scalar version did.
-- **No implicit conversion, in either direction.** `let l : length = 5` is an error that suggests `to_length 5`, a `u32` where a `length` is expected is an error that suggests `to_length`, and a `length` where a `u32` is expected suggests `from_length`. Two distinct types over one type never convert into each other except through both functions.
-- **`min` and `max`.** `max length` is an error that suggests `to_length (max u32)`: the bounds are values of the underlying type, and folding them to a bare literal would be the implicit conversion this ADR rules out. `@derive(bounds)` (section 4) gives `min_length` and `max_length` as values of `length`.
+- **Bounds.** The field has the underlying type, so a `percent` holds 0 to 100 and the prover knows it about every `percent`, for free, as for the range itself. `percent x` has the narrowing goal `x` fits `int{0..100}` at its argument, as any call does, and `int{0..100} p` (or `u8 p`, widened) returns an `int{0..100}`, which widens implicitly to anything larger.
+- **Contracts.** `length#raw` is a pure function of scalars, so in a contract `u32 l` means its body ([tests/verify/pure_calls.pia](../../tests/verify/pure_calls.pia)), and `requires u32 w * u32 h <= max u32` reads and proves as the scalar version did.
+- **No implicit conversion, in either direction.** `let l : length = 5` is an error that suggests `length 5`, a `u32` where a `length` is expected is an error that suggests `length x`, and a `length` where a `u32` is expected suggests `u32 l`. Two distinct types over one type never convert into each other except through the underlying type, `width (u32 l)`.
+- **`min` and `max`.** `max length` is an error that suggests `length (max u32)`: the bounds are values of the underlying type, and folding them to a bare literal would be the implicit conversion this ADR rules out. `@derive(bounds)` (section 4) gives `min_length` and `max_length` as values of `length`.
 
 ### 4. Nothing is inherited; operators come from derives
 
@@ -69,21 +70,21 @@ A distinct type starts with no operators, no equality in code, and meets no conc
 let length = type u32 @derive(eq, ord, add, scale)
 ```
 
-A derive's postconditions are written in terms of `from_n`, so callers prove facts about `a + b` the way they would about the underlying numbers. Concepts follow from the functions: a concept whose signature `ord` meets is met by any distinct type that derives it, and an adapter ([ADR 0009](0009-generics-concepts-adapters.md)) covers anything else. A program can write any operator itself, such as `let mul (a : length) (b : length) : area`, which is how units are built ([theories.md](../theories.md), "Units").
+A derive's postconditions are written in terms of the underlying values, `u32 a`, so callers prove facts about `a + b` the way they would about the underlying numbers. Concepts follow from the functions: a concept whose signature `ord` meets is met by any distinct type that derives it, and an adapter ([ADR 0009](0009-generics-concepts-adapters.md)) covers anything else. A program can write any operator itself, such as `let mul (a : length) (b : length) : area`, which is how units are built ([theories.md](../theories.md), "Units").
 
 `@derive(add)` on a distinct type over a type with no `add`, such as a record, is an error at the derive, which names the missing function.
 
 ### 5. Types as values, generics, error sets
 
 - **Types as values.** `length` is a type value like any record: `option length`, `[length; 8]`, `vec length` and a generic's `(t : type)` all take it. A generic over `(t : type where Ord t)` accepts `length` when it derives `ord`.
-- **Over records and variants.** `let celsius = type reading` is a distinct type over the record `reading`. It does not copy `reading`'s fields or constructors (constructors are one namespace, and copies would clash); it wraps one `reading`, reached through `from_celsius`.
+- **Over records and variants.** `let celsius = type reading` is a distinct type over the record `reading`. It does not copy `reading`'s fields or constructors (constructors are one namespace, and copies would clash); it wraps one `reading`, reached as `reading c`.
 - **Error sets.** An error set's members are variants ([ADR 0028](0028-error-propagation-and-cleanup.md)), so a distinct type is not one, even over a variant. A handler matches the variant itself. Making a distinct type over a variant usable as an error set member is left until someone needs it.
-- **Distinct of distinct.** `let width = type length` wraps a `length`; `to_width` takes a `length`, not a `u32`.
+- **Distinct of distinct.** `let width = type length` wraps a `length`: `width l` takes a `length`, not a `u32`.
 
 ### 6. Interfaces, certificates and abstract types
 
 - **Interfaces.** An interface shows a distinct type as it is defined, `let length = type u32`, and exports the functions it chooses. The `.piai` carries the `@distinct` record, so importers agree on its layout, and the interface hash covers the type's name and its underlying type: changing `u32` to `u64` changes the hash and the importers' witnesses ([ADR 0024](0024-published-proof-certificates.md)).
-- **Abstract types.** An interface that lists `let length : type` and exports `to_length` but not `from_length`, or a checked constructor in its place, keeps the type's values under the module's control. This is what makes a distinct type with an invariant possible (a `sorted` slice, a `nonzero` divisor). Abstract types are not importable yet ([ADR 0039](0039-module-and-interface-syntax.md)); this ADR does not change that, and invariant-carrying distinct types are a later ADR.
+- **Abstract types.** An interface that lists `let length : type` and exports one conversion but not the other, or a checked constructor in place of `length x`, keeps the type's values under the module's control. This is what makes a distinct type with an invariant possible (a `sorted` slice, a `nonzero` divisor). Abstract types are not importable yet ([ADR 0039](0039-module-and-interface-syntax.md)); this ADR does not change that, and invariant-carrying distinct types are a later ADR.
 
 ### 7. Zero cost
 
@@ -97,14 +98,14 @@ A derive's postconditions are written in terms of `from_n`, so callers prove fac
 - **A core nominal type in Sema and the dialect** (`!pia.distinct<"length", ui32>`). Every pass that compares types would learn a new case, and the verifier and codegen would need to strip it, for the same result the record gives already.
 - **One-constructor variants** (`type | Length of u32`). Nominal today, but a variant carries a tag, matching is the only way out, and a derive would have to treat one-constructor variants specially.
 - **Inheriting everything the underlying type has.** Rejected: it re-admits `length * length : length`, which is the class of bug the feature exists to stop. Haskell's `GeneralizedNewtypeDeriving` and Rust's newtype pattern both make derivation explicit for this reason.
-- **Implicit conversion from literals.** `let l : length = 5` would be pleasant, but it is a conversion the reader cannot see, and it makes `to_length` optional in exactly the places (constants, defaults) where units are most often wrong.
+- **Implicit conversion from literals.** `let l : length = 5` would be pleasant, but it is a conversion the reader cannot see, and it makes `length x` optional in exactly the places (constants, defaults) where units are most often wrong.
 
 ## Consequences
 
 Implementation, one PR each:
 
 1. **Aliases spelled `let byte = u8`.** Sema accepts a `let` whose right side is a type expression as an alias, `type <scalar>` keeps meaning an alias for now, and every existing `type`-spelled alias in the repository moves to the new spelling. Tests: `tests/verify/type_aliases.pia`, `tests/irgen/alias_errors.pia`.
-2. **`type e` is distinct.** The prelude's `distinct`, the `@distinct` attribute, the `underlying` builtin, the diagnostics that suggest `to_n` and `from_n`, and one-scalar-field records returned as the scalar in the C ABI. Tests: `tests/verify/distinct_types.pia`, `tests/irgen/distinct_errors.pia`, `tests/codegen/distinct_abi.pia`, `tests/meta/distinct.pia`.
+2. **`type e` is distinct.** The prelude's `distinct`, the `@distinct` attribute, the `underlying` builtin, calls of a type as conversions, the diagnostics that suggest them, and one-scalar-field records returned as the scalar in the C ABI. Tests: `tests/verify/distinct_types.pia`, `tests/irgen/distinct_errors.pia`, `tests/codegen/distinct_abi.pia`, `tests/meta/distinct.pia`.
 3. **Derives.** `ord`, `add`, `scale` and `bounds` in the prelude, and `eq` checked on distinct types. Tests: `tests/verify/distinct_derives.pia`.
 4. **`json` and `hash`.** `derive_json` and `Pia.Core.Hash` write and hash the underlying value. Tests in `tests/std`.
 
@@ -112,5 +113,4 @@ Docs: the tour's Records section and `docs/irgen.md` (types), `docs/meta.md` (`d
 
 Open questions:
 
-1. The conversion names. `to_length`/`from_length` match the library; the alternative is to make a type callable, `length 5`, with an overloaded `raw l` out. That reads well but makes a type a function, which nothing else does.
-2. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Proposed: yes, as one family.
+1. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Proposed: yes, as one family.
