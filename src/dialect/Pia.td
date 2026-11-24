@@ -209,6 +209,19 @@ def Pia_RecordType : Pia_Type<"Record", "record"> {
   }];
 }
 
+def Pia_RecType : Pia_Type<"Rec", "rec"> {
+  let summary = "a value of a recursive type, named by its datatype";
+  let description = [{
+    `!pia.rec<"tree">` is a value of `let rec tree = type | Leaf | Node of
+    ...` (ADR 0047). It is a leaf: its constructors and their payloads are
+    in the module's `pia.datatype @tree`, so a payload may hold the type
+    itself, inside a box or vec, without the type containing itself.
+    Records stay structural; only recursive variants are named like this.
+  }];
+  let parameters = (ins StringRefParameter<"the datatype's name">:$name);
+  let assemblyFormat = "`<` $name `>`";
+}
+
 def Pia_DynType : Pia_Type<"Dyn", "dyn"> {
   let summary = "a tagged value whose tag is one of the listed types";
   let description = [{
@@ -238,6 +251,8 @@ def Pia_Buffer : Type<CPred<"::llvm::isa<::pia::ArrayType, ::pia::SliceType>($_s
                       "Pia array or slice">;
 def Pia_Record : Type<CPred<"::llvm::isa<::pia::RecordType>($_self)">,
                        "Pia record", "::pia::RecordType">;
+def Pia_Rec : Type<CPred<"::llvm::isa<::pia::RecType>($_self)">,
+                    "Pia recursive value", "::pia::RecType">;
 def Pia_Exact : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::RealType>($_self)">,
                      "Pia spec-only int or real">;
 def Pia_Comparable : Type<CPred<"::llvm::isa<::pia::UnboundedIntType, ::pia::RealType, ::pia::SortType>($_self)">,
@@ -671,6 +686,71 @@ def Pia_RecordOp : Pia_Op<"record", [Pure]> {
   let results = (outs Pia_Record:$result);
   let assemblyFormat = [{
     `(` ($fields^ `:` type($fields))? `)` attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_DatatypeOp : Pia_Op<"datatype"> {
+  let summary = "the constructors of a recursive type";
+  let description = [{
+    `pia.datatype @tree ctors ["Leaf", "Node"] payloads [none, !pia.record<...>]`
+    declares the constructors of `!pia.rec<"tree">`, in tag order, and each
+    one's payload type (`none` for a constructor without one). Payloads
+    keep their record types after ScalarizeRecords, which flattens only
+    the values: the verifier and codegen read the datatype from here.
+  }];
+  let arguments = (ins SymbolNameAttr:$sym_name, StrArrayAttr:$ctors,
+                       TypeArrayAttr:$payloads);
+  let assemblyFormat = [{
+    $sym_name `ctors` $ctors `payloads` $payloads attr-dict
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    /// The tag of the constructor called `name`, if there is one.
+    std::optional<unsigned> tagOf(::llvm::StringRef name);
+    /// The payload type of a constructor, null for none.
+    ::mlir::Type payloadOf(unsigned tag);
+  }];
+}
+
+def Pia_RecMakeOp : Pia_Op<"rec_make", [Pure]> {
+  let summary = "build a value of a recursive type with one constructor";
+  let description = [{
+    `%t = pia.rec_make "Node"(%p : !pia.record<"tree_Node", ...>) : !pia.rec<"tree">`.
+    A constructor without a payload takes no operands. After
+    ScalarizeRecords a record payload is passed as its fields, in order.
+  }];
+  let arguments = (ins StrAttr:$ctor, Variadic<AnyType>:$payload);
+  let results = (outs Pia_Rec:$result);
+  let assemblyFormat = [{
+    $ctor (`(` $payload^ `:` type($payload) `)`)? attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Pia_RecTagOp : Pia_Op<"rec_tag", [Pure]> {
+  let summary = "the constructor a recursive value was built with";
+  let description = [{
+    `%k = pia.rec_tag %t : !pia.rec<"tree"> -> !pia.int<0, 1>`: the
+    constructor's position in its datatype.
+  }];
+  let arguments = (ins Pia_Rec:$input);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def Pia_RecPayloadOp : Pia_Op<"rec_payload", [NoMemoryEffect]> {
+  let summary = "the payload of a recursive value built with `ctor`";
+  let description = [{
+    `%p = pia.rec_payload %t, "Node" : !pia.rec<"tree"> -> (!pia.record<...>)`.
+    Only `match` makes it, under a test of the tag, so the value was built
+    with `ctor`. After ScalarizeRecords a record payload is its fields.
+  }];
+  let arguments = (ins Pia_Rec:$input, StrAttr:$ctor);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $input `,` $ctor attr-dict `:` type($input) `->` `(` type($results) `)`
   }];
   let hasVerifier = 1;
 }

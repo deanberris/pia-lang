@@ -357,11 +357,30 @@ class Gen {
         notes.push_back(b_.getStringAttr(n.where + "\t" + n.generic + "\t" + n.why));
       (*module)->setAttr("pia.not_parametric", b_.getArrayAttr(notes));
     }
+    declareDatatypes();
     if (mlir::failed(mlir::verify(*module))) return nullptr;
     return module;
   }
 
  private:
+  // A pia.datatype for each recursive variant made (ADR 0047), first in
+  // the module: its constructors in tag order and their payload types.
+  void declareDatatypes() {
+    OpBuilder::InsertionGuard guard(b_);
+    b_.setInsertionPointToStart(module_.getBody());
+    for (Type t : types_.datatypes()) {
+      auto rec = mlir::cast<RecType>(t);
+      llvm::SmallVector<mlir::Attribute> names, payloads;
+      for (const sema::Ctor *c : types_.ctorsOf(rec)) {
+        names.push_back(b_.getStringAttr(c->name));
+        payloads.push_back(
+            mlir::TypeAttr::get(c->payload ? c->payload : b_.getNoneType()));
+      }
+      create<DatatypeOp>(module_.getLoc(), b_.getStringAttr(rec.getName()),
+                         b_.getArrayAttr(names), b_.getArrayAttr(payloads));
+    }
+  }
+
   // --- helpers --------------------------------------------------------
 
   // `OpTy::create(builder, ...)` replaced `builder.create<OpTy>(...)` in
@@ -2418,6 +2437,14 @@ class Gen {
   // fixed value in every other payload field, which nothing reads.
   R genCtor(const Node &n, const sema::Ctor &c, std::optional<TV> payload) {
     Location l = loc(n);
+    // A recursive variant (ADR 0047) is built by its constructor's name.
+    if (auto rec = mlir::dyn_cast<RecType>(c.variant)) {
+      llvm::SmallVector<Value> operands;
+      if (payload && c.payload) operands.push_back(payload->value);
+      return TV{create<RecMakeOp>(l, rec, b_.getStringAttr(c.name), operands)
+                    .getResult(),
+                rec};
+    }
     auto rt = mlir::cast<RecordType>(c.variant);
     llvm::SmallVector<Value> fields;
     for (auto [name, ft] : llvm::zip(rt.getFieldNames(), rt.getFieldTypes())) {
@@ -2820,8 +2847,24 @@ class Gen {
     BindingPtr b = lookup(n.kids[1]->text);
     const sema::Ctor *c = b ? types_.ctorIn(n.kids[2]->text, b->type) : nullptr;
     if (!b || !c) return fail(n, "internal error in 'match'");
-    auto rt = mlir::cast<RecordType>(b->type);
     Location l = loc(n);
+    if (auto rec = mlir::dyn_cast<RecType>(b->type)) {
+      if (n.kids[0]->text == "#is") {
+        size_t count = types_.ctorsOf(rec).size();
+        Type tt = IntType::get(&ctx_, llvm::APInt(kWidth, 0),
+                               llvm::APInt(kWidth, count - 1));
+        Value tag = create<RecTagOp>(l, tt, b->value);
+        Value k = create<ConstantOp>(
+            l, tt,
+            b_.getIntegerAttr(b_.getIntegerType(kWidth),
+                              llvm::APInt(kWidth, c->tag)));
+        return TV{cmp(l, CmpPredicate::eq, tag, k), boolType()};
+      }
+      auto p = create<RecPayloadOp>(l, mlir::TypeRange{c->payload}, b->value,
+                                    b_.getStringAttr(c->name));
+      return TV{p->getResult(0), c->payload};
+    }
+    auto rt = mlir::cast<RecordType>(b->type);
     if (n.kids[0]->text == "#is") {
       Type tt = rt.getFieldTypes()[*rt.fieldIndex("tag")];
       Value tag = create<FieldOp>(l, tt, b->value, b_.getStringAttr("tag"));

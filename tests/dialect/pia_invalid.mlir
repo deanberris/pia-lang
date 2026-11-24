@@ -89,3 +89,49 @@ func.func @atomic_wrong_value(%c: !pia.atomic<!pia.int<0, 255>>, %v: i1) {
   pia.atomic.store relaxed %v, %c : i1, !pia.atomic<!pia.int<0, 255>>
   return
 }
+
+// -----
+
+// Recursive types (ADR 0047).
+// expected-error @+1 {{'pia.datatype' op has two constructors named "A"}}
+pia.datatype @twice ctors ["A", "A"] payloads [none, none]
+
+// -----
+
+// expected-error @+1 {{'pia.datatype' op needs one payload type per constructor}}
+pia.datatype @short ctors ["A", "B"] payloads [none]
+
+// -----
+
+func.func @no_datatype() -> !pia.rec<"ghost"> {
+  // expected-error @+1 {{no pia.datatype @ghost}}
+  %t = pia.rec_make "A" : !pia.rec<"ghost">
+  return %t : !pia.rec<"ghost">
+}
+
+// -----
+
+pia.datatype @nat ctors ["Zero", "Succ"] payloads [none, !pia.slice<!pia.rec<"nat">>]
+func.func @wrong_ctor() -> !pia.rec<"nat"> {
+  // expected-error @+1 {{'Two' is not a constructor of @nat}}
+  %t = pia.rec_make "Two" : !pia.rec<"nat">
+  return %t : !pia.rec<"nat">
+}
+
+// -----
+
+pia.datatype @nat ctors ["Zero", "Succ"] payloads [none, !pia.slice<!pia.rec<"nat">>]
+func.func @payload_on_none(%s: !pia.slice<!pia.rec<"nat">>) -> !pia.rec<"nat"> {
+  // expected-error @+1 {{'Zero' has no payload}}
+  %t = pia.rec_make "Zero"(%s : !pia.slice<!pia.rec<"nat">>) : !pia.rec<"nat">
+  return %t : !pia.rec<"nat">
+}
+
+// -----
+
+pia.datatype @nat ctors ["Zero", "Succ"] payloads [none, !pia.slice<!pia.rec<"nat">>]
+func.func @narrow_tag(%t: !pia.rec<"nat">) -> !pia.int<0, 0> {
+  // expected-error @+1 {{the tag's type must hold 0 to 1}}
+  %k = pia.rec_tag %t : !pia.rec<"nat"> -> !pia.int<0, 0>
+  return %k : !pia.int<0, 0>
+}
