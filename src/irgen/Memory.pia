@@ -24,6 +24,7 @@ let theory Memory = sig
   let spec releases : (e : event) -> bool   \ release, acq_rel or seq_cst
   let spec acquires : (e : event) -> bool   \ acquire, acq_rel or seq_cst
   let spec is_sc : (e : event) -> bool      \ seq_cst
+  let spec ordered : (e : event) -> bool    \ a relaxed load written @ordered
   let spec same_loc : (a : event) -> (b : event) -> bool
 
   let spec po : (a : event) -> (b : event) -> bool
@@ -41,7 +42,7 @@ let theory Memory = sig
   let spec scb : (a : event) -> (b : event) -> bool
   let spec lsc : (a : event) -> (y : event) -> bool  \ psc's left half and scb
   let spec psc : (a : event) -> (b : event) -> bool
-  let spec air : (e : event) -> int      \ a rank: po ∪ rf is acyclic
+  let spec air : (e : event) -> int      \ a rank: ord ∪ rf is acyclic
   let spec sc_rank : (e : event) -> int  \ a rank: psc is acyclic
 
   (* From-reads, and the extended coherence order. *)
@@ -112,8 +113,14 @@ let theory Memory = sig
     ensures psc a b
   let axiom psc_acyclic (a : event) (b : event) requires psc a b ensures sc_rank a < sc_rank b
 
-  (* No thin air: po ∪ rf is acyclic. *)
-  let axiom air_po (a : event) (b : event) requires po a b ensures air a < air b
+  (* No thin air, where the program asks for it (Dean, 2026-11-24): ord ∪ rf
+     is acyclic, where ord is program order from a load that acquires or is
+     written @ordered. RC11 makes all of po ∪ rf acyclic, which plain ldr
+     and str on Armv8 do not give, so a relaxed load that is not @ordered
+     does not order what follows it (ADR 0052, notes from step 3). *)
+  let axiom air_ord (a : event) (b : event)
+    requires po a b && is_read a && (acquires a || ordered a)
+    ensures air a < air b
   let axiom air_rf (a : event) (b : event) requires rf a b ensures air a < air b
 end
 
@@ -131,6 +138,7 @@ let model timeline : Memory = struct
   let spec releases (e : stamp) : bool = e.ord = 3 || e.ord = 4 || e.ord = 5
   let spec acquires (e : stamp) : bool = e.ord = 2 || e.ord = 4 || e.ord = 5
   let spec is_sc (e : stamp) : bool = e.ord = 5
+  let spec ordered (e : stamp) : bool = e.ord = 1
   let spec same_loc (a : stamp) (b : stamp) : bool = a.loc = b.loc && a.kind < 2 && b.kind < 2
   let spec po (a : stamp) (b : stamp) : bool = a.thread = b.thread && a.time < b.time
   let spec rf (w : stamp) (r : stamp) : bool =

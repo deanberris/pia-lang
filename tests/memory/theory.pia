@@ -6,7 +6,7 @@
 // RUN: piac --verify --trust-report %S/../../src/irgen/Memory.pia | FileCheck %s --check-prefix=MODEL
 // RUN: not piac --verify %s | FileCheck %s
 // MODEL: 0 trusted items
-// MODEL: 61 proved, 0 failed, 0 skipped
+// MODEL: 60 proved, 0 failed, 0 skipped
 *)
 
 (* Message passing, from the axioms: a release store read by an acquire

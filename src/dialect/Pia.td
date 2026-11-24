@@ -791,10 +791,17 @@ def Pia_AtomicLoadOp : Pia_AtomicOp<"load"> {
   let description = [{
     `atomic_load o c`. To the verifier, the result is a fresh value of the
     element type, with the type's range assumed (ADR 0052, section 3).
+    `ordered` is `@ordered (atomic_load relaxed c)`: the load is ordered
+    before every later access of its thread, which is what rules out values
+    out of thin air (ADR 0052, notes from step 3).
   }];
-  let arguments = (ins Pia_MemoryOrder:$order, Pia_Atomic:$cell);
+  let arguments = (ins Pia_MemoryOrder:$order, Pia_Atomic:$cell,
+                       UnitAttr:$ordered);
   let results = (outs AnyType:$result);
-  let assemblyFormat = "$order $cell attr-dict `:` qualified(type($cell)) `->` type($result)";
+  let assemblyFormat = [{
+    $order (`ordered` $ordered^)? $cell attr-dict `:` qualified(type($cell))
+    `->` type($result)
+  }];
   let hasVerifier = 1;
 }
 

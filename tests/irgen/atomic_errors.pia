@@ -57,6 +57,9 @@ let in_contract (c : borrowed atomic u32) : u32
   ensures result <= atomic_load relaxed c
 = 0
 
+(* @ordered is a property of one load. *)
+let ordered_store (c : borrowed atomic u32) : unit = @ordered (atomic_store relaxed c 1)
+
 (*
 // CHECK: atomic_errors.pia:10:64: error: 'atomic_load' takes the order relaxed, acquire or seq_cst, not release (ADR 0052, section 2)
 // CHECK: atomic_errors.pia:13:16: error: 'atomic_store' takes the order relaxed, release or seq_cst, not acquire (ADR 0052, section 2)
@@ -73,4 +76,5 @@ let in_contract (c : borrowed atomic u32) : u32
 // CHECK: atomic_errors.pia:52:57: error: 'atomic_add' needs a cell of an integer type, found atomic bool
 // CHECK: atomic_errors.pia:54:54: error: 'atomic_load' needs an atomic cell, found u32
 // CHECK: atomic_errors.pia:57:21: error: 'atomic_load' is not allowed in a contract or ghost code: what another task may write is not a value a specification can name (ADR 0052, section 3)
+// CHECK: atomic_errors.pia:61:54: error: '@ordered' applies to an atomic load, as in '@ordered (atomic_load relaxed c)'
 *)

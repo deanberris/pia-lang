@@ -54,6 +54,9 @@
 #include "llvm/ADT/APInt.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InlineAsm.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -954,6 +957,9 @@ mlir::LLVM::AtomicOrdering readHalf(MemoryOrder o) {
   }
 }
 
+// The placeholder for `@ordered`'s fake dependency (AtomicLoadLowering).
+constexpr llvm::StringLiteral kOrderedAsm = "pia.ordered";
+
 // A cell's address and how its values are held there. A bool is a byte,
 // since LLVM's atomics take whole bytes.
 struct CellAccess {
@@ -1037,8 +1043,27 @@ struct AtomicLoadLowering : mlir::OpConversionPattern<AtomicLoadOp> {
         /*isNonTemporal=*/false, /*isInvariant=*/false,
         /*isInvariantGroup=*/false, /*isNoundef=*/false,
         llvmOrder(op.getOrder()));
+    if (op.getOrdered())
+      orderAfter(rw, loc, v);
     rw.replaceOp(op, c.fromStorage(rw, loc, v));
     return mlir::success();
+  }
+
+  // `@ordered`: a fake control dependency on the value just loaded, which
+  // orders the load before every later store of its thread on arm64, as
+  // the RC11 paper's ARM mapping does. LLVM would delete a branch to the
+  // next instruction, so it is inline assembly, with a placeholder that
+  // translate() replaces by the target's instructions; its memory clobber
+  // also keeps LLVM from moving later accesses above it.
+  static void orderAfter(OpBuilder &b, Location loc, Value v) {
+    Value wide = v;
+    if (v.getType().getIntOrFloatBitWidth() < 64)
+      wide = make<mlir::arith::ExtUIOp>(b, loc, b.getI64Type(), v);
+    make<mlir::LLVM::InlineAsmOp>(
+        b, loc, mlir::TypeRange{}, mlir::ValueRange{wide}, kOrderedAsm,
+        "r,~{memory}", /*has_side_effects=*/true, /*is_align_stack=*/false,
+        mlir::LLVM::tailcallkind::TailCallKind::None, /*convergent=*/false,
+        mlir::LLVM::AsmDialectAttr(), mlir::ArrayAttr());
   }
 };
 
@@ -2023,6 +2048,8 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
     llvm::InitializeAllTargets();
     llvm::InitializeAllTargetMCs();
     llvm::InitializeAllAsmPrinters();
+    // `@ordered` is inline assembly, which the integrated assembler parses.
+    llvm::InitializeAllAsmParsers();
     return true;
   }();
   (void)initialised;
@@ -2122,6 +2149,32 @@ void addWitnesses(llvm::Module &m, const Options &options) {
 
 } // namespace
 
+namespace {
+
+// `@ordered`'s placeholder as the target's instructions: on arm64 a
+// branch on the loaded value to the next instruction, a control
+// dependency that orders the load before later stores; on x86_64 nothing,
+// since TSO keeps a load before every later access, and the memory clobber
+// stops the compiler from reordering.
+void lowerOrdered(llvm::Module &m) {
+  llvm::Triple triple(m.getTargetTriple());
+  bool arm = triple.isAArch64();
+  for (llvm::Function &f : m)
+    for (llvm::Instruction &i : llvm::instructions(f)) {
+      auto *call = llvm::dyn_cast<llvm::CallInst>(&i);
+      auto *asmv =
+          call ? llvm::dyn_cast<llvm::InlineAsm>(call->getCalledOperand())
+               : nullptr;
+      if (!asmv || asmv->getAsmString() != kOrderedAsm)
+        continue;
+      call->setCalledOperand(llvm::InlineAsm::get(
+          asmv->getFunctionType(), arm ? "cbz $0, 1f\n1:" : "",
+          asmv->getConstraintString(), /*hasSideEffects=*/true));
+    }
+}
+
+} // namespace
+
 std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
                                         llvm::LLVMContext &llvmCtx,
                                         const Options &options,
@@ -2135,6 +2188,7 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
   }
   m->setTargetTriple(tm->getTargetTriple());
   m->setDataLayout(tm->createDataLayout());
+  lowerOrdered(*m);
   auto optimise =
       mlir::makeOptimizingTransformer(options.optLevel, 0, tm.get());
   if (llvm::Error e = optimise(m.get())) {

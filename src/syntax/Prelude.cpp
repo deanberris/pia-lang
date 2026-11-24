@@ -914,6 +914,12 @@ let meta store (o : string) (loc : string) (v : int) : expr =
 let meta load (o : string) (loc : string) (reg : string) : expr =
   let o' = check_order "load" o ["relaxed"; "acquire"; "seq_cst"] in
   let (k) => k "R" o' loc 0 reg ""
+let meta load_ordered (o : string) (loc : string) (reg : string) : expr =
+  let o' = check_order "load" o ["relaxed"; "acquire"; "seq_cst"] in
+  let (k) => k "R" o' loc 0 reg "ordered"
+let meta store_from (o : string) (loc : string) (reg : string) : expr =
+  let o' = check_order "store" o ["relaxed"; "release"; "seq_cst"] in
+  let (k) => k "W" o' loc 0 reg "from"
 let meta swap (o : string) (loc : string) (v : int) (reg : string) : expr =
   let o' = check_order "swap" o ["relaxed"; "acquire"; "release"; "acq_rel"; "seq_cst"] in
   let (k) => k "U" o' loc v reg "swap"
@@ -961,7 +967,7 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
       if okind a = "U" then
         concat acc [ ev i tid "R" (oord a) (oloc a) 0 (oreg a) "" (0 - 1)
                    ; ev (i + 1) tid "W" (oord a) (oloc a) (oval a) "" (oop a) i ]
-      else concat acc [ev i tid (okind a) (oord a) (oloc a) (oval a) (oreg a) "" (0 - 1)])
+      else concat acc [ev i tid (okind a) (oord a) (oloc a) (oval a) (oreg a) (oop a) (0 - 1)])
       st t in
   let evs = fold add_thread inits threads in
   let n = length evs in
@@ -1001,9 +1007,15 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
         (concat (map (let (w) => `( $(rf w r) ==> $!v.[$(ix r)] = $!v.[$(ix w)] )) ws)
                 (each (let (w1) (w2) => if cand w1 r && cand w2 r && ix w1 < ix w2 then [ `( ($(rf w1 r) && $(rf w2 r)) = false ) ] else []))))) in
   (* The values writes store. *)
+  (* The read a `store_from` stores the value of: the last read of its
+     register before it in its thread, a data dependency. *)
+  let src = let (w) => fold (let (acc) (e) => if isr e && reg e = reg w && th e = th w && ix e < ix w then ix e else acc) (0 - 1) evs in
   let c_val = each_ev (let (w) =>
     if isw w = false then [] else
     if rop w = "add" then [ `( $!v.[$(ix w)] = $!v.[$(partner w)] + $(cv w) ) ]
+    else if rop w = "from" then
+      (if src w < 0 then fail (concat "a litmus store_from reads no earlier register " (reg w))
+       else [ `( $!v.[$(ix w)] = $!v.[$(src w)] ) ])
     else [ `( $!v.[$(ix w)] = $(cv w) ) ]) in
   (* The modification order: a rank per write, distinct per location, the
      initial write first. *)
@@ -1052,9 +1064,12 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
   let c_atom = each (let (r) (w) =>
     if rmw r w = false then [] else
     fold (let (acc) (x) => if isw x && sloc x w && same x w = false then concat acc [ `( ($(fr r x) && $(mo x w)) = false ) ] else acc) [] evs) in
-  (* No thin air: po ∪ rf is acyclic, by a rank. *)
+  (* No thin air where the program asks for it: ord ∪ rf is acyclic, by a
+     rank, where ord is program order from a load that acquires or is
+     `load_ordered` (Memory.pia, air_ord). *)
+  let ordered = let (e) => isr e && (acq e || rop e = "ordered") in
   let c_air = concat
-    (each (let (a) (b) => if po a b then [ `( $!air.[$(ix a)] < $!air.[$(ix b)] ) ] else []))
+    (each (let (a) (b) => if po a b && ordered a then [ `( $!air.[$(ix a)] < $!air.[$(ix b)] ) ] else []))
     (each (let (w) (r) => if cand w r then [ `( $(rf w r) ==> $!air.[$(ix w)] < $!air.[$(ix r)] ) ] else [])) in
   (* SC: psc is acyclic, by a rank. *)
   let scb = let (a) (b) => `( $!scb.[$(p a b)] ) in
@@ -1162,7 +1177,13 @@ let meta litmus (name : string) (threads : list) (verdict : string) (conds : lis
   let arm_aob = concat
     (each (let (r) (w) => if rmw r w then [ g r w ] else []))
     (each (let (w) (r) => if isw w && partner w >= 0 && cand w r && th w = th r && (arm_a r || arm_q r) then [ `( $(rf w r) ==> $(g w r) ) ] else [])) in
-  let arm = fold concat [] [c_uni; c_hwatom; obs false; arm_bob; arm_aob] in
+  (* Dependency-ordered-before: a `store_from` depends on the read whose
+     value it stores, and `@ordered` puts a control dependency between its
+     load and every later store. *)
+  let arm_dob = concat
+    (each_ev (let (w) => if isw w && rop w = "from" && src w >= 0 then [ `( $!g.[$(src w)] < $!g.[$(ix w)] ) ] else []))
+    (each (let (r) (w) => if isr r && rop r = "ordered" && po r w && isw w then [ g r w ] else [])) in
+  let arm = fold concat [] [c_uni; c_hwatom; obs false; arm_bob; arm_aob; arm_dob] in
   let hw = let (rules) => conj (concat shared rules) in
   let tso_c = hw tso in
   let arm_c = hw arm in

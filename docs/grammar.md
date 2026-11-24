@@ -276,7 +276,8 @@ range_e = add_e [ ".." add_e ] ;
 add_e   = mul_e { add_op mul_e } ;
 mul_e   = unary { mul_op unary } ;
 unary   = "-" unary | "~" unary | mode unary | application ;
-mode    = "@wrap" | "@trap" | "@saturate" | "@proof" ;   (* one expression's overflow mode *)
+mode    = "@wrap" | "@trap" | "@saturate" | "@proof"    (* one expression's overflow mode *)
+        | "@ordered" ;                                   (* a relaxed load ordered before the rest of its thread *)
 application = postfix { postfix } { "?" } ;   (* f x? is (f x)? *)
 
 postfix = atom
