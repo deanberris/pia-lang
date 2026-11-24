@@ -39,7 +39,7 @@ twice : (a : u8) -> u8  (* 2 proved *)
 - : u8 = 43
 ```
 
-The first `bump` can overflow, so it is refused with the input that breaks it, and nothing is committed. The second adds a precondition and proves. `bump 255` breaks that precondition, so it is refused at compile time and never runs. `twice` is proved against `bump`, so the `:redef` that would tighten `bump` to `a < 10` is refused, with the error pointing at the call in `twice` that it would break. The environment is always a program that proves.
+The first `bump` can overflow, so it is refused with the input that breaks it, and nothing is committed. The second adds a precondition and proves. `bump 255` breaks that precondition, so it is refused at compile time and never runs. `twice` is proved against `bump`, so the `:redef` that would tighten `bump` to `a < 10` is refused, with errors pointing at the calls in `twice` that it would break. The environment is always a program that proves.
 
 [The REPL](repl.md) page has the rest: state with invariants and verified migration, `:load` for files, and live redefinition of code that background tasks are running.
 
