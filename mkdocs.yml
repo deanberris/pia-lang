@@ -171,3 +171,4 @@ nav:
       - adr/0062-cost-bounds-in-contracts.md
       - adr/0063-opaque-spec-functions.md
       - adr/0064-distinct-types.md
+      - adr/0066-int-blasting-for-nonlinear-goals.md
