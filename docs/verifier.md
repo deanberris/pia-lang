@@ -376,6 +376,10 @@ These lines have their own prefixes, so `tools/bench` still reads the single `ve
 
 A counterexample over the axioms shows a value of a sort as Z3 names it (`b = Lip.layer!val!0`). It does not yet show the theory functions' values at it.
 
+## `spread`
+
+A `spread i in lo .. hi do ... done` runs its iterations at the same time ([ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md)). The verifier walks one arbitrary iteration, as for a `for` loop, and adds a goal at every access to a buffer the body writes: the iteration owns the cell. By default iteration `i` owns cell `i`; `@owns(buf, owner)` on the `spread` gives the cells of `buf` with `owner.[c] = i` instead. These goals imply that no two iterations touch the same cell, since an owner is a function, so no goal compares two iterations. The body may not assign a variable declared outside it, and may only index a buffer it writes (tests/verify/spread.pia, tests/irgen/spread_errors.pia).
+
 ## Solver strategies and tactics
 
 Two ways to help a proof the solver cannot find, or finds slowly ([ADR 0036](adr/0036-library-theories.md), step 6). Neither can make a wrong proof.

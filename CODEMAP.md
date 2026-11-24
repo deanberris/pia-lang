@@ -45,6 +45,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | new syntax | `docs/grammar.md`, `grammar/pia.lark` | `src/syntax/Lexer.cpp`, `Parser.cpp`, `Syntax.h`; tests in `tests/parser`, `tests/grammar` |
 | an operator or a core builtin | `src/syntax/Prelude.cpp` (operators, `derive_eq`, `machine`) | `isCoreBuiltin` in `src/sema/Sema.cpp`, the lowering in `IRGen.cpp` (`genBinary`, `genBitBuiltin`) |
 | the memory model, litmus tests (ADR 0052) | `src/irgen/Memory.pia`, `litmus` in `src/syntax/Prelude.cpp` | `tests/memory`; docs/theories.md, "The memory model" |
+| `spread`: parallel loops, ownership goals, the async runtime (ADR 0060) | `genSpread` and `ownedHere` in `src/irgen/IRGen.cpp` | `lowerSpreads` and the async passes in `src/codegen/Codegen.cpp`; tests in `tests/verify/spread.pia`, `tests/irgen/spread_errors.pia`, `tests/codegen/spread.pia` (run by `spread_test`) |
 | atomics: cells, orders, overflow modes (ADR 0052) | `genAtomic` in `src/irgen/IRGen.cpp`, the `pia.atomic.*` ops in `src/dialect/Pia.td` | the `Atomic*Lowering` patterns in `src/codegen/Codegen.cpp`; tests in `tests/verify/atomics.pia`, `tests/irgen/atomic_errors.pia`, `tests/codegen/atomics.pia` |
 | a metaprogram builtin or expansion | `src/meta/Interpreter.cpp`, `Expand.cpp` | `docs/meta.md`; tests in `tests/meta` |
 | type checking, overloads, concepts, deduction | `src/sema/Sema.{h,cpp}` | `IRGen.cpp`: `genCall`, `genGenericCall`, `--explain-overloads` |

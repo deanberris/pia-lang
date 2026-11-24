@@ -1800,6 +1800,8 @@ class Gen {
         return genIf(n, expected);
       case NodeKind::For:
         return genFor(n);
+      case NodeKind::Spread:
+        return genSpread(n);
       case NodeKind::While:
         return genWhile(n);
       case NodeKind::Sequence: {
@@ -8150,6 +8152,10 @@ class Gen {
     }
     auto idx = genIndexValue(*n.kids[1]);
     if (!idx) return std::nullopt;
+    if (spread_ && n.kids[0]->kind == NodeKind::Name)
+      if (BindingPtr b = lookup(n.kids[0]->text))
+        if (!ownedHere(n, b, *idx, false))
+          return std::nullopt;
     Value v = create<LoadOp>(loc(n), elem, buf->value, *idx);
     if (!contract_ && !ghost_ && ownsSlices(elem))
       noteMoveOut(n, buf->value, *idx, v, elem);
@@ -8420,6 +8426,9 @@ class Gen {
       // `r.f.[i] <- v` writes the buffer the field holds, as
       // `let b = r.f in b.[i] <- v` does.
       if (obj.kind == NodeKind::Field) {
+        if (spread_ && !contract_ && !ghost_)
+          return fail(obj, "writing a record's buffer in a spread is not "
+                           "supported yet; name the buffer (ADR 0060)");
         R buf = genExpr(obj, Type());
         if (!buf) return buf;
         Type elem = elementType(buf->type);
@@ -8472,6 +8481,8 @@ class Gen {
                                      "use");
       auto idx = genIndexValue(*place.kids[1]);
       if (!idx) return std::nullopt;
+      if (!ownedHere(place, b, *idx, true))
+        return std::nullopt;
       R v = genExpr(valueNode, elem);
       if (!v) return v;
       R c = coerce(*v, elem, valueNode);
@@ -9451,6 +9462,174 @@ class Gen {
       if (!r) return r;
     }
     setValues(vars, forOp.getResults());
+    return unit();
+  }
+
+  // --- spread (ADR 0060) --------------------------------------------------
+
+  // The innermost `spread` being generated: its loop variable, and for each
+  // buffer the body writes, the owner array that says which of its cells an
+  // iteration owns (none: the identity, iteration i owns cell i).
+  struct SpreadScope {
+    std::string var;
+    Value iv;                          // the loop variable, at its range type
+    std::set<const Binding *> outside; // the bindings in scope before it
+    std::set<std::string> written;     // the buffers the body writes
+    std::map<std::string, BindingPtr> owners;
+  };
+  std::optional<SpreadScope> spread_;
+
+  // The names of buffers the body writes element by element.
+  static void collectWrittenBuffers(const Node &n, std::set<std::string> &out) {
+    if (n.kind == NodeKind::Assign && n.kids[0]->kind == NodeKind::Index &&
+        n.kids[0]->kids[0]->kind == NodeKind::Name)
+      out.insert(n.kids[0]->kids[0]->text);
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        collectWrittenBuffers(*k, out);
+  }
+
+  // A written buffer may only be indexed, or measured with `len`, in a
+  // spread body: anything else could reach a cell the iteration does not
+  // own (ADR 0060, section 1).
+  const Node *strayUse(const Node &n, const Node *parent,
+                       const std::set<std::string> &written) {
+    if (n.kind == NodeKind::Name && written.count(n.text)) {
+      bool indexed = parent && parent->kind == NodeKind::Index &&
+                     parent->kids[0].get() == &n;
+      bool measured = parent && parent->kind == NodeKind::Apply &&
+                      parent->kids.size() == 2 && parent->kids[1].get() == &n &&
+                      parent->kids[0]->kind == NodeKind::Name &&
+                      parent->kids[0]->text == "len";
+      if (!indexed && !measured)
+        return &n;
+    }
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        if (const Node *bad = strayUse(*k, &n, written))
+          return bad;
+    return nullptr;
+  }
+
+  // The goal that iteration `i` owns cell `idx` of `buf`, at an access in a
+  // spread body: `idx = i`, or `owner.[idx] = i` under `@owns(buf, owner)`.
+  bool ownedHere(const Node &at, const BindingPtr &buf, Value idx, bool write) {
+    if (!spread_ || contract_ || ghost_)
+      return true;
+    if (!spread_->outside.count(buf.get()) ||
+        !spread_->written.count(buf->name))
+      return true;
+    Location l = loc(at);
+    Value cell;
+    std::string by;
+    auto owner = spread_->owners.find(buf->name);
+    if (owner != spread_->owners.end()) {
+      Type et = elementType(owner->second->type);
+      cell = create<LoadOp>(l, et, owner->second->value, idx);
+      by = owner->second->name + ".[c] = " + spread_->var;
+    } else {
+      cell = create<FromIndexOp>(l, types_.usize(), idx);
+      by = "c = " + spread_->var;
+    }
+    Value ok = cmp(l, CmpPredicate::eq, cell, spread_->iv);
+    auto a = create<contract::AssertOp>(l, ok);
+    a->setAttr("pia.claim",
+               b_.getStringAttr("the iteration owns the cell it " +
+                                std::string(write ? "writes" : "reads") +
+                                " in '" + buf->name + "' (" + by + ")"));
+    return true;
+  }
+
+  R genSpread(const Node &n) {
+    Location l = loc(n);
+    const Node &pattern = *n.kids[0];
+    const Node &iterable = *n.kids[1];
+    const Node &attrs = *n.kids[2];
+    const Node &annots = *n.kids[3];
+    const Node &body = *n.kids[4];
+    if (spread_)
+      return fail(n, "a spread inside a spread is not supported yet");
+    if (pattern.kind != NodeKind::PVar)
+      return fail(pattern, "a spread binds a single name for now");
+    if (iterable.kind != NodeKind::Range)
+      return fail(iterable,
+                  "a spread runs over a range 'lo..hi' for now (ADR 0060)");
+    if (!annots.kids.empty())
+      return fail(*annots.kids[0],
+                  "loop annotations on a spread are not supported yet");
+    std::vector<BindingPtr> vars = carried({&body});
+    if (!vars.empty())
+      return fail(n, "a spread body cannot assign '" + vars[0]->name +
+                         "', which is declared outside it: iterations run at "
+                         "the same time (ADR 0060)");
+    SpreadScope sc;
+    sc.var = pattern.text;
+    collectWrittenBuffers(body, sc.written);
+    for (const auto &scope : scopes_)
+      for (const auto &[name, b] : scope)
+        sc.outside.insert(b.get());
+    if (const Node *bad = strayUse(body, nullptr, sc.written))
+      return fail(*bad,
+                  "'" + bad->text +
+                      "' is written in this spread, so it "
+                      "can only be indexed here: passing it on could reach "
+                      "a cell another iteration writes (ADR 0060)");
+    for (const syntax::NodePtr &a : attrs.kids) {
+      if (a->text != "owns")
+        return fail(*a, "the attribute @" + a->text +
+                            " is not supported on a spread yet");
+      if (a->kids.size() != 2 || a->kids[0]->kind != NodeKind::Name ||
+          a->kids[1]->kind != NodeKind::Name)
+        return fail(*a, "@owns takes a buffer and an owner array: "
+                        "@owns(buf, owner)");
+      BindingPtr owner = lookup(a->kids[1]->text);
+      if (!owner || !elementType(owner->type) ||
+          !mlir::isa<IntType>(elementType(owner->type)))
+        return fail(*a->kids[1], "an owner must be an array of integers");
+      if (sc.written.count(owner->name))
+        return fail(*a->kids[1], "the owner array '" + owner->name +
+                                     "' must not be written in the spread");
+      sc.owners[a->kids[0]->text] = owner;
+    }
+    auto bounds = genRange(iterable);
+    if (!bounds)
+      return std::nullopt;
+    Type t = bounds->first.type;
+    Value lb = toIndex(l, bounds->first.value);
+    Value ub = toIndex(l, bounds->second.value);
+    Value step = create<mlir::arith::ConstantIndexOp>(l, 1);
+    auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, mlir::ValueRange{});
+    forOp->setAttr("pia.spread", b_.getUnitAttr());
+    Block *block = forOp.getBody();
+    {
+      OpBuilder::InsertionGuard guard(b_);
+      if (!block->empty() &&
+          block->back().hasTrait<mlir::OpTrait::IsTerminator>())
+        block->back().erase();
+      b_.setInsertionPointToEnd(block);
+      pushScope();
+      Value i = create<FromIndexOp>(loc(pattern), t, forOp.getInductionVar());
+      if (!checkFresh(pattern.text, pattern.loc)) {
+        popScope();
+        return std::nullopt;
+      }
+      bind(pattern.text, i, t, false);
+      sc.iv = i;
+      spread_ = std::move(sc);
+      LoopScope inLoop(frames_);
+      Deeper deeper(loopDepth_);
+      R r = genExpr(body, Type());
+      spread_.reset();
+      if (r && !checkLoopMoves())
+        r = std::nullopt;
+      if (r && !mustUse(*r, body))
+        r = std::nullopt;
+      if (r)
+        create<mlir::scf::YieldOp>(l);
+      popScope();
+      if (!r)
+        return r;
+    }
     return unit();
   }
 

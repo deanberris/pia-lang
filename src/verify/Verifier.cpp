@@ -1191,6 +1191,9 @@ class Encoder {
     if (auto a = mlir::dyn_cast<contract::AssertOp>(op)) {
       // A contract lemma's assertion says whose precondition it checks.
       auto claim = fn_->getAttrOfType<mlir::StringAttr>("pia.assert_claim");
+      // A spread's ownership goal names its own claim (ADR 0060).
+      if (auto own = a->getAttrOfType<mlir::StringAttr>("pia.claim"))
+        claim = own;
       goal(ObligationKind::assert_, op,
            claim ? claim.getValue().str() : "the assertion holds",
            term(a.getPredicate()), false);
