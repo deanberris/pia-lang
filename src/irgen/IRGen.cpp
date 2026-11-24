@@ -444,9 +444,11 @@ class Gen {
       return specInElement(a.getElementType());
     if (auto sl = mlir::dyn_cast<SliceType>(t))
       return specInElement(sl.getElementType());
+    // A spec field is spec state of its own (ADR 0058).
     if (auto r = mlir::dyn_cast<RecordType>(t))
-      for (Type f : r.getFieldTypes())
-        if (Type x = specInBuffer(f)) return x;
+      for (auto [i, f] : llvm::enumerate(r.getFieldTypes()))
+        if (!r.isSpecField(i))
+          if (Type x = specInBuffer(f)) return x;
     return {};
   }
   std::string specInBufferMessage(Type t) {
@@ -8520,6 +8522,24 @@ class Gen {
       if (!init)
         return fail(n, "the field '" + name.str() + "' of " + typeName(rt) +
                            " is missing");
+      // A spec field's value is specification (ADR 0058). An array one
+      // has storage of its own, which codegen erases.
+      if (rt.isSpecField(*rt.fieldIndex(name.getValue())) && !contract_ &&
+          !ghost_) {
+        contract_ = true;
+        R sv = mlir::isa<ArrayType>(ft)
+                   ? genLocalArray(*init->kids[0], mlir::cast<ArrayType>(ft))
+                   : genExpr(*init->kids[0], ft);
+        if (sv && !mlir::isa<ArrayType>(ft))
+          sv = coerce(*sv, ft, *init->kids[0]);
+        contract_ = false;
+        if (!sv) return sv;
+        if (mlir::isa<ArrayType>(ft))
+          sv->value.getDefiningOp()->setAttr(PiaDialect::getSpecStateAttrName(),
+                                             b_.getUnitAttr());
+        fields.push_back(sv->value);
+        continue;
+      }
       R v = genExpr(*init->kids[0], ft);
       if (!v) return v;
       R c = coerce(*v, ft, *init->kids[0]);
@@ -8566,6 +8586,15 @@ class Gen {
     std::optional<unsigned> i = rt.fieldIndex(n.text);
     if (!i) return fail(n, typeName(rt) + " has no field '" + n.text + "'");
     Type ft = rt.getFieldTypes()[*i];
+    // A spec field (ADR 0058) is read only by specification, or for a
+    // spec write into it.
+    if (rt.isSpecField(*i) && !contract_ && !ghost_ && !specPlace_)
+      return fail(n, "'." + n.text + "' is a spec field of " + typeName(rt) +
+                         ", which code may write but not read: only "
+                         "contracts, loop invariants, asserts, lemma calls "
+                         "and spec parameters may read it, so that codegen "
+                         "can erase it (ADR 0058)");
+    if (rt.isSpecField(*i)) specFieldSeen_ = true;
     Value v = create<FieldOp>(loc(n), ft, obj->value, b_.getStringAttr(n.text));
     return TV{v, ft};
   }
@@ -8597,10 +8626,13 @@ class Gen {
     auto idx = genIndexValue(*index.kids[1]);
     if (!idx) return std::nullopt;
     Type ft = rt.getFieldTypes()[*i];
+    // A spec field's new value is specification (ADR 0058).
+    bool specValue = rt.isSpecField(*i) && !contract_ && !ghost_;
+    if (specValue) contract_ = true;
     R v = genExpr(*n.kids[1], ft);
-    if (!v) return v;
-    R c = coerce(*v, ft, *n.kids[1]);
-    if (!c) return c;
+    R c = v ? coerce(*v, ft, *n.kids[1]) : std::nullopt;
+    if (specValue) contract_ = false;
+    if (!c) return std::nullopt;
     Location l = loc(n);
     Value old = create<LoadOp>(l, rt, b->value, *idx);
     llvm::SmallVector<Value> fields;
@@ -8644,10 +8676,16 @@ class Gen {
       if (!i)
         return fail(place, typeName(rt) + " has no field '" + place.text + "'");
       Type ft = rt.getFieldTypes()[*i];
+      // A spec field's new value is specification (ADR 0058).
+      bool specValue = rt.isSpecField(*i) && !contract_ && !ghost_;
+      if (specValue && mlir::isa<ArrayType>(ft))
+        return fail(place, "assigning a whole spec array is not supported "
+                           "yet; write its elements");
+      if (specValue) contract_ = true;
       R v = genExpr(valueNode, ft);
-      if (!v) return v;
-      R c = coerce(*v, ft, valueNode);
-      if (!c) return c;
+      R c = v ? coerce(*v, ft, valueNode) : std::nullopt;
+      if (specValue) contract_ = false;
+      if (!c) return std::nullopt;
       Location l = loc(n);
       llvm::SmallVector<Value> fields;
       for (auto [j, name] : llvm::enumerate(rt.getFieldNames()))
@@ -8699,7 +8737,13 @@ class Gen {
         if (spread_ && !contract_ && !ghost_)
           return fail(obj, "writing a record's buffer in a spread is not "
                            "supported yet; name the buffer (ADR 0060)");
+        // `r.hist.[i] <- v` into a spec field is a spec write (ADR 0058).
+        bool savedPlace = specPlace_;
+        specPlace_ = true;
+        specFieldSeen_ = false;
         R buf = genExpr(obj, Type());
+        specPlace_ = savedPlace;
+        bool specBuffer = specFieldSeen_ && !contract_ && !ghost_;
         if (!buf) return buf;
         Type elem = elementType(buf->type);
         if (!elem)
@@ -8713,10 +8757,22 @@ class Gen {
         BindingPtr rb = root->kind == NodeKind::Name && root->flags.empty()
                             ? lookup(root->text)
                             : nullptr;
-        if (!writable(obj) && !(rb && writableValue(*rb)))
+        // A spec field of a mutable local record is its own spec state.
+        if (!writable(obj) && !(rb && writableValue(*rb)) &&
+            !(specBuffer && rb && rb->isMutable))
           return fail(obj, "cannot write to this buffer: its record must be "
                            "an 'out' or 'inout' parameter or a writable "
                            "borrow");
+        if (specBuffer) {
+          contract_ = true;
+          auto idx = genIndexValue(*place.kids[1]);
+          R v = idx ? genExpr(valueNode, elem) : std::nullopt;
+          R c = v ? coerce(*v, elem, valueNode) : std::nullopt;
+          contract_ = false;
+          if (!c) return std::nullopt;
+          create<StoreOp>(loc(n), c->value, buf->value, *idx);
+          return unit();
+        }
         auto idx = genIndexValue(*place.kids[1]);
         if (!idx) return std::nullopt;
         R v = genExpr(valueNode, elem);
@@ -11012,6 +11068,10 @@ class Gen {
   const Node *variadicNode_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
+  // While a spec write's place is generated, a spec field may be named
+  // (ADR 0058); specFieldSeen_ says one was.
+  bool specPlace_ = false;
+  bool specFieldSeen_ = false;
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)

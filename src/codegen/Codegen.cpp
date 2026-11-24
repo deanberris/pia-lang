@@ -697,6 +697,23 @@ struct ErasedLowering : mlir::OpConversionPattern<ErasedOp> {
       mlir::ConversionPatternRewriter &rw) const override {
     Type t = getTypeConverter()->convertType(op.getType());
     if (!t) return mlir::failure();
+    // Spec state's storage (ADR 0058) that a loop or a record still
+    // carries: nothing reads or writes it, so a view of one byte of the
+    // frame, at the type the carrier needs, stands in for it.
+    if (auto m = mlir::dyn_cast<mlir::MemRefType>(t)) {
+      auto one = mlir::MemRefType::get({1}, m.getElementType());
+      Value cell = make<mlir::memref::AllocaOp>(rw, op.getLoc(), one);
+      llvm::SmallVector<mlir::OpFoldResult> sizes, strides;
+      for (int64_t d : m.getShape()) {
+        sizes.push_back(d == mlir::ShapedType::kDynamic
+                            ? mlir::OpFoldResult(rw.getIndexAttr(0))
+                            : mlir::OpFoldResult(rw.getIndexAttr(d)));
+        strides.push_back(rw.getIndexAttr(1));
+      }
+      rw.replaceOpWithNewOp<mlir::memref::ReinterpretCastOp>(
+          op, m, cell, rw.getIndexAttr(0), sizes, strides);
+      return mlir::success();
+    }
     rw.replaceOpWithNewOp<mlir::arith::ConstantOp>(op, t, rw.getZeroAttr(t));
     return mlir::success();
   }
@@ -1259,13 +1276,29 @@ void eraseSpecState(mlir::ModuleOp module) {
         out.set(i);
     return out;
   };
+  auto specResult = [](mlir::func::FuncOp f, unsigned i) {
+    return f && static_cast<bool>(
+                    f.getResultAttr(i, PiaDialect::getSpecStateAttrName()));
+  };
   llvm::SetVector<mlir::Operation *> doomed;
   llvm::SmallVector<Value> work;
+  llvm::DenseSet<Value> seen;
+  auto push = [&](Value v) {
+    if (seen.insert(v).second)
+      work.push_back(v);
+  };
   module.walk([&](mlir::Operation *op) {
     if (op->hasAttr(PiaDialect::getSpecStateAttrName())) {
       doomed.insert(op);
       for (Value r : op->getResults())
-        work.push_back(r);
+        push(r);
+    }
+    // A spec field's leaf in a callee's result (ADR 0058).
+    if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op)) {
+      auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+      for (unsigned i = 0; i < call.getNumResults(); ++i)
+        if (specResult(f, i))
+          push(call.getResult(i));
     }
   });
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
@@ -1273,18 +1306,84 @@ void eraseSpecState(mlir::ModuleOp module) {
       continue;
     llvm::BitVector spec = specArgs(f);
     for (unsigned i : spec.set_bits())
-      work.push_back(f.getArgument(i));
+      push(f.getArgument(i));
   }
+  // Spec state that a record held moves through structured control flow
+  // once records are scalarized (ADR 0058): what a loop or branch carries
+  // stays spec state, and the operand that carried it becomes pia.erased.
+  llvm::SmallVector<std::pair<mlir::Operation *, unsigned>> erasedOperands;
   while (!work.empty()) {
     Value v = work.pop_back_val();
-    for (mlir::Operation *user : v.getUsers()) {
+    for (mlir::OpOperand &use : v.getUses()) {
+      mlir::Operation *user = use.getOwner();
+      unsigned at = use.getOperandNumber();
       if (mlir::isa<mlir::func::CallOp>(user))
         continue; // dropped below
-      if (!doomed.insert(user))
+      if (doomed.contains(user))
         continue;
+      if (mlir::isa<mlir::func::ReturnOp>(user))
+        continue; // dropped below, with the result
+
+      if (auto yield = mlir::dyn_cast<mlir::scf::YieldOp>(user)) {
+        erasedOperands.push_back({user, at});
+        mlir::Operation *parent = yield->getParentOp();
+        if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(parent)) {
+          push(loop.getResult(at));
+          push(loop.getRegionIterArgs()[at]);
+        } else if (mlir::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(
+                       parent)) {
+          push(parent->getResult(at));
+        } else if (auto loop = mlir::dyn_cast<mlir::scf::WhileOp>(parent)) {
+          push(loop.getBeforeArguments()[at]);
+        }
+        continue;
+      }
+      if (auto cond = mlir::dyn_cast<mlir::scf::ConditionOp>(user)) {
+        erasedOperands.push_back({user, at});
+        if (at > 0) {
+          auto loop = mlir::cast<mlir::scf::WhileOp>(cond->getParentOp());
+          push(loop.getAfterArguments()[at - 1]);
+          push(loop.getResult(at - 1));
+        }
+        continue;
+      }
+      if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(user)) {
+        if (at >= loop.getNumControlOperands()) {
+          unsigned k = at - loop.getNumControlOperands();
+          erasedOperands.push_back({user, at});
+          push(loop.getRegionIterArgs()[k]);
+          push(loop.getResult(k));
+        }
+        continue;
+      }
+      if (auto loop = mlir::dyn_cast<mlir::scf::WhileOp>(user)) {
+        erasedOperands.push_back({user, at});
+        push(loop.getBeforeArguments()[at]);
+        continue;
+      }
+      if (user->getNumRegions() > 0)
+        continue;
+      doomed.insert(user);
       for (Value r : user->getResults())
-        work.push_back(r);
+        push(r);
     }
+  }
+  for (auto [op, at] : erasedOperands) {
+    if (doomed.contains(op))
+      continue;
+    OpBuilder b(op);
+    Value v = op->getOperand(at);
+    op->setOperand(at, make<ErasedOp>(b, op->getLoc(), v.getType()));
+  }
+  // The results that are spec fields' leaves, which go below.
+  llvm::DenseMap<mlir::Operation *, llvm::BitVector> specResults;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    llvm::BitVector r(f.getNumResults());
+    for (unsigned i = 0; i < f.getNumResults(); ++i)
+      if (specResult(f, i))
+        r.set(i);
+    if (r.any())
+      specResults[f] = r;
   }
   // Each call drops the arguments for its callee's spec parameters.
   module.walk([&](mlir::func::CallOp call) {
@@ -1301,10 +1400,65 @@ void eraseSpecState(mlir::ModuleOp module) {
     op->dropAllReferences();
   for (mlir::Operation *op : doomed)
     op->erase();
+  // A spec result goes from the function, its returns and its calls,
+  // whose uses of it went with the spec state above.
+  llvm::SmallVector<mlir::func::CallOp> calls;
+  module.walk([&](mlir::func::CallOp call) { calls.push_back(call); });
+  for (mlir::func::CallOp call : calls) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    auto r = f ? specResults.find(f) : specResults.end();
+    if (r == specResults.end())
+      continue;
+    llvm::SmallVector<Type> kept;
+    for (unsigned i = 0; i < call.getNumResults(); ++i)
+      if (!r->second.test(i))
+        kept.push_back(call.getResult(i).getType());
+    OpBuilder b(call);
+    auto fresh = b.create<mlir::func::CallOp>(call.getLoc(), call.getCallee(),
+                                              kept, call.getOperands());
+    unsigned k = 0;
+    for (unsigned i = 0; i < call.getNumResults(); ++i)
+      if (!r->second.test(i))
+        call.getResult(i).replaceAllUsesWith(fresh.getResult(k++));
+    call.erase();
+  }
+  for (auto &[op, r] : specResults) {
+    auto f = mlir::cast<mlir::func::FuncOp>(op);
+    f.walk([&](mlir::func::ReturnOp ret) { ret->eraseOperands(r); });
+    (void)f.eraseResults(r);
+  }
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     llvm::BitVector spec = specArgs(f);
     if (spec.none())
       continue;
+    // pia.length_of names an argument by position: the fields of a slice
+    // of records share the first field's length. When that field is a
+    // spec field, the first field kept carries the length instead.
+    auto lengthOf = PiaDialect::getLengthOfAttrName();
+    auto i64 = mlir::IntegerType::get(module.getContext(), 64);
+    llvm::SmallVector<int> newIndex(f.getNumArguments(), -1);
+    for (unsigned i = 0, k = 0; i < f.getNumArguments(); ++i)
+      if (!spec.test(i))
+        newIndex[i] = k++;
+    llvm::DenseMap<unsigned, unsigned> carrier;  // old carrier -> new one
+    for (unsigned i = 0; i < f.getNumArguments(); ++i) {
+      if (spec.test(i))
+        continue;
+      auto shared = f.getArgAttrOfType<mlir::IntegerAttr>(i, lengthOf);
+      if (!shared)
+        continue;
+      unsigned c = shared.getInt();
+      if (!spec.test(c)) {
+        f.setArgAttr(i, lengthOf, mlir::IntegerAttr::get(i64, newIndex[c]));
+        continue;
+      }
+      auto [it, fresh] = carrier.try_emplace(c, i);
+      if (fresh)
+        f.removeArgAttr(i, lengthOf);
+      else
+        f.setArgAttr(i, lengthOf,
+                     mlir::IntegerAttr::get(i64, newIndex[it->second]));
+    }
     if (f.isExternal()) {
       llvm::SmallVector<Type> inputs;
       llvm::SmallVector<mlir::DictionaryAttr> attrs;
