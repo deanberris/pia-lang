@@ -9,6 +9,7 @@ import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
 import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
 
 let pix = type { rgb : [u8; 3]; flags : [bool; 2]; n : u8 } @derive(json)
 

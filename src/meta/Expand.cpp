@@ -604,10 +604,23 @@ class Expander {
         }
         std::string fn = "derive_" + arg->text;
         std::string what = "@derive(" + arg->text + ") on '" + item.text + "'";
+        // A derive of the program's own, or one an imported interface
+        // exports, as Pia.Text.Json.Derive's derive_json (ADR 0039).
         if (!interp_.isMeta(fn)) {
-          diags_.error(arg->loc, "there is no metaprogram '" + fn + "' for " +
-                                     what);
-          continue;
+          std::vector<std::string> found = interp_.importedMetas(fn);
+          if (found.size() > 1) {
+            std::string names;
+            for (const std::string &f : found) names += (names.empty() ? "'" : ", '") + f + "'";
+            diags_.error(arg->loc, "more than one imported metaprogram is '" + fn +
+                                       "' for " + what + ": " + names);
+            continue;
+          }
+          if (found.empty()) {
+            diags_.error(arg->loc, "there is no metaprogram '" + fn + "' for " +
+                                       what);
+            continue;
+          }
+          fn = found[0];
         }
         try {
           interp_.setSite(attr->loc);

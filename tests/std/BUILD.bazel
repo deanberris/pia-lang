@@ -56,6 +56,7 @@ lit_tests(
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
         "//lib/Pia/Mem:Vec.pia",
+        "//lib/Pia/Text/Json:Derive.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -179,6 +180,7 @@ pia_binary(
     src = "Inputs/json_derive_run.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -201,6 +203,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:option",
         "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -223,6 +226,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:option",
         "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -245,6 +249,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:option",
         "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
