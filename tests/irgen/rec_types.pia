@@ -1,0 +1,33 @@
+(* Recursive types (ADR 0047, step 1): `let rec` declares a type that
+   refers to itself, directly or through others marked `let rec`, each
+   occurrence inside an indirection (`box`, `vec`, `ref`, `weak`), a
+   generic one applied to its own parameters, and with a value that can be
+   built from none. These pass the checks; they are not built until their
+   proofs and code (steps 2 and 3), so a use says so.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+// CHECK-NOT: refers to itself
+// CHECK-NOT: holds
+// CHECK-NOT: has no values
+// CHECK-NOT: regular recursion
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let vec = let (t : type) => type { items : [t]; used : usize }
+
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(* Mutual recursion: both marked. *)
+let rec forest = type | Trees of vec rose
+let rec rose = type | Rose of { label : u8; kids : forest }
+
+(* Generic, regular: `list t` inside `list t`. *)
+let rec list = let (t : type) => type | Nil | Cons of { head : t; tail : box (list t) }
+
+(* Inhabited through vec: an empty vector needs no node. *)
+let rec bag = type | Bag of vec bag
+
+(* CHECK: rec_types.pia:[[@LINE+2]]:23: error: 'tree' is a recursive type, which is checked but cannot be used yet: its proofs and code come with ADR 0047, steps 2 and 3
+*)
+let size (t : tree) : tree = t

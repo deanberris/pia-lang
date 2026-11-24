@@ -80,6 +80,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/syntax/Parser.{h,cpp}` (1.8k lines) is recursive descent with precedence climbing over the prelude's operator table.
 - `src/syntax/Prelude.cpp` is the prelude source as a Pia string: the operators, `fold_and`, `derive_eq` and `machine`.
 - `src/syntax/Comments.{h,cpp}` attaches comments to nodes (ADR 0029). It also reads literate `.pia.md`.
+- `src/syntax/RecTypes.{h,cpp}` finds the type items that refer to themselves, alone or in cycles, for sema's `let rec` checks and the `needless_rec` lint (ADR 0047).
 - `src/syntax/Diagnostics.h` holds the diagnostics, printed with a caret under the column.
 - `src/syntax/Interfaces.{h,cpp}` holds module headers, `.piai` interface artifacts and import resolution (ADR 0039).
 - `src/syntax/Lint.{h,cpp}` holds the ADR 0037 lints. They run before expansion, and piac and pia-lsp share them.

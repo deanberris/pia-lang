@@ -1,0 +1,39 @@
+(* The rules of ADR 0047, step 1, each with its error.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+let box = let (t : type) => type { slot : [t] }
+
+(* Recursion without `rec`.
+// CHECK: rec_type_errors.pia:[[@LINE+2]]:1: error: 'chain' refers to itself; declare it 'let rec chain = ...' (ADR 0047)
+*)
+let chain = type | End | Link of box chain
+
+(* A cycle with one type unmarked.
+// CHECK: rec_type_errors.pia:[[@LINE+3]]:1: error: 'ping' and 'pong' refer to each other; declare 'pong' with 'let rec' too, as every type in the cycle must be (ADR 0047)
+*)
+let rec ping = type | Ping of box pong | Stop
+let pong = type | Pong of box ping
+
+(* An occurrence with no indirection, which would have no size.
+// CHECK-NOT: stream_More
+// CHECK: rec_type_errors.pia:[[@LINE+2]]:43: error: 'inline' holds 'inline' directly here, so it would have no size; a recursive occurrence must be inside an indirection, such as 'box inline' or 'vec inline' (ADR 0047)
+*)
+let rec inline = type | Nothing | Hold of inline
+
+(* Non-regular recursion.
+// CHECK: rec_type_errors.pia:[[@LINE+2]]:66: error: the recursive occurrence of 'nest' must apply it to its own parameters in order, as 'nest t' (regular recursion, ADR 0047)
+*)
+let rec nest = let (t : type) => type | Flat of t | Deep of box (nest { a : t; b : t })
+
+(* No value to start from: a box is never empty.
+// CHECK: rec_type_errors.pia:[[@LINE+2]]:1: error: 'stream' has no values: each of its constructors needs a value of a recursive type to build one, and a box is never empty; add a constructor without one, or hold it in 'option' or 'vec' (ADR 0047)
+*)
+let rec stream = type | More of { head : u8; rest : box stream }
+
+(* Two types that hold each other directly.
+// CHECK: rec_type_errors.pia:[[@LINE+3]]:33: error: 'left' holds 'right' directly here, and 'right' holds 'left' the same way, so neither would have a size; put one inside an indirection, such as 'box right' (ADR 0047)
+// CHECK: rec_type_errors.pia:[[@LINE+3]]:34: error: 'right' holds 'left' directly here, and 'left' holds 'right' the same way, so neither would have a size; put one inside an indirection, such as 'box left' (ADR 0047)
+*)
+let rec left = type | L | Lr of right
+let rec right = type | R | Rl of left
