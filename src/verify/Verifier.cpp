@@ -40,6 +40,7 @@
 #include "mlir/Target/SMTLIB/ExportSMTLIB.h"
 #include "sema/Sema.h"
 #include "transforms/ScalarizeRecords.h"
+#include "mlir/IR/Dominance.h"
 #include "verify/Strategy.h"
 #include "verify/Triggers.h"
 #include "z3++.h"
@@ -73,6 +74,9 @@ constexpr unsigned kBoundWidth = 128;
 
 // The SMT-LIB sort of `real` (see Encoder::realType).
 constexpr llvm::StringLiteral kRealSort = "Real";
+// The SMT-LIB names of a recursive type's datatype (ADR 0047) and its
+// functions start with this, which no Pia name can: `rec` is a keyword.
+constexpr llvm::StringLiteral kRecPrefix = "rec.";
 
 // The SMT-LIB functions the encoder declares under their own names because
 // the smt dialect has no op for them (Encoder::interpreted).
@@ -90,6 +94,10 @@ std::string interpretedSMTLIB(const std::string &smtlib) {
     llvm::StringRef line(smtlib.data() + pos, end - pos);
     pos = end + 1;
     if (line == ("(declare-sort " + kRealSort + " 0)").str()) continue;
+    // A datatype and its functions are declared together (withDatatypes).
+    if (line.starts_with(("(declare-sort " + kRecPrefix).str()) ||
+        line.starts_with(("(declare-fun " + kRecPrefix).str()))
+      continue;
     bool drop = false;
     for (llvm::StringRef f : kInterpreted)
       if (line.starts_with(("(declare-fun " + f + " (").str())) drop = true;
@@ -375,10 +383,6 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
 
 // The function at the heart of the verifier: a symbolic walk of one
 // function that encodes its ops in the smt dialect.
-// Why a goal over a recursive value is not proved yet.
-constexpr const char *kRecursiveNotVerified =
-    "recursive types are not verified yet (ADR 0047, step 2)";
-
 // Whether `t` is, or holds, a value of a recursive type (ADR 0047).
 bool holdsRecursive(Type t) {
   if (mlir::isa<RecType>(t)) return true;
@@ -403,13 +407,63 @@ bool touchesRecursive(mlir::func::FuncOp fn) {
           if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
         for (Type t : op->getOperandTypes())
           if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
-        for (mlir::Region &r : op->getRegions())
-          for (mlir::Block &b : r)
-            for (Type t : b.getArgumentTypes())
-              if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
         return mlir::WalkResult::advance();
       })
       .wasInterrupted();
+}
+
+// The buffers an op writes: a store's, a copy's destination, and those a
+// call passes as `out` or `inout`.
+llvm::SmallVector<Value> buffersWritten(mlir::ModuleOp module, Operation *op) {
+  llvm::SmallVector<Value> out;
+  if (auto st = mlir::dyn_cast<StoreOp>(op)) out.push_back(st.getBuffer());
+  if (auto cp = mlir::dyn_cast<CopyOp>(op)) out.push_back(cp.getDst());
+  if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+    if (auto callee = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        if (!mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
+          continue;
+        auto mods = callee.getArgAttrOfType<mlir::StringAttr>(
+            i, PiaDialect::getModifiersAttrName());
+        if (mods && (sema::hasModifier(mods.getValue(), "out") ||
+                     sema::hasModifier(mods.getValue(), "inout")))
+          out.push_back(call.getOperand(i));
+      }
+  return out;
+}
+
+// The proof sees a recursive value as a value (ADR 0047, section 3): a
+// buffer in its payload, such as a box's slot, holds what it held when
+// the value was built. That is what the memory holds while the buffer is
+// owned only by the value, which is why the function may not write a
+// buffer after building a value with it, nor write a buffer taken out of
+// one. Why a function does, or nothing.
+std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
+                                             mlir::func::FuncOp fn) {
+  llvm::SmallVector<RecMakeOp> makes;
+  fn.walk([&](RecMakeOp m) { makes.push_back(m); });
+  std::optional<std::string> why;
+  mlir::DominanceInfo dom(fn);
+  fn.walk([&](Operation *op) {
+    for (Value b : buffersWritten(module, op)) {
+      Value root = rootBuffer(b);
+      if (root.getDefiningOp<RecPayloadOp>()) {
+        why = "it writes a buffer taken out of a recursive value, which "
+              "the verifier sees as a value; write a copy instead";
+        return mlir::WalkResult::interrupt();
+      }
+      for (RecMakeOp m : makes)
+        if (llvm::is_contained(m.getPayload(), root) &&
+            !dom.properlyDominates(op, m.getOperation())) {
+          why = "it writes a buffer after building a recursive value "
+                "with it, which the verifier sees as the buffer's contents "
+                "when it was built";
+          return mlir::WalkResult::interrupt();
+        }
+    }
+    return mlir::WalkResult::advance();
+  });
+  return why;
 }
 
 class Encoder {
@@ -445,19 +499,44 @@ class Encoder {
   };
 
   void run() {
-    // Recursive values have no encoding yet (ADR 0047, step 2), so none
-    // of the function's goals is proved: each is unproved, which is a
-    // compile error unless --allow-unproved accepts it.
+    // Recursive values are datatypes (ADR 0047, step 2). Where their
+    // encoding does not hold, every goal of the function is unproved,
+    // which is a compile error unless --allow-unproved accepts it.
     if (touchesRecursive(fn_)) {
-      fn_.walk([&](Operation *op) {
-        for (auto &[kind, claim] : describe(op))
-          skipped(kind, op, claim, kRecursiveNotVerified);
-      });
-      return;
+      std::optional<std::string> why = recursiveAliasing(module_, fn_);
+      if (!why && fn_->hasAttr("pia.generic_proof"))
+        why = "a generic's proof over recursive values is not supported "
+              "yet (ADR 0047)";
+      if (!why)
+        for (auto d : module_.getOps<DatatypeOp>())
+          if (const RecInfo *ri = recInfo(d.getSymName()); !ri || !ri->ok) {
+            why = "the payload of a constructor of '" +
+                  d.getSymName().str() + "' cannot be encoded yet";
+            break;
+          }
+      if (why) {
+        fn_.walk([&](Operation *op) {
+          for (auto &[kind, claim] : describe(op))
+            skipped(kind, op, claim, "not verified: " + *why);
+        });
+        return;
+      }
     }
     declareSpecFunctions();
     mlir::Block &entry = fn_.getBody().front();
     for (unsigned i = 0; i < entry.getNumArguments(); ++i) declareParam(entry.getArgument(i), i);
+    recFacts_ = fn_.walk([&](Operation *op) {
+                     if (mlir::isa<RecMeasureOp>(op))
+                       return mlir::WalkResult::interrupt();
+                     if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+                         c && c.getCallee() == fn_.getSymName())
+                       return mlir::WalkResult::interrupt();
+                     return mlir::WalkResult::advance();
+                   }).wasInterrupted();
+    if (recFacts_)
+      for (mlir::BlockArgument a : entry.getArguments())
+        if (auto rt = mlir::dyn_cast<RecType>(a.getType()))
+          if (Value v = term(a)) recLeast(v, rt);
     entryArrays_ = arrays_;
     entryInner_ = innerLengths_;
     walkBlock(entry, nullptr);
@@ -489,6 +568,8 @@ class Encoder {
   // The `assume`s the query asserts, as `assume file:line:col`.
   const std::vector<std::string> &sentAssumes() const { return sentAssumes_; }
   const std::set<std::string> &sorts() const { return sorts_; }
+  // The declarations of the datatypes the query uses (ADR 0047).
+  std::string datatypeDecls() { return recDecls(); }
   bool usesTheories() const { return !theoryFuns_.empty(); }
 
   // The axioms a query gets (ADR 0036, "Build time"). With `all` unset,
@@ -614,6 +695,12 @@ class Encoder {
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
+    // A recursive value is a datatype, declared with its constructors
+    // when the query is exported.
+    if (auto r = mlir::dyn_cast<RecType>(t)) {
+      recUsed_.insert(r.getName().str());
+      return mlir::smt::SortType::get(ctx_, recSort(r.getName()));
+    }
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
@@ -623,6 +710,254 @@ class Encoder {
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
     }
     return {};
+  }
+
+  // --- recursive types (ADR 0047) ----------------------------------------
+
+  // A datatype's constructor as SMT fields: a payload leaf is one field, a
+  // buffer leaf its contents and its length, and a buffer of slices also
+  // its elements' lengths.
+  struct RecCtor {
+    std::string name;                // the SMT constructor, rec.tree.Node
+    llvm::SmallVector<Type> leaves;  // the payload's leaves
+    llvm::SmallVector<Type> sorts;   // the fields' sorts
+    // For a field that holds a buffer, the buffer's array; null for other
+    // fields. Z3 does not decide datatypes whose constructors hold arrays
+    // well, so the field is a handle of an uninterpreted sort, rec.bufN,
+    // with `rec.bufN.of` the handle of an array and `rec.bufN.at` the
+    // array of a handle: the walk asserts `at (of a) = a` for each array
+    // it puts in a value. Datatypes are then plain, and the depth and size
+    // axioms, not Z3's own acyclicity, are what make them well founded.
+    llvm::SmallVector<Type> wide;
+  };
+  struct RecInfo {
+    std::string sort;  // rec.tree
+    std::vector<RecCtor> ctors;
+    std::set<std::string> holds;  // the datatypes its fields hold
+    bool ok = true;
+  };
+
+  static std::string recSort(llvm::StringRef name) {
+    return (kRecPrefix + smtSymbol(name)).str();
+  }
+
+  // The handle sort of buffers whose array is `wide`, one per array sort.
+  std::string bufSort(Type wide) {
+    auto it = llvm::find(bufSorts_, wide);
+    size_t n = it - bufSorts_.begin();
+    if (it == bufSorts_.end()) bufSorts_.push_back(wide);
+    return (kRecPrefix + "buf" + llvm::Twine(n)).str();
+  }
+
+  // The constructors of the datatype `name` at this query's width.
+  const RecInfo *recInfo(llvm::StringRef name) {
+    auto it = recs_.find(name.str());
+    if (it != recs_.end()) return &it->second;
+    DatatypeOp d;
+    for (auto op : module_.getOps<DatatypeOp>())
+      if (op.getSymName() == name) d = op;
+    if (!d) return nullptr;
+    // Working out the fields uses no datatype: the query still uses only
+    // those it did.
+    std::set<std::string> used = recUsed_;
+    RecInfo info;
+    info.sort = recSort(name);
+    for (auto [i, c] : llvm::enumerate(d.getCtors().getAsValueRange<mlir::StringAttr>())) {
+      RecCtor rc;
+      rc.name = info.sort + "." + smtSymbol(c);
+      if (Type p = d.payloadOf(i)) {
+        if (mlir::isa<RecordType>(p))
+          transforms::recordLeaves(p, rc.leaves);
+        else
+          rc.leaves.push_back(p);
+      }
+      for (Type leaf : rc.leaves) {
+        std::set<std::string> before = recUsed_;
+        Type sort = sortOf(leaf);
+        for (const std::string &u : recUsed_)
+          if (!before.count(u)) info.holds.insert(u);
+        if (auto r = mlir::dyn_cast<RecType>(leaf))
+          info.holds.insert(r.getName().str());
+        if (auto r = recElement(leaf)) info.holds.insert(r.getName().str());
+        if (!sort) {
+          info.ok = false;
+          continue;
+        }
+        auto narrow = [&](Type wide) -> Type {
+          return mlir::smt::SortType::get(ctx_, bufSort(wide));
+        };
+        if (mlir::isa<ArrayType, SliceType>(leaf)) {
+          rc.sorts.push_back(narrow(sort));
+          rc.wide.push_back(sort);
+          rc.sorts.push_back(bvType());
+          rc.wide.push_back(Type());
+          if (holdsSlices(leaf)) {
+            Type lens = mlir::smt::ArrayType::get(ctx_, bvType(), bvType());
+            rc.sorts.push_back(narrow(lens));
+            rc.wide.push_back(lens);
+          }
+        } else {
+          rc.sorts.push_back(sort);
+          rc.wide.push_back(Type());
+        }
+      }
+      info.ctors.push_back(std::move(rc));
+    }
+    recUsed_ = std::move(used);
+    return &recs_.emplace(name.str(), std::move(info)).first->second;
+  }
+
+  static RecType recElement(Type t) {
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return mlir::dyn_cast<RecType>(a.getElementType());
+    if (auto sl = mlir::dyn_cast<SliceType>(t))
+      return mlir::dyn_cast<RecType>(sl.getElementType());
+    return {};
+  }
+
+  // A function of a datatype, declared once per query and replaced by the
+  // datatype's own declaration when the query is exported.
+  Value recApply(const std::string &name, llvm::ArrayRef<Value> args,
+                 Type range) {
+    if (args.empty()) {
+      auto it = interpreted_.find(name);
+      if (it != interpreted_.end()) return it->second;
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToStart(solverBlock_);
+      Value c = create<mlir::smt::DeclareFunOp>(range, b_.getStringAttr(name));
+      interpreted_[name] = c;
+      return c;
+    }
+    return apply(name, args, range);
+  }
+
+  // The constructor `ctor` of `t`, its position and its fields.
+  const RecCtor *recCtor(RecType t, llvm::StringRef ctor, unsigned &tag) {
+    const RecInfo *ri = recInfo(t.getName());
+    if (!ri || !ri->ok) return nullptr;
+    for (auto op : module_.getOps<DatatypeOp>())
+      if (op.getSymName() == t.getName())
+        if (auto k = op.tagOf(ctor)) {
+          tag = *k;
+          return &ri->ctors[*k];
+        }
+    return nullptr;
+  }
+
+  // `depth v` or `size v`: an Int, of which the query knows only the
+  // facts the walk asserts, all ground: a parameter's depth is at least 0
+  // and its size at least 1, and a component's are smaller than its
+  // holder's. That is what a measure needs, and true of every value,
+  // since datatypes are well founded. Ground facts keep a failed goal's
+  // query as quick as a proved one's; quantified axioms did not.
+  Value recMeasure(llvm::StringRef kind, Value v, RecType t) {
+    (kind == "size" ? recSize_ : recDepth_) = true;
+    return recApply(recSort(t.getName()) + "." + kind.str(), {v}, intType());
+  }
+
+  Value intCmp(mlir::smt::IntPredicate p, Value a, Value b) {
+    return create<mlir::smt::IntCmpOp>(boolType(), p, a, b);
+  }
+
+  // The facts that `child`, a component of `holder`, is smaller, when
+  // `cond` holds.
+  void recSmaller(Value child, RecType ct, Value holder, RecType ht,
+                  Value cond) {
+    using IP = mlir::smt::IntPredicate;
+    for (const char *kind : {"depth", "size"}) {
+      Value lt = intCmp(IP::lt, recMeasure(kind, child, ct),
+                        recMeasure(kind, holder, ht));
+      assertTerm(cond ? implies(cond, lt) : lt);
+    }
+  }
+
+  // A value's depth is at least 0 and its size at least 1.
+  void recLeast(Value v, RecType t) {
+    using IP = mlir::smt::IntPredicate;
+    assertTerm(intCmp(IP::ge, recMeasure("depth", v, t), intConst(APInt(64, 0))));
+    assertTerm(intCmp(IP::ge, recMeasure("size", v, t), intConst(APInt(64, 1))));
+  }
+
+  // The datatypes the query uses and those they hold, declared as one
+  // group, each with its tag function, and the measures it uses with
+  // their axioms. Empty when it uses none.
+  std::string recDecls() {
+    if (recUsed_.empty()) return "";
+    std::vector<std::string> order;
+    std::set<std::string> seen;
+    std::vector<std::string> work(recUsed_.begin(), recUsed_.end());
+    while (!work.empty()) {
+      std::string n = work.back();
+      work.pop_back();
+      if (!seen.insert(n).second) continue;
+      const RecInfo *ri = recInfo(n);
+      if (!ri) continue;
+      order.push_back(n);
+      for (const std::string &h : ri->holds) work.push_back(h);
+    }
+    std::sort(order.begin(), order.end());
+    std::string w = std::to_string(width_);
+    auto bvLit = [&](unsigned v) {
+      return "(_ bv" + std::to_string(v) + " " + w + ")";
+    };
+    // The buffer handles the fields of these datatypes use.
+    std::vector<Type> bufs;
+    for (const std::string &n : order)
+      for (const RecCtor &c : recs_.at(n).ctors)
+        for (Type wide : c.wide)
+          if (wide && !llvm::is_contained(bufs, wide)) bufs.push_back(wide);
+    std::string out;
+    for (Type wide : bufs)
+      out += "(declare-sort " + bufSort(wide) + " 0)\n";
+    out += "(declare-datatypes (";
+    for (const std::string &n : order) out += "(" + recSort(n) + " 0) ";
+    out += ") (";
+    for (const std::string &n : order) {
+      out += "(";
+      for (const RecCtor &c : recs_.at(n).ctors) {
+        out += "(" + c.name;
+        for (auto [k, so] : llvm::enumerate(c.sorts))
+          out += " (" + c.name + "." + std::to_string(k) + " " + sortText(so) + ")";
+        out += ")";
+      }
+      out += ")";
+    }
+    out += "))\n";
+    for (Type wide : bufs) {
+      std::string so = bufSort(wide), ws = sortText(wide);
+      out += "(declare-fun " + so + ".at (" + so + ") " + ws + ")\n";
+      out += "(declare-fun " + so + ".of (" + ws + ") " + so + ")\n";
+    }
+    for (const std::string &n : order) {
+      const RecInfo &ri = recs_.at(n);
+      std::string body = bvLit(ri.ctors.size() - 1);
+      for (size_t i = ri.ctors.size() - 1; i-- > 0;)
+        body = "(ite ((_ is " + ri.ctors[i].name + ") x) " + bvLit(i) + " " +
+               body + ")";
+      out += "(define-fun " + ri.sort + ".tag ((x " + ri.sort + ")) (_ BitVec " +
+             w + ") " + body + ")\n";
+    }
+    // The measures, whose facts the walk asserts (recSmaller).
+    for (const char *kind : {"depth", "size"}) {
+      if (std::string(kind) == "depth" ? !recDepth_ : !recSize_) continue;
+      for (const std::string &n : order)
+        out += "(declare-fun " + recs_.at(n).sort + "." + kind + " (" +
+               recs_.at(n).sort + ") Int)\n";
+    }
+    return out;
+  }
+
+  static std::string sortText(Type so) {
+    if (mlir::isa<mlir::smt::BoolType>(so)) return "Bool";
+    if (mlir::isa<mlir::smt::IntType>(so)) return "Int";
+    if (auto b = mlir::dyn_cast<mlir::smt::BitVectorType>(so))
+      return "(_ BitVec " + std::to_string(b.getWidth()) + ")";
+    if (auto a = mlir::dyn_cast<mlir::smt::ArrayType>(so))
+      return "(Array " + sortText(a.getDomainType()) + " " +
+             sortText(a.getRangeType()) + ")";
+    if (auto u = mlir::dyn_cast<mlir::smt::SortType>(so))
+      return u.getIdentifier().getValue().str();
+    return "Bool";
   }
 
   Value bv(const APInt &v) {
@@ -793,6 +1128,14 @@ class Encoder {
   }
 
   // --- parameters and buffers ------------------------------------------
+
+  // A parameter's name, as the source spells it.
+  std::string argName(unsigned index) {
+    mlir::BlockArgument arg = fn_.getArgument(index);
+    if (auto n = mlir::dyn_cast<mlir::NameLoc>(arg.getLoc()))
+      return n.getName().str();
+    return "arg" + std::to_string(index);
+  }
 
   void declareParam(mlir::BlockArgument arg, unsigned index) {
     std::string name = "arg" + std::to_string(index);
@@ -1582,6 +1925,49 @@ class Encoder {
       if (auto ld = mlir::dyn_cast<LoadOp>(op))
         if (auto it = mlir::dyn_cast<IntType>(ld.getType()))
           assertTerm(inRange(results[0], it));
+      // A payload's integers are in their ranges, and its buffers' lengths
+      // are lengths, as they were when the value was built.
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op))
+        for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
+          if (auto it = mlir::dyn_cast<IntType>(r.getType()))
+            assertTerm(inRange(t, it));
+          if (Value len = lengths_.lookup(r))
+            assertTerm(inRange(len, indexRange()));
+        }
+      if (auto tg = mlir::dyn_cast<RecTagOp>(op))
+        assertTerm(inRange(results[0], tg.getType()));
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op); pl && recFacts_) {
+        RecType ht = pl.getInput().getType();
+        Value x = term(pl.getInput());
+        for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
+          if (auto ct = mlir::dyn_cast<RecType>(r.getType())) {
+            if (x && t) recSmaller(t, ct, x, ht, Value());
+          } else if (recElement(r.getType()) && x) {
+            recHolder_[r] = {x, ht};
+          }
+        }
+      }
+      if (auto ld = mlir::dyn_cast<LoadOp>(op); ld && recFacts_)
+        if (auto ct = mlir::dyn_cast<RecType>(ld.getType())) {
+          Value root = rootBuffer(ld.getBuffer());
+          auto it = recHolder_.find(root);
+          Value at = elementIndex(ld.getBuffer(), operands[1], views_);
+          Value len = lengths_.lookup(root);
+          using P = mlir::smt::BVCmpPredicate;
+          if (it != recHolder_.end() && at && len && results[0])
+            recSmaller(results[0], ct, it->second.first, it->second.second,
+                       andOf(cmp(P::sge, at, bv(0)), cmp(P::slt, at, len)));
+        }
+      // A buffer put in a value is the array of its handle.
+      if (auto mk = mlir::dyn_cast<RecMakeOp>(op))
+        for (Value operand : mk.getPayload())
+          for (Value arr : {arrays_.lookup(operand), innerLengths_.lookup(operand)})
+            if (arr) {
+              std::string so = bufSort(arr.getType());
+              Value h = recApply(so + ".of", {arr},
+                                 mlir::smt::SortType::get(ctx_, so));
+              assertTerm(eq(recApply(so + ".at", {h}, arr.getType()), arr));
+            }
     } else {
       for (Value r : op->getResults())
         if (auto v = havoc(r.getType())) env_[r] = *v;
@@ -1831,6 +2217,80 @@ class Encoder {
         return false;
     if (auto c = mlir::dyn_cast<ConstantOp>(op)) {
       out.push_back(bv(c.getValue()));
+      return true;
+    }
+    // Recursive values (ADR 0047): a constructor applied to the payload's
+    // fields, a buffer as its contents and length; the tag; a payload's
+    // fields, read with the constructor's selectors.
+    if (auto mk = mlir::dyn_cast<RecMakeOp>(op)) {
+      unsigned tag = 0;
+      const RecCtor *c = recCtor(mk.getType(), mk.getCtor(), tag);
+      if (!c) return false;
+      llvm::SmallVector<Value> args;
+      for (auto [v, operand] : llvm::zip(in, op->getOperands())) {
+        Type t = operand.getType();
+        if (!mlir::isa<ArrayType, SliceType>(t)) {
+          args.push_back(v);
+          continue;
+        }
+        // A view of a buffer has no contents of its own to hold.
+        if (rootBuffer(operand) != operand) return false;
+        Value arr = arrays.lookup(operand), len = lengths.lookup(operand);
+        if (!arr || !len) return false;
+        args.push_back(arr);
+        args.push_back(len);
+        if (holdsSlices(t)) {
+          Value lens = inner ? inner->lookup(operand) : Value();
+          if (!lens) lens = innerLengths_.lookup(operand);
+          if (!lens) return false;
+          args.push_back(lens);
+        }
+      }
+      if (args.size() != c->sorts.size()) return false;
+      for (unsigned k = 0; k < args.size(); ++k) {
+        if (c->wide[k]) {
+          if (args[k].getType() != c->wide[k]) return false;
+          args[k] = recApply(bufSort(c->wide[k]) + ".of", {args[k]},
+                             c->sorts[k]);
+        }
+        if (args[k].getType() != c->sorts[k]) return false;
+      }
+      out.push_back(recApply(c->name, args, sortOf(mk.getType())));
+      return true;
+    }
+    if (auto tg = mlir::dyn_cast<RecTagOp>(op)) {
+      out.push_back(recApply(recSort(tg.getInput().getType().getName()) + ".tag",
+                             {in[0]}, bvType()));
+      return true;
+    }
+    if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
+      unsigned tag = 0;
+      const RecCtor *c = recCtor(pl.getInput().getType(), pl.getCtor(), tag);
+      if (!c || c->leaves.size() != pl.getNumResults()) return false;
+      unsigned k = 0;
+      auto field = [&](unsigned i) {
+        std::string sel = c->name + "." + std::to_string(i);
+        Value f = recApply(sel, {in[0]}, c->sorts[i]);
+        return c->wide[i] ? recApply(bufSort(c->wide[i]) + ".at", {f},
+                                     c->wide[i])
+                          : f;
+      };
+      for (auto [r, leaf] : llvm::zip(pl.getResults(), c->leaves)) {
+        if (mlir::isa<ArrayType, SliceType>(leaf)) {
+          arrays[r] = field(k);
+          lengths[r] = field(k + 1);
+          if (holdsSlices(leaf) && &arrays == &arrays_)
+            innerLengths_[r] = field(k + 2);
+          k += holdsSlices(leaf) ? 3 : 2;
+          out.push_back(bv(0));  // a placeholder: buffers are not terms
+          continue;
+        }
+        out.push_back(field(k++));
+      }
+      return true;
+    }
+    if (auto m = mlir::dyn_cast<RecMeasureOp>(op)) {
+      out.push_back(recMeasure(m.getKind(), in[0], m.getInput().getType()));
       return true;
     }
     if (auto m = arithMode(op)) {
@@ -2559,9 +3019,33 @@ class Encoder {
         if (done_) return false;
       }
     }
+    // Without a measure, recursion on a recursive value is structural
+    // (ADR 0047, section 3): the call terminates when its first argument
+    // of a recursive type is a component of the parameter, of smaller
+    // depth, as a name a `match` binds below the top is.
+    std::optional<unsigned> structural;
     if (hasBody && callee == fn_ && !measureOf(fn_))
+      for (unsigned i = 0; i < fn_.getNumArguments(); ++i)
+        if (mlir::isa<RecType>(fn_.getArgument(i).getType())) {
+          structural = i;
+          break;
+        }
+    if (structural) {
+      auto rt = mlir::cast<RecType>(fn_.getArgument(*structural).getType());
+      Value now = term(fn_.getArgument(*structural));
+      Value next = term(call.getOperand(*structural));
+      Value t = now && next ? decreasesTerm(recMeasure("depth", now, rt),
+                                            recMeasure("depth", next, rt))
+                            : Value();
+      goal(ObligationKind::decreases, call,
+           "the recursion terminates: '" + argName(*structural) +
+               "' is smaller in each recursive call",
+           t ? t : declare(boolType(), "", false), false);
+      if (done_) return false;
+    } else if (hasBody && callee == fn_ && !measureOf(fn_)) {
       skipped(ObligationKind::decreases, call, "the recursion terminates",
               "'" + call.getCallee().str() + "' has no 'decreases' measure");
+    }
     if (hasBody && callee == fn_)
       if (auto m = measureOf(fn_)) {
         // Recursion terminates when each recursive call makes the measure
@@ -3504,6 +3988,18 @@ class Encoder {
   }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
+  // Recursive types (ADR 0047): each datatype's constructors at this
+  // query's width, those the query uses, and the measures it uses.
+  std::map<std::string, RecInfo> recs_;
+  std::set<std::string> recUsed_;
+  std::vector<Type> bufSorts_;
+  bool recSize_ = false, recDepth_ = false;
+  // Whether the walk asserts the measures' facts: in a function that
+  // recurses or measures a recursive value. And the buffers a payload
+  // holds, with the value holding them, for the facts about their
+  // elements.
+  bool recFacts_ = false;
+  llvm::DenseMap<Value, std::pair<Value, RecType>> recHolder_;
 
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
@@ -3706,6 +4202,48 @@ std::string declareSorts(const std::string &smtlib,
   return smtlib.substr(0, at) + missing + smtlib.substr(at);
 }
 
+// A model's value for a counterexample. A recursive value (ADR 0047) is
+// its constructor and the payload's fields in order, `Node {_, 7, _}`,
+// where `_` is a buffer, whose contents the model does not list.
+std::string recValue(const z3::expr &e) {
+  if (e.is_app()) {
+    std::string name = e.decl().name().str();
+    if (llvm::StringRef(name).starts_with(kRecPrefix)) {
+      if (e.num_args() == 0 && name.find("!val!") != std::string::npos)
+        return "_";
+      if (e.get_sort().is_datatype()) {
+        std::string out = name.substr(name.rfind('.') + 1);
+        if (e.num_args() == 0) return out;
+        out += " {";
+        for (unsigned i = 0; i < e.num_args(); ++i)
+          out += (i ? ", " : "") + recValue(e.arg(i));
+        return out + "}";
+      }
+    }
+    if (e.is_numeral() && e.get_sort().is_bv()) {
+      // Two's complement at the query's width.
+      unsigned w = e.get_sort().bv_size();
+      APInt v(w, e.get_decimal_string(0), 10);
+      return llvm::toString(v, 10, /*Signed=*/true);
+    }
+  }
+  return e.to_string();
+}
+
+// The query with the declarations of its datatypes (ADR 0047) after its
+// sorts, which their fields may use, and before anything that uses them.
+std::string withDatatypes(const std::string &smtlib, const std::string &decls) {
+  if (decls.empty()) return smtlib;
+  size_t at = 0;
+  while (at < smtlib.size()) {
+    llvm::StringRef rest(smtlib.data() + at, smtlib.size() - at);
+    if (!rest.starts_with(";") && !rest.starts_with("(declare-sort ")) break;
+    size_t end = smtlib.find('\n', at);
+    at = end == std::string::npos ? smtlib.size() : end + 1;
+  }
+  return smtlib.substr(0, at) + decls + smtlib.substr(at);
+}
+
 // Each axiom's assertion as `(assert (! <fact> :named |T.a|))`: the
 // export cannot name an assertion, so the k-th top-level assert, counted
 // as the export prints them, gets the name its AssertOp carries.
@@ -3797,8 +4335,11 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
     q.smtlib.clear();
   else {
     std::string text = interpretedSMTLIB(q.smtlib);
-    if (!axiomNames.empty()) q.plain = declareSorts(text, enc.sorts());
-    q.smtlib = declareSorts(nameAxioms(text, axiomNames), enc.sorts());
+    std::string recs = enc.datatypeDecls();
+    if (!axiomNames.empty())
+      q.plain = withDatatypes(declareSorts(text, enc.sorts()), recs);
+    q.smtlib = withDatatypes(
+        declareSorts(nameAxioms(text, axiomNames), enc.sorts()), recs);
   }
   return q;
 }
@@ -4409,7 +4950,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
       // `Lip.layer!val!0`; two names that differ are different values.
       for (unsigned i = 0; i < m.num_consts(); ++i)
         if (m.get_const_decl(i).name().str() == d.exported)
-          return m.get_const_interp(m.get_const_decl(i)).to_string();
+          return recValue(m.get_const_interp(m.get_const_decl(i)));
       return "any";
     }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)

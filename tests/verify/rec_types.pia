@@ -1,0 +1,84 @@
+(* Recursive values are datatypes (ADR 0047, step 2). A `let rec` variant
+   is an SMT-LIB datatype, and a buffer in its payload, such as a box's
+   slot, holds what it held when the value was built. Recursion on a
+   recursive value needs no measure when each call is on a component of
+   the parameter, such as an element of a box a `match` takes out; other
+   recursion gives `decreases`, which may use `depth t` and `size t`.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+let box = let (t : type) => type { slot : [t] }
+let vec = let (t : type) => type { items : [t]; used : usize }
+
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(* Structural: `n.left.slot.[0]` is a component of `t`.
+// CHECK: rec_types.pia:[[@LINE+7]]:40: proved: the index is within bounds [smt]
+// CHECK: rec_types.pia:[[@LINE+6]]:89: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+*)
+let rec leftmost (t : tree) : u32 =
+  match t with
+  | Leaf -> 0
+  | Node n ->
+    if len n.left.slot = 1 then (match n.left.slot.[0] with | Leaf -> n.key | Node _ -> leftmost n.left.slot.[0])
+    else n.key
+
+(* What a value is built from is what a match takes out.
+// CHECK: rec_types.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let key_of (l : box tree) (k : u32) (r : box tree) : u32
+  ensures result = k
+= match Node { left = l; key = k; right = r } with
+  | Leaf -> 0
+  | Node n -> n.key
+
+(* A measure over the value's depth or size.
+// CHECK: rec_types.pia:[[@LINE+6]]:44: proved: the measure of 'rightmost' decreases [smt]
+*)
+let rec rightmost (t : tree) : u32
+  decreases size t
+= match t with
+  | Leaf -> 0
+  | Node n -> if len n.right.slot = 1 then rightmost n.right.slot.[0] else n.key
+
+(* A key can be the largest u32.
+// CHECK: rec_types.pia:[[@LINE+6]]:21: failed: '+' does not overflow u32
+// CHECK-NEXT: counterexample: t = Node {_, {{.*}}, 4294967295, _, {{.*}}}
+*)
+let bump (t : tree) : u32 =
+  match t with
+  | Leaf -> 0
+  | Node n -> n.key + 1
+
+(* Recursion on the same value does not terminate.
+// CHECK: rec_types.pia:[[@LINE+2]]:33: failed: the recursion terminates: 't' is smaller in each recursive call
+*)
+let rec spin (t : tree) : u32 = spin t
+
+(* Mutual recursion, through a vec: a rose's kids are a forest.
+// CHECK: rec_types.pia:[[@LINE+8]]:42: proved: the recursion terminates: 'r' is smaller in each recursive call [smt]
+*)
+let rec forest = type | Trees of vec rose
+let rec rose = type | Rose of { label : u8; kids : forest }
+
+let rec first_label (r : rose) : u8 =
+  match r with
+  | Rose n -> (match n.kids with
+    | Trees v -> if len v.items > 0 then first_label v.items.[0] else n.label)
+
+(* A generic recursive type, at u8.
+// CHECK: rec_types.pia:[[@LINE+8]]:99: proved: the recursion terminates: 'l' is smaller in each recursive call [smt]
+*)
+let rec list = let (t : type) => type | Nil | Cons of cell t
+let rec cell = let (t : type) => type { head : t; tail : box (list t) }
+
+let rec last (l : list u8) : u8 =
+  match l with
+  | Nil -> 0
+  | Cons c -> if len c.tail.slot = 1 then (match c.tail.slot.[0] with | Nil -> c.head | Cons _ -> last c.tail.slot.[0]) else c.head
+
+(*
+// CHECK: 11 proved, 2 failed, 0 skipped
+*)
