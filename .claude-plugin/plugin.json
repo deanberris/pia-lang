@@ -1,0 +1,27 @@
+{
+  "name": "pia",
+  "description": "Write, port, prove and debug Pia: agent skills for the language, porting from C, C++, Rust, OCaml and Zig, idioms and lints, piac, the REPL and proof debugging; the pia-lsp language server for .pia files; and the pia REPL as an MCP server.",
+  "author": {
+    "name": "Pia contributors",
+    "url": "https://github.com/deanberris/pia-lang"
+  },
+  "homepage": "https://pia-lang.dev/agents/",
+  "repository": "https://github.com/deanberris/pia-lang",
+  "license": "Apache-2.0",
+  "keywords": ["pia", "verification", "z3", "mlir", "lsp", "mcp"],
+  "mcpServers": {
+    "pia": {
+      "command": "pia",
+      "args": ["mcp"]
+    }
+  },
+  "lspServers": {
+    "pia": {
+      "command": "pia-lsp",
+      "args": ["--stdio"],
+      "extensionToLanguage": {
+        ".pia": "pia"
+      }
+    }
+  }
+}

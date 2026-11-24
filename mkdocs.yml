@@ -172,3 +172,5 @@ nav:
       - adr/0063-opaque-spec-functions.md
       - adr/0064-distinct-types.md
       - adr/0065-lowerings-written-in-pia.md
+      - adr/0067-release-0-1-0-a-proved-small-llm.md
+      - adr/0068-gpu-compute-through-spirv-and-metal.md

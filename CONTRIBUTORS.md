@@ -9,6 +9,7 @@ Every change reaches `main` through a pull request. A pull request is ready to m
 - `bazel build //...` and `bazel test //...` pass, which CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) checks for every pull request. That suite includes the proofs: Pia code in the repository must verify, and an unproved goal is a failure unless it is accepted narrowly and on purpose.
 - Every example in the documentation still verifies and shows the real output of `piac` and `pia` (`bazel test //tests/docs:doc_examples_test` and `//tests/docs:skills_test`).
 - A change to the documentation site still builds with `mkdocs build --strict`.
+- A change to the language or the tools updates the [agent skills](skills/README.md) that teach it, which users install as a Claude Code plugin: `python3 tools/skills/check.py` fails when a new keyword or `piac` flag is in no skill.
 - Changed C++ lines are formatted with `clang-format` (CI checks them), and the code follows the [style guide](docs/style.md): early returns rather than nested `if`s, comments that say why, and the LLVM Coding Standards.
 
 A change to how the language works starts as a design note or an [Architecture Decision Record](docs/adr/README.md), so the reasoning is written down before the code.
