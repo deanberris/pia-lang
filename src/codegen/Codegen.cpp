@@ -2,6 +2,7 @@
 
 #include "codegen/Codegen.h"
 #include "codegen/ArrayResults.h"
+#include "codegen/Lowerings.h"
 #include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
@@ -2168,6 +2169,11 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
 LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+  // A caller that did not apply the lowerings, such as the REPL's JIT,
+  // compiles every body (ADR 0065).
+  if (mlir::failed(applyLowerings(module, /*enabled=*/false)))
+    return mlir::failure();
+  bool lowered = takeLoweredMark(module);
 
   std::vector<Entry> entries;
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
@@ -2251,6 +2257,10 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
     pm.addPass(mlir::createConvertAsyncToLLVMPass());
   }
+  // What a lowering's MLIR uses beyond the core dialects goes down to them
+  // first (ADR 0065).
+  if (lowered)
+    addLoweringPasses(pm);
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(mlir::createConvertControlFlowToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());

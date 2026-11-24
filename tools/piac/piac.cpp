@@ -44,6 +44,10 @@
 //                                   such theory's consistency check
 //   piac --trust-report --why ...   also list, for each trusted axiom, the
 //                                   goals whose proofs used it
+//   piac --lower=off ...            compile each function marked @lower
+//                                   from its Pia body, not its MLIR form,
+//                                   for differential tests (ADR 0065);
+//                                   --lower=on, the default, uses the MLIR
 //   piac --check-vacuity ...        with --verify, solve each goal proved
 //                                   with a trusted axiom or an `assume`
 //                                   again without its negation, and fail
@@ -81,6 +85,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -97,6 +102,7 @@
 #ifndef PIA_NO_MLIR
 #include "cert/Certificate.h"
 #include "codegen/Codegen.h"
+#include "codegen/Lowerings.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -128,7 +134,7 @@ int usage() {
          "<file.pia>\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
-         "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
+         "[--target=<triple>] [--cpu=<name>] [-O<n>] [--lower=on|off]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       Every mode but --emit=interface takes "
@@ -335,7 +341,7 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 // and `assume`s (ADR 0023).
 void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
                       const std::vector<pia::verify::Outcome> &outcomes,
-                      bool why, std::ostream &os) {
+                      bool why, bool lower, std::ostream &os) {
   // Each trusted theory's consistency check.
   std::map<std::string, const pia::verify::TheoryCheck *> checks;
   for (const pia::verify::TheoryCheck &c : stats.theories) {
@@ -401,6 +407,27 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
   };
   unsigned n = 0, assumes = 0;
   std::set<std::string> trustedAxioms;  // and `assume file:line:col`
+  // A lowering's MLIR is trusted to do what the proved body does (ADR
+  // 0065, step 1). Its text is known once codegen has spliced in the core
+  // types, so this compiles a copy of the module that far. With
+  // --lower=off no lowering is used, so none is trusted.
+  if (lower) {
+    mlir::FailureOr<std::vector<pia::codegen::Lowering>> lowerings =
+        pia::codegen::describeLowerings(module);
+    if (mlir::failed(lowerings)) {
+      os << "piac: the lowerings could not be compiled, so their trusted "
+            "items are not listed\n";
+    } else {
+      for (const pia::codegen::Lowering &l : *lowerings) {
+        os << l.where << ": trusted: the lowering of '" << l.function
+           << "' to MLIR (";
+        for (size_t i = 0; i < l.ops.size(); ++i)
+          os << (i ? ", " : "") << l.ops[i];
+        os << "; sha256 " << l.hash << ")\n";
+        ++n;
+      }
+    }
+  }
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     if (auto sym = f->getAttrOfType<mlir::StringAttr>("pia.extern")) {
       os << pia::verify::formatLoc(f.getLoc())
@@ -466,9 +493,10 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
 }
 
 int compile(mlir::ModuleOp module, const std::string &mode,
-            const std::string &output, const pia::codegen::Options &options,
+            const std::string &output, pia::codegen::Options options,
             const std::vector<std::string> &allowUnproved,
-            const pia::verify::Options &verifyOptions, bool verifyStats) {
+            const pia::verify::Options &verifyOptions, bool verifyStats,
+            bool lower) {
   using pia::verify::Outcome;
   using pia::verify::Status;
   pia::verify::Stats stats;
@@ -511,6 +539,23 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
   pia::codegen::eraseContracts(module);
   if (mlir::failed(pia::codegen::lowerToCore(module))) return 1;
+  // Each lowering replaces a proved body with MLIR nothing proved, so the
+  // certificate lists it as a trusted item (ADR 0065, docs/abi.md).
+  std::vector<pia::codegen::Lowering> lowerings;
+  if (mlir::failed(pia::codegen::applyLowerings(module, lower, &lowerings)))
+    return 1;
+  if (!lowerings.empty() && !options.certificate.empty()) {
+    std::string error;
+    std::optional<pia::cert::Certificate> cert =
+        pia::cert::decode(options.certificate, error);
+    if (!cert) {
+      std::cerr << "piac: internal error: " << error << "\n";
+      return 1;
+    }
+    for (const pia::codegen::Lowering &l : lowerings)
+      cert->trusted.push_back({"lowering", l.function, l.hash, l.ops});
+    options.certificate = pia::cert::encode(*cert);
+  }
 
   std::error_code ec;
   llvm::raw_fd_ostream out(output.empty() ? "-" : output, ec,
@@ -574,6 +619,7 @@ int main(int argc, char **argv) {
   bool verifyStats = false;
   bool checkVacuity = false;
   bool trustReport = false;
+  bool lower = true; // --lower=off compiles lowered functions' bodies
   bool trustWhy = false;
   std::string explainFile;
   unsigned explainLine = 0;
@@ -657,6 +703,8 @@ int main(int argc, char **argv) {
       verify = checkVacuity = true;
     else if (arg == "--trust-report")
       trustReport = true;
+    else if (arg == "--lower=on" || arg == "--lower=off")
+      lower = arg == "--lower=on";
     else if (arg == "--why")
       trustWhy = true;
     else if (arg.rfind("--explain-overloads=", 0) == 0) {
@@ -772,6 +820,7 @@ int main(int argc, char **argv) {
   (void)slice;
   (void)verifyStats;
   (void)trustReport;
+  (void)lower;
   (void)trustWhy;
   (void)explainLine;
   (void)costlyGoal;
@@ -918,7 +967,7 @@ int main(int argc, char **argv) {
           verifyStats || trustReport || checkVacuity || !proofCache.empty();
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options,
-                       verifyStats);
+                       verifyStats, lower);
       } else if (module && verify) {
         pia::verify::Stats stats;
         if (mlir::failed(pia::verify::resolveOverloads(*module, options))) {
@@ -933,7 +982,8 @@ int main(int argc, char **argv) {
           printGoalAxioms(outcomes);
         }
         if (trustReport)
-          printTrustReport(*module, stats, outcomes, trustWhy, std::cout);
+          printTrustReport(*module, stats, outcomes, trustWhy, lower,
+                           std::cout);
         if (checkVacuity && stats.vacuityUnknown)
           std::cerr << "piac: note: --check-vacuity could not decide "
                     << stats.vacuityUnknown << " of " << stats.vacuityChecks

@@ -57,6 +57,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | solver encodings, theories, triggers | `src/verify/Verifier.cpp`, `Triggers.cpp`, `Strategy.cpp` | `src/irgen/Theories.cpp`; `docs/theories.md` |
 | a lint | `src/syntax/Lint.{h,cpp}` | `docs/idioms.md` table; `tests/lint` |
 | modules, `.piai`, imports | `src/syntax/Interfaces.cpp` | `tools/piac/pia.bzl` (`pia_library`, `pia_binary`); `tests/modules` |
+| a lowering to MLIR (`@lower`, ADR 0065) | `markLowering` in `src/irgen/IRGen.cpp` (the rules), `src/codegen/Lowerings.cpp` (splice, parse, replace the body, the linalg passes) | `--lower` and the trust report in `tools/piac/piac.cpp`, `trusted` lines in `src/cert/Certificate.cpp`; tests in `tests/codegen/lower_linalg.pia` (run by `lower_linalg_test` and `lower_linalg_body_test`), `tests/codegen/lower_invalid.pia`, `tests/irgen/lower.pia`, `tests/irgen/lower_errors.pia`, `tests/irgen/lower_untrusted.pia` |
 | codegen or the C ABI | `src/codegen/Codegen.cpp` | `docs/codegen.md`, `docs/abi.md`; `tests/codegen` |
 | a target platform | `tools/piac/targets.bzl`, `--target`/`--cpu` in `piac.cpp` | ADR 0049, `docs/adr/0049-targets-are-theories.md` |
 | the dialects | `src/dialect/*.td` | `tests/dialect` (round trips through `pia-opt`) |
@@ -119,8 +120,9 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
 - `src/codegen/ArrayResults.{h,cpp}` turns each array result into a buffer the caller makes, and each return into a copy into it, so arrays are returned by value.
+- `src/codegen/Lowerings.{h,cpp}` puts each `@lower` function's MLIR in place of its body after `lowerToCore`, and adds the passes that take `linalg` to loops (ADR 0065).
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
-- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 

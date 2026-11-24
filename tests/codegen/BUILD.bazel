@@ -6,7 +6,10 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 lit_tests(
     name = "codegen_tests",
     srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
-    tools = ["//tools/piac"],
+    tools = [
+        "//tools/pia-cert",
+        "//tools/piac",
+    ],
 )
 
 # saturate.pia compiled for the platform being built for and linked with a
@@ -322,4 +325,42 @@ cc_test(
     ],
     target_compatible_with = PIA_TARGETS,
     deps = ["@llvm-project//mlir:mlir_async_runtime"],
+)
+
+# lower_linalg.pia, a matmul lowered to linalg (ADR 0065), run from C: once
+# from its MLIR form, and once from its Pia body (--lower=off).
+genrule(
+    name = "lower_linalg_obj",
+    srcs = ["lower_linalg.pia"],
+    outs = ["lower_linalg.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lower_linalg_test",
+    srcs = [
+        "lower_linalg_test.c",
+        ":lower_linalg_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+genrule(
+    name = "lower_linalg_body_obj",
+    srcs = ["lower_linalg.pia"],
+    outs = ["lower_linalg_body.o"],
+    cmd = "$(location //tools/piac) --emit=obj --lower=off " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lower_linalg_body_test",
+    srcs = [
+        "lower_linalg_test.c",
+        ":lower_linalg_body_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
 )

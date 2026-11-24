@@ -156,3 +156,13 @@ Dean answered all three on 2026-11-24, each with the recommended option:
 1. **The surface:** one attribute, `@lower`, carrying MLIR text with `$` splices, or a metaprogram that returns it, on an ordinary `let` (section 1). There is no MLIR quote language, and no MLIR ops inline in expressions.
 2. **The body:** every lowered function keeps a Pia body, as its specification and its fallback. There are no lowerings with only a contract, not even in `@trusted` modules. A foreign function without a body stays an `extern`.
 3. **Schedules:** `@schedule` holds transform-dialect scripts, trusted as compiler passes and listed in the trust report until step 8 validates them (section 2). A friendlier Pia vocabulary, if one is wanted later, is metaprograms that write these scripts.
+
+## Notes from step 1
+
+Step 1 (trusted lowerings on the CPU) is implemented as decided, with these details settled in the code ([codegen.md](../codegen.md#lowerings-written-in-pia)):
+
+- **Placement.** `@lower(...)` goes where every other function attribute goes, after the return type and before `requires`, as `@opaque` and `@variadic` do, not after `ensures` as the sketch in section 1 shows.
+- **The wrapper.** MLIR's parser takes the text as the body of `func.func @pia_lowering` with the function's core signature, with `return` added for a function that returns nothing; a function that returns an integer or a bool writes its own `return`. The body is moved into the real function, every op located at the attribute.
+- **Splices and results.** A spliced parameter is an integer, a bool or a buffer of them, since a record is several values once records are scalarized; a lowered function returns unit, an integer or a bool, since an array result becomes a buffer the caller makes after IRGen.
+- **Named ops on memrefs.** `linalg.matmul` and the other named ops verify on memrefs, so step 1 needs no tensors: `memref.expand_shape` views a `[i8; 16]` as `memref<4x4xi8>`, and `convert-linalg-to-loops`, `expand-strided-metadata` and `lower-affine` take the result to the existing passes. `tensor` and `bufferization` are linked and registered but nothing bufferises yet (step 6). `transform` is linked and registered for step 5.
+- **The certificate.** Format 2 adds a `trusted <kind> <name> <hash> <ops>` line, written only by an object that has a lowering, so every other object stays format 1 and older readers still read it. The other trusted kinds of docs/abi.md are not recorded in certificates yet.

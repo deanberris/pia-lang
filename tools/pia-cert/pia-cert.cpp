@@ -72,6 +72,12 @@ int main(int argc, char **argv) {
       std::cout << "provides " << i.name << " " << i.hash << "\n";
     for (const pia::cert::Interface &i : c.requires_)
       std::cout << "requires " << i.name << " " << i.hash << "\n";
+    for (const pia::cert::Trusted &t : c.trusted) {
+      std::cout << "trusted " << t.kind << " " << t.name << " " << t.hash;
+      for (size_t i = 0; i < t.detail.size(); ++i)
+        std::cout << (i ? ", " : " (") << t.detail[i];
+      std::cout << (t.detail.empty() ? "\n" : ")\n");
+    }
     return 0;
   }
   std::vector<std::string> problems = pia::cert::checkLink(objects);
