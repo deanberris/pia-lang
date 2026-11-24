@@ -267,7 +267,6 @@ class Expander {
    // scalar costs nothing once records are scalarized.
    void makeDistinct() {
      std::vector<NodePtr> out;
-     bool changed = false;
      for (NodePtr &item : program_.kids) {
        if (!isTypeItem(*item) || item->kids[3]->flags == "alias" ||
            item->flags.find("distinct") != std::string::npos) {
@@ -298,7 +297,6 @@ class Expander {
          out.push_back(std::move(item));
          continue;
        }
-       changed = true;
        SourceLoc at = item->loc;
        const std::string field = "raw#" + n;
        NodePtr under = std::move(value.kids[0]);
