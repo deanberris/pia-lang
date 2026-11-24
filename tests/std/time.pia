@@ -1,0 +1,37 @@
+(* Pia.Time (ADR 0040, phase 1.10): <chrono>'s durations, as exported
+   metaprograms over Pia.Core.Ratio, and the civil calendar. What the
+   metaprograms make is proved in each importer (time_edges.pia). The
+   calendar's 230 goals are proved in three tests, so that none takes long
+   under a full parallel suite: here the per-level lemmas and the
+   interface's contracts (90), time_civil.pia the conversions (80), and
+   time_unique.pia the injectivity proof behind the lemma unique (60).
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --verify --iface-path=%t --verify-only=month_of --verify-only=day_of --verify-only=doy_of --verify-only=mlen --verify-only=md_round_trip --verify-only=doy_round_trip --verify-only=day_fits --verify-only=doe_of --verify-only=yoe_of --verify-only=leap_yoe --verify-only=yd_round_trip --verify-only=doe_round_trip --verify-only=split_days --verify-only=split_years --verify-only=is_leap --verify-only=last_day --verify-only=leap_link --verify-only=month_link --verify-only=fits --verify-only=years_unique --verify-only=doe_linear --verify-only=unfits --verify-only=Pia.Time.Calendar.is_leap.contract --verify-only=Pia.Time.Calendar.last_day.contract --verify-only=Pia.Time.Calendar.days_from_civil.contract --verify-only=Pia.Time.Calendar.civil_from_days.contract --verify-only=Pia.Time.Calendar.in_range.contract %S/../../lib/Pia/Time.pia | FileCheck %s
+// RUN: mkdir -p %t/t && piac --emit=interface -o %t/t %S/../../lib/Pia/Time.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/t/Pia.Time.Durations.piai
+// RUN: FileCheck --check-prefix=CAL %s < %t/t/Pia.Time.Calendar.piai
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 90 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Time{{$}}
+// IFACE-NEXT: {{^}}interface Durations = sig{{$}}
+// IFACE-NEXT: {{^}}  let meta duration : list{{$}}
+// IFACE-NEXT: {{^}}  let meta cast : item{{$}}
+// IFACE-NEXT: {{^}}  let meta standard : list{{$}}
+// IFACE-NEXT: {{^}}  let meta time_point : list{{$}}
+// IFACE-NEXT: {{^}}  let meta point_cast : item{{$}}
+// IFACE-NEXT: {{^}}  let meta sys_days : list{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+// IFACE: {{^}}let meta duration (x : string) (p : list) : list{{$}}
+// IFACE: {{^}}let meta cast (name : string) (from : string) (fp : list) (to : string) (tp : list) : item{{$}}
+// IFACE: {{^}}let meta standard (u : unit) : list{{$}}
+// CAL: {{^}}interface Calendar = sig{{$}}
+// CAL: let days_from_civil : (y0 : int{-1000000..1000000}) -> (m : int{1..12}) -> (d : int{1..31}) -> i64 requires d <= last_day y0 m ensures result = civil_days y0 m d
+// CAL: let civil_from_days : (z : int{-365962028..364523337}) -> ymd ensures valid result ensures maps_to result z
+// CAL: let lemma unique : (c : ymd)
+*)

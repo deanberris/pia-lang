@@ -501,25 +501,42 @@ private:
     out_.push_back(t);
   }
 
+  // Consumes the digits in `digits` and the separators between them. A `'`
+  // must sit between two digits, as in C++14, because after a name it is
+  // a prime (`x'`) and a stray one is more likely a typo than a separator.
+  // `_` keeps its looser rule, since code already uses it.
+  void lexDigits(std::string_view digits) {
+    auto isIn = [&](char c) {
+      return c != '\0' && digits.find(c) != std::string_view::npos;
+    };
+    while (isIn(peek()) || peek() == '_' ||
+           (peek() == '\'' && pos_ > 0 && isIn(src_[pos_ - 1]))) {
+      if (peek() == '\'' && !isIn(peek(1))) {
+        error(here(), "a digit separator ' must sit between two digits");
+        advance();
+        continue;
+      }
+      advance();
+    }
+  }
+
   void lexNumber(SourceLoc start) {
     TokenKind kind = TokenKind::Int;
     char base =
         static_cast<char>(std::tolower(static_cast<unsigned char>(peek(1))));
+    constexpr std::string_view decimal = "0123456789";
     if (peek() == '0' && (base == 'x' || base == 'b' || base == 'o')) {
-      std::string_view digits = base == 'x'   ? "0123456789abcdefABCDEF_"
-                                : base == 'b' ? "01_"
-                                              : "01234567_";
+      std::string_view digits = base == 'x'   ? "0123456789abcdefABCDEF"
+                                : base == 'b' ? "01"
+                                              : "01234567";
       advance(2);
-      while (peek() != '\0' && digits.find(peek()) != std::string_view::npos)
-        advance();
+      lexDigits(digits);
     } else {
-      while (isDigit(peek()) || peek() == '_')
-        advance();
+      lexDigits(decimal);
       if (peek() == '.' && isDigit(peek(1))) {
         kind = TokenKind::Float;
         advance();
-        while (isDigit(peek()) || peek() == '_')
-          advance();
+        lexDigits(decimal);
       }
       if ((peek() == 'e' || peek() == 'E') &&
           (isDigit(peek(1)) ||
@@ -574,6 +591,12 @@ private:
          out_.back().kind == TokenKind::Rec) &&
         nameFollows())
       kind = word == "spec" ? TokenKind::Spec : TokenKind::Lemma;
+    // `reads` is a keyword only where a contract clause starts: first on
+    // its line, before the buffer it names (ADR 0060, section 3), so it
+    // stays a usable name elsewhere.
+    if (word == "reads" &&
+        (out_.empty() || out_.back().loc.line < start.line) && nameFollows())
+      kind = TokenKind::Reads;
     // `step` is a keyword only in the header of a `for` or `spread`, between
     // it and its `do` at the same bracket depth, so it stays a usable name
     // elsewhere.

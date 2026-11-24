@@ -1,0 +1,387 @@
+(* Pia.Image.Gif.Decode: the GIF container (GIF89a; ADR 0054, step 2),
+   proved total and safe on every input, with `info` proved to accept
+   exactly the inputs Pia.Image.Gif.Spec's block grammar accepts.
+
+   Decoding is in two steps and allocates nothing (ADR 0054, section 4).
+   `info` reads the screen's dimensions, counts the frames and finds the
+   NETSCAPE2.0 loop count. The caller then lends `decode_frame` the
+   buffers it needs, sized from the dimensions: the RGBA canvas, a copy
+   of it for "restore to previous" disposal, a w * h index buffer, a data
+   buffer as long as the input, the 12288-byte LZW table and a 768-byte
+   colour map. decode_frame composites frames 0 to k onto the canvas,
+   which starts transparent: each frame is drawn with its own colour
+   table or the global one, in interlaced row order where it says so,
+   clipped to the screen, skipping its transparent index, and then
+   disposed of as its Graphic Control Extension says before the next.
+
+   The colour map is padded to 256 entries with zeros, so every index the
+   LZW decoder writes (below 2^8) has a colour. The interlaced row order
+   is proved a permutation of the frame's rows (`row_rank`, `rank_row`). *)
+module Pia.Image.Gif.Decode : Decode
+
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+
+interface Decode = sig
+  let gif_error = type
+    | Ends of usize | NotGif of usize | BadBlock of usize
+    | BadData of usize | TooLarge of usize | NoFrame of usize
+  let gif_info = type { w : int{1..65535}; h : int{1..65535}; frames : usize; loops : int{0..65536}; start : usize }
+  let frame = type { x0 : u16; y0 : u16; fw : u16; fh : u16; delay : u16; disposal : int{0..7}; transparent : int{0..256} }
+  let lemma row_rank : (h : int{1..65535}) -> (r : usize) -> unit
+    requires r < h
+    ensures G.row_of h r < h && G.rank_of h (G.row_of h r) = r
+  let lemma rank_row : (h : int{1..65535}) -> (y : usize) -> unit
+    requires y < h
+    ensures G.rank_of h y < h && G.row_of h (G.rank_of h y) = y
+  let chain_skip : (s : [u8]) -> (p : usize) -> usize
+    ensures result = G.chain_end s p
+  let block_skip : (s : [u8]) -> (p : usize) -> usize
+    requires p < len s
+    ensures result = G.block_end s p
+  let info : (s : [u8]) -> result gif_info gif_error
+    ensures (match result with
+      | Ok i -> (if G.header_ok s then
+                  i.start = G.first_block s && G.blocks_ok s i.start && i.frames = G.frames_from s i.start
+                  && i.w = G.u16le s 6 && i.h = G.u16le s 8
+                else false)
+      | Err _ -> (if G.header_ok s then
+                   G.u16le s 6 = 0 || G.u16le s 8 = 0 || G.blocks_ok s (G.first_block s) = false
+                 else true))
+  let decode_frame : (s : [u8]) -> (i : gif_info) -> (k : usize) -> (canvas : borrowed inout mutable [u8]) -> (save : borrowed inout mutable [u8]) -> (idx : borrowed inout mutable [u8]) -> (data : borrowed inout mutable [u8]) -> (t : borrowed inout mutable [u8]) -> (pal : borrowed inout mutable [u8]) -> result frame gif_error
+    requires len canvas = R.size i.w i.h 4 && len save = len canvas && len idx = R.size i.w i.h 1
+    requires len data >= len s && len t = 12288 && len pal = 768
+end
+
+(** Ends: the input ends inside the block at the offset. NotGif: no GIF
+    signature. BadBlock: a block that is not an extension, an image or the
+    trailer, or a field out of range. BadData: the image data at the
+    offset is not a valid LZW stream. TooLarge: a frame holds more pixels
+    than the screen. NoFrame: the trailer comes before frame k. *)
+let gif_error = type
+  | Ends of usize | NotGif of usize | BadBlock of usize
+  | BadData of usize | TooLarge of usize | NoFrame of usize
+
+(** The logical screen, the number of frames, the loop count (0 for
+    forever, 65536 when there is no NETSCAPE2.0 extension), and the offset
+    of the first block. *)
+let gif_info = type { w : int{1..65535}; h : int{1..65535}; frames : usize; loops : int{0..65536}; start : usize }
+
+(** A frame's rectangle, delay in hundredths of a second, disposal method,
+    and transparent index (256 for none). *)
+let frame = type { x0 : u16; y0 : u16; fw : u16; fh : u16; delay : u16; disposal : int{0..7}; transparent : int{0..256} }
+
+let lemma passes_cover (h : int{1..65535}) : unit
+  ensures G.pass_rows h 0 + G.pass_rows h 1 + G.pass_rows h 2 + G.pass_rows h 3 = h
+= ()
+
+(** The interlaced row order maps the rows 0 .. h - 1 onto themselves, and
+    rank_of undoes it: a permutation. *)
+let lemma row_rank (h : int{1..65535}) (r : usize) : unit
+  requires r < h
+  ensures G.row_of h r < h && G.rank_of h (G.row_of h r) = r
+= passes_cover h
+
+let lemma rank_row (h : int{1..65535}) (y : usize) : unit
+  requires y < h
+  ensures G.rank_of h y < h && G.row_of h (G.rank_of h y) = y
+= passes_cover h
+
+(* The image row of the r-th row of interlaced data. *)
+let interlaced_row (h : int{1..65535}) (r : usize) : usize
+  requires r < h
+  ensures result = G.row_of h r && result < h
+= row_rank h r;
+  let a : usize = (h + 7) / 8 in
+  let b : usize = (h + 3) / 8 in
+  let c : usize = (h + 1) / 4 in
+  if r < a then 8 * r
+  else if r < a + b then 8 * (r - a) + 4
+  else if r < a + b + c then 4 * (r - a - b) + 2
+  else 2 * (r - a - b - c) + 1
+
+(** The end of the sub-block chain at p, or 0. *)
+let chain_skip (s : [u8]) (p : usize) : usize
+  ensures result = G.chain_end s p
+= let q : mutable usize = p in
+  let r : mutable usize = 0 in
+  let go : mutable bool = p < len s in
+  while go
+    invariant p <= q && (go ==> q < len s)
+    invariant go ==> G.chain_end s p = G.chain_end s q
+    invariant go = false ==> r = G.chain_end s p
+    decreases len s - q + (if go then 1 else 0)
+  do
+    if s.[q] = 0 then (r <- q + 1; go <- false)
+    else if len s - q <= s.[q] then (r <- 0; go <- false)
+    else (
+      q <- q + 1 + s.[q];
+      if q >= len s then (r <- 0; go <- false) else ())
+  done;
+  r
+
+(* The bytes of the colour table a packed field announces. *)
+let table_len (packed : u8) : int{0..768}
+  ensures result = G.ctab_len packed
+= if (packed & 0x80) = 0 then 0
+  else (let n : u16 = packed & 7 in let two : u16 = 2 in let v : int{6..768} = 3 * (two << n) in v)
+
+(** The end of the extension or image block at p, or 0. *)
+let block_skip (s : [u8]) (p : usize) : usize
+  requires p < len s
+  ensures result = G.block_end s p
+= if s.[p] = 0x21 then (if len s - p < 2 then 0 else chain_skip s (p + 2))
+  else if s.[p] = 0x2C then (
+    if len s - p < 11 then 0
+    else (
+      let n = table_len s.[p + 9] in
+      if len s - p <= 10 + n then 0 else chain_skip s (p + 11 + n)))
+  else 0
+
+(* The loop count of a NETSCAPE2.0 application extension at p, or 65536
+   when the block at p is not one. *)
+let loop_count (s : [u8]) (p : usize) : int{0..65536}
+  requires p < len s
+= if len s - p < 19 then 65536
+  else if s.[p] = 0x21 && s.[p + 1] = 0xFF && s.[p + 2] = 11
+     && s.[p + 3] = 0x4E && s.[p + 4] = 0x45 && s.[p + 5] = 0x54 && s.[p + 6] = 0x53
+     && s.[p + 7] = 0x43 && s.[p + 8] = 0x41 && s.[p + 9] = 0x50 && s.[p + 10] = 0x45
+     && s.[p + 11] = 0x32 && s.[p + 12] = 0x2E && s.[p + 13] = 0x30
+     && s.[p + 14] = 3 && s.[p + 15] = 1
+  then (let lo : u16 = s.[p + 16] in let hi : u16 = s.[p + 17] in (lo | (hi << 8)))
+  else 65536
+
+(** The screen, the frame count and the loop count, or where the input
+    stops being a GIF. *)
+let info (s : [u8]) : result gif_info gif_error
+  ensures (match result with
+    | Ok i -> (if G.header_ok s then
+                i.start = G.first_block s && G.blocks_ok s i.start && i.frames = G.frames_from s i.start
+                && i.w = G.u16le s 6 && i.h = G.u16le s 8
+              else false)
+    | Err _ -> (if G.header_ok s then
+                 G.u16le s 6 = 0 || G.u16le s 8 = 0 || G.blocks_ok s (G.first_block s) = false
+               else true))
+= if len s < 13 then Err (NotGif 0)
+  else if (s.[0] = 0x47 && s.[1] = 0x49 && s.[2] = 0x46 && s.[3] = 0x38
+           && (s.[4] = 0x37 || s.[4] = 0x39) && s.[5] = 0x61) = false then Err (NotGif 0)
+  else (
+    let w : u16 = (let lo : u16 = s.[6] in let hi : u16 = s.[7] in (lo | (hi << 8))) in
+    let h : u16 = (let lo : u16 = s.[8] in let hi : u16 = s.[9] in (lo | (hi << 8))) in
+    if w = 0 || h = 0 then Err (BadBlock 6)
+    else (
+      let start : usize = 13 + table_len s.[10] in
+      let p : mutable usize = start in
+      let n : mutable usize = 0 in
+      let loops : mutable int{0..65536} = 65536 in
+      let st : mutable int{0..3} = if start < len s then 0 else 2 in
+      while st = 0
+        invariant start <= p && n <= p - start && (st = 0 ==> p < len s)
+        invariant st = 0 ==> (G.blocks_ok s start = G.blocks_ok s p
+                              && G.frames_from s start = n + G.frames_from s p)
+        invariant st = 1 ==> G.blocks_ok s start && G.frames_from s start = n
+        invariant st >= 2 ==> G.blocks_ok s start = false
+        invariant st = 3 ==> p < len s
+        decreases len s - p + (if st = 0 then 1 else 0)
+      do
+        if s.[p] = 0x3B then st <- 1
+        else (
+          let e = block_skip s p in
+          if e = 0 then st <- 3
+          else (
+            (if s.[p] = 0x2C then n <- n + 1 else ());
+            let l = loop_count s p in
+            (if l < 65536 && loops = 65536 then loops <- l else ());
+            p <- e;
+            if p >= len s then st <- 2 else ()))
+      done;
+      if st = 1 then Ok { w = w; h = h; frames = n; loops = loops; start = start }
+      else if st = 2 then Err (Ends p)
+      else if s.[p] = 0x21 || s.[p] = 0x2C then Err (Ends p)
+      else Err (BadBlock p)))
+
+(* Sets every byte of b to v. *)
+let fill (b : borrowed inout mutable [u8]) (v : u8) : unit
+= for j in 0 .. len b do b.[j] <- v done
+
+(* Copies a to b, of the same length. *)
+let copy (a : [u8]) (b : borrowed inout mutable [u8]) : unit
+  requires len a = len b
+= for j in 0 .. len a do b.[j] <- a.[j] done
+
+(* The colour table of n bytes at s.[p ..], padded with zeros to 256
+   colours. *)
+let load_palette (s : [u8]) (p : usize) (n : int{0..768}) (pal : borrowed inout mutable [u8]) : unit
+  requires len pal = 768 && p <= len s && n <= len s - p
+= for j in 0 .. 768 do
+    if j < n then pal.[j] <- s.[p + j] else pal.[j] <- 0
+  done
+
+(* Copies the payloads of the sub-block chain at q into data, and returns
+   how many bytes that is. *)
+let gather (s : [u8]) (q : usize) (data : borrowed inout mutable [u8]) : usize
+  requires G.chain_end s q <> 0 && len data >= len s
+  ensures result <= len data
+= let c : mutable usize = q in
+  let n : mutable usize = 0 in
+  while s.[c] <> 0
+    invariant q <= c && c < len s && n <= c - q
+    invariant G.chain_end s c = G.chain_end s q
+    decreases len s - c
+  do
+    let k : usize = s.[c] in
+    for j in 0 .. k
+      invariant n + j <= c - q + j
+    do
+      data.[n + j] <- s.[c + 1 + j]
+    done;
+    n <- n + k;
+    c <- c + 1 + k
+  done;
+  n
+
+(* Clears the part of rectangle (x0, y0, fw, fh) inside the screen to
+   transparent. *)
+let clear_rect (d : R.dims) (canvas : borrowed inout mutable [u8]) (x0 : u16) (y0 : u16) (fw : u16) (fh : u16) : unit
+  requires d.c = 4 && len canvas = R.size d.w d.h d.c
+= for r in 0 .. fh do
+    let y : u32 = y0 + r in
+    if y < d.h then (
+      for x' in 0 .. fw do
+        let x : u32 = x0 + x' in
+        if x < d.w then (
+          let o = R.index d x y 0 in
+          canvas.[o] <- 0;
+          canvas.[o + 1] <- 0;
+          canvas.[o + 2] <- 0;
+          canvas.[o + 3] <- 0)
+        else ()
+      done)
+    else ()
+  done
+
+(* Draws n decoded indices of a frame onto the canvas: row by row of the
+   data, in interlaced order if il, clipped to the screen, skipping the
+   transparent index tr. *)
+let draw (d : R.dims) (canvas : borrowed inout mutable [u8]) (idx : [u8]) (n : usize) (pal : [u8]) (x0 : u16) (y0 : u16) (fw : int{1..65535}) (fh : int{1..65535}) (il : bool) (tr : int{0..256}) : unit
+  requires d.c = 4 && len canvas = R.size d.w d.h d.c && n <= len idx && len pal = 768
+= let i : mutable usize = 0 in
+  let rows : usize = fh in
+  let cols : usize = fw in
+  for r in 0 .. rows
+    invariant i <= n
+  do
+    let yr : usize = if il then interlaced_row fh r else r in
+    let y : u32 = y0 + yr in
+    for x' in 0 .. cols
+      invariant i <= n
+    do
+      if i < n then (
+        let c : usize = idx.[i] in
+        i <- i + 1;
+        let x : u32 = x0 + x' in
+        if x < d.w && y < d.h && c <> tr then (
+          let o = R.index d x y 0 in
+          canvas.[o] <- pal.[3 * c];
+          canvas.[o + 1] <- pal.[3 * c + 1];
+          canvas.[o + 2] <- pal.[3 * c + 2];
+          canvas.[o + 3] <- 255)
+        else ())
+      else ()
+    done
+  done
+
+(** Composites frames 0 to k of s onto canvas, which starts transparent,
+    and returns frame k's rectangle, delay, disposal and transparent
+    index. The other buffers are decode_frame's to overwrite: save holds
+    the canvas for "restore to previous" disposal, idx a frame's indices,
+    data its LZW stream, t the LZW table and pal its colours. *)
+let decode_frame (s : [u8]) (i : gif_info) (k : usize) (canvas : borrowed inout mutable [u8]) (save : borrowed inout mutable [u8]) (idx : borrowed inout mutable [u8]) (data : borrowed inout mutable [u8]) (t : borrowed inout mutable [u8]) (pal : borrowed inout mutable [u8]) : result frame gif_error
+  requires len canvas = R.size i.w i.h 4 && len save = len canvas && len idx = R.size i.w i.h 1
+  requires len data >= len s && len t = 12288 && len pal = 768
+= let d : R.dims = { w = i.w; h = i.h; c = 4 } in
+  fill canvas 0;
+  if i.start < 13 || i.start > len s || i.start - 13 > 768 then Err (NotGif 0)
+  else (
+    let gct : int{0..768} = i.start - 13 in
+    let p : mutable usize = i.start in
+    let j : mutable usize = 0 in
+    let disp : mutable int{0..7} = 0 in
+    let tr : mutable int{0..256} = 256 in
+    let delay : mutable u16 = 0 in
+    let pd : mutable int{0..7} = 0 in
+    let px : mutable u16 = 0 in
+    let py : mutable u16 = 0 in
+    let pw : mutable u16 = 0 in
+    let ph : mutable u16 = 0 in
+    let st : mutable int{0..7} = 0 in
+    let at : mutable usize = 0 in
+    let res : mutable frame = { x0 = 0; y0 = 0; fw = 0; fh = 0; delay = 0; disposal = 0; transparent = 256 } in
+    while st = 0
+      invariant i.start <= p && p <= len s && j <= p - i.start
+      decreases len s - p + (if st = 0 then 1 else 0)
+    do
+      if p >= len s then (st <- 2; at <- p)
+      else if s.[p] = 0x3B then (st <- 6; at <- p)
+      else (
+        let e = block_skip s p in
+        if e = 0 then (if s.[p] = 0x21 || s.[p] = 0x2C then st <- 2 else st <- 3; at <- p)
+        else if (p < e && e <= len s) = false then abort ()
+        else if s.[p] = 0x21 then (
+          (if len s - p >= 8 && s.[p + 1] = 0xF9 && s.[p + 2] = 4 then (
+             let pk = s.[p + 3] in
+             disp <- (pk >> 2) & 7;
+             tr <- (if (pk & 1) = 1 then s.[p + 6] else 256);
+             let lo : u16 = s.[p + 4] in
+             let hi : u16 = s.[p + 5] in
+             delay <- (lo | (hi << 8)))
+           else ());
+          p <- e)
+        else (
+          (if pd = 2 then clear_rect d canvas px py pw ph
+           else if pd = 3 then copy save canvas
+           else ());
+          let x0 : u16 = (let lo : u16 = s.[p + 1] in let hi : u16 = s.[p + 2] in (lo | (hi << 8))) in
+          let y0 : u16 = (let lo : u16 = s.[p + 3] in let hi : u16 = s.[p + 4] in (lo | (hi << 8))) in
+          let fw : u16 = (let lo : u16 = s.[p + 5] in let hi : u16 = s.[p + 6] in (lo | (hi << 8))) in
+          let fh : u16 = (let lo : u16 = s.[p + 7] in let hi : u16 = s.[p + 8] in (lo | (hi << 8))) in
+          let packed = s.[p + 9] in
+          let ltab = table_len packed in
+          (if ltab > 0 then load_palette s (p + 10) ltab pal else load_palette s 13 gct pal);
+          (if disp = 3 then copy canvas save else ());
+          let mpos : usize = p + 10 + ltab in
+          let m = s.[mpos] in
+          if m < 2 || m > 8 then (st <- 3; at <- mpos)
+          else (
+            let mm : int{2..8} = m in
+            let n = gather s (mpos + 1) data in
+            match L.decode (data.[0 .. n]) mm t idx with
+            | Ok cnt -> (
+                (if fw > 0 && fh > 0 then (
+                   let w' : int{1..65535} = fw in
+                   let h' : int{1..65535} = fh in
+                   draw d canvas idx cnt pal x0 y0 w' h' ((packed & 0x40) <> 0) tr)
+                 else ());
+                if j = k then (
+                  st <- 1;
+                  res <- { x0 = x0; y0 = y0; fw = fw; fh = fh; delay = delay; disposal = disp; transparent = tr })
+                else (
+                  pd <- disp; px <- x0; py <- y0; pw <- fw; ph <- fh;
+                  disp <- 0; tr <- 256; delay <- 0;
+                  j <- j + 1;
+                  p <- e))
+            | Err lerr -> (
+                at <- mpos;
+                match lerr with
+                | OutputFull _ -> st <- 5
+                | _ -> st <- 4))))
+    done;
+    if st = 1 then Ok res
+    else if st = 2 then Err (Ends at)
+    else if st = 3 then Err (BadBlock at)
+    else if st = 4 then Err (BadData at)
+    else if st = 5 then Err (TooLarge at)
+    else Err (NoFrame at))

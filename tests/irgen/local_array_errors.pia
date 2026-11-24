@@ -1,0 +1,14 @@
+(* A local array's literal has as many elements as its type, and an array
+   that is not `mutable` cannot be written.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: local_array_errors.pia:[[@LINE+3]]:29: error: an array literal for [u8; 3] needs 3 elements, found 2
+*)
+let short (x : u8) : u8 =
+  let a : mutable [u8; 3] = [x; x] in a.[0]
+
+(* CHECK: local_array_errors.pia:[[@LINE+3]]:32: error: cannot write to 'a': declare the local 'mutable'
+*)
+let frozen (x : u8) : u8 =
+  let a : [u8; 2] = [x; x] in (a.[0] <- 1; a.[1])

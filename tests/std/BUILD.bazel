@@ -11,12 +11,19 @@ lit_tests(
     srcs = glob(["*.pia"]),
     data = [
         "Inputs/hof_overloads.pia",
+        "Inputs/ratio_errors.pia",
+        "Inputs/time_errors.pia",
+        "Inputs/time_overflow.pia",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
+        "//lib/Pia/Core:Digits.pia",
+        "//lib/Pia/Core:Hash.pia",
         "//lib/Pia/Core:Int.pia",
         "//lib/Pia/Core:Option.pia",
         "//lib/Pia/Core:Order.pia",
+        "//lib/Pia/Core:Ratio.pia",
+        "//lib/Pia:Time.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core:Utf8.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
@@ -34,25 +41,37 @@ lit_tests(
         "//lib/Pia/Core/Algo:SetSymmetric.pia",
         "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
+        "//lib/Pia/Compress:Huffman.pia",
+        "//lib/Pia/Compress:Inflate.pia",
+        "//lib/Pia/Compress:Zlib.pia",
+        "//lib/Pia/Compress/Inflate:Spec.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
+        "//lib/Pia/Image/Gif:Decode.pia",
+        "//lib/Pia/Image/Gif:Encode.pia",
         "//lib/Pia/Image/Gif:Lzw.pia",
+        "//lib/Pia/Image/Gif:LzwEncode.pia",
+        "//lib/Pia/Image/Gif:Quantise.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
         "//lib/Pia/Mem:Vec.pia",
         "//lib/Pia/Sys/Gen:arm64_macos.pia",
+        "//lib/Pia/Text/Json:Derive.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
         "//lib/Pia/Text/Json:Write.pia",
     ],
-    # These two prove alone in about 190 s, so under a full parallel
-    # `bazel test //tests/...` they went past the 300 s of a medium test.
+    # These prove alone in 60-190 s on the iMac, so under a full parallel
+    # `bazel test //tests/...` (and on the slower Linux CI runner) they went
+    # past the 300 s of a medium test. heap.pia and partial_sort.pia were
+    # here too, until the verifier stopped rescanning the module for each
+    # callee, which halved them (21 s and 17 s alone).
     sizes = {
-        "heap.pia": "large",
+        "json_derive_array.pia": "large",
+        "json_derive_variant.pia": "large",
         "json_write.pia": "large",
-        "partial_sort.pia": "large",
     },
     tools = ["//tools/piac"],
 )
@@ -162,6 +181,7 @@ pia_binary(
     src = "Inputs/json_derive_run.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -184,6 +204,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:option",
         "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -206,6 +227,7 @@ pia_binary(
     deps = [
         "//lib/Pia/Core:option",
         "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:lex",
         "//lib/Pia/Text/Json:read",
         "//lib/Pia/Text/Json:spec",
@@ -218,6 +240,29 @@ sh_test(
     srcs = ["json_variant_run_test.sh"],
     args = ["$(rootpath :json_variant_run)"],
     data = [":json_variant_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "json_array_run",
+    src = "Inputs/json_array_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+sh_test(
+    name = "json_array_run_test",
+    srcs = ["json_array_run_test.sh"],
+    args = ["$(rootpath :json_array_run)"],
+    data = [":json_array_run"],
     target_compatible_with = PIA_TARGETS,
 )
 
@@ -435,6 +480,108 @@ sh_test(
 )
 
 pia_binary(
+    name = "digits_run",
+    src = "Inputs/digits_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:digits"],
+)
+
+sh_test(
+    name = "digits_run_test",
+    srcs = ["digits_run_test.sh"],
+    args = ["$(rootpath :digits_run)"],
+    data = [":digits_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "hash_run",
+    src = "Inputs/hash_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Core:hash",
+        "//lib/Pia/Core:order",
+    ],
+)
+
+sh_test(
+    name = "hash_run_test",
+    srcs = ["hash_run_test.sh"],
+    args = ["$(rootpath :hash_run)"],
+    data = [":hash_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "ratio_run",
+    src = "Inputs/ratio_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Core:ratio"],
+)
+
+sh_test(
+    name = "ratio_run_test",
+    srcs = ["ratio_run_test.sh"],
+    args = ["$(rootpath :ratio_run)"],
+    data = [":ratio_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "time_run",
+    src = "Inputs/time_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "time_run_test",
+    srcs = ["time_run_test.sh"],
+    args = ["$(rootpath :time_run)"],
+    data = [":time_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "calendar_run",
+    src = "Inputs/calendar_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "calendar_run_test",
+    srcs = ["calendar_run_test.sh"],
+    args = ["$(rootpath :calendar_run)"],
+    data = [":calendar_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "time_point_run",
+    src = "Inputs/time_point_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia:time",
+        "//lib/Pia/Core:ratio",
+    ],
+)
+
+sh_test(
+    name = "time_point_run_test",
+    srcs = ["time_point_run_test.sh"],
+    args = ["$(rootpath :time_point_run)"],
+    data = [":time_point_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
     name = "utf8_run",
     src = "Inputs/utf8_run.pia",
     target_compatible_with = PIA_TARGETS,
@@ -529,5 +676,94 @@ sh_test(
     srcs = ["mem_run_test.sh"],
     args = ["$(rootpath :mem_run)"],
     data = [":mem_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_decode_run",
+    src = "Inputs/gif_decode_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_decode_run_test",
+    srcs = ["gif_decode_run_test.sh"],
+    args = ["$(rootpath :gif_decode_run)"],
+    data = [":gif_decode_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_encode_run",
+    src = "Inputs/gif_encode_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_encode_run_test",
+    srcs = ["gif_encode_run_test.sh"],
+    args = ["$(rootpath :gif_encode_run)"],
+    data = [":gif_encode_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_quantise_run",
+    src = "Inputs/gif_quantise_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:quantise",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_quantise_run_test",
+    srcs = ["gif_quantise_run_test.sh"],
+    args = ["$(rootpath :gif_quantise_run)"],
+    data = [":gif_quantise_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "zlib_run",
+    src = "Inputs/zlib_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Compress:huffman",
+        "//lib/Pia/Compress:inflate",
+        "//lib/Pia/Compress:zlib",
+        "//lib/Pia/Compress/Inflate:spec",
+        "//lib/Pia/Image:bits",
+    ],
+)
+
+sh_test(
+    name = "zlib_run_test",
+    srcs = ["zlib_run_test.sh"],
+    args = ["$(rootpath :zlib_run)"],
+    data = [":zlib_run"],
     target_compatible_with = PIA_TARGETS,
 )

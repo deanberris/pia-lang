@@ -1,0 +1,34 @@
+(* Importers of Pia.Core.Digits prove facts about digit strings by calling
+   its lemmas, which are proved once, in Digits (#305): a run's value split
+   at its first digit, a digit written by put that keeps the value of the
+   digits after it, and a number split into its last digit and the rest.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Digits.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Core.Digits.Digits as D
+
+(* Two digits [d0; d1] in base b are d0 * b + d1. *)
+let two (xs : [u8]) (b : int) : unit
+  requires len xs = 2
+  ensures D.dval xs 0 2 b = xs.[0] * b + xs.[1]
+= D.prepend xs 0 2 b;
+  D.prepend xs 1 2 b
+
+(* Writing the first of three digits keeps the value of the last two. *)
+let lead (xs : borrowed inout mutable [u8]) (d : u8) (b : int) : unit
+  requires len xs = 3
+  ensures D.dval xs 1 3 b = D.dval (old xs) 1 3 b
+  ensures D.dval xs 0 3 b = d * D.pow b 2 + D.dval xs 1 3 b
+= D.put xs 0 d 3 b;
+  D.prepend xs 0 3 b
+
+(* The last digit of v in base 10, and the rest. *)
+let last (v : u32) : unit
+  ensures (v / 10) * 10 + v % 10 = v && v % 10 < 10
+= D.divmod32 v 10
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+*)

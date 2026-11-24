@@ -5,10 +5,12 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 cc_library(
     name = "codegen",
     srcs = [
+        "ArrayResults.cpp",
         "Codegen.cpp",
         "SliceBuffers.cpp",
     ],
     hdrs = [
+        "ArrayResults.h",
         "Codegen.h",
         "SliceBuffers.h",
     ],
@@ -26,6 +28,9 @@ cc_library(
         "@llvm-project//llvm:TransformUtils",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
+        "@llvm-project//mlir:AsyncDialect",
+        "@llvm-project//mlir:AsyncToLLVM",
+        "@llvm-project//mlir:AsyncTransforms",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowToLLVM",

@@ -88,6 +88,7 @@ There, types are values. A type's name, such as `u8` or `pixel`, denotes the typ
 | `element t` | an array's or a slice's element type |
 | `field_types t` | a record's field types, or a variant's payload types, as a list |
 | `type_args t` | a generic instance's type arguments, as a list (empty for any other type) |
+| `type_named s` | the type named `s`, as `Pia.Text.Json.Derive`'s `json_errors` names the error type a derive defined |
 | `eq ne lt gt le ge add sub mul div rem and or implies iff` | the core builtins that a `where` predicate's operators expand to |
 
 `match` takes a type too, which reads better than a cascade of `if`s:
@@ -283,12 +284,12 @@ let eq_pixel (a : pixel) (b : pixel) : bool
 
 `=` on two values of a record type calls `eq_<name>`, and `<>` is its negation. Without the derive, comparing records in code is an error that suggests `@derive(eq)`; in a contract they compare as values ([irgen.md](irgen.md#records)). Because `eq_pixel` has a postcondition, callers can prove facts about `p = q`, such as `ensures result ==> p.r = q.r`.
 
-The prelude also defines `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 4 and 5). For a record of integers, range types, `bool` and `option`s of them (`Pia.Core.Option`), it makes:
+`Pia.Text.Json.Derive` exports `derive_json` ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 4 and 5): `@derive(x)` finds `derive_x` among the program's own metaprograms, or among those its imported interfaces export, and two imported ones of one name are an error that names both. For a record of integers, range types, `bool`, and `option`s (`Pia.Core.Option`) or fixed arrays `[t; n]` of them, it makes:
 
 - `write_json_<t> (dst) (pos) (v : t) : usize`, which writes `v` as a JSON object with `Pia.Text.Json.Write`, one function per member, into room its precondition states as a constant;
 - `read_json_<t> (s) (pos) : result <t>_json_read <t>_json_error`, which reads one with `Pia.Text.Json.Read`. It finds a member by a decision tree built at compile time, on the name's length, then on the first byte where the names left differ, then one full compare. It keeps a flag per field, so a member given twice is `Duplicate_<t>` and one never given is `Missing_<t>`, and it checks each integer's range as its digits are read (`Range_<t>`). An unknown member is `Unknown_<t>`, and anything else `Syntax_<t>`, each with its position. The error type has exactly the constructors its type can raise: no `Range_<t>` without an integer field. The value is built only once every field has been read, so it is fully initialised.
 
-An `option` field writes `null` for None, and reads `null`, or a missing member, as None (`tests/std/json_derive_option.pia`, `tests/std/Inputs/json_option_run.pia`). A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read` and `Write`. The derive is in the prelude until interfaces can export metaprograms ([ADR 0039](adr/0039-module-and-interface-syntax.md), step 3), when it moves to `Pia.Text.Json.Derive`. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
+A fixed-array field is a JSON array of exactly n values: too few or too many is `Length_<t>`, at the `]` or at the value past the last, and the error type has that constructor only when there is an array field (`tests/std/json_derive_array.pia`, `tests/std/Inputs/json_array_run.pia`). An `option` field writes `null` for None, and reads `null`, or a missing member, as None (`tests/std/json_derive_option.pia`, `tests/std/Inputs/json_option_run.pia`). A member's name is its field's, or `@json(name = "...")` on the field, in printable ASCII with no quote or backslash. The generated code calls the JSON modules by their full paths, so a program that derives `json` imports the interfaces of `Pia.Text.Json.Spec`, `Lex`, `Read`, `Write` and `Derive`. Each derived type also gets `read_json`, the instance of the concept `Json`, so `Json.read<point> text` reads the whole text as a `point`, with only whitespace after it (anything else is `Syntax_point` where the value ends), and `Json.json_errors point`, a type-level metaprogram, is its error type, `point_json_error`; the error constructors still carry the type's name, since constructors are names of the module. `tests/std/json_derive.pia` proves the code it makes, and `tests/std/Inputs/json_derive_run.pia` runs it.
 
 On a variant, `derive_json` follows ADR 0045, section 2. Untagged, the default, each constructor must be told apart from every other by its JSON: a record payload is an object, a number or `bool` payload is that, and a constructor with no payload is `null`; two objects are apart when one requires a member the other cannot have, and two numbers when their ranges do not meet. Any other pair is an error that names the two and suggests a tag. The reader scans an object's members into slots for every object constructor's members, by position, in a function of its own, then picks the one constructor they fit and reads each value with that payload's field readers, so a member whose type differs between constructors is read only once the constructor is known. `@json(tag = "kind")` on the type writes `"kind": "<name>"` first and accepts it anywhere among the members; each payload must then be a record, or none. A constructor's name is its own, or `@json(name = "...")` on it. A record payload, in place or named, derives json too, and the variant's codec calls it (`tests/std/json_derive_variant.pia`, `tests/std/Inputs/json_variant_run.pia`).
 
@@ -304,6 +305,7 @@ A derive reads the type it is given with these builtins, besides `fields`, `cons
 | `field_attrs t f` | the attributes on the field `f` of the record `t` |
 | `ctor_attrs t c` | the attributes on the constructor `c` of the variant `t` |
 | `bytes s` | the UTF-8 bytes of the string `s`, as integers |
+| `value x` | the value of a literal's syntax, such as an array type's length: an integer, a bool or a string |
 
 An attribute is `[name; args]`, and each argument `[key; value]`, with `""` as the key of a positional one. A literal argument is its value and a name its spelling as a string, so `@json(name = "x", ignore_unknown)` is `["json"; [["name"; "x"]; [""; "ignore_unknown"]]]`; any other argument is syntax.
 
@@ -358,6 +360,8 @@ cases clamp
 ## Top-level calls
 
 An item that is a call of a metaprogram, such as `make_byte ()` in column 1, runs it. The items it returns replace the call. A metaprogram may return a list of items, which all replace the call. A metaprogram may also return a call of another metaprogram, which runs in the next pass.
+
+A module exports a metaprogram by listing it in an interface with its result type, as `let meta define : item` ([ADR 0039](adr/0039-module-and-interface-syntax.md)). The interface artifact carries its definition, and an importer runs it by its qualified name, as `R.define "milli" (R.si "milli")`. The names its quotes use are the defining module's: an importer's own `ratio` does not capture `Pia.Core.Ratio.ratio`. The module must define every metaprogram its interfaces list (tests/modules/metaprograms.pia). An exported metaprogram names another module's items in full, as `Pia.Core.Ratio.num` in `Pia.Time`: an alias is the defining module's own, and its importers need not share it. They do import that module's interface. `Pia.Core.Ratio` is built this way.
 
 ## The expansion loop
 

@@ -138,6 +138,13 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'pia.erased' on argument " << argIndex
                            << " must be a unit attribute";
   }
+  // `{pia.spec_state}`: a spec parameter, which codegen erases (ADR 0058).
+  if (attr.getName() == getSpecStateAttrName()) {
+    if (isa<UnitAttr>(attr.getValue()))
+      return success();
+    return op->emitError() << "'" << getSpecStateAttrName() << "' on argument "
+                           << argIndex << " must be a unit attribute";
+  }
   if (attr.getName() == getLengthOfAttrName()) {
     auto i = dyn_cast<IntegerAttr>(attr.getValue());
     if (i && i.getValue().ult(argIndex)) return success();
@@ -395,6 +402,13 @@ LogicalResult SliceOp::verify() {
   if (getResult().getType().getElementType() !=
       elementTypeOf(getBuffer().getType()))
     return emitOpError("result must be a slice of the buffer's element type");
+  return success();
+}
+
+LogicalResult CopyOp::verify() {
+  if (getSrc().getType() != getDst().getType())
+    return emitOpError("copies between arrays of one type, found ")
+           << getSrc().getType() << " and " << getDst().getType();
   return success();
 }
 

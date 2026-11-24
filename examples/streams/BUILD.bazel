@@ -1,10 +1,10 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
-load("//tools/piac:pia.bzl", "pia_object")
+load("//tools/piac:pia.bzl", "pia_library", "pia_object")
 load("//tools/piac:targets.bzl", "APPLE_SILICON", "PIA_TARGETS")
 
-# The stream delineation demo. The program is the literate page
-# docs/streams.pia.md, which is also its documentation; main.c reads and
+# The stream delineation demo. The program is the literate pages
+# docs/streams.pia.md and docs/sediment.pia.md, which are also its documentation; main.c reads and
 # writes images around it with macOS's ImageIO, because Pia has no I/O yet.
 #
 #   bazel run //examples/streams                     # a synthetic terrain
@@ -20,9 +20,40 @@ pia_object(
     target_compatible_with = PIA_TARGETS,
 )
 
+# Sediment transport is its own page and module, proved in parallel.
+pia_object(
+    name = "sediment_obj",
+    src = "//docs:sediment.pia.md",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# The animated GIF of the evolving landscape: a C entry point for the
+# proved encoder of Pia.Image.Gif.Encode (ADR 0054).
+pia_library(
+    name = "gif",
+    src = "gif.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+# Sediment by basin, a spread over the basins (ADR 0060).
+pia_object(
+    name = "basins_obj",
+    src = "//docs:basins.pia.md",
+    target_compatible_with = PIA_TARGETS,
+)
+
 cc_library(
     name = "streams_pia",
-    srcs = [":streams_obj"],
+    srcs = [":basins_obj", ":gif", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )
@@ -39,7 +70,10 @@ cc_binary(
         "CoreFoundation",
     ],
     target_compatible_with = APPLE_SILICON,
-    deps = [":streams_pia"],
+    deps = [
+        ":streams_pia",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
 )
 
 cc_test(

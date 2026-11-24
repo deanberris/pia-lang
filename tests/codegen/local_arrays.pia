@@ -1,0 +1,70 @@
+(* Local arrays with storage of their own, compiled and run from
+   local_arrays_test.c: a `mutable` array written in a loop, a literal of
+   computed elements, a copy written after it is made, a record with an
+   array field, arrays and records holding them returned by value through
+   the caller's buffers, one kept from a loop whose calls reuse their
+   buffers, and returns several calls deep. *)
+module LocalArrays : Exported
+
+(* What local_arrays_test.c calls, by its C names (ADR 0039). *)
+interface Exported @abi(c) = sig
+  let fill : (v : u8) -> u16
+  let pair : (x : u8) -> (y : u8) -> u16
+  let copied : (x : u8) -> u16
+  let grey : (v : u8) -> u16
+  let returned : (v : u8) -> u16
+  let kept : (v : u8) -> u8
+  let deep : (n : u8) -> u16
+end
+
+let sum3 (a : [u8; 3]) : u16
+  ensures result = a.[0] + a.[1] + a.[2]
+= a.[0] + a.[1] + a.[2]
+
+let fill (v : u8) : u16 =
+  let a : mutable [u8; 3] = [0; 0; 0] in
+  for i in 0 .. 3 do a.[i] <- v done;
+  sum3 a
+
+let pair (x : u8) (y : u8) : u16 = let a : [u8; 3] = [x; y; y] in sum3 a
+
+let copied (x : u8) : u16 =
+  let a : [u8; 3] = [x; 1; 1] in
+  let b : mutable [u8; 3] = a in
+  b.[0] <- 0;
+  a.[0] + b.[0] + b.[1]
+
+let rgb = type { c : [u8; 3]; alpha : u8 }
+
+let grey (v : u8) : u16 =
+  let a : [u8; 3] = [v; v; v] in
+  let p : rgb = { c = a; alpha = 1 } in
+  sum3 p.c + p.alpha
+
+let pair_of (x : u8) : [u8; 2] = [x; x]
+
+let rgb_of (v : u8) : rgb =
+  let a : mutable [u8; 3] = [0; 0; 0] in
+  a.[1] <- v;
+  { c = a; alpha = v }
+
+let returned (v : u8) : u16 =
+  let p = pair_of v in
+  let r = rgb_of v in
+  p.[0] + r.c.[1]
+
+(* The first iteration's result is kept while later calls at the same
+   place reuse their buffers. *)
+let kept (v : u8) : u8 =
+  let r : mutable rgb = rgb_of 0 in
+  for i in 0 .. 4 do
+    let m = rgb_of (if i = 0 then v else 0) in
+    if i = 0 then r <- m
+  done;
+  r.c.[1]
+
+let twice (x : u8) : [u8; 2] = let p = pair_of x in p
+
+let deep (n : u8) : u16 =
+  let t = twice n in
+  t.[0] + t.[1]

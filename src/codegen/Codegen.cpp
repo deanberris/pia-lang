@@ -1,6 +1,7 @@
 // Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
 
 #include "codegen/Codegen.h"
+#include "codegen/ArrayResults.h"
 #include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
@@ -20,6 +21,7 @@
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/AsyncToLLVM/AsyncToLLVM.h"
 #include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
 #include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
 #include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
@@ -27,6 +29,8 @@
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Async/IR/Async.h"
+#include "mlir/Dialect/Async/Passes.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
@@ -49,6 +53,8 @@
 #include "mlir/Transforms/DialectConversion.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/BitVector.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
 #include "llvm/IR/LegacyPassManager.h"
@@ -696,6 +702,18 @@ struct ErasedLowering : mlir::OpConversionPattern<ErasedOp> {
   }
 };
 
+// `pia.copy src, dst`: memref.copy of every element.
+struct CopyLowering : mlir::OpConversionPattern<CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      CopyOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::memref::CopyOp>(op, adaptor.getSrc(),
+                                                adaptor.getDst());
+    return mlir::success();
+  }
+};
+
 struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1184,10 +1202,10 @@ constexpr llvm::StringLiteral kErased = "pia.erased";
 constexpr llvm::StringLiteral kInternalPrefix = "__pia_";
 
 bool isContractStatement(mlir::Operation *op) {
-  return mlir::isa<contract::RequiresOp, contract::EnsuresOp,
-                   contract::InvariantOp, contract::DecreasesOp,
-                   contract::AssertOp, contract::AssumeOp,
-                   contract::ObligationOp>(op);
+  return mlir::isa<
+      contract::RequiresOp, contract::EnsuresOp, contract::InvariantOp,
+      contract::DecreasesOp, contract::AssertOp, contract::AssumeOp,
+      contract::ObligationOp, contract::HavocOthersOp, contract::ReadsOp>(op);
 }
 
 // An op whose results are unused and that has no effect but reading.
@@ -1209,7 +1227,7 @@ void loadDialects(mlir::MLIRContext &ctx) {
   ctx.loadDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                   mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::LLVM::LLVMDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect>();
+                  mlir::scf::SCFDialect, mlir::async::AsyncDialect>();
   mlir::registerBuiltinDialectTranslation(ctx);
   mlir::registerLLVMDialectTranslation(ctx);
 }
@@ -1225,6 +1243,84 @@ std::string linkSymbol(llvm::StringRef path, llvm::StringRef name) {
   return "__pia$" + p + "$" + cName(name);
 }
 }  // namespace
+
+// Spec state (ADR 0058): the storage of each `let spec` local and each
+// spec parameter, both marked `pia.spec_state`. IRGen lets code write spec
+// state but read it only in contracts, which are gone by now, and in other
+// spec writes. So every op that uses spec state, and every op that uses
+// one of those, only computes spec state: all of it goes. A call passes
+// spec state only for a spec parameter, and those parameters go too, with
+// the arguments every call passes for them.
+void eraseSpecState(mlir::ModuleOp module) {
+  auto specArgs = [](mlir::func::FuncOp f) {
+    llvm::BitVector out(f.getNumArguments());
+    for (unsigned i = 0; i < f.getNumArguments(); ++i)
+      if (f.getArgAttr(i, PiaDialect::getSpecStateAttrName()))
+        out.set(i);
+    return out;
+  };
+  llvm::SetVector<mlir::Operation *> doomed;
+  llvm::SmallVector<Value> work;
+  module.walk([&](mlir::Operation *op) {
+    if (op->hasAttr(PiaDialect::getSpecStateAttrName())) {
+      doomed.insert(op);
+      for (Value r : op->getResults())
+        work.push_back(r);
+    }
+  });
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    if (f.isExternal())
+      continue;
+    llvm::BitVector spec = specArgs(f);
+    for (unsigned i : spec.set_bits())
+      work.push_back(f.getArgument(i));
+  }
+  while (!work.empty()) {
+    Value v = work.pop_back_val();
+    for (mlir::Operation *user : v.getUsers()) {
+      if (mlir::isa<mlir::func::CallOp>(user))
+        continue; // dropped below
+      if (!doomed.insert(user))
+        continue;
+      for (Value r : user->getResults())
+        work.push_back(r);
+    }
+  }
+  // Each call drops the arguments for its callee's spec parameters.
+  module.walk([&](mlir::func::CallOp call) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    if (!f)
+      return;
+    llvm::BitVector spec = specArgs(f);
+    if (spec.any())
+      call->eraseOperands(spec);
+  });
+  for (mlir::Operation *op : doomed)
+    op->dropAllUses();
+  for (mlir::Operation *op : doomed)
+    op->dropAllReferences();
+  for (mlir::Operation *op : doomed)
+    op->erase();
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    llvm::BitVector spec = specArgs(f);
+    if (spec.none())
+      continue;
+    if (f.isExternal()) {
+      llvm::SmallVector<Type> inputs;
+      llvm::SmallVector<mlir::DictionaryAttr> attrs;
+      for (unsigned i = 0; i < f.getNumArguments(); ++i)
+        if (!spec.test(i)) {
+          inputs.push_back(f.getFunctionType().getInput(i));
+          attrs.push_back(f.getArgAttrDict(i));
+        }
+      f.setType(mlir::FunctionType::get(module.getContext(), inputs,
+                                        f.getFunctionType().getResults()));
+      f.setAllArgAttrs(attrs);
+      continue;
+    }
+    (void)f.eraseArguments(spec);
+  }
+}
 
 void eraseContracts(mlir::ModuleOp module) {
   // A generic's proof over sorts (ADR 0043) is for the verifier only.
@@ -1364,6 +1460,7 @@ void eraseContracts(mlir::ModuleOp module) {
   // Users come after definitions, so the last goes first.
   for (mlir::Operation *op : llvm::reverse(feeders))
     if (op->use_empty()) op->erase();
+  eraseSpecState(module);
   // Spec-only state (ADR 0041): code may store a spec value in a
   // parameter, local or field of a spec-only type, but never computes with
   // one, so each spec computation still in code only feeds such places.
@@ -1472,9 +1569,38 @@ void eraseContracts(mlir::ModuleOp module) {
       f.erase();
 }
 
+// A `spread` (ADR 0060) reaches codegen as an `scf.for` marked
+// `pia.spread`, so that the verifier sees an ordinary loop. Its iterations
+// own disjoint cells, which the verifier proved, so here it becomes an
+// `scf.parallel`, which MLIR's async lowering runs on all cores.
+static void lowerSpreads(mlir::ModuleOp module) {
+  llvm::SmallVector<mlir::scf::ForOp> spreads;
+  module.walk([&](mlir::scf::ForOp f) {
+    if (f->hasAttr("pia.spread"))
+      spreads.push_back(f);
+  });
+  for (mlir::scf::ForOp f : spreads) {
+    mlir::OpBuilder b(f);
+    auto par = b.create<mlir::scf::ParallelOp>(
+        f.getLoc(), mlir::ValueRange{f.getLowerBound()},
+        mlir::ValueRange{f.getUpperBound()}, mlir::ValueRange{f.getStep()});
+    mlir::Block *src = f.getBody();
+    mlir::Block *dst = par.getBody();
+    src->getArgument(0).replaceAllUsesWith(par.getInductionVars()[0]);
+    dst->getOperations().splice(mlir::Block::iterator(dst->getTerminator()),
+                                src->getOperations(), src->begin(),
+                                std::prev(src->end()));
+    f.erase();
+  }
+}
+
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+
+  // An array result becomes an output buffer its caller makes.
+  if (mlir::failed(arrayResultsToBuffers(module)))
+    return mlir::failure();
 
   // A buffer whose elements are slices becomes a buffer of addresses and
   // one of lengths (ADR 0048, section 4).
@@ -1613,7 +1739,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
            CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
            LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, ViewLowering, AtAddressLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
            AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
           types, ctx);
   // Atomics (ADR 0052).
@@ -1628,6 +1754,7 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
     return mlir::failure();
+  lowerSpreads(module);
   // Tidy the casts and constants the conversion leaves behind.
   mlir::PassManager pm(ctx);
   pm.addPass(mlir::createCanonicalizerPass());
@@ -1913,6 +2040,22 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   }
 
   mlir::PassManager pm(ctx);
+  // A spread runs on MLIR's async runtime, a trusted v0 (ADR 0060): the
+  // range is split into blocks, at least one iteration each, on as many
+  // workers as the runtime has.
+  bool parallel = false;
+  module.walk([&](mlir::scf::ParallelOp) { parallel = true; });
+  if (parallel) {
+    mlir::AsyncParallelForPassOptions par;
+    par.asyncDispatch = true;
+    par.numWorkerThreads = -1;
+    par.minTaskSize = 1;
+    pm.addPass(mlir::createAsyncParallelForPass(par));
+    pm.addPass(mlir::createAsyncToAsyncRuntimePass());
+    pm.addPass(mlir::createAsyncRuntimeRefCountingPass());
+    pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
+    pm.addPass(mlir::createConvertAsyncToLLVMPass());
+  }
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(mlir::createConvertControlFlowToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());

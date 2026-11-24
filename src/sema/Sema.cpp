@@ -2,9 +2,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <map>
 #include <set>
 
 #include "dialect/PiaDialect.h"
+#include "syntax/RecTypes.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -13,6 +16,12 @@ namespace pia::sema {
 
 using syntax::Node;
 using syntax::NodeKind;
+
+// Why a `let rec` type cannot be used yet.
+static std::string recursiveNotYet(const std::string &name) {
+  return "'" + name + "' is a recursive type, which is checked but cannot "
+         "be used yet: its proofs and code come with ADR 0047, steps 2 and 3";
+}
 
 namespace {
 
@@ -53,7 +62,8 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   }
   std::string digits;
   for (char c : s)
-    if (c != '_') digits.push_back(c);
+    if (!syntax::isDigitSeparator(c))
+      digits.push_back(c);
   if (digits.empty()) return std::nullopt;
   llvm::APInt v(kWidth, 0);
   llvm::APInt base(kWidth, radix);
@@ -236,6 +246,10 @@ mlir::Type TypeResolver::resolve(const Node &type) {
                                    ", as in '" + type.text + " u8'");
         return {};
       }
+      if (isRecursive(type.text)) {
+        diags_.error(type.loc, recursiveNotYet(type.text));
+        return {};
+      }
       diags_.error(type.loc, "unknown type '" + type.text + "'");
       return {};
     }
@@ -252,6 +266,10 @@ mlir::Type TypeResolver::resolve(const Node &type) {
           args.push_back(a);
         }
         return callTypeFunction_(head.text, args, type.loc);
+      }
+      if (head.kind == NodeKind::TypeName && isRecursive(head.text)) {
+        diags_.error(head.loc, recursiveNotYet(head.text));
+        return {};
       }
       if (head.kind != NodeKind::TypeName || !generic(head.text)) {
         diags_.error(head.loc, "only a generic type can take type arguments");
@@ -590,11 +608,6 @@ static mlir::Type buildType(const std::string &name, const Node &value,
       diags.error(f->loc, "a field cannot have type unit");
       return {};
     }
-    if (mlir::isa<ArrayType>(t)) {
-      diags.error(f->loc, "a record field cannot be an array yet; a slice "
-                          "field can hold one");
-      return {};
-    }
     if (mlir::isa<AtomicType>(t)) {
       diags.error(f->loc, "a record field cannot be an atomic cell yet "
                           "(ADR 0052); pass the cell as a borrowed "
@@ -723,14 +736,216 @@ void typeNames(const Node &n, std::set<std::string> &out) {
 // Defines each type after the types it mentions, so a type may use one
 // defined later in the file, as metaprograms often produce. Types left in a
 // cycle are defined in source order, which reports the unknown name.
+namespace {
+
+// The last part of a qualified name: `box` of `Pia.Mem.Box.box`.
+std::string lastPart(const std::string &n) {
+  size_t dot = n.rfind('.');
+  return dot == std::string::npos ? n : n.substr(dot + 1);
+}
+
+// The indirections a recursive occurrence may sit in (ADR 0047, section
+// 2): they hold their argument behind a pointer, so the type's size is
+// known. The prelude's `Indirect` concept over type constructors waits for
+// concepts on them; until then these are the ones.
+bool isIndirect(const std::string &n) {
+  std::string b = lastPart(n);
+  return b == "box" || b == "vec" || b == "ref" || b == "weak";
+}
+
+// ADR 0047, step 1: explicit, regular, guarded and inhabited recursion.
+// Returns the names of the recursive types that pass, which are not built
+// yet.
+std::set<std::string> checkRecursion(const Node &program,
+                                     syntax::Diagnostics &diags) {
+  std::vector<syntax::TypeItem> items = syntax::typeItems(program);
+  std::set<std::string> out;
+  for (const std::vector<const syntax::TypeItem *> &group :
+       syntax::typeCycles(items)) {
+    std::set<std::string> names;
+    for (const syntax::TypeItem *t : group) names.insert(t->item->text);
+    auto list = [&] {
+      std::string s;
+      for (size_t i = 0; i < group.size(); ++i)
+        s += (i == 0 ? "'" : i + 1 == group.size() ? "' and '" : "', '") +
+             group[i]->item->text;
+      return s + "'";
+    };
+    bool ok = true;
+    // 1. Explicit: every type in the cycle is marked.
+    for (const syntax::TypeItem *t : group)
+      if (!t->rec) {
+        ok = false;
+        if (group.size() == 1)
+          diags.error(t->item->loc,
+                      "'" + t->item->text + "' refers to itself; declare it "
+                      "'let rec " + t->item->text + " = ...' (ADR 0047)");
+        else
+          diags.error(t->item->loc,
+                      list() + " refer to each other; declare '" +
+                          t->item->text + "' with 'let rec' too, as every "
+                          "type in the cycle must be (ADR 0047)");
+      }
+    // 2. Guarded and regular: every cycle goes through an indirection, so
+    // each type has a size, and a generic occurrence applies the type to
+    // its own parameters, in order. An occurrence outside an indirection
+    // is an edge of the "holds directly" graph, which must have no cycle.
+    struct Direct {
+      std::string from, to;
+      syntax::SourceLoc at;
+    };
+    std::vector<Direct> direct;
+    for (const syntax::TypeItem *t : group) {
+      std::function<void(const Node &, bool)> walk = [&](const Node &n,
+                                                         bool guarded) {
+        if (n.kind == NodeKind::TypeApp && !n.kids.empty() &&
+            n.kids[0]->kind == NodeKind::TypeName) {
+          const std::string &head = n.kids[0]->text;
+          if (names.count(head)) {
+            if (!guarded) direct.push_back({t->item->text, head, n.loc});
+            bool regular = n.kids.size() == t->params.size() + 1;
+            for (size_t i = 1; regular && i < n.kids.size(); ++i)
+              regular = n.kids[i]->kind == NodeKind::TypeName &&
+                        n.kids[i]->text == t->params[i - 1];
+            if (!regular) {
+              ok = false;
+              std::string own = head;
+              for (const std::string &p : t->params) own += " " + p;
+              diags.error(n.loc, "the recursive occurrence of '" + head +
+                                     "' must apply it to its own parameters "
+                                     "in order, as '" + own +
+                                     "' (regular recursion, ADR 0047)");
+            }
+            for (size_t i = 1; i < n.kids.size(); ++i) walk(*n.kids[i], guarded);
+            return;
+          }
+          bool inner = guarded || isIndirect(head);
+          for (size_t i = 1; i < n.kids.size(); ++i) walk(*n.kids[i], inner);
+          return;
+        }
+        if (n.kind == NodeKind::TypeName && names.count(n.text)) {
+          if (!t->params.empty()) {
+            ok = false;
+            std::string own = n.text;
+            for (const std::string &p : t->params) own += " " + p;
+            diags.error(n.loc, "the recursive occurrence of '" + n.text +
+                                   "' must apply it to its own parameters "
+                                   "in order, as '" + own +
+                                   "' (regular recursion, ADR 0047)");
+          } else if (!guarded) {
+            direct.push_back({t->item->text, n.text, n.loc});
+          }
+          return;
+        }
+        for (const syntax::NodePtr &k : n.kids) walk(*k, guarded);
+      };
+      walk(*t->body->kids[0], false);
+    }
+    // A direct edge from a to b on a cycle of direct edges: b reaches a.
+    auto reaches = [&](const std::string &from, const std::string &to) {
+      std::set<std::string> seen;
+      std::vector<std::string> todo{from};
+      while (!todo.empty()) {
+        std::string v = todo.back();
+        todo.pop_back();
+        if (v == to) return true;
+        if (!seen.insert(v).second) continue;
+        for (const Direct &d : direct)
+          if (d.from == v) todo.push_back(d.to);
+      }
+      return false;
+    };
+    for (const Direct &d : direct)
+      if (reaches(d.to, d.from)) {
+        ok = false;
+        if (d.from == d.to)
+          diags.error(d.at, "'" + d.from + "' holds '" + d.to +
+                                "' directly here, so it would have no size; "
+                                "a recursive occurrence must be inside an "
+                                "indirection, such as 'box " + d.to +
+                                "' or 'vec " + d.to + "' (ADR 0047)");
+        else
+          diags.error(d.at, "'" + d.from + "' holds '" + d.to +
+                                "' directly here, and '" + d.to + "' holds '" +
+                                d.from + "' the same way, so neither would "
+                                "have a size; put one inside an indirection, "
+                                "such as 'box " + d.to + "' (ADR 0047)");
+      }
+    // 3. Inhabited: some value can be built without already having one.
+    // A least fixed point over the group; outside types are inhabited.
+    std::map<std::string, bool> inhabited;
+    for (const std::string &n : names) inhabited[n] = false;
+    std::function<bool(const Node &)> inh = [&](const Node &n) -> bool {
+      switch (n.kind) {
+        case NodeKind::TypeName:
+          return names.count(n.text) ? inhabited[n.text] : true;
+        case NodeKind::TypeApp: {
+          if (n.kids.empty() || n.kids[0]->kind != NodeKind::TypeName) return true;
+          const std::string &head = n.kids[0]->text;
+          if (names.count(head)) return inhabited[head];
+          std::string b = lastPart(head);
+          // An empty vector, None and a dangling weak need nothing.
+          if (b == "vec" || b == "option" || b == "weak") return true;
+          for (size_t i = 1; i < n.kids.size(); ++i)
+            if (!inh(*n.kids[i])) return false;
+          return true;
+        }
+        case NodeKind::Variants:
+          for (const syntax::NodePtr &c : n.kids)
+            if (c->kids.empty() || c->kids[0]->kind == NodeKind::None ||
+                inh(*c->kids[0]))
+              return true;
+          return false;
+        default:
+          for (const syntax::NodePtr &k : n.kids)
+            if (!inh(*k)) return false;
+          return true;
+      }
+    };
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (const syntax::TypeItem *t : group)
+        if (!inhabited[t->item->text] && inh(*t->body->kids[0])) {
+          inhabited[t->item->text] = true;
+          changed = true;
+        }
+    }
+    for (const syntax::TypeItem *t : group)
+      if (!inhabited[t->item->text]) {
+        ok = false;
+        // A lifted payload record's variant says it.
+        if (t->item->flags.find("payload") != std::string::npos) continue;
+        diags.error(t->item->loc,
+                    "'" + t->item->text + "' has no values: each of its "
+                    "constructors needs a value of a recursive type to build "
+                    "one, and a box is never empty; add a constructor without "
+                    "one, or hold it in 'option' or 'vec' (ADR 0047)");
+      }
+    if (ok)
+      for (const std::string &n : names) out.insert(n);
+  }
+  return out;
+}
+
+}  // namespace
+
 void defineTypes(const Node &program, TypeResolver &types,
                  syntax::Diagnostics &diags) {
+  // Recursive types are checked (ADR 0047, step 1) and set aside: they
+  // are not built until their proofs and code exist (steps 2 and 3).
+  std::set<std::string> cyclic;
+  std::vector<syntax::TypeItem> items = syntax::typeItems(program);
+  for (const std::vector<const syntax::TypeItem *> &g : syntax::typeCycles(items))
+    for (const syntax::TypeItem *t : g) cyclic.insert(t->item->text);
+  for (const std::string &r : checkRecursion(program, diags))
+    types.markRecursive(r);
   for (const syntax::NodePtr &item : program.kids)
-    if (isGenericTypeItem(*item)) defineGenericType(*item, types, diags);
+    if (isGenericTypeItem(*item) && !cyclic.count(item->text))
+      defineGenericType(*item, types, diags);
   std::vector<const Node *> pending;
   std::set<std::string> declared;
   for (const syntax::NodePtr &item : program.kids)
-    if (isTypeItem(*item)) {
+    if (isTypeItem(*item) && !cyclic.count(item->text)) {
       pending.push_back(item.get());
       declared.insert(item->text);
     }
@@ -812,6 +1027,7 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     const Node &annot = *p->kids[0];
     Param param;
     param.regions = regionsOf(p->flags);
+    param.spec = p->flags == "spec";
     if (const Node *l = findLender(annot); l && l->flags == "region") {
       const std::string &mods = annot.kids[0]->text;
       if (findLentAnnot(annot) != &annot ||

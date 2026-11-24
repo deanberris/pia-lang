@@ -1,0 +1,42 @@
+(* The C entry points of the streams demo's animated GIF: the encoder of
+   Pia.Image.Gif.Encode (ADR 0054), whose output is proved to parse as a
+   GIF with nf frames, with plain integer arguments. *)
+module StreamsGif : Entry
+
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+import Pia.Image.Gif.LzwEncode.LzwEncode as E
+import Pia.Image.Gif.Encode.Encode as X
+
+interface Entry @abi(c) = sig
+  let gif_bound : (w : u16) -> (h : u16) -> (nf : u16) -> u64
+  let gif_animation : (w : u16) -> (h : u16) -> (pal : [u8]) -> (frames : [u8]) -> (nf : u16) -> (delay : u16) -> (loops : u16) -> (dst : borrowed inout mutable [u8]) -> (rect : borrowed inout mutable [u8]) -> (lz : borrowed inout mutable [u8]) -> (hash : borrowed inout mutable [u8]) -> u64
+end
+
+(** The size dst needs for nf frames of w by h, or 0 if w or h is 0: with
+    a dst this long the encoder never runs out of room. *)
+let gif_bound (w : u16) (h : u16) (nf : u16) : u64
+= if w = 0 || h = 0 then 0
+  else (
+    let w' : int{1..65'535} = w in
+    let h' : int{1..65'535} = h in
+    X.size_bound w' h' nf)
+
+(** The animation: nf frames of palette indices into pal, each shown for
+    delay hundredths of a second, looping loops times (0 for ever). The
+    result is the length written, or 0 for any error. *)
+let gif_animation (w : u16) (h : u16) (pal : [u8]) (frames : [u8]) (nf : u16) (delay : u16) (loops : u16) (dst : borrowed inout mutable [u8]) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : u64
+= if w = 0 || h = 0 || len hash <> 40'960 then 0
+  else (
+    let w' : int{1..65'535} = w in
+    let h' : int{1..65'535} = h in
+    let fs : usize = w' * h' * 1 in
+    if len rect <> fs || len lz <> 3 * len rect + 5 then 0
+    else (
+      match X.encode_animation w' h' pal frames nf delay loops dst rect lz hash with
+      | Ok n -> n
+      | Err _ -> 0))

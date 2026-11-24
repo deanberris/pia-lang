@@ -536,21 +536,46 @@ class Parser {
         take();
         take();
         p->add(annot());
-        // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
-        // function type's contracts (ADR 0044), on its innermost arrow.
-        if (p->kids[0]->kids[1]->kind == N::ArrowType && atContract()) {
-          Node *arrow = p->kids[0]->kids[1].get();
-          while (arrow->kids[1]->kind == N::ArrowType)
-            arrow = arrow->kids[1].get();
-          Node *cs = arrow->add(makeNode(N::Contracts, loc()));
-          while (atContract()) cs->add(contract());
-        }
+        paramContracts(*p);
+        expect(K::RParen, "')' after the parameter's type");
+        ps->add(std::move(p));
+      } else if (atSpecParam()) {
+        // `(spec ref : inout [u8; 4096])`: a spec parameter (ADR 0058),
+        // which callers and the callee share as spec state.
+        take();
+        take(); // spec
+        auto p = makeNode(N::Param, loc(), text());
+        p->flags = "spec";
+        take();
+        take();
+        p->add(annot());
         expect(K::RParen, "')' after the parameter's type");
         ps->add(std::move(p));
       } else {
         return ps;
       }
     }
+  }
+
+  // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
+  // function type's contracts (ADR 0044), on its innermost arrow.
+  void paramContracts(Node &p) {
+    if (p.kids[0]->kids[1]->kind != N::ArrowType || !atContract())
+      return;
+    Node *arrow = p.kids[0]->kids[1].get();
+    while (arrow->kids[1]->kind == N::ArrowType)
+      arrow = arrow->kids[1].get();
+    Node *cs = arrow->add(makeNode(N::Contracts, loc()));
+    while (atContract())
+      cs->add(contract());
+  }
+
+  // `(spec name :`, which opens a spec parameter (ADR 0058). `spec` is not
+  // a keyword here, so a parameter may still be named `spec`.
+  bool atSpecParam() const {
+    return at(K::LParen) && kind(1) == K::Ident && tok(1).text == "spec" &&
+           (kind(2) == K::Ident || kind(2) == K::SpliceIdent) &&
+           kind(3) == K::Colon;
   }
 
   NodePtr retAnnot() {
@@ -568,20 +593,26 @@ class Parser {
   // `invariant` is a contract of a state (ADR 0031); loops read their own.
   bool atContract() const {
     return at(K::Requires) || at(K::Ensures) || at(K::Decreases) ||
-           at(K::Invariant);
+           at(K::Invariant) || at(K::Reads);
   }
 
   NodePtr contract() {
-    N k = at(K::Requires)   ? N::Requires
-          : at(K::Ensures)  ? N::Ensures
+    N k = at(K::Requires)    ? N::Requires
+          : at(K::Ensures)   ? N::Ensures
           : at(K::Invariant) ? N::Invariant
-                            : N::Decreases;
+          : at(K::Reads)     ? N::Reads
+                             : N::Decreases;
     auto c = makeNode(k, loc());
     take();
     bool savedContract = contractMode_, savedEnded = clauseEnded_;
     contractMode_ = true;
     clauseEnded_ = false;
     c->add(stmt());
+    // `reads xs.[c] where owner.[c] = v` (ADR 0060, section 3).
+    if (k == N::Reads && accept(K::Where)) {
+      clauseEnded_ = false;
+      c->add(stmt());
+    }
     contractMode_ = savedContract;
     clauseEnded_ = savedEnded;
     return c;
@@ -856,8 +887,15 @@ class Parser {
   NodePtr type() {
     SourceLoc start = loc();
     auto dom = makeNode(N::Domain, start);
-    if (at(K::LParen) && kind(1) == K::Ident && kind(2) == K::Colon) {
+    bool specDom = atSpecParam();
+    if (specDom ||
+        (at(K::LParen) && kind(1) == K::Ident && kind(2) == K::Colon)) {
       take();
+      if (specDom) {
+        // `(spec ref : inout [u8; 4096]) -> r` in a signature (ADR 0058).
+        take();
+        dom->flags = "spec";
+      }
       dom->text = text();
       take();
       take();
@@ -1338,7 +1376,7 @@ class Parser {
         } else {
           n->add(makeNode(N::None, loc()));
         }
-        n->add(loopAnnots());
+        n->add(loopAnnots(spread));
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
@@ -1394,10 +1432,14 @@ class Parser {
     return e;
   }
 
-  NodePtr loopAnnots() {
+  NodePtr loopAnnots(bool spread = false) {
     auto as = makeNode(N::LoopAnnots, loc());
-    while (at(K::Invariant) || at(K::Decreases)) {
-      auto a = makeNode(at(K::Invariant) ? N::Invariant : N::Decreases, loc());
+    while (at(K::Invariant) || at(K::Decreases) || (spread && at(K::Ensures))) {
+      // A spread's `ensures` holds for each iteration (ADR 0060).
+      auto a = makeNode(at(K::Invariant)   ? N::Invariant
+                        : at(K::Decreases) ? N::Decreases
+                                           : N::Ensures,
+                        loc());
       take();
       a->add(stmt());
       as->add(std::move(a));

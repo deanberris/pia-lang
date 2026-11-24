@@ -104,6 +104,17 @@ class Interpreter {
   void define(const syntax::Node &item);
 
   bool isMeta(const std::string &name) const { return globals_.count(name); }
+  // The metaprograms imported from other modules whose own name is
+  // `name`, as `Pia.Text.Json.Derive.derive_json` for `derive_json`.
+  std::vector<std::string> importedMetas(const std::string &name) const {
+    std::vector<std::string> out;
+    for (const auto &[g, item] : globals_)
+      if (g.size() > name.size() + 1 &&
+          g.compare(g.size() - name.size(), name.size(), name) == 0 &&
+          g[g.size() - name.size() - 1] == '.')
+        out.push_back(g);
+    return out;
+  }
 
   // Evaluates an expression with no local bindings.
   ValuePtr eval(const syntax::Node &expr);

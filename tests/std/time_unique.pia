@@ -1,0 +1,11 @@
+(* Pia.Time's civil calendar, part 3 of 3 (see time.pia): two valid dates
+   with the same day number are the same date (injective), so the lemma
+   unique gives civil_from_days (days_from_civil d) = d.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --verify --iface-path=%t --verify-only=days_unique --verify-only=yd_unique --verify-only=md_unique --verify-only=decompose --verify-only=injective --verify-only=unique --verify-only=Pia.Time.Calendar.unique.contract %S/../../lib/Pia/Time.pia | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: failed
+// CHECK: 60 proved, 0 failed, 0 skipped
+*)

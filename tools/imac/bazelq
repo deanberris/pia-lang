@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""bazelq: a machine-wide FIFO queue in front of Bazel.
+
+    bazelq build //tools/piac            # any Bazel command line
+    bazelq --exec -- bazel-bin/tools/piac/piac --verify f.pia   # any heavy command
+    bazelq --status                      # who is running, who is waiting
+
+Many threads build from separate worktrees on one machine, and each worktree
+has its own Bazel server, so Bazel's own --jobs limit is per build, not per
+machine. bazelq lets at most SLOTS heavy commands run at a time; the rest wait
+in arrival order and print their place in line.
+
+Commands that execute no actions (version, help, info, query, shutdown, clean,
+mod, license) skip the queue. A command started from inside a queued command
+(BAZELQ_HELD is set) also skips it, so nesting cannot deadlock.
+
+Each ticket is a file in $BAZELQ_DIR/tickets (default ~/.cache/bazelq) that its
+owner holds an flock on for as long as it lives. A ticket whose lock is free
+belongs to a process that died, and is removed, so a killed build never blocks
+the queue. The number of slots is read from $BAZELQ_SLOTS, else from
+$BAZELQ_DIR/slots, else 1. Changing the file takes effect for waiting tickets
+at their next poll.
+
+tools/imac/install.sh installs this script as ~/.local/bin/bazelq, with a
+~/.local/bin/bazel shim in front of the real Bazel.
+"""
+
+import fcntl
+import json
+import os
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+QDIR = os.path.expanduser(os.environ.get("BAZELQ_DIR", "~/.cache/bazelq"))
+TICKETS = os.path.join(QDIR, "tickets")
+DEFAULT_SLOTS = 1
+POLL_SECS = 2.0
+REPORT_SECS = 60.0
+
+# Subcommands that run no build actions, so they cost no more than a server
+# round trip and never wait in line.
+BYPASS = {"version", "help", "info", "query", "shutdown", "clean", "mod",
+          "license", "canonicalize-flags", "dump"}
+
+
+def log(msg):
+    sys.stderr.write("bazelq: %s\n" % msg)
+    sys.stderr.flush()
+
+
+def slots():
+    v = os.environ.get("BAZELQ_SLOTS")
+    if not v:
+        try:
+            with open(os.path.join(QDIR, "slots")) as f:
+                v = f.read().strip()
+        except OSError:
+            v = ""
+    try:
+        return max(1, int(v))
+    except ValueError:
+        return DEFAULT_SLOTS
+
+
+def real_bazel():
+    """The Bazel to run: $BAZELQ_BAZEL, else the first `bazel` on PATH that
+    is not this script or the shim that calls it."""
+    if os.environ.get("BAZELQ_BAZEL"):
+        return os.environ["BAZELQ_BAZEL"]
+    me = os.path.realpath(__file__)
+    for d in os.environ.get("PATH", "").split(os.pathsep):
+        p = os.path.join(d, "bazel")
+        if not (os.path.isfile(p) and os.access(p, os.X_OK)):
+            continue
+        if os.path.realpath(p) == me:
+            continue
+        try:
+            with open(p, "rb") as f:
+                if b"BAZELQ_SHIM" in f.read(4096):
+                    continue
+        except OSError:
+            continue
+        return p
+    for p in ("/opt/homebrew/bin/bazel", "/usr/local/bin/bazel"):
+        if os.access(p, os.X_OK):
+            return p
+    log("cannot find the real bazel; set BAZELQ_BAZEL")
+    sys.exit(127)
+
+
+def subcommand(args):
+    """The first argument that is not a startup option."""
+    for a in args:
+        if not a.startswith("-"):
+            return a
+    return None
+
+
+class GlobalLock:
+    def __enter__(self):
+        os.makedirs(TICKETS, exist_ok=True)
+        self.fd = os.open(os.path.join(QDIR, "lock"), os.O_RDWR | os.O_CREAT, 0o644)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        fcntl.flock(self.fd, fcntl.LOCK_UN)
+        os.close(self.fd)
+
+
+def read_meta(path):
+    try:
+        with open(path) as f:
+            return json.loads(f.read() or "{}")
+    except (OSError, ValueError):
+        return {}
+
+
+def live_tickets():
+    """Ticket names in arrival order, after removing those whose owner died.
+    Call with the global lock held."""
+    out = []
+    for name in sorted(os.listdir(TICKETS)):
+        path = os.path.join(TICKETS, name)
+        try:
+            fd = os.open(path, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            out.append(name)  # held: its owner is alive
+        else:
+            os.unlink(path)  # free: its owner is gone
+        finally:
+            os.close(fd)
+    return out
+
+
+class Ticket:
+    def __init__(self, argv):
+        with GlobalLock():
+            counter = os.path.join(QDIR, "counter")
+            try:
+                with open(counter) as f:
+                    n = int(f.read().strip() or 0)
+            except (OSError, ValueError):
+                n = 0
+            n += 1
+            with open(counter, "w") as f:
+                f.write(str(n))
+            self.name = "%012d" % n
+            self.path = os.path.join(TICKETS, self.name)
+            self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o644)
+            fcntl.flock(self.fd, fcntl.LOCK_EX)
+            self.meta = {"pid": os.getpid(), "cwd": os.getcwd(),
+                         "argv": argv, "queued": time.time()}
+            self.write()
+
+    def write(self):
+        data = json.dumps(self.meta).encode()
+        os.ftruncate(self.fd, 0)
+        os.pwrite(self.fd, data, 0)
+
+    def release(self):
+        try:
+            os.unlink(self.path)
+        except OSError:
+            pass
+        os.close(self.fd)
+
+
+def describe(name):
+    m = read_meta(os.path.join(TICKETS, name))
+    where = os.path.basename(m.get("cwd", "?"))
+    cmd = " ".join(m.get("argv", [])[:3])
+    since = m.get("started") or m.get("queued") or time.time()
+    return "%s [%s] %s (%dm)" % (where, m.get("pid", "?"), cmd, (time.time() - since) // 60)
+
+
+def wait_turn(t):
+    start = time.time()
+    last_pos, last_report = None, 0.0
+    while True:
+        with GlobalLock():
+            live = live_tickets()
+            n = slots()
+        pos = live.index(t.name) if t.name in live else 0
+        if pos < n:
+            waited = time.time() - start
+            if last_pos is not None:
+                log("slot free after %ds; starting" % waited)
+            return waited
+        now = time.time()
+        if pos != last_pos or now - last_report >= REPORT_SECS:
+            ahead = pos - n + 1
+            running = "; ".join(describe(x) for x in live[:n])
+            log("waiting: %d ahead of you, %d slot(s), waited %ds. Running: %s"
+                % (ahead, n, now - start, running))
+            last_pos, last_report = pos, now
+        time.sleep(POLL_SECS)
+
+
+def status():
+    os.makedirs(TICKETS, exist_ok=True)
+    with GlobalLock():
+        live = live_tickets()
+        n = slots()
+    print("slots: %d   running: %d   waiting: %d" %
+          (n, min(n, len(live)), max(0, len(live) - n)))
+    for i, name in enumerate(live):
+        print("  %s %s" % ("run " if i < n else "wait", describe(name)))
+    try:
+        print("load: %.1f %.1f %.1f" % os.getloadavg())
+    except OSError:
+        pass
+    return 0
+
+
+def run(cmd, argv):
+    if os.environ.get("BAZELQ_HELD"):
+        os.execvp(cmd[0], cmd)
+    t = Ticket(argv)
+    child = None
+
+    def forward(sig, _frame):
+        if child is not None and child.poll() is None:
+            # Ctrl-C already reached the child through the process group;
+            # pass on only the signals sent to this process alone.
+            if sig != signal.SIGINT:
+                child.send_signal(sig)
+        else:
+            t.release()
+            sys.exit(128 + sig)
+
+    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, forward)
+    try:
+        wait_turn(t)
+        t.meta["started"] = time.time()
+        t.write()
+        env = dict(os.environ, BAZELQ_HELD="1")
+        try:
+            child = subprocess.Popen(cmd, env=env)
+        except OSError as e:
+            log("cannot run %s: %s" % (cmd[0], e))
+            return 127
+        while True:
+            try:
+                rc = child.wait()
+                return 128 - rc if rc < 0 else rc
+            except InterruptedError:
+                continue
+    finally:
+        t.release()
+
+
+def main():
+    args = sys.argv[1:]
+    if args[:1] == ["--status"]:
+        return status()
+    if args[:1] == ["--exec"]:
+        args = args[1:]
+        if args[:1] == ["--"]:
+            args = args[1:]
+        if not args:
+            log("usage: bazelq --exec -- COMMAND [ARGS...]")
+            return 2
+        if not shutil.which(args[0]) and not os.access(args[0], os.X_OK):
+            log("no such command: %s" % args[0])
+            return 127
+        return run(args, args)
+    bazel = real_bazel()
+    if subcommand(args) in BYPASS or subcommand(args) is None:
+        os.execv(bazel, [bazel] + args)
+    return run([bazel] + args, ["bazel"] + args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

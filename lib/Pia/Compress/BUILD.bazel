@@ -1,0 +1,51 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Compress (ADR 0054, step 5): canonical Huffman codes, deflate decoding
+# and the zlib format, proved total and safe. Each module is proved and
+# compiled on its own, and importers build against its interface
+# artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files([
+    "Huffman.pia",
+    "Inflate.pia",
+    "Zlib.pia",
+])
+
+# Canonical Huffman codes: tests/std/inflate.pia checks its goals.
+pia_library(
+    name = "huffman",
+    src = "Huffman.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Image:bits"],
+)
+
+# Deflate decoding: tests/std/inflate.pia checks its goals; :zlib_run tests
+# it against zlib.
+pia_library(
+    name = "inflate",
+    src = "Inflate.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":huffman",
+        "//lib/Pia/Compress/Inflate:spec",
+        "//lib/Pia/Image:bits",
+    ],
+)
+
+# The zlib format and Adler-32: tests/std/inflate.pia checks its goals;
+# tests/std/zlib_edges.pia and :zlib_run test it through its interface.
+pia_library(
+    name = "zlib",
+    src = "Zlib.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":huffman",
+        ":inflate",
+        "//lib/Pia/Compress/Inflate:spec",
+        "//lib/Pia/Image:bits",
+    ],
+)

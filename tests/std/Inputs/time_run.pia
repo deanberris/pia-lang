@@ -1,0 +1,19 @@
+(* Runs code made by Pia.Time's metaprograms, linked by pia_binary: 0 when
+   each cast and sum gives what C++'s std::chrono gives, and otherwise the
+   number of the first wrong one. *)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Durations as T
+
+T.standard ()
+
+let main () : i32 =
+  let h : hours = { count = 2 } in
+  let m : milliseconds = { count = 0 - 1500 } in
+  let s : seconds = { count = 59 } in
+  let back : hours = { count = 0 - 1 } in
+  if (to_minutes h).count <> 120 then 1
+  else if (to_seconds m).count <> 0 - 1 then 2
+  else if (plus (to_seconds h) s).count <> 7259 then 3
+  else if (to_microseconds s).count <> 59000000 then 4
+  else if (to_weeks (to_days back)).count <> 0 then 5
+  else 0

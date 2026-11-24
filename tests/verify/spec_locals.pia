@@ -1,0 +1,111 @@
+(* Spec state (ADR 0058): a `let spec` local or a spec parameter is
+   spec-only whatever its type, here fixed arrays. Code may write it; only
+   contracts, loop invariants, asserts and lemma calls may read it, and
+   codegen erases it. The verifier sees it as an SMT array, like any other
+   buffer. The flows IRGen rejects are in tests/irgen/spec_local_errors.pia.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+(* A trace of what the loop wrote, kept in a spec local: the invariant
+   reads it, and code only writes it. *)
+let copy_trace (src : [u8; 8]) (dst : out [u8]) : unit
+  requires len dst = 8
+  ensures forall (k in 0 .. 8). dst.[k] = src.[k]
+= let spec seen : mutable [u8; 8] = zeros in
+  for i in 0 .. 8
+    invariant forall (k in 0 .. i). seen.[k] = src.[k] && dst.[k] = seen.[k]
+  do
+    dst.[i] <- src.[i];
+    seen.[i] <- src.[i]
+  done
+
+(* `zeros` is an array of zero elements. *)
+let zeroed (x : u8) : u8
+  ensures result = x
+= let spec z : [u8; 4] = zeros in
+  assert (z.[2] = 0);
+  x
+
+(* A spec parameter: the caller and the callee share spec state. *)
+let record (spec log : inout [u16; 64]) (i : int{0..63}) (v : u16) : unit
+  ensures log.[i] = v
+  ensures forall (k in 0 .. 64). k <> i ==> log.[k] = old (log.[k])
+= log.[i] <- v
+
+let twice (a : u16) (b : u16) : u16
+  ensures result = a
+= let spec log : mutable [u16; 64] = zeros in
+  record log 0 a;
+  record log 1 b;
+  assert (log.[0] = a && log.[1] = b);
+  a
+
+(* Spec state may hold int: running sums, where a spec write reads spec
+   state. *)
+let prefix (xs : [u8; 8]) : u8
+  ensures result = xs.[0]
+= let spec sums : mutable [int; 9] = zeros in
+  for i in 0 .. 8
+    invariant sums.[0] = 0
+    invariant forall (k in 0 .. i). sums.[k + 1] = sums.[k] + xs.[k]
+  do
+    sums.[i + 1] <- sums.[i] + xs.[i]
+  done;
+  assert (sums.[8] >= 0);
+  xs.[0]
+
+(* A code value copied into spec state: a snapshot. *)
+let snapshot (a : inout [u8; 4]) : unit
+  ensures a.[0] = old (a.[0]) + 1 || old (a.[0]) = 255
+= let spec snap : [u8; 4] = a in
+  if a.[0] < 255 then a.[0] <- a.[0] + 1 else ();
+  assert (a.[0] = snap.[0] + 1 || snap.[0] = 255)
+
+(* Wrong: the trace holds the last value written, not the first. *)
+let last (a : u8) (b : u8) : u8
+  ensures result = a
+= let spec log : mutable [u8; 1] = zeros in
+  log.[0] <- a;
+  log.[0] <- b;
+  assert (log.[0] = a);
+  a
+
+(* Expected report, in order.
+// CHECK: spec_locals.pia:16:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_locals.pia:18:16: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:18:5: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:19:17: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:19:5: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:16:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_locals.pia:13:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:26:3: proved: the assertion holds [smt]
+// CHECK: spec_locals.pia:24:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:33:3: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:31:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:32:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:40:3: proved: the assertion holds [smt]
+// CHECK: spec_locals.pia:36:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:49:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_locals.pia:50:5: proved: the loop invariant holds on entry [smt]
+// CHECK: spec_locals.pia:52:13: proved: '+' does not overflow usize [smt]
+// CHECK: spec_locals.pia:52:21: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:52:32: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:52:5: proved: the index is within bounds [smt]
+// CHECK: spec_locals.pia:49:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_locals.pia:50:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: spec_locals.pia:54:3: proved: the assertion holds [smt]
+// CHECK: spec_locals.pia:55:3: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:61:6: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:61:32: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:61:38: proved: '+' does not overflow u8 [smt]
+// CHECK: spec_locals.pia:61:23: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:62:3: proved: the assertion holds [smt]
+// CHECK: spec_locals.pia:59:3: proved: the postcondition holds [smt]
+// CHECK: spec_locals.pia:68:3: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:69:3: proved: the index is within bounds [intervals]
+// CHECK: spec_locals.pia:70:3: failed: the assertion holds
+// CHECK-NEXT: counterexample: a = {{-?[0-9]+}}, b = {{-?[0-9]+}}
+// CHECK: spec_locals.pia:66:3: proved: the postcondition holds [smt]
+// CHECK: 34 proved, 1 failed, 0 skipped
+*)

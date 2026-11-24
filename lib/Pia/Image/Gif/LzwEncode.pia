@@ -1,0 +1,191 @@
+(* Pia.Image.Gif.LzwEncode: GIF's variable-length LZW encoder (GIF89a,
+   appendix F; ADR 0054, step 3), proved total and safe on every input.
+
+   The dictionary is a hash of (prefix code, byte) to code, open
+   addressing over 8192 slots of five bytes each in a 40960-byte table the
+   caller lends: the key plus one in three bytes (0 marks an empty slot)
+   and the code in two. When the dictionary holds 4096 entries the encoder
+   writes a clear code and starts again, as giflib does.
+
+   The encoder tracks the code width the decoder will be reading at, by
+   counting the entries the decoder adds (one code behind the encoder's
+   own), so every code is written in the width it is read in. Proved:
+   every code written is below 2^width, the width stays at most 12, and
+   the stream fits in 3 n + 5 bytes for n indices. put_blocks writes a
+   stream as GIF's sub-blocks of at most 255 bytes. That the stream decodes
+   to the indices is checked against giflib and Pia.Image.Gif.Lzw in the
+   tests; proving it waits on ghost state (ADR 0058). *)
+module Pia.Image.Gif.LzwEncode : LzwEncode
+
+import Pia.Image.Bits.Bits as B
+
+interface LzwEncode = sig
+  let enc_error = type | BadIndex of usize
+  let encode : (px : [u8]) -> (m : int{2..8}) -> (h : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> result usize enc_error
+    requires len h = 40960
+    requires len px <= 4294836225 && len dst >= 3 * len px + 5
+    ensures (match result with | Ok n -> n <= 3 * len px + 5 && n <= len dst | Err _ -> true)
+  let put_blocks : (lz : [u8]) -> (n : int{0..13000000000}) -> (cmax : int{0..60000000}) -> (dst : borrowed inout mutable [u8]) -> (p : usize) -> usize
+    requires n <= len lz && p <= len dst && n + cmax + 1 <= len dst - p
+    requires 255 * cmax >= n
+    ensures p < result && result <= p + n + cmax + 1
+end
+
+(** BadIndex: the index at the offset is not below 2^m. *)
+let enc_error = type | BadIndex of usize
+
+(* Empties the hash. *)
+let clear_hash (h : borrowed inout mutable [u8]) : unit
+= for j in 0 .. len h do h.[j] <- 0 done
+
+(* The slot holding key (prefix, byte), or the empty slot where it goes,
+   or 8192 when neither turned up (which a table of at most 4096 keys in
+   8192 slots never gives). found says which. *)
+let probe_slot (h : [u8]) (key : int{1..1048576}) : int{0..8192}
+  requires len h = 40960
+= let k32 : u32 = key in
+  let base : usize = ((k32 * 2654435761u32) >> 19) & 8191 in
+  let r : mutable int{0..8192} = 8192 in
+  let go : mutable bool = true in
+  let i : mutable usize = 0 in
+  while go && i < 8192
+    invariant i <= 8192
+    decreases 8192 - i + (if go then 1 else 0)
+  do
+    let s : usize = (base + i) & 8191 in
+    let b0 : u32 = h.[5 * s] in
+    let b1 : u32 = h.[5 * s + 1] in
+    let b2 : u32 = h.[5 * s + 2] in
+    let k : u32 = (b0 | (b1 << 8) | (b2 << 16)) in
+    if k = 0 || k = key then (r <- s; go <- false) else i <- i + 1
+  done;
+  r
+
+(** Encodes the indices px, each below 2^m, as a GIF LZW stream at
+    dst.[0 ..]: a clear code, the codes, and the end code. Returns the
+    number of bytes written. h is the dictionary's table. *)
+let encode (px : [u8]) (m : int{2..8}) (h : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : result usize enc_error
+  requires len h = 40960
+  requires len px <= 4294836225 && len dst >= 3 * len px + 5
+  ensures (match result with | Ok n -> n <= 3 * len px + 5 && n <= len dst | Err _ -> true)
+= let one : u32 = 1 in
+  let clear : u32 = one << m in
+  let m1 : u8 = m in
+  clear_hash h;
+  let pos : mutable usize = 0 in
+  let width : mutable int{3..12} = m1 + 1 in
+  let nx : mutable u32 = clear + 2 in
+  let dnx : mutable u32 = clear + 2 in
+  let started : mutable bool = false in
+  B.write_bits dst pos width clear;
+  pos <- pos + width;
+  let bad : mutable usize = len px in
+  let cur : mutable u32 = 0 in
+  (if len px > 0 then (
+     let c0 : u32 = px.[0] in
+     if c0 < clear then cur <- c0 else bad <- 0)
+   else ());
+  let i : mutable usize = 1 in
+  while bad = len px && i < len px
+    invariant 1 <= i && i <= len px + 1 && (len px > 0 ==> i <= len px)
+    invariant pos + 12 <= 24 * i
+    invariant clear = B.pow2 m && clear + 2 <= dnx && dnx <= nx && nx <= dnx + 1 && nx <= 4096
+    invariant started = false ==> nx = dnx
+    invariant dnx < B.pow2 width || width = 12
+    invariant m1 + 1 <= width && clear + 1 < B.pow2 width
+    invariant cur < nx
+    decreases len px - i + (if bad = len px then 1 else 0)
+  do
+    let c : u32 = px.[i] in
+    if c >= clear then bad <- i
+    else (
+      let key : int{1..1048576} = cur * 256 + c + 1 in
+      let s = probe_slot h key in
+      let hit : bool = (if s < 8192 then (
+          let b0 : u32 = h.[5 * s] in
+          let b1 : u32 = h.[5 * s + 1] in
+          let b2 : u32 = h.[5 * s + 2] in
+          (b0 | (b1 << 8) | (b2 << 16)) = key) else false) in
+      let code : u32 = (if hit then (
+          let lo : u32 = h.[5 * s + 3] in
+          let hi : u32 = h.[5 * s + 4] in
+          (lo | (hi << 8))) else 0) in
+      if hit && code < nx then cur <- code
+      else (
+        B.write_bits dst pos width cur;
+        pos <- pos + width;
+        (if started && dnx < 4096 then dnx <- dnx + 1 else ());
+        started <- true;
+        (if dnx = (one << width) && width < 12 then (let w1 : u8 = width in width <- w1 + 1) else ());
+        (if nx < 4096 then (
+           (if s < 8192 then (
+              let kk : u32 = key in
+              let b0 : u8 = kk & 0xFF in
+              let b1 : u8 = (kk >> 8) & 0xFF in
+              let b2 : u8 = (kk >> 16) & 0xFF in
+              let c0 : u8 = nx & 0xFF in
+              let c1 : u8 = nx >> 8 in
+              h.[5 * s] <- b0;
+              h.[5 * s + 1] <- b1;
+              h.[5 * s + 2] <- b2;
+              h.[5 * s + 3] <- c0;
+              h.[5 * s + 4] <- c1)
+            else ());
+           nx <- nx + 1)
+         else (
+           B.write_bits dst pos width clear;
+           pos <- pos + width;
+           width <- m1 + 1;
+           nx <- clear + 2;
+           dnx <- clear + 2;
+           started <- false;
+           clear_hash h));
+        cur <- c);
+      i <- i + 1)
+  done;
+  if bad < len px then Err (BadIndex bad)
+  else (
+    (if len px > 0 then (
+       B.write_bits dst pos width cur;
+       pos <- pos + width;
+       (if started && dnx < 4096 then dnx <- dnx + 1 else ());
+       started <- true;
+       (if dnx = (one << width) && width < 12 then (let w1 : u8 = width in width <- w1 + 1) else ()))
+     else ());
+    B.write_bits dst pos width (clear + 1);
+    pos <- pos + width;
+    Ok ((pos + 7) / 8))
+
+(* Copies k bytes of src at a to dst at b. *)
+let copy_bytes (src : [u8]) (a : usize) (dst : borrowed inout mutable [u8]) (b : usize) (k : usize) : unit
+  requires a <= len src && k <= len src - a && b <= len dst && k <= len dst - b
+= for j in 0 .. k do dst.[b + j] <- src.[a + j] done
+
+(* Copies the n bytes of lz into dst at p as sub-blocks of at most 255
+   bytes and a terminator, and returns the end. cmax is how many length
+   bytes the caller made room for: 255 cmax >= n. Z3's bit-blaster stalls
+   on the equalities with 255 * chunks, so this function uses the
+   int-blasting bit-vector solver. *)
+let put_blocks (lz : [u8]) (n : int{0..13000000000}) (cmax : int{0..60000000}) (dst : borrowed inout mutable [u8]) (p : usize) : usize @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires n <= len lz && p <= len dst && n + cmax + 1 <= len dst - p
+  requires 255 * cmax >= n
+  ensures p < result && result <= p + n + cmax + 1
+= let q : mutable usize = p in
+  let dn : mutable int{0..13000000000} = 0 in
+  let chunks : mutable int{0..60000000} = 0 in
+  while dn < n
+    invariant dn <= n && q = p + dn + chunks && chunks <= cmax
+    invariant dn < n ==> dn = 255 * chunks
+    decreases n - dn
+  do
+    let rest : int{0..13000000000} = n - dn in
+    let k : int{1..255} = (if rest < 255 then rest else 255) in
+    let kb : u8 = k in
+    dst.[q] <- kb;
+    copy_bytes lz dn dst (q + 1) k;
+    q <- q + 1 + k;
+    dn <- dn + k;
+    chunks <- chunks + 1
+  done;
+  dst.[q] <- 0;
+  q + 1

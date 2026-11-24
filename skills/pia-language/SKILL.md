@@ -52,9 +52,12 @@ let count_bright (ys : [u16]) : usize
 | `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = type u8` |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
+| `100'000`, `0xFFFF'FFFF`, `1_000_000`, `42u8` | digits group with `'` (between two digits) or `_`; `,` never groups. A suffix gives a literal its type |
+| `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
+| `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
 | `@overflow(proof\|wrap\|saturate\|trap)`, `+\|`, `-\|` | after the return type. `proof` is the default. The `+\|` operators always saturate |
 | `(* *)` (nests), `\` to the end of the line, `(** *)` doc | comments are syntax. `//` is **not** a comment |
@@ -154,8 +157,8 @@ end
 | `x & m = 0` surprises a C reader | the bit operators bind tighter than comparisons | nothing to do, it means `(x & m) = 0` |
 | `a \| b` parses as match arms | `\|` is bitwise or only inside brackets | `x <- (a \| b)` |
 | a parse error after `then`, or after the last `ensures` | `if c then let ...` and a body starting `=` right after `ensures` can misparse | wrap the inner `let`, or the body, in parentheses |
-| a contract mentions `limit` or `f x` and the solver knows nothing about it | calls to ordinary functions, and `let` constants, are unknown values inside contracts | a literal, or a `let spec` function |
-| a fact is lost after a call | callers see only the callee's `ensures` | state it in the callee's `ensures`, or better, in its return type |
+| a contract mentions `limit` or `f x` and the solver knows nothing about it | calls to ordinary functions, and `let` constants, are unknown values inside contracts | a literal, `max u32` for a type's bound, or a `let spec` function |
+| a fact is lost after a call | callers see only the callee's `ensures` (a loop-free function of scalars unfolds, but anything with a loop, a buffer or recursion does not) | state it in the callee's `ensures`, or better, in its return type |
 | slow or nonlinear goals | `w * h` or `/ n` in a `requires`, a `forall` in a `requires`, or `@fuel` above 4 | range-typed factors, ranged element types, a lemma, or a helper with its own contract |
 | `requires x < 100` still costs a solver query at each call | a precondition is always sent to Z3 | `int{0..99}` instead |
 | `=` on two records is rejected | records have no built-in equality | `@derive(eq)` on the type |

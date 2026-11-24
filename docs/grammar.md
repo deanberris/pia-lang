@@ -62,9 +62,9 @@ interface sig module struct end import operator true false
 borrowed moved out inout fixed mutable mod handle defer as
 ```
 
-`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`.
+`step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
-`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
+`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`. Inside a body, `let spec ref : mutable [u8; 4096] = zeros in ...` binds spec state, and `(spec log : inout [u16; 64])` is a spec parameter, where `spec` is a keyword only when a name and a colon follow it, so `(spec : u8)` is still a parameter called `spec` ([verifier.md](verifier.md#spec-state), ADR 0058).
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -77,7 +77,7 @@ suffix = ( "u" | "i" | "f" ) digits | "usize" | "isize" ;     (* 42u8, 1i64, 0.5
 STRING = '"' { char | escape } '"' ;
 ```
 
-Digits may contain `_` separators (`1_000_000`). A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
+Digits may be grouped with `'` or `_` (`100'000`, `0xFFFF'FFFF`, `1_000_000`), which mean nothing to the value. A `'` must sit between two digits of the literal's base, as in C++14, so `100'` and `1'_0` are errors. `,` cannot group digits, because it already separates tuple elements and arguments: `f (1,000)` would be ambiguous. A `'` after a name is a prime, as in `x'`, which is part of the name. A float needs a digit after the point, so `0..n` lexes as `0`, `..`, `n`.
 
 ### Operators
 
@@ -169,14 +169,15 @@ path      = IDENT { "." IDENT } ;
 
 ```ebnf
 let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
-let_in    = "let" [ "rec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
+let_in    = "let" [ "rec" ] [ "spec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
 param     = IDENT | SPLICE_IDENT
-          | "(" ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
+          | "(" [ "spec" ] ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
-contract  = "requires" stmt | "ensures" stmt | "decreases" stmt ;
+contract  = "requires" stmt | "ensures" stmt | "decreases" stmt
+          | "reads" stmt ;   (* a spec function's footprint, ADR 0060 *)
 
 lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 captures  = "[" capture { "," capture } "]" ;
@@ -202,7 +203,7 @@ lender     = "(" IDENT ")" ;                      (* borrowed(m), with no space 
 
 type       = arrow_type | union_type ;
 arrow_type = arrow_dom "->" type ;
-arrow_dom  = modifiers union_type | "(" IDENT ":" annot ")" ;
+arrow_dom  = modifiers union_type | "(" [ "spec" ] IDENT ":" annot ")" ;
 union_type = app_type { "|" app_type } ;
 app_type   = type_atom { type_arg } ;             (* pair u8 f32, adapter Eq f32 *)
 type_arg   = type_atom | INT | "(" expr ")"

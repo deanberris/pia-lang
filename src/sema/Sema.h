@@ -117,6 +117,11 @@ class TypeResolver {
   // A named type from a `let name = type ...` item: a record or an alias.
   void define(const std::string &name, mlir::Type type) { named_[name] = type; }
 
+  // A `let rec` type that passed ADR 0047's checks, which is not built
+  // yet: a use of it says so rather than that it is unknown.
+  void markRecursive(const std::string &name) { recursive_.insert(name); }
+  bool isRecursive(const std::string &name) const { return recursive_.count(name) != 0; }
+
   // A record's field refinements, `{ p : real where 0 <= p }` (ADR 0036):
   // each field's name and its predicate, in which the name is the field.
   using Refinements = std::vector<std::pair<std::string, const syntax::Node *>>;
@@ -241,6 +246,7 @@ class TypeResolver {
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
   std::map<std::string, mlir::Type> named_;
+  std::set<std::string> recursive_;
   std::map<std::string, Refinements> refinements_;
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;
@@ -278,6 +284,9 @@ struct Param {
   // step 2): its value may hold loans from whatever the arguments for
   // that region's parameters borrow from.
   std::vector<std::string> regions;
+  // `(spec ref : inout [u8; 4096])`: spec state the caller and the callee
+  // share (ADR 0058). Code passes it and writes it, and codegen erases it.
+  bool spec = false;
 };
 
 struct FuncSig {

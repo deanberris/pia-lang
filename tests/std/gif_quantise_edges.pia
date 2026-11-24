@@ -1,0 +1,44 @@
+(* Importers of Pia.Image.Gif.Quantise see only its interface, and that is
+   enough to look every pixel's colour up in the palette with no check of
+   their own, and to rely on the exact flag.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Quantise.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+import Pia.Image.Gif.LzwEncode.LzwEncode as E
+import Pia.Image.Gif.Encode.Encode as X
+import Pia.Image.Gif.Quantise.Quantise as Q
+
+(* The red of pixel i, from the palette: in bounds, with no check. *)
+let red (rgb : [u8]) (i : usize) (pal : borrowed inout mutable [u8]) (idx : borrowed inout mutable [u8]) (bx : borrowed inout mutable [u8]) (hist : borrowed inout mutable [u8]) : u8
+  requires len rgb = 3 * len idx && len idx <= 4294967295 && i < len idx
+  requires len pal = 768 && len bx = 1536 && len hist = 1024
+= let q = Q.quantise rgb 16 pal idx bx hist in
+  let c : usize = idx.[i] in
+  assert c < 16;
+  pal.[3 * c]
+
+(* When exact, pixel i's colour is its palette colour. *)
+let exact_pixel (rgb : [u8]) (i : usize) (pal : borrowed inout mutable [u8]) (idx : borrowed inout mutable [u8]) (bx : borrowed inout mutable [u8]) (hist : borrowed inout mutable [u8]) : unit
+  requires len rgb = 3 * len idx && len idx <= 4294967295 && i < len idx
+  requires len pal = 768 && len bx = 1536 && len hist = 1024
+= let q = Q.quantise rgb 256 pal idx bx hist in
+  if q.exact then assert Q.pix_is rgb pal i idx.[i] else ()
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 10 proved, 0 failed, 0 skipped
+*)

@@ -1,0 +1,67 @@
+(* Importers of Pia.Time make C++'s chrono durations with `standard ()`
+   and prove what C++ promises of them: casts that widen are exact and
+   undone by the cast back, casts that narrow truncate toward zero, and
+   arithmetic and order are the counts'. Each type and function is made
+   here, by Pia.Time's metaprograms, and proved here.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Time.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: not piac --verify --iface-path=%t %S/Inputs/time_errors.pia 2>&1 | FileCheck --check-prefix=ERR %s
+// RUN: not piac --verify --iface-path=%t %S/Inputs/time_overflow.pia | FileCheck --check-prefix=OVER %s
+*)
+import Pia.Core.Ratio.Ratio as R
+import Pia.Time.Durations as T
+
+T.standard ()
+
+(* A unit of 1/30 s, for frames, and its cast to milliseconds and back. *)
+T.duration "frames" (R.reduce 1 30)
+T.cast "to_frames" "seconds" (R.reduce 1 1) "frames" (R.reduce 1 30)
+
+let widen (h : hours) : unit
+  requires h.count >= 0 - 1000 && h.count <= 1000
+  ensures (to_minutes h).count = h.count * 60
+  ensures (to_hours (to_seconds h)).count = h.count
+  ensures (to_nanoseconds h).count = h.count * 3600000000000
+= ()
+
+let narrow (m : milliseconds) : unit
+  ensures (to_seconds m).count = m.count / 1000
+  ensures m.count >= 0 && m.count < 1000 ==> (to_seconds m).count = 0
+  ensures m.count = 0 - 1500 ==> (to_seconds m).count = 0 - 1
+= ()
+
+let weeks_of_days (d : days) : unit
+  requires d.count >= 0
+  ensures (to_weeks d).count = d.count / 7
+  ensures (to_days (to_weeks d)).count <= d.count
+= ()
+
+let arithmetic (a : seconds) (b : seconds) : unit
+  requires a.count >= 0 && a.count < 1000 && b.count >= 0 && b.count < 1000
+  ensures (plus a b).count = a.count + b.count
+  ensures (minus (plus a b) b).count = a.count
+  ensures (times a 3).count = 3 * a.count
+= ()
+
+let order (a : seconds) (b : seconds) : unit
+  requires a.count >= 0 && a.count < 1000 && b.count >= 0 && b.count < 1000
+  ensures less a (plus a b) <==> b.count > 0
+= ()
+
+let round_trip (a : seconds) : unit
+  requires a.count >= 0 && a.count < 1000
+  ensures same (to_seconds (to_milliseconds a)) a
+= ()
+
+let film (s : seconds) : unit
+  requires s.count >= 0 && s.count < 1000
+  ensures (to_frames s).count = 30 * s.count
+= ()
+
+(*
+// CHECK-NOT: failed
+// CHECK: 0 failed, 0 skipped
+// ERR: time_errors.pia:7:1: error: the metaprogram 'Pia.Time.cast' failed: a cast between periods that do not divide each other is not supported yet
+// OVER: time_overflow.pia:9:3: failed: the precondition of 'to_nanoseconds(weeks)' holds
+*)

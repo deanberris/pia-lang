@@ -1,0 +1,58 @@
+(* What spec state refuses (ADR 0058): code reading a spec local, as a
+   value, as an argument or in a condition; a code buffer passed for a
+   spec parameter the callee writes; a spec local that is not a fixed
+   array or has no type; `let spec` where everything is spec already; and
+   assigning a whole spec array.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK: spec_local_errors.pia:[[@LINE+5]]:3: error: 's' is spec state, which code may write but not read: only contracts, loop invariants, asserts, lemma calls and spec parameters may read it, so that codegen can erase it (ADR 0058)
+*)
+let leak (x : u8) : u8
+= let spec s : mutable [u8; 4] = zeros in
+  s.[0] <- x;
+  s.[0]
+
+let sum4 (a : [u8; 4]) : u16 = a.[0] + a.[1] + a.[2] + a.[3]
+
+(* CHECK: spec_local_errors.pia:[[@LINE+4]]:8: error: 's' is spec state
+*)
+let pass_to_code (x : u8) : u16
+= let spec s : mutable [u8; 4] = zeros in
+  sum4 s
+
+(* CHECK: spec_local_errors.pia:[[@LINE+4]]:6: error: 's' is spec state
+*)
+let branch (x : u8) : u8
+= let spec s : mutable [u8; 4] = zeros in
+  if s.[0] = 0 then x else 0
+
+let note (spec log : inout [u8; 4]) (v : u8) : unit = log.[0] <- v
+
+(* CHECK: spec_local_errors.pia:[[@LINE+4]]:8: error: 'log' of 'note' is a spec parameter that it may write, so pass a spec local or spec parameter by name (ADR 0058)
+*)
+let code_buffer (v : u8) : unit
+= let buf : mutable [u8; 4] = zeros in
+  note buf v
+
+(* CHECK: spec_local_errors.pia:[[@LINE+3]]:16: error: a spec local is a fixed array, as in 'let spec n : mutable [u8; 4096] = zeros', for now; a spec number is an 'int' (ADR 0058)
+*)
+let scalar (x : u8) : u8
+= let spec n : mutable u8 = 0 in
+  x
+
+(* CHECK: spec_local_errors.pia:[[@LINE+3]]:3: error: 'let spec' makes spec state in code; in a contract, spec function or lemma everything is already spec, so drop 'spec'
+*)
+let spec in_spec (x : u8) : u8
+= let spec s : [u8; 4] = zeros in x
+
+(* CHECK: spec_local_errors.pia:[[@LINE+4]]:3: error: assigning a whole spec array is not supported yet; write its elements
+*)
+let whole (a : [u8; 4]) : unit
+= let spec s : mutable [u8; 4] = zeros in
+  s <- a
+
+(* CHECK: spec_local_errors.pia:[[@LINE+3]]:3: error: a spec local needs its type, as in 'let spec s : mutable [u8; 4096] = zeros'
+*)
+let untyped (x : u8) : u8
+= let spec s = x in x

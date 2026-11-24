@@ -1,0 +1,28 @@
+(* Pia.Core.Digits (ADR 0040): the lemma library for digit strings, which
+   its interface exports as lemmas (#305), with the spec functions they
+   are about.
+// RUN: piac --verify %S/../../lib/Pia/Core/Digits.pia | FileCheck %s
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Digits.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Digits.Digits.piai
+*)
+
+(* Every goal is proved, with no warning.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 83 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Core.Digits{{$}}
+// IFACE-NEXT: {{^}}interface Digits = sig{{$}}
+// IFACE-NEXT: {{^}}  let lemma divmod32 : (v : u32) -> (b : u32) -> unit requires b >= 2 ensures (v / b) * b + v % b = v && v % b < b{{$}}
+// IFACE-NEXT: {{^}}  let lemma divmod64 : (v : u64) -> (b : u64) -> unit requires b >= 2 ensures (v / b) * b + v % b = v && v % b < b{{$}}
+// IFACE-NEXT: {{^}}  let spec pow : (b : int) -> (k : usize) -> int{{$}}
+// IFACE-NEXT: {{^}}  let spec dval : (xs : [u8]) -> (i : usize) -> (j : usize) -> (b : int) -> int{{$}}
+// IFACE-NEXT: {{^}}  let lemma shift : (a : int) -> (p : int) -> (r : int) -> (b : int) -> (x : int) -> unit ensures (a * p + r) * b + x = a * (b * p) + (r * b + x){{$}}
+// IFACE-NEXT: {{^}}  let lemma prepend : (xs : [u8]) -> (i : usize) -> (j : usize) -> (b : int) -> unit requires i < j && j <= len xs ensures dval xs i j b = xs.[i] * pow b (j - i - 1) + dval xs (i + 1) j b{{$}}
+// IFACE-NEXT: {{^}}  let lemma frame : (xs : [u8]) -> (ys : [u8]) -> (i : usize) -> (j : usize) -> (b : int) -> unit requires i <= j && j <= len xs && j <= len ys requires forall (k in 0 .. len xs). i <= k && k < j ==> xs.[k] = ys.[k] ensures dval xs i j b = dval ys i j b{{$}}
+// IFACE-NEXT: {{^}}  let lemma step : (v : int) -> (q : int) -> (b : int) -> (d : int) -> (pk : int) -> (rest : int) -> unit requires v = (q * b + d) * pk + rest ensures v = q * (b * pk) + (d * pk + rest){{$}}
+// IFACE-NEXT: {{^}}  let put : (xs : borrowed inout mutable [u8]) -> (p : usize) -> (d : u8) -> (n : usize) -> (b : int) -> unit requires p < n && n <= len xs ensures xs.[p] = d ensures forall (k in 0 .. len xs). k <> p ==> xs.[k] = old (xs.[k]) ensures dval xs (p + 1) n b = dval (old xs) (p + 1) n b{{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)

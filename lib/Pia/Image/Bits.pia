@@ -54,7 +54,7 @@ let spec pow2 (n : int{0..16}) : int{1..65536} =
 
 (** The number of bit positions of s that a usize can address. *)
 let spec nbits (s : [u8]) : usize =
-  if len s <= 2305843009213693951 then 8 * len s else 18446744073709551615
+  if len s <= max usize / 8 then 8 * len s else max usize
 
 (** The n-bit field at bit pos, least significant bit first. *)
 let spec bits_at (s : [u8]) (pos : usize) (n : int{0..16}) : u32
@@ -126,7 +126,7 @@ let lemma window_bits (s : [u8]) (pos : usize) (n : int{0..16}) (q : usize) : un
 (** The number of addressable bits of s. *)
 let bit_len (s : [u8]) : usize
   ensures result = nbits s
-= if len s <= 2305843009213693951 then 8 * len s else 18446744073709551615
+= if len s <= max usize / 8 then 8 * len s else max usize
 
 (** The n-bit field at bit pos, least significant bit first. *)
 let read_bits (s : [u8]) (pos : usize) (n : int{0..16}) : u32

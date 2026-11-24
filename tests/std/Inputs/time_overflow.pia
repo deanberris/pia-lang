@@ -1,0 +1,9 @@
+(* A widening cast whose count can overflow i64 fails its precondition:
+   a week is 604800000000000 nanoseconds. *)
+import Pia.Core.Ratio.Ratio
+import Pia.Time.Durations as T
+
+T.standard ()
+
+let too_far (w : weeks) : nanoseconds
+= to_nanoseconds w
