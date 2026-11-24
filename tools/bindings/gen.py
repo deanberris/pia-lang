@@ -33,6 +33,7 @@ import tomllib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MANIFEST = os.path.join(ROOT, "tools", "bindings", "posix.toml")
+OVERLAY = os.path.join(ROOT, "lib", "Pia", "Sys", "Posix.pia")
 OUT_DIR = os.path.join(ROOT, "lib", "Pia", "Sys", "Gen")
 
 TARGETS = {
@@ -329,90 +330,210 @@ def generate(target, clang):
 
     collect(cxx_ast)
 
-    out = [header(target)]
-    names = set()
-
-    def define(name):
-        if name in names:
-            fail(f"two generated items are named {name}")
-        names.add(name)
-        return name
-
-    # Constants and layouts first: their names are reserved before any
-    # parameter is named, so no parameter shadows one.
-    const_lines = []
+    consts = []
     for i, n in enumerate(constants):
         ctype = strip_const(values[f"t{i}"])
         pia, why = pia_type(ctype, ctype, False)
         value = values[f"c{i}"]
         if pia is None or not fits(pia, value):
             fail(f"{n} = {value} has C type {ctype}, which Pia cannot hold")
-        const_lines.append(f"let {define(pia_name(n))} : {pia} @target({target}) = {value}\n")
-    layout_lines = []
+        consts.append((pia_name(n), pia, value))
+    layouts = []
     for i, n in enumerate(structs):
-        size, align = values[f"s{i}"], values[f"a{i}"]
-        layout_lines.append(f"\n(* struct {n}: {size} bytes, aligned to {align}. *)\n")
-        layout_lines.append(f"let {define(n + '_size')} : usize @target({target}) = {size}\n")
-        layout_lines.append(f"let {define(n + '_align')} : usize @target({target}) = {align}\n")
-        for j, (f, qual) in enumerate(layout[n]):
-            off = values[f"o{i}_{j}"]
-            fsize = values.get(f"z{i}_{j}", 0)
-            base = f"{n}_{f.lower()}"
-            layout_lines.append(
-                f"let {define(base + '_offset')} : usize @target({target}) = {off}"
-                f"  \\ {qual}, {fsize} bytes\n"
-            )
-
-    fn_lines, skipped = [], []
+        fields = [
+            (f.lower(), qual, values[f"o{i}_{j}"], values.get(f"z{i}_{j}", 0))
+            for j, (f, qual) in enumerate(layout[n])
+        ]
+        layouts.append((n, values[f"s{i}"], values[f"a{i}"], fields))
+    fns, skipped = [], []
     for i, n in enumerate(functions):
         node = decls[n]
         qual, _ = type_of(node)
         spelled_result, spelled_params = split_signature(qual)
         result, why = pia_type(spelled_result, canonical(values[f"f{i}"]), True)
         params = [c for c in node.get("inner", []) if c.get("kind") == "ParmVarDecl"]
-        taken = set(names)
-        pieces = []
+        ps = []
         for k, p in enumerate(params):
-            pt, pwhy = pia_type(type_of(p)[0], canonical(values[f"f{i}_{k}"]), False)
+            c = canonical(values[f"f{i}_{k}"])
+            pt, pwhy = pia_type(type_of(p)[0], c, False)
             if pt is None:
                 why = why or f"parameter {k + 1}: {pwhy}"
                 break
-            pieces.append(f"({param_name(p.get('name'), k, taken)} : {pt})")
+            ps.append((p.get("name"), pt, c))
         if why:
-            skipped.append(f"\\   {n}: {qual}: {why}\n")
+            skipped.append((n, qual, why))
             continue
-        attrs = f"@target({target})"
-        if node.get("variadic"):
-            attrs += f" @variadic({len(params)})"
-        args = ", ".join(spelled_params) or "void"
-        # A line comment, since a C pointer's "*)" would end a (* comment.
-        fn_lines.append(f"\n\\ {spelled_result} {n}({args})\n")
-        fn_lines.append(
-            f"let {define(n)} {' '.join(pieces) or '()'} : {result} {attrs}\n"
-            f"= extern \"{n}\"\n"
-        )
+        args = ", ".join(spelled_params + (["..."] if node.get("variadic") else [])) or "void"
+        fns.append(Fn(n, f"{spelled_result} {n}({args})", ps, result, bool(node.get("variadic"))))
+    return emit(target, consts, layouts, fns, skipped, read_overlay())
 
+
+class Fn:
+    """A C function as the header declares it: its signature as spelled,
+    each parameter's name, Pia type and canonical C type, its Pia result
+    type, and whether it is variadic."""
+
+    def __init__(self, name, spelled, params, result, variadic):
+        self.name, self.spelled, self.params = name, spelled, params
+        self.result, self.variadic = result, variadic
+
+
+class Row:
+    """One `let` of the Posix interface: a function's parameters as
+    (name, modifiers, type), its result, its @variadic count, and its
+    contract lines; or a constant's type."""
+
+    def __init__(self, name, params, result, variadic, contract, is_fn):
+        self.name, self.params, self.result = name, params, result
+        self.variadic, self.contract, self.is_fn = variadic, contract, is_fn
+
+
+def split_top(text, sep):
+    parts, depth, cur, i = [], 0, "", 0
+    while i < len(text):
+        c = text[i]
+        depth += {"(": 1, ")": -1, "[": 1, "]": -1}.get(c, 0)
+        if depth == 0 and text.startswith(sep, i):
+            parts.append(cur.strip())
+            cur, i = "", i + len(sep)
+            continue
+        cur += c
+        i += 1
+    parts.append(cur.strip())
+    return parts
+
+
+def read_overlay():
+    """The interface text and its rows, from lib/Pia/Sys/Posix.pia."""
+    text = open(OVERLAY).read()
+    m = re.search(r"^interface Posix = sig\n.*?^end\n", text, re.M | re.S)
+    if not m:
+        fail(f"{os.path.relpath(OVERLAY, ROOT)} has no `interface Posix = sig ... end`")
+    interface = m.group(0)
+    rows, current = [], None
+    for line in interface.splitlines()[1:-1]:
+        t = line.strip()
+        if t.startswith("let "):
+            current = [t, []]
+            rows.append(current)
+        elif t.startswith(("requires ", "ensures ")) and current:
+            current[1].append(t)
+    parsed = []
+    for head, contract in rows:
+        name, sig = re.fullmatch(r"let ([a-z_][a-z0-9_]*) : (.*)", head).groups()
+        variadic = None
+        v = re.search(r"\s*@variadic\((\d+)\)$", sig)
+        if v:
+            variadic, sig = int(v.group(1)), sig[: v.start()]
+        parts = split_top(sig, "->")
+        if len(parts) == 1:
+            parsed.append(Row(name, [], parts[0], None, contract, False))
+            continue
+        params = []
+        for part in parts[:-1]:
+            pm = re.fullmatch(r"\(([a-z_][a-z0-9_]*) : (.*)\)", part)
+            if not pm:
+                fail(f"row {name}: cannot read the parameter {part!r}")
+            words = pm.group(2).split()
+            mods = [w for w in words if w in MODIFIERS]
+            params.append((pm.group(1), mods, " ".join(w for w in words if w not in MODIFIERS)))
+        parsed.append(Row(name, params, parts[-1], variadic, contract, True))
+    return interface, parsed
+
+
+MODIFIERS = {"borrowed", "moved", "in", "out", "inout", "fixed", "mutable"}
+
+
+def join(row, fn, target):
+    """Fails unless the row fits the header's declaration on this target."""
+    where = f"row {row.name} ({fn.spelled}) on {target}"
+    named = len(fn.params)
+    if fn.variadic != (row.variadic is not None):
+        fail(f"{where}: C's function is {'' if fn.variadic else 'not '}variadic")
+    if fn.variadic and row.variadic != named:
+        fail(f"{where}: C names {named} parameters, so the row needs @variadic({named})")
+    if not fn.variadic and len(row.params) != named:
+        fail(f"{where}: C takes {named} parameters, the row {len(row.params)}")
+    for (pname, mods, ptype), (_, ctype, canon) in zip(row.params, fn.params):
+        if ptype != ctype:
+            fail(f"{where}: '{pname}' is {canon} in C, which is {ctype} in Pia, not {ptype}")
+        if ("mutable" in mods or "out" in mods) and canon.startswith("const "):
+            fail(f"{where}: '{pname}' is {canon}, so C does not write it: drop mutable and out")
+    if row.result != fn.result:
+        fail(f"{where}: C returns {fn.result} in Pia, not {row.result}")
+
+
+def emit(target, consts, layouts, fns, skipped, overlay):
+    interface, rows = overlay
+    with open(MANIFEST, "rb") as f:
+        aliases = tomllib.load(f).get("aliases", {})
+    by_name = {f.name: f for f in fns}
+    const_types = {n: t for n, t, _ in consts}
+    covered = set()
+    row_lines = []
+    for row in rows:
+        if not row.is_fn:
+            if row.name not in const_types:
+                fail(f"row {row.name}: no such constant in the {target} headers")
+            if const_types[row.name] != row.result:
+                fail(f"row {row.name}: C's type is {const_types[row.name]}, not {row.result}")
+            continue
+        symbol = aliases.get(row.name, row.name)
+        if symbol not in by_name:
+            fail(f"row {row.name}: no function {symbol} in the {target} headers, or Pia cannot declare it")
+        join(row, by_name[symbol], target)
+        covered.add(symbol)
+        params = " ".join(
+            f"({n} : {' '.join(mods + [t])})" for n, mods, t in row.params
+        ) or "()"
+        attrs = f" @variadic({row.variadic})" if row.variadic is not None else ""
+        row_lines.append(f"\n\\ {by_name[symbol].spelled}\n")
+        row_lines.append(f"let {row.name} {params} : {row.result}{attrs}\n")
+        row_lines.extend(f"  {c}\n" for c in row.contract)
+        row_lines.append(f"= extern \"{symbol}\"\n")
+
+    names = {n for n, _, _ in consts}
+    out = [header(target), "module Pia.Sys.Posix : Posix\n\n", interface]
     out.append(SECTION_CONSTANTS)
-    out.extend(const_lines)
+    out.extend(f"let {n} : {t} = {v}\n" for n, t, v in consts)
     out.append(SECTION_LAYOUTS)
-    out.extend(layout_lines)
+    for n, size, align, fields in layouts:
+        out.append(f"\n(* struct {n}: {size} bytes, aligned to {align}. *)\n")
+        out.append(f"let {n}_size : usize = {size}\n")
+        out.append(f"let {n}_align : usize = {align}\n")
+        for f, qual, off, fsize in fields:
+            out.append(f"let {n}_{f}_offset : usize = {off}  \\ {qual}, {fsize} bytes\n")
+        names |= {f"{n}_size", f"{n}_align"} | {f"{n}_{f}_offset" for f, *_ in fields}
+    out.append(SECTION_ROWS)
+    out.extend(row_lines)
     out.append(SECTION_FUNCTIONS)
-    out.extend(fn_lines)
+    for fn in fns:
+        if fn.name in covered:
+            continue
+        if fn.name in names:
+            fail(f"the function {fn.name} has the name of a generated constant")
+        taken = set(names)
+        pieces = [f"({param_name(p, k, taken)} : {t})" for k, (p, t, _) in enumerate(fn.params)]
+        attrs = f" @variadic({len(fn.params)})" if fn.variadic else ""
+        # A line comment, since a C pointer's "*)" would end a (* comment.
+        out.append(f"\n\\ {fn.spelled}\n")
+        out.append(f"let {fn.name} {' '.join(pieces) or '()'} : {fn.result}{attrs}\n= extern \"{fn.name}\"\n")
     if skipped:
         out.append("\n\\ Not declared yet, because Pia's foreign calls cannot express them:\n")
-        out.extend(skipped)
+        out.extend(f"\\   {n}: {q}: {w}\n" for n, q, w in skipped)
     return "".join(out)
 
 
 def header(target):
     return f"""(* GENERATED by tools/bindings/gen.py from the {target} headers named in
-   tools/bindings/posix.toml (ADR 0051, section 6). Do not edit it: CI
-   regenerates it on {target} and fails on any difference. To add a name,
-   list it in posix.toml and run the generator on that target.
+   tools/bindings/posix.toml and the interface in lib/Pia/Sys/Posix.pia
+   (ADR 0051, section 6, and ADR 0057). Do not edit it: CI regenerates it
+   on {target} and fails on any difference. To add a name, list it in
+   posix.toml, or add a row to the interface, and run the generator on
+   that target.
 
-   Every item is `@target({target})`, so it is compiled and proved only
-   for that target. None has a contract, so each function can be called
-   only as `unsafe`, until the contract overlay gives it one. *)
+   This is Pia.Sys.Posix for {target}; the build picks it by target.
+   Importers see only the interface, so its constants' values stay here. *)
 """
 
 
@@ -425,10 +546,15 @@ SECTION_LAYOUTS = """
    is passed to C as a byte buffer of its size. *)
 """
 
+SECTION_ROWS = """
+(* The interface's functions: each row's modifiers and contract, checked
+   against the C declaration above it. *)
+"""
+
 SECTION_FUNCTIONS = """
-(* Functions: C's signatures, each above its declaration. A pointer is a
-   byte buffer, and a variadic function takes only its named parameters
-   here; its variadic arguments come with the overlay. *)
+(* The other functions: C's signatures, with no contract, private to this
+   module until the interface gives them a row. A pointer is a byte
+   buffer, and a variadic function takes only its named parameters. *)
 """
 
 
