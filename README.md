@@ -6,7 +6,9 @@ Every integer overflow, every array index and every contract in a Pia program is
 
 The name is the second half of *Sophia*, and it stands for **Proved In Advance**.
 
-[Documentation](https://pia-lang.dev/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Stream delineation](docs/streams.pia.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [Status and roadmap](docs/status.md) · [Contributing](CONTRIBUTORS.md) · [Sponsor](https://github.com/sponsors/deanberris)
+[Documentation](https://pia-lang.dev/) · [Getting started](docs/getting-started.md) · [Demo](docs/demo.md) · [Stream delineation](docs/streams.pia.md) · [Language tour](docs/tour.md) · [How verification works](docs/verification.md) · [The REPL and MCP server](docs/repl.md) · [Compared with other languages](docs/comparison.md) · [Status and roadmap](docs/status.md) · [Contributing](CONTRIBUTORS.md) · [Sponsor](https://github.com/sponsors/deanberris)
+
+**Try it cell by cell.** `pia repl` is a verified REPL: each cell is proved before it runs, and a redefinition that would break the code that uses it is refused. `pia mcp` serves the same session to an agent such as Claude over the Model Context Protocol, with a primer on the language, `:help` topics, a hint on every failed cell and what each proof cost. See [the REPL](docs/repl.md) and [agent skills](docs/agents.md).
 
 ## A first proof
 
