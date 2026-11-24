@@ -1188,6 +1188,42 @@ class Encoder {
            term(e.getPredicate()), false);
       return true;
     }
+    if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op)) {
+      // The cells of a spread's buffer that other iterations own take
+      // unknown values (ADR 0060): forall c, if the iteration owns c,
+      // the new contents at c are the old.
+      using P = mlir::smt::BVCmpPredicate;
+      Value root = rootBuffer(h.getBuffer());
+      Value old = arrays_.lookup(root), len = lengths_.lookup(root);
+      Value iv = term(h.getIv());
+      Value owner =
+          h.getOwner() ? arrays_.lookup(rootBuffer(h.getOwner())) : Value();
+      if (!old || !len || !iv || (h.getOwner() && !owner)) {
+        havocArray(root); // every cell unknown: sound, and stronger
+        return true;
+      }
+      auto at = mlir::cast<mlir::smt::ArrayType>(old.getType());
+      Value fresh = declare(at, "", false);
+      Value keep = forallIndex([&](Value c) {
+        Value in = andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len));
+        Value own;
+        if (owner) {
+          auto ot = mlir::cast<mlir::smt::ArrayType>(owner.getType());
+          own =
+              eq(create<mlir::smt::ArraySelectOp>(ot.getRangeType(), owner, c),
+                 iv);
+        } else {
+          own = eq(c, iv);
+        }
+        return implies(
+            andOf(in, own),
+            eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), fresh, c),
+               create<mlir::smt::ArraySelectOp>(at.getRangeType(), old, c)));
+      });
+      assume(keep);
+      setArray(root, fresh);
+      return true;
+    }
     if (auto a = mlir::dyn_cast<contract::AssertOp>(op)) {
       // A contract lemma's assertion says whose precondition it checks.
       auto claim = fn_->getAttrOfType<mlir::StringAttr>("pia.assert_claim");

@@ -921,6 +921,7 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    owns_.clear();
     variadic_.reset();
     solver_.clear();
     ghost_ = false;
@@ -1133,9 +1134,14 @@ class Gen {
                            "'= extern \"symbol\"'");
       return;
     }
+    // A function with `@owns(buf, owner, b)` checks every access to `buf`
+    // as a spread iteration `b` would (ADR 0060).
+    if (!owns_.empty() && !footprintScope(item))
+      return;
     R body = isExtern ? genForeign(bodyNode, foreign, sig, entry)
              : isSpec ? genContractExpr(bodyNode, sig.result)
                       : genExpr(*bodyPtr, sig.result);
+    spread_.reset();
     if (!body) return;
     if (!isSpec && !ghost_)
       for (size_t i : threaded(sig))
@@ -1673,6 +1679,15 @@ class Gen {
       // `@trigger(t1, t2)` on an axiom: one pattern (ADR 0036).
       if (a->text == "trigger" && !a->kids.empty()) {
         triggers_.push_back(a.get());
+        continue;
+      }
+      // `@owns(buf, owner, b)`: the function touches only the cells c of
+      // `buf` with `owner.[c] = b` (ADR 0060); checked with the body.
+      if (a->text == "owns" && a->kids.size() == 3 &&
+          llvm::all_of(a->kids, [](const syntax::NodePtr &k) {
+            return k->kind == NodeKind::Name;
+          })) {
+        owns_.push_back(a.get());
         continue;
       }
       if (a->text == "allow" && !a->kids.empty()) {
@@ -3410,6 +3425,10 @@ class Gen {
     if (sig.item)
       if (std::string why = boxUncallable(*sig.item); !why.empty())
         return fail(n, why);
+    if (args.size() == sig.params.size() &&
+        !(sig.item && hasFlag(*sig.item, "lemma")) &&
+        !checkFootprintCall(n, sig, args))
+      return std::nullopt;
     if (args.size() != sig.params.size())
       return fail(n, "'" + sig.name + "' takes " +
                          plural(sig.params.size(), "argument") + ", given " +
@@ -9476,14 +9495,25 @@ class Gen {
     std::set<const Binding *> outside; // the bindings in scope before it
     std::set<std::string> written;     // the buffers the body writes
     std::map<std::string, BindingPtr> owners;
+    bool footprint = false; // a function's @owns, not a spread
   };
   std::optional<SpreadScope> spread_;
 
-  // The names of buffers the body writes element by element.
-  static void collectWrittenBuffers(const Node &n, std::set<std::string> &out) {
+  // The names of buffers the body writes: element by element, or by
+  // passing them to a call's `out` or `inout` parameter.
+  void collectWrittenBuffers(const Node &n, std::set<std::string> &out) {
     if (n.kind == NodeKind::Assign && n.kids[0]->kind == NodeKind::Index &&
         n.kids[0]->kids[0]->kind == NodeKind::Name)
       out.insert(n.kids[0]->kids[0]->text);
+    if (n.kind == NodeKind::Apply && n.kids[0]->kind == NodeKind::Name)
+      if (auto it = sigs_.find(n.kids[0]->text); it != sigs_.end()) {
+        const sema::FuncSig &sig = it->second;
+        for (size_t k = 1; k < n.kids.size() && k - 1 < sig.params.size(); ++k)
+          if (n.kids[k]->kind == NodeKind::Name &&
+              (sema::hasModifier(sig.params[k - 1].modifiers, "out") ||
+               sema::hasModifier(sig.params[k - 1].modifiers, "inout")))
+            out.insert(n.kids[k]->text);
+      }
     for (const syntax::NodePtr &k : n.kids)
       if (k)
         collectWrittenBuffers(*k, out);
@@ -9501,9 +9531,30 @@ class Gen {
                       parent->kids.size() == 2 && parent->kids[1].get() == &n &&
                       parent->kids[0]->kind == NodeKind::Name &&
                       parent->kids[0]->text == "len";
-      if (!indexed && !measured)
+      // An argument of a call to a function with a footprint for it, or
+      // of a lemma, which is erased; checked at the call.
+      bool passed = false;
+      if (parent && parent->kind == NodeKind::Apply &&
+          parent->kids[0]->kind == NodeKind::Name &&
+          parent->kids[0].get() != &n)
+        if (auto it = sigs_.find(parent->kids[0]->text); it != sigs_.end()) {
+          const sema::FuncSig &sig = it->second;
+          size_t at = 0;
+          for (size_t k = 1; k < parent->kids.size(); ++k)
+            if (parent->kids[k].get() == &n)
+              at = k - 1;
+          bool lemma = sig.item && hasFlag(*sig.item, "lemma");
+          passed =
+              lemma || llvm::any_of(footprintsOf(sig), [&](const Footprint &f) {
+                return f.buf == at;
+              });
+        }
+      if (!indexed && !measured && !passed)
         return &n;
     }
+    // Contracts are erased, so what they read cannot race.
+    if (n.kind == NodeKind::Assert || n.kind == NodeKind::Assume)
+      return nullptr;
     for (const syntax::NodePtr &k : n.kids)
       if (k)
         if (const Node *bad = strayUse(*k, &n, written))
@@ -9540,6 +9591,142 @@ class Gen {
     return true;
   }
 
+  // The `@owns` attributes of the function being generated.
+  std::vector<const Node *> owns_;
+
+  // Sets up the footprint checks of a function with `@owns` (ADR 0060):
+  // its owned buffers can only be indexed, measured, or passed to a call
+  // with a footprint of its own, and every access is a goal.
+  bool footprintScope(const Node &item) {
+    SpreadScope sc;
+    const Node *bNode = nullptr;
+    for (const Node *a : owns_) {
+      BindingPtr buf = lookup(a->kids[0]->text);
+      BindingPtr owner = lookup(a->kids[1]->text);
+      BindingPtr b = lookup(a->kids[2]->text);
+      if (!buf || !buf->isParam || !elementType(buf->type)) {
+        fail(*a->kids[0], "@owns names a buffer parameter first");
+        return false;
+      }
+      if (!owner || !owner->isParam || !elementType(owner->type) ||
+          !mlir::isa<IntType>(elementType(owner->type))) {
+        fail(*a->kids[1], "@owns names an owner array parameter second");
+        return false;
+      }
+      if (!b || !b->isParam || !mlir::isa<IntType>(b->type)) {
+        fail(*a->kids[2], "@owns names an integer parameter third, the owner "
+                          "of the cells it may touch");
+        return false;
+      }
+      if (bNode && bNode->text != a->kids[2]->text) {
+        fail(*a->kids[2], "every @owns of a function names the same owner");
+        return false;
+      }
+      bNode = a->kids[2].get();
+      sc.var = b->name;
+      sc.iv = b->value;
+      sc.written.insert(buf->name);
+      sc.owners[buf->name] = owner;
+      sc.outside.insert(buf.get());
+    }
+    const Node &body = *item.kids.back();
+    if (const Node *bad = strayUse(body, nullptr, sc.written)) {
+      fail(*bad,
+           "'" + bad->text +
+               "' has a footprint (@owns), so it can only "
+               "be indexed here, or passed to a function with a footprint");
+      return false;
+    }
+    sc.footprint = true;
+    spread_ = std::move(sc);
+    return true;
+  }
+
+  // Where a callee's `@owns(buf, owner, b)` puts its buffer, owner and
+  // owner value among its parameters.
+  struct Footprint {
+    size_t buf, owner, b;
+  };
+  std::vector<Footprint> footprintsOf(const sema::FuncSig &sig) {
+    std::vector<Footprint> out;
+    if (!sig.item)
+      return out;
+    const Node &ret = *sig.item->kids[1];
+    if (ret.kind != NodeKind::RetAnnot || ret.kids.size() < 2)
+      return out;
+    auto index = [&](const std::string &name) -> std::optional<size_t> {
+      for (size_t i = 0; i < sig.params.size(); ++i)
+        if (sig.params[i].name == name)
+          return i;
+      return std::nullopt;
+    };
+    for (const syntax::NodePtr &a : ret.kids[1]->kids) {
+      if (a->text != "owns" || a->kids.size() != 3)
+        continue;
+      auto x = index(a->kids[0]->text), o = index(a->kids[1]->text),
+           b = index(a->kids[2]->text);
+      if (x && o && b)
+        out.push_back({*x, *o, *b});
+    }
+    return out;
+  }
+
+  // A buffer that a spread writes, or that a function owns, passed to a
+  // call: the callee must own it by the same owner array, and the goal is
+  // that it touches the iteration's cells, `b = i` (ADR 0060).
+  bool checkFootprintCall(const Node &n, const sema::FuncSig &sig,
+                          const std::vector<const Node *> &args) {
+    if (!spread_ || contract_ || ghost_)
+      return true;
+    std::vector<Footprint> fps = footprintsOf(sig);
+    for (size_t i = 0; i < args.size(); ++i) {
+      const Node &arg = *args[i];
+      if (arg.kind != NodeKind::Name || !spread_->written.count(arg.text))
+        continue;
+      BindingPtr buf = lookup(arg.text);
+      if (!buf || !spread_->outside.count(buf.get()))
+        continue;
+      auto fp =
+          llvm::find_if(fps, [&](const Footprint &f) { return f.buf == i; });
+      auto owner = spread_->owners.find(arg.text);
+      if (fp == fps.end())
+        return fail(arg, "'" + arg.text + "' is passed to '" + sig.name +
+                             "', which has no footprint for it: give it "
+                             "@owns(" +
+                             sig.params[i].name +
+                             ", owner, b) "
+                             "(ADR 0060)"),
+               false;
+      if (owner == spread_->owners.end())
+        return fail(arg, "'" + arg.text +
+                             "' has no owner array here, so it "
+                             "cannot be passed to a call with a footprint: "
+                             "give the spread @owns(" +
+                             arg.text + ", owner) (ADR 0060)"),
+               false;
+      const Node &ownerArg = *args[fp->owner];
+      if (ownerArg.kind != NodeKind::Name ||
+          lookup(ownerArg.text) != owner->second)
+        return fail(ownerArg, "the footprint's owner must be '" +
+                                  owner->second->name + "', the owner of '" +
+                                  arg.text + "' here"),
+               false;
+      R bv = genExpr(*args[fp->b], Type());
+      if (!bv)
+        return false;
+      Location l = loc(*args[fp->b]);
+      auto as = create<contract::AssertOp>(
+          l, cmp(l, CmpPredicate::eq, bv->value, spread_->iv));
+      as->setAttr("pia.claim",
+                  b_.getStringAttr("the call touches only the cells the "
+                                   "iteration owns in '" +
+                                   arg.text + "' (its '" +
+                                   sig.params[fp->b].name + "' is '" +
+                                   spread_->var + "')"));
+    }
+    return true;
+  }
+
   R genSpread(const Node &n) {
     Location l = loc(n);
     const Node &pattern = *n.kids[0];
@@ -9548,15 +9735,19 @@ class Gen {
     const Node &annots = *n.kids[3];
     const Node &body = *n.kids[4];
     if (spread_)
-      return fail(n, "a spread inside a spread is not supported yet");
+      return fail(n, spread_->footprint
+                         ? "a spread in a function with @owns is not "
+                           "supported yet"
+                         : "a spread inside a spread is not supported yet");
     if (pattern.kind != NodeKind::PVar)
       return fail(pattern, "a spread binds a single name for now");
     if (iterable.kind != NodeKind::Range)
       return fail(iterable,
                   "a spread runs over a range 'lo..hi' for now (ADR 0060)");
-    if (!annots.kids.empty())
-      return fail(*annots.kids[0],
-                  "loop annotations on a spread are not supported yet");
+    for (const syntax::NodePtr &a : annots.kids)
+      if (a->kind != NodeKind::Ensures)
+        return fail(*a, "a spread takes 'ensures', not a loop invariant or a "
+                        "measure: its iterations are not in sequence");
     std::vector<BindingPtr> vars = carried({&body});
     if (!vars.empty())
       return fail(n, "a spread body cannot assign '" + vars[0]->name +
@@ -9619,16 +9810,64 @@ class Gen {
       LoopScope inLoop(frames_);
       Deeper deeper(loopDepth_);
       R r = genExpr(body, Type());
-      spread_.reset();
       if (r && !checkLoopMoves())
         r = std::nullopt;
       if (r && !mustUse(*r, body))
         r = std::nullopt;
+      // Each `ensures` is proved at the end of one iteration, with every
+      // cell of a written buffer that another iteration owns forgotten,
+      // so it holds whatever the others write (ADR 0060).
+      if (r && !annots.kids.empty()) {
+        for (const std::string &name : spread_->written) {
+          BindingPtr wb = lookup(name);
+          if (!wb || !spread_->outside.count(wb.get()))
+            continue;
+          auto owner = spread_->owners.find(name);
+          Value ov =
+              owner != spread_->owners.end() ? owner->second->value : Value();
+          create<contract::HavocOthersOp>(l, wb->value, spread_->iv, ov);
+        }
+        for (const syntax::NodePtr &a : annots.kids) {
+          SpreadScope saved = *spread_;
+          spread_.reset();
+          R p = genPredicate(*a->kids[0]);
+          spread_ = std::move(saved);
+          if (!p) {
+            r = std::nullopt;
+            break;
+          }
+          auto as = create<contract::AssertOp>(loc(*a), p->value);
+          as->setAttr("pia.claim",
+                      b_.getStringAttr("the spread's postcondition holds for "
+                                       "an iteration, whatever the others "
+                                       "write"));
+        }
+      }
+      spread_.reset();
       if (r)
         create<mlir::scf::YieldOp>(l);
       popScope();
       if (!r)
         return r;
+    }
+    // After the loop, every iteration's `ensures` holds:
+    // `forall (i in lo .. hi). p`.
+    for (const syntax::NodePtr &a : annots.kids) {
+      auto q = std::make_unique<Node>();
+      q->kind = NodeKind::Quantifier;
+      q->text = "forall";
+      q->loc = a->loc;
+      auto binder = std::make_unique<Node>();
+      binder->kind = NodeKind::RangeBinder;
+      binder->text = pattern.text;
+      binder->loc = pattern.loc;
+      binder->kids.push_back(syntax::clone(iterable));
+      q->kids.push_back(std::move(binder));
+      q->kids.push_back(syntax::clone(*a->kids[0]));
+      R all = genPredicate(*q);
+      if (!all)
+        return all;
+      create<contract::AssumeOp>(loc(*a), all->value);
     }
     return unit();
   }
