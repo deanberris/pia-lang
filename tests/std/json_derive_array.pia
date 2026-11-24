@@ -1,0 +1,37 @@
+(* @derive(json) on fixed-array fields (ADR 0045, step 5): `[t; n]` is a
+   JSON array of exactly n values of t, in a record and in a variant's
+   record payload. Too few or too many values is Length_<t>, which the
+   error type has only when there is an array field; every goal is
+   proved.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --dump-expanded --iface-path=%t %s | FileCheck %s --check-prefix=AST
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+
+(*
+// AST:      (LetItem "pix_json_error"
+// AST:          (Ctor "Length_pix"
+*)
+let pix = type { rgb : [u8; 3]; flags : [bool; 2]; n : u8 } @derive(json)
+
+(* A payload's array field: the variant's errors gain Length too.
+// AST:      (LetItem "msg_json_error"
+// AST:          (Ctor "Length_msg"
+*)
+let msg = type
+  | Point of { xy : [i16; 2] }
+  | Mask of { bits : [bool; 3]; id : u8 }
+  @derive(json)
