@@ -69,3 +69,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0063](0063-opaque-spec-functions.md) | Opaque spec functions: a spec function marked `@opaque` keeps its definition out of every goal until a proof reveals it | Accepted |
 | [0064](0064-distinct-types.md) | `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only by applying a type to a value, and inherits only what it derives | Proposed |
 | [0065](0065-lowerings-written-in-pia.md) | Pia code extends the compiler's lowering: `@lower` gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted | Proposed |
+| [0068](0068-gpu-compute-through-spirv-and-metal.md) | GPU compute: a proved `spread` placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim, with an Apple GPU float model | Proposed |
