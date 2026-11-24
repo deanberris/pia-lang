@@ -10,7 +10,7 @@ The name is the second half of *Sophia*, and it stands for **Proved In Advance**
 
 **Try it cell by cell.** `pia repl` is a verified REPL: each cell is proved before it runs, and a redefinition that would break the code that uses it is refused. `pia mcp` serves the same session to an agent such as Claude over the Model Context Protocol, with a primer on the language, `:help` topics, a hint on every failed cell and what each proof cost. See [the REPL](docs/repl.md) and [agent skills](docs/agents.md).
 
-**Use it from Claude Code.** The repository is a Claude Code plugin: `/plugin install pia --marketplace deanberris/pia-lang` installs the agent skills, the `pia-lsp` language server for `.pia` files and the `pia mcp` REPL server. Both servers need `pia` and `pia-lsp` on your `PATH` ([agent skills](docs/agents.md#claude-code)).
+**Use it from Claude Code.** The repository is a Claude Code plugin marketplace: `/plugin marketplace add deanberris/pia-lang` and then `/plugin install pia@pia-lang` install the agent skills, the `pia-lsp` language server for `.pia` files and the `pia mcp` REPL server. Both servers need `pia` and `pia-lsp` on your `PATH` ([agent skills](docs/agents.md#claude-code)).
 
 ## A first proof
 
