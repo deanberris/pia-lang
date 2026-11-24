@@ -1,0 +1,397 @@
+(* Pia.Image.Gif.Encode: animated GIF encoding (GIF89a; ADR 0054, step 3),
+   proved total and safe on every input.
+
+   `encode_animation` writes nf frames of a w by h screen, each an index
+   raster in `frames` (frame j at frames.[j * w * h ..]), with one global
+   colour table, a NETSCAPE2.0 loop count, and per frame a Graphic Control
+   Extension (the delay, and "do not dispose") and an image descriptor.
+   The first frame covers the screen; each later one covers only the
+   rectangle where it differs from the one before (one pixel when nothing
+   changed), so a viewer that composites as GIF89a says shows every frame
+   exactly. Its LZW data is written by Pia.Image.Gif.LzwEncode and cut into
+   sub-blocks of at most 255 bytes.
+
+   Proved: the output fits in `size_bound w h nf` bytes, so a buffer that
+   long never returns DstFull; and what Ok returns is a GIF by
+   Pia.Image.Gif.Spec's grammar, with nf frames and the screen w by h. The
+   encoder makes sure of that last part by running Pia.Image.Gif.Decode's
+   `info` over its output, which is proved to accept exactly what the
+   grammar accepts; that it decodes to the frames given is what ADR 0058's
+   ghost buffers would let a proof say, and the tests check. Nothing is
+   allocated: the caller lends the rectangle, LZW and hash buffers. *)
+module Pia.Image.Gif.Encode : Encode
+
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+import Pia.Image.Gif.LzwEncode.LzwEncode as E
+
+interface Encode = sig
+  let encode_error = type
+    | BadPalette of usize | IndexTooLarge of usize | ShortFrames of usize
+    | DstFull of usize | NotParsed of usize
+  let spec frame_bound : (fs : int{0..4294836225}) -> int{0..13000000000}
+  let spec cap : (k : int{0..65535}) -> u64
+  let spec anim_bound : (fb : int{0..13000000000}) -> (k : int{0..65535}) -> usize
+  let size_bound : (w : int{1..65535}) -> (h : int{1..65535}) -> (nf : u16) -> usize
+    ensures result = 800 + anim_bound (frame_bound (R.size w h 1)) nf
+  let encode_animation : (w : int{1..65535}) -> (h : int{1..65535}) -> (pal : [u8]) -> (frames : [u8]) -> (nf : u16) -> (delay : u16) -> (loops : u16) -> (dst : borrowed inout mutable [u8]) -> (rect : borrowed inout mutable [u8]) -> (lz : borrowed inout mutable [u8]) -> (hash : borrowed inout mutable [u8]) -> result usize encode_error
+    requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960
+    ensures (match result with
+      | Ok n -> n <= len dst && n <= 800 + anim_bound (frame_bound (R.size w h 1)) nf
+                && (if G.header_ok dst then
+                      G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf
+                      && G.u16le dst 6 = w && G.u16le dst 8 = h
+                    else false)
+      | Err _ -> true)
+    ensures (match result with
+      | Ok n -> true
+      | Err e -> (match e with
+        | DstFull p -> len dst < 800 + anim_bound (frame_bound (R.size w h 1)) nf
+        | _ -> true))
+end
+
+(** BadPalette: the palette is not 3 * 2^b bytes for b from 1 to 8.
+    IndexTooLarge: an index at the offset of frames is not below 2^b.
+    ShortFrames: frames ends inside frame j. DstFull: dst ends at the
+    offset. NotParsed: the output did not parse, which the tests say never
+    happens. *)
+let encode_error = type
+  | BadPalette of usize | IndexTooLarge of usize | ShortFrames of usize
+  | DstFull of usize | NotParsed of usize
+
+(** The most bytes a frame of fs pixels takes: its Graphic Control
+    Extension (8), image descriptor (10), minimum code size (1), LZW data
+    (at most L = 3 fs + 5), a length byte per 255 bytes of it, the
+    terminator, and one byte to spare. *)
+let spec frame_bound (fs : int{0..4294836225}) : int{0..13000000000}
+= 21 + (3 * fs + 5) + (3 * fs + 5 + 254) / 255
+
+(** 2^34 bytes for each of k frames: more than any frame takes. *)
+let spec cap (k : int{0..65535}) : u64 =
+  (let c : int{0..17179869184} = 17179869184 in let kk : int{0..65535} = k in kk * c)
+
+(** k frames of at most fb bytes each, and the trailer. *)
+let spec anim_bound (fb : int{0..13000000000}) (k : int{0..65535}) : usize
+  ensures 1 <= result && result <= cap k + 1
+  decreases k
+= if k = 0 then 1 else fb + anim_bound fb (k - 1)
+
+(* The budget of the frames left, k of them, after one more is written
+   in at most fb bytes; when there is no room for a frame, dst is shorter
+   than the whole budget; and at the end, room for the trailer. *)
+let lemma budget_next (fb : int{0..13000000000}) (k : int{1..65535}) (p : usize) (q : usize) (total : usize) : unit
+  requires p + anim_bound fb k <= total && q <= p + fb
+  ensures q + anim_bound fb (k - 1) <= total
+= ()
+
+let lemma budget_head (fb : int{0..13000000000}) (k : int{1..65535}) (p : usize) (total : usize) : unit
+  requires p + anim_bound fb k <= total
+  ensures p + fb < total
+= ()
+
+let lemma budget_room (fb : int{0..13000000000}) (k : int{1..65535}) (p : usize) (n : usize) (total : usize) : unit
+  requires p + anim_bound fb k <= total && n < p + fb
+  ensures n < total
+= ()
+
+let lemma budget_end (fb : int{0..13000000000}) (p : usize) (total : usize) : unit
+  requires p + anim_bound fb 0 <= total
+  ensures p + 1 <= total
+= ()
+
+(* One frame's bound, in code. *)
+let frame_size (fs : int{0..4294836225}) : int{0..13000000000}
+  ensures result = frame_bound fs
+= 21 + (3 * fs + 5) + (3 * fs + 5 + 254) / 255
+
+(* anim_bound, in code. *)
+let frames_bound (fb : int{0..13000000000}) (nf : u16) : usize @solver(tactic = "(using-params smt :bv.solver 2)")
+  ensures result = anim_bound fb nf
+= let acc : mutable usize = 1 in
+  for k in 0 .. nf
+    invariant acc = anim_bound fb k && acc <= cap k + 1
+  do
+    acc <- fb + acc
+  done;
+  acc
+
+(** The most bytes encode_animation writes for nf frames of w by h. *)
+let size_bound (w : int{1..65535}) (h : int{1..65535}) (nf : u16) : usize
+  ensures result = 800 + anim_bound (frame_bound (R.size w h 1)) nf
+= let fs : int{0..4294836225} = w * h * 1 in
+  800 + frames_bound (frame_size fs) nf
+
+(* Writes the little-endian u16 v at dst.[p]. *)
+let put16 (dst : borrowed inout mutable [u8]) (p : usize) (v : u16) : unit
+  requires p < len dst && 1 < len dst - p
+  ensures dst.[p] = (v & 0xFF) && dst.[p + 1] = (v >> 8)
+  ensures forall (j in 0 .. len dst). (j < p || p + 1 < j) ==> dst.[j] = old (dst.[j])
+= let lo : u8 = v & 0xFF in
+  let hi : u8 = v >> 8 in
+  dst.[p] <- lo;
+  dst.[p + 1] <- hi
+
+(* The palette's bits b, with len pal = 3 * 2^b, or 0 when it has none. *)
+let palette_bits (pal : [u8]) : int{0..8}
+  ensures result = 0 || (6 <= len pal && len pal <= 768)
+= let b : mutable int{0..8} = 0 in
+  for k in 1 .. 9
+    invariant b = 0 || (6 <= len pal && len pal <= 768)
+  do
+    let one : usize = 1 in
+    let k' : int{1..8} = k in
+    if len pal = 3 * (one << k') then b <- k' else ()
+  done;
+  b
+
+(* The rectangle where frame cur differs from frame prev, as (x0, y0, x1, y1) with x0 < x1 and y0 < y1, or the first
+   pixel when they are the same. *)
+let changed (d : R.dims) (cur : [u8]) (prev : [u8]) : R.rect
+  requires len prev = len cur
+  ensures R.inside d result
+= let x0 : mutable u16 = 65535 in
+  let y0 : mutable u16 = 65535 in
+  let x1 : mutable u16 = 0 in
+  let y1 : mutable u16 = 0 in
+  let any : mutable bool = false in
+  let hh : u16 = d.h in
+  let ww : u16 = d.w in
+  for y in 0 .. hh
+    invariant any ==> (x0 < x1 && y0 < y1 && x1 <= d.w && y1 <= d.h)
+  do
+    for x in 0 .. ww
+      invariant any ==> (x0 < x1 && y0 < y1 && x1 <= d.w && y1 <= d.h)
+    do
+      let o = R.index d x y 0 in
+      if o < len cur && cur.[o] <> prev.[o] then (
+        (if any = false || x < x0 then x0 <- x else ());
+        (if any = false || y < y0 then y0 <- y else ());
+        (if any = false || x + 1 > x1 then x1 <- x + 1 else ());
+        (if any = false || y + 1 > y1 then y1 <- y + 1 else ());
+        any <- true)
+      else ()
+    done
+  done;
+  if any then (
+    let rw : int{1..65535} = x1 - x0 in
+    let rh : int{1..65535} = y1 - y0 in
+    { x0 = x0; y0 = y0; rw = rw; rh = rh })
+  else { x0 = 0; y0 = 0; rw = 1; rh = 1 }
+
+(* Copies rectangle r of frame fr into rect, row by row, and
+   returns how many pixels; or the offset of an index not below 2^b. *)
+let extract (d : R.dims) (fr : [u8]) (r : R.rect) (b : int{1..8}) (rect : borrowed inout mutable [u8]) : result usize usize
+  requires R.inside d r && len rect = len fr
+  ensures (match result with | Ok n -> n <= len rect | Err p -> true)
+= let one : u16 = 1 in
+  let ncol : u16 = one << b in
+  let n : mutable usize = 0 in
+  let bad : mutable usize = 0 in
+  let ok : mutable bool = true in
+  let rows : u16 = r.rh in
+  let cols : u16 = r.rw in
+  for j in 0 .. rows
+    invariant n <= len rect
+  do
+    for i in 0 .. cols
+      invariant n <= len rect
+    do
+      let x : u16 = r.x0 + i in
+      let y : u16 = r.y0 + j in
+      let o = R.index d x y 0 in
+      let v = if o < len fr then fr.[o] else 0 in
+      if v >= ncol then (if ok then (ok <- false; bad <- o) else ())
+      else if n < len rect then (rect.[n] <- v; n <- n + 1)
+      else ()
+    done
+  done;
+  if ok then Ok n else Err bad
+
+(* Sub-blocks for nl bytes need at most as many length bytes as for the
+   most a frame can hold, and (nl + 254) / 255 of them are enough. *)
+let lemma blocks_fit (nl : int{0..13000000000}) (lmax : int{0..13000000000}) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires nl <= lmax
+  ensures (nl + 254) / 255 <= (lmax + 254) / 255 && 255 * ((nl + 254) / 255) >= nl
+= ()
+
+(* The frame's bytes, counted without the dividers in view: a + c + 20
+   bytes fit in fb = 21 + b + d when a <= b and c <= d. *)
+let lemma frame_room (a : int{0..13000000000}) (b : int{0..13000000000}) (c : int{0..60000000}) (d : int{0..60000000}) (fb : int{0..13000000000}) : unit
+  requires a <= b && c <= d && fb = 21 + b + d
+  ensures a + c + 20 <= fb
+= ()
+
+(* And a frame that ends by p + 19 + a + c + 1 ends by p + fb. *)
+let lemma frame_end (a : int{0..13000000000}) (c : int{0..60000000}) (fb : int{0..13000000000}) (p : usize) (q : usize) : unit
+  requires a + c + 20 <= fb && q <= p + 19 + a + c + 1
+  ensures q <= p + fb
+= ()
+
+(* The rectangle a frame is written as, and how many of its pixels
+   extract copied into rect. *)
+let piece = type { r : R.rect; n : usize }
+
+(* The rectangle of fr that differs from prev (all of fr for the first
+   frame), copied into rect; or the offset of an index not below 2^b. *)
+let frame_piece (d : R.dims) (fr : [u8]) (prev : [u8]) (first : bool) (b : int{1..8}) (rect : borrowed inout mutable [u8]) : result piece usize
+  requires len prev = len fr && len rect = len fr
+  ensures (match result with | Ok pc -> pc.n <= len rect | Err _ -> true)
+= let r : R.rect = (if first then { x0 = 0; y0 = 0; rw = d.w; rh = d.h } else changed d fr prev) in
+  match extract d fr r b rect with
+  | Err off -> Err off
+  | Ok n -> Ok { r = r; n = n }
+
+(* Writes a frame at dst.[p ..]: its Graphic Control Extension, the image
+   descriptor of rectangle r, and the LZW data of the n pixels in rect in
+   sub-blocks. Returns the end, at most fb bytes on. *)
+let put_frame (r : R.rect) (n : usize) (m : int{2..8}) (delay : u16) (fs : int{0..4294836225}) (fb : int{0..13000000000}) (dst : borrowed inout mutable [u8]) (p : usize) (rect : [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : result usize usize
+  requires n <= len rect && len rect = fs && len lz = 3 * fs + 5 && len hash = 40960
+  requires fb = frame_bound fs && p <= len dst && fb <= len dst - p
+  ensures (match result with | Ok q -> p < q && q <= p + fb | Err _ -> true)
+= match E.encode (rect.[0 .. n]) m hash lz with
+  | Err _ -> Err 0
+  | Ok nl -> (
+      (* The Graphic Control Extension: no disposal, the delay. *)
+      dst.[p] <- 0x21; dst.[p + 1] <- 0xF9; dst.[p + 2] <- 4; dst.[p + 3] <- 0x04;
+      put16 dst (p + 4) delay;
+      dst.[p + 6] <- 0; dst.[p + 7] <- 0;
+      (* The image descriptor and the minimum code size. *)
+      dst.[p + 8] <- 0x2C;
+      put16 dst (p + 9) r.x0;
+      put16 dst (p + 11) r.y0;
+      let rw : u16 = r.rw in
+      let rh : u16 = r.rh in
+      put16 dst (p + 13) rw;
+      put16 dst (p + 15) rh;
+      dst.[p + 17] <- 0;
+      dst.[p + 18] <- m;
+      let nl' : int{0..13000000000} = nl in
+      let lmax : int{0..13000000000} = 3 * fs + 5 in
+      assert nl' <= lmax;
+      blocks_fit nl' lmax;
+      let cmax : int{0..60000000} = (nl' + 254) / 255 in
+      let c2 : int{0..60000000} = (lmax + 254) / 255 in
+      assert cmax <= c2 && 255 * cmax >= nl';
+      assert fb = 21 + lmax + c2;
+      frame_room nl' lmax cmax c2 fb;
+      let q = E.put_blocks lz nl' cmax dst (p + 19) in
+      frame_end nl' cmax fb p q;
+      Ok q)
+
+(* Writes the nf frames, from dst.[p0 ..], and the trailer, and checks
+   that the whole parses as a GIF of nf frames on a d.w by d.h screen. *)
+let put_frames (d : R.dims) (frames : [u8]) (nf : u16) (b' : int{1..8}) (m : int{2..8}) (delay : u16) (fs : int{0..4294836225}) (fb : int{0..13000000000}) (total : usize) (dst : borrowed inout mutable [u8]) (p0 : usize) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : result usize encode_error
+  requires p0 <= len dst && p0 + anim_bound fb nf <= total && 800 <= total
+  requires fb = frame_bound fs && len rect = fs && len lz = 3 * fs + 5 && len hash = 40960
+  ensures (match result with
+    | Ok n -> n <= len dst && n <= total
+              && (if G.header_ok dst then
+                    G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf
+                    && G.u16le dst 6 = d.w && G.u16le dst 8 = d.h
+                  else false)
+    | Err _ -> true)
+  ensures (match result with
+    | Ok n -> true
+    | Err e -> (match e with
+      | DstFull p -> len dst < total
+      | _ -> true))
+= let p : mutable usize = p0 in
+  let j : mutable u16 = 0 in
+  let base : mutable usize = 0 in
+  let st : mutable int{0..3} = 0 in
+  let at : mutable usize = 0 in
+  while st = 0 && j < nf
+    invariant j <= nf && p <= len dst && 800 <= total
+    invariant st = 0 ==> p + anim_bound fb (nf - j) <= total
+    invariant st = 3 ==> len dst < total
+    invariant fb = frame_bound fs && len rect = fs && len lz = 3 * fs + 5
+    decreases nf - j + (if st = 0 then 1 else 0)
+  do
+    let k : int{1..65535} = nf - j in
+    budget_head fb k p total;
+    if p + fb > len dst then (
+      budget_room fb k p (len dst) total;
+      st <- 3; at <- p)
+    else if base > len frames || len frames - base < fs then (st <- 2; at <- j)
+    else (
+      let fr = frames.[base .. base + fs] in
+      let prev = (if j = 0 || base < fs then fr else frames.[base - fs .. base]) in
+      match frame_piece d fr prev (j = 0 || base < fs) b' rect with
+      | Err off -> (st <- 1; at <- off)
+      | Ok pc -> (
+          match put_frame pc.r pc.n m delay fs fb dst p rect lz hash with
+          | Err off -> (st <- 1; at <- off)
+          | Ok q -> (
+              budget_next fb (nf - j) p q total;
+              p <- q;
+              base <- base + fs;
+              j <- j + 1)))
+  done;
+  if st = 1 then Err (IndexTooLarge at)
+  else if st = 2 then Err (ShortFrames at)
+  else if st = 3 then Err (DstFull at)
+  else (
+    budget_end fb p total;
+    if p >= len dst then Err (DstFull p)
+    else (
+    dst.[p] <- 0x3B;
+    match D.info dst with
+    | Ok i -> (
+        if i.frames = nf && i.w = d.w && i.h = d.h then Ok (p + 1) else Err (NotParsed 0))
+    | Err _ -> Err (NotParsed 0)))
+
+(** Encodes nf frames of a w by h screen, each a raster of indices into
+    pal, as an animated GIF at dst.[0 ..], and returns its length. Each
+    frame shows for delay hundredths of a second, and the animation plays
+    loops times more (0 for forever). rect, lz and hash are scratch. *)
+let encode_animation (w : int{1..65535}) (h : int{1..65535}) (pal : [u8]) (frames : [u8]) (nf : u16) (delay : u16) (loops : u16) (dst : borrowed inout mutable [u8]) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : result usize encode_error
+  requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960
+  ensures (match result with
+    | Ok n -> n <= len dst && n <= 800 + anim_bound (frame_bound (R.size w h 1)) nf
+              && (if G.header_ok dst then
+                    G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf
+                    && G.u16le dst 6 = w && G.u16le dst 8 = h
+                  else false)
+    | Err _ -> true)
+  ensures (match result with
+    | Ok n -> true
+    | Err e -> (match e with
+      | DstFull p -> len dst < 800 + anim_bound (frame_bound (R.size w h 1)) nf
+      | _ -> true))
+= let d : R.dims = { w = w; h = h; c = 1 } in
+  let fs : int{0..4294836225} = w * h * 1 in
+  let fb = frame_size fs in
+  let total : usize = size_bound w h nf in
+  let b = palette_bits pal in
+  if b = 0 then Err (BadPalette (len pal))
+  else if len dst < 800 then Err (DstFull 0)
+  else (
+    let b' : int{1..8} = b in
+    let m : int{2..8} = if b' < 2 then 2 else b' in
+    let wv : u16 = w in
+    let hv : u16 = h in
+    let bm1 : u8 = b' - 1 in
+    (* The header and logical screen descriptor. *)
+    dst.[0] <- 0x47; dst.[1] <- 0x49; dst.[2] <- 0x46;
+    dst.[3] <- 0x38; dst.[4] <- 0x39; dst.[5] <- 0x61;
+    put16 dst 6 wv;
+    put16 dst 8 hv;
+    dst.[10] <- (0x80 | (bm1 << 4) | bm1);
+    dst.[11] <- 0;
+    dst.[12] <- 0;
+    for k in 0 .. len pal do dst.[13 + k] <- pal.[k] done;
+    let p : mutable usize = 13 + len pal in
+    (* NETSCAPE2.0: the loop count. *)
+    dst.[p] <- 0x21; dst.[p + 1] <- 0xFF; dst.[p + 2] <- 11;
+    dst.[p + 3] <- 0x4E; dst.[p + 4] <- 0x45; dst.[p + 5] <- 0x54; dst.[p + 6] <- 0x53;
+    dst.[p + 7] <- 0x43; dst.[p + 8] <- 0x41; dst.[p + 9] <- 0x50; dst.[p + 10] <- 0x45;
+    dst.[p + 11] <- 0x32; dst.[p + 12] <- 0x2E; dst.[p + 13] <- 0x30;
+    dst.[p + 14] <- 3; dst.[p + 15] <- 1;
+    put16 dst (p + 16) loops;
+    dst.[p + 18] <- 0;
+    p <- p + 19;
+    put_frames d frames nf b' m delay fs fb total dst p rect lz hash)

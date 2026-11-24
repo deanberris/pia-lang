@@ -1,0 +1,52 @@
+(* Pia.Image.Gif.LzwEncode and Pia.Image.Gif.Encode (ADR 0054, step 3):
+   every goal is proved, with nothing accepted unproved. Every LZW code is
+   written in the width the decoder reads it at and below 2^width, the
+   stream fits in 3 n + 5 bytes, the animation fits in size_bound bytes,
+   and what encode_animation returns Ok parses as a GIF of the frames and
+   screen asked for.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/LzwEncode.pia | FileCheck --check-prefix=LZWE %s
+// RUN: FileCheck --check-prefix=LZWI %s < %t/Pia.Image.Gif.LzwEncode.LzwEncode.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Encode.pia | FileCheck %s
+// RUN: FileCheck --check-prefix=ENC %s < %t/Pia.Image.Gif.Encode.Encode.piai
+*)
+
+(* The LZW encoder and the sub-block writer.
+// LZWE-NOT: warning
+// LZWE-NOT: failed
+// LZWE: 169 proved, 0 failed, 0 skipped
+*)
+
+(* The container.
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 263 proved, 0 failed, 0 skipped
+*)
+
+(*
+// LZWI:      {{^}}module Pia.Image.Gif.LzwEncode{{$}}
+// LZWI-NEXT: {{^}}interface LzwEncode = sig{{$}}
+// LZWI-NEXT: {{^}}  let enc_error = type | BadIndex of usize{{$}}
+// LZWI-NEXT: {{^}}  let encode : (px : [u8]) -> (m : int{2..8}) -> (h : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> result usize enc_error requires len h = 40960 requires len px <= 4294836225 && len dst >= 3 * len px + 5 ensures (match result with | Ok n -> n <= 3 * len px + 5 && n <= len dst | Err _ -> true){{$}}
+// LZWI-NEXT: {{^}}  let put_blocks : (lz : [u8]) -> (n : int{0..13000000000}) -> (cmax : int{0..60000000}) -> (dst : borrowed inout mutable [u8]) -> (p : usize) -> usize requires n <= len lz && p <= len dst && n + cmax + 1 <= len dst - p requires 255 * cmax >= n ensures p < result && result <= p + n + cmax + 1{{$}}
+// LZWI-NEXT: {{^}}end{{$}}
+*)
+
+(*
+// ENC:      {{^}}module Pia.Image.Gif.Encode{{$}}
+// ENC-NEXT: {{^}}interface Encode = sig{{$}}
+// ENC-NEXT: {{^}}  let encode_error = type | BadPalette of usize | IndexTooLarge of usize | ShortFrames of usize | DstFull of usize | NotParsed of usize{{$}}
+// ENC-NEXT: {{^}}  let spec frame_bound : (fs : int{0..4294836225}) -> int{0..13000000000}{{$}}
+// ENC-NEXT: {{^}}  let spec cap : (k : int{0..65535}) -> u64{{$}}
+// ENC-NEXT: {{^}}  let spec anim_bound : (fb : int{0..13000000000}) -> (k : int{0..65535}) -> usize{{$}}
+// ENC-NEXT: {{^}}  let size_bound : (w : int{1..65535}) -> (h : int{1..65535}) -> (nf : u16) -> usize ensures result = 800 + anim_bound (frame_bound (R.size w h 1)) nf{{$}}
+// ENC-NEXT: {{^}}  let encode_animation : (w : int{1..65535}) -> (h : int{1..65535}) -> (pal : [u8]) -> (frames : [u8]) -> (nf : u16) -> (delay : u16) -> (loops : u16) -> (dst : borrowed inout mutable [u8]) -> (rect : borrowed inout mutable [u8]) -> (lz : borrowed inout mutable [u8]) -> (hash : borrowed inout mutable [u8]) -> result usize encode_error requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960 ensures (match result with | Ok n -> n <= len dst && n <= 800 + anim_bound (frame_bound (R.size w h 1)) nf && (if G.header_ok dst then G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf && G.u16le dst 6 = w && G.u16le dst 8 = h else false) | Err _ -> true) ensures (match result with | Ok n -> true | Err e -> (match e with | DstFull p -> len dst < 800 + anim_bound (frame_bound (R.size w h 1)) nf | _ -> true)){{$}}
+// ENC-NEXT: {{^}}end{{$}}
+*)
