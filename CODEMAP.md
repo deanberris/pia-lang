@@ -158,6 +158,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
 - `lib/Pia/Image/Gif/Spec.pia` is GIF89a as spec functions: the LZW dictionary and the block grammar. `lib/Pia/Image/Gif/Lzw.pia` is the LZW decoder proved against it. `lib/Pia/Image/Gif/Decode.pia` is the container: `info`, proved to accept exactly what the grammar accepts, and `decode_frame`, which composites frames.
 - `lib/Pia/Image/Gif/LzwEncode.pia` is the LZW encoder and the sub-block writer. `lib/Pia/Image/Gif/Encode.pia` is the animated GIF encoder, `encode_animation`, with its proved size bound.
+- `lib/Pia/Image/Gif/Quantise.pia` maps RGB to a palette of at most 256 colours (exact when the input has few enough, else median cut), and holds `encode_rgb_animation`.
 
 ### Elsewhere
 

@@ -47,6 +47,7 @@ lit_tests(
         "//lib/Pia/Image/Gif:Encode.pia",
         "//lib/Pia/Image/Gif:Lzw.pia",
         "//lib/Pia/Image/Gif:LzwEncode.pia",
+        "//lib/Pia/Image/Gif:Quantise.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
@@ -668,5 +669,29 @@ sh_test(
     srcs = ["gif_encode_run_test.sh"],
     args = ["$(rootpath :gif_encode_run)"],
     data = [":gif_encode_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "gif_quantise_run",
+    src = "Inputs/gif_quantise_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:quantise",
+        "//lib/Pia/Image/Gif:spec",
+    ],
+)
+
+sh_test(
+    name = "gif_quantise_run_test",
+    srcs = ["gif_quantise_run_test.sh"],
+    args = ["$(rootpath :gif_quantise_run)"],
+    data = [":gif_quantise_run"],
     target_compatible_with = PIA_TARGETS,
 )

@@ -1,0 +1,33 @@
+(* Pia.Image.Gif.Quantise (ADR 0054, step 4): every goal is proved, with
+   nothing accepted unproved. Every index is below the palette's size, the
+   palette has at most maxc colours, and when quantise says exact, each
+   pixel's palette colour is its own colour.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Quantise.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Quantise.pia | FileCheck %s
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Image.Gif.Quantise.Quantise.piai
+*)
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 343 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Image.Gif.Quantise{{$}}
+// IFACE-NEXT: {{^}}interface Quantise = sig{{$}}
+// IFACE-NEXT: {{^}}  let quant = type { k : int{1..256}; exact : bool }{{$}}
+// IFACE-NEXT: {{^}}  let rgb_error = type | RgbFull of usize | RgbFailed of usize{{$}}
+// IFACE-NEXT: {{^}}  let spec pix_is : (rgb : [u8]) -> (pal : [u8]) -> (i : usize) -> (c : usize) -> bool{{$}}
+// IFACE-NEXT: {{^}}  let quantise : (rgb : [u8]) -> (maxc : int{1..256}) -> (pal : borrowed inout mutable [u8]) -> (idx : borrowed inout mutable [u8]) -> (bx : borrowed inout mutable [u8]) -> (hist : borrowed inout mutable [u8]) -> quant requires len rgb = 3 * len idx && len idx <= 4294967295 requires len pal = 768 && len bx = 1536 && len hist = 1024 ensures result.k <= maxc ensures forall (i in 0 .. len idx). idx.[i] < result.k ensures result.exact ==> (forall (i in 0 .. len idx). pix_is rgb pal i idx.[i]){{$}}
+// IFACE-NEXT: {{^}}  let encode_rgb_animation : (w : int{1..65535}) -> (h : int{1..65535}) -> (rgb : [u8]) -> (nf : u16) -> (delay : u16) -> (loops : u16) -> (dst : borrowed inout mutable [u8]) -> (idx : borrowed inout mutable [u8]) -> (pal : borrowed inout mutable [u8]) -> (bx : borrowed inout mutable [u8]) -> (hist : borrowed inout mutable [u8]) -> (rect : borrowed inout mutable [u8]) -> (lz : borrowed inout mutable [u8]) -> (hash : borrowed inout mutable [u8]) -> result usize rgb_error requires len rgb = 3 * len idx && len idx <= 4294967295 requires len pal = 768 && len bx = 1536 && len hist = 1024 requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960 ensures (match result with | Ok n -> n <= len dst && n <= 800 + X.anim_bound (X.frame_bound (R.size w h 1)) nf && (if G.header_ok dst then G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf && G.u16le dst 6 = w && G.u16le dst 8 = h else false) | Err _ -> true) ensures (match result with | Ok n -> true | Err e -> (match e with | RgbFull p -> len dst < 800 + X.anim_bound (X.frame_bound (R.size w h 1)) nf | _ -> true)){{$}}
+// IFACE-NEXT: {{^}}end{{$}}
+*)
