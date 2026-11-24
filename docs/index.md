@@ -23,7 +23,20 @@ twice 41
 
 ```console
 $ pia repl < home.pia
-REPL_OUTPUT
+[1]:1:28: failed: '+' does not overflow u8
+  counterexample: a = 255, result = 256
+[1]: error: 1 obligation failed; nothing was committed
+bump : (a : u8) -> u8  (* 1 proved *)
+- : u8 = 42
+[4]:1:1: failed: the precondition of 'bump' holds
+[4]: error: 1 obligation failed; nothing was committed
+twice : (a : u8) -> u8  (* 2 proved *)
+[5]:1:50: failed: the precondition of 'bump' holds
+  counterexample: a = 64
+[5]:1:44: failed: the precondition of 'bump' holds
+  counterexample: a = 9
+[6]: error: 2 obligations failed; the redefinition is not committed
+- : u8 = 43
 ```
 
 The first `bump` can overflow, so it is refused with the input that breaks it, and nothing is committed. The second adds a precondition and proves. `bump 255` breaks that precondition, so it is refused at compile time and never runs. `twice` is proved against `bump`, so the `:redef` that would tighten `bump` to `a < 10` is refused, with the error pointing at the call in `twice` that it would break. The environment is always a program that proves.
