@@ -1,0 +1,19 @@
+{
+  "name": "pia-lang",
+  "owner": {
+    "name": "Pia contributors",
+    "url": "https://github.com/deanberris/pia-lang"
+  },
+  "metadata": {
+    "description": "Claude Code plugins for the Pia programming language"
+  },
+  "plugins": [
+    {
+      "name": "pia",
+      "source": "./",
+      "description": "Write, port, prove and debug Pia: agent skills, the pia-lsp language server and the pia REPL's MCP server",
+      "category": "development",
+      "homepage": "https://pia-lang.dev/agents/"
+    }
+  ]
+}

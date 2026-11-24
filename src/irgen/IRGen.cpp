@@ -2286,6 +2286,23 @@ class Gen {
       }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
+      // Recursive values (ADR 0047) compare in contracts, as values.
+      if (mlir::isa<RecType>(a.type) || mlir::isa<RecType>(c.type)) {
+        if ((op != "=" && op != "<>") || a.type != c.type)
+          return fail(n, "'" + op + "' compares two values of one recursive "
+                         "type with '=' or '<>', found " + typeName(a.type) +
+                         " and " + typeName(c.type));
+        if (!contract_)
+          return fail(n, "comparing values of the recursive type " +
+                             typeName(a.type) + " is only supported in "
+                             "contracts yet; code compares them with "
+                             "@derive(eq), which comes with ADR 0047, step 4");
+        Location l = loc(n);
+        Value eq = create<RecEqOp>(l, a.value, c.value);
+        if (op == "<>")
+          eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+        return TV{eq, boolType()};
+      }
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
       if (!u) return std::nullopt;
       CmpPredicate p = op == "="    ? CmpPredicate::eq
@@ -2556,8 +2573,30 @@ class Gen {
       }
       return create<RecordOp>(l, rt, fields).getResult();
     }
+    // A recursive value (ADR 0047): a constructor that needs no value of
+    // the type, which inhabitation guarantees, such as `Leaf`, or one
+    // whose payload has a default without one, such as an empty vec.
+    if (auto rec = mlir::dyn_cast<RecType>(t)) {
+      if (!defaulting_.insert(t).second) return Value();
+      Value out;
+      for (const sema::Ctor *c : types_.ctorsOf(rec)) {
+        llvm::SmallVector<Value> payload;
+        if (c->payload) {
+          Value d = defaultValue(l, c->payload);
+          if (!d) continue;
+          payload.push_back(d);
+        }
+        out = create<RecMakeOp>(l, rec, b_.getStringAttr(c->name), payload)
+                  .getResult();
+        break;
+      }
+      defaulting_.erase(t);
+      return out;
+    }
     return Value();
   }
+  // The recursive types defaultValue is making a value of.
+  llvm::DenseSet<Type> defaulting_;
 
   // `match e with | C x -> a | D -> b | _ -> c` on a variant. It becomes a
   // chain of `if`s on the tag, each arm binding its payload, so carried
@@ -7045,8 +7084,14 @@ class Gen {
                                   "no interface of '" + header.text +
                                   "' lists");
         const Node *own = typeItem(r.text);
+        bool ownRec = own && own->flags.find("rec") != std::string::npos;
         if (!own)
           diags_.error(r.loc, unmet + "no type '" + r.text + "'");
+        else if (ownRec != (r.flags == "rec"))
+          diags_.error(r.loc, unmet + "the type '" + r.text + "' is " +
+                                  (ownRec ? "" : "not ") +
+                                  "recursive, so the interface must show it "
+                                  "with " + (ownRec ? "'let rec'" : "'let'"));
         else if (!sameTree(*own->kids[3], *r.kids[0]))
           diags_.error(r.loc, unmet + "the type '" + r.text +
                                   "' is defined differently; an interface "
@@ -8439,6 +8484,7 @@ class Gen {
     if (isBool(t))
       return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
                                          a, b);
+    if (mlir::isa<RecType>(t)) return create<RecEqOp>(l, a, b);
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt) return Value();
     auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
