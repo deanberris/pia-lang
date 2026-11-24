@@ -1,0 +1,468 @@
+(* Pia.Image.Gif.Lzw: GIF's variable-length LZW decoder (GIF89a, appendix
+   F; ADR 0054, step 2), proved total and safe on every input and proved
+   against Pia.Image.Gif.Spec's dictionary.
+
+   Codes are read LSB first with Pia.Image.Bits. With a minimum code size
+   m (2 to 8), clear = 2^m resets the dictionary and clear + 1 ends the
+   data. Codes start m + 1 bits wide and widen by one each time the next
+   free entry reaches 2^width, up to 12 bits. A full dictionary (4096
+   entries) stays as it is until the next clear, as giflib and browsers
+   do: the "deferred clear".
+
+   The dictionary lives in a 12288-byte table the caller lends, so the
+   decoder allocates nothing. Each code's string is written into the
+   caller's output by `put_entry`, which is proved to write exactly the
+   spec's string for that entry (`sym`), and every index written is below
+   clear, so a palette of 2^m colours covers it. `add_entry` is proved to
+   keep the table well formed (Spec.table_ok). *)
+module Pia.Image.Gif.Lzw : Lzw
+
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Ref.Ref as R
+
+interface Lzw = sig
+  let lzw_error = type | Truncated of usize | BadCode of usize | OutputFull of usize
+  let entry_len : (t : [u8]) -> (clear : usize) -> (k : int{0..4095}) -> usize
+    requires len t = 12288
+    ensures result = S.elen t clear k
+  let put_entry : (t : [u8]) -> (clear : int{4..256}) -> (nx : int{0..4096}) -> (k : usize) -> (dst : borrowed inout mutable [u8]) -> (o : usize) -> (n : usize) -> unit
+    requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k
+    requires n = S.elen t clear k && o + n <= len dst
+    requires forall (j in 0 .. o). dst.[j] < clear
+    ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d
+    ensures forall (j in 0 .. o + n). dst.[j] < clear
+    ensures forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j])
+  let decode : (s : [u8]) -> (m : int{2..8}) -> (t : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> result usize lzw_error
+    requires len t = 12288
+    ensures (match result with | Ok n -> n <= len dst | Err _ -> true)
+    ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true)
+    ensures (match result with
+      | Ok n -> true
+      | Err e -> (match e with
+        | Truncated p -> p <= B.nbits s
+        | BadCode p -> p < B.nbits s
+        | OutputFull p -> p < B.nbits s))
+end
+
+(** Truncated: the data ends at bit p before the end code. BadCode: the
+    code at bit p names no entry. OutputFull: the string of the code at bit
+    p does not fit in the output. *)
+let lzw_error = type | Truncated of usize | BadCode of usize | OutputFull of usize
+
+(** The length of entry k's string, by following its prefixes. *)
+let entry_len (t : [u8]) (clear : usize) (k : int{0..4095}) : usize
+  requires len t = 12288
+  ensures result = S.elen t clear k
+= let c : mutable usize = k in
+  let n : mutable usize = 1 in
+  let go : mutable bool = true in
+  while go
+    invariant c < 4096 && n <= k + 1 - c
+    invariant S.elen t clear k = n - 1 + S.elen t clear c
+    invariant go = false ==> S.elen t clear c = 1
+    decreases c + (if go then 1 else 0)
+  do
+    if c < clear then go <- false
+    else (
+      let lo : u16 = t.[2 * c] in
+      let hi : u16 = t.[2 * c + 1] in
+      let p : u16 = (lo | (hi << 8)) in
+      if p < c then (n <- n + 1; c <- p) else go <- false)
+  done;
+  n
+
+(** Writes entry k's string, n bytes, at dst.[o ..], last byte first. *)
+let put_entry (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (k : usize) (dst : borrowed inout mutable [u8]) (o : usize) (n : usize) : unit
+  requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k
+  requires n = S.elen t clear k && o + n <= len dst
+  requires forall (j in 0 .. o). dst.[j] < clear
+  ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d
+  ensures forall (j in 0 .. o + n). dst.[j] < clear
+  ensures forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j])
+= let c : mutable usize = k in
+  let p : mutable usize = o + n - 1 in
+  while c >= clear
+    invariant S.valid clear nx c
+    invariant o <= p && p < o + n && p < len dst
+    invariant p + 1 = o + S.elen t clear c
+    invariant forall (d in 0 .. S.elen t clear c). S.sym t clear k d = S.sym t clear c d
+    invariant forall (j in p + 1 .. o + n). dst.[j] = S.sym t clear k (j - o) && dst.[j] < clear
+    invariant forall (j in 0 .. o). dst.[j] < clear
+    invariant forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j])
+    decreases c
+  do
+    let s : u8 = t.[8192 + c] in
+    dst.[p] <- s;
+    let lo : u16 = t.[2 * c] in
+    let hi : u16 = t.[2 * c + 1] in
+    c <- (lo | (hi << 8));
+    p <- p - 1
+  done;
+  let r : u8 = c in
+  dst.[p] <- r
+
+(* Adds entry nx: the string of entry p and then the byte b. *)
+let add_entry (t : borrowed inout mutable [u8]) (clear : int{4..256}) (nx : int{0..4095}) (p : usize) (b : u8) : unit
+  requires len t = 12288 && clear + 2u16 <= nx && S.table_ok t clear nx
+  requires S.valid clear nx p && b < clear
+  ensures S.table_ok t clear (nx + 1)
+  ensures S.pre t nx = p && S.suf t nx = b
+  ensures forall (j in 0 .. 4096). j <> nx ==> S.pre t j = old (S.pre t j) && S.suf t j = old (S.suf t j)
+= let i : usize = nx in
+  let lo : u8 = p & 0xFF in
+  let hi : u8 = p >> 8 in
+  t.[2 * i] <- lo;
+  t.[2 * i + 1] <- hi;
+  t.[8192 + i] <- b
+
+(* Appends entry p's string and then its first byte: the string of the
+   entry the code nx is about to name (the KwKwK case). *)
+let append_kwk (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (p : usize) (dst : borrowed inout mutable [u8]) (o : usize) (n : usize) : unit
+  requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx p
+  requires n = S.elen t clear p && o + n < len dst
+  requires forall (i in 0 .. o). dst.[i] < clear
+  ensures forall (j in 0 .. o + n + 1). dst.[j] < clear
+  ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear p d
+  ensures dst.[o + n] = S.sym t clear p 0
+= put_entry t clear nx p dst o n;
+  let f = dst.[o] in
+  assert f < clear;
+  dst.[o + n] <- f
+
+(* put_entry, which also keeps dst equal to x on [0, o + n) where h
+   holds: the bytes it writes are x's, and it leaves the rest. *)
+let put_entry_x (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (k : usize) (dst : borrowed inout mutable [u8]) (o : usize) (n : usize) (spec h : bool) (spec x : [u8]) : unit
+  requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k
+  requires n = S.elen t clear k && o + n <= len dst
+  requires forall (j in 0 .. o). dst.[j] < clear
+  requires h ==> o + n <= len x
+  requires h ==> (forall (j in 0 .. o). dst.[j] = x.[j])
+  requires h ==> (forall (d in 0 .. n). S.sym t clear k d = x.[o + d])
+  ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d
+  ensures forall (j in 0 .. o + n). dst.[j] < clear
+  ensures h ==> (forall (j in 0 .. o + n). dst.[j] = x.[j])
+= put_entry t clear nx k dst o n
+
+(* append_kwk, keeping dst equal to x on [0, o + n + 1) where h holds. *)
+let append_kwk_x (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (p : usize) (dst : borrowed inout mutable [u8]) (o : usize) (n : usize) (spec h : bool) (spec x : [u8]) : unit
+  requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx p
+  requires n = S.elen t clear p && o + n < len dst
+  requires forall (i in 0 .. o). dst.[i] < clear
+  requires h ==> o + n < len x
+  requires h ==> (forall (j in 0 .. o). dst.[j] = x.[j])
+  requires h ==> (forall (d in 0 .. n). S.sym t clear p d = x.[o + d])
+  requires h ==> S.sym t clear p 0 = x.[o + n]
+  ensures forall (j in 0 .. o + n + 1). dst.[j] < clear
+  ensures h ==> (forall (j in 0 .. o + n + 1). dst.[j] = x.[j])
+= put_entry_x t clear nx p dst o n h x;
+  let f = dst.[o] in
+  assert f < clear;
+  dst.[o + n] <- f
+
+(** Decodes the LZW code stream s, with minimum code size m, into dst,
+    and returns the number of indices written. t is the dictionary's
+    table, which decode overwrites. *)
+let decode (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : result usize lzw_error
+  requires len t = 12288
+  ensures (match result with | Ok n -> n <= len dst | Err _ -> true)
+  ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true)
+  ensures (match result with
+    | Ok n -> true
+    | Err e -> (match e with
+      | Truncated p -> p <= B.nbits s
+      | BadCode p -> p < B.nbits s
+      | OutputFull p -> p < B.nbits s))
+= let one : u16 = 1 in
+  let clear : int{4..256} = one << m in
+  let cl : u16 = clear in
+  let m1 : u8 = m in
+  let nb = B.bit_len s in
+  let pos : mutable usize = 0 in
+  let width : mutable int{3..12} = m1 + 1 in
+  let nx : mutable int{0..4096} = cl + 2 in
+  let prev : mutable int{0..4096} = 4096 in
+  let o : mutable usize = 0 in
+  let st : mutable int{0..4} = 0 in
+  let at : mutable usize = 0 in
+  while st = 0
+    invariant clear = B.pow2 m && nb = B.nbits s
+    invariant pos <= nb && o <= len dst
+    invariant clear + 2u16 <= nx && S.table_ok t clear nx
+    invariant prev = 4096 || S.valid clear nx prev
+    invariant forall (i in 0 .. o). dst.[i] < clear
+    invariant st = 2 ==> at <= nb
+    invariant (st = 3 || st = 4) ==> at < nb
+    decreases nb - pos + (if st = 0 then 1 else 0)
+  do
+    if width > nb - pos then (st <- 2; at <- pos)
+    else (
+      let here = pos in
+      let code : usize = B.read_bits s pos width in
+      pos <- pos + width;
+      if code = clear then (width <- m1 + 1; nx <- cl + 2; prev <- 4096)
+      else if code = cl + 1 then st <- 1
+      else if prev = 4096 then (
+        if code < clear then (
+          if o < len dst then (
+            let v : u8 = code in
+            dst.[o] <- v;
+            o <- o + 1;
+            prev <- code)
+          else (st <- 4; at <- here))
+        else (st <- 3; at <- here))
+      else if code < nx then (
+        let n = entry_len t clear code in
+        if n > len dst - o then (st <- 4; at <- here)
+        else (
+          put_entry t clear nx code dst o n;
+          let f = dst.[o] in
+          (if nx < 4096 then (add_entry t clear nx prev f; nx <- nx + 1) else ());
+          o <- o + n;
+          prev <- code))
+      else if code = nx && nx < 4096 then (
+        let n = entry_len t clear prev in
+        if n >= len dst - o then (st <- 4; at <- here)
+        else (
+          append_kwk t clear nx prev dst o n;
+          let f = dst.[o] in
+          add_entry t clear nx prev f;
+          nx <- nx + 1;
+          o <- o + n + 1;
+          prev <- code))
+      else (st <- 3; at <- here);
+      if st = 0 && nx = (one << width) && width < 12 then (let w1 : u8 = width in width <- w1 + 1) else ())
+  done;
+  if st = 1 then Ok o
+  else if st = 2 then Err (Truncated at)
+  else if st = 3 then Err (BadCode at)
+  else Err (OutputFull at)
+
+(* Entry kk of the epoch that began at code e, as the trace says: it was
+   added by code a + 1, for a = e + (kk - clear - 2), so its prefix is
+   code a and its suffix the first byte code a + 1 wrote. Code a wrote its
+   own string at to.[a]: its value, for a root, or else a copy of the
+   string of the code before the one that added it. *)
+let spec link_tr (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (kk : usize) : bool
+  requires kk < 4096 && clear + 2u16 <= kk
+  requires e + (kk - clear - 2) + 1 < len to && e + (kk - clear - 2) < len tc
+= let a : usize = e + (kk - clear - 2) in
+  if to.[a] > to.[a + 1] then false
+  else if to.[a + 1] >= len x then false
+  else if tc.[a] < clear then (if to.[a + 1] - to.[a] <> 1 then false else x.[to.[a]] = tc.[a])
+  else if tc.[a] < clear + 2u16 || tc.[a] >= kk then false
+  else (
+    let b : usize = e + (tc.[a] - clear - 2) in
+    if to.[b] > to.[b + 1] then false
+    else if to.[b + 1] > to.[a] then false
+    else if to.[a + 1] - to.[a] <> to.[b + 1] - to.[b] + 1 then false
+    else (forall (d in 0 .. to.[a + 1] - to.[a]). x.[to.[a] + d] = x.[to.[b] + d]))
+
+(* The table's part of link: entry kk's cells. The rest is link_tr,
+   which reads only the trace, so a change to other entries' cells
+   leaves it as it was. *)
+let spec link (t : [u8]) (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (kk : usize) : bool
+  requires len t = 12288 && kk < 4096 && clear + 2u16 <= kk
+  requires e + (kk - clear - 2) + 1 < len to && e + (kk - clear - 2) < len tc
+= if link_tr clear x tc to e kk = false then false
+  else S.pre t kk = tc.[e + (kk - clear - 2)] && S.suf t kk = x.[to.[e + (kk - clear - 2) + 1]]
+
+(* add_entry, which keeps every entry below nx as link says, where h
+   holds: it changes only entry nx's cells. *)
+let add_entry_x (t : borrowed inout mutable [u8]) (clear : int{4..256}) (nx : int{0..4095}) (p : usize) (b : u8) (spec h : bool) (spec x : [u8]) (spec tc : [int{0..4095}]) (spec to : [usize]) (spec te : [usize]) (spec q : usize) : unit
+  requires len t = 12288 && clear + 2u16 <= nx && S.table_ok t clear nx
+  requires S.valid clear nx p && b < clear
+  requires h ==> q < len te
+  requires h ==> te.[q] + (nx - clear - 2) + 1 < len to && te.[q] + (nx - clear - 2) + 1 < len tc
+  requires h ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[q] kk)
+  ensures S.table_ok t clear (nx + 1)
+  ensures S.pre t nx = p && S.suf t nx = b
+  ensures h ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[q] kk)
+= add_entry t clear nx p b
+
+(* Entry c's string is the bytes of x that the trace says it names. *)
+let lemma sym_is_x (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (c : usize) : unit
+  requires len t = 12288 && S.table_ok t clear nx
+  requires clear + 2u16 <= c && c < nx
+  requires e + (nx - clear - 2) < len to && e + (nx - clear - 2) < len tc
+  requires forall (kk in clear + 2u16 .. nx). link t clear x tc to e kk
+  ensures S.elen t clear c = to.[e + (c - clear - 2) + 1] - to.[e + (c - clear - 2)] + 1
+  ensures forall (d in 0 .. S.elen t clear c). S.sym t clear c d = x.[to.[e + (c - clear - 2)] + d]
+  decreases c
+= assert link t clear x tc to e c;
+  let p : u16 = S.pre t c in
+  assert S.elen t clear c = S.elen t clear p + 1;
+  assert S.sym t clear c (S.elen t clear p) = S.suf t c;
+  assert (forall (d in 0 .. S.elen t clear p). S.sym t clear c d = S.sym t clear p d);
+  if p >= clear then sym_is_x t clear nx x tc to e p
+  else (assert S.sym t clear p 0 = p)
+
+(* sym_is_x where h holds, for the epoch te.[q]: decode calls it only
+   when the trace holds. *)
+let lemma sym_when (h : bool) (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (c : usize) : unit
+  requires h ==> q < len te
+  requires h ==> len t = 12288 && S.table_ok t clear nx
+  requires h ==> clear + 2u16 <= c && c < nx
+  requires h ==> te.[q] + (nx - clear - 2) < len to && te.[q] + (nx - clear - 2) < len tc
+  requires h ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[q] kk)
+  ensures (if h then S.elen t clear c = to.[te.[q] + (c - clear - 2) + 1] - to.[te.[q] + (c - clear - 2)] + 1 else true)
+  ensures (if h then (forall (d in 0 .. S.elen t clear c). S.sym t clear c d = x.[to.[te.[q] + (c - clear - 2)] + d]) else true)
+= if h then sym_is_x t clear nx x tc to te.[q] c else ()
+
+(* What code q writes, when it names a root or an entry below nx and is
+   not the first of its epoch: its string, which is what the trace says
+   it writes at to.[q]. *)
+let lemma emit_code (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : int{4..256}) (x : [u8]) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (nx : int{0..4096}) (c : usize) : unit
+  requires clear = B.pow2 m
+  requires h ==> q + 1 < len tp && q + 1 < len tw && q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires h ==> R.lzw_step s m x tp tw tc to te q && tc.[q] = c && c <> clear
+  requires h ==> te.[q] < q && nx = R.nx_at clear te.[q] q && c < nx
+  requires h ==> len t = 12288 && S.table_ok t clear nx && S.valid clear nx c
+  requires h ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[q] kk)
+  ensures (if h then S.elen t clear c = to.[q + 1] - to.[q] else true)
+  ensures (if h then (forall (d in 0 .. to.[q + 1] - to.[q]). S.sym t clear c d = x.[to.[q] + d]) else true)
+= if h then (
+    if c >= clear then sym_is_x t clear nx x tc to te.[q] c
+    else (assert S.elen t clear c = 1; assert S.sym t clear c 0 = c))
+  else ()
+
+(* What code q writes when it names the entry about to be added, nx
+   (the KwKwK case): the previous code's string and its first byte. *)
+let lemma emit_kwk (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : int{4..256}) (x : [u8]) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (nx : int{0..4096}) (p : usize) : unit
+  requires clear = B.pow2 m
+  requires h ==> q + 1 < len tp && q + 1 < len tw && q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires h ==> R.lzw_step s m x tp tw tc to te q && tc.[q] = nx && nx < 4096
+  requires h ==> te.[q] < q && te.[q - 1] = te.[q] && nx = R.nx_at clear te.[q] q
+  requires h ==> R.lzw_step s m x tp tw tc to te (q - 1) && tc.[q - 1] = p
+  requires h ==> len t = 12288 && S.table_ok t clear nx && S.valid clear nx p
+  requires h ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[q] kk)
+  ensures (if h then S.elen t clear p + 1 = to.[q + 1] - to.[q] else true)
+  ensures (if h then (forall (d in 0 .. S.elen t clear p). S.sym t clear p d = x.[to.[q] + d]) else true)
+  ensures (if h then S.sym t clear p 0 = x.[to.[q] + S.elen t clear p] else true)
+= if h then (
+    assert te.[q] + (nx - clear - 2) = q - 1;
+    R.emit_entry m x tc to te q (q - 1);
+    if p >= clear then (
+      R.emit_entry m x tc to te (q - 1) (te.[q] + (p - clear - 2));
+      sym_is_x t clear nx x tc to te.[q] p)
+    else (R.emit_root m x tc to te (q - 1); assert S.elen t clear p = 1; assert S.sym t clear p 0 = p))
+  else ()
+
+(* The entry nx that code q adds: the previous code and the first byte
+   code q wrote, as link says. *)
+let lemma link_new (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : int{4..256}) (x : [u8]) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (nx : int{0..4096}) (p : usize) (f : u8) : unit
+  requires clear = B.pow2 m
+  requires h ==> q + 1 < len tp && q + 1 < len tw && q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires h ==> te.[q] < q && te.[q - 1] = te.[q] && nx = R.nx_at clear te.[q] q && nx < 4096
+  requires h ==> R.lzw_step s m x tp tw tc to te (q - 1) && tc.[q - 1] = p
+  requires h ==> to.[q] < len x && f = x.[to.[q]]
+  requires h ==> len t = 12288 && S.pre t nx = p && S.suf t nx = f
+  ensures (if h then link t clear x tc to te.[q] nx else true)
+= if h then (
+    assert te.[q] + (nx - clear - 2) = q - 1;
+    if p < clear then R.emit_root m x tc to te (q - 1)
+    else R.emit_entry m x tc to te (q - 1) (te.[q] + (p - clear - 2)))
+  else ()
+
+(** decode, with the whole-stream theorem (ADR 0058): whenever x is
+    what GIF89a's LZW reading of s gives (R.lzw_ok, by the trace tp, tw,
+    tc, to, te of its k codes) and fits in dst, decode returns Ok (len x)
+    with x in dst. The trace and x are spec state, which codegen erases. *)
+let decode_ref (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) (spec x : [u8]) (spec k : usize) (spec tp : [usize]) (spec tw : [int{3..12}]) (spec tc : [int{0..4095}]) (spec to : [usize]) (spec te : [usize]) (spec h : bool) : result usize lzw_error
+  requires len t = 12288
+  requires h ==> R.lzw_ok s m x k tp tw tc to te && len x <= len dst
+  ensures (match result with | Ok n -> n <= len dst | Err _ -> true)
+  ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true)
+  ensures (match result with
+    | Ok n -> true
+    | Err e -> (match e with
+      | Truncated p -> p <= B.nbits s
+      | BadCode p -> p < B.nbits s
+      | OutputFull p -> p < B.nbits s))
+  ensures h ==>
+    (match result with | Ok n -> n = len x && (forall (i in 0 .. n). dst.[i] = x.[i]) | Err _ -> false)
+=   let one : u16 = 1 in
+  let clear : int{4..256} = one << m in
+  let cl : u16 = clear in
+  let m1 : u8 = m in
+  let nb = B.bit_len s in
+  let pos : mutable usize = 0 in
+  let width : mutable int{3..12} = m1 + 1 in
+  let nx : mutable int{0..4096} = cl + 2 in
+  let prev : mutable int{0..4096} = 4096 in
+  let o : mutable usize = 0 in
+  let st : mutable int{0..4} = 0 in
+  let at : mutable usize = 0 in
+  let j : mutable usize = 0 in
+  while st = 0
+    invariant clear = B.pow2 m && nb = B.nbits s
+    invariant pos <= nb && o <= len dst && 3 * j <= pos
+    invariant clear + 2u16 <= nx && S.table_ok t clear nx
+    invariant prev = 4096 || S.valid clear nx prev
+    invariant forall (i in 0 .. o). dst.[i] < clear
+    invariant st = 2 ==> at <= nb
+    invariant (st = 3 || st = 4) ==> at < nb
+    invariant h ==> k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && len x <= len dst
+    invariant h ==> (st = 0 || st = 1)
+    invariant h && st = 1 ==> o = len x
+    invariant h ==> (forall (i in 0 .. o). dst.[i] = x.[i])
+    invariant h && st = 0 ==> j < k && R.lzw_from s m x k tp tw tc to te j
+    invariant h && st = 0 ==> pos = tp.[j]
+    invariant h && st = 0 ==> width = tw.[j]
+    invariant h && st = 0 ==> o = to.[j]
+    invariant h && st = 0 ==> te.[j] <= j && nx = R.nx_at clear te.[j] j
+    invariant h && st = 0 ==> (prev = 4096) = (j = te.[j])
+    invariant h && st = 0 && j > te.[j] ==> prev = tc.[j - 1] && te.[j - 1] = te.[j] && R.lzw_step s m x tp tw tc to te (j - 1)
+    invariant h && st = 0 ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[j] kk)
+    decreases nb - pos + (if st = 0 then 1 else 0)
+  do
+    if width > nb - pos then (assert h ==> false; st <- 2; at <- pos)
+    else (
+      let here = pos in
+      let q : usize = j in
+      let code : usize = B.read_bits s pos width in
+      pos <- pos + width;
+      j <- j + 1;
+      assert h ==> code = tc.[q];
+      if code = clear then (width <- m1 + 1; nx <- cl + 2; prev <- 4096)
+      else if code = cl + 1 then st <- 1
+      else if prev = 4096 then (
+        if code < clear then (
+          if o < len dst then (
+            let v : u8 = code in
+            dst.[o] <- v;
+            assert h ==> dst.[o] = x.[o];
+            o <- o + 1;
+            prev <- code)
+          else (assert h ==> false; st <- 4; at <- here))
+        else (assert h ==> false; st <- 3; at <- here))
+      else if code < nx then (
+        let n = entry_len t clear code in
+        emit_code h t s m clear x tp tw tc to te q nx code;
+        if n > len dst - o then (assert h ==> false; st <- 4; at <- here)
+        else (
+          put_entry_x t clear nx code dst o n h x;
+          let f = dst.[o] in
+          (if nx < 4096 then (add_entry_x t clear nx prev f h x tc to te q; link_new h t s m clear x tp tw tc to te q nx prev f; nx <- nx + 1) else ());
+          o <- o + n;
+          prev <- code))
+      else if code = nx && nx < 4096 then (
+        let n = entry_len t clear prev in
+        emit_kwk h t s m clear x tp tw tc to te q nx prev;
+        if n >= len dst - o then (assert h ==> false; st <- 4; at <- here)
+        else (
+          append_kwk_x t clear nx prev dst o n h x;
+          let f = dst.[o] in
+          add_entry_x t clear nx prev f h x tc to te q;
+          link_new h t s m clear x tp tw tc to te q nx prev f;
+          nx <- nx + 1;
+          o <- o + n + 1;
+          prev <- code))
+      else (assert h ==> false; st <- 3; at <- here);
+      assert h && st = 0 && code <> clear ==> nx = R.nx_at clear te.[q] (q + 1);
+      if st = 0 && nx = (one << width) && width < 12 then (let w1 : u8 = width in width <- w1 + 1) else ())
+  done;
+  if st = 1 then Ok o
+  else if st = 2 then Err (Truncated at)
+  else if st = 3 then Err (BadCode at)
+  else Err (OutputFull at)

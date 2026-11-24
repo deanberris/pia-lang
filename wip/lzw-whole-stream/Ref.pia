@@ -6,6 +6,19 @@ interface Ref = sig
   let spec nx_at : (clear : int{4..256}) -> (e : usize) -> (j : usize) -> usize
   let spec read_ok : (s : [u8]) -> (m : int{2..8}) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (j : usize) -> bool
   let spec emit_ok : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
+  let lemma emit_entry : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (q : usize) -> (a : usize) -> unit
+    requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+    requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+    requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m
+    requires a = te.[q] + (tc.[q] - B.pow2 m - 2)
+    ensures te.[q] < q && a < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= nx_at (B.pow2 m) te.[q] q
+    ensures to.[a] <= to.[a + 1] && to.[a + 1] <= to.[q] && to.[q + 1] - to.[q] = to.[a + 1] - to.[a] + 1
+    ensures forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[a] + d]
+  let lemma emit_root : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (q : usize) -> unit
+    requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+    requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+    requires emit_ok m x tc to te q && tc.[q] < B.pow2 m
+    ensures to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
   let spec lzw_step : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
   let spec lzw_from : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
   let spec lzw_ok : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> bool
@@ -48,6 +61,26 @@ let spec emit_ok (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize])
     else if to.[j + 1] = to.[j] then false
     else if to.[j + 1] - to.[j] - 1 <> to.[a + 1] - to.[a] then false
     else (forall (d in 0 .. to.[j + 1] - to.[j]). x.[to.[j] + d] = x.[to.[a] + d]))
+
+(** emit_ok's facts for code q naming an entry, with its index a
+    explicit: what a proof about a copy needs, with no if to unfold. *)
+let lemma emit_entry (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (a : usize) : unit
+  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+  requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m
+  requires a = te.[q] + (tc.[q] - B.pow2 m - 2)
+  ensures te.[q] < q && a < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= nx_at (B.pow2 m) te.[q] q
+  ensures to.[a] <= to.[a + 1] && to.[a + 1] <= to.[q] && to.[q + 1] - to.[q] = to.[a + 1] - to.[a] + 1
+  ensures forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[a] + d]
+= ()
+
+(** emit_ok's facts for code q naming a root. *)
+let lemma emit_root (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
+  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+  requires emit_ok m x tc to te q && tc.[q] < B.pow2 m
+  ensures to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
+= ()
 
 (** Code j of the trace, which is not the last, read as GIF89a's LZW
     reads it: a clear starts a new epoch at code j + 1, and any other

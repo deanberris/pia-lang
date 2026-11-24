@@ -32,3 +32,24 @@ the Bits and Gif.Spec interfaces into a directory `if`:
   emit_kwk and link_new state their facts about x with explicit indices
   and no `if` chains (helpers in Ref for "x copies at a"), and to give the
   loop's two quantified invariants their own preservation lemmas.
+
+## Two more rounds (2026-11-24), both worse than the best version
+
+The best version is `Lzw.pia` here: 229 of 234 goals. `attempts/Lzw_wrappers.pia`
+is the last attempt, 327 of 343 (16 unproved), which tried:
+
+- `Ref.emit_entry` and `Ref.emit_root`: emit_ok's facts with the entry's index
+  explicit and no `if` (these prove, and stay in `Ref.pia`);
+- `put_entry_x`, `append_kwk_x` and `add_entry_x`: wrappers with spec
+  parameters that carry `dst = x` and `link` through each call, so the loop's
+  two quantified invariants are a callee's postcondition;
+- `link` split into `link_tr`, which reads only the trace, and the table's
+  two cells, so a write to other entries' cells leaves it as it was.
+
+Each of these made more goals time out, not fewer: the wrappers' and lemmas'
+own postconditions (put_entry_x, add_entry_x, emit_kwk, link_new) and the
+preconditions at their call sites. The quantified facts in their contracts
+match each other's terms poorly. What may work instead: state the copy
+relation with an explicit witness index per byte (a spec function `src j d`
+for "byte d of code j comes from position ..."), so every fact is about one
+array cell and no proof needs to match two foralls.
