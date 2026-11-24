@@ -227,6 +227,7 @@ NodePtr importedFunction(const Node &val, const std::string &module,
     }
     names.insert(dom.text);
     Node *p = params->add(makeNode(N::Param, at, dom.text));
+    p->flags = dom.flags;  // `spec` (ADR 0058)
     Node *annot = p->add(makeNode(N::Annot, at));
     for (const NodePtr &k : dom.kids) annot->add(clone(*k));
     while (annot->kids.size() < 3) annot->add(makeNode(N::None, at));

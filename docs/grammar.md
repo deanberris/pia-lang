@@ -64,7 +64,7 @@ borrowed moved out inout fixed mutable mod handle defer as
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
-`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`.
+`theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`. Inside a body, `let spec ref : mutable [u8; 4096] = zeros in ...` binds spec state, and `(spec log : inout [u16; 64])` is a spec parameter, where `spec` is a keyword only when a name and a colon follow it, so `(spec : u8)` is still a parameter called `spec` ([verifier.md](verifier.md#spec-state), ADR 0058).
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
 
@@ -169,11 +169,11 @@ path      = IDENT { "." IDENT } ;
 
 ```ebnf
 let_item  = "let" [ "rec" ] [ "meta" ] binder { param } [ ret_annot ] { contract } "=" handled ;
-let_in    = "let" [ "rec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
+let_in    = "let" [ "rec" ] [ "spec" ] binder { param } [ ret_annot ] { contract } "=" handled "in" seq ;
 handled   = seq [ "handle" [ "|" ] arm { "|" arm } ] ;
 binder    = IDENT | SPLICE_IDENT ;
 param     = IDENT | SPLICE_IDENT
-          | "(" ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
+          | "(" [ "spec" ] ( IDENT | SPLICE_IDENT ) ":" annot { contract } ")"
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
 contract  = "requires" stmt | "ensures" stmt | "decreases" stmt
@@ -203,7 +203,7 @@ lender     = "(" IDENT ")" ;                      (* borrowed(m), with no space 
 
 type       = arrow_type | union_type ;
 arrow_type = arrow_dom "->" type ;
-arrow_dom  = modifiers union_type | "(" IDENT ":" annot ")" ;
+arrow_dom  = modifiers union_type | "(" [ "spec" ] IDENT ":" annot ")" ;
 union_type = app_type { "|" app_type } ;
 app_type   = type_atom { type_arg } ;             (* pair u8 f32, adapter Eq f32 *)
 type_arg   = type_atom | INT | "(" expr ")"

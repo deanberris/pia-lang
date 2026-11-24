@@ -128,6 +128,22 @@ let swap (xs : borrowed inout mutable [u8; 2]) : unit
 
 A **spec function** (`let spec`) is pure, total and erased by codegen. It is the way to name a property in contracts: to the solver it is a function with its `ensures` and one unfolding of its body. A **lemma** (`let lemma`, returns `unit`) is proved once, and a call to it adds its `ensures` as a fact; a recursive lemma with `decreases` is a proof by induction. `@fuel(n)` on a spec function's return type unfolds it `n` levels. See [docs/verifier.md](../../docs/verifier.md#spec-functions-and-lemmas).
 
+**Spec state** (`let spec`, ADR 0058) is a fixed array that code writes and only specification reads, for a proof that needs state that evolves with the loop: a reference implementation run beside the real one, or a trace of what was written. Invariants relate the code's state to it. A spec parameter, `(spec log : inout [u16; 64])`, shares it with a callee. See [docs/verifier.md](../../docs/verifier.md#spec-state).
+
+<!-- example: trace.pia -->
+```ocaml
+let copy_trace (src : [u8; 8]) (dst : out [u8]) : unit
+  requires len dst = 8
+  ensures forall (k in 0 .. 8). dst.[k] = src.[k]
+= let spec seen : mutable [u8; 8] = zeros in
+  for i in 0 .. 8
+    invariant forall (k in 0 .. i). seen.[k] = src.[k] && dst.[k] = seen.[k]
+  do
+    dst.[i] <- src.[i];
+    seen.[i] <- src.[i]
+  done
+```
+
 ## Pitfalls
 
 - **Calls to ordinary functions or constants inside contracts are unknown values.** `requires a < limit`, where `limit` is a `let` constant, does not give the solver `limit`'s value. Write the literal, or use a spec function.

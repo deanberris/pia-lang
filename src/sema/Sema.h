@@ -278,6 +278,9 @@ struct Param {
   // step 2): its value may hold loans from whatever the arguments for
   // that region's parameters borrow from.
   std::vector<std::string> regions;
+  // `(spec ref : inout [u8; 4096])`: spec state the caller and the callee
+  // share (ADR 0058). Code passes it and writes it, and codegen erases it.
+  bool spec = false;
 };
 
 struct FuncSig {

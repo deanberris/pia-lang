@@ -1,0 +1,17 @@
+(* Spec state (ADR 0058): a `let spec` local, a spec parameter, and a spec
+   parameter in a signature. `spec` before a parameter's name is a keyword
+   only when a name and a colon follow. *)
+let record (spec log : inout [u16; 64]) (i : int{0..63}) (v : u16) : unit
+  ensures log.[i] = v
+= log.[i] <- v
+
+let twice (a : u16) (b : u16) : u16
+= let spec log : mutable [u16; 64] = zeros in
+  record log 0 a;
+  a
+
+let id (spec : u8) : u8 = spec
+
+interface Trace = sig
+  let record : (spec log : inout [u16; 64]) -> (i : int{0..63}) -> (v : u16) -> unit
+end

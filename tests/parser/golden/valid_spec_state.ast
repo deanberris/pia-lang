@@ -1,0 +1,171 @@
+(Program
+  (LetItem "record"
+    (Params
+      (Param "log" [spec]
+        (Annot
+          (Modifiers "inout")
+          (ArrayType
+            (TypeName "u16")
+            (IntLit "64")
+          )
+          (None)
+        )
+      )
+      (Param "i"
+        (Annot
+          (Modifiers)
+          (RangeType "int"
+            (IntLit "0")
+            (IntLit "63")
+          )
+          (None)
+        )
+      )
+      (Param "v"
+        (Annot
+          (Modifiers)
+          (TypeName "u16")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "="
+          (Index
+            (Name "log")
+            (Name "i")
+          )
+          (Name "v")
+        )
+      )
+    )
+    (Assign
+      (Index
+        (Name "log")
+        (Name "i")
+      )
+      (Name "v")
+    )
+  )
+  (LetItem "twice"
+    (Params
+      (Param "a"
+        (Annot
+          (Modifiers)
+          (TypeName "u16")
+          (None)
+        )
+      )
+      (Param "b"
+        (Annot
+          (Modifiers)
+          (TypeName "u16")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u16")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (LetIn "log" [spec]
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers "mutable")
+          (ArrayType
+            (TypeName "u16")
+            (IntLit "64")
+          )
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (Name "zeros")
+      (Sequence
+        (Apply
+          (Name "record")
+          (Name "log")
+          (IntLit "0")
+          (Name "a")
+        )
+        (Name "a")
+      )
+    )
+  )
+  (LetItem "id"
+    (Params
+      (Param "spec"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Name "spec")
+  )
+  (Interface "Trace"
+    (Attrs)
+    (SigVal "record"
+      (Annot
+        (Modifiers)
+        (ArrowType
+          (Domain "log" [spec]
+            (Modifiers "inout")
+            (ArrayType
+              (TypeName "u16")
+              (IntLit "64")
+            )
+            (None)
+          )
+          (ArrowType
+            (Domain "i"
+              (Modifiers)
+              (RangeType "int"
+                (IntLit "0")
+                (IntLit "63")
+              )
+              (None)
+            )
+            (ArrowType
+              (Domain "v"
+                (Modifiers)
+                (TypeName "u16")
+                (None)
+              )
+              (TypeName "unit")
+            )
+          )
+        )
+        (None)
+      )
+      (Attrs)
+      (Contracts)
+    )
+  )
+)

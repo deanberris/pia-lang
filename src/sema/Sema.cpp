@@ -808,6 +808,7 @@ bool resolveSignature(FuncSig &sig, TypeResolver &types,
     const Node &annot = *p->kids[0];
     Param param;
     param.regions = regionsOf(p->flags);
+    param.spec = p->flags == "spec";
     if (const Node *l = findLender(annot); l && l->flags == "region") {
       const std::string &mods = annot.kids[0]->text;
       if (findLentAnnot(annot) != &annot ||
