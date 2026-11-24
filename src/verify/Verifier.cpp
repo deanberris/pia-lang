@@ -4816,7 +4816,17 @@ void solve(const Job &job, const Options &options, Outcome &out,
     try {
       // In a context of its own, as for the abstract attempt above.
       z3::context ictx;
-      z3::solver blast = z3::tactic(ictx, "smt").mk_solver();
+      // Ground applications of uninterpreted functions, such as opaque spec
+      // functions (ADR 0063), stall int-blasting, so Ackermann's reduction
+      // first replaces them with constants and the facts that equal
+      // arguments give equal results. It needs a query without quantifiers.
+      bool quantified = job.script.find("(forall") != std::string::npos ||
+                        job.script.find("(exists") != std::string::npos;
+      z3::solver blast =
+          quantified
+              ? z3::tactic(ictx, "smt").mk_solver()
+              : (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
+                    .mk_solver();
       z3::params ip(ictx);
       ip.set("timeout", options.timeoutMs);
       ip.set("rlimit", static_cast<unsigned>(

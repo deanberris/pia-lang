@@ -15,7 +15,8 @@ how long they took, and what routing nonlinear queries to int-blasting
 (and the rest to Z3's bit-blaster) would take.
 
 Solvers: `z3` (Z3's default solver, as piac calls it), `z3-intblast` (the
-`smt` tactic with `smt.bv.solver=2`), and, if installed,
+`smt` tactic with `smt.bv.solver=2`), `z3-intblast-ack` (the same after
+Ackermann's reduction, on quantifier-free queries), and, if installed,
 `cvc5-intblast` (`--solve-bv-as-int=sum`), `cvc5` and `bitwuzla`. Set
 Z3, CVC5 and BITWUZLA to their binaries. No GPL-licensed solver is
 supported (ADR 0066).
@@ -84,9 +85,15 @@ def solve_one(solver, path, timeout):
     plain = re.sub(r"\(check-sat-using .*\)\s*$", "(check-sat)", text, flags=re.M)
     if solver == "z3":
         cmd, inp = [os.environ.get("Z3", "z3"), "-in", "-smt2", "-T:%d" % timeout], text
-    elif solver == "z3-intblast":
+    elif solver in ("z3-intblast", "z3-intblast-ack"):
         cmd = [os.environ.get("Z3", "z3"), "-in", "-smt2", "-T:%d" % timeout, "smt.bv.solver=2"]
-        inp = plain.replace("(check-sat)", "(check-sat-using smt)")
+        # Ground applications of uninterpreted functions, such as opaque
+        # spec functions, stall int-blasting; Ackermann's reduction turns
+        # them into constants first. It needs a quantifier-free query.
+        tactic = "smt"
+        if solver == "z3-intblast-ack" and "(forall" not in plain and "(exists" not in plain:
+            tactic = "(then ackermannize_bv smt)"
+        inp = plain.replace("(check-sat)", "(check-sat-using %s)" % tactic)
     elif solver in ("cvc5", "cvc5-intblast"):
         cmd = [os.environ.get("CVC5", "cvc5"), "--lang=smt2", "--tlimit-per=%d" % (timeout * 1000)]
         if solver == "cvc5-intblast":

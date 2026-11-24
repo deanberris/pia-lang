@@ -58,6 +58,7 @@ No solver disagreed with another on any query: none proved a goal that another r
 ## Decision
 
 1. **A nonlinear goal is tried first with Z3's int-blasting solver.** A goal is nonlinear when its query has a `bvmul` of two terms neither of which is a literal, or a `bvsdiv` or `bvsrem` by a term that is not a literal (`multipliesVariables`). After the abstract attempt (division and multiplication uninterpreted), `solve` gives such a goal to `z3::tactic(ctx, "smt").mk_solver()` with `smt.bv.solver = 2`, in a context of its own, with a budget of 50M rlimit (`kIntBlastRlimit`), or the goal's rlimit if that is smaller. The translation is exact both ways, so unsat is a proof. On sat or unknown, the bit-blaster decides the goal as before, and gives the counterexample.
+   When the query has no quantifier, Ackermann's reduction (`ackermannize_bv`) runs first, so the solver is `(then ackermannize_bv smt)`. Ground applications of uninterpreted functions, such as opaque spec functions ([ADR 0063](0063-opaque-spec-functions.md)) and the verifier's own `pia_N` symbols, otherwise stall int-blasting: `a <= b && f a = a * c ==> f a <= b * c` times out at 30 s, and proves in 0.07 s after the reduction. On Int.pia's 473 queries the reduction also takes the total from 34.3 s to 27.9 s.
 2. **What stays as it is.** A goal with a `@solver` strategy of its own, with theory axioms, or with assumptions keeps today's path, since its strategy, or the unsat core of its solver, is the point. Linear goals keep the bit-blaster.
 3. **Reported.** A goal proved this way is reported as `[smt]`, as before, and `--verify-stats` counts these goals as `intblast=`. `--no-int-blast` turns the attempt off, for comparison and as an escape hatch. The proof cache is keyed by the query, so its entries are unchanged.
 4. **No second solver for now.** cvc5 is the fallback to revisit if Z3's int-blasting stops being enough: it is BSD-licensed and was as good on every goal measured, but it means building GMP. Yices2 is not bundled, because of its licence. Bitwuzla and the real relaxation are not used.
@@ -75,3 +76,17 @@ No solver disagreed with another on any query: none proved a goal that another r
 1. **Int-blasting is on by default.** `--no-int-blast` stays, for comparison.
 2. **cvc5 is deferred.** It is not built now, and is revisited only if Z3's int-blasting stops being enough.
 3. **Nothing GPL, ever.** Pia does not bundle, link, call or script any GPL-licensed tool, so Yices2 is out entirely, in the pipeline and in the benchmark scripts.
+
+## Opaque spec functions and revealed definitions (2026-11-25)
+
+Dean asked how this meets opaque spec functions ([ADR 0063](0063-opaque-spec-functions.md)). Measured with hand-written goals at Pia's 68-bit width (Z3 4.15.1, 30 s limit):
+
+| Goal | Bit-blasting | Int-blasting | After Ackermann's reduction |
+| --- | --- | --- | --- |
+| `f` opaque, the goal nonlinear around `f a` | timeout | timeout | **0.07 s** |
+| `f` revealed with `with f`: its definition `forall x. f x = x * x` | timeout | unknown (6 s) | not applicable: quantified |
+| `f` revealed at the arguments used, `f a = a * a` and `f b = b * b` | timeout | — | **0.03 s** |
+
+So an opaque function costs int-blasting nothing once it is reduced to a constant, which is what the decision above does. A reveal that arrives as a quantified definition leaves int-blasting incomplete: Z3 answers unknown, and the goal falls through to the bit-blaster, which times out too. cvc5's int-blasting proved all three, and is the alternative if that matters before step 2.
+
+**Step 2, when a reveal meets a product.** A `with f` reveal in a nonlinear goal should give the definition at the ground applications the goal contains, the way fuel unfolds a recursive spec function, instead of as a `forall`. Then the query is quantifier-free, and the reduction and int-blasting apply. This belongs with ADR 0063's encoding of reveals, and it is measured on the LZW and Huffman goals once they use `@opaque`.
