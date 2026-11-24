@@ -1,0 +1,116 @@
+let cell = type { bed : u32; load : u32 }
+
+let spec step_of (w : usize) (a : usize) (b : usize) : bool
+  requires w >= 1 && w < max usize
+= if a < b then (b - a = 1 || b - a = w - 1 || b - a = w || b - a = w + 1) else false
+
+let spec adjacent (w : usize) (k : usize) (p : usize) : bool
+  requires w >= 1 && w < max usize
+= step_of w p k || step_of w k p
+
+let spec nbr (n : usize) (w : usize) (c : usize) (d : int{0..7}) : usize
+  requires w >= 3 && w < max usize && c < n
+= if d = 0 then (if c >= w + 1 then c - (w + 1) else n)
+  else if d = 1 then (if c >= w then c - w else n)
+  else if d = 2 then (if c >= w - 1 then c - (w - 1) else n)
+  else if d = 3 then (if c >= 1 then c - 1 else n)
+  else if d = 4 then (if 1 < n - c then c + 1 else n)
+  else if d = 5 then (if w - 1 < n - c then c + (w - 1) else n)
+  else if d = 6 then (if w < n - c then c + w else n)
+  else (if w + 1 < n - c then c + (w + 1) else n)
+
+let spec from (down : [usize]) (flux : [u32]) (w : usize) (c : usize) (d : int{0..7}) : u64
+  requires len flux = len down && c < len down && w >= 3 && w < max usize
+  ensures result <= max u32
+= let nb = nbr (len down) w c d in
+  if nb < len down then (if nb <> c && down.[nb] = c then flux.[nb] else 0) else 0
+
+let spec inflow_of (down : [usize]) (flux : [u32]) (w : usize) (c : usize) : u64
+  requires len flux = len down && c < len down && w >= 3 && w < max usize
+  ensures result <= 34'359'738'360
+= from down flux w c 0 + from down flux w c 1 + from down flux w c 2 + from down flux w c 3
+  + from down flux w c 4 + from down flux w c 5 + from down flux w c 6 + from down flux w c 7
+
+
+let before (n : usize) (w : usize) (c : usize) (d : usize) : usize
+  requires w >= 3 && w < max usize && c < n && (d = 1 || d = w - 1 || d = w || d = w + 1)
+  ensures result = (if c >= d then c - d else n)
+= if c >= d then c - d else n
+
+let after (n : usize) (w : usize) (c : usize) (d : usize) : usize
+  requires w >= 3 && w < max usize && c < n && (d = 1 || d = w - 1 || d = w || d = w + 1)
+  ensures result = (if d < n - c then c + d else n)
+= if d < n - c then c + d else n
+
+let neighbour (n : usize) (w : usize) (c : usize) (d : int{0..7}) : usize
+  requires w >= 3 && w < max usize && c < n
+  ensures result = nbr n w c d
+=
+  if d = 0 then before n w c (w + 1)
+  else if d = 1 then before n w c w
+  else if d = 2 then before n w c (w - 1)
+  else if d = 3 then before n w c 1
+  else if d = 4 then after n w c 1
+  else if d = 5 then after n w c (w - 1)
+  else if d = 6 then after n w c w
+  else after n w c (w + 1)
+
+let pull_from (down : [usize]) (carry : [u32]) (w : usize) (c : usize) (d : int{0..7}) : u64
+  requires len carry = len down && c < len down && w >= 3 && w < max usize
+  ensures result = from down carry w c d
+= let nb = neighbour (len down) w c d in
+  if nb < len down then (if nb <> c && down.[nb] = c then carry.[nb] else 0) else 0
+
+let gather (down : [usize]) (carry : [u32]) (w : usize) (c : usize) : u64
+  requires len carry = len down && c < len down && w >= 3 && w < max usize
+  ensures result = inflow_of down carry w c
+= pull_from down carry w c 0 + pull_from down carry w c 1 + pull_from down carry w c 2 + pull_from down carry w c 3
+  + pull_from down carry w c 4 + pull_from down carry w c 5 + pull_from down carry w c 6 + pull_from down carry w c 7
+
+
+let erode_or_deposit (inflow : u32) (capacity : u32) (bed : u32) : cell
+  requires bed + inflow <= max u32
+  ensures result.bed + result.load = bed + inflow
+= if inflow < capacity then
+    (let room = capacity - inflow in
+     let e = if room < bed then room else bed in
+     { bed = bed - e; load = inflow + e })
+  else { bed = bed + (inflow - capacity); load = capacity }
+
+let capacity_of (a : u32) (drop : u16) : u32 =
+  let d : u32 = drop in
+  let c : u64 = (a >> 4) + (d << 2) in
+  if c < max u16 then c else max u16
+
+let pull_wave (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (w : usize)
+    (bed : [u32]) (carry : [u32]) (lo : usize) (hi : usize)
+    (gathered : borrowed inout mutable [u64]) (newbed : borrowed inout mutable [u32])
+    (newout : borrowed inout mutable [u32]) : unit
+  requires len down = len fill && len acc = len fill && len order = len fill
+  requires len bed = len fill && len carry = len fill
+  requires len gathered = len fill && len newbed = len fill && len newout = len fill
+  requires lo <= hi && hi <= len fill && w >= 3 && w < max usize
+  requires forall (q in 0 .. len order). order.[q] < len fill
+  requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+  ensures forall (q in lo .. hi). gathered.[q] = inflow_of down carry w (order.[q])
+  ensures forall (q in lo .. hi). gathered.[q] + bed.[order.[q]] <= max u32 ==>
+    newbed.[q] + newout.[q] = bed.[order.[q]] + gathered.[q]
+= spread q in lo .. hi
+    ensures gathered.[q] = inflow_of down carry w (order.[q])
+    ensures gathered.[q] + bed.[order.[q]] <= max u32 ==> newbed.[q] + newout.[q] = bed.[order.[q]] + gathered.[q]
+  do
+    let c = order.[q] in
+    let g = gather down carry w c in
+    gathered.[q] <- g;
+    let b = bed.[c] in
+    let d = down.[c] in
+    let drop : u16 = if d = c then 0 else fill.[c] - fill.[d] in
+    if g + b <= max u32 then (
+      let r = erode_or_deposit g (capacity_of acc.[c] drop) b in
+      newbed.[q] <- r.bed;
+      newout.[q] <- r.load
+    ) else (
+      newbed.[q] <- b;
+      newout.[q] <- 0
+    )
+  done
