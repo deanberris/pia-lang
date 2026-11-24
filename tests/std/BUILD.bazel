@@ -41,6 +41,10 @@ lit_tests(
         "//lib/Pia/Core/Algo:SetSymmetric.pia",
         "//lib/Pia/Core/Algo:SetUnion.pia",
         "//lib/Pia:Fn.pia",
+        "//lib/Pia/Compress:Huffman.pia",
+        "//lib/Pia/Compress:Inflate.pia",
+        "//lib/Pia/Compress:Zlib.pia",
+        "//lib/Pia/Compress/Inflate:Spec.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
         "//lib/Pia/Image/Gif:Decode.pia",
@@ -693,5 +697,26 @@ sh_test(
     srcs = ["gif_quantise_run_test.sh"],
     args = ["$(rootpath :gif_quantise_run)"],
     data = [":gif_quantise_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "zlib_run",
+    src = "Inputs/zlib_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Compress:huffman",
+        "//lib/Pia/Compress:inflate",
+        "//lib/Pia/Compress:zlib",
+        "//lib/Pia/Compress/Inflate:spec",
+        "//lib/Pia/Image:bits",
+    ],
+)
+
+sh_test(
+    name = "zlib_run_test",
+    srcs = ["zlib_run_test.sh"],
+    args = ["$(rootpath :zlib_run)"],
+    data = [":zlib_run"],
     target_compatible_with = PIA_TARGETS,
 )

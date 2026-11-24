@@ -1,0 +1,40 @@
+(* Importers of Pia.Compress.Zlib and Pia.Compress.Huffman see only their
+   interfaces, and that is enough to know a decompressed buffer is
+   checked by its Adler-32, that the Adler-32 of nothing is 1, and what
+   the Kraft check says of small codes.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Huffman.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Zlib.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Image.Bits.Bits as B
+import Pia.Compress.Huffman.Huffman as H
+import Pia.Compress.Inflate.Spec.Deflate as F
+import Pia.Compress.Inflate.Inflate as I
+import Pia.Compress.Zlib.Zlib as Z
+
+(* What decompress returns Ok is what the stream's Adler-32 says. *)
+let checked (s : [u8]) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (lt' : borrowed inout mutable [u8]) (dt' : borrowed inout mutable [u8]) : unit
+  requires len s <= 1000000 && len lb = 320 && len lt' = 704 && len dt' = 704
+= match Z.decompress s dst lb lt' dt' with
+  | Ok r -> assert Z.be32 s r.trailer = Z.adler dst r.n && r.n <= len dst
+  | Err _ -> ()
+
+(* The Adler-32 of no bytes is 1. *)
+let empty (s : [u8]) : unit
+  requires len s = 0
+= let a = Z.adler32 s 0 in assert a = 1
+
+(* No lengths at all are an incomplete code: the Kraft sum is 0. *)
+let none (l : [u8]) (t : borrowed inout mutable [u8]) : unit
+  requires len t = 704
+= let f = H.build l 0 t in
+  assert f = Incomplete
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: 9 proved, 0 failed, 0 skipped
+*)

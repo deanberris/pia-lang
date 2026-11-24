@@ -1,0 +1,303 @@
+(* Pia.Compress.Inflate: deflate decoding (RFC 1951; ADR 0054, step 5),
+   proved total and safe on every input, into a caller's buffer, with no
+   allocation.
+
+   The decoder follows zlib's puff.c. Each block is stored, fixed Huffman
+   or dynamic Huffman; codes are read with Pia.Compress.Huffman over
+   tables the caller lends (a 320-byte buffer of code lengths and two
+   704-byte tables). Proved, besides safety: every back-reference's
+   distance is at most the bytes written so far, and its copy stays inside
+   the output; the length and distance of each code are Inflate.Spec's
+   base plus extra bits; a stored block's LEN is the complement of its
+   NLEN; the code length code is complete; and a literal/length or
+   distance code is complete, or a single code. That the whole output is
+   the stream's meaning waits on ADR 0058's ghost state; the run tests
+   compare it with zlib's. *)
+module Pia.Compress.Inflate : Inflate
+
+import Pia.Image.Bits.Bits as B
+import Pia.Compress.Huffman.Huffman as H
+import Pia.Compress.Inflate.Spec.Deflate as F
+
+interface Inflate = sig
+  let inflate_error = type
+    | Ends of usize | BadBlock of usize | BadCode of usize
+    | BadLengths of usize | TooFar of usize | Full of usize
+  let inflated = type { written : usize; pos : usize }
+  let inflate : (s : [u8]) -> (pos : usize) -> (dst : borrowed inout mutable [u8]) -> (lb : borrowed inout mutable [u8]) -> (ltab : borrowed inout mutable [u8]) -> (dtab : borrowed inout mutable [u8]) -> result inflated inflate_error
+    requires len s <= 1152921504606846975 && pos <= B.nbits s
+    requires len lb = 320 && len ltab = 704 && len dtab = 704
+    ensures (match result with
+      | Ok r -> r.written <= len dst && pos < r.pos && r.pos <= B.nbits s
+      | Err _ -> true)
+end
+
+(** Ends: the input ends inside the block at the bit offset. BadBlock: a
+    block type 3, or a stored block whose NLEN is not ~LEN. BadCode: a code
+    no table holds, or a length or distance code past the end of its
+    table. BadLengths: a dynamic block's code lengths do not make codes.
+    TooFar: a distance past the start of the output. Full: the output
+    buffer is full. *)
+let inflate_error = type
+  | Ends of usize | BadBlock of usize | BadCode of usize
+  | BadLengths of usize | TooFar of usize | Full of usize
+
+(** The bytes written, and the bit position after the last block. *)
+let inflated = type { written : usize; pos : usize }
+
+(* Where decoding is: the bit position and the bytes written. *)
+let at = type { p : usize; o : usize }
+
+(* The code lengths of a dynamic block, decoded: where it goes on, and how
+   many literal/length and distance codes it has. *)
+let dyn = type { dp : usize; nl : int{257..286}; nd : int{1..30} }
+
+let len_extra_of (c : int{0..28}) : int{0..5}
+  ensures result = F.len_extra c
+= if c < 8 || c = 28 then 0 else (let e : int{0..5} = c / 4 - 1 in e)
+
+let len_base_of (c : int{0..28}) : int{3..258}
+  ensures result = F.len_base c
+= if c < 8 then 3 + c
+  else if c = 28 then 258
+  else (let e : u16 = c / 4 - 1 in let m : u16 = 4 + (c & 3) in let v : int{3..258} = (m << e) + 3 in v)
+
+let dist_extra_of (c : int{0..29}) : int{0..13}
+  ensures result = F.dist_extra c
+= if c < 4 then 0 else (let e : int{0..13} = c / 2 - 1 in e)
+
+let dist_base_of (c : int{0..29}) : int{1..24577}
+  ensures result = F.dist_base c
+= if c < 4 then 1 + c
+  else (let e : u16 = c / 2 - 1 in let m : u16 = 2 + (c & 1) in let v : int{1..24577} = (m << e) + 1 in v)
+
+let clen_order_of (i : int{0..18}) : int{0..18}
+  ensures result = F.clen_order i
+= if i = 0 then 16 else if i = 1 then 17 else if i = 2 then 18 else if i = 3 then 0
+  else if i = 4 then 8 else if i = 5 then 7 else if i = 6 then 9 else if i = 7 then 6
+  else if i = 8 then 10 else if i = 9 then 5 else if i = 10 then 11 else if i = 11 then 4
+  else if i = 12 then 12 else if i = 13 then 3 else if i = 14 then 13 else if i = 15 then 2
+  else if i = 16 then 14 else if i = 17 then 1 else 15
+
+(* A stored block from bit p: its LEN bytes copied to dst.[o ..]. *)
+let stored (s : [u8]) (p : usize) (dst : borrowed inout mutable [u8]) (o : usize) : result at inflate_error
+  requires len s <= 1152921504606846975 && p <= B.nbits s && o <= len dst
+  ensures (match result with
+    | Ok r -> p < r.p && r.p <= B.nbits s && o <= r.o && r.o <= len dst
+    | Err _ -> true)
+= let q : usize = (p + 7) / 8 in
+  if q >= len s || len s - q < 4 then Err (Ends p)
+  else (
+    let lo : u16 = s.[q] in
+    let hi : u16 = s.[q + 1] in
+    let ln : u16 = (lo | (hi << 8)) in
+    let nlo : u16 = s.[q + 2] in
+    let nhi : u16 = s.[q + 3] in
+    let nl : u16 = (nlo | (nhi << 8)) in
+    if (ln ^ nl) <> 65535 then Err (BadBlock p)
+    else if len s - q - 4 < ln then Err (Ends p)
+    else if len dst - o < ln then Err (Full p)
+    else (
+      let n : usize = ln in
+      for j in 0 .. n do dst.[o + j] <- s.[q + 4 + j] done;
+      Ok { p = 8 * (q + 4 + n); o = o + n }))
+
+(* The n-bit field at p, which the caller has checked is there. *)
+let field (s : [u8]) (p : usize) (n : int{0..16}) : u32
+  requires p + n <= B.nbits s
+  ensures result < B.pow2 n
+= B.read_bits s p n
+
+(* The literals and back-references of a Huffman block, from bit p, up to
+   its end code. *)
+let codes (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usize) (ltab : [u8]) (nl : int{1..288}) (dtab : [u8]) (nd : int{1..30}) : result at inflate_error
+  requires len ltab = 704 && len dtab = 704 && p0 <= B.nbits s && o0 <= len dst
+  ensures (match result with
+    | Ok r -> p0 < r.p && r.p <= B.nbits s && o0 <= r.o && r.o <= len dst
+    | Err _ -> true)
+= let nb = B.bit_len s in
+  let p : mutable usize = p0 in
+  let o : mutable usize = o0 in
+  let st : mutable int{0..7} = 0 in
+  let at' : mutable usize = p0 in
+  while st = 0
+    invariant p0 <= p && p <= nb && o0 <= o && o <= len dst
+    invariant st = 1 ==> p0 < p
+    decreases nb - p + (if st = 0 then 1 else 0)
+  do
+    match H.decode s p ltab nl with
+    | Err e -> (at' <- p; if e >= nb then st <- 2 else st <- 3)
+    | Ok d -> (
+        let here = p in
+        p <- d.pos;
+        let sym = d.sym in
+        if sym < 256 then (
+          if o >= len dst then (at' <- here; st <- 6)
+          else (let v : u8 = sym in dst.[o] <- v; o <- o + 1))
+        else if sym = 256 then st <- 1
+        else if sym > 285 then (at' <- here; st <- 3)
+        else (
+          let c : int{0..28} = sym - 257 in
+          let e = len_extra_of c in
+          if e > nb - p then (at' <- here; st <- 2)
+          else (
+            let ln : usize = len_base_of c + field s p e in
+            p <- p + e;
+            match H.decode s p dtab nd with
+            | Err e2 -> (at' <- p; if e2 >= nb then st <- 2 else st <- 3)
+            | Ok dd -> (
+                p <- dd.pos;
+                if dd.sym > 29 then (at' <- here; st <- 3)
+                else (
+                  let dc : int{0..29} = dd.sym in
+                  let de = dist_extra_of dc in
+                  if de > nb - p then (at' <- here; st <- 2)
+                  else (
+                    let dist : usize = dist_base_of dc + field s p de in
+                    p <- p + de;
+                    if dist > o then (at' <- here; st <- 5)
+                    else if len dst - o < ln then (at' <- here; st <- 6)
+                    else (
+                      for j in 0 .. ln do dst.[o + j] <- dst.[o + j - dist] done;
+                      o <- o + ln)))))))
+  done;
+  if st = 1 then Ok { p = p; o = o }
+  else if st = 2 then Err (Ends at')
+  else if st = 3 then Err (BadCode at')
+  else if st = 5 then Err (TooFar at')
+  else Err (Full at')
+
+(* The fixed code's tables. *)
+let fixed_tables (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : unit
+  requires len lb = 320 && len ltab = 704 && len dtab = 704
+= for i in 0 .. 288 do
+    lb.[i] <- (if i < 144 then 8 else if i < 256 then 9 else if i < 280 then 7 else 8)
+  done;
+  let f1 = H.build lb 288 ltab in
+  for i in 0 .. 30 do lb.[i] <- 5 done;
+  let f2 = H.build lb 30 dtab in
+  ()
+
+(* A literal/length or distance code is usable: complete, or one code. *)
+let usable (lb : [u8]) (n : int{0..320}) (f : H.fill) : bool
+  requires n <= len lb
+= match f with
+  | Complete -> true
+  | Oversubscribed -> false
+  | Incomplete -> (
+      let used : mutable usize = 0 in
+      for i in 0 .. n
+        invariant used <= i
+      do
+        if lb.[i] <> 0 then used <- used + 1 else ()
+      done;
+      used = 1)
+
+(* A dynamic block's header and code lengths from bit p, and its tables. *)
+let dynamic (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result dyn inflate_error
+  requires len lb = 320 && len ltab = 704 && len dtab = 704 && p0 <= B.nbits s
+  ensures (match result with
+    | Ok r -> p0 < r.dp && r.dp <= B.nbits s
+    | Err _ -> true)
+= let nb = B.bit_len s in
+  if 14 > nb - p0 then Err (Ends p0)
+  else (
+    let hlit : u32 = field s p0 5 + 257 in
+    let hdist : u32 = field s (p0 + 5) 5 + 1 in
+    let hclen : u32 = field s (p0 + 10) 4 + 4 in
+    let p : mutable usize = p0 + 14 in
+    if hlit > 286 || hdist > 30 then Err (BadLengths p0)
+    else if 3 * hclen > nb - p then Err (Ends p0)
+    else (
+      let nl : int{257..286} = hlit in
+      let nd : int{1..30} = hdist in
+      for i in 0 .. 19 do lb.[i] <- 0 done;
+      let hc : usize = hclen in
+      for i in 0 .. hc
+        invariant p + 3 * (hc - i) <= nb && p0 < p
+      do
+        let ii : int{0..18} = i in
+        let v : u8 = field s p 3 in
+        lb.[clen_order_of ii] <- v;
+        p <- p + 3
+      done;
+      match H.build lb 19 ltab with
+      | Incomplete -> Err (BadLengths p0)
+      | Oversubscribed -> Err (BadLengths p0)
+      | Complete -> (
+          let total : usize = nl + nd in
+          let k : mutable usize = 0 in
+          let st : mutable int{0..3} = 0 in
+          let at' : mutable usize = p in
+          while st = 0 && k < total
+            invariant k <= total && p0 < p && p <= nb
+            decreases nb - p + (if st = 0 then 1 else 0)
+          do
+            match H.decode s p ltab 19 with
+            | Err e -> (at' <- p; if e >= nb then st <- 1 else st <- 2)
+            | Ok d -> (
+                p <- d.pos;
+                let sym = d.sym in
+                if sym < 16 then (let v : u8 = sym in lb.[k] <- v; k <- k + 1)
+                else (
+                  let eb : int{0..7} = (if sym = 16 then 2 else if sym = 17 then 3 else 7) in
+                  if eb > nb - p then (at' <- p; st <- 1)
+                  else (
+                    let x : usize = field s p eb in
+                    p <- p + eb;
+                    let rep : usize = (if sym = 16 then 3 + x else if sym = 17 then 3 + x else 11 + x) in
+                    if sym = 16 && k = 0 then (at' <- p; st <- 2)
+                    else if rep > total - k then (at' <- p; st <- 2)
+                    else (
+                      let v : u8 = (if sym = 16 then lb.[k - 1] else 0) in
+                      for r in 0 .. rep do lb.[k + r] <- v done;
+                      k <- k + rep))))
+          done;
+          if st = 1 then Err (Ends at')
+          else if st = 2 then Err (BadLengths at')
+          else if lb.[256] = 0 then Err (BadLengths p0)
+          else (
+            let fl = H.build lb nl ltab in
+            let dl = lb.[nl .. nl + nd] in
+            let fd = H.build dl nd dtab in
+            if usable lb nl fl = false || usable dl nd fd = false then Err (BadLengths p0)
+            else Ok { dp = p; nl = nl; nd = nd }))))
+
+(** Decodes the deflate stream starting at bit pos of s into dst, and
+    returns the bytes written and the bit position after the last block.
+    lb, ltab and dtab are scratch. *)
+let inflate (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result inflated inflate_error
+  requires len s <= 1152921504606846975 && pos <= B.nbits s
+  requires len lb = 320 && len ltab = 704 && len dtab = 704
+  ensures (match result with
+    | Ok r -> r.written <= len dst && pos < r.pos && r.pos <= B.nbits s
+    | Err _ -> true)
+= let nb = B.bit_len s in
+  let p : mutable usize = pos in
+  let o : mutable usize = 0 in
+  let last : mutable bool = false in
+  let err : mutable bool = false in
+  let e' : mutable inflate_error = Ends 0 in
+  while last = false && err = false
+    invariant pos <= p && p <= nb && o <= len dst
+    invariant last ==> pos < p
+    decreases nb - p + (if last = false && err = false then 1 else 0)
+  do
+    if 3 > nb - p then (err <- true; e' <- Ends p)
+    else (
+      let final = field s p 1 in
+      let ty = field s (p + 1) 2 in
+      p <- p + 3;
+      let r : result at inflate_error =
+        (if ty = 0 then stored s p dst o
+         else if ty = 1 then (fixed_tables lb ltab dtab; codes s p dst o ltab 288 dtab 30)
+         else if ty = 2 then (
+           match dynamic s p lb ltab dtab with
+           | Ok d -> codes s d.dp dst o ltab d.nl dtab d.nd
+           | Err x -> Err x)
+         else Err (BadBlock p)) in
+      match r with
+      | Ok a -> (p <- a.p; o <- a.o; if final = 1 then last <- true else ())
+      | Err x -> (err <- true; e' <- x))
+  done;
+  if err then Err e' else Ok { written = o; pos = p }

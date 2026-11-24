@@ -1,0 +1,113 @@
+(* Pia.Compress.Zlib: the zlib format (RFC 1950; ADR 0054, step 5): a
+   two-byte header, a deflate stream, and the Adler-32 of the data,
+   proved total and safe on every input.
+
+   `adler32` is proved equal to `adler`, RFC 1950's definition as spec
+   functions over a prefix of the data. `decompress` checks the header
+   (compression method 8, a window of at most 32 KiB, the check bits, and
+   no preset dictionary), inflates with Pia.Compress.Inflate, and returns
+   Ok only when the four bytes after the deflate stream are the Adler-32
+   of what it wrote, which its contract states. *)
+module Pia.Compress.Zlib : Zlib
+
+import Pia.Image.Bits.Bits as B
+import Pia.Compress.Huffman.Huffman as H
+import Pia.Compress.Inflate.Spec.Deflate as F
+import Pia.Compress.Inflate.Inflate as I
+
+interface Zlib = sig
+  let zlib_error = type | ZHeader of usize | ZData of usize | ZChecksum of usize | ZEnds of usize
+  let zout = type { n : usize; trailer : usize }
+  let spec adler_a : (s : [u8]) -> (k : usize) -> u32
+  let spec adler_b : (s : [u8]) -> (k : usize) -> u32
+  let spec adler : (s : [u8]) -> (k : usize) -> u32
+  let spec be32 : (s : [u8]) -> (q : usize) -> u32
+  let adler32 : (s : [u8]) -> (n : usize) -> u32
+    requires n <= len s
+    ensures result = adler s n
+  let decompress : (s : [u8]) -> (dst : borrowed inout mutable [u8]) -> (lb : borrowed inout mutable [u8]) -> (ltab : borrowed inout mutable [u8]) -> (dtab : borrowed inout mutable [u8]) -> result zout zlib_error
+    requires len s <= 1152921504606846975
+    requires len lb = 320 && len ltab = 704 && len dtab = 704
+    ensures (match result with
+      | Ok r -> r.n <= len dst && r.trailer < len s && 4 <= len s - r.trailer
+                && be32 s r.trailer = adler dst r.n
+      | Err _ -> true)
+end
+
+(** ZHeader: not a zlib header this decoder takes. ZData: the deflate
+    stream is bad at the bit offset. ZChecksum: the Adler-32 at the byte
+    offset does not match. ZEnds: the input ends at the byte offset. *)
+let zlib_error = type | ZHeader of usize | ZData of usize | ZChecksum of usize | ZEnds of usize
+
+(** The bytes written, and the byte offset of the Adler-32 trailer. *)
+let zout = type { n : usize; trailer : usize }
+
+(** Adler-32's A over the first k bytes: one plus their sum, mod 65521. *)
+let spec adler_a (s : [u8]) (k : usize) : u32
+  requires k <= len s
+  ensures result < 65521
+  decreases k
+= if k = 0 then 1 else (adler_a s (k - 1) + s.[k - 1]) % 65521
+
+(** Adler-32's B: the sum of each A after a byte, mod 65521. *)
+let spec adler_b (s : [u8]) (k : usize) : u32
+  requires k <= len s
+  ensures result < 65521
+  decreases k
+= if k = 0 then 0 else (adler_b s (k - 1) + adler_a s k) % 65521
+
+(** Adler-32 of the first k bytes: B in the high half, A in the low. *)
+let spec adler (s : [u8]) (k : usize) : u32
+  requires k <= len s
+= ((adler_b s k << 16) | adler_a s k)
+
+(** The big-endian u32 at s.[q]. *)
+let spec be32 (s : [u8]) (q : usize) : u32
+  requires q < len s && 3 < len s - q
+= let b0 : u32 = s.[q] in let b1 : u32 = s.[q + 1] in
+  let b2 : u32 = s.[q + 2] in let b3 : u32 = s.[q + 3] in
+  ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3)
+
+(** The Adler-32 of the first n bytes of s. *)
+let adler32 (s : [u8]) (n : usize) : u32
+  requires n <= len s
+  ensures result = adler s n
+= let a : mutable u32 = 1 in
+  let b : mutable u32 = 0 in
+  for i in 0 .. n
+    invariant a = adler_a s i && b = adler_b s i
+  do
+    a <- (a + s.[i]) % 65521;
+    b <- (b + a) % 65521
+  done;
+  ((b << 16) | a)
+
+(** Decompresses the zlib stream s into dst. lb, ltab and dtab are
+    Pia.Compress.Inflate's scratch. *)
+let decompress (s : [u8]) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result zout zlib_error
+  requires len s <= 1152921504606846975
+  requires len lb = 320 && len ltab = 704 && len dtab = 704
+  ensures (match result with
+    | Ok r -> r.n <= len dst && r.trailer < len s && 4 <= len s - r.trailer
+              && be32 s r.trailer = adler dst r.n
+    | Err _ -> true)
+= if len s < 2 then Err (ZEnds 0)
+  else (
+    let cmf : u32 = s.[0] in
+    let flg : u32 = s.[1] in
+    if (cmf & 15) <> 8 || (cmf >> 4) > 7 || (cmf * 256 + flg) % 31 <> 0 || (flg & 0x20) <> 0 then Err (ZHeader 0)
+    else (
+      match I.inflate s 16 dst lb ltab dtab with
+      | Err e -> (
+          match e with
+          | Ends p -> Err (ZData p) | BadBlock p -> Err (ZData p) | BadCode p -> Err (ZData p)
+          | BadLengths p -> Err (ZData p) | TooFar p -> Err (ZData p) | Full p -> Err (ZData p))
+      | Ok r -> (
+          let q : usize = (r.pos + 7) / 8 in
+          if q >= len s || len s - q < 4 then Err (ZEnds q)
+          else (
+            let b0 : u32 = s.[q] in let b1 : u32 = s.[q + 1] in
+            let b2 : u32 = s.[q + 2] in let b3 : u32 = s.[q + 3] in
+            let want : u32 = ((b0 << 24) | (b1 << 16) | (b2 << 8) | b3) in
+            if want = adler32 dst r.written then Ok { n = r.written; trailer = q }
+            else Err (ZChecksum q)))))
