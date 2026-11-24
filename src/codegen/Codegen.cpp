@@ -1219,11 +1219,11 @@ constexpr llvm::StringLiteral kErased = "pia.erased";
 constexpr llvm::StringLiteral kInternalPrefix = "__pia_";
 
 bool isContractStatement(mlir::Operation *op) {
-  return mlir::isa<
-      contract::RequiresOp, contract::EnsuresOp, contract::InvariantOp,
-      contract::DecreasesOp, contract::AssertOp, contract::AssumeOp,
-      contract::ObligationOp, contract::HavocOthersOp, contract::ReadsOp,
-      contract::RevealOp>(op);
+  return mlir::isa<contract::RequiresOp, contract::EnsuresOp,
+                   contract::InvariantOp, contract::DecreasesOp,
+                   contract::AssertOp, contract::AssumeOp,
+                   contract::ObligationOp, contract::HavocOthersOp,
+                   contract::ReadsOp, contract::RevealOp>(op);
 }
 
 // An op whose results are unused and that has no effect but reading.

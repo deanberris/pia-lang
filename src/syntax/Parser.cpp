@@ -187,7 +187,11 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type: case K::Sig: case K::Defer: case K::With:
+      case K::Assume:
+      case K::Type:
+      case K::Sig:
+      case K::Defer:
+      case K::With:
         return true;
       default:
         return false;
@@ -461,7 +465,8 @@ class Parser {
     Node *contracts = n->add(makeNode(N::Contracts, loc()));
     while (atContract()) contracts->add(contract());
     // `with f, g`: reveal opaque spec functions in the body (ADR 0063).
-    if (at(K::With)) contracts->add(reveal(/*clause=*/true));
+    if (at(K::With))
+      contracts->add(reveal(/*clause=*/true));
 
     NodePtr body;
     if (bodyless == Bodyless::Axiom) {
@@ -1223,7 +1228,8 @@ class Parser {
       return let(/*allowItem=*/false, /*allowIn=*/true);
     }
     if (at(K::Match)) return match();
-    if (at(K::With)) return reveal(/*clause=*/false);
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     NodePtr s = stmt();
     if (at(K::Semi)) {
       take();
@@ -1364,7 +1370,8 @@ class Parser {
     auto n = makeNode(N::Reveal, loc());
     expect(K::With, "'with'");
     do {
-      if (!at(K::Ident)) fail("expected the name of a spec function after 'with'");
+      if (!at(K::Ident))
+        fail("expected the name of a spec function after 'with'");
       NodePtr f = makeNode(N::Name, loc(), text());
       take();
       // `M.f`, an imported function, as an expression writes it.
@@ -1388,7 +1395,8 @@ class Parser {
 
   NodePtr stmt() {
     SourceLoc start = loc();
-    if (at(K::With)) return reveal(/*clause=*/false);
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     switch (kind()) {
       case K::If: {
         take();

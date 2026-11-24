@@ -1579,7 +1579,8 @@ class Encoder {
         return true;
       }
       revealed_.push_back(name);
-      if (blockReveals_.empty()) blockReveals_.push_back(0);
+      if (blockReveals_.empty())
+        blockReveals_.push_back(0);
       ++blockReveals_.back();
       std::vector<Hidden> hidden = std::move(hiddenCalls_);
       hiddenCalls_.clear();
@@ -4927,8 +4928,8 @@ void solve(const Job &job, const Options &options, Outcome &out,
   if (!answer->opaque.empty()) {
     // The source name: a symbol may carry its module or overload.
     std::string f = *answer->opaque.begin();
-    out.hint = "'" + f + "' is opaque here; 'with " + f +
-               "' may prove it (ADR 0063)";
+    out.hint =
+        "'" + f + "' is opaque here; 'with " + f + "' may prove it (ADR 0063)";
   } else if (answer->truncated)
     out.hint = "a recursive spec function was unfolded only as far as its "
                "@fuel allows, so this goal may hold; raise @fuel on the "

@@ -1099,7 +1099,8 @@ class Gen {
       fail(item, "@opaque applies only to a spec function (ADR 0063)");
       return;
     }
-    if (opaque_) fn->setAttr("pia.opaque", b_.getUnitAttr());
+    if (opaque_)
+      fn->setAttr("pia.opaque", b_.getUnitAttr());
     if (isSpec || isLemma) {
       // Specification code only says what other code means: it cannot
       // write through its parameters (docs/verification.md).
@@ -1144,7 +1145,8 @@ class Gen {
       } else if (c->kind == NodeKind::Reveal) {
         // `with f, g` after the contracts: revealed in the whole body.
         auto fs = revealed(*c);
-        if (!fs) return;
+        if (!fs)
+          return;
         for (const std::string &f : *fs)
           create<contract::RevealOp>(loc(*c), f);
       } else if (c->kind == NodeKind::Invariant) {
@@ -3483,8 +3485,9 @@ class Gen {
         return std::nullopt;
       }
       if (!isOpaqueItem(*set[0]->item)) {
-        fail(f, "'" + f.text + "' is not @opaque, so its definition is "
-                "always a fact; drop it from 'with'");
+        fail(f, "'" + f.text +
+                    "' is not @opaque, so its definition is "
+                    "always a fact; drop it from 'with'");
         return std::nullopt;
       }
       out.push_back(set[0]->name);
@@ -3495,9 +3498,11 @@ class Gen {
   // `with f, g in e`: f and g revealed in e only (ADR 0063).
   R genReveal(const Node &n, Type expected) {
     auto fs = revealed(n);
-    if (!fs) return std::nullopt;
+    if (!fs)
+      return std::nullopt;
     Location l = loc(n);
-    for (const std::string &f : *fs) create<contract::RevealOp>(l, f);
+    for (const std::string &f : *fs)
+      create<contract::RevealOp>(l, f);
     R body = genExpr(*n.kids.back(), expected);
     for (const std::string &f : *fs)
       create<contract::RevealOp>(l, f)->setAttr("pia.end", b_.getUnitAttr());
@@ -3510,7 +3515,8 @@ class Gen {
         item.kids[1]->kids.size() < 2)
       return false;
     for (const syntax::NodePtr &a : item.kids[1]->kids[1]->kids)
-      if (a->text == "opaque") return true;
+      if (a->text == "opaque")
+        return true;
     return false;
   }
 
@@ -11165,7 +11171,7 @@ class Gen {
   const Node *statedNode_ = nullptr;
   std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
-  bool opaque_ = false;  // @opaque on it (ADR 0063)
+  bool opaque_ = false; // @opaque on it (ADR 0063)
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
