@@ -722,6 +722,8 @@ class Parser {
       // module, and which importers call as a fact: its precondition a
       // goal, its postcondition assumed (#305).
       bool lemma = !isConcept && !meta && !spec && accept(K::Lemma);
+      // `let rec t = type ...` shows a recursive type (ADR 0047).
+      bool rec = !isConcept && !meta && !spec && !lemma && accept(K::Rec);
       if (!at(K::Ident) && !at(K::SpliceIdent)) fail("expected a name");
       std::string name = text();
       take();
@@ -730,6 +732,9 @@ class Parser {
         fail("expected ':' after a spec function's name");
       if (lemma && !at(K::Colon))
         fail("expected ':' after a lemma's name");
+      if (rec && !at(K::Eq))
+        fail("expected '=' after a recursive type's name: an interface "
+             "shows a recursive type with its definition");
       if (accept(K::Colon)) {
         auto v = makeNode(N::SigVal, start, name);
         if (meta) v->flags = "meta";
@@ -747,6 +752,7 @@ class Parser {
         n.add(std::move(v));
       } else if (accept(K::Eq)) {
         auto t = makeNode(N::SigType, start, name);
+        if (rec) t->flags = "rec";
         // A generic type is shown as it is defined, `let (t : type) =>
         // type ...` (ADR 0039).
         if (at(K::Let) && kind(1) == K::LParen)

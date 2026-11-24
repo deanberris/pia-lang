@@ -452,9 +452,23 @@ std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
               "the verifier sees as a value; write a copy instead";
         return mlir::WalkResult::interrupt();
       }
+      // A view of the buffer's storage counts as the buffer. A write in a
+      // loop that also builds the value comes after the value of an
+      // earlier iteration, even where it comes first in the body.
+      auto inSameLoop = [&](Operation *m) {
+        for (Operation *l = op->getParentOp(); l && l != fn.getOperation();
+             l = l->getParentOp())
+          if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp,
+                        mlir::scf::ParallelOp>(l) &&
+              l->isAncestor(m))
+            return true;
+        return false;
+      };
       for (RecMakeOp m : makes)
-        if (llvm::is_contained(m.getPayload(), root) &&
-            !dom.properlyDominates(op, m.getOperation())) {
+        if (llvm::any_of(m.getPayload(),
+                         [&](Value p) { return rootBuffer(p) == root; }) &&
+            (!dom.properlyDominates(op, m.getOperation()) ||
+             inSameLoop(m.getOperation()))) {
           why = "it writes a buffer after building a recursive value "
                 "with it, which the verifier sees as the buffer's contents "
                 "when it was built";
@@ -2246,6 +2260,10 @@ class Encoder {
         }
         out.push_back(field(k++));
       }
+      return true;
+    }
+    if (mlir::isa<RecEqOp>(op)) {
+      out.push_back(eq(in[0], in[1]));
       return true;
     }
     if (auto m = mlir::dyn_cast<RecMeasureOp>(op)) {
