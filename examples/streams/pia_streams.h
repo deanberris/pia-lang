@@ -64,4 +64,19 @@ uint64_t render_load(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                      const uint32_t *flux, uint64_t nflux, uint32_t threshold,
                      uint8_t *rgb, uint64_t nrgb);
 
+// examples/streams/gif.pia.
+uint64_t gif_bound(uint16_t w, uint16_t h, uint16_t nf);
+uint64_t gif_animation(uint16_t w, uint16_t h, const uint8_t *pal,
+                       uint64_t npal, const uint8_t *frames, uint64_t nframes,
+                       uint16_t nf, uint16_t delay, uint16_t loops,
+                       uint8_t *dst, uint64_t ndst, uint8_t *rect,
+                       uint64_t nrect, uint8_t *lz, uint64_t nlz, uint8_t *hash,
+                       uint64_t nhash);
+void palette(uint8_t *pal, uint64_t npal);
+void render_load_index(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
+                       uint64_t nfill, const uint32_t *acc, uint64_t nacc,
+                       const uint64_t *basin, uint64_t nbasin,
+                       const uint32_t *flux, uint64_t nflux, uint32_t threshold,
+                       uint8_t *idx, uint64_t nidx);
+
 #endif

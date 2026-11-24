@@ -388,9 +388,13 @@ int main(int argc, char **argv) {
   // The landscape evolves (docs/sediment.pia.md, section 6): epochs of
   // `steps` time steps, each under its own rainfall field, with the ground
   // raised by the sediment on it, and its sinks, directions and order
-  // recomputed before each. Two epochs of uniform rain, four of a storm
-  // band moving down the map, then a wet season and a dry one.
-  enum { EPOCHS = 8, STEPS = 4 };
+  // recomputed before each. A year is eight epochs: two of uniform rain,
+  // four of a storm band moving down the map, then a wet season and a dry
+  // one. Three years run; the first year's epochs are written as PNGs, and
+  // every epoch is a frame of an animated GIF.
+  enum { EPOCHS = 24, YEAR = 8, STEPS = 4 };
+  uint8_t *pal = malloc(768), *frames = malloc((size_t)EPOCHS * n);
+  palette(pal, 768);
   uint16_t *ground = malloc(n * sizeof *ground);
   uint32_t *rain = malloc(n * sizeof *rain), *flow = malloc(n * sizeof *flow);
   uint32_t *pend = malloc(n * sizeof *pend);
@@ -404,13 +408,14 @@ int main(int argc, char **argv) {
     // The rainfall fields are Pia's, each proved to keep the total rain
     // within a u32 (docs/sediment.pia.md, "Rainfall fields").
     const char *kind;
-    if (e < 2)
+    int season = e % YEAR;
+    if (season < 2)
       kind = "uniform", rain_uniform(4, rain, n);
-    else if (e < 6)
+    else if (season < 6)
       kind = "storm",
-      rain_band(w, (e - 2) * h / 4, (e - 1) * h / 4, 16, 1, rain, n);
+      rain_band(w, (season - 2) * h / 4, (season - 1) * h / 4, 16, 1, rain, n);
     else
-      kind = e == 6 ? "wet" : "dry", rain_season(e == 6, 8, rain, n);
+      kind = season == 6 ? "wet" : "dry", rain_season(season == 6, 8, rain, n);
     double a = seconds();
     surface(dem, n, bed, n, ground, n);
     fill_sinks(ground, n, w, limit, fill, n);
@@ -434,17 +439,21 @@ int main(int argc, char **argv) {
              pos, n, cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS, last, HEIGHTS,
              owner, n);
     shed_ms += (seconds() - c0) * 1e3;
-    render_load(ground, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb,
-                3 * n);
-    char frame[4096], frame_buf[4096];
-    sediment_name(output, "-epoch-", e, frame, sizeof frame);
-    if (!write_rgb(resolve(frame, frame_buf, sizeof frame_buf), w, h, rgb))
-      return 1;
+    render_load_index(ground, n, fill, n, acc, n, basin, n, flux, n, threshold,
+                      frames + (size_t)e * n, n);
+    char frame[4096] = "", frame_buf[4096];
+    if (e < YEAR) {
+      render_load(ground, n, fill, n, acc, n, basin, n, flux, n, threshold, rgb,
+                  3 * n);
+      sediment_name(output, "-epoch-", e, frame, sizeof frame);
+      if (!write_rgb(resolve(frame, frame_buf, sizeof frame_buf), w, h, rgb))
+        return 1;
+    }
     uint32_t peak = 0;
     for (uint64_t i = 0; i < n; ++i)
       peak = flow[i] > peak ? flow[i] : peak;
-    printf("epoch %d (%s rain): %llu out, peak flow %u, written to %s\n", e,
-           kind, (unsigned long long)out, peak, frame);
+    printf("epoch %d (%s rain): %llu out, peak flow %u%s%s\n", e, kind,
+           (unsigned long long)out, peak, *frame ? ", written to " : "", frame);
   }
   uint64_t left = 0;
   for (uint64_t i = 0; i < n; ++i) {
@@ -464,6 +473,38 @@ int main(int argc, char **argv) {
     fprintf(stderr, "evolution: the total changed\n");
     return 1;
   }
+
+  // The animation: the encoder of Pia.Image.Gif.Encode, whose output is
+  // proved to parse as a GIF with one frame per epoch.
+  if (w <= 65535 && h <= 65535) {
+    uint64_t bound = gif_bound(w, h, EPOCHS);
+    uint8_t *gif = malloc(bound), *rect = malloc(n), *lz = malloc(3 * n + 5);
+    uint8_t *hash = malloc(40960);
+    double g0 = seconds();
+    uint64_t size =
+        gif_animation(w, h, pal, 768, frames, (uint64_t)EPOCHS * n, EPOCHS, 25,
+                      0, gif, bound, rect, n, lz, 3 * n + 5, hash, 40960);
+    double g1 = seconds();
+    if (size == 0) {
+      fprintf(stderr, "the animation could not be encoded\n");
+      return 1;
+    }
+    char anim[4096], anim_buf[4096];
+    sediment_name(output, "-evolution", -1, anim, sizeof anim);
+    char *dot = strrchr(anim, '.');
+    if (dot)
+      strcpy(dot, ".gif");
+    FILE *f = fopen(resolve(anim, anim_buf, sizeof anim_buf), "wb");
+    if (!f || fwrite(gif, 1, size, f) != size || fclose(f) != 0) {
+      fprintf(stderr, "%s: cannot write the animation\n", anim);
+      return 1;
+    }
+    printf("animation: %d frames, %llu bytes, encoded in %.1f ms, written to "
+           "%s\n",
+           EPOCHS, (unsigned long long)size, (g1 - g0) * 1e3, anim);
+    free(gif), free(rect), free(lz), free(hash);
+  }
+  free(pal), free(frames);
   free(ground), free(rain), free(flow), free(pend), free(fill0);
   free(order), free(pos), free(bed), free(load), free(inflow), free(flux);
   free(cnt), free(first), free(next), free(last), free(owner);
