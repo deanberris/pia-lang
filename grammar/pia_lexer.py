@@ -437,4 +437,12 @@ class Lexer:
 
 
 def tokenize(text):
-    return Lexer(text).tokenize()
+    toks = Lexer(text).tokenize()
+    # `costs` is a keyword only where a cost clause starts, `costs c <= e`
+    # (ADR 0062), so it takes no name away from code.
+    for i in range(len(toks) - 2):
+        t, c, le = toks[i], toks[i + 1], toks[i + 2]
+        if (t.type == "IDENT" and t.value == "costs" and c.type == "IDENT"
+                and le.type == "OP_CMP" and le.value == "<="):
+            t.type = "COSTS"
+    return toks

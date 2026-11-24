@@ -1402,8 +1402,11 @@ class Encoder {
       out.push_back({ObligationKind::assert_, "the assertion holds"});
     if (mlir::isa<contract::EnsuresOp>(op))
       out.push_back({ObligationKind::ensures, "the postcondition holds"});
-    if (auto o = mlir::dyn_cast<contract::ObligationOp>(op))
-      out.push_back({o.getKind(), "the obligation holds"});
+    if (auto o = mlir::dyn_cast<contract::ObligationOp>(op)) {
+      auto claim = o->getAttrOfType<mlir::StringAttr>("pia.claim");
+      out.push_back({o.getKind(), claim ? claim.getValue().str()
+                                        : "the obligation holds"});
+    }
     if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
       if (auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
         if (!callee.isExternal())
@@ -1718,7 +1721,11 @@ class Encoder {
       return true;
     }
     if (auto o = mlir::dyn_cast<contract::ObligationOp>(op)) {
-      goal(o.getKind(), op, "the obligation holds", term(o.getGoal()), false);
+      // A cost bound's goal names its own claim (ADR 0062).
+      auto claim = o->getAttrOfType<mlir::StringAttr>("pia.claim");
+      goal(o.getKind(), op,
+           claim ? claim.getValue().str() : "the obligation holds",
+           term(o.getGoal()), false);
       return true;
     }
     // A measure is checked by the loop or the recursive call it belongs to.
@@ -2830,6 +2837,26 @@ class Encoder {
                                     cmp(P::slt, bvBin("sub", exit, ub), st)),
                               eq(bvBin("srem", bvBin("sub", exit, lb), st),
                                  bv(0)))));
+    // With a step of one that is `exit = ub`, said outright in a function
+    // with a cost bound (ADR 0062): its bounds multiply loop variables, as
+    // in `spent iterations <= i * m`, and Z3 bit-blasts two products it
+    // cannot tell are equal rather than derive `exit = ub` first. Other
+    // functions keep the query they had.
+    if (stepConst && stepConst.value() == 1 && fn_->hasAttr("pia.costs")) {
+      // When the bounds' ranges say the loop cannot run backwards, as in
+      // `0..n`, it is `exit = ub` whether or not the loop ran, which Z3
+      // substitutes.
+      auto range = [](Value index) -> std::optional<Interval> {
+        if (auto t = index.getDefiningOp<ToIndexOp>())
+          return valueRange(t.getInput());
+        return std::nullopt;
+      };
+      auto lr = range(forOp.getLowerBound()), ur = range(forOp.getUpperBound());
+      if (lr && ur && ur->first.sge(lr->second))
+        assume(eq(exit, ub));
+      else
+        assume(implies(ran, eq(exit, ub)));
+    }
     for (auto inv : invariants) {
       Demand d = at(exit, results);
       if (Value p = demand(inv.getPredicate(), d)) assume(p);

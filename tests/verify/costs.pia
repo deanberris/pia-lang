@@ -1,0 +1,86 @@
+(* Cost bounds (ADR 0062, step 1). `costs c <= e` bounds what every run
+   spends on the counter `c`: `iterations` counts each iteration of a
+   loop, and `calls` each call of code, which also adds the callee's own
+   bound at its arguments. `spent c`, in invariants and asserts, is what
+   the function has spent so far, and at the return `spent c <= e` is a
+   goal, with `e` read at the parameters' entry values.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* A linear search makes at most one iteration per element, and no call. *)
+let find (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs iterations <= len xs
+  costs calls <= 0
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> v
+    invariant i <= len xs
+    invariant spent iterations <= i && spent calls = 0
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  i
+
+(* Nested loops: one outer iteration and m inner ones, n times. *)
+let pairs (n : u8) (m : u8) : unit
+  costs iterations <= n + n * m
+=
+  for i in 0..n invariant spent iterations <= i + i * m do
+    for j in 0..m invariant spent iterations <= i + i * m + 1 + j do
+      ()
+    done
+  done
+
+(* A function with no loop and no recursion has a bound without writing
+   it: `square` spends 0 on both counters, and `fourth` 2 on calls. *)
+let square (x : u8) : u16 = x * x
+let fourth (x : u8) : u32 = square x * square x
+
+(* A caller adds up its callees' bounds: two searches, each one call and
+   at most len xs iterations, and on one branch of the `if` a call of
+   `fourth`, which is one call and its own two. *)
+let either (xs : [u32]) (a : u32) (b : u32) (wide : bool) : usize
+  costs iterations <= 2 * len xs
+  costs calls <= 5
+=
+  let p = find xs a in
+  let q = find xs b in
+  let r : u32 = if wide then fourth 3 else 0 in
+  assert spent calls <= 5;
+  if p < q then p else q
+
+(* A loop over 0..n makes n iterations, not n / 2. *)
+let halfway (n : u8) : unit
+  costs iterations <= n / 2
+=
+  for i in 0..n invariant spent iterations <= i do () done
+
+(* Expected report, in order.
+// CHECK: costs.pia:18:5: proved: the loop invariant holds on entry [smt]
+// CHECK: costs.pia:19:5: proved: the loop invariant holds on entry [smt]
+// CHECK: costs.pia:17:23: proved: the index is within bounds [smt]
+// CHECK: costs.pia:22:12: proved: '+' does not overflow usize [smt]
+// CHECK: costs.pia:18:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: costs.pia:19:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: costs.pia:20:5: proved: the measure decreases [smt]
+// CHECK: costs.pia:12:3: proved: the postcondition holds [smt]
+// CHECK: costs.pia:13:3: proved: the cost on iterations is within its bound [smt]
+// CHECK: costs.pia:14:3: proved: the cost on calls is within its bound [smt]
+// CHECK: costs.pia:30:17: proved: the loop invariant holds on entry [smt]
+// CHECK: costs.pia:31:19: proved: the loop invariant holds on entry [smt]
+// CHECK: costs.pia:31:19: proved: the loop invariant holds after each iteration [smt]
+// CHECK: costs.pia:30:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: costs.pia:28:3: proved: the cost on iterations is within its bound [smt]
+// CHECK: costs.pia:38:31: proved: '*' does not overflow u16 [intervals]
+// CHECK: costs.pia:39:38: proved: '*' does not overflow u32 [intervals]
+// CHECK: costs.pia:51:3: proved: the assertion holds [smt]
+// CHECK: costs.pia:45:3: proved: the cost on iterations is within its bound [smt]
+// CHECK: costs.pia:46:3: proved: the cost on calls is within its bound [smt]
+// CHECK: costs.pia:58:17: proved: the loop invariant holds on entry [smt]
+// CHECK: costs.pia:58:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: costs.pia:56:3: failed: the cost on iterations is within its bound
+// CHECK-NEXT: counterexample: n = {{-?[0-9]+}}
+// CHECK: 22 proved, 1 failed, 0 skipped
+*)
