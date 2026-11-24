@@ -169,3 +169,4 @@ nav:
       - adr/0060-spread-v0-ownership-and-runtime.md
       - adr/0061-lean-proved-facts.md
       - adr/0062-cost-bounds-in-contracts.md
+      - adr/0063-distinct-types.md

@@ -66,3 +66,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0060](0060-spread-v0-ownership-and-runtime.md) | `spread` v0: iterations own the cells they write, proved one iteration at a time; MLIR's async runtime runs them | Proposed |
 | [0061](0061-lean-proved-facts.md) | Lean proves the facts Z3 cannot: lemmas and theory models proved in Lean against generated statements, recorded by statement hash, checked outside the edit loop; cost bounds proved by Z3, their asymptotics in Lean | Accepted |
 | [0062](0062-cost-bounds-in-contracts.md) | Cost bounds are contracts: `costs c <= e` bounds what a function spends on a named counter, tracked by a spec-only `spent c` and proved by Z3 | Accepted |
+| [0063](0063-distinct-types.md) | `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only through named functions, and inherits only what it derives | Proposed |
