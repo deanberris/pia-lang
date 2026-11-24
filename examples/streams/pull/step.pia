@@ -589,11 +589,22 @@ let spec oterm (order : [usize]) (down : [usize]) (flux : [u32]) (q : usize) : u
     (let c = order.[q] in if c < len down && c < len flux then (if down.[c] = c then flux.[c] else 0) else 0)
   else 0
 
-let spec osum (order : [usize]) (down : [usize]) (flux : [u32]) (p : usize) : u64
+let spec osum (order : [usize]) (down : [usize]) (flux : [u32]) (p : usize) : u64 @opaque
   requires p <= max u32 + 1
   ensures result <= (max u32 + 1) * p
   decreases p
 = if p = 0 then 0 else osum order down flux (p - 1) + oterm order down flux (p - 1)
+
+let lemma osum_next (order : [usize]) (down : [usize]) (flux : [u32]) (p : usize) : unit
+  requires p < max u32 + 1
+  ensures osum order down flux (p + 1) = osum order down flux p + oterm order down flux p
+  with osum
+= ()
+
+\ g is the gone of the first p cells: what came in, and what their outlets sent off.
+let spec gone_ok (order : [usize]) (down : [usize]) (flux : [u32]) (g : u64) (gone : u64) (p : usize) : bool @opaque
+  requires p <= max u32 + 1
+= g = gone + osum order down flux p
 
 \ Changing flux at a cell after the first p in the order leaves their sum alone.
 let lemma osum_frame (order : [usize]) (down : [usize]) (flux : [u32]) (flux2 : [u32]) (c : usize) (p : usize) : unit
@@ -602,6 +613,7 @@ let lemma osum_frame (order : [usize]) (down : [usize]) (flux : [u32]) (flux2 : 
   requires forall (q in 0 .. p). order.[q] <> c
   ensures osum order down flux2 p = osum order down flux p
   decreases p
+  with osum
 = if p > 0 then (
     osum_frame order down flux flux2 c (p - 1);
     assert order.[p - 1] <> c;
@@ -613,12 +625,39 @@ let lemma osum_eq (order : [usize]) (down : [usize]) (fa : [u32]) (fb : [u32]) (
   requires forall (j in 0 .. len fa). fa.[j] = fb.[j]
   ensures osum order down fa p = osum order down fb p
   decreases p
+  with osum
 = if p > 0 then (
     osum_eq order down fa fb (p - 1);
     let c = order.[p - 1] in
     (if c < len fa then assert fa.[c] = fb.[c] else ());
     assert oterm order down fa (p - 1) = oterm order down fb (p - 1)
   ) else ()
+
+let lemma add_sent (g : u64) (gone : u64) (x : u32) (outlet : bool) (t : u32) : unit
+  requires outlet ==> g = gone + x
+  requires outlet = false ==> g = gone
+  requires t = (if outlet then x else 0)
+  ensures g = gone + t
+= ()
+
+let lemma gone_in (order : [usize]) (down : [usize]) (flux : [u32]) (g : u64) (gone : u64) (p : usize) : unit
+  requires p <= max u32 + 1
+  requires gone_ok order down flux g gone p
+  ensures g = gone + osum order down flux p
+  with gone_ok
+= ()
+
+let lemma gone_out (order : [usize]) (down : [usize]) (flux : [u32]) (g : u64) (gone : u64) (p : usize) : unit
+  requires p < max u32 + 1
+  requires g = gone + (osum order down flux p + oterm order down flux p)
+  ensures gone_ok order down flux g gone (p + 1)
+  with gone_ok
+= osum_next order down flux p
+
+let lemma gone_start (order : [usize]) (down : [usize]) (flux : [u32]) (gone : u64) : unit
+  ensures gone_ok order down flux gone gone 0
+  with gone_ok, osum
+= ()
 
 \ One cell of the sequential step, the cell at position p, keeping the
 \ three invariants and the conservation of transport.
@@ -639,8 +678,8 @@ let seq_cell (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (po
   requires done_upto fill down acc bed0 bed flux seen inflow pos p
   requires linked_upto down flux seen pos p w
   requires pending down flux pos inflow bed bed0 p w
-  requires gone = g0 + osum order down flux p
-  ensures result = g0 + osum order down flux (p + 1)
+  requires gone_ok order down flux gone g0 p
+  ensures gone_ok order down flux result g0 (p + 1)
   ensures forall (k in 0 .. len load). load.[k] = 0
   ensures sum bed (len bed) + sum load (len load) + sum inflow (len inflow) + result =
     sum (old bed) (len bed) + sum (old load) (len load) + sum (old inflow) (len inflow) + gone
@@ -667,7 +706,11 @@ let seq_cell (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (po
   pending_step down (old flux) flux pos (old inflow) inflow (old bed) bed bed0 p w c;
   assert (forall (r in 0 .. p). order.[r] <> c);
   osum_frame order down (old flux) flux c p;
+  osum_next order down flux p;
+  gone_in order down (old flux) gone g0 p;
   assert oterm order down flux p = (if d = c then flux.[c] else 0);
+  add_sent g gone (flux.[c]) (d = c) (oterm order down flux p);
+  gone_out order down flux g g0 p;
   g
 
 \ The sequential step of docs/sediment.pia.md, highest cells first, with
@@ -696,6 +739,7 @@ let transport_seen (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize
   ensures result = gone + osum order down flux (len fill)
 =
   start_seq fill down acc bed0 bed flux seen inflow pos w;
+  gone_start order down flux gone;
   let g : mutable u64 = gone in
   for p in 0 .. len fill
     invariant forall (k in 0 .. len load). load.[k] = 0
@@ -704,11 +748,12 @@ let transport_seen (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize
     invariant done_upto fill down acc bed0 bed flux seen inflow pos p
     invariant linked_upto down flux seen pos p w
     invariant pending down flux pos inflow bed bed0 p w
-    invariant g = gone + osum order down flux p
+    invariant gone_ok order down flux g gone p
   do
     g <- seq_cell fill down acc order pos w bed0 bed load inflow flux seen p g gone
   done;
   finish_seq fill down acc bed0 bed flux seen inflow pos w;
+  gone_in order down flux g gone (len fill);
   g
 
 \ ---- The pull step ----
@@ -956,6 +1001,7 @@ let copy_cell (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]) (p
   ready_step down order w (old flux) flux gathered q hi c;
   assert (forall (r in 0 .. q). order.[r] <> c);
   osum_frame order down (old flux) flux c q;
+  osum_next order down flux q;
   assert oterm order down flux q = (if d = c then flux.[c] else 0);
   let sent : u64 = if d = c then flux.[c] else 0 in
   g + sent
