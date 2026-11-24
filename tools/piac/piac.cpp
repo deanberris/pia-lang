@@ -98,13 +98,18 @@
 #include "cert/Certificate.h"
 #include "codegen/Codegen.h"
 #include "dialect/PiaDialect.h"
+#include "gpu/Spirv.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Parser/Parser.h"
 #include "verify/Verifier.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #endif
 
@@ -127,6 +132,7 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
+         "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
          "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
@@ -135,6 +141,42 @@ int usage() {
          "[--iface-path=<dir>]...\n";
   return 2;
 }
+
+#ifndef PIA_NO_MLIR
+// Parses an MLIR file holding a gpu.module, lowers it to SPIR-V and writes
+// the binary to `output`.
+int emitSpirv(const std::string &file, const std::string &output) {
+  mlir::DialectRegistry registry;
+  pia::gpu::registerDialects(registry);
+  mlir::MLIRContext ctx(registry);
+  auto buffer = llvm::MemoryBuffer::getFile(file);
+  if (!buffer) {
+    std::cerr << file << ": " << buffer.getError().message() << "\n";
+    return 1;
+  }
+  llvm::SourceMgr sm;
+  sm.AddNewSourceBuffer(std::move(*buffer), llvm::SMLoc());
+  mlir::SourceMgrDiagnosticHandler diagnostics(sm, &ctx);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(sm, &ctx);
+  if (!module)
+    return 1;
+  if (mlir::failed(pia::gpu::lowerToSpirv(*module)))
+    return 1;
+  llvm::SmallVector<uint32_t> binary;
+  if (mlir::failed(pia::gpu::serializeSpirv(*module, binary)))
+    return 1;
+  std::error_code ec;
+  llvm::raw_fd_ostream out(output, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    std::cerr << output << ": " << ec.message() << "\n";
+    return 1;
+  }
+  out.write(reinterpret_cast<const char *>(binary.data()),
+            binary.size() * sizeof(uint32_t));
+  return 0;
+}
+#endif
 
 // Which lints are on: all but those --no-lint names, or none.
 struct LintSwitch {
@@ -585,10 +627,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--dump-ast" || arg == "--dump-expanded" ||
-        arg == "--dump-tokens" || arg == "--check" ||
-        arg == "--emit=mlir" || arg == "--emit=core" || arg == "--emit=llvm" ||
-        arg == "--emit=asm" || arg == "--emit=obj" ||
-        arg == "--emit=interface")
+        arg == "--dump-tokens" || arg == "--check" || arg == "--emit=mlir" ||
+        arg == "--emit=core" || arg == "--emit=llvm" || arg == "--emit=asm" ||
+        arg == "--emit=obj" || arg == "--emit=interface" ||
+        arg == "--emit=spirv")
       mode = arg;
     else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
@@ -734,6 +776,15 @@ int main(int argc, char **argv) {
   if (verify && mode.empty()) mode = "--verify";
   if (verify && mode != "--verify" && mode != "--emit=mlir") return usage();
   if (mode.empty() || file.empty()) return usage();
+#ifndef PIA_NO_MLIR
+  // A hand-written gpu.module, lowered to a SPIR-V binary (ADR 0068, step
+  // 1). Step 3 makes the gpu.module from @place(gpu) spreads.
+  if (mode == "--emit=spirv") {
+    if (output.empty() || verify)
+      return usage();
+    return emitSpirv(file, output);
+  }
+#endif
   if (pia::syntax::isLiterateFileName(file)) literate = true;
   if (showComments && mode != "--dump-ast" && mode != "--dump-expanded")
     return usage();
