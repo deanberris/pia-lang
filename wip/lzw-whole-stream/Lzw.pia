@@ -213,14 +213,12 @@ let decode (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst : b
    code a and its suffix the first byte code a + 1 wrote. Code a wrote its
    own string at to.[a]: its value, for a root, or else a copy of the
    string of the code before the one that added it. *)
-let spec link (t : [u8]) (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (kk : usize) : bool
-  requires len t = 12288 && kk < 4096 && clear + 2u16 <= kk
+let spec link_tr (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (kk : usize) : bool @opaque
+  requires kk < 4096 && clear + 2u16 <= kk
   requires e + (kk - clear - 2) + 1 < len to && e + (kk - clear - 2) < len tc
 = let a : usize = e + (kk - clear - 2) in
-  if S.pre t kk <> tc.[a] then false
-  else if to.[a] > to.[a + 1] then false
+  if to.[a] > to.[a + 1] then false
   else if to.[a + 1] >= len x then false
-  else if S.suf t kk <> x.[to.[a + 1]] then false
   else if tc.[a] < clear then (if to.[a + 1] - to.[a] <> 1 then false else x.[to.[a]] = tc.[a])
   else if tc.[a] < clear + 2u16 || tc.[a] >= kk then false
   else (
@@ -229,6 +227,17 @@ let spec link (t : [u8]) (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) 
     else if to.[b + 1] > to.[a] then false
     else if to.[a + 1] - to.[a] <> to.[b + 1] - to.[b] + 1 then false
     else (forall (d in 0 .. to.[a + 1] - to.[a]). x.[to.[a] + d] = x.[to.[b] + d]))
+
+
+(* The table's part of link: entry kk's cells. The trace's part is
+   link_tr, opaque, which reads no table, so a change to other entries'
+   cells leaves it as it was. *)
+let spec link (t : [u8]) (clear : int{4..256}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (kk : usize) : bool
+  requires len t = 12288 && kk < 4096 && clear + 2u16 <= kk
+  requires e + (kk - clear - 2) + 1 < len to && e + (kk - clear - 2) < len tc
+= if link_tr clear x tc to e kk = false then false
+  else if to.[e + (kk - clear - 2) + 1] >= len x then false
+  else S.pre t kk = tc.[e + (kk - clear - 2)] && S.suf t kk = x.[to.[e + (kk - clear - 2) + 1]]
 
 (* Entry c's string is the bytes of x that the trace says it names. *)
 let lemma sym_is_x (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (e : usize) (c : usize) : unit
@@ -239,6 +248,7 @@ let lemma sym_is_x (t : [u8]) (clear : int{4..256}) (nx : int{0..4096}) (x : [u8
   ensures S.elen t clear c = to.[e + (c - clear - 2) + 1] - to.[e + (c - clear - 2)] + 1
   ensures forall (d in 0 .. S.elen t clear c). S.sym t clear c d = x.[to.[e + (c - clear - 2)] + d]
   decreases c
+  with link_tr
 = assert link t clear x tc to e c;
   let p : u16 = S.pre t c in
   assert S.elen t clear c = S.elen t clear p + 1;
@@ -272,8 +282,10 @@ let lemma emit_code (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : in
   ensures (if h then S.elen t clear c = to.[q + 1] - to.[q] else true)
   ensures (if h then (forall (d in 0 .. to.[q + 1] - to.[q]). S.sym t clear c d = x.[to.[q] + d]) else true)
 = if h then (
-    if c >= clear then sym_is_x t clear nx x tc to te.[q] c
-    else (assert S.elen t clear c = 1; assert S.sym t clear c 0 = c))
+    if c >= clear then (
+      R.emit_entry m x tc to te q (te.[q] + (c - clear - 2));
+      sym_is_x t clear nx x tc to te.[q] c)
+    else (R.emit_root m x tc to te q; assert S.elen t clear c = 1; assert S.sym t clear c 0 = c))
   else ()
 
 (* What code q writes when it names the entry about to be added, nx
@@ -291,14 +303,11 @@ let lemma emit_kwk (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : int
   ensures (if h then S.sym t clear p 0 = x.[to.[q] + S.elen t clear p] else true)
 = if h then (
     assert te.[q] + (nx - clear - 2) = q - 1;
-    assert R.emit_ok m x tc to te q;
-    assert R.emit_ok m x tc to te (q - 1);
-    assert to.[q + 1] - to.[q] = to.[q] - to.[q - 1] + 1;
-    assert (forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[q - 1] + d]);
+    R.emit_entry m x tc to te q (q - 1);
     if p >= clear then (
-      sym_is_x t clear nx x tc to te.[q] p;
-      assert to.[q] - to.[q - 1] = to.[te.[q] + (p - clear - 2) + 1] - to.[te.[q] + (p - clear - 2)] + 1)
-    else (assert S.elen t clear p = 1; assert S.sym t clear p 0 = p; assert to.[q] - to.[q - 1] = 1))
+      R.emit_entry m x tc to te (q - 1) (te.[q] + (p - clear - 2));
+      sym_is_x t clear nx x tc to te.[q] p)
+    else (R.emit_root m x tc to te (q - 1); assert S.elen t clear p = 1; assert S.sym t clear p 0 = p))
   else ()
 
 (* The entry nx that code q adds: the previous code and the first byte
@@ -311,10 +320,44 @@ let lemma link_new (h : bool) (t : [u8]) (s : [u8]) (m : int{2..8}) (clear : int
   requires h ==> to.[q] < len x && f = x.[to.[q]]
   requires h ==> len t = 12288 && S.pre t nx = p && S.suf t nx = f
   ensures (if h then link t clear x tc to te.[q] nx else true)
+  with link_tr
 = if h then (
     assert te.[q] + (nx - clear - 2) = q - 1;
-    assert R.emit_ok m x tc to te (q - 1);
-    assert S.pre t nx = tc.[q - 1] && S.suf t nx = x.[to.[q]])
+    if p < clear then R.emit_root m x tc to te (q - 1)
+    else if p - clear - 2 <= q - 1 - te.[q] then
+      R.emit_entry m x tc to te (q - 1) (te.[q] + (p - clear - 2))
+    else R.emit_overrun m x tc to te (q - 1))
+  else ()
+
+(* Ref.from_step and Ref.ok_start where h holds. *)
+let lemma step_when (h : bool) (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : unit
+  requires h ==> k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && j < k
+  requires h ==> R.lzw_from s m x k tp tw tc to te j
+  ensures h && j + 1 < k ==> R.lzw_step s m x tp tw tc to te j && R.lzw_from s m x k tp tw tc to te (j + 1)
+  ensures h && j + 1 = k ==> R.read_ok s m tp tw tc j && tc.[j] = B.pow2 m + 1u16 && to.[j] = len x
+= if h then R.from_step s m x k tp tw tc to te j else ()
+
+let lemma start_when (h : bool) (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) : unit
+  requires h ==> R.lzw_ok s m x k tp tw tc to te
+  ensures h ==> 1 <= k && k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te
+  ensures h ==> tp.[0] = 0 && tw.[0] = m + 1u8 && to.[0] = 0 && te.[0] = 0
+  ensures h ==> R.lzw_from s m x k tp tw tc to te 0
+= if h then R.ok_start s m x k tp tw tc to te else ()
+
+(* What code q of the trace is, for decode's branches, where h holds: a
+   root writes its own value, and anything else that is not a clear names
+   an entry of the epoch, below the next free one or that one. *)
+let lemma emit_when (h : bool) (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
+  requires h ==> k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te
+  requires h && q + 1 < k ==> R.lzw_step s m x tp tw tc to te q
+  ensures h && q + 1 < k && tc.[q] < B.pow2 m ==> to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
+  ensures h && q + 1 < k && tc.[q] > B.pow2 m ==> te.[q] < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= R.nx_at (B.pow2 m) te.[q] q
+= if h && k > 0 && q < k - 1 then (
+    if tc.[q] < B.pow2 m then R.emit_root m x tc to te q
+    else if tc.[q] > B.pow2 m + 1u16 && te.[q] <= q && tc.[q] - B.pow2 m - 2 <= q - te.[q] then
+      R.emit_entry m x tc to te q (te.[q] + (tc.[q] - B.pow2 m - 2))
+    else if tc.[q] > B.pow2 m + 1u16 then R.emit_overrun m x tc to te q
+    else ())
   else ()
 
 (** decode, with the whole-stream theorem (ADR 0058): whenever x is
@@ -347,6 +390,7 @@ let decode_ref (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst
   let st : mutable int{0..4} = 0 in
   let at : mutable usize = 0 in
   let j : mutable usize = 0 in
+  start_when h s m x k tp tw tc to te;
   while st = 0
     invariant clear = B.pow2 m && nb = B.nbits s
     invariant pos <= nb && o <= len dst && 3 * j <= pos
@@ -369,6 +413,7 @@ let decode_ref (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst
     invariant h && st = 0 ==> (forall (kk in clear + 2u16 .. nx). link t clear x tc to te.[j] kk)
     decreases nb - pos + (if st = 0 then 1 else 0)
   do
+    step_when h s m x k tp tw tc to te j;
     if width > nb - pos then (assert h ==> false; st <- 2; at <- pos)
     else (
       let here = pos in
@@ -377,6 +422,7 @@ let decode_ref (s : [u8]) (m : int{2..8}) (t : borrowed inout mutable [u8]) (dst
       pos <- pos + width;
       j <- j + 1;
       assert h ==> code = tc.[q];
+      emit_when h s m x k tp tw tc to te q;
       if code = clear then (width <- m1 + 1; nx <- cl + 2; prev <- 4096)
       else if code = cl + 1 then st <- 1
       else if prev = 4096 then (
