@@ -583,6 +583,11 @@ class Parser {
     contractMode_ = true;
     clauseEnded_ = false;
     c->add(stmt());
+    // `reads xs.[c] where owner.[c] = v` (ADR 0060, section 3).
+    if (k == N::Reads && accept(K::Where)) {
+      clauseEnded_ = false;
+      c->add(stmt());
+    }
     contractMode_ = savedContract;
     clauseEnded_ = savedEnded;
     return c;

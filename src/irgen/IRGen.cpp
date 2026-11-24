@@ -1071,10 +1071,36 @@ class Gen {
           fail(*c, "only a spec function says what it reads");
           return;
         }
+        bool byOwner = c->kids.size() == 2;
+        // `reads xs.[c] where owner.[c] = v`: the cells an owner array
+        // gives to v.
+        const Node *ownerAt = nullptr, *value = nullptr;
+        if (byOwner) {
+          // `owner.[c] = v`, as written or as the operator expands it,
+          // `eq (owner.[c]) v`.
+          const Node &w = *c->kids[1];
+          const Node *lhs = nullptr, *rhs = nullptr;
+          if (w.kind == NodeKind::Binary && w.text == "=")
+            lhs = w.kids[0].get(), rhs = w.kids[1].get();
+          else if (w.kind == NodeKind::Apply && w.kids.size() == 3 &&
+                   w.kids[0]->kind == NodeKind::Name && w.kids[0]->text == "eq")
+            lhs = w.kids[1].get(), rhs = w.kids[2].get();
+          if (lhs && e.kind == NodeKind::Index &&
+              e.kids[1]->kind == NodeKind::Name &&
+              lhs->kind == NodeKind::Index &&
+              lhs->kids[0]->kind == NodeKind::Name &&
+              lhs->kids[1]->kind == NodeKind::Name &&
+              lhs->kids[1]->text == e.kids[1]->text) {
+            ownerAt = lhs->kids[0].get();
+            value = rhs;
+          }
+        }
         if (e.kind != NodeKind::Index || e.kids[0]->kind != NodeKind::Name ||
-            e.kids[1]->kind != NodeKind::Range) {
+            (!byOwner && e.kids[1]->kind != NodeKind::Range) ||
+            (byOwner && !ownerAt)) {
           fail(e, "a footprint is a range of a buffer parameter, as in "
-                  "'reads xs.[lo .. hi]'");
+                  "'reads xs.[lo .. hi]', or the cells an owner array gives "
+                  "to a value, as in 'reads xs.[c] where owner.[c] = v'");
           return;
         }
         BindingPtr buf = lookup(e.kids[0]->text);
@@ -1082,12 +1108,28 @@ class Gen {
           fail(*e.kids[0], "a footprint names a buffer parameter");
           return;
         }
-        R lo = genContractExpr(*e.kids[1]->kids[0], types_.usize());
-        R hi = lo ? genContractExpr(*e.kids[1]->kids[1], types_.usize())
-                  : std::nullopt;
-        if (!lo || !hi)
-          return;
-        create<contract::ReadsOp>(loc(*c), buf->value, lo->value, hi->value);
+        if (byOwner) {
+          BindingPtr owner = lookup(ownerAt->text);
+          if (!owner || !owner->isParam || !elementType(owner->type) ||
+              !mlir::isa<IntType>(elementType(owner->type))) {
+            fail(*ownerAt,
+                 "a footprint's owner is an array parameter of integers");
+            return;
+          }
+          R v = genContractExpr(*value, Type());
+          if (!v)
+            return;
+          create<contract::ReadsOp>(loc(*c), buf->value, v->value, v->value,
+                                    owner->value);
+        } else {
+          R lo = genContractExpr(*e.kids[1]->kids[0], types_.usize());
+          R hi = lo ? genContractExpr(*e.kids[1]->kids[1], types_.usize())
+                    : std::nullopt;
+          if (!lo || !hi)
+            return;
+          create<contract::ReadsOp>(loc(*c), buf->value, lo->value, hi->value,
+                                    Value());
+        }
       }
     }
 

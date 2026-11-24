@@ -2815,12 +2815,30 @@ class Encoder {
       Value lo = demand(r.getLo(), bounds), hi = demand(r.getHi(), bounds);
       if (!lo || !hi)
         continue;
+      // The footprint: a range, or the cells an owner array gives to `lo`.
+      Value fowner;
+      if (r.getOwner()) {
+        fowner = args.arrays.lookup(r.getOwner());
+        if (!fowner)
+          continue;
+      }
+      Value len = args.lengths.lookup(formal);
+      auto inFoot = [&](Value c) -> Value {
+        if (!fowner)
+          return andOf(cmp(P::sge, c, lo), cmp(P::slt, c, hi));
+        auto ft = mlir::cast<mlir::smt::ArrayType>(fowner.getType());
+        Value inLen = len ? andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len))
+                          : boolConst(true);
+        return andOf(inLen, eq(create<mlir::smt::ArraySelectOp>(
+                                   ft.getRangeType(), fowner, c),
+                               lo));
+      };
       Value outside;
       if (from.at) {
-        outside = orOf(cmp(P::slt, from.at, lo), cmp(P::sge, from.at, hi));
+        outside = notOf(inFoot(from.at));
       } else {
         outside = forallIndex([&](Value c) {
-          Value in = andOf(cmp(P::sge, c, lo), cmp(P::slt, c, hi));
+          Value in = inFoot(c);
           Value own;
           if (from.owner) {
             auto ot = mlir::cast<mlir::smt::ArrayType>(from.owner.getType());

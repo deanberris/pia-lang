@@ -43,8 +43,11 @@ def Contract_ReadsOp : Contract_Op<"reads"> {
     contents equals the call on the old; the generated frame lemma
     `f'frame` proves it.
   }];
-  let arguments = (ins AnyType:$buffer, AnyType:$lo, AnyType:$hi);
-  let assemblyFormat = "$buffer `[` $lo `,` $hi `]` attr-dict `:` type($buffer) `,` type($lo) `,` type($hi)";
+  // With an owner, the footprint is the cells c with owner[c] = lo, and
+  // hi is unused: `reads xs.[c] where owner.[c] = v`.
+  let arguments = (ins AnyType:$buffer, AnyType:$lo, AnyType:$hi,
+                       Optional<AnyType>:$owner);
+  let assemblyFormat = "$buffer `[` $lo `,` $hi `]` (`by` $owner^)? attr-dict `:` type($buffer) `,` type($lo) `,` type($hi) (`,` type($owner)^)?";
 }
 
 def Contract_EnsuresOp : Contract_Op<"ensures"> {

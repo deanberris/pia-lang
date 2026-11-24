@@ -3,8 +3,10 @@
    it by induction on rsum's own measure, and the verifier then knows that
    a write outside the footprint leaves the call's value alone, after a
    store and after a spread forgets the cells other iterations own.
-   A footprint that misses a cell the function reads fails in the frame
-   lemma.
+   A footprint may also be the cells an owner array gives to a value,
+   `reads xs.[c] where label.[c] = b`, the shape a sum over one basin
+   needs. A footprint that misses a cell the function reads fails in the
+   frame lemma.
 // RUN: not piac --verify --no-lint %s | FileCheck %s
 *)
 
@@ -41,71 +43,121 @@ let spec tsum (xs : [u32]) (lo : usize) (hi : usize) : u64
   decreases hi - lo
 = if lo + 1 = hi then xs.[lo] else tsum xs lo (hi - 1) + xs.[hi - 1]
 
+(* The cells of basin b: a write in another basin keeps its sum. *)
+let spec bsum (xs : [u32]) (label : [usize]) (b : usize) (n : usize) : u64
+  requires n <= len xs && len label = len xs && n <= 4294967296
+  reads xs.[c] where label.[c] = b
+  ensures result <= 4294967296 * n
+  decreases n
+= if n = 0 then 0 else bsum xs label b (n - 1) + (if label.[n - 1] = b then xs.[n - 1] else 0)
+
+let poke_basin (xs : borrowed inout mutable [u32]) (label : [usize]) (b : usize) (i : usize) : unit
+  requires len label = len xs && len xs <= 4294967296 && i < len xs && label.[i] <> b
+  ensures bsum xs label b (len xs) = old (bsum xs label b (len xs))
+= xs.[i] <- 7
+
+(* A write in basin b itself does not keep it: no frame applies. *)
+let poke_own (xs : borrowed inout mutable [u32]) (label : [usize]) (b : usize) (i : usize) : unit
+  requires len label = len xs && len xs <= 4294967296 && i < len xs && label.[i] = b
+  ensures bsum xs label b (len xs) = old (bsum xs label b (len xs))
+= xs.[i] <- 7
+
 (* Expected report, in order.
-// CHECK: frames.pia:16:41: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:16:26: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:16:26: proved: the measure of 'rsum' decreases [smt]
-// CHECK: frames.pia:16:55: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:16:48: proved: the index is within bounds [smt]
-// CHECK: frames.pia:16:46: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:14:3: proved: the postcondition holds [smt]
-// CHECK: frames.pia:16:41: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:16:26: proved: the precondition of 'rsum'frame' holds [smt]
-// CHECK: frames.pia:16:26: proved: the precondition of 'rsum'frame' holds [smt]
-// CHECK: frames.pia:16:26: proved: the precondition of 'rsum'frame' holds [smt]
-// CHECK: frames.pia:16:26: proved: the precondition of 'rsum'frame' holds [smt]
-// CHECK: frames.pia:16:26: proved: the measure of 'rsum'frame' decreases [smt]
-// CHECK: frames.pia:16:48: proved: 'rsum' reads only the cells its 'reads' clause names [smt]
-// CHECK: frames.pia:13:3: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:13:3: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:13:3: proved: 'rsum' gives the same result for buffers that agree on what it reads [smt]
-// CHECK: frames.pia:22:3: proved: the index is within bounds [smt]
-// CHECK: frames.pia:21:11: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:21:32: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:21:3: proved: the postcondition holds [smt]
-// CHECK: frames.pia:32:11: proved: '*' does not overflow usize [smt]
-// CHECK: frames.pia:32:5: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
-// CHECK: frames.pia:32:5: proved: the index is within bounds [smt]
-// CHECK: frames.pia:32:28: proved: '*' does not overflow usize [smt]
-// CHECK: frames.pia:32:32: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:32:22: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
-// CHECK: frames.pia:32:22: proved: the index is within bounds [smt]
-// CHECK: frames.pia:32:49: proved: '*' does not overflow usize [smt]
-// CHECK: frames.pia:32:53: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:32:43: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
-// CHECK: frames.pia:32:43: proved: the index is within bounds [smt]
-// CHECK: frames.pia:32:70: proved: '*' does not overflow usize [smt]
-// CHECK: frames.pia:32:74: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:32:64: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
-// CHECK: frames.pia:32:64: proved: the index is within bounds [smt]
-// CHECK: frames.pia:33:12: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:33:5: proved: the assertion holds [smt]
-// CHECK: frames.pia:30:13: proved: the precondition of 'rsum' holds [smt]
-// CHECK: frames.pia:30:5: proved: the spread's postcondition holds for an iteration, whatever the others write [smt]
-// CHECK: frames.pia:39:22: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:42:9: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:42:23: proved: the index is within bounds [smt]
-// CHECK: frames.pia:42:51: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:42:36: proved: the precondition of 'tsum' holds [smt]
-// CHECK: frames.pia:42:36: proved: the measure of 'tsum' decreases [smt]
-// CHECK: frames.pia:42:65: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:42:58: proved: the index is within bounds [smt]
-// CHECK: frames.pia:42:56: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:40:3: proved: the postcondition holds [smt]
-// CHECK: frames.pia:42:9: proved: '+' does not overflow usize [smt]
-// CHECK: frames.pia:42:23: failed: 'tsum' reads only the cells its 'reads' clause names
+// CHECK: frames.pia:18:41: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:18:26: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:18:26: proved: the measure of 'rsum' decreases [smt]
+// CHECK: frames.pia:18:55: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:18:48: proved: the index is within bounds [smt]
+// CHECK: frames.pia:18:46: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: frames.pia:18:41: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:18:26: proved: the precondition of 'rsum'frame' holds [smt]
+// CHECK: frames.pia:18:26: proved: the precondition of 'rsum'frame' holds [smt]
+// CHECK: frames.pia:18:26: proved: the precondition of 'rsum'frame' holds [smt]
+// CHECK: frames.pia:18:26: proved: the precondition of 'rsum'frame' holds [smt]
+// CHECK: frames.pia:18:26: proved: the measure of 'rsum'frame' decreases [smt]
+// CHECK: frames.pia:18:48: proved: 'rsum' reads only the cells its 'reads' clause names [smt]
+// CHECK: frames.pia:15:3: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:15:3: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:15:3: proved: 'rsum' gives the same result for buffers that agree on what it reads [smt]
+// CHECK: frames.pia:24:3: proved: the index is within bounds [smt]
+// CHECK: frames.pia:23:11: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:23:32: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:23:3: proved: the postcondition holds [smt]
+// CHECK: frames.pia:34:11: proved: '*' does not overflow usize [smt]
+// CHECK: frames.pia:34:5: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
+// CHECK: frames.pia:34:5: proved: the index is within bounds [smt]
+// CHECK: frames.pia:34:28: proved: '*' does not overflow usize [smt]
+// CHECK: frames.pia:34:32: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:34:22: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
+// CHECK: frames.pia:34:22: proved: the index is within bounds [smt]
+// CHECK: frames.pia:34:49: proved: '*' does not overflow usize [smt]
+// CHECK: frames.pia:34:53: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:34:43: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
+// CHECK: frames.pia:34:43: proved: the index is within bounds [smt]
+// CHECK: frames.pia:34:70: proved: '*' does not overflow usize [smt]
+// CHECK: frames.pia:34:74: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:34:64: proved: the iteration owns the cell it writes in 'xs' (owner.[c] = b) [smt]
+// CHECK: frames.pia:34:64: proved: the index is within bounds [smt]
+// CHECK: frames.pia:35:12: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:35:5: proved: the assertion holds [smt]
+// CHECK: frames.pia:32:13: proved: the precondition of 'rsum' holds [smt]
+// CHECK: frames.pia:32:5: proved: the spread's postcondition holds for an iteration, whatever the others write [smt]
+// CHECK: frames.pia:41:22: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:44:9: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:44:23: proved: the index is within bounds [smt]
+// CHECK: frames.pia:44:51: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:44:36: proved: the precondition of 'tsum' holds [smt]
+// CHECK: frames.pia:44:36: proved: the measure of 'tsum' decreases [smt]
+// CHECK: frames.pia:44:65: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:44:58: proved: the index is within bounds [smt]
+// CHECK: frames.pia:44:56: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: frames.pia:44:9: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:44:23: failed: 'tsum' reads only the cells its 'reads' clause names
 // CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len xs' = {{-?[0-9]+}}, lo = {{-?[0-9]+}}, hi = {{-?[0-9]+}}
-// CHECK: frames.pia:42:51: proved: '-' does not overflow usize [smt]
-// CHECK: frames.pia:42:36: proved: the precondition of 'tsum'frame' holds [smt]
-// CHECK: frames.pia:42:36: proved: the precondition of 'tsum'frame' holds [smt]
-// CHECK: frames.pia:42:36: proved: the precondition of 'tsum'frame' holds [smt]
-// CHECK: frames.pia:42:36: proved: the precondition of 'tsum'frame' holds [smt]
-// CHECK: frames.pia:42:36: proved: the measure of 'tsum'frame' decreases [smt]
-// CHECK: frames.pia:42:58: failed: 'tsum' reads only the cells its 'reads' clause names
+// CHECK: frames.pia:44:51: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:44:36: proved: the precondition of 'tsum'frame' holds [smt]
+// CHECK: frames.pia:44:36: proved: the precondition of 'tsum'frame' holds [smt]
+// CHECK: frames.pia:44:36: proved: the precondition of 'tsum'frame' holds [smt]
+// CHECK: frames.pia:44:36: proved: the precondition of 'tsum'frame' holds [smt]
+// CHECK: frames.pia:44:36: proved: the measure of 'tsum'frame' decreases [smt]
+// CHECK: frames.pia:44:58: failed: 'tsum' reads only the cells its 'reads' clause names
 // CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len xs' = {{-?[0-9]+}}, lo = {{-?[0-9]+}}, hi = {{-?[0-9]+}}
 // CHECK:   hint: a recursive spec function was unfolded only as far as its @fuel allows, so this goal may hold; raise @fuel on the function or the lemma, or prove the fact by induction in a lemma
-// CHECK: frames.pia:39:3: proved: the precondition of 'tsum' holds [smt]
-// CHECK: frames.pia:39:3: proved: the precondition of 'tsum' holds [smt]
-// CHECK: frames.pia:39:3: proved: 'tsum' gives the same result for buffers that agree on what it reads [smt]
-// CHECK: 60 proved, 2 failed, 0 skipped
+// CHECK: frames.pia:41:3: proved: the precondition of 'tsum' holds [smt]
+// CHECK: frames.pia:41:3: proved: the precondition of 'tsum' holds [smt]
+// CHECK: frames.pia:41:3: proved: 'tsum' gives the same result for buffers that agree on what it reads [smt]
+// CHECK: frames.pia:52:43: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:52:24: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:52:24: proved: the measure of 'bsum' decreases [smt]
+// CHECK: frames.pia:52:63: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:52:54: proved: the index is within bounds [smt]
+// CHECK: frames.pia:52:83: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:52:77: proved: the index is within bounds [smt]
+// CHECK: frames.pia:52:48: proved: '+' does not overflow usize [smt]
+// CHECK: frames.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: frames.pia:52:43: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:52:24: proved: the precondition of 'bsum'frame' holds [smt]
+// CHECK: frames.pia:52:24: proved: the precondition of 'bsum'frame' holds [smt]
+// CHECK: frames.pia:52:24: proved: the precondition of 'bsum'frame' holds [smt]
+// CHECK: frames.pia:52:24: proved: the precondition of 'bsum'frame' holds [smt]
+// CHECK: frames.pia:52:24: proved: the measure of 'bsum'frame' decreases [smt]
+// CHECK: frames.pia:52:63: proved: '-' does not overflow usize [smt]
+// CHECK: frames.pia:52:54: proved: the index is within bounds [smt]
+// CHECK: frames.pia:52:77: proved: 'bsum' reads only the cells its 'reads' clause names [smt]
+// CHECK: frames.pia:49:3: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:49:3: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:49:3: proved: 'bsum' gives the same result for buffers that agree on what it reads [smt]
+// CHECK: frames.pia:57:3: proved: the index is within bounds [smt]
+// CHECK: frames.pia:56:11: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:56:43: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: frames.pia:63:3: proved: the index is within bounds [smt]
+// CHECK: frames.pia:62:11: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:62:43: proved: the precondition of 'bsum' holds [smt]
+// CHECK: frames.pia:62:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len label = {{-?[0-9]+}}, b = {{-?[0-9]+}}, i = {{-?[0-9]+}}
+// CHECK:   hint: a recursive spec function was unfolded only as far as its @fuel allows, so this goal may hold; raise @fuel on the function or the lemma, or prove the fact by induction in a lemma
+// CHECK: 88 proved, 3 failed, 0 skipped
 *)
