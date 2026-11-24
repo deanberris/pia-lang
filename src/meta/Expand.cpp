@@ -846,6 +846,22 @@ struct Builder {
         collect(*e.kids[k], out);
       return;
     }
+    // An `if` inside an expression guards what its branches read.
+    if (e.kind == NodeKind::If && e.kids.size() >= 3 && e.kids[2] &&
+        e.kids[2]->kind != NodeKind::None) {
+      std::vector<NodePtr> a, b;
+      collect(*e.kids[1], a);
+      collect(*e.kids[2], b);
+      collect(*e.kids[0], out);
+      if (a.empty() && b.empty())
+        return;
+      NodePtr n = makeNode(NodeKind::If, e.loc);
+      n->add(clone(*e.kids[0]));
+      n->add(sequence(std::move(a), e.loc));
+      n->add(sequence(std::move(b), e.loc));
+      out.push_back(std::move(n));
+      return;
+    }
     if (e.kind == NodeKind::Index && e.kids[0]->kind == NodeKind::Name &&
         e.kids[0]->text == xs && e.kids[1]->kind != NodeKind::Range) {
       NodePtr a = makeNode(NodeKind::Assert, e.loc);
@@ -897,8 +913,10 @@ void addFrameLemmas(Node &program, Diagnostics &diags) {
     if (!reads)
       continue;
     const Node &view = *reads->kids[0];
+    bool byOwner = reads->kids.size() == 2;
     if (view.kind != NodeKind::Index || view.kids[0]->kind != NodeKind::Name ||
-        view.kids[1]->kind != NodeKind::Range)
+        (!byOwner && view.kids[1]->kind != NodeKind::Range) ||
+        (byOwner && view.kids[1]->kind != NodeKind::Name))
       continue; // IRGen reports it
     Builder b{fn,
               view.kids[0]->text,
@@ -947,11 +965,19 @@ void addFrameLemmas(Node &program, Diagnostics &diags) {
     NodePtr sameLen = makeNode(NodeKind::Requires, l);
     sameLen->add(binary("=", lenOf(b.ys), lenOf(b.xs), l));
     cs->add(std::move(sameLen));
-    // forall (c in a .. b). xs'.[c] = xs.[c]
+    // forall (c in a .. b). xs'.[c] = xs.[c], or with an owner,
+    // forall (c in 0 .. len xs). owner.[c] = v ==> xs'.[c] = xs.[c]
     std::string c = "c'frame";
     NodePtr q = makeNode(NodeKind::Quantifier, l, "forall");
     NodePtr binder = makeNode(NodeKind::RangeBinder, l, c);
-    binder->add(clone(*view.kids[1]));
+    if (byOwner) {
+      NodePtr r = makeNode(NodeKind::Range, l);
+      r->add(makeNode(NodeKind::IntLit, l, "0"));
+      r->add(lenOf(b.xs));
+      binder->add(std::move(r));
+    } else {
+      binder->add(clone(*view.kids[1]));
+    }
     q->add(std::move(binder));
     NodePtr lhs = makeNode(NodeKind::Index, l);
     lhs->add(name(b.ys, l));
@@ -959,7 +985,11 @@ void addFrameLemmas(Node &program, Diagnostics &diags) {
     NodePtr rhs = makeNode(NodeKind::Index, l);
     rhs->add(name(b.xs, l));
     rhs->add(name(c, l));
-    q->add(binary("=", std::move(lhs), std::move(rhs), l));
+    NodePtr agreeAt = binary("=", std::move(lhs), std::move(rhs), l);
+    if (byOwner)
+      agreeAt = binary("==>", renamed(*reads->kids[1], view.kids[1]->text, c),
+                       std::move(agreeAt), l);
+    q->add(std::move(agreeAt));
     NodePtr agree = makeNode(NodeKind::Requires, l);
     agree->add(std::move(q));
     cs->add(std::move(agree));
