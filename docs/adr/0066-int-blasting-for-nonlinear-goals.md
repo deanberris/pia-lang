@@ -43,6 +43,8 @@ On the same goals written as integers, Z3's default nonlinear integer arithmetic
 
 The slowest int-blasted query is linear, a chain of `bvashr` that is cheap to bit-blast and costly to state as integers, so int-blasting is for nonlinear goals only. On the nonlinear queries Z3 bit-blasting took 135.8 s and Z3 int-blasting 6.8 s. In piac's own resource count, routing the nonlinear goals to int-blasting would take the file from 22.6M to 15.1M. piac's count is lower than the plain bit-blasting run above, because piac first tries each division with multiplication and division uninterpreted (`abstractArithmetic`). The costliest goal, `Int.pia:369`, falls from 5.3M to 12k.
 
+The Z3 version matters too. Z3 5.4.1 bit-blasts the same 473 queries in 46.9 s, three times faster than 4.15.1, but its int-blasting is slower on the linear ones (170.2 s on every query). Routed as above, 5.4.1 takes 18.0 s. Upgrading Z3 is a separate step, measured by the benchmark on its own.
+
 No solver disagreed with another on any query: none proved a goal that another refuted.
 
 ### The options
