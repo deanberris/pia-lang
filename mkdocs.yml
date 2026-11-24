@@ -65,6 +65,9 @@ validation:
 nav:
   - Home: index.md
   - Getting started: getting-started.md
+  - The REPL: repl.md
+  - Agent skills and MCP: agents.md
+  - Pia and other verified languages: comparison.md
   - "Demo: edge detection": demo.md
   - "Demo: stream delineation": streams.pia.md
   - "Demo: sediment transport": sediment.pia.md
@@ -73,9 +76,7 @@ nav:
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
   - "Theories: teaching the verifier a domain": theories.md
-  - The REPL: repl.md
   - Debugging C++ with the REPL: repl-debugging.md
-  - Agent skills: agents.md
   - Case studies:
       - Famous bugs, proved away: cases/index.md
       - Heartbleed: cases/heartbleed.pia.md
@@ -163,6 +164,7 @@ nav:
       - adr/0055-sediment-transport-in-fixed-point.md
       - adr/0056-tests-generated-from-contracts-and-theories.md
       - adr/0057-posix-module-per-target-behind-one-interface.md
-      - adr/0058-ghost-buffers.md
+      - adr/0058-spec-buffers.md
       - adr/0059-digit-separators-and-type-bounds.md
       - adr/0060-spread-v0-ownership-and-runtime.md
+      - adr/0061-lean-proved-facts.md
