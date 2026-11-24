@@ -46,7 +46,7 @@ path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
 
-let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* EQ handled
+let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* reveal_clause? EQ handled
 
 binder: IDENT | SPLICE_IDENT
 
@@ -162,6 +162,13 @@ named_attr_arg.2: IDENT EQ stmt
     | let_in
     | match_e
     | lambda
+    | reveal_in
+
+// `with f, g`: reveal opaque spec functions in a body, or in one
+// expression with `with f, g in e` (ADR 0063).
+reveal_names: postfix (COMMA postfix)*
+reveal_clause: WITH reveal_names
+reveal_in: WITH reveal_names IN seq
 
 let_in: LET REC? SPEC? binder param* ret_annot? contract* EQ handled IN seq
 

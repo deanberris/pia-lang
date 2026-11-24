@@ -187,7 +187,11 @@ class Parser {
     switch (kind()) {
       case K::Let: case K::Match: case K::If: case K::For: case K::Spread:
       case K::While: case K::Forall: case K::Exists: case K::Assert:
-      case K::Assume: case K::Type: case K::Sig: case K::Defer:
+      case K::Assume:
+      case K::Type:
+      case K::Sig:
+      case K::Defer:
+      case K::With:
         return true;
       default:
         return false;
@@ -460,6 +464,9 @@ class Parser {
     n->add(retAnnot());
     Node *contracts = n->add(makeNode(N::Contracts, loc()));
     while (atContract()) contracts->add(contract());
+    // `with f, g`: reveal opaque spec functions in the body (ADR 0063).
+    if (at(K::With))
+      contracts->add(reveal(/*clause=*/true));
 
     NodePtr body;
     if (bodyless == Bodyless::Axiom) {
@@ -1221,6 +1228,8 @@ class Parser {
       return let(/*allowItem=*/false, /*allowIn=*/true);
     }
     if (at(K::Match)) return match();
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     NodePtr s = stmt();
     if (at(K::Semi)) {
       take();
@@ -1354,8 +1363,40 @@ class Parser {
     return h;
   }
 
+  // `with f, g in e` (ADR 0063): the opaque spec functions f and g are
+  // revealed in e. As a clause after a function's contracts, `with f, g`
+  // reveals them in its whole body, and has no `in`.
+  NodePtr reveal(bool clause) {
+    auto n = makeNode(N::Reveal, loc());
+    expect(K::With, "'with'");
+    do {
+      if (!at(K::Ident))
+        fail("expected the name of a spec function after 'with'");
+      NodePtr f = makeNode(N::Name, loc(), text());
+      take();
+      // `M.f`, an imported function, as an expression writes it.
+      while (at(K::Dot) && kind(1) == K::Ident) {
+        take();
+        auto field = makeNode(N::Field, f->loc, text());
+        take();
+        field->add(std::move(f));
+        f = std::move(field);
+      }
+      n->add(std::move(f));
+    } while (accept(K::Comma));
+    if (clause) {
+      n->flags = "clause";
+      return n;
+    }
+    expect(K::In, "'in' after the functions 'with' reveals");
+    n->add(seq());
+    return n;
+  }
+
   NodePtr stmt() {
     SourceLoc start = loc();
+    if (at(K::With))
+      return reveal(/*clause=*/false);
     switch (kind()) {
       case K::If: {
         take();

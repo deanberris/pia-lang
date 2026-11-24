@@ -1,0 +1,86 @@
+(* Opaque spec functions (ADR 0063): a spec function marked @opaque keeps
+   its definition out of every goal, though a call keeps its range and its
+   ensures. `with f` after a function's contracts reveals f in its whole
+   body, and `with f in e` only in e. An imported one is in
+   tests/modules/opaque.pia.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let spec small (x : u8) : bool @opaque = x < 10
+
+(* Wrong: without its definition, small x says nothing about x. *)
+let hidden (x : u8) : u8
+  requires small x
+  ensures result < 20
+= x + x
+
+(* The clause reveals small in the whole body. *)
+let shown (x : u8) : u8
+  requires small x
+  ensures result < 20
+  with small
+= x + x
+
+(* The expression reveals it only in e. *)
+let scoped (x : u8) : u8
+  requires small x
+  ensures result < 20
+= (with small in assert x < 10);
+  x + x
+
+(* Its range and ensures still hold at a call. *)
+let spec capped (x : u8) : u8 @opaque
+  ensures result <= 100
+= if x > 100 then 100 else x
+
+let use_cap (x : u8) : u16
+  ensures result <= 510
+= let spec c : [u8; 1] = [capped x] in
+  assert c.[0] <= 100;
+  2 * x
+
+(* Wrong: after the scope, a call with new arguments is opaque again. *)
+let scope_ends (x : u8) : u8
+= (with small in assert small 3);
+  assert small 4;
+  x
+
+let lemma reveal_in_lemma (x : u8) : unit
+  requires small x
+  ensures x < 10
+  with small
+= ()
+
+let after_lemma (x : u8) : u8
+  requires small x
+  ensures result < 20
+= reveal_in_lemma x;
+  x + x
+
+(* Expected report, in order.
+// CHECK: opaque.pia:15:5: failed: '+' does not overflow u8
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}, result = {{-?[0-9]+}}
+// CHECK:   hint: 'small' is opaque here; 'with small' may prove it (ADR 0063)
+// CHECK: opaque.pia:14:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK:   hint: 'small' is opaque here; 'with small' may prove it (ADR 0063)
+// CHECK: opaque.pia:22:5: proved: '+' does not overflow u8 [smt]
+// CHECK: opaque.pia:20:3: proved: the postcondition holds [smt]
+// CHECK: opaque.pia:28:18: proved: the assertion holds [smt]
+// CHECK: opaque.pia:29:5: proved: '+' does not overflow u8 [smt]
+// CHECK: opaque.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: opaque.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: opaque.pia:38:27: proved: the index is within bounds [intervals]
+// CHECK: opaque.pia:39:3: proved: the assertion holds [smt]
+// CHECK: opaque.pia:40:5: proved: '*' does not overflow u16 [intervals]
+// CHECK: opaque.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: opaque.pia:44:18: proved: the assertion holds [smt]
+// CHECK: opaque.pia:45:3: failed: the assertion holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK:   hint: 'small' is opaque here; 'with small' may prove it (ADR 0063)
+// CHECK: opaque.pia:50:3: proved: the postcondition holds [smt]
+// CHECK: opaque.pia:57:3: proved: the precondition of 'reveal_in_lemma' holds [smt]
+// CHECK: opaque.pia:58:5: proved: '+' does not overflow u8 [smt]
+// CHECK: opaque.pia:56:3: proved: the postcondition holds [smt]
+// CHECK: 15 proved, 3 failed, 0 skipped
+*)

@@ -97,6 +97,18 @@ def Contract_HavocOthersOp : Contract_Op<"havoc_others"> {
   let assemblyFormat = "$buffer `,` $iv (`by` $owner^)? attr-dict `:` type($buffer) `,` type($iv) (`,` type($owner)^)?";
 }
 
+def Contract_RevealOp : Contract_Op<"reveal"> {
+  let summary = "an opaque spec function's definition, a fact from here on";
+  let description = [{
+    `with f` (ADR 0063): from this point to the end of the enclosing
+    block, a call to the `@opaque` spec function `f` gets its definition
+    as a fact, as if `f` were not opaque; the calls already met get it too.
+    With `pia.end`, it ends a `with f in e` instead. Codegen erases it.
+  }];
+  let arguments = (ins FlatSymbolRefAttr:$callee);
+  let assemblyFormat = "$callee attr-dict";
+}
+
 def Contract_AssumeOp : Contract_Op<"assume"> {
   let summary = "a fact the verifier may use without proof";
   let arguments = (ins I1:$predicate);
