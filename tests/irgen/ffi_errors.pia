@@ -36,3 +36,11 @@ let too_many (n : i32) : i32 @variadic(3) ensures true = extern "many_va"
 (* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @variadic is only for a foreign declaration, '= extern "symbol"'
 *)
 let not_foreign (n : i32) : i32 @variadic(1) = n
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @deref is only for a foreign declaration, '= extern "symbol"'
+*)
+let not_foreign_deref (n : i32) : i32 @deref = n
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @deref reads an integer through the pointer C returns, so the result must be an integer
+*)
+let deref_bool () : bool @deref ensures true = extern "flag_c"
