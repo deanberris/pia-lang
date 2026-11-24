@@ -505,6 +505,60 @@ int main(int argc, char **argv) {
     free(gif), free(rect), free(lz), free(hash);
   }
   free(pal), free(frames);
+
+  // Sediment by basin (docs/basins.pia.md): every basin on its own core, a
+  // spread over the basins, against the sequential sediment from the same
+  // start. Basins never exchange sediment, so the two must agree cell for
+  // cell.
+  {
+    uint64_t *lab = malloc(n * sizeof *lab), *ord = malloc(n * sizeof *ord);
+    uint64_t *ps = malloc(n * sizeof *ps);
+    uint32_t *ac = malloc(n * sizeof *ac);
+    drainage(fill, n, down, n, ac, n, lab, n, rain, n, pend, n, ord, n, ps, n,
+             cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS, last, HEIGHTS, owner,
+             n);
+    uint32_t *bs = malloc(n * 4), *ls = malloc(n * 4), *is = malloc(n * 4),
+             *fs = malloc(n * 4);
+    uint32_t *bp = malloc(n * 4), *lp = malloc(n * 4), *ip = malloc(n * 4),
+             *fp = malloc(n * 4), *gb = malloc(n * 4);
+    uint64_t *border = malloc(n * 8), *keys = malloc(n * 8),
+             *place2 = malloc(n * 8), *pos2 = malloc(n * 8),
+             *gfirst = malloc(n * 8), *gnext = malloc(n * 8),
+             *glast = malloc(n * 8), *gowner = malloc(n * 8);
+    uint32_t *gcnt = malloc(n * 4);
+    const uint32_t bsteps = 16;
+    for (uint64_t i = 0; i < n; ++i)
+      bs[i] = bp[i] = seed;
+    double s0 = seconds();
+    uint64_t gone_s =
+        sediment(fill, n, down, n, ac, n, bsteps, bs, n, ls, n, is, n, fs, n,
+                 order, n, pos, n, cnt, HEIGHTS, first, HEIGHTS, next, HEIGHTS,
+                 last, HEIGHTS, owner, n);
+    double s1 = seconds();
+    uint64_t gone_p = sediment_basins(
+        fill, n, down, n, ac, n, lab, n, ord, n, bsteps, bp, n, lp, n, ip, n,
+        fp, n, gb, n, border, n, keys, n, place2, n, pos2, n, gcnt, n, gfirst,
+        n, gnext, n, glast, n, gowner, n);
+    double s2 = seconds();
+    uint64_t differ = 0, basins = 0;
+    for (uint64_t i = 0; i < n; ++i) {
+      differ += bs[i] != bp[i] || ls[i] != lp[i] || is[i] != ip[i];
+      basins += down[i] == i;
+    }
+    printf("basins: %llu steps, sequential %.1f ms, by %llu basins in parallel "
+           "%.1f ms; %llu out both ways; %llu cells differ\n",
+           (unsigned long long)bsteps, (s1 - s0) * 1e3,
+           (unsigned long long)basins, (s2 - s1) * 1e3,
+           (unsigned long long)gone_p, (unsigned long long)differ);
+    if (gone_s != gone_p || differ) {
+      fprintf(stderr, "basins: the parallel run differs from the sequential\n");
+      return 1;
+    }
+    free(lab), free(ord), free(ps), free(ac), free(bs), free(ls), free(is);
+    free(fs), free(bp), free(lp), free(ip), free(fp), free(gb), free(border);
+    free(keys), free(place2), free(pos2), free(gfirst), free(gnext);
+    free(glast), free(gowner), free(gcnt);
+  }
   free(ground), free(rain), free(flow), free(pend), free(fill0);
   free(order), free(pos), free(bed), free(load), free(inflow), free(flux);
   free(cnt), free(first), free(next), free(last), free(owner);

@@ -9608,10 +9608,12 @@ class Gen {
     if (n.kind == NodeKind::Name && written.count(n.text)) {
       bool indexed = parent && parent->kind == NodeKind::Index &&
                      parent->kids[0].get() == &n;
-      bool measured = parent && parent->kind == NodeKind::Apply &&
-                      parent->kids.size() == 2 && parent->kids[1].get() == &n &&
-                      parent->kids[0]->kind == NodeKind::Name &&
-                      parent->kids[0]->text == "len";
+      // `len xs`, or `old xs`, which only contracts and lemmas can use.
+      bool measured =
+          parent && parent->kind == NodeKind::Apply &&
+          parent->kids.size() == 2 && parent->kids[1].get() == &n &&
+          parent->kids[0]->kind == NodeKind::Name &&
+          (parent->kids[0]->text == "len" || parent->kids[0]->text == "old");
       // An argument of a call to a function with a footprint for it, or
       // of a lemma, which is erased; checked at the call.
       bool passed = false;
@@ -9624,7 +9626,10 @@ class Gen {
           for (size_t k = 1; k < parent->kids.size(); ++k)
             if (parent->kids[k].get() == &n)
               at = k - 1;
-          bool lemma = sig.item && hasFlag(*sig.item, "lemma");
+          // A lemma is erased, and a spec function is only for contracts
+          // and lemmas: neither runs.
+          bool lemma = sig.item && (hasFlag(*sig.item, "lemma") ||
+                                    hasFlag(*sig.item, "spec"));
           passed =
               lemma || llvm::any_of(footprintsOf(sig), [&](const Footprint &f) {
                 return f.buf == at;
@@ -9887,6 +9892,17 @@ class Gen {
       }
       bind(pattern.text, i, t, false);
       sc.iv = i;
+      // The iteration starts with its own cells as they were before the
+      // loop: no other iteration writes them (ADR 0060).
+      for (const std::string &name : sc.written) {
+        BindingPtr wb = lookup(name);
+        if (!wb || !sc.outside.count(wb.get()))
+          continue;
+        auto owner = sc.owners.find(name);
+        Value ov = owner != sc.owners.end() ? owner->second->value : Value();
+        auto h = create<contract::HavocOthersOp>(l, wb->value, i, ov);
+        h->setAttr("pia.from_start", b_.getUnitAttr());
+      }
       spread_ = std::move(sc);
       LoopScope inLoop(frames_);
       Deeper deeper(loopDepth_);
