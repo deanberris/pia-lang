@@ -1,0 +1,81 @@
+(* Recursive values compiled (ADR 0047, step 3) and run from C
+   (rec_run_test.c): a tree's nodes live in a buffer of cells the caller
+   lends, each a struct of the tag and every constructor's payload, where
+   a box is a slot of one cell. `build` makes a tree of five nodes with a
+   bump allocator, one fallible allocation per box, and sums its keys by
+   recursion through the boxes.
+*)
+module RecRun : Trees
+
+interface Trees @abi(c) = sig
+  let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+  let rec tree = let (r : region) => type
+    | Leaf
+    | Node of node r
+  let rec node = let (r : region) => type { left : box (tree r) r; key : u32; right : box (tree r) r }
+  let build : (cells : borrowed mutable [tree]) -> u64
+end
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b.slot = 1 && b.state = 1
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+let rec tree = let (r : region) => type
+  | Leaf
+  | Node of node r
+let rec node = let (r : region) => type { left : box (tree r) r; key : u32; right : box (tree r) r }
+
+let rec sum (r : region) (t : tree r) : u64 =
+  match t with
+  | Leaf -> 0
+  | Node n ->
+    let a = if len n.left.slot = 1 then sum n.left.slot.[0] else 0 in
+    let b = if len n.right.slot = 1 then sum n.right.slot.[0] else 0 in
+    if a < 1000000 && b < 1000000 then a + b + (if n.key < 1000 then n.key else 0) else 0
+
+(* A node over two fresh leaves. *)
+let twig (m : inout mutable bump tree) (k : u32) : result tree oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+= let l = make m Leaf? in
+  let r = make m Leaf? in
+  Ok (Node { left = l; key = k; right = r })
+
+(* 5 over the twigs 7 and 30: 42, or 0 when the cells run out. *)
+let build (cells : borrowed mutable [tree]) : u64 =
+  let m : mutable bump tree = { mem = cells; used = 0 } in
+  match twig m 7 with
+  | Err _ -> 0
+  | Ok a ->
+    match twig m 30 with
+    | Err _ -> 0
+    | Ok b ->
+      match make m a with
+      | Err _ -> 0
+      | Ok l ->
+        match make m b with
+        | Err _ -> 0
+        | Ok r -> sum (Node { left = l; key = 5; right = r })

@@ -5,7 +5,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
+    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -281,6 +281,26 @@ cc_test(
     srcs = [
         "box_concept_test.c",
         ":box_concept_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# rec_run.pia, a tree of recursive values in cells C lends (ADR 0047,
+# step 3), built with a bump allocator and summed.
+genrule(
+    name = "rec_run_obj",
+    srcs = ["rec_run.pia"],
+    outs = ["rec_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "rec_run_test",
+    srcs = [
+        "rec_run_test.c",
+        ":rec_run_obj",
     ],
     target_compatible_with = PIA_TARGETS,
 )

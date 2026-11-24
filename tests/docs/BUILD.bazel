@@ -17,6 +17,7 @@ DOCS = [
     "//docs:streams.pia.md",
     "//docs:sediment.pia.md",
     "//docs:basins.pia.md",
+    "//docs:pull.pia.md",
     "//docs:theories.md",
 ]
 
@@ -78,10 +79,13 @@ SKILLS = [
     "//skills:README.md",
     "//skills:pia-contracts/SKILL.md",
     "//skills:pia-fast-proofs/SKILL.md",
+    "//skills:pia-idioms/SKILL.md",
     "//skills:pia-language/SKILL.md",
     "//skills:pia-mcp/SKILL.md",
+    "//skills:pia-porting/SKILL.md",
     "//skills:pia-proof-debugging/SKILL.md",
     "//skills:pia-repl/SKILL.md",
+    "//skills:piac-build/SKILL.md",
     "//skills:piac-verify/SKILL.md",
 ]
 

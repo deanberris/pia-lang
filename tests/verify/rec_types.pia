@@ -34,6 +34,15 @@ let key_of (l : box tree) (k : u32) (r : box tree) : u32
   | Leaf -> 0
   | Node n -> n.key
 
+(* A constructor without a payload, built and matched.
+// CHECK: rec_types.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let empty_key () : u32
+  ensures result = 0
+= match Leaf with
+  | Leaf -> 0
+  | Node n -> n.key
+
 (* A measure over the value's depth or size.
 // CHECK: rec_types.pia:[[@LINE+6]]:44: proved: the measure of 'rightmost' decreases [smt]
 *)
@@ -80,5 +89,5 @@ let rec last (l : list u8) : u8 =
   | Cons c -> if len c.tail.slot = 1 then (match c.tail.slot.[0] with | Nil -> c.head | Cons _ -> last c.tail.slot.[0]) else c.head
 
 (*
-// CHECK: 11 proved, 2 failed, 0 skipped
+// CHECK: 12 proved, 2 failed, 0 skipped
 *)

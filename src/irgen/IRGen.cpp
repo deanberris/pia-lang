@@ -1000,6 +1000,7 @@ class Gen {
     opaque_ = false;
     owns_.clear();
     variadic_.reset();
+    deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
     triggers_.clear();
@@ -1303,6 +1304,11 @@ class Gen {
     if (variadic_ && !isExtern) {
       fail(*variadicNode_, "@variadic is only for a foreign declaration, "
                            "'= extern \"symbol\"'");
+      return;
+    }
+    if (deref_ && !isExtern) {
+      fail(*deref_, "@deref is only for a foreign declaration, "
+                    "'= extern \"symbol\"'");
       return;
     }
     // A function with `@owns(buf, owner, b)` checks every access to `buf`
@@ -1851,6 +1857,13 @@ class Gen {
         variadicNode_ = a.get();
         continue;
       }
+      // `@deref` on a foreign declaration: the C function returns a
+      // pointer to the result, and the call reads through it, so the
+      // pointer never reaches Pia. errno is the case (ADR 0057, section 5).
+      if (a->text == "deref" && a->kids.empty()) {
+        deref_ = a.get();
+        continue;
+      }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
       // the syntax tree, so there is nothing to generate.
       // `@trigger(t1, t2)` on an axiom: one pattern (ADR 0036).
@@ -2269,6 +2282,23 @@ class Gen {
       }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
+      // Recursive values (ADR 0047) compare in contracts, as values.
+      if (mlir::isa<RecType>(a.type) || mlir::isa<RecType>(c.type)) {
+        if ((op != "=" && op != "<>") || a.type != c.type)
+          return fail(n, "'" + op + "' compares two values of one recursive "
+                         "type with '=' or '<>', found " + typeName(a.type) +
+                         " and " + typeName(c.type));
+        if (!contract_)
+          return fail(n, "comparing values of the recursive type " +
+                             typeName(a.type) + " is only supported in "
+                             "contracts yet; code compares them with "
+                             "@derive(eq), which comes with ADR 0047, step 4");
+        Location l = loc(n);
+        Value eq = create<RecEqOp>(l, a.value, c.value);
+        if (op == "<>")
+          eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+        return TV{eq, boolType()};
+      }
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
       if (!u) return std::nullopt;
       CmpPredicate p = op == "="    ? CmpPredicate::eq
@@ -2539,8 +2569,30 @@ class Gen {
       }
       return create<RecordOp>(l, rt, fields).getResult();
     }
+    // A recursive value (ADR 0047): a constructor that needs no value of
+    // the type, which inhabitation guarantees, such as `Leaf`, or one
+    // whose payload has a default without one, such as an empty vec.
+    if (auto rec = mlir::dyn_cast<RecType>(t)) {
+      if (!defaulting_.insert(t).second) return Value();
+      Value out;
+      for (const sema::Ctor *c : types_.ctorsOf(rec)) {
+        llvm::SmallVector<Value> payload;
+        if (c->payload) {
+          Value d = defaultValue(l, c->payload);
+          if (!d) continue;
+          payload.push_back(d);
+        }
+        out = create<RecMakeOp>(l, rec, b_.getStringAttr(c->name), payload)
+                  .getResult();
+        break;
+      }
+      defaulting_.erase(t);
+      return out;
+    }
     return Value();
   }
+  // The recursive types defaultValue is making a value of.
+  llvm::DenseSet<Type> defaulting_;
 
   // `match e with | C x -> a | D -> b | _ -> c` on a variant. It becomes a
   // chain of `if`s on the tag, each arm binding its payload, so carried
@@ -7028,8 +7080,14 @@ class Gen {
                                   "no interface of '" + header.text +
                                   "' lists");
         const Node *own = typeItem(r.text);
+        bool ownRec = own && own->flags.find("rec") != std::string::npos;
         if (!own)
           diags_.error(r.loc, unmet + "no type '" + r.text + "'");
+        else if (ownRec != (r.flags == "rec"))
+          diags_.error(r.loc, unmet + "the type '" + r.text + "' is " +
+                                  (ownRec ? "" : "not ") +
+                                  "recursive, so the interface must show it "
+                                  "with " + (ownRec ? "'let rec'" : "'let'"));
         else if (!sameTree(*own->kids[3], *r.kids[0]))
           diags_.error(r.loc, unmet + "the type '" + r.text +
                                   "' is defined differently; an interface "
@@ -8422,6 +8480,7 @@ class Gen {
     if (isBool(t))
       return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
                                          a, b);
+    if (mlir::isa<RecType>(t)) return create<RecEqOp>(l, a, b);
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt) return Value();
     auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
@@ -9136,6 +9195,9 @@ class Gen {
                         "bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
+    if (deref_ && !mlir::isa<IntType>(sig.result))
+      return fail(*deref_, "@deref reads an integer through the pointer C "
+                           "returns, so the result must be an integer");
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
@@ -9144,6 +9206,8 @@ class Gen {
                                 b_.getStringAttr(symbol), args);
     if (variadic_)
       op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
+    if (deref_)
+      op->setAttr("pia.deref", b_.getUnitAttr());
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }
@@ -11175,6 +11239,8 @@ class Gen {
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
+  // `@deref` on the item being generated, or null.
+  const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   // While a spec write's place is generated, a spec field may be named
