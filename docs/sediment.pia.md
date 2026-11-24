@@ -1009,9 +1009,11 @@ let label_outlets (fill : [u16]) (down : [usize]) (order : [usize]) (pos : [usiz
   requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
   requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
   ensures forall (k in 0 .. len basin). basin.[k] < len fill && down.[basin.[k]] = basin.[k]
+  ensures forall (k in 0 .. len basin). basin.[at down k] = basin.[k]
 = let n = len fill in
   for t in 0 .. n
     invariant forall (k in 0 .. len basin). n - t <= at pos k ==> basin.[k] < n && down.[basin.[k]] = basin.[k]
+    invariant forall (k in 0 .. len basin). n - t <= at pos k ==> basin.[at down k] = basin.[k]
   do
     let p = n - 1 - t in
     let c = order.[p] in
@@ -1069,6 +1071,7 @@ Every goal in this file is proved before `piac` generates code:
 | The flow through every cell is at least its own rain and at most the total rain | `accumulate_rain` |
 | Every rainfall field gives each cell at most 255 units, and its total fits in a `u32` | `rain_uniform`, `rain_band`, `rain_season` |
 | A cell's downstream neighbour comes later in the height order | `later` |
+| A cell and the cell it drains to have the same watershed, so a basin's water stays in it | `label_outlets` |
 | Accumulation is between 1 and the number of cells, and every watershed label is an outlet, in linear time | `label_outlets`, `drainage` |
 | No sediment buffer overflows | the total is at most 2^32 - 1, and `elt_le` bounds each cell by it |
 
