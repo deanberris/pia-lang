@@ -1,8 +1,8 @@
-# 62. Cost bounds are contracts: `costs e` bounds a function's steps, counted by a spec-only `spent` and proved by Z3
+# 62. Cost bounds are contracts: `costs c <= e` bounds what a function spends on a named counter, tracked by a spec-only `spent c` and proved by Z3
 
 Date: 2026-11-24
 
-Status: Proposed
+Status: Accepted (2026-11-24, with Dean's answers below)
 
 ## Context
 
@@ -14,44 +14,50 @@ Most complexity clauses are exact upper bounds on a count: comparisons, swaps, l
 
 ## Decision
 
-### 1. `costs e` bounds a function's cost
+### 1. `costs c <= e` bounds what a function spends on one counter
 
-A function may state its cost after its other contracts:
+A function may state its cost after its other contracts, and every cost clause names what it counts:
 
 ```ocaml
 let find (xs : [u32]) (v : u32) : usize
   ensures result <= len xs
-  costs len xs
+  costs iterations <= len xs
 = ...
 ```
 
-`costs e` means that every run of the function, from any state meeting its `requires`, costs at most `e`. `e` is a spec expression of type `int` (unbounded, so a bound never overflows) over the parameters and their `old` values. It is an upper bound only. Lower bounds and exact counts are out of scope.
+`costs c <= e` means that every run of the function, from any state meeting its `requires`, spends at most `e` on the counter `c`. `e` is a spec expression of type `int` (unbounded, so a bound never overflows) over the parameters and their `old` values. A function may have several cost clauses, one per counter, such as `costs less <= n` and `costs swap <= n` for a sort. Each is proved on its own.
 
-Only upper bounds are in scope, because they are what callers need: a caller that knows each callee's bound can add them up. `costs` is a keyword only in contract position, like `requires` and `ensures`.
+Only upper bounds are in scope, because they are what callers need: a caller that knows each callee's bound can add them up. Lower bounds and exact counts are out of scope. `costs` is a keyword only in contract position, like `requires` and `ensures`.
 
-### 2. The cost model: steps by default, or calls to one function
+### 2. Counters
 
-**Steps (the default).** One unit for each loop iteration, and for each call that is not to a spec function or lemma. A call costs one unit plus the callee's bound: its `costs` clause, with the arguments substituted. A callee without `costs` has a bound only when the compiler can work one out: a function with no loops and no recursion costs the number of calls on its longest path, plus their bounds, which is a constant. Calling any other function without `costs` from a function with `costs` is an error that names the callee: "`sort` has no cost bound, so the cost of `top_k` cannot be proved; add `costs` to `sort`."
+There is no default cost model. A bound always says what it is in units of, so two bounds are never compared in different units by accident (Dean, 2026-11-24). A counter is one of:
 
-**Calls to one function, `@counts(f)`.** Only calls to `f` count, one unit each. `f` is a function, a function parameter, or a concept requirement such as `Ord`'s `less`. This is how C++ states its clauses, in comparisons or swaps. Under `@counts(f)`, a callee contributes its own bound if it is also `@counts(f)` for the same `f` (passed through as an argument), and nothing if `f` cannot be reached from it: the callee is not `f`, does not take `f` as an argument and has no concept that provides it. The type checker decides both from the callee's signature. Any other callee is an error, as for steps.
+- **A function**, a function parameter, or a concept requirement such as `Ord`'s `less`: each call to it counts one. This is how C++ states its clauses, in comparisons, swaps or assignments.
+- **`iterations`**: each iteration of a loop in the function counts one.
+- **`calls`**: each call to a function that is not a spec function or lemma counts one.
 
-A cost model counts steps, not time. A step count says nothing about caches or vector width, so performance budgets stay benchmarks (ADR 0056). What a cost bound proves is the shape that a benchmark measures: how the work grows with the input.
+`iterations` and `calls` are names only after `costs` and `spent`, not keywords, so they do not take names away from code.
 
-### 3. `spent` counts the cost so far
+**What a callee contributes.** A call adds the callee's own bound for the same counter, with its arguments substituted, so cost composes. The callee contributes nothing if the counter cannot be reached from it: for a function counter `f`, the callee is not `f`, does not take `f` as an argument and has no concept that provides it, which the type checker decides from its signature. For `iterations` and `calls`, every callee can reach the counter, so it must have a bound for it. A callee with no loops and no recursion has one without writing it: the compiler works out the constant from its body. Any other callee without a bound for the counter is an error that names it: "`sort` has no bound on `less`, so the cost of `top_k` on `less` cannot be proved; add `costs less <= ...` to `sort`."
 
-Inside a function with `costs`, the spec-only value `spent` is the cost so far, under the function's model. It is `0` on entry. Each counted event adds to it: one for a loop iteration, and one plus the callee's bound for a call. At each return, `spent <= e` is a goal, with `e` evaluated at the parameters' entry values.
+A counter counts events, not time. A count says nothing about caches or vector width, so performance budgets stay benchmarks (ADR 0056). What a cost bound proves is the shape that a benchmark measures: how the work grows with the input.
 
-`spent` is a loop-carried value like any other, so loops bound it with an invariant, and the loop machinery that exists today ([verifier.md](../verifier.md#loops)) does the rest. Binary search, counting calls to `less`:
+### 3. `spent c` counts what has been spent so far
+
+Inside a function with a cost clause on `c`, the spec-only value `spent c` is what the function has spent on `c` so far. It is `0` on entry. Each counted event adds one, and each call adds the callee's bound. At each return, `spent c <= e` is a goal, with `e` evaluated at the parameters' entry values.
+
+`spent c` is a loop-carried value like any other, so loops bound it with an invariant, and the loop machinery that exists today ([verifier.md](../verifier.md#loops)) does the rest. Binary search, counting calls to `less`:
 
 ```ocaml
-let lower_bound (xs : [t]) (v : t) : usize @counts(less)
+let lower_bound (xs : [t]) (v : t) : usize
   requires sorted xs
-  costs Pia.Math.Log.bits (len xs)
+  costs less <= Pia.Math.Log.bits (len xs)
 = let lo : mutable usize = 0 in
   let hi : mutable usize = len xs in
   while lo < hi
     invariant lo <= hi && hi <= len xs
-    invariant spent + Pia.Math.Log.bits (hi - lo) <= Pia.Math.Log.bits (len xs)
+    invariant spent less + Pia.Math.Log.bits (hi - lo) <= Pia.Math.Log.bits (len xs)
   do
     let mid = lo + (hi - lo) / 2 in
     if less xs.[mid] v then lo <- mid + 1 else hi <- mid
@@ -61,7 +67,7 @@ let lower_bound (xs : [t]) (v : t) : usize @counts(less)
 
 `bits m` is the number of binary digits of `m`, which is `floor (log2 m) + 1` for `m >= 1`: exactly C++'s "at most `log2(n) + 1` comparisons". Each iteration costs one `less` and leaves a range of at most `(hi - lo) / 2`, and `bits` drops by one when its argument is halved. That fact is a lemma of `Pia.Math.Log`, so the invariant's goal is linear.
 
-`spent` can appear in loop invariants, `assert`s and lemma calls. It cannot appear in code, in `requires` or in `ensures`, and codegen erases it like any spec value. Encoded, it is a spec `int` local, which IRGen threads through loops, branches and error handlers like a mutable local ([ADR 0028](0028-error-propagation-and-cleanup.md)'s `?` returns are returns, so each has the goal).
+`spent c` can appear in loop invariants, `assert`s and lemma calls. It cannot appear in code, in `requires` or in `ensures`, and codegen erases it like any spec value. Encoded, it is a spec `int` local per counter, which IRGen threads through loops, branches and error handlers like a mutable local ([ADR 0028](0028-error-propagation-and-cleanup.md)'s `?` returns are returns, so each has the goal).
 
 ### 4. Recursion
 
@@ -73,10 +79,10 @@ let spec merge_cost (n : int) : int
   decreases n
 = if n <= 1 then 0 else merge_cost (n / 2) + merge_cost (n - n / 2) + n
 
-let merge_sort (xs : inout [t]) (scratch : out [t]) : unit @counts(less)
+let merge_sort (xs : inout [t]) (scratch : out [t]) : unit
   requires len scratch = len xs
   ensures sorted xs && permutation xs (old xs)
-  costs merge_cost (len xs)
+  costs less <= merge_cost (len xs)
   decreases len xs
 = ...
 ```
@@ -85,7 +91,7 @@ Z3 proves that the code follows the recurrence, one call at a time. It cannot so
 
 ### 5. Amortised bounds
 
-An operation that is cheap on average, such as `vec`'s `push` or a union–find `union`, states its bound with a potential: a spec function of the structure's model ([docs/stdlib.md](../stdlib.md), ghost models), such as `costs 1 + phi (old v) - phi v`. It is an ordinary `costs` expression, using `old`, so nothing new is needed to prove it. A sequence of `k` pushes then costs at most `k + phi (first) - phi (last)`, which is linear, because the potential is never negative (a lemma about `phi`). This is the banker's method of time credits, written as a contract.
+An operation that is cheap on average, such as `vec`'s `push` or a union–find `union`, states its bound with a potential: a spec function of the structure's model ([docs/stdlib.md](../stdlib.md), ghost models), such as `costs calls <= 1 + phi (old v) - phi v`. It is an ordinary `costs` expression, using `old`, so nothing new is needed to prove it. A sequence of `k` pushes then costs at most `k + phi (first) - phi (last)`, which is linear, because the potential is never negative (a lemma about `phi`). This is the banker's method of time credits, written as a contract.
 
 ### 6. `Pia.Math.Log`
 
@@ -103,7 +109,7 @@ A `costs` clause is part of its function's contract, so it is in the interface a
 
 ### 8. Build time
 
-A function without `costs` has no `spent` and no cost goals, so existing code costs nothing more to prove. A function with `costs` gets one more loop-carried `int` and one more goal per return and per invariant. These goals are linear when the bound is linear or written with `bits` and its lemmas. Bounds such as `n * bits n` are nonlinear. They are proved through lemmas that do the multiplication once, or with `@solver(nlsat)`, and they join the benchmark corpus ([ADR 0032](0032-parallel-sliced-cached-proving.md)), so a costly bound shows up as a regression.
+A function without a cost clause has no `spent` and no cost goals, so existing code costs nothing more to prove. A function with a cost clause gets one more loop-carried `int` per counter and one more goal per return and per invariant. These goals are linear when the bound is linear or written with `bits` and its lemmas. Bounds such as `n * bits n` are nonlinear. They are proved through lemmas that do the multiplication once, or with `@solver(nlsat)`, and they join the benchmark corpus ([ADR 0032](0032-parallel-sliced-cached-proving.md)), so a costly bound shows up as a regression.
 
 ## Consequences
 
@@ -112,19 +118,23 @@ A function without `costs` has no `spent` and no cost goals, so existing code co
 - Recurrences are proved to be followed, not solved. Solving them, and asymptotic claims, need ADR 0061's Lean lemmas, or induction lemmas in Pia where those are enough.
 - A step is not time. Bounds say how work grows, and benchmarks still say how fast it is.
 - Pia goes on being an upper-bound system. Lower bounds, worst-case inputs and parallel span (for `spread`, [ADR 0060](0060-spread-v0-ownership-and-runtime.md)) are left for later.
-- New syntax: the `costs e` clause, the spec-only `spent`, and `@counts(f)`. `costs` is a keyword only in contract position.
+- New syntax: the `costs c <= e` clause and the spec-only `spent c`. `costs` is a keyword only in contract position, and `iterations` and `calls` are names only after `costs` and `spent`.
+- Every exported `Pia.Core` function with a loop or recursion states a bound, which a lint checks (below).
 
 ### Implementation order
 
 Each step is a PR with tests in `tests/verify/costs.pia`.
 
-1. **`costs` and `spent` under the step model**: loops, calls, inferred bounds for functions with no loops or recursion, the error for a callee without a bound, and `spent` in invariants and `assert`s.
-2. **Recursion and `@counts(f)`**, including function parameters and concept requirements, and `Pia.Math.Log` with its lemmas.
-3. **Interfaces**: `costs` in `.piai`, the interface hash and the refinement goal; then the first proved clauses in `Pia.Core.Algo` (`lower_bound`, `upper_bound`, `push_heap`, `pop_heap`), with `docs/cpp-std.md` updated.
+1. **`costs c <= e` and `spent c` for `iterations` and `calls`**: loops, calls, inferred bounds for functions with no loops or recursion, the error for a callee without a bound, and `spent c` in invariants and `assert`s.
+2. **Recursion and function counters**, including function parameters and concept requirements, and `Pia.Math.Log` with its lemmas.
+3. **Interfaces**: cost clauses in `.piai`, the interface hash and the refinement goal; then the first proved clauses in `Pia.Core.Algo` (`lower_bound`, `upper_bound`, `push_heap`, `pop_heap`), with `docs/cpp-std.md` updated.
 4. **Amortised bounds** with a potential, starting with `vec`'s `push`.
 5. **Reporting**: `--verify-stats` and the REPL report cost goals separately, so their proof cost is visible.
+6. **The lint** `unbounded_cost` ([ADR 0037](0037-idiomatic-pia-and-lints.md)): an exported function of a `Pia.Core` module with a loop or recursion and no cost clause is a warning. It is on for `lib/Pia/Core` from the start, and the warnings it finds there are fixed module by module.
 
-## Open questions
+## Answers to the open questions
 
-1. **Is "steps" the right default?** The alternative is no default: every `costs` must name what it counts with `@counts`, so a bound always says what it is in units of. Steps are convenient for code written in Pia, and `@counts` fits C++'s clauses.
-2. **Should a lint ask for `costs` on public library functions?** An idiom lint ([ADR 0037](0037-idiomatic-pia-and-lints.md)) could warn when an exported function of `Pia.Core` has loops and no `costs`, so the library's bounds are complete.
+Dean answered when he accepted it (2026-11-24):
+
+1. **Every bound names what it counts.** There is no default cost model, so `costs` always names its counter (`iterations`, `calls`, or a function such as `less`), and `spent` takes the counter too. This replaced the proposed default of steps and the `@counts(f)` attribute.
+2. **A lint asks for bounds on the library.** `unbounded_cost` warns on an exported `Pia.Core` function with a loop or recursion and no cost clause (step 6).
