@@ -76,6 +76,15 @@ common:rbe --remote_timeout=1h
 # Actions run remotely, so many at once; --local_resources still limits what
 # runs on the machine itself.
 common:rbe --jobs=100
+# Proofs and tests run on the machine Bazel runs on, not remotely. piac
+# starts a solver thread per core it sees, and an executor shows many cores
+# but gives an action few, so a proof that takes seconds on the CI runner
+# ran into its 10-minute wall-clock safety net there. Their results are
+# still cached remotely.
+build:rbe --strategy=PiaInterface=sandboxed,local
+build:rbe --strategy=PiaCompile=sandboxed,local
+build:rbe --strategy=PiaCertCheck=sandboxed,local
+test:rbe --strategy=TestRunner=sandboxed,local
 # The Linux settings, whatever the host.
 build:rbe --config=linux
 
