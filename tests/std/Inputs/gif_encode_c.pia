@@ -1,0 +1,30 @@
+(* A C entry point for Pia.Image.Gif.Encode, for the generator of the
+   encoder's run test (tests/std/Inputs/gif_encode_gen.py): gif_encode is
+   encode_animation with plain integer arguments, returning the length
+   written, or 0 for any error. *)
+module GifEncodeC : Entry
+
+import Pia.Image.Bits.Bits as B
+import Pia.Image.Raster.Raster as R
+import Pia.Image.Gif.Spec.Lzw as S
+import Pia.Image.Gif.Spec.Blocks as G
+import Pia.Image.Gif.Lzw.Lzw as L
+import Pia.Image.Gif.Decode.Decode as D
+import Pia.Image.Gif.LzwEncode.LzwEncode as E
+import Pia.Image.Gif.Encode.Encode as X
+
+interface Entry @abi(c) = sig
+  let gif_encode : (w : u16) -> (h : u16) -> (pal : [u8]) -> (frames : [u8]) -> (nf : u16) -> (delay : u16) -> (loops : u16) -> (dst : borrowed inout mutable [u8]) -> (rect : borrowed inout mutable [u8]) -> (lz : borrowed inout mutable [u8]) -> (hash : borrowed inout mutable [u8]) -> u64
+end
+
+let gif_encode (w : u16) (h : u16) (pal : [u8]) (frames : [u8]) (nf : u16) (delay : u16) (loops : u16) (dst : borrowed inout mutable [u8]) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : u64
+= if w = 0 || h = 0 || len hash <> 40960 then 0
+  else (
+    let w' : int{1..65535} = w in
+    let h' : int{1..65535} = h in
+    let fs : usize = w' * h' * 1 in
+    if len rect <> fs || len lz <> 3 * len rect + 5 then 0
+    else (
+      match X.encode_animation w' h' pal frames nf delay loops dst rect lz hash with
+      | Ok n -> n
+      | Err _ -> 0))
