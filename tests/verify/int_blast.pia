@@ -27,8 +27,7 @@ let lemma index_lt (x : u32) (y : u32) (w : u32) (h : u32) (c : u8) (k : u8) : u
 (* Lemire's range reduction: the high half of x * s lies below s.
 // CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
-let lemma reduce_lt (x : u32) (s : u32) : unit
-  requires s > 0
+let lemma reduce_lt (x : int{0..4294967295}) (s : int{1..4294967295}) : unit
   ensures (x * s) / 4294967296 < s
 = ()
 
