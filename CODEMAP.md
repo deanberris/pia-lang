@@ -27,6 +27,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | everything | `bazel build //... && bazel test //...` | the iMac (arm64 macOS), or CI (macOS arm64 and Linux x86_64, `.github/workflows/ci.yml`). Cloud sessions cannot fetch Bazel's dependencies. |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
+| build queue (iMac) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
 | prove a file | `bazel-bin/tools/piac/piac --verify f.pia` | see the `piac-verify` and `pia-fast-proofs` skills |
 | doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test` | every `ocaml` block in the listed pages is proved |
 | proof cost gate | `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac` | fails on a Z3 cost regression of more than 10% against `tools/bench/baseline.json` |
@@ -138,6 +139,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
+- `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
 - `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` (ADR 0051, section 6). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
 
