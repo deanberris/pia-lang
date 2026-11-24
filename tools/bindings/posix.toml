@@ -110,3 +110,8 @@ constants = [
 structs = [
   "kevent",
 ]
+
+# Interface rows whose names are not the C symbol they declare: one C
+# variadic function at another arity.
+[aliases]
+open_mode = "open"

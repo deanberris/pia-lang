@@ -56,6 +56,7 @@ lit_tests(
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
         "//lib/Pia/Mem:Vec.pia",
+        "//lib/Pia/Sys/Gen:arm64_macos.pia",
         "//lib/Pia/Text/Json:Derive.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",

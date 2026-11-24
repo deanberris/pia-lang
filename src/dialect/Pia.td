@@ -769,6 +769,21 @@ def Pia_RecPayloadOp : Pia_Op<"rec_payload", [NoMemoryEffect]> {
   let hasVerifier = 1;
 }
 
+def Pia_RecMeasureOp : Pia_Op<"rec_measure", [Pure]> {
+  let summary = "the depth or size of a recursive value, spec-only";
+  let description = [{
+    `%d = pia.rec_measure "depth" %t : !pia.rec<"tree">` is `depth t`, and
+    `"size"` is `size t` (ADR 0047, section 3): an `int`, for `decreases`
+    and other contracts. The verifier knows only that each is at least 0
+    (size at least 1) and that a component's is smaller than its
+    holder's, which is what a measure needs.
+  }];
+  let arguments = (ins StrAttr:$kind, Pia_Rec:$input);
+  let results = (outs Pia_UnboundedIntType:$result);
+  let assemblyFormat = "$kind $input attr-dict `:` type($input)";
+  let hasVerifier = 1;
+}
+
 def Pia_FieldOp : Pia_Op<"field", [Pure]> {
   let summary = "read a field of a record";
   let description = [{ `%r = pia.field %p, "r" : !pia.record<...> -> !pia.int<0, 255>` }];

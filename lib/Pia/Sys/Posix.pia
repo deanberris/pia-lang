@@ -1,0 +1,91 @@
+(* The contract overlay of Pia.Sys.Posix (ADR 0057): the interface that each
+   target's generated module, lib/Pia/Sys/Gen/<target>.pia, meets. Each
+   `let` is one row: the Pia types and modifiers of a POSIX function's
+   parameters and the contract its manual page promises, or a constant
+   whose value importers cannot see. tools/bindings/gen.py copies this
+   interface into each generated module and writes a contracted extern for
+   each row, after checking it against that target's header. The contracts
+   are trusted, so each says no more than its manual page.
+
+   A path is a byte buffer that ends in a NUL, so C stops reading at or
+   before its last byte. *)
+
+interface Posix = sig
+  (** open(2), without O_CREAT: C reads no mode. *)
+  let open : (path : [u8]) -> (flags : i32) -> i32 @variadic(2)
+    requires len path >= 1 && path.[len path - 1] = 0
+    ensures result >= -1
+  (** open(2) with a mode, which C reads when flags has O_CREAT. *)
+  let open_mode : (path : [u8]) -> (flags : i32) -> (mode : u32) -> i32 @variadic(2)
+    requires len path >= 1 && path.[len path - 1] = 0
+    requires mode <= 4095
+    ensures result >= -1
+  (** close(2) *)
+  let close : (fd : i32) -> i32
+    ensures result >= -1 && result <= 0
+  (** read(2): returns at most n, or -1. *)
+  let read : (fd : i32) -> (buf : out mutable [u8]) -> (n : usize) -> isize
+    requires n <= len buf
+    ensures result >= -1 && result <= n
+  (** write(2): writes at most n, or returns -1. *)
+  let write : (fd : i32) -> (buf : [u8]) -> (n : usize) -> isize
+    requires n <= len buf
+    ensures result >= -1 && result <= n
+  (** pread(2) *)
+  let pread : (fd : i32) -> (buf : out mutable [u8]) -> (n : usize) -> (offset : i64) -> isize
+    requires n <= len buf && offset >= 0
+    ensures result >= -1 && result <= n
+  (** pwrite(2) *)
+  let pwrite : (fd : i32) -> (buf : [u8]) -> (n : usize) -> (offset : i64) -> isize
+    requires n <= len buf && offset >= 0
+    ensures result >= -1 && result <= n
+  (** lseek(2): the new offset, or -1. *)
+  let lseek : (fd : i32) -> (offset : i64) -> (whence : i32) -> i64
+    ensures result >= -1
+  (** fsync(2) *)
+  let fsync : (fd : i32) -> i32
+    ensures result >= -1 && result <= 0
+  (** ftruncate(2) *)
+  let ftruncate : (fd : i32) -> (length : i64) -> i32
+    requires length >= 0
+    ensures result >= -1 && result <= 0
+  (** unlink(2) *)
+  let unlink : (path : [u8]) -> i32
+    requires len path >= 1 && path.[len path - 1] = 0
+    ensures result >= -1 && result <= 0
+  (** isatty(3): 1 for a terminal, else 0. *)
+  let isatty : (fd : i32) -> i32
+    ensures result >= 0 && result <= 1
+
+  let o_rdonly : i32
+  let o_wronly : i32
+  let o_rdwr : i32
+  let o_creat : i32
+  let o_excl : i32
+  let o_trunc : i32
+  let o_append : i32
+  let o_nonblock : i32
+  let o_cloexec : i32
+  let o_directory : i32
+  let seek_set : i32
+  let seek_cur : i32
+  let seek_end : i32
+  let stdin_fileno : i32
+  let stdout_fileno : i32
+  let stderr_fileno : i32
+  let eperm : i32
+  let enoent : i32
+  let eintr : i32
+  let eio : i32
+  let ebadf : i32
+  let eagain : i32
+  let enomem : i32
+  let eacces : i32
+  let eexist : i32
+  let enotdir : i32
+  let eisdir : i32
+  let einval : i32
+  let emfile : i32
+  let enospc : i32
+  let epipe : i32
+end

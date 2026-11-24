@@ -32,7 +32,7 @@ interface Tracked @abi(c) = sig
   let count_from : (z : int{0..15}) -> counted
 end
 
-let blk = type int{0..63}
+let blk = int{0..63}
 
 let theory Alloc = sig
   let sort heap
