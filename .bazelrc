@@ -63,28 +63,19 @@ common:buildbuddy --remote_build_event_upload=minimal
 common:buildbuddy --remote_download_toplevel
 
 # BuildBuddy remote execution: Linux x86_64 builds and tests on BuildBuddy's
-# executors (Ubuntu 24.04, GCC 13), for CI's Linux job. Needs the API key,
-# as --config=buildbuddy does. macOS builds cannot use it: BuildBuddy's cloud
-# executors are Linux only.
+# executors (Ubuntu 24.04, Clang 19 via toolchains_llvm), for CI's Linux job.
+# Needs the API key, as --config=buildbuddy does. macOS builds cannot use it:
+# BuildBuddy's cloud executors are Linux only.
 common:rbe --config=buildbuddy
 common:rbe --remote_executor=grpcs://remote.buildbuddy.io
 common:rbe --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
 common:rbe --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
-common:rbe --extra_toolchains=@toolchains_buildbuddy//toolchains/cc:ubuntu_gcc_x86_64
+common:rbe --extra_toolchains=@llvm_rbe//:cc-toolchain-x86_64-linux
 # The longest actions are LLVM links and proof tests, under 15 minutes.
 common:rbe --remote_timeout=1h
 # Actions run remotely, so many at once; --local_resources still limits what
 # runs on the machine itself.
 common:rbe --jobs=100
-# Proofs and tests run on the machine Bazel runs on, not remotely. piac
-# starts a solver thread per core it sees, and an executor shows many cores
-# but gives an action few, so a proof that takes seconds on the CI runner
-# ran into its 10-minute wall-clock safety net there. Their results are
-# still cached remotely.
-build:rbe --strategy=PiaInterface=sandboxed,local
-build:rbe --strategy=PiaCompile=sandboxed,local
-build:rbe --strategy=PiaCertCheck=sandboxed,local
-test:rbe --strategy=TestRunner=sandboxed,local
 # The Linux settings, whatever the host.
 build:rbe --config=linux
 

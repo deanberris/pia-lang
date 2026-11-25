@@ -15,11 +15,13 @@ bazel_dep(name = "rules_python", version = "1.9.3")
 
 bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
 
-# BuildBuddy's Linux executors and their GCC toolchain, for --config=rbe
-# (.bazelrc), which CI's Linux job uses. The toolchain only matches an
-# execution platform with the @bazel_tools//tools/cpp:gcc constraint, which
-# only BuildBuddy's platform has, so local builds keep their own toolchain.
-# Ubuntu 24.04, as on CI's runner, so the piac it builds runs there too.
+# BuildBuddy's Linux executors (Ubuntu 24.04, as on CI's runner, so the piac
+# it builds runs there too) and a Clang toolchain for them (--config=rbe in
+# .bazelrc). Both macOS and Linux CI build Z3 with Clang so solver costs match
+# the shared baseline (and GCC 13 made Utf8.pia's decode postcondition time
+# out). The Clang toolchain is not registered globally: only --config=rbe
+# selects it via --extra_toolchains, so local and fork-PR builds keep their
+# own toolchain and never download the archive.
 bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4", dev_dependency = True)
 
 buildbuddy = use_extension(
@@ -28,7 +30,21 @@ buildbuddy = use_extension(
     dev_dependency = True,
 )
 buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
-buildbuddy.gcc_toolchain(gcc_major_version = "13")
+
+bazel_dep(name = "toolchains_llvm", version = "1.13.0", dev_dependency = True)
+
+llvm_rbe = use_extension(
+    "@toolchains_llvm//toolchain/extensions:llvm.bzl",
+    "llvm",
+    dev_dependency = True,
+)
+llvm_rbe.toolchain(
+    name = "llvm_rbe",
+    exec_arch = "amd64",
+    exec_os = "linux",
+    llvm_version = "19.1.7",
+)
+use_repo(llvm_rbe, "llvm_rbe")
 
 # --------------------------------------------------------------- Z3
 
