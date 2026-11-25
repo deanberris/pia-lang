@@ -1,0 +1,54 @@
+(* Repeated calls of a pure function in a contract — including an interface
+   conformance check that substitutes `result` at every mention (#375) —
+   agree, because the verifier encodes them as applications of one
+   uninterpreted function per result field.
+// RUN: piac --verify %s | FileCheck %s
+*)
+module PureCalls : Splits
+
+interface Splits = sig
+  let pair = type { a : u8; b : u8 }
+  let combine : (a : u8) -> (b : u8) -> u16
+    ensures result = a + b
+  let split : (x : u8) -> pair
+    ensures result.a + result.b = x
+    ensures combine result.a result.b = x
+end
+
+let pair = type { a : u8; b : u8 }
+
+let combine (a : u8) (b : u8) : u16
+  ensures result = a + b
+= a + b
+
+(* The postcondition does not pin down `a` and `b` uniquely, so unrelated calls
+   would fail whenever a contract reads both fields. *)
+let split (x : u8) : pair
+  ensures result.a + result.b = x
+= let half : u8 = x / 2 in
+  { a = half; b = x - half }
+
+(* Calling a pure function twice in a lemma's contract sees the same record. *)
+let lemma split_sum (x : u8) : unit
+  ensures (split x).a + (split x).b = x
+= ()
+
+(* Equal arguments produce equal fields. *)
+let lemma split_congruent (x : u8) (y : u8) : unit
+  requires x = y
+  ensures (split x).a = (split y).a && (split x).b = (split y).b
+= ()
+
+(* A call in code and one in a contract agree. *)
+let first_half (x : u8) : u8
+  ensures result = (split x).a
+= let p = split x in p.a
+
+(* Inside a quantifier, repeated calls also refer to the same record. *)
+let lemma split_all () : unit
+  ensures forall (x : u8). (split x).a + (split x).b = x
+= ()
+
+(* Expected report.
+// CHECK: 0 failed, 0 skipped
+*)

@@ -72,3 +72,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0066](0066-int-blasting-for-nonlinear-goals.md) | Nonlinear goals are tried first with Z3's int-blasting solver; cvc5 is deferred, and nothing GPL is used | Accepted |
 | [0067](0067-release-0-1-0-a-proved-small-llm.md) | Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 on CPU SIMD and on the GPU through linalg | Accepted |
 | [0068](0068-gpu-compute-through-spirv-and-metal.md) | GPU compute: a proved `spread` placed on the GPU, lowered through SPIR-V and SPIRV-Cross to Metal, launched by a small trusted shim, with an Apple GPU float model | Accepted |
+| [0069](0069-pure-and-impure-functions.md) | Pure and impure functions: computed purity, `@pure` assertions, and `@impure` interface boundaries | Accepted |

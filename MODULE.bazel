@@ -56,6 +56,26 @@ single_version_override(
     version = "0.16.0",
 )
 
+# --------------------------------------------------------------- SPIR-V (ADR 0068)
+
+# SPIRV-Tools, for spirv-val on the SPIR-V piac makes for the GPU. 2026.3
+# needs rules_python 2.1, and the LLVM overlay below requires rules_python
+# below 2.0, so it stays at 2026.2.
+bazel_dep(name = "spirv_tools", version = "2026.2")
+
+# SPIRV-Cross translates SPIR-V to the Metal Shading Language. It is not in
+# the Bazel Central Registry, so it is pinned here at a Vulkan SDK tag with
+# its hash, and built by third_party/spirv_cross/BUILD.overlay.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "spirv_cross",
+    build_file = "//third_party/spirv_cross:BUILD.overlay",
+    sha256 = "fbf9bee521545557357679173d39787a954bd8187e4b2fcaa09044c70201b434",
+    strip_prefix = "SPIRV-Cross-vulkan-sdk-1.4.350.0",
+    urls = ["https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-1.4.350.0.tar.gz"],
+)
+
 # --------------------------------------------------------------- LLVM and MLIR
 #
 # LLVM's Bazel build lives in llvm-project at utils/bazel. Its MODULE.bazel

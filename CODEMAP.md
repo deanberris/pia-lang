@@ -25,6 +25,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | What | Command | Where |
 | --- | --- | --- |
 | everything | `bazel build //... && bazel test //...` | the iMac (arm64 macOS), or CI (macOS arm64 and Linux x86_64, `.github/workflows/ci.yml`). Cloud sessions cannot fetch Bazel's dependencies. |
+| prebuilt `pia` and `piac` | `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'` (or `pia-macos-arm64.tar.gz`) | moving `latest` prerelease on [GitHub Releases](https://github.com/deanberris/pia-lang/releases/tag/latest) (plus `SHA256SUMS.txt`), updated on green `main` runs (`.github/workflows/ci.yml`) |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
 | build queue (iMac) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
@@ -120,6 +121,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
 - `src/codegen/ArrayResults.{h,cpp}` turns each array result into a buffer the caller makes, and each return into a copy into it, so arrays are returned by value.
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
+- `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
 - `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
@@ -208,7 +210,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 
 - **Syntax and bindings:** 0002 (single `let`), 0019 (grammar), 0059 (digit separators, `min t`/`max t`), 0022 (hygiene, no shadowing), 0029 (comments, literate), 0039 (modules and interfaces).
 - **Types:** 0003 (`dyn`), 0005 (parameter modifiers), 0009 (generics, concepts), 0034 (overloads), 0035 (SFINAE, type `match`), 0043 (generics proved once), 0044 (lambdas), 0046 (`box`), 0047 (recursive types), 0048 (buffers of slices), 0051 (tuples, variadic packs, `one_of`, generated foreign bindings), 0057 (`Pia.Sys.Posix` per target behind one interface), 0064 (distinct types: `type` always makes a new type).
-- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions), 0066 (int-blasting for nonlinear goals).
+- **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions), 0066 (int-blasting for nonlinear goals), 0069 (pure and impure functions).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).

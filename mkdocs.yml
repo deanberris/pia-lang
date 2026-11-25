@@ -176,3 +176,4 @@ nav:
       - adr/0066-int-blasting-for-nonlinear-goals.md
       - adr/0067-release-0-1-0-a-proved-small-llm.md
       - adr/0068-gpu-compute-through-spirv-and-metal.md
+      - adr/0069-pure-and-impure-functions.md
