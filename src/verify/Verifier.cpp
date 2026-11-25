@@ -3313,6 +3313,10 @@ class Encoder {
     bool ok = true;
     while (!worklist.empty() && ok) {
       mlir::func::FuncOp cur = worklist.pop_back_val();
+      bool curTerminates =
+          measureOf(cur).has_value() ||
+          llvm::any_of(cur.getFunctionType().getInputs(),
+                       [](Type t) { return mlir::isa<RecType>(t); });
       cur.walk([&](Operation *op) {
         if (!ok)
           return;
@@ -3320,6 +3324,13 @@ class Encoder {
             mlir::isa<ForeignOp, ViewOp, ArbitraryOp, AddressOp, AtAddressOp>(
                 op)) {
           ok = false;
+          return;
+        }
+        if (auto w = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+          bool hasMeasure = false;
+          w.walk([&](contract::DecreasesOp) { hasMeasure = true; });
+          if (!hasMeasure)
+            ok = false;
           return;
         }
         auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
@@ -3332,6 +3343,11 @@ class Encoder {
         mlir::func::FuncOp callee = calleeOf(c);
         if (!callee) {
           ok = false;
+          return;
+        }
+        if (callee == cur) {
+          if (!curTerminates)
+            ok = false;
           return;
         }
         if (callee->hasAttr(PiaDialect::getLemmaAttrName()) ||
