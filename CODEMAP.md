@@ -120,6 +120,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
 - `src/codegen/ArrayResults.{h,cpp}` turns each array result into a buffer the caller makes, and each return into a copy into it, so arrays are returned by value.
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
+- `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
 - `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
