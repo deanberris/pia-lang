@@ -13,6 +13,15 @@
 # runs only when the `changes` job finds a change that can move a gated
 # cost (tools/bench/needs_bench.py), and every night on main whatever
 # changed. Running the workflow by hand runs it too.
+#
+# Runs on main (and manual runs) package and upload stripped `pia` and `piac`
+# binaries (`pia-macos-arm64` and `pia-linux-x86_64`, kept 14 days). When both
+# platforms pass on `main`, `publish-latest` also updates the moving `latest`
+# GitHub prerelease (`pia-linux-x86_64.tar.gz`, `pia-macos-arm64.tar.gz`, and
+# `SHA256SUMS.txt`) so sessions and users can fetch them with
+# `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'`
+# (or `pia-macos-arm64.tar.gz`, or the GitHub Releases URL) without building
+# LLVM, MLIR and Z3.
 name: CI
 
 on:
@@ -24,6 +33,9 @@ on:
     # 16:00 UTC is 2 or 3 in the morning in Sydney.
     - cron: "0 16 * * *"
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 # A new push to a pull request makes its older run worthless, so that run is
 # cancelled. Runs on main are not: each one checks a commit that landed and
@@ -155,6 +167,36 @@ jobs:
           path: bench.json
           if-no-files-found: ignore
 
+      # Prebuilt binaries from main (and manual runs) let cloud sessions and
+      # users run `pia repl` and `piac --verify` without building LLVM, MLIR
+      # and Z3 from source. Packaged as a tarball so execute bits survive
+      # GitHub's artifact zip; re-signed after stripping because Apple silicon
+      # rejects unsigned Mach-O binaries.
+      - name: Package binaries
+        if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          stage="${{ runner.temp }}/pia-macos-arm64"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac "$stage/"
+          chmod 755 "$stage/pia" "$stage/piac"
+          strip -x "$stage/pia" "$stage/piac"
+          codesign --force --sign - "$stage/pia" "$stage/piac"
+          printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
+          "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
+          printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
+          COPYFILE_DISABLE=1 tar -czf "${{ runner.temp }}/pia-macos-arm64.tar.gz" -C "$stage" pia piac
+          ls -lh "$stage/pia" "$stage/piac" "${{ runner.temp }}/pia-macos-arm64.tar.gz"
+
+      - name: Upload binaries
+        if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v4
+        with:
+          name: pia-macos-arm64
+          path: ${{ runner.temp }}/pia-macos-arm64.tar.gz
+          retention-days: 14
+          compression-level: 0
+
       - name: Save the Bazel disk cache
         if: steps.test.outcome == 'success' && steps.restore.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -276,6 +318,36 @@ jobs:
           path: bench.json
           if-no-files-found: ignore
 
+      # Prebuilt binaries from main (and manual runs) let cloud sessions and
+      # users run `pia repl` and `piac --verify` without building LLVM, MLIR
+      # and Z3 from source. Linux builds with --fission=dbg,fastbuild, so debug
+      # info already lives in .dwo files that are not shipped; stripping drops
+      # the remaining symbol tables. Packaged as a tarball so execute bits
+      # survive GitHub's artifact zip.
+      - name: Package binaries
+        if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: |
+          stage="${{ runner.temp }}/pia-linux-x86_64"
+          rm -rf "$stage"
+          mkdir -p "$stage"
+          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac "$stage/"
+          chmod 755 "$stage/pia" "$stage/piac"
+          strip "$stage/pia" "$stage/piac"
+          printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
+          "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
+          printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
+          tar -czf "${{ runner.temp }}/pia-linux-x86_64.tar.gz" -C "$stage" pia piac
+          ls -lh "$stage/pia" "$stage/piac" "${{ runner.temp }}/pia-linux-x86_64.tar.gz"
+
+      - name: Upload binaries
+        if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-artifact@v4
+        with:
+          name: pia-linux-x86_64
+          path: ${{ runner.temp }}/pia-linux-x86_64.tar.gz
+          retention-days: 14
+          compression-level: 0
+
       # A queue group's ref is deleted once the group is done, and nothing
       # can restore a cache saved under it, so the queue does not save one.
       - name: Save the Bazel disk cache
@@ -333,3 +405,98 @@ jobs:
     timeout-minutes: 5
     steps:
       - run: echo "Checked in the merge queue, not here."
+
+  # Publishes both platform tarballs and their checksums to the moving `latest`
+  # GitHub prerelease once both macOS and Linux succeed on `main`. Marked
+  # prerelease so it never displaces future versioned releases, and moves the
+  # `latest` git tag explicitly via the Git Refs API (`gh release edit --target`
+  # does not move an already-existing lightweight tag).
+  publish-latest:
+    name: publish latest release
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.idle != 'true' &&
+      needs.test.result == 'success' &&
+      needs.linux.result == 'success'
+    needs: [changes, test, linux]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: pia-linux-x86_64
+          path: dist
+
+      - name: Download macOS binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: pia-macos-arm64
+          path: dist
+
+      - name: Generate checksums
+        run: |
+          (cd dist && sha256sum pia-linux-x86_64.tar.gz pia-macos-arm64.tar.gz > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+
+      - name: Update latest prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          short_sha="${GITHUB_SHA:0:12}"
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          title="Latest build (${short_sha})"
+          notes=$(cat <<EOF
+          Prebuilt \`pia\` and \`piac\` binaries from \`main\` commit ${GITHUB_SHA}.
+
+          - Workflow run: ${run_url}
+          - Assets: \`pia-linux-x86_64.tar.gz\`, \`pia-macos-arm64.tar.gz\`, \`SHA256SUMS.txt\`
+
+          Download with GitHub CLI:
+          \`\`\`sh
+          gh release download latest -R ${GITHUB_REPOSITORY} --pattern 'pia-linux-x86_64.tar.gz'
+          # or on Apple silicon macOS:
+          gh release download latest -R ${GITHUB_REPOSITORY} --pattern 'pia-macos-arm64.tar.gz'
+          \`\`\`
+          EOF
+          )
+
+          # Move the lightweight `latest` tag to this commit (or create it on
+          # the first run). `gh release edit --target` does not move an existing
+          # git tag.
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/latest" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/latest" \
+              -f sha="${GITHUB_SHA}" \
+              -F force=true >/dev/null
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref="refs/tags/latest" \
+              -f sha="${GITHUB_SHA}" >/dev/null
+          fi
+
+          if gh release view latest >/dev/null 2>&1; then
+            gh release edit latest \
+              --prerelease \
+              --target "${GITHUB_SHA}" \
+              --title "${title}" \
+              --notes "${notes}"
+          else
+            gh release create latest \
+              --prerelease \
+              --verify-tag \
+              --target "${GITHUB_SHA}" \
+              --title "${title}" \
+              --notes "${notes}"
+          fi
+
+          gh release upload latest \
+            dist/pia-linux-x86_64.tar.gz \
+            dist/pia-macos-arm64.tar.gz \
+            dist/SHA256SUMS.txt \
+            --clobber

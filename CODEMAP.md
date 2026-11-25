@@ -25,6 +25,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | What | Command | Where |
 | --- | --- | --- |
 | everything | `bazel build //... && bazel test //...` | the iMac (arm64 macOS), or CI (macOS arm64 and Linux x86_64, `.github/workflows/ci.yml`). Cloud sessions cannot fetch Bazel's dependencies. |
+| prebuilt `pia` and `piac` | `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'` (or `pia-macos-arm64.tar.gz`) | moving `latest` prerelease on [GitHub Releases](https://github.com/deanberris/pia-lang/releases/tag/latest) (plus `SHA256SUMS.txt`), updated on green `main` runs (`.github/workflows/ci.yml`) |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
 | build queue (iMac) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
