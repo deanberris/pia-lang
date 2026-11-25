@@ -43,6 +43,7 @@ llvm_rbe.toolchain(
     exec_arch = "amd64",
     exec_os = "linux",
     llvm_version = "19.1.7",
+    stdlib = {"": "dynamic-stdc++"},
 )
 use_repo(llvm_rbe, "llvm_rbe")
 
