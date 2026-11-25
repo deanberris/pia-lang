@@ -17,8 +17,15 @@ bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
 
 # --------------------------------------------------------------- Z3
 
-bazel_dep(name = "z3", version = "4.15.2")
+bazel_dep(name = "z3", version = "5.4.1")
 
+# Z3 5.4.1 fixes the bv2int_translator / theory_intblast use-after-free and
+# soundness bugs that crashed 4.15.2 under ADR 0066 (Z3 PRs #10109, #10485,
+# #10707, #11066, #11098, #11166, #11417). BCR does not yet publish 5.4.1 (and
+# BCR's 5.3.1 had a broken strip_prefix), so we fetch the upstream release
+# tarball with archive_override; switch back to single_version_override once
+# 5.4.1+ lands on BCR.
+#
 # Z3's QF_BV tactic simplifies and runs its AIG pass after bit-blasting only
 # while the whole process holds less than 300 MB (MEMLIMIT in
 # qfbv_tactic.cpp). A proof run with many threads holds more, so the same
@@ -26,14 +33,16 @@ bazel_dep(name = "z3", version = "4.15.2")
 # thread, which proof_bench's determinism check caught on
 # lib/Pia/Core/Charconv.pia. The patch always takes the branch a small
 # process takes, so every cost is what a single thread already measured.
-single_version_override(
+archive_override(
     module_name = "z3",
+    integrity = "sha256-WQAsyGrrhFeYpssgD48J5SBbIM1/qwMWvvsuNV45bIM=",
     patch_strip = 1,
     patches = ["//third_party/z3:qfbv_memory_independent.patch"],
-    version = "4.15.2",
+    strip_prefix = "z3-z3-5.4.1",
+    urls = ["https://github.com/Z3Prover/z3/releases/download/z3-5.4.1/z3-5.4.1-source.tar.gz"],
 )
 
-# Z3's BCR module builds with rules_foreign_cc's CMake rule. On macOS,
+# Z3's module builds with rules_foreign_cc's CMake rule. On macOS,
 # apple_support's toolchain links with a different tool (wrapped_clang) from
 # the one it compiles with (wrapped_clang_pp). rules_foreign_cc hands CMake
 # that linker as a relative bazel-out/ path, which breaks once CMake changes
@@ -44,7 +53,7 @@ single_version_override(
     module_name = "rules_foreign_cc",
     patch_strip = 1,
     patches = ["//third_party/rules_foreign_cc:absolute_linker_path.patch"],
-    version = "0.14.0",
+    version = "0.16.0",
 )
 
 # --------------------------------------------------------------- LLVM and MLIR

@@ -4774,14 +4774,12 @@ bool multipliesVariables(const std::string &script) {
 }
 
 // Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
-// Quantified queries stall Z3 4.15.2's int-blaster and trigger its
-// `ast.cpp:388` assertion violation (#371), and `bvsmod` has an int-blast
-// soundness bug in Z3 4.15.2 (fixed upstream in Z3 PR #11417).
+// Quantified queries leave int-blasting incomplete and stall on quantified
+// definitions, so only quantifier-free nonlinear queries take this path.
 bool canIntBlast(const std::string &script) {
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
-      script.find("(lambda") != std::string::npos ||
-      script.find("(bvsmod ") != std::string::npos)
+      script.find("(lambda") != std::string::npos)
     return false;
   return multipliesVariables(script);
 }
@@ -4980,7 +4978,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
   // milliseconds. The translation is exact, both ways, so unsat is a proof.
   // On sat or unknown the bit-blaster below decides as before, and gives the
   // counterexample. Goals with a strategy of their own, theory axioms,
-  // assumptions, quantifiers or `bvsmod` are left to the bit-blaster.
+  // assumptions or quantifiers are left to the bit-blaster.
   if (last != &witness && options.intBlast && job.strategy.empty() &&
       q.axioms.empty() && q.assumes.empty() && first == &full &&
       canIntBlast(job.script))
