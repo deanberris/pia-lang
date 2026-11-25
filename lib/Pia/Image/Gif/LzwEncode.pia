@@ -166,7 +166,7 @@ let copy_bytes (src : [u8]) (a : usize) (dst : borrowed inout mutable [u8]) (b :
    bytes the caller made room for: 255 cmax >= n. Z3's bit-blaster stalls
    on the equalities with 255 * chunks, so this function uses the
    int-blasting bit-vector solver. *)
-let put_blocks (lz : [u8]) (n : int{0..13000000000}) (cmax : int{0..60000000}) (dst : borrowed inout mutable [u8]) (p : usize) : usize @solver(tactic = "(then simplify solve-eqs (using-params smt :bv.solver 2))")
+let put_blocks (lz : [u8]) (n : int{0..13000000000}) (cmax : int{0..60000000}) (dst : borrowed inout mutable [u8]) (p : usize) : usize @solver(tactic = "(then simplify elim-term-ite solve-eqs (using-params smt :bv.solver 2))")
   requires n <= len lz && p <= len dst && n + cmax + 1 <= len dst - p
   requires 255 * cmax >= n
   ensures p < result && result <= p + n + cmax + 1
