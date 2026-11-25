@@ -3113,13 +3113,20 @@ class Encoder {
     // and so is a pure function's, so a call in code and one in a contract
     // agree.
     if (hasBody && (isSpecFunction(callee) || definesValue(callee) ||
-                    contractOnly(callee)))
+                    contractOnly(callee))) {
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
         Value r = env_.lookup(call.getResult(k));
         if (app && r) assume(eq(r, app));
       }
+    } else if (hasBody && !call->hasAttr("pia.unsafe") &&
+               isPureFunction(callee)) {
+      llvm::SmallVector<Value> results;
+      for (Value r : call.getResults())
+        results.push_back(env_.lookup(r));
+      bindPureCall(callee, pre, results, guard);
+    }
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
@@ -3245,6 +3252,238 @@ class Encoder {
   bool hasSpecDecl(mlir::func::FuncOp f) {
     return isSpecFunction(f) || isAbstract(f) || definesValue(f) ||
            contractOnly(f);
+  }
+
+  // Side-effect-free check matching sortOf(), so checking purity does not
+  // record unused sorts or datatypes in the query.
+  static bool canEncodeType(Type t) {
+    if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
+                  SortType, RecType>(t) ||
+        t.isInteger(1))
+      return true;
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      return r.getFieldTypes().empty();
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return canEncodeType(a.getElementType());
+    if (auto s = mlir::dyn_cast<SliceType>(t))
+      return canEncodeType(s.getElementType());
+    return false;
+  }
+
+  // An ordinary function in this module that takes no mutable, atomic or
+  // dynamic parameters, returns no buffers, and transitively performs no
+  // atomic, foreign, unsafe, address or imported side-effecting operations is
+  // deterministic: repeated calls on equal arguments return equal values
+  // (#375).
+  bool isPureFunction(mlir::func::FuncOp f) {
+    if (!f || f.isExternal() || f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+        f->hasAttr(PiaDialect::getImportAttrName()) ||
+        f->hasAttr("pia.extern") || f->hasAttr("pia.generic_eq") ||
+        f->hasAttr("pia.out_result") || f.getNumResults() == 0)
+      return false;
+    if (f->hasAttr("pia.generic_proof") &&
+        !(fn_ && fn_->hasAttr("pia.generic_proof")))
+      return false;
+    if (auto m = f->getAttrOfType<mlir::StringAttr>("pia.model")) {
+      auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
+      if (!here)
+        here = fn_->getAttrOfType<mlir::StringAttr>("pia.target");
+      if (!here || here != m)
+        return false;
+    }
+    for (Type r : f.getFunctionType().getResults())
+      if (mlir::isa<ArrayType, SliceType>(r) || !canEncodeType(r))
+        return false;
+    for (unsigned i = 0; i < f.getNumArguments(); ++i) {
+      auto mods = f.getArgAttrOfType<mlir::StringAttr>(
+          i, PiaDialect::getModifiersAttrName());
+      if (mods && (sema::hasModifier(mods.getValue(), "out") ||
+                   sema::hasModifier(mods.getValue(), "inout") ||
+                   sema::hasModifier(mods.getValue(), "mutable")))
+        return false;
+      if (!canEncodeType(f.getFunctionType().getInput(i)))
+        return false;
+    }
+    if (auto it = pureFunction_.find(f.getOperation());
+        it != pureFunction_.end())
+      return it->second;
+    llvm::SmallVector<mlir::func::FuncOp> worklist{f};
+    llvm::DenseSet<Operation *> visited;
+    visited.insert(f.getOperation());
+    bool ok = true;
+    while (!worklist.empty() && ok) {
+      mlir::func::FuncOp cur = worklist.pop_back_val();
+      cur.walk([&](Operation *op) {
+        if (!ok)
+          return;
+        if (isAtomicOp(op) ||
+            mlir::isa<ForeignOp, ViewOp, ArbitraryOp, AddressOp, AtAddressOp>(
+                op)) {
+          ok = false;
+          return;
+        }
+        auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+        if (!c)
+          return;
+        if (c->hasAttr("pia.unsafe")) {
+          ok = false;
+          return;
+        }
+        mlir::func::FuncOp callee = calleeOf(c);
+        if (!callee) {
+          ok = false;
+          return;
+        }
+        if (callee->hasAttr(PiaDialect::getLemmaAttrName()) ||
+            callee->hasAttr("pia.generic_eq") || isSpecFunction(callee) ||
+            isAbstract(callee) || contractOnly(callee))
+          return;
+        if (callee.isExternal() || callee->hasAttr("pia.extern") ||
+            callee->hasAttr(PiaDialect::getImportAttrName())) {
+          ok = false;
+          return;
+        }
+        if (visited.insert(callee.getOperation()).second)
+          worklist.push_back(callee);
+      });
+    }
+    pureFunction_[f.getOperation()] = ok;
+    return ok;
+  }
+
+  bool flatSpecArgs(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::SmallVectorImpl<Value> &flat) {
+    mlir::Block &entry = callee.getBody().front();
+    for (mlir::BlockArgument a : entry.getArguments()) {
+      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
+        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
+        if (!arr || !len)
+          return false;
+        flat.append({arr, len});
+        // A buffer of slices: its elements' lengths too (ADR 0048), so
+        // calls with different ones are different applications.
+        if (holdsSlices(a.getType())) {
+          Value lens = args.inner.lookup(a);
+          if (!lens)
+            return false;
+          flat.push_back(lens);
+        }
+        continue;
+      }
+      Value v = args.values.lookup(a);
+      if (!v)
+        return false;
+      flat.push_back(v);
+    }
+    return true;
+  }
+
+  Value applySpecFun(mlir::func::FuncOp callee, unsigned k,
+                     llvm::ArrayRef<Value> flat) {
+    auto it = specFuns_.find(callee.getOperation());
+    if (it == specFuns_.end() || k >= it->second.size())
+      return Value();
+    Type rt = callee.getFunctionType().getResult(k);
+    Value fun = it->second[k];
+    return flat.empty() ? fun
+                        : create<mlir::smt::ApplyFuncOp>(
+                              sortOf(rt), fun, mlir::ValueRange(flat));
+  }
+
+  // Lazily declares one uninterpreted function per result for a pure function
+  // and promotes its recorded first call, so single calls add no SMT overhead
+  // (#375).
+  bool ensurePureSpecFun(mlir::func::FuncOp callee) {
+    if (specFuns_.count(callee.getOperation()))
+      return true;
+    if (!isPureFunction(callee))
+      return false;
+    {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToStart(solverBlock_);
+      llvm::SmallVector<Type> domain;
+      for (Type t : callee.getFunctionType().getInputs()) {
+        Type sort = sortOf(t);
+        if (!sort)
+          return false;
+        domain.push_back(sort);
+        if (mlir::isa<ArrayType, SliceType>(t))
+          domain.push_back(bvType());
+        if (holdsSlices(t))
+          domain.push_back(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()));
+      }
+      llvm::SmallVector<Value> funs;
+      for (Type r : callee.getFunctionType().getResults()) {
+        Type sort = sortOf(r);
+        if (!sort)
+          return false;
+        Type ft = domain.empty()
+                      ? sort
+                      : mlir::smt::SMTFuncType::get(ctx_, domain, sort);
+        funs.push_back(declare(ft, "", false));
+      }
+      if (funs.empty())
+        return false;
+      specFuns_[callee.getOperation()] = std::move(funs);
+    }
+    if (auto it = firstPureCall_.find(callee.getOperation());
+        it != firstPureCall_.end()) {
+      FirstPureCall first = std::move(it->second);
+      firstPureCall_.erase(it);
+      OpBuilder::InsertionGuard guard(b_);
+      if (first.after)
+        b_.setInsertionPointAfter(first.after);
+      else
+        b_.setInsertionPointToEnd(solverBlock_);
+      emitPureCallEqs(callee, first.args, first.results, first.pc);
+    }
+    return true;
+  }
+
+  void emitPureCallEqs(mlir::func::FuncOp callee, const Demand &args,
+                       llvm::ArrayRef<Value> results,
+                       llvm::ArrayRef<Value> pc) {
+    llvm::SmallVector<Value> flat;
+    if (!flatSpecArgs(callee, args, flat))
+      return;
+    Value cond;
+    if (!pc.empty()) {
+      cond = pc[0];
+      for (size_t i = 1; i < pc.size(); ++i)
+        cond = andOf(cond, pc[i]);
+    }
+    for (unsigned k = 0; k < results.size(); ++k) {
+      if (!results[k])
+        continue;
+      Value app = applySpecFun(callee, k, flat);
+      if (!app)
+        continue;
+      Value fact = eq(results[k], app);
+      assertTerm(cond ? implies(cond, fact) : fact);
+    }
+  }
+
+  void bindPureCall(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::ArrayRef<Value> results, Value guard) {
+    llvm::SmallVector<Value> pc(pc_.begin(), pc_.end());
+    if (guard)
+      pc.push_back(guard);
+    if (specFuns_.count(callee.getOperation())) {
+      emitPureCallEqs(callee, args, results, pc);
+      return;
+    }
+    if (!firstPureCall_.count(callee.getOperation())) {
+      FirstPureCall first;
+      first.args = args;
+      first.results.assign(results.begin(), results.end());
+      first.pc = std::move(pc);
+      first.after = solverBlock_->empty() ? nullptr : &solverBlock_->back();
+      firstPureCall_[callee.getOperation()] = std::move(first);
+      return;
+    }
+    if (!ensurePureSpecFun(callee))
+      return;
+    emitPureCallEqs(callee, args, results, pc);
   }
 
   // An ordinary function whose body is a definition: one scalar result,
@@ -3499,32 +3738,16 @@ class Encoder {
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
     if (it == specFuns_.end()) return Value();
+    size_t numFuns = it->second.size();
     noteTheoryUse(callee);
     mlir::Block &entry = callee.getBody().front();
     llvm::SmallVector<Value> flat;
-    for (mlir::BlockArgument a : entry.getArguments()) {
-      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
-        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
-        if (!arr || !len) return Value();
-        flat.append({arr, len});
-        // A buffer of slices: its elements' lengths too (ADR 0048), so
-        // calls with different ones are different applications.
-        if (holdsSlices(a.getType())) {
-          Value lens = args.inner.lookup(a);
-          if (!lens) return Value();
-          flat.push_back(lens);
-        }
-      } else {
-        Value v = args.values.lookup(a);
-        if (!v) return Value();
-        flat.push_back(v);
-      }
-    }
+    if (!flatSpecArgs(callee, args, flat))
+      return Value();
     Type rt = callee.getFunctionType().getResult(k);
-    Value fun = it->second[k];
-    Value app = flat.empty() ? fun
-                             : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
-                                                              mlir::ValueRange(flat));
+    Value app = applySpecFun(callee, k, flat);
+    if (!app)
+      return Value();
     frameLink(callee, k, args, app);
     // A pure function's call is its body, where its precondition holds:
     // it has no recursion, so the body is a term, and a fact inside a
@@ -3563,11 +3786,29 @@ class Encoder {
       post.arrays = args.arrays;
       post.lengths = args.lengths;
       post.inner = args.inner;
-      callee.walk([&](mlir::func::ReturnOp ret) {
-        if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
-      });
+      post.oldArrays = args.arrays;
+      post.oldInner = args.inner;
       Value pre = argsInRange(entry, args), facts = boolConst(true);
-      bool ok = callee.getNumResults() == 1;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
+          Value appJ = j == k ? app : applySpecFun(callee, j, flat);
+          if (!appJ)
+            continue;
+          if (j != k)
+            if (auto itJ = mlir::dyn_cast<IntType>(
+                    callee.getFunctionType().getResult(j)))
+              define(inRange(appJ, itJ));
+          if (auto prev = post.values.find(ret.getOperand(j));
+              prev != post.values.end()) {
+            if (prev->second)
+              facts = andOf(facts, eq(appJ, prev->second));
+            continue;
+          }
+          post.values[ret.getOperand(j)] = appJ;
+        }
+      });
+      bool ok =
+          callee.getNumResults() >= 1 && numFuns == callee.getNumResults();
       for (auto r : entry.getOps<contract::RequiresOp>()) {
         Value p = demand(r.getPredicate(), post);
         if (!p) ok = false;
@@ -3581,8 +3822,10 @@ class Encoder {
       ensuresStack_.pop_back();
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
-    // Its body is in its own module: the contract is all there is.
-    if (contractOnly(callee)) return app;
+    // Only spec functions unfold their body past here; an imported or
+    // ordinary pure function is known only by its contract (#375).
+    if (!isSpecFunction(callee))
+      return app;
     // An @opaque function's definition is a fact only where a `reveal`
     // asks for it (ADR 0063). A call met before the reveal gets it then.
     if (callee->hasAttr("pia.opaque") &&
@@ -3628,6 +3871,10 @@ class Encoder {
   // A spec call met while demanding a contract.
   Value demandSpecCall(mlir::func::CallOp call, unsigned k, Demand &d) {
     mlir::func::FuncOp callee = calleeOf(call);
+    if (!callee || callee.isExternal())
+      return Value();
+    if (!specFuns_.count(callee.getOperation()) && !ensurePureSpecFun(callee))
+      return Value();
     mlir::Block &entry = callee.getBody().front();
     Demand args;
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
@@ -3746,9 +3993,10 @@ class Encoder {
       for (Value a : call.getOperands()) args.push_back(demand(a, d));
       result = abstractCall(calleeOf(call), args);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
-               call && (isSpecFunction(calleeOf(call)) ||
-                        definesValue(calleeOf(call)) ||
-                        contractOnly(calleeOf(call)))) {
+               call && !call->hasAttr("pia.unsafe") &&
+               (isSpecFunction(calleeOf(call)) ||
+                definesValue(calleeOf(call)) || contractOnly(calleeOf(call)) ||
+                isPureFunction(calleeOf(call)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
@@ -4042,6 +4290,14 @@ class Encoder {
   // result, the definitions being unfolded, and definitions made inside a
   // quantifier, which it takes as hypotheses.
   llvm::DenseMap<Operation *, llvm::SmallVector<Value>> specFuns_;
+  struct FirstPureCall {
+    Demand args;
+    llvm::SmallVector<Value> results;
+    llvm::SmallVector<Value> pc;
+    Operation *after = nullptr;
+  };
+  llvm::DenseMap<Operation *, FirstPureCall> firstPureCall_;
+  llvm::DenseMap<Operation *, bool> pureFunction_;
   llvm::SmallVector<Operation *> specStack_, ensuresStack_;
   std::vector<Value> pendingDefs_;
   unsigned unknowns_ = 0;  // values demand() could not encode
