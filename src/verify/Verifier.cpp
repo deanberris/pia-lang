@@ -4639,22 +4639,33 @@ unsigned long long rlimitCount(z3::solver &solver) {
 constexpr unsigned long long kAbstractRlimit = 500000;
 
 // The budget of the int-blasting attempt in `solve` (ADR 0066). The
-// nonlinear goals of the benchmark take at most a few million; a goal that
-// needs more is left to the bit-blaster, which also finds counterexamples.
-constexpr unsigned long long kIntBlastRlimit = 50000000;
+// quantifier-free nonlinear goals of the benchmark take at most ~600k; 5M
+// leaves comfortable headroom while bounding how long a stalled goal can
+// spend before falling through to the bit-blaster (which also gives
+// counterexamples).
+constexpr unsigned long long kIntBlastRlimit = 5000000;
+
+bool isSexprSpace(char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
 
 // The end of the s-expression that starts at `at` in `s`.
 size_t sexprEnd(const std::string &s, size_t at) {
-  while (at < s.size() && s[at] == ' ') ++at;
-  if (at >= s.size()) return at;
+  while (at < s.size() && isSexprSpace(s[at]))
+    ++at;
+  if (at >= s.size())
+    return at;
   if (s[at] != '(') {
-    while (at < s.size() && s[at] != ' ' && s[at] != ')') ++at;
+    while (at < s.size() && !isSexprSpace(s[at]) && s[at] != ')')
+      ++at;
     return at;
   }
   int depth = 0;
   for (; at < s.size(); ++at) {
-    if (s[at] == '(') ++depth;
-    if (s[at] == ')' && --depth == 0) return at + 1;
+    if (s[at] == '(')
+      ++depth;
+    if (s[at] == ')' && --depth == 0)
+      return at + 1;
   }
   return at;
 }
@@ -4662,7 +4673,7 @@ size_t sexprEnd(const std::string &s, size_t at) {
 // Whether the operand of `script` that starts at `at` is a literal
 // (`#x...`, `#b...` or `(_ bvN w)`).
 bool literalAt(const std::string &script, size_t at) {
-  while (at < script.size() && script[at] == ' ')
+  while (at < script.size() && isSexprSpace(script[at]))
     ++at;
   if (at >= script.size())
     return false;
@@ -4682,22 +4693,97 @@ bool dividesByVariable(const std::string &script) {
   return false;
 }
 
+// Whether the s-expression at `at` in `script` evaluates to a constant
+// bit-vector, using `constLets` for previously bound constant lets.
+// Recognises literals and pure BV ops over constants, so a linear product
+// such as `(max u32 + 1) * n` is not misclassified as nonlinear.
+bool isConstBVTerm(const std::string &script, size_t at,
+                   const std::unordered_set<std::string> &constLets) {
+  while (at < script.size() && isSexprSpace(script[at]))
+    ++at;
+  if (at >= script.size())
+    return false;
+  if (script[at] == '#' || script.compare(at, 4, "(_ b") == 0)
+    return true;
+  if (script[at] != '(') {
+    size_t end = sexprEnd(script, at);
+    return constLets.count(script.substr(at, end - at)) != 0;
+  }
+  size_t opStart = at + 1;
+  while (opStart < script.size() && isSexprSpace(script[opStart]))
+    ++opStart;
+  size_t opEnd = opStart;
+  while (opEnd < script.size() && !isSexprSpace(script[opEnd]) &&
+         script[opEnd] != ')' && script[opEnd] != '(')
+    ++opEnd;
+  llvm::StringRef op(script.data() + opStart, opEnd - opStart);
+  if (op != "bvneg" && op != "bvadd" && op != "bvsub" && op != "bvmul" &&
+      op != "bvsdiv" && op != "bvsrem" && op != "bvsmod" && op != "bvand" &&
+      op != "bvor" && op != "bvxor" && op != "bvshl" && op != "bvashr")
+    return false;
+  size_t end = sexprEnd(script, at);
+  size_t cur = opEnd;
+  bool anyArg = false;
+  while (cur < end) {
+    while (cur < end && isSexprSpace(script[cur]))
+      ++cur;
+    if (cur >= end || script[cur] == ')')
+      break;
+    if (!isConstBVTerm(script, cur, constLets))
+      return false;
+    anyArg = true;
+    cur = sexprEnd(script, cur);
+  }
+  return anyArg;
+}
+
 // Whether `script` is nonlinear: it multiplies two terms neither of which
-// is a literal, or divides by a term that is not one. Those are the goals
+// is a constant, or divides by a term that is not one. Those are the goals
 // a bit-blasted multiplier or divider makes slow (ADR 0066).
 bool multipliesVariables(const std::string &script) {
-  if (dividesByVariable(script))
-    return true;
-  const std::string f = "(bvmul ";
-  for (size_t at = script.find(f); at != std::string::npos;
-       at = script.find(f, at + 1)) {
-    size_t first = at + f.size();
-    if (literalAt(script, first))
+  std::unordered_set<std::string> constLets;
+  for (size_t i = 0; i < script.size(); ++i) {
+    if (script[i] != '(')
       continue;
-    if (!literalAt(script, sexprEnd(script, first)))
-      return true;
+    if (script.compare(i, 7, "(let ((") == 0) {
+      size_t nameStart = i + 7;
+      size_t nameEnd = sexprEnd(script, nameStart);
+      std::string name = script.substr(nameStart, nameEnd - nameStart);
+      if (isConstBVTerm(script, nameEnd, constLets))
+        constLets.insert(std::move(name));
+      else
+        constLets.erase(name);
+      continue;
+    }
+    if (script.compare(i, 8, "(bvsdiv ") == 0 ||
+        script.compare(i, 8, "(bvsrem ") == 0) {
+      size_t second = sexprEnd(script, i + 8);
+      if (!isConstBVTerm(script, second, constLets))
+        return true;
+      continue;
+    }
+    if (script.compare(i, 7, "(bvmul ") == 0) {
+      size_t first = i + 7;
+      if (isConstBVTerm(script, first, constLets))
+        continue;
+      if (!isConstBVTerm(script, sexprEnd(script, first), constLets))
+        return true;
+    }
   }
   return false;
+}
+
+// Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
+// Quantified queries stall Z3 4.15.2's int-blaster and trigger its
+// `ast.cpp:388` assertion violation (#371), and `bvsmod` has an int-blast
+// soundness bug in Z3 4.15.2 (fixed upstream in Z3 PR #11417).
+bool canIntBlast(const std::string &script) {
+  if (script.find("(forall") != std::string::npos ||
+      script.find("(exists") != std::string::npos ||
+      script.find("(lambda") != std::string::npos ||
+      script.find("(bvsmod ") != std::string::npos)
+    return false;
+  return multipliesVariables(script);
 }
 
 // `script` with signed division, remainder and multiplication as the
@@ -4887,32 +4973,27 @@ void solve(const Job &job, const Options &options, Outcome &out,
     } catch (const z3::exception &) {
     }
   }
-  // A nonlinear goal is next given to Z3's int-blasting solver (ADR 0066).
-  // Bit-blasting a 68- or 132-bit multiplier is what times out on goals
-  // such as `a <= b ==> a * c <= b * c`, while the same goal over integers
-  // is decided by nonlinear integer arithmetic in milliseconds. The
-  // translation is exact, both ways, so unsat is a proof. On sat or
-  // unknown the bit-blaster below decides as before, and gives the
-  // counterexample. A goal with a strategy of its own, with theory axioms
-  // or with assumptions is left as it is, since those need its solver, or
-  // an unsat core of it.
+  // A quantifier-free nonlinear goal is next given to Z3's int-blasting
+  // solver (ADR 0066). Bit-blasting a 68- or 132-bit multiplier is what
+  // times out on goals such as `a <= b ==> a * c <= b * c`, while the same
+  // goal over integers is decided by nonlinear integer arithmetic in
+  // milliseconds. The translation is exact, both ways, so unsat is a proof.
+  // On sat or unknown the bit-blaster below decides as before, and gives the
+  // counterexample. Goals with a strategy of their own, theory axioms,
+  // assumptions, quantifiers or `bvsmod` are left to the bit-blaster.
   if (last != &witness && options.intBlast && job.strategy.empty() &&
       q.axioms.empty() && q.assumes.empty() && first == &full &&
-      multipliesVariables(job.script))
+      canIntBlast(job.script))
     try {
       // In a context of its own, as for the abstract attempt above.
       z3::context ictx;
       // Ground applications of uninterpreted functions, such as opaque spec
       // functions (ADR 0063), stall int-blasting, so Ackermann's reduction
       // first replaces them with constants and the facts that equal
-      // arguments give equal results. It needs a query without quantifiers.
-      bool quantified = job.script.find("(forall") != std::string::npos ||
-                        job.script.find("(exists") != std::string::npos;
+      // arguments give equal results.
       z3::solver blast =
-          quantified
-              ? z3::tactic(ictx, "smt").mk_solver()
-              : (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
-                    .mk_solver();
+          (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
+              .mk_solver();
       z3::params ip(ictx);
       ip.set("timeout", options.timeoutMs);
       ip.set("rlimit", static_cast<unsigned>(

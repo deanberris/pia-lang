@@ -9,7 +9,7 @@
 *)
 
 (* Monotonicity of a product, with no induction.
-// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let lemma mul_mono (a : u64) (b : u64) (c : u64) : unit
   requires a <= b
@@ -17,7 +17,7 @@ let lemma mul_mono (a : u64) (b : u64) (c : u64) : unit
 = ()
 
 (* Sample k of pixel (x, y) lies inside a w by h image of c channels.
-// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let lemma index_lt (x : u32) (y : u32) (w : u32) (h : u32) (c : u8) (k : u8) : unit
   requires x < w && y < h && k < c
@@ -32,7 +32,7 @@ let lemma reduce_lt (x : int{0..4294967295}) (s : int{1..4294967295}) : unit
 = ()
 
 (* A cost bound is monotone in n (ADR 0062).
-// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let lemma triangle_mono (i : u32) (n : u32) : unit
   requires i <= n
@@ -40,7 +40,8 @@ let lemma triangle_mono (i : u32) (n : u32) : unit
 = ()
 
 (* One step of writing digits: v = q * p + d, with the digit q mod b.
-// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: int_blast.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: int_blast.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let lemma digit_step (q : u64) (p : u64) (d : u64) (b : int{2..36}) : unit
   requires d < p && p * b <= 18446744073709551615
@@ -50,7 +51,7 @@ let lemma digit_step (q : u64) (p : u64) (d : u64) (b : int{2..36}) : unit
 
 (* Without c >= 0 a product is not monotone, and the counterexample still
    comes from the bit-blaster.
-// CHECK: int_blast.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
+// CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
 *)
 let lemma signed_mono (a : i32) (b : i32) (c : i32) : unit
   requires a <= b
@@ -58,6 +59,6 @@ let lemma signed_mono (a : i32) (b : i32) (c : i32) : unit
 = ()
 
 (*
-// CHECK: 5 proved, 1 failed, 0 skipped
+// CHECK: 6 proved, 1 failed, 0 skipped
 // CHECK: verify-stats: {{.*}} intblast={{[1-9][0-9]*}}
 *)
