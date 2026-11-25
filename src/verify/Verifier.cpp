@@ -3954,6 +3954,18 @@ class Encoder {
 
   // --- demand encoding ---------------------------------------------------
 
+  // Under `old`, a call the walk has already stepped, with its contract
+  // assumed, is already that value when its postconditions do not read
+  // memory, so demanding it needs no uninterpreted function.
+  bool steppedOldCall(mlir::func::CallOp call, Value v, const Demand &d) {
+    if (!d.envForBlockArgs || !env_.lookup(v))
+      return false;
+    return llvm::none_of(
+               call.getOperandTypes(),
+               [](Type t) { return mlir::isa<ArrayType, SliceType>(t); }) ||
+           !ensuresReadMemory(calleeOf(call));
+  }
+
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
     if (Value t = d.memo.lookup(v)) return t;
@@ -4012,7 +4024,8 @@ class Encoder {
                call && !call->hasAttr("pia.unsafe") &&
                (isSpecFunction(calleeOf(call)) ||
                 definesValue(calleeOf(call)) || contractOnly(calleeOf(call)) ||
-                isPureFunction(calleeOf(call)))) {
+                (isPureFunction(calleeOf(call)) &&
+                 !steppedOldCall(call, v, d)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
@@ -4025,13 +4038,9 @@ class Encoder {
     // Under `old`, a call the walk has already stepped, with its contract
     // assumed, is that value: its operands are the entry values there too,
     // unless it reads a buffer, whose memory `old` reads from entry.
-    if (!result && d.envForBlockArgs)
+    if (!result)
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
-        if (llvm::none_of(call.getOperandTypes(),
-                          [](Type t) {
-                            return mlir::isa<ArrayType, SliceType>(t);
-                          }) ||
-            !ensuresReadMemory(calleeOf(call)))
+        if (steppedOldCall(call, v, d))
           result = env_.lookup(v);
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
