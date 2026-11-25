@@ -1,0 +1,46 @@
+(* Pia.Mem's box and bump inside a recursive type (ADR 0047, step 3): a
+   tree whose children are library boxes, in a region its caller lends.
+   Building a node allocates its boxes explicitly, with
+   Pia.Mem.Box.make, so every allocation is fallible and visible; the
+   proof sees each box as what it holds. It compiles, as a tree of
+   descriptors into the caller's buffer.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Box.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --emit=core --iface-path=%t %s | FileCheck %s --check-prefix=CORE
+*)
+import Pia.Mem.Alloc.Allocators
+import Pia.Mem.Box.Boxes
+
+let rec tree = let (r : region) => type
+  | Leaf
+  | Node of node r
+let rec node = let (r : region) => type { left : Pia.Mem.Box.box (tree r) r; key : u32; right : Pia.Mem.Box.box (tree r) r }
+
+(* The sum of the keys, capped: structural, through the boxes' slots.
+// CHECK: rec_mem.pia:[[@LINE+7]]:{{[0-9]+}}: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+*)
+let rec sum (r : region) (t : tree r) : u64 =
+  match t with
+  | Leaf -> 0
+  | Node n ->
+    let a = if len n.left.slot = 1 then sum n.left.slot.[0] else 0 in
+    let b = if len n.right.slot = 1 then sum n.right.slot.[0] else 0 in
+    if a < 1000000 && b < 1000000 && n.key < 1000 then a + b + n.key else 1000000
+
+(* Two leaves and a node over them, from a bump over `cells`.
+// CHECK: rec_mem.pia:[[@LINE+4]]:3: proved: the postcondition holds [smt]
+// CORE: func.func @build(%{{.*}}: memref<?x!llvm.struct<"pia.rec.tree", (i8, struct<(ptr, ptr, i64, array<1 x i64>, array<1 x i64>)>, i1, i32, struct<(ptr, ptr, i64, array<1 x i64>, array<1 x i64>)>, i1)>
+*)
+let build (cells : borrowed mutable [tree]) : result u32 Pia.Mem.Alloc.oom
+  ensures (match result with | Ok k -> k = 7 | Err _ -> true)
+= let m : mutable Pia.Mem.Alloc.bump tree = { mem = cells; used = 0 } in
+  let l = Pia.Mem.Box.make<tree> m Leaf? in
+  let r = Pia.Mem.Box.make<tree> m Leaf? in
+  match Node { left = l; key = 7; right = r } with
+  | Leaf -> Ok 0
+  | Node n -> Ok n.key
+
+(*
+// CHECK: 0 failed, 0 skipped
+*)

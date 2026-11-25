@@ -13,6 +13,7 @@ grep -q '^fill: [0-9]* cells raised, 0 unreached ' out.txt
 grep -q '^directions: .* outlets drain 65536 cells ' out.txt
 grep -q '^sediment: 4 steps, sequential, .*; 6553600 in all, 6553600 at the start$' out.txt
 grep -q '^basins: 4 steps, .* 0 cells differ$' out.txt
+grep -q '^pull: 4 steps, in waves of equal height, .* 0 cells differ$' out.txt
 for f in crop.png crop-quarter.png; do
   [ "$(head -c 4 "$f" | tail -c 3)" = PNG ] || { echo "$f is not a PNG" >&2; exit 1; }
 done

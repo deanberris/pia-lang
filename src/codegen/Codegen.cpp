@@ -36,6 +36,7 @@
 #include "mlir/Dialect/Func/Transforms/FuncConversions.h"
 #include "mlir/Dialect/Index/IR/IndexDialect.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "transforms/ScalarizeRecords.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Transforms/Patterns.h"
@@ -304,10 +305,78 @@ bool isSpecBuffer(Type t) {
   return false;
 }
 
+// The LLVM struct of a memref descriptor of rank 1, as the MemRef to LLVM
+// lowering makes it.
+mlir::LLVM::LLVMStructType descriptorType(mlir::MLIRContext *ctx) {
+  auto i64 = mlir::IntegerType::get(ctx, 64);
+  auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+  auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
+  return mlir::LLVM::LLVMStructType::getLiteral(ctx, {ptr, ptr, i64, dims, dims});
+}
+
 class CoreTypes : public mlir::TypeConverter {
  public:
+  // A recursive value (ADR 0047, step 3) is laid out as its variant is
+  // (ADR 0030): a struct of its tag and every constructor's payload
+  // fields, in order. A buffer in a payload, such as a box's slot, is its
+  // memref descriptor, so a recursive occurrence is a pointer into
+  // memory its allocator lent. Each type is an identified LLVM struct,
+  // `pia.rec.tree`, so a box of a tree inside a tree is no cycle of types.
+  struct RecLayout {
+    mlir::LLVM::LLVMStructType type;
+    // Each constructor's first field; field 0 is the tag.
+    std::map<std::string, unsigned> first;
+    std::map<std::string, unsigned> tag;
+  };
+
+  void addDatatypes(mlir::ModuleOp module) {
+    mlir::MLIRContext *ctx = module.getContext();
+    for (DatatypeOp d : module.getOps<DatatypeOp>())
+      recs_[d.getSymName().str()].type =
+          mlir::LLVM::LLVMStructType::getIdentified(
+              ctx, ("pia.rec." + d.getSymName()).str());
+    for (DatatypeOp d : module.getOps<DatatypeOp>()) {
+      RecLayout &l = recs_[d.getSymName().str()];
+      llvm::SmallVector<Type> fields{tagType(ctx, d.getCtors().size())};
+      for (auto [i, c] :
+           llvm::enumerate(d.getCtors().getAsValueRange<mlir::StringAttr>())) {
+        l.first[c.str()] = fields.size();
+        l.tag[c.str()] = i;
+        llvm::SmallVector<Type> leaves;
+        if (Type p = d.payloadOf(i)) {
+          if (mlir::isa<RecordType>(p))
+            transforms::recordLeaves(p, leaves);
+          else
+            leaves.push_back(p);
+        }
+        for (Type leaf : leaves) {
+          Type f = convertType(leaf);
+          if (f && mlir::isa<mlir::MemRefType>(f)) f = descriptorType(ctx);
+          if (!f) f = mlir::IntegerType::get(ctx, 1);
+          fields.push_back(f);
+        }
+      }
+      (void)l.type.setBody(fields, /*isPacked=*/false);
+    }
+  }
+
+  const RecLayout *layout(RecType t) const {
+    auto it = recs_.find(t.getName().str());
+    return it == recs_.end() ? nullptr : &it->second;
+  }
+
+  // The tag's type: as `rec_tag` gives it, the range 0 to n - 1.
+  Type tagType(mlir::MLIRContext *ctx, size_t n) {
+    return convertType(IntType::get(ctx, APInt(128, 0), APInt(128, n - 1)));
+  }
+
   CoreTypes() {
     addConversion([](Type t) { return t; });
+    addConversion([this](RecType t) -> std::optional<Type> {
+      auto it = recs_.find(t.getName().str());
+      if (it == recs_.end()) return std::nullopt;
+      return Type(it->second.type);
+    });
     addConversion([](IntType t) -> Type {
       return mlir::IntegerType::get(t.getContext(), reprOf(t).width);
     });
@@ -352,12 +421,16 @@ class CoreTypes : public mlir::TypeConverter {
   }
 
  private:
-  // Buffers hold scalars only in v0.
+  // Buffers hold scalars, and recursive values (ADR 0047).
   Type element(Type t) {
     Type c = convertType(t);
-    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType>(c)) return c;
+    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType,
+                       mlir::LLVM::LLVMStructType>(c))
+      return c;
     return {};
   }
+
+  std::map<std::string, RecLayout> recs_;
 };
 
 //===----------------------------------------------------------------------===//
@@ -905,13 +978,21 @@ struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
       }
       args.push_back(v);
     }
-    if (op->hasAttr("pia.variadic")) {
+    if (op->hasAttr("pia.variadic") || op->hasAttr("pia.deref")) {
       auto module = op->getParentOfType<mlir::ModuleOp>();
       auto callee = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(op.getSymbol());
       if (!callee)
-        return rw.notifyMatchFailure(op, "no variadic declaration");
+        return rw.notifyMatchFailure(op, "no llvm.func declaration");
       auto call = make<mlir::LLVM::CallOp>(rw, loc, callee, args);
-      rw.replaceOp(op, call->getResults());
+      if (!op->hasAttr("pia.deref")) {
+        rw.replaceOp(op, call->getResults());
+        return mlir::success();
+      }
+      // C returned a pointer to the result: read it here, so that the
+      // pointer never reaches Pia (ADR 0057, section 5).
+      Type result = getTypeConverter()->convertType(op.getResult(0).getType());
+      auto load = make<mlir::LLVM::LoadOp>(rw, loc, result, call.getResult());
+      rw.replaceOp(op, load.getResult());
       return mlir::success();
     }
     llvm::SmallVector<Type> results;
@@ -919,6 +1000,89 @@ struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
       results.push_back(getTypeConverter()->convertType(t));
     rw.replaceOpWithNewOp<mlir::func::CallOp>(op, op.getSymbol(), results,
                                               args);
+    return mlir::success();
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Recursive values (ADR 0047, step 3)
+//===----------------------------------------------------------------------===//
+
+// A memref as its descriptor, a field of a recursive value, and back.
+Value toDescriptor(mlir::ConversionPatternRewriter &rw, Location loc, Value v) {
+  if (!mlir::isa<mlir::MemRefType>(v.getType())) return v;
+  return make<mlir::UnrealizedConversionCastOp>(
+             rw, loc, mlir::TypeRange{descriptorType(rw.getContext())},
+             mlir::ValueRange{v})
+      .getResult(0);
+}
+
+// A value of the constructor `ctor`: its tag, and its payload in the
+// constructor's fields. The other constructors' fields are zero, which
+// nothing reads.
+struct RecMakeLowering : mlir::OpConversionPattern<RecMakeOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      RecMakeOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto &types = *static_cast<const CoreTypes *>(getTypeConverter());
+    const CoreTypes::RecLayout *l = types.layout(op.getType());
+    if (!l) return mlir::failure();
+    Location loc = op.getLoc();
+    unsigned tag = l->tag.at(op.getCtor().str());
+    Value v = make<mlir::LLVM::ZeroOp>(rw, loc, l->type);
+    Type tt = l->type.getBody()[0];
+    Value k = make<mlir::LLVM::ConstantOp>(rw, loc, tt,
+                                           rw.getIntegerAttr(tt, tag));
+    v = make<mlir::LLVM::InsertValueOp>(rw, loc, v, k, llvm::ArrayRef<int64_t>{0});
+    unsigned at = l->first.at(op.getCtor().str());
+    for (Value p : adaptor.getPayload())
+      v = make<mlir::LLVM::InsertValueOp>(
+          rw, loc, v, toDescriptor(rw, loc, p),
+          llvm::ArrayRef<int64_t>{static_cast<int64_t>(at++)});
+    rw.replaceOp(op, v);
+    return mlir::success();
+  }
+};
+
+struct RecTagLowering : mlir::OpConversionPattern<RecTagOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      RecTagOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Type t = getTypeConverter()->convertType(op.getType());
+    Value tag = make<mlir::LLVM::ExtractValueOp>(rw, op.getLoc(), adaptor.getInput(),
+                                                 llvm::ArrayRef<int64_t>{0});
+    if (tag.getType() != t) return mlir::failure();
+    rw.replaceOp(op, tag);
+    return mlir::success();
+  }
+};
+
+struct RecPayloadLowering : mlir::OpConversionPattern<RecPayloadOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      RecPayloadOp op, OpAdaptor adaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    auto &types = *static_cast<const CoreTypes *>(getTypeConverter());
+    const CoreTypes::RecLayout *l = types.layout(op.getInput().getType());
+    if (!l) return mlir::failure();
+    Location loc = op.getLoc();
+    unsigned at = l->first.at(op.getCtor().str());
+    llvm::SmallVector<Value> out;
+    for (Type r : op.getResultTypes()) {
+      Type t = getTypeConverter()->convertType(r);
+      if (!t) return mlir::failure();
+      Value f = make<mlir::LLVM::ExtractValueOp>(
+          rw, loc, adaptor.getInput(),
+          llvm::ArrayRef<int64_t>{static_cast<int64_t>(at++)});
+      if (mlir::isa<mlir::MemRefType>(t))
+        f = make<mlir::UnrealizedConversionCastOp>(rw, loc, mlir::TypeRange{t},
+                                                   mlir::ValueRange{f})
+                .getResult(0);
+      out.push_back(f);
+    }
+    rw.replaceOp(op, out);
     return mlir::success();
   }
 };
@@ -1241,11 +1405,23 @@ bool isDead(mlir::Operation *op) {
 // Stages
 //===----------------------------------------------------------------------===//
 
+namespace {
+// A buffer of recursive values (ADR 0047) is a memref of their LLVM
+// struct, which MemRef's lowering loads and stores as any element. MLIR
+// lets a memref hold only types that say they may be its elements.
+struct StructElement
+    : mlir::MemRefElementTypeInterface::ExternalModel<
+          StructElement, mlir::LLVM::LLVMStructType> {};
+}  // namespace
+
 void loadDialects(mlir::MLIRContext &ctx) {
   ctx.loadDialect<mlir::arith::ArithDialect, mlir::cf::ControlFlowDialect,
                   mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::LLVM::LLVMDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::async::AsyncDialect>();
+  if (!mlir::isa<mlir::MemRefElementTypeInterface>(
+          mlir::LLVM::LLVMStructType::getLiteral(&ctx, {})))
+    mlir::LLVM::LLVMStructType::attachInterface<StructElement>(ctx);
   mlir::registerBuiltinDialectTranslation(ctx);
   mlir::registerLLVMDialectTranslation(ctx);
 }
@@ -1749,49 +1925,9 @@ static void lowerSpreads(mlir::ModuleOp module) {
   }
 }
 
-// Whether `t` is, or holds, a value of a recursive type (ADR 0047).
-static bool holdsRecursive(Type t) {
-  if (mlir::isa<RecType>(t)) return true;
-  if (auto a = mlir::dyn_cast<ArrayType>(t))
-    return holdsRecursive(a.getElementType());
-  if (auto sl = mlir::dyn_cast<SliceType>(t))
-    return holdsRecursive(sl.getElementType());
-  if (auto r = mlir::dyn_cast<RecordType>(t))
-    return llvm::any_of(r.getFieldTypes(), holdsRecursive);
-  return false;
-}
-
-// Recursive values have no layout until ADR 0047, step 3: a function
-// that uses one is an error, and the datatypes, which make no code, go.
-static LogicalResult rejectRecursive(mlir::ModuleOp module) {
-  bool ok = true;
-  for (auto f : module.getOps<mlir::func::FuncOp>()) {
-    Type found;
-    auto note = [&](Type t) {
-      if (!found && holdsRecursive(t)) found = t;
-    };
-    for (Type t : f.getFunctionType().getInputs()) note(t);
-    for (Type t : f.getFunctionType().getResults()) note(t);
-    f.walk([&](mlir::Operation *op) {
-      for (Type t : op->getResultTypes()) note(t);
-      for (Type t : op->getOperandTypes()) note(t);
-    });
-    if (!found) continue;
-    f.emitError() << "'" << f.getSymName()
-                  << "' uses a recursive type, which has no code yet "
-                     "(ADR 0047, step 3)";
-    ok = false;
-  }
-  for (auto d : llvm::make_early_inc_range(module.getOps<DatatypeOp>()))
-    d.erase();
-  return mlir::success(ok);
-}
-
 LogicalResult lowerToCore(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
-
-  if (mlir::failed(rejectRecursive(module))) return mlir::failure();
 
   // An array result becomes an output buffer its caller makes.
   if (mlir::failed(arrayResultsToBuffers(module)))
@@ -1815,6 +1951,11 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   });
 
   CoreTypes types;
+  // Recursive values' layouts (ADR 0047), from the datatypes, which make
+  // no code themselves.
+  types.addDatatypes(module);
+  for (auto d : llvm::make_early_inc_range(module.getOps<DatatypeOp>()))
+    d.erase();
   // Foreign functions (#55): each C symbol a `pia.foreign` calls gets a
   // private declaration with C types, marked `pia.c`. A Pia declaration
   // with the same name as its symbol is renamed out of the way.
@@ -1822,20 +1963,24 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
     llvm::SmallVector<ForeignOp> foreign;
     module.walk([&](ForeignOp op) { foreign.push_back(op); });
     std::set<std::string> declared;
-    // A variadic symbol's named parameters, so that every call of it
-    // agrees on them (ADR 0051).
-    std::map<std::string, std::optional<int64_t>> variadicOf;
+    // A symbol's named parameters if it is variadic (ADR 0051), and
+    // whether it is @deref, so that every call of it agrees.
+    std::map<std::string, std::pair<std::optional<int64_t>, bool>> shapeOf;
     for (ForeignOp op : foreign) {
       std::string sym = op.getSymbol().str();
       std::optional<int64_t> named;
       if (auto v = op->getAttrOfType<mlir::IntegerAttr>("pia.variadic"))
         named = v.getInt();
-      if (auto [it, fresh] = variadicOf.try_emplace(sym, named);
-          !fresh && it->second != named)
+      bool deref = op->hasAttr("pia.deref");
+      if (auto [it, fresh] = shapeOf.try_emplace(sym, named, deref);
+          !fresh && it->second.first != named)
         return op.emitError()
                << "the C symbol '" << sym
                << "' is declared both with and without @variadic, or with "
                   "different numbers of named parameters";
+      else if (!fresh && it->second.second != deref)
+        return op.emitError() << "the C symbol '" << sym
+                              << "' is declared both with and without @deref";
       if (auto own = module.lookupSymbol<mlir::func::FuncOp>(sym);
           own && !own->hasAttr("pia.c")) {
         if (!own->hasAttr("pia.extern"))
@@ -1873,22 +2018,28 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       // func.func cannot say so, and the calling convention differs:
       // Apple arm64 passes the variadic arguments on the stack, and
       // x86_64 System V counts vector registers in %al.
-      if (named) {
-        args.resize(*named);
+      // A @deref function returns a pointer in C, so it is an llvm.func
+      // too, and its call loads the result through it.
+      if (named || deref) {
+        if (named)
+          args.resize(*named);
         Type result = results.empty() ? Type(mlir::LLVM::LLVMVoidType::get(ctx))
                                       : results.front();
+        if (deref)
+          result = ptr;
         auto decl = make<mlir::LLVM::LLVMFuncOp>(
             b, op.getLoc(), sym,
             mlir::LLVM::LLVMFunctionType::get(result, args,
-                                              /*isVarArg=*/true));
+                                              /*isVarArg=*/named.has_value()));
         decl->setAttr("pia.c", b.getUnitAttr());
         for (auto [i, a] : llvm::enumerate(op.getArgs()))
-          if (static_cast<int64_t>(i) < *named)
+          if (!named || static_cast<int64_t>(i) < *named)
             if (auto e = ext(a.getType()))
               decl.setArgAttr(i, *e, b.getUnitAttr());
-        for (Type t : op.getResultTypes())
-          if (auto e = ext(t))
-            decl.setResultAttr(0, *e, b.getUnitAttr());
+        if (!deref)
+          for (Type t : op.getResultTypes())
+            if (auto e = ext(t))
+              decl.setResultAttr(0, *e, b.getUnitAttr());
         continue;
       }
       auto decl = make<mlir::func::FuncOp>(
@@ -1935,7 +2086,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
            LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
            ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
-           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering>(
+           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering,
+           RecMakeLowering, RecTagLowering, RecPayloadLowering>(
           types, ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
@@ -2226,6 +2378,15 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
       f.removeResAttrsAttr();
     }
     if (f.isExternal() || !f.isPublic()) continue;
+    // A recursive value (ADR 0047) has no C type yet: a function that
+    // takes or returns one by value has no entry point, and C passes a
+    // buffer of them instead.
+    auto byValue = [](Type t) { return mlir::isa<mlir::LLVM::LLVMStructType>(t); };
+    if (llvm::any_of(f.getFunctionType().getInputs(), byValue) ||
+        llvm::any_of(f.getFunctionType().getResults(), byValue)) {
+      f.setPrivate();
+      continue;
+    }
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
             f, mlir::StringAttr::get(ctx, e.internal), module)))
       return mlir::failure();

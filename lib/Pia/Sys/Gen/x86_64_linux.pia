@@ -55,6 +55,11 @@ interface Posix = sig
   (** isatty(3): 1 for a terminal, else 0. *)
   let isatty : (fd : i32) -> i32
     ensures result >= 0 && result <= 1
+  (** errno(3): the calling thread's errno, read through the pointer that
+      __errno_location (glibc) or __error (Darwin) returns. It holds any
+      value, and means something only after a call that failed. *)
+  let errno : i32 @deref
+    ensures true
 
   let o_rdonly : i32
   let o_wronly : i32
@@ -455,6 +460,11 @@ let unlink (path : [u8]) : i32
 let isatty (fd : i32) : i32
   ensures result >= 0 && result <= 1
 = extern "isatty"
+
+\ int * __errno_location(void)
+let errno () : i32 @deref
+  ensures true
+= extern "__errno_location"
 
 (* The other functions: C's signatures, with no contract, private to this
    module until the interface gives them a row. A pointer is a byte

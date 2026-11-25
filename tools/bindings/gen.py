@@ -351,6 +351,15 @@ def generate(target, clang):
         qual, _ = type_of(node)
         spelled_result, spelled_params = split_signature(qual)
         result, why = pia_type(spelled_result, canonical(values[f"f{i}"]), True)
+        # A pointer to an integer, which a @deref row reads through
+        # (ADR 0057, section 5).
+        pointee = None
+        target_type = strip_const(canonical(values[f"f{i}"]))
+        if target_type.endswith("*") and "*" not in target_type[:-1]:
+            base = target_type[:-1].strip()
+            pointee, _ = pia_type(base, base, False)
+            if pointee in ("[u8]", "bool"):
+                pointee = None
         params = [c for c in node.get("inner", []) if c.get("kind") == "ParmVarDecl"]
         ps = []
         for k, p in enumerate(params):
@@ -360,10 +369,12 @@ def generate(target, clang):
                 why = why or f"parameter {k + 1}: {pwhy}"
                 break
             ps.append((p.get("name"), pt, c))
+        args = ", ".join(spelled_params + (["..."] if node.get("variadic") else [])) or "void"
         if why:
             skipped.append((n, qual, why))
+            if pointee and not params and not node.get("variadic"):
+                fns.append(Fn(n, f"{spelled_result} {n}({args})", [], None, False, pointee))
             continue
-        args = ", ".join(spelled_params + (["..."] if node.get("variadic") else [])) or "void"
         fns.append(Fn(n, f"{spelled_result} {n}({args})", ps, result, bool(node.get("variadic"))))
     return emit(target, consts, layouts, fns, skipped, read_overlay())
 
@@ -373,9 +384,13 @@ class Fn:
     each parameter's name, Pia type and canonical C type, its Pia result
     type, and whether it is variadic."""
 
-    def __init__(self, name, spelled, params, result, variadic):
+    def __init__(self, name, spelled, params, result, variadic, pointee=None):
         self.name, self.spelled, self.params = name, spelled, params
         self.result, self.variadic = result, variadic
+        # The Pia type C's result points to, for a function of no
+        # parameters that returns a pointer to an integer; its result is
+        # then None, and only a @deref row can declare it.
+        self.pointee = pointee
 
 
 class Row:
@@ -383,9 +398,12 @@ class Row:
     (name, modifiers, type), its result, its @variadic count, and its
     contract lines; or a constant's type."""
 
-    def __init__(self, name, params, result, variadic, contract, is_fn):
+    def __init__(self, name, params, result, variadic, contract, is_fn, deref=False):
         self.name, self.params, self.result = name, params, result
         self.variadic, self.contract, self.is_fn = variadic, contract, is_fn
+        # `let errno : i32 @deref`: a function of no parameters whose C
+        # symbol returns a pointer to the result (ADR 0057, section 5).
+        self.deref = deref
 
 
 def split_top(text, sep):
@@ -425,10 +443,15 @@ def read_overlay():
         v = re.search(r"\s*@variadic\((\d+)\)$", sig)
         if v:
             variadic, sig = int(v.group(1)), sig[: v.start()]
+        deref = sig.endswith(" @deref")
+        if deref:
+            sig = sig[: -len(" @deref")]
         parts = split_top(sig, "->")
         if len(parts) == 1:
-            parsed.append(Row(name, [], parts[0], None, contract, False))
+            parsed.append(Row(name, [], parts[0], None, contract, deref, deref))
             continue
+        if deref:
+            fail(f"row {name}: a @deref row has no parameters, `let {name} : <type> @deref`")
         params = []
         for part in parts[:-1]:
             pm = re.fullmatch(r"\(([a-z_][a-z0-9_]*) : (.*)\)", part)
@@ -447,6 +470,14 @@ MODIFIERS = {"borrowed", "moved", "in", "out", "inout", "fixed", "mutable"}
 def join(row, fn, target):
     """Fails unless the row fits the header's declaration on this target."""
     where = f"row {row.name} ({fn.spelled}) on {target}"
+    if row.deref or fn.result is None:
+        if not row.deref:
+            fail(f"{where}: C returns a pointer to {fn.pointee}, so the row needs @deref")
+        if fn.pointee is None:
+            fail(f"{where}: @deref needs a C function of no parameters that returns a pointer to an integer")
+        if fn.pointee != row.result:
+            fail(f"{where}: C's result points to {fn.pointee} in Pia, not {row.result}")
+        return
     named = len(fn.params)
     if fn.variadic != (row.variadic is not None):
         fail(f"{where}: C's function is {'' if fn.variadic else 'not '}variadic")
@@ -466,7 +497,10 @@ def join(row, fn, target):
 def emit(target, consts, layouts, fns, skipped, overlay):
     interface, rows = overlay
     with open(MANIFEST, "rb") as f:
-        aliases = tomllib.load(f).get("aliases", {})
+        manifest = tomllib.load(f)
+    # A target's own aliases name its own symbol for a row, as errno's do.
+    aliases = dict(manifest.get("aliases", {}))
+    aliases.update(manifest.get(target, {}).get("aliases", {}))
     by_name = {f.name: f for f in fns}
     const_types = {n: t for n, t, _ in consts}
     covered = set()
@@ -487,6 +521,8 @@ def emit(target, consts, layouts, fns, skipped, overlay):
             f"({n} : {' '.join(mods + [t])})" for n, mods, t in row.params
         ) or "()"
         attrs = f" @variadic({row.variadic})" if row.variadic is not None else ""
+        if row.deref:
+            attrs = " @deref"
         row_lines.append(f"\n\\ {by_name[symbol].spelled}\n")
         row_lines.append(f"let {row.name} {params} : {row.result}{attrs}\n")
         row_lines.extend(f"  {c}\n" for c in row.contract)
@@ -507,8 +543,9 @@ def emit(target, consts, layouts, fns, skipped, overlay):
     out.append(SECTION_ROWS)
     out.extend(row_lines)
     out.append(SECTION_FUNCTIONS)
+    skipped = [s for s in skipped if s[0] not in covered]
     for fn in fns:
-        if fn.name in covered:
+        if fn.name in covered or fn.result is None:
             continue
         if fn.name in names:
             fail(f"the function {fn.name} has the name of a generated constant")
