@@ -6,6 +6,7 @@
 
 %declare LET REC META IN TYPE OF WHERE IF THEN ELSE MATCH WITH FOR SPREAD
 %declare WHILE STEP SPEC LEMMA DO DONE REQUIRES ENSURES INVARIANT DECREASES ASSERT
+%declare COSTS
 %declare ASSUME FORALL EXISTS INTERFACE SIG MODULE STRUCT END IMPORT OPERATOR
 %declare ADAPTER HANDLE DEFER QUESTION AS THEORY SORT AXIOM MODEL
 %declare TRUE FALSE BORROWED MOVED OUT INOUT FIXED MUTABLE
@@ -63,6 +64,9 @@ ret_annot: COLON annot attribute*
 contract: REQUIRES stmt          -> requires
         | ENSURES stmt           -> ensures
         | DECREASES stmt         -> decreases
+        // `costs iterations <= len xs` (ADR 0062). `costs` is a keyword
+        // only here: the lexer makes it COSTS before a name and `<=`.
+        | COSTS IDENT OP_CMP stmt -> costs
         | REQUIRES clause_eq     -> requires
         | ENSURES clause_eq      -> ensures
 
