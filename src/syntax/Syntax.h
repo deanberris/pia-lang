@@ -112,6 +112,7 @@ namespace pia::syntax {
   X(Binder)        /* text=name; type? (typed) */                            \
   X(RangeBinder)   /* text=name; range */                                    \
   X(Assert) X(Assume) /* predicate */                                        \
+  X(ByLean)        /* text=Lean theorem: a lemma's body `by lean N` (ADR 0061) */ \
   X(Reveal)        /* Name+, then the body (none in a clause): ADR 0063 */   \
   X(Try)           /* operand: `e?` (ADR 0028) */                            \
   X(Handle)        /* body, Arm+: `body handle | p -> e ...` (ADR 0028) */   \

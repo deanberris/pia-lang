@@ -10,6 +10,7 @@ These are [Agent Skills](https://agentskills.io): folders with a `SKILL.md` that
 | [pia-contracts](pia-contracts/SKILL.md) | writing `requires`, `ensures`, loop invariants and `decreases`, and fixing each kind of failed goal |
 | [piac-verify](piac-verify/SKILL.md) | `piac --verify`: the goal report, counterexamples, `--allow-unproved`, solver limits, other modes |
 | [piac-build](piac-build/SKILL.md) | compiling and linking: emit modes, targets, modules and interfaces, C interop, the Bazel rules, trust reports and proof certificates |
+| [pia-lean](pia-lean/SKILL.md) | proving a lemma in Lean 4 when Z3 cannot: `= by lean T`, `--emit=lean`, the proof file, `pia_lean_proof` receipts and stale receipts |
 | [pia-fast-proofs](pia-fast-proofs/SKILL.md) | proving only what changed: `--verify-only`, `--proof-cache`, `--jobs`, `--verify-stats`, slicing |
 | [pia-mcp](pia-mcp/SKILL.md) | driving a verified session through the `pia mcp` server's `execute` and `poll` tools |
 | [pia-repl](pia-repl/SKILL.md) | `pia repl` from a shell: piped cells, JSON lines, `:redef`, state with invariants and `old`, tasks |

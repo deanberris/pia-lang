@@ -83,6 +83,8 @@
 // (README, "Front end without Bazel").
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -96,6 +98,7 @@
 
 #include "meta/Expand.h"
 #include "syntax/Interfaces.h"
+#include "syntax/Lean.h"
 #include "syntax/Lexer.h"
 #include "syntax/Lint.h"
 #include "syntax/Parser.h"
@@ -113,10 +116,12 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "verify/Verifier.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SHA256.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #endif
@@ -139,8 +144,10 @@ int usage() {
          "             [--explain-overloads=<file:line>]\n"
          "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
-         "<file.pia>\n"
+         "[--lean-receipt=<file>]...\n"
+         "             <file.pia>\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
+         "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
          "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
          "[--target=<triple>] [--cpu=<name>] [-O<n>] [--lower=on|off]\n"
@@ -184,6 +191,149 @@ int emitSpirv(const std::string &file, const std::string &output) {
   out.write(reinterpret_cast<const char *>(binary.data()),
             binary.size() * sizeof(uint32_t));
   return 0;
+}
+#endif
+
+#ifndef PIA_NO_MLIR
+// --- lemmas proved in Lean (ADR 0061) -------------------------------------
+
+// The statement hash: the SHA-256 of a statement's Lean text and of the
+// definitions it uses, in hex.
+std::string statementHash(const std::string &text) {
+  std::array<uint8_t, 32> digest = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
+      reinterpret_cast<const uint8_t *>(text.data()), text.size()));
+  return llvm::toHex(digest, /*LowerCase=*/true);
+}
+
+// The Lean namespace of a file's statements: its module, or else its file
+// name, as in `Pia.Drop` or `gauss`.
+std::string leanNamespace(const pia::syntax::Node &tree,
+                          const std::string &file) {
+  if (!tree.kids.empty() &&
+      tree.kids[0]->kind == pia::syntax::NodeKind::ModuleHeader)
+    return tree.kids[0]->text;
+  std::string base = file.substr(file.find_last_of('/') + 1);
+  base = base.substr(0, base.find('.'));
+  std::string ns;
+  for (char c : base)
+    ns += std::isalnum(static_cast<unsigned char>(c)) ? c : '_';
+  if (ns.empty() || std::isdigit(static_cast<unsigned char>(ns[0])))
+    ns = "Pia_" + ns;
+  return ns;
+}
+
+// `piac --emit=lean`'s file: a header naming each statement with its hash,
+// which the receipt writer copies, then the definitions.
+std::string leanFileText(const pia::syntax::LeanFile &lean,
+                         const std::string &file) {
+  std::string out =
+      "-- The statements of the lemmas of " + file +
+      " proved in Lean, written by\n"
+      "-- `piac --emit=lean` (ADR 0061). Do not edit: a receipt names each\n"
+      "-- statement by the SHA-256 of its text and the definitions it uses.\n";
+  for (const pia::syntax::LeanStatement &s : lean.statements)
+    out += "-- pia-lean-statement " + s.lemma + " " + s.theorem + " " +
+           statementHash(s.closure) + "\n";
+  return out + "set_option linter.unusedVariables false\n\n" + lean.text;
+}
+
+// A receipt, which the pia_lean_proof rule writes once Lean has checked a
+// proof: `key value` lines, one receipt per `pia-lean-receipt 1` line.
+struct LeanReceipt {
+  std::string lemma, statement, theorem, toolchain;
+  std::vector<std::string> axioms;
+};
+
+bool readReceipts(const std::string &path, std::vector<LeanReceipt> &out) {
+  std::ifstream in(path);
+  if (!in) {
+    std::cerr << "piac: cannot open the Lean receipt " << path << "\n";
+    return false;
+  }
+  std::string line;
+  bool any = false;
+  while (std::getline(in, line)) {
+    std::istringstream words(line);
+    std::string key;
+    if (!(words >> key) || key[0] == '#')
+      continue;
+    if (key == "pia-lean-receipt") {
+      std::string version;
+      words >> version;
+      if (version != "1") {
+        std::cerr << "piac: " << path << ": a Lean receipt of version '"
+                  << version << "', and this piac reads version 1\n";
+        return false;
+      }
+      out.emplace_back();
+      any = true;
+      continue;
+    }
+    if (!any) {
+      std::cerr << "piac: " << path << " is not a Lean receipt\n";
+      return false;
+    }
+    LeanReceipt &r = out.back();
+    std::string value;
+    if (key == "axioms") {
+      while (words >> value)
+        r.axioms.push_back(value);
+      continue;
+    }
+    words >> value;
+    if (key == "lemma")
+      r.lemma = value;
+    else if (key == "statement")
+      r.statement = value;
+    else if (key == "theorem")
+      r.theorem = value;
+    else if (key == "toolchain")
+      r.toolchain = value;
+  }
+  return true;
+}
+
+// Whether each lemma's receipt proves the statement it has now. A receipt
+// for an older statement is stale, so its goal fails, as ADR 0061 says.
+std::map<std::string, pia::verify::Options::LeanProof>
+checkLean(const pia::syntax::LeanFile &lean,
+          const std::vector<LeanReceipt> &receipts) {
+  std::map<std::string, pia::verify::Options::LeanProof> out;
+  for (const pia::syntax::LeanStatement &s : lean.statements) {
+    std::string hash = statementHash(s.closure);
+    const LeanReceipt *best = nullptr;
+    for (const LeanReceipt &r : receipts)
+      if (r.lemma == s.lemma &&
+          (!best || (r.statement == hash && r.theorem == s.theorem)))
+        best = &r;
+    if (!best)
+      continue;
+    pia::verify::Options::LeanProof &p = out[s.lemma];
+    if (best->theorem != s.theorem) {
+      p.why = "receipt for another theorem";
+      p.hint = "the receipt is for the Lean theorem '" + best->theorem +
+               "', and the lemma names '" + s.theorem + "'";
+    } else if (best->statement != hash) {
+      p.why = "stale receipt";
+      p.hint = "the statement or a definition it uses changed since the "
+               "proof was checked; build its pia_lean_proof target again";
+    } else {
+      // Lean's own axioms, and those of `native_decide`, which trusts the
+      // compiler. Anything else, `sorryAx` above all, proves nothing.
+      static const std::set<std::string> allowed = {
+          "propext", "Classical.choice", "Quot.sound", "Lean.ofReduceBool",
+          "Lean.trustCompiler"};
+      for (const std::string &x : best->axioms)
+        if (!allowed.count(x)) {
+          p.why = "axiom " + x;
+          p.hint = "the Lean proof depends on the axiom '" + x +
+                   "', so it proves nothing";
+          break;
+        }
+      p.proved = p.why.empty();
+    }
+  }
+  return out;
 }
 #endif
 
@@ -661,6 +811,7 @@ int main(int argc, char **argv) {
   bool goalTimes = false;
   unsigned jobs = 0;  // 0: one per core
   std::vector<std::string> verifyOnly;
+  std::vector<std::string> leanReceipts;
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
   bool intBlast = true; // --no-int-blast turns it off (ADR 0066)
@@ -682,13 +833,16 @@ int main(int argc, char **argv) {
         arg == "--dump-tokens" || arg == "--check" || arg == "--emit=mlir" ||
         arg == "--emit=core" || arg == "--emit=llvm" || arg == "--emit=asm" ||
         arg == "--emit=obj" || arg == "--emit=interface" ||
-        arg == "--emit=spirv")
+        arg == "--emit=spirv" || arg == "--emit=lean")
       mode = arg;
-    else if (arg.rfind("--iface-path=", 0) == 0) {
+    else if (arg.rfind("--lean-receipt=", 0) == 0) {
+      if (arg.size() == 15)
+        return usage();
+      leanReceipts.push_back(arg.substr(15));
+    } else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
       ifacePaths.push_back(arg.substr(13));
-    }
-    else if (arg == "-o" && i + 1 < argc)
+    } else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
     else if (arg.rfind("--target=", 0) == 0)
@@ -867,7 +1021,13 @@ int main(int argc, char **argv) {
         jobs = static_cast<unsigned>(n);
     }
   }
-  if (!output.empty() && !codegen && !emitInterface) return usage();
+  bool emitLean = mode == "--emit=lean";
+  if (emitLean && (verify || contracts))
+    return usage();
+  if (!leanReceipts.empty() && !verify && !codegen)
+    return usage();
+  if (!output.empty() && !codegen && !emitInterface && !emitLean)
+    return usage();
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();
 #ifdef PIA_NO_MLIR
@@ -883,7 +1043,7 @@ int main(int argc, char **argv) {
   (void)trustWhy;
   (void)explainLine;
   (void)costlyGoal;
-  if (mode == "--emit=mlir" || mode == "--verify" || codegen) {
+  if (mode == "--emit=mlir" || mode == "--verify" || codegen || emitLean) {
     std::cerr << "piac: built without MLIR (-DPIA_NO_MLIR)\n";
     return 2;
   }
@@ -979,6 +1139,32 @@ int main(int argc, char **argv) {
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR
+    // The statements of the lemmas proved in Lean, which their receipts
+    // must match (ADR 0061). They are translated after the metaprograms
+    // run, so operators are the prelude's builtins.
+    pia::syntax::LeanFile lean;
+    if (!diags.hasErrors() &&
+        (emitLean ||
+         ((mode == "--emit=mlir" || mode == "--verify" || codegen) &&
+          !pia::syntax::leanLemmas(*tree).empty())))
+      lean = pia::syntax::emitLean(*tree, leanNamespace(*tree, file), diags);
+    if (!diags.hasErrors() && emitLean) {
+      std::string text = leanFileText(lean, file);
+      if (output.empty()) {
+        std::cout << text;
+      } else {
+        std::ofstream out(output, std::ios::binary);
+        out << text;
+        if (!out) {
+          std::cerr << "piac: cannot write " << output << "\n";
+          return 2;
+        }
+      }
+    }
+    std::vector<LeanReceipt> receipts;
+    for (const std::string &path : leanReceipts)
+      if (!readReceipts(path, receipts))
+        return 2;
     if (!diags.hasErrors() &&
         (mode == "--emit=mlir" || mode == "--verify" || codegen)) {
       mlir::MLIRContext ctx;
@@ -1021,6 +1207,7 @@ int main(int argc, char **argv) {
       options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
+      options.leanProofs = checkLean(lean, receipts);
       // Which axioms each proof used is only reported by these, and kept
       // in proof cache entries for later runs to report (ADR 0036).
       options.trackAxioms =
