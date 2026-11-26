@@ -8,8 +8,8 @@ let priv_blob : [u8] @embed(file = "magic.bin")
 let pub_blob : [u8] @embed(file = "magic.bin", symbol = "pia_test_magic", align = 16)
 let sec_blob : [u8] @embed(file = "magic.bin", symbol = "pia_test_sec", section = "__DATA,__pia_test")
 
-let read_priv () : u8 = priv_blob.[0]
-let read_pub () : u8 = pub_blob.[1]
+let main () : i32 =
+  if priv_blob.[0] = pub_blob.[0] then 0 else 1
 
 (* CHECK-DAG: @__pia_embed_priv_blob = private constant [8 x i8] c"MTLB\01\02\03\04", align 8
 // CHECK-DAG: @pia_test_magic = constant [8 x i8] c"MTLB\01\02\03\04", align 16
