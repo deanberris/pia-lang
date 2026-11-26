@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: Proposed
+Status: Accepted (2026-11-27, with Dean's answers below)
 
 ## Context
 
@@ -128,5 +128,7 @@ Each step is one PR and useful on its own.
 2. **Destination-passing, or ops that allocate?** This ADR has every op take a `moved` destination (section 4). The alternative is ops that take an allocator and return a result or an error, which reads more like NumPy and puts an allocation and an error path on every op.
 
 ## Answers to the open questions
+
+- **Shapes in the type (question 1), Dean, 2026-11-27:** `tensor t s` takes its shape as a value parameter, as section 2 says, so value parameters on types (step 2) come before `Pia.Tensor`.
 
 - **Destination-passing (question 2), Dean, 2026-11-27:** every op takes a `moved` destination and returns it, as section 4 says. Only `Pia.Tensor.empty` allocates.
