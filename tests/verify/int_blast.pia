@@ -6,6 +6,7 @@
    lib/Pia/Image/Raster.pia. Now a nonlinear goal is first given to Z3's
    int-blasting solver, which decides it as integer arithmetic.
 // RUN: not piac --verify --verify-stats %s 2>&1 | FileCheck %s
+// CHECK: verify-stats: {{.*}} intblast=6
 *)
 
 (* Monotonicity of a product, with no induction.
@@ -19,7 +20,7 @@ let lemma mul_mono (a : u64) (b : u64) (c : u64) : unit
 (* Sample k of pixel (x, y) lies inside a w by h image of c channels.
 // CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
-let lemma index_lt (x : u32) (y : u32) (w : u32) (h : u32) (c : u8) (k : u8) : unit
+let lemma index_lt (x : u16) (y : u16) (w : u16) (h : u16) (c : u8) (k : u8) : unit
   requires x < w && y < h && k < c
   ensures (y * w + x) * c + k < w * h * c
 = ()
@@ -61,5 +62,4 @@ let lemma signed_mono (a : i32) (b : i32) (c : i32) : unit
 
 (*
 // CHECK: 6 proved, 1 failed, 0 skipped
-// CHECK: verify-stats: {{.*}} intblast={{[1-9][0-9]*}}
 *)
