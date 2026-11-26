@@ -22,9 +22,9 @@ let alike (a : length) (b : length) : unit
 
 (* A length hashes as its u32, and a temp as its i16. *)
 let as_number (a : length) (t : temp) : unit
-  ensures hash a = hash (u32 a)
-  ensures hash t = hash (i16 t)
+  ensures hash a = Pia.Core.Hash.hash (u32 a)
+  ensures hash t = Pia.Core.Hash.hash (i16 t)
 = ()
 
 (* Any slice of lengths, through the concept. *)
-let all (xs : [length]) : u64 = hash_all<length> xs
+let all (xs : [length]) : u64 = Pia.Core.Hash.hash_all<length> xs

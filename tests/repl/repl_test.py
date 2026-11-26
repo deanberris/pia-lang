@@ -223,11 +223,16 @@ class ReplTest(unittest.TestCase):
         r = self.repl.run("let l : length = length 5")
         self.assertTrue(r["ok"], r)
         self.assertEqual(kinds(r, "defined")[0]["value"], "length 5")
-        self.repl.run("let temp = type i16\nlet pixels = type length")
-        r = self.repl.run("temp (-3)\npixels (length 7)")
+        # Each cell defines a distinct type with the one it wraps, since
+        # `pixels` adds an unwrapping overload to `size#of`.
+        r = self.repl.run("let temp = type i16")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("let size = type u16\nlet pixels = type size")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("temp (-3)\npixels (size 7)")
         self.assertTrue(r["ok"], r)
         self.assertEqual([v["value"] for v in kinds(r, "value")],
-                         ["temp (-3)", "pixels (length 7)"])
+                         ["temp (-3)", "pixels (size 7)"])
 
     def test_floats(self):
         # f32 and f64 values show as the shortest literal that reads back
