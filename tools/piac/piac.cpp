@@ -658,8 +658,11 @@ int printVersion() {
 }
 
 int main(int argc, char **argv) {
-  if (argc == 2 && std::string_view(argv[1]) == "--version")
-    return printVersion();
+  // Anywhere on the line, since wrappers (tests/lit/run_lit.sh) add
+  // --target and --cpu to every call.
+  for (int i = 1; i < argc; ++i)
+    if (std::string_view(argv[i]) == "--version")
+      return printVersion();
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
   std::vector<std::string> ifacePaths;
