@@ -67,6 +67,8 @@ let lower_bound (xs : [t]) (v : t) : usize
 
 `bits m` is the number of binary digits of `m`, which is `floor (log2 m) + 1` for `m >= 1`: exactly C++'s "at most `log2(n) + 1` comparisons". Each iteration costs one `less` and leaves a range of at most `(hi - lo) / 2`, and `bits` drops by one when its argument is halved. That fact is a lemma of `Pia.Math.Log`, so the invariant's goal is linear.
 
+(Step 1, 2026-11-24: the count is encoded as a `usize` that saturates at 2^64 - 1, not an `int`, because Z3 relates an `int` to machine integers through `bv2int` and timed out on the simplest loop invariants; see [verifier.md](../verifier.md#cost-bounds).)
+
 `spent c` can appear in loop invariants, `assert`s and lemma calls. It cannot appear in code, in `requires` or in `ensures`, and codegen erases it like any spec value. Encoded, it is a spec `int` local per counter, which IRGen threads through loops, branches and error handlers like a mutable local ([ADR 0028](0028-error-propagation-and-cleanup.md)'s `?` returns are returns, so each has the goal).
 
 ### 4. Recursion
