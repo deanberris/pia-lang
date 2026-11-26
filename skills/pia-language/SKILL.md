@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>`, refinement types, cost bounds (`costs`, ADR 0062) are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -49,7 +49,7 @@ let count_bright (ys : [u16]) : usize
 
 | Form | Meaning |
 | --- | --- |
-| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)` |
+| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)`; importing Pia.Core.Hash gives `@derive(hash)`, and Pia.Text.Json.Derive gives `@derive(json)`, which writes the bare value |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
 | `f32`, `f64`; `0.5f32`, `1f64`, `1.0e-3` | strict IEEE 754 floats: one rounding per operation, no FMA unless licensed, subnormals kept. `+ - * /`, negation and IEEE comparisons (`=` is false on NaN). A literal takes the float type its context expects, else needs the suffix; an integer literal is never a float (`2.0`, not `2`), and nothing mixes floats with integers or `real` implicitly. Proofs see floats as their bits for now: the order and arithmetic facts of ADR 0038 come later, so a goal about float values fails rather than proves |
@@ -59,6 +59,7 @@ let count_bright (ys : [u16]) : usize
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
+| `costs iterations <= len xs`, `costs calls <= 0`; `spent iterations` in an invariant | a cost bound (ADR 0062): every clause names its counter, `iterations` (loop iterations) or `calls` (non-spec calls), and is proved at return. A loop needs an invariant on `spent c`. Callees need their own bound, unless they have no loop or recursion. Function counters such as `less` come later. See `tests/verify/costs.pia` |
 | `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). See `tests/verify/spread.pia` |
 | `let rec tree = type \| Leaf \| Node of { l : box tree; k : u32 }` | a recursive type (ADR 0047): proved, with structural recursion needing no `decreases`, but not compiled yet. See `tests/verify/rec_types.pia` |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |

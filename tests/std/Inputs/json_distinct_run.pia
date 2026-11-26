@@ -1,0 +1,62 @@
+(* Runs the code @derive(json) makes for distinct types (ADR 0064, step
+   4), linked by pia_binary: a length is written and read as the bare
+   number it holds, a range is checked on read, and a bool is true or
+   false. It exits 0 when all is as expected, and otherwise with the
+   number of the first check that is not. *)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+
+let length = type u32 @derive(json)
+let temp = type int{-40..60} @derive(json)
+let flag = type bool @derive(json)
+
+let temp_range (s : [u8]) (p : usize) : bool =
+  match Json.read<temp> s with
+  | Ok _ -> false
+  | Err e -> (match e with | Range_temp q -> q = p | Syntax_temp _ -> false)
+
+let run (buf : borrowed inout mutable [u8]) : i32
+  requires len buf = 16
+=
+  let five : [u8; 1] = [ 0x35 ] in
+  let big : [u8; 10] = [ 0x34; 0x32; 0x39; 0x34; 0x39; 0x36; 0x37; 0x32; 0x39; 0x36 ] in
+  let obj : [u8; 2] = [ 0x7B; 0x7D ] in
+  let cold : [u8; 3] = [ 0x2D; 0x34; 0x31 ] in
+  let warm : [u8; 2] = [ 0x2D; 0x37 ] in
+  let yes : [u8; 4] = [ 0x74; 0x72; 0x75; 0x65 ] in
+  for k in 0 .. 16 do buf.[k] <- 0x20 done;
+  let e = write_json_length buf 0 (length 4096) in
+  if e <> 4 || buf.[0] <> 0x34 || buf.[1] <> 0x30 || buf.[2] <> 0x39 || buf.[3] <> 0x36 then 1
+  else
+    (match Json.read<length> five with
+     | Err _ -> 2
+     | Ok l ->
+         if u32 l <> 5 then 3
+         else
+           (match Json.read<length> big with
+            | Ok _ -> 4
+            | Err b ->
+                (match b with
+                 | Range_length _ ->
+                     (match Json.read<length> obj with
+                      | Ok _ -> 5
+                      | Err o ->
+                          (match o with
+                           | Range_length _ -> 6
+                           | Syntax_length _ ->
+                               if temp_range cold 0 = false then 7
+                               else
+                                 (match Json.read<temp> warm with
+                                  | Err _ -> 8
+                                  | Ok t ->
+                                      if int t <> -7 then 9
+                                      else
+                                        (match Json.read<flag> yes with
+                                         | Err _ -> 10
+                                         | Ok f -> if bool f then 0 else 11))))
+                 | Syntax_length _ -> 12)))
+
+let main () : i32 = with_arena 16 (let (m) => run m.mem)

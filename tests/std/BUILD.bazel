@@ -188,6 +188,27 @@ sh_test(
 )
 
 pia_binary(
+    name = "json_distinct_run",
+    src = "Inputs/json_distinct_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+sh_test(
+    name = "json_distinct_run_test",
+    srcs = ["json_distinct_run_test.sh"],
+    args = ["$(rootpath :json_distinct_run)"],
+    data = [":json_distinct_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
     name = "json_derive_run",
     src = "Inputs/json_derive_run.pia",
     target_compatible_with = PIA_TARGETS,

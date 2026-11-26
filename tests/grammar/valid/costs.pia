@@ -1,0 +1,21 @@
+(* Cost clauses (ADR 0062): `costs` is a keyword only before a counter and
+   `<=`, after the other contracts or straight after the return type. *)
+let find (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs iterations <= len xs
+  costs calls <= 0
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> v
+    invariant spent iterations <= i
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  i
+
+let pairs (n : u8) (m : u8) : unit
+  costs iterations <= n + n * m
+= ()
+
+let costs (x : u8) : u8 = x

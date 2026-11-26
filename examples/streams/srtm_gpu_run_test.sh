@@ -7,3 +7,6 @@ cat out.txt
 grep -q '^tile: 256x256 cells$' out.txt
 grep -q '^directions: .* 0 cells differ$' out.txt
 grep -q '^render: .* 0 cells differ$' out.txt
+# Every buffer the stages pass is page-aligned, so none is copied but the
+# few scalars, eight bytes each.
+grep -Eq '^buffers: [1-9][0-9]* wrapped in place, [0-9]+ copied \([0-9]{1,3} bytes\)$' out.txt

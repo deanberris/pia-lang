@@ -207,6 +207,8 @@ let wider (a : span) (b : span) : span
 
 `a * a` is still an error, since a length times a length is an area: a program writes that function itself.
 
+Two derives come from library modules, for programs that import them: `@derive(hash)` from Pia.Core.Hash, so `hash_all<span>` works and a span hashes as the u32 it holds, and `@derive(json)` from Pia.Text.Json.Derive, which writes and reads a span as the bare JSON number, `5`, not an object.
+
 A field of a mutable record can be assigned:
 
 ```ocaml
