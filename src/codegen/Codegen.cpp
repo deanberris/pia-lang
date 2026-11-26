@@ -719,44 +719,6 @@ struct ConstArrayLowering : mlir::OpConversionPattern<ConstArrayOp> {
   }
 };
 
-// Embedded binary blob (ADR 0070): for non-empty blobs, declare an external
-// constant memref.global (populated directly with a ConstantDataArray in
-// translate()) and cast it to a slice; for empty blobs, cast a zero-length
-// stack allocation as in EmptyLowering.
-struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
-  using OpConversionPattern::OpConversionPattern;
-  LogicalResult
-  matchAndRewrite(EmbedOp op, OpAdaptor,
-                  mlir::ConversionPatternRewriter &rw) const override {
-    Location loc = op.getLoc();
-    auto sliceType = mlir::dyn_cast_or_null<mlir::MemRefType>(
-        getTypeConverter()->convertType(op.getType()));
-    if (!sliceType)
-      return mlir::failure();
-    int64_t len = op.getLength();
-    if (len == 0) {
-      auto none = mlir::MemRefType::get({0}, sliceType.getElementType());
-      Value storage = make<mlir::memref::AllocaOp>(rw, loc, none);
-      rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, storage);
-      return mlir::success();
-    }
-    auto arrType = mlir::MemRefType::get({len}, sliceType.getElementType());
-    auto module = op->getParentOfType<mlir::ModuleOp>();
-    llvm::StringRef sym = op.getSymbol();
-    if (!module.lookupSymbol<mlir::memref::GlobalOp>(sym)) {
-      mlir::OpBuilder::InsertionGuard guard(rw);
-      rw.setInsertionPointToStart(module.getBody());
-      make<mlir::memref::GlobalOp>(
-          rw, loc, sym, rw.getStringAttr("private"), arrType,
-          /*initial_value=*/mlir::Attribute(), /*constant=*/true,
-          /*alignment=*/mlir::IntegerAttr());
-    }
-    Value global = make<mlir::memref::GetGlobalOp>(rw, loc, arrType, sym);
-    rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, global);
-    return mlir::success();
-  }
-};
-
 // `xs.[lo .. hi]`: the same storage, from the buffer's offset plus lo, with
 // hi - lo elements.
 struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
@@ -884,19 +846,14 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   }
 };
 
-// `unsafe view addr n`: a memref descriptor over foreign memory, built
-// as the LLVM struct a memref lowers to, so its uses lower as usual.
-// The memref descriptor of the `length` elements at the address `addr`,
-// an i64: no offset, unit stride.
-Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
-              mlir::MemRefType type, Value addr, Value length) {
+// Builds a memref descriptor `{p, p, 0, [n], [1]}` for `n` elements at `p`.
+Value sliceFromPtr(mlir::ConversionPatternRewriter &rw, Location loc,
+                   mlir::MemRefType type, Value p, Value n) {
   auto i64 = rw.getI64Type();
   auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
   auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
   auto desc = mlir::LLVM::LLVMStructType::getLiteral(
       rw.getContext(), {ptr, ptr, i64, dims, dims});
-  Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
-  Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, length);
   Value zero =
       make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(0));
   Value one =
@@ -914,6 +871,61 @@ Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
                                                 mlir::ValueRange{d})
       .getResult(0);
 }
+
+// `unsafe view addr n`: a memref descriptor over foreign memory, built
+// as the LLVM struct a memref lowers to, so its uses lower as usual.
+// The memref descriptor of the `length` elements at the address `addr`,
+// an i64: no offset, unit stride.
+Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
+              mlir::MemRefType type, Value addr, Value length) {
+  auto i64 = rw.getI64Type();
+  auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+  Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
+  Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, length);
+  return sliceFromPtr(rw, loc, type, p, n);
+}
+
+// Embedded binary blob (ADR 0070): for non-empty blobs, declare an external
+// constant llvm.mlir.global (populated directly with a ConstantDataArray in
+// translate()) and wrap its address in a slice descriptor; for empty blobs,
+// cast a zero-length stack allocation as in EmptyLowering.
+struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(EmbedOp op, OpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto sliceType = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!sliceType)
+      return mlir::failure();
+    int64_t len = op.getLength();
+    if (len == 0) {
+      auto none = mlir::MemRefType::get({0}, sliceType.getElementType());
+      Value storage = make<mlir::memref::AllocaOp>(rw, loc, none);
+      rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, storage);
+      return mlir::success();
+    }
+    auto i8 = rw.getI8Type();
+    auto i64 = rw.getI64Type();
+    auto arrType = mlir::LLVM::LLVMArrayType::get(i8, len);
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    llvm::StringRef sym = op.getSymbol();
+    if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      make<mlir::LLVM::GlobalOp>(rw, loc, arrType, /*isConstant=*/true,
+                                 mlir::LLVM::Linkage::External, sym,
+                                 mlir::Attribute());
+    }
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+    Value p = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
+    Value n =
+        make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(len));
+    rw.replaceOp(op, sliceFromPtr(rw, loc, sliceType, p, n));
+    return mlir::success();
+  }
+};
 
 struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
   using OpConversionPattern::OpConversionPattern;

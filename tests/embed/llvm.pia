@@ -17,4 +17,7 @@ let main () : i32 =
 // CHECK-DAG: @pia_test_sec = constant [8 x i8] c"MTLB\01\02\03\04", section "__DATA,__pia_test", align 8
 // CHECK-DAG: @pia_test_sec_len = constant i64 8, align 8
 // CHECK-DAG: @llvm.used = appending global {{.*}}@pia_test_sec
+// CHECK: define {{.*}}@main()
+// CHECK-DAG: load i8, ptr @__pia_embed_priv_blob
+// CHECK-DAG: load i8, ptr @pia_test_magic
 *)
