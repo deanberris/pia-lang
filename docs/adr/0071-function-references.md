@@ -80,14 +80,28 @@ A reference to a function that captures nothing has no environment, and is one w
 
 ### 6. Boxes over concepts
 
-This is what the references are for first, and what makes a `box c` work as Rust's `dyn Trait` does. When `widen` makes a `box c` from a `box t`, it stores, beside the slot and the object's size and alignment (the ADR 0046 amendment):
+This is what the references are for first, and what makes a `box c` work as Rust's `dyn Trait` does.
 
-- **A reference to `t`'s drop**, through a thunk that takes the slot and drops the object in it, or one that does nothing for a type with no drop. Dropping the box calls it, then gives the slot back to its allocator.
-- **A reference to `t`'s implementation of each of `c`'s requirements**, through a thunk that takes the slot in the receiver's place and forwards to `t`'s function. `area b` on a `box Shape` is a call through the box's `area` reference.
+**One static table per type and concept.** For each type `t` that is widened into `box c`, the compiler makes one table, a constant record in read-only data, shared by every `box c` that holds a `t` (Dean, 2026-11-27: references in every box would be wasteful). It holds:
 
-Each reference is checked once, where `widen` makes it, against the requirement's arrow with the receiver erased, which is exactly the check ADR 0046's section 4 already asks for: what is placed in a box must be proved to expose the concept's interface. So the verifier's view of a box does not change. A call through it has the requirement's contract and nothing else.
+- `t`'s size and alignment, in bytes (the ADR 0046 amendment);
+- a reference to `t`'s drop, through a thunk that takes the slot and drops the object in it, or one that does nothing for a type with no drop;
+- a reference to `t`'s implementation of each of `c`'s requirements, through a thunk that takes the slot in the receiver's place and forwards to `t`'s function.
 
-The references are stored in the box itself, not in a table the box points to, as Dean asked ("instead of a vtable we have an explicit ref"): a call is one load and one indirect call, and a box is one word wider for each requirement. Where the compiler can see what a box holds, such as straight after `widen`, the call is direct, as it is today. Because a reference is an address, a box made in one module can be called and dropped in another that never saw its type, so ADR 0046's step 6 needs no table layout and no thunks beyond these.
+A `box c` is then two words, the slot and a reference to its table, whatever `c` requires. `area b` on a `box Shape` loads `area` from the table and calls it; dropping the box calls the table's drop, then gives the slot back to its allocator. Where the compiler can see what a box holds, such as straight after `widen`, the call is direct, as it is today.
+
+**Consolidated across modules.** A table is named by its type and concept, `pia$t$<type>$<concept>`, and emitted as a link-once constant in each module that widens a `t` into `box c`, so the linker keeps one copy however many modules make such boxes. Its layout is the concept's requirements in declaration order after the three fixed entries, published with the concept ([ADR 0030](0030-published-object-layouts.md)), so a module that imports `c` can call and drop a box made elsewhere, and ADR 0046's step 6 needs nothing more.
+
+**Checked once.** Each entry is checked where the table is made, against the requirement's arrow with the receiver erased: exactly what ADR 0046's section 4 asks, that what is placed in a box exposes the concept's interface. The verifier's view of a box does not change. A call through it has the requirement's contract and nothing else, and the table itself never appears in a goal.
+
+### 6a. Tables in the REPL
+
+A table ties a type, a concept and the functions that implement it, so the REPL's redefinition rules ([ADR 0031](0031-verified-repl-and-live-environment.md)) must cover all three. A table is a derived definition in the session's environment, depending on the type, the concept and each implementing function, so every `:redef` of one of them reaches it.
+
+- **An implementation changes, and refines.** The table's entry is a thunk that calls through the function's REPL slot, as every call between REPL definitions already does, so a new body proved against the old contract is swapped into the slot and the table does not change. Live boxes carry on.
+- **An implementation stops meeting the concept.** The table's check fails like any dependent's proof, and the redefinition is refused, naming the concept and the type.
+- **The type's layout changes.** Boxes alive in a task hold objects of the old layout, and only the old table's size, drop and implementations are right for them. The old table stays, with the old type's code, as Erlang keeps two versions of a module, and boxes made after the change get the new type's table. Each version is proved against its own type, so neither table is ever used for the other's objects. The old table and its code are freed when no task can still reach a box made with it; until then the session lists it.
+- **The concept changes.** Adding, removing or reordering a requirement changes every table's layout, so it is refused while any `box c` is alive in a running task or in REPL state, as ADR 0031 refuses a layout change with live values and no migration. With none alive, every table for `c` is rebuilt and every type widened into it is checked against the new concept. A change only to a requirement's contract follows ADR 0031's cases: if every implementation still meets it and callers' proofs still hold, it commits; otherwise the callers and tables are verified again and swapped together at a quiescent point.
 
 ### 7. What this ADR does not decide
 
@@ -103,7 +117,8 @@ Each step is a PR with lit tests in `tests/verify`, `tests/irgen` and `tests/cod
 2. **Code generation.** Addresses and indirect calls, references in records, variants and buffers, `option` of an arrow as a nullable pointer, and a run test that picks handlers from a table.
 3. **The C boundary.** References as parameters of `extern`s and `@abi(c)` exports, with a test of `qsort` over a Pia comparator and of C calling back into Pia, and the trust report's entries.
 4. **Borrowed closures**: two-word references to capturing lambdas, with ADR 0042's loan checks.
-5. **Boxes over concepts through references** (the ADR 0046 amendment, steps 2 and 3): `widen` stores the drop and each requirement's reference, calls and drops go through them, and a box made in one module is used in another.
+5. **Boxes over concepts through tables** (the ADR 0046 amendment, steps 2 and 3): one link-once table per type and concept, `widen` storing a reference to it, calls and drops through it, and a box made in one module used in another.
+6. **Tables in the REPL**: tables as derived definitions, slot thunks, old tables kept for live boxes of an old layout, and the refusal of a concept change while boxes are alive.
 
 ## Consequences
 
