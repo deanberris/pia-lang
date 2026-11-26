@@ -55,7 +55,9 @@ A recursive type may still have its own `drop` (#85). It sees the node's fields 
 
 ### 6. Every other drop has a known depth
 
-A type that cannot nest without bound has a drop depth the compiler knows, and with it the stack its drop uses. The compiler reports the deepest drop in a function with `--verify-stats`, and a drop deeper than a limit (`--drop-depth`, 64 by default) is a lint, `deep_drop`, suggesting a `box` to flatten it. With sections 2 to 5, no drop in a Pia program uses stack that grows with its data.
+A type that cannot nest without bound has a drop depth the compiler knows, and with it the stack its drop uses: the sum of the frames of the drops along its deepest path, which codegen measures from LLVM's frame sizes once the drops are compiled. The compiler reports the deepest drop in a function with `--verify-stats`.
+
+The limit comes from the target (Dean, 2026-11-27), not from a fixed number of levels. The `Pia.Target` theory ([ADR 0049](0049-targets-are-theories.md)) gains `task_stack_bytes`, the smallest stack a Pia task runs on for that target: the stack of a thread the runtime starts, since the main thread's is larger. On arm64 macOS that is 512 KiB, the default for a thread other than the main one; on x86_64 Linux it is 8 MiB, the default `RLIMIT_STACK` that glibc gives new threads. A drop whose stack is more than an eighth of `task_stack_bytes` (64 KiB on macOS, 1 MiB on Linux) is a lint, `deep_drop`, which names the type and the path and suggests a `box` to flatten it. `--drop-stack=<bytes>` sets another budget, for a program that runs on smaller stacks or sets its own. With sections 2 to 5, no drop in a Pia program uses stack that grows with its data, so this budget is about a type's shape alone.
 
 ### 7. Proofs
 
@@ -65,7 +67,7 @@ What the verifier sees does not change. A drop is still its type's `drop` contra
 
 Each step is a PR with tests in `tests/codegen` run from C, and the `pia-language` skill updated when the lint lands.
 
-1. **Drop depth.** Which types can nest without bound (section 1), the depth of every other drop in `--verify-stats`, and the `deep_drop` lint.
+1. **Drop depth.** Which types can nest without bound (section 1), the stack of every other drop in `--verify-stats`, `task_stack_bytes` in `Pia.Target`'s two models, and the `deep_drop` lint against it.
 2. **Lists.** The loop along the last child for `let rec` types with one recursive child, with a test that drops a list of a million nodes in a thread with a 64 KiB stack.
 3. **Trees.** Pointer reversal for several children, and the order of section 3, with a test that drops a left-leaning tree of a million nodes and checks the order of the drops it runs.
 4. **Hand-written drops** of recursive types (section 4).
@@ -81,4 +83,4 @@ Each step is a PR with tests in `tests/codegen` run from C, and the `pia-languag
 
 ## Questions for Dean
 
-1. **The drop-depth limit.** Is 64 levels the right default for `deep_drop`, and should it be a lint (recommended) or an error?
+1. **The budget.** Is an eighth of the target's task stack the right share for one drop, and should exceeding it be a lint (recommended) or an error? *Dean, 2026-11-27: take the default from the target's stack limits.*
