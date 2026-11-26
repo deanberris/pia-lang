@@ -60,6 +60,90 @@ let meta derive_eq (t : type_decl) : item =
   with_doc (concat "Field-by-field equality for " what)
     `( let $n ($!a : $t) ($!b : $t) : bool ensures $!result <==> $c = $c )
 
+(* The derives of a distinct type (ADR 0064, section 4): `let length =
+   type u32 @derive(eq, ord, add, scale, bounds)`. A distinct type has
+   nothing of its underlying type's until it derives it. Each derive reads
+   the type's one field, `raw#length`, writes ordinary functions on the
+   type, and states them in terms of the underlying values, so a caller
+   proves facts about `a + b` as it would about two u32s. They work on any
+   type of one integer field, which a distinct type is. *)
+let meta one_field (what : string) (t : type_decl) : string =
+  if length (fields t) = 1 then nth (fields t) 0
+  else fail (concat what (concat " needs a type of one integer field, such as 'let length = type u32'; '" (concat (name t) "' is not one")))
+
+(* @derive(ord): `<`, `<=`, `>` and `>=`, comparing the underlying values. *)
+let meta derive_ord (t : type_decl) : item =
+  let f = one_field "@derive(ord)" t in
+  let lt = concat "lt_" (name t) in
+  let le = concat "le_" (name t) in
+  let gt = concat "gt_" (name t) in
+  let ge = concat "ge_" (name t) in
+  `( let $lt ($!a : $t) ($!b : $t) : bool ensures $!result <==> $!a.$f < $!b.$f = $!a.$f < $!b.$f
+     let $le ($!a : $t) ($!b : $t) : bool ensures $!result <==> $!a.$f <= $!b.$f = $!a.$f <= $!b.$f
+     let $gt ($!a : $t) ($!b : $t) : bool ensures $!result <==> $!a.$f > $!b.$f = $!a.$f > $!b.$f
+     let $ge ($!a : $t) ($!b : $t) : bool ensures $!result <==> $!a.$f >= $!b.$f = $!a.$f >= $!b.$f )
+
+(* @derive(add): `+` and `-` between two values of the type, never with
+   the underlying type. Each requires that the exact result fits, so
+   overflow is the caller's goal, as it is for the underlying type. *)
+let meta derive_add (t : type_decl) : item =
+  let f = one_field "@derive(add)" t in
+  let r = range_of (field_type t f) in
+  let lo = nth r 0 in
+  let hi = nth r 1 in
+  let n = name t in
+  let add = concat "add_" n in
+  let sub = concat "sub_" n in
+  `( let $add ($!a : $t) ($!b : $t) : $t
+       requires $lo <= $!a.$f + $!b.$f && $!a.$f + $!b.$f <= $hi
+       ensures $!result.$f = $!a.$f + $!b.$f
+     = $n ($!a.$f + $!b.$f)
+     let $sub ($!a : $t) ($!b : $t) : $t
+       requires $lo <= $!a.$f - $!b.$f && $!a.$f - $!b.$f <= $hi
+       ensures $!result.$f = $!a.$f - $!b.$f
+     = $n ($!a.$f - $!b.$f) )
+
+(* @derive(scale): `*`, `/` and `%` by the underlying type, on the right:
+   `l * 3` is a length, and `l * l` is not defined, since a length times
+   a length is an area. *)
+let meta derive_scale (t : type_decl) : item =
+  let f = one_field "@derive(scale)" t in
+  let u = field_type t f in
+  let r = range_of u in
+  let lo = nth r 0 in
+  let hi = nth r 1 in
+  let n = name t in
+  let mul = concat "mul_" n in
+  let div = concat "div_" n in
+  let rem = concat "rem_" n in
+  let q = if lo < 0 then `( $!k <> 0 && ($!a.$f <> $lo || $!k <> -1) ) else `( $!k <> 0 ) in
+  `( let $mul ($!a : $t) ($!k : $u) : $t
+       requires $lo <= $!a.$f * $!k && $!a.$f * $!k <= $hi
+       ensures $!result.$f = $!a.$f * $!k
+     = $n ($!a.$f * $!k)
+     let $div ($!a : $t) ($!k : $u) : $t
+       requires $q
+       ensures $!result.$f = $!a.$f / $!k
+     = $n ($!a.$f / $!k)
+     let $rem ($!a : $t) ($!k : $u) : $t
+       requires $q
+       ensures $!result.$f = $!a.$f % $!k
+     = $n ($!a.$f % $!k) )
+
+(* @derive(bounds): `min_<t> ()` and `max_<t> ()`, the underlying type's
+   bounds as values of the type. `max length` stays an error: the bounds
+   of a distinct type are its own to give. *)
+let meta derive_bounds (t : type_decl) : item =
+  let f = one_field "@derive(bounds)" t in
+  let r = range_of (field_type t f) in
+  let lo = nth r 0 in
+  let hi = nth r 1 in
+  let n = name t in
+  let mn = concat "min_" n in
+  let mx = concat "max_" n in
+  `( let $mn () : $t ensures $!result.$f = $lo = $n $lo
+     let $mx () : $t ensures $!result.$f = $hi = $n $hi )
+
 (* State machines as theories (ADR 0036, step 5; docs/theories.md).
    `let theory Conn = machine "conn" conn_state Closed [ edge Closed
    "connect" Open; ... ]` builds a theory with a sort `conn`, `at c : conn

@@ -2199,9 +2199,12 @@ class Gen {
   }
 
   // Lowers both operands. A literal takes its type from the other side, so
-  // `0 < x` and `x < 0` both compare at x's type.
+  // `0 < x` and `x < 0` both compare at x's type. On the right of a record
+  // whose derive defines `op`, it takes that function's second parameter's
+  // type, so `l * 3` scales a distinct type by a u32 (ADR 0064, section 4).
   std::optional<std::pair<TV, TV>> genOperands(const Node &lhs, const Node &rhs,
-                                               Type expected) {
+                                               Type expected,
+                                               const std::string &op = "") {
     // Of two literals, one with a float suffix gives the other its type:
     // `0.1 + 0.2f64`.
     auto suffixed = [&](const Node &k) {
@@ -2220,9 +2223,37 @@ class Gen {
     }
     R l = genExpr(lhs, expected);
     if (!l) return std::nullopt;
-    R r = genExpr(rhs, l->type);
+    Type want = l->type;
+    if (auto rt = mlir::dyn_cast<RecordType>(l->type))
+      if (const sema::FuncSig *sig = recordOpSig(op, rt))
+        if (sig->params.size() == 2)
+          want = sig->params[1].type;
+    R r = genExpr(rhs, want);
     if (!r) return std::nullopt;
     return std::make_pair(*l, *r);
+  }
+
+  // The name of the function an operator on a record calls: `eq_<t>` for
+  // `=`, which @derive(eq) makes, and `lt_<t>`, `add_<t>`, `mul_<t>` and
+  // the rest, which @derive(ord), @derive(add) and @derive(scale) make
+  // (ADR 0064, section 4). Empty for an operator no derive defines.
+  static std::string recordOpName(const std::string &op, llvm::StringRef type) {
+    static const std::map<std::string, std::string> names = {
+        {"=", "eq"},  {"<>", "eq"}, {"<", "lt"},  {"<=", "le"},
+        {">", "gt"},  {">=", "ge"}, {"+", "add"}, {"-", "sub"},
+        {"*", "mul"}, {"/", "div"}, {"%", "rem"}};
+    auto it = names.find(op);
+    if (it == names.end())
+      return "";
+    return it->second + "_" + type.str();
+  }
+
+  const sema::FuncSig *recordOpSig(const std::string &op, RecordType rt) {
+    std::string name = recordOpName(op, rt.getName());
+    if (name.empty())
+      return nullptr;
+    auto it = sigs_.find(name);
+    return it == sigs_.end() ? nullptr : &it->second;
   }
 
   // Brings two integers to their joined type.
@@ -2272,7 +2303,7 @@ class Gen {
               const Node &rhsNode, Type expected) {
     if (isLogic(op)) return genLogic(n, op, lhsNode, rhsNode);
     if (isComparison(op)) {
-      auto ops = genOperands(lhsNode, rhsNode, Type());
+      auto ops = genOperands(lhsNode, rhsNode, Type(), op);
       if (!ops) return std::nullopt;
       auto [a, c] = *ops;
       Location l = loc(n);
@@ -2359,8 +2390,12 @@ class Gen {
                              mlir::isa_and_nonnull<IntType>(expected) ||
                                      isExact(expected) || isFloat(expected)
                                  ? expected
-                                 : Type());
+                                 : Type(),
+                             op);
       if (!ops) return std::nullopt;
+      if (mlir::isa<RecordType>(ops->first.type) ||
+          mlir::isa<RecordType>(ops->second.type))
+        return genRecordArith(n, op, ops->first, ops->second);
       if (isFloat(ops->first.type) || isFloat(ops->second.type))
         return genFloatArith(n, op, ops->first, ops->second);
       if (isExact(ops->first.type) || isExact(ops->second.type))
@@ -8634,11 +8669,63 @@ class Gen {
     return out;
   }
 
+  // `<`, `<=`, `>` and `>=` on records call `lt_<name>` and the rest,
+  // which `@derive(ord)` makes (ADR 0064, section 4).
+  R genRecordOrder(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt || a.type != c.type)
+      return fail(n, "'" + op + "' compares two values of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type));
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig)
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(ord) to '" + name + "'");
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != a.type || sig->result != boolType())
+      return fail(n, "'" + recordOpName(op, name) + "' must take two " + name +
+                         " values and return bool");
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
+  // `+` and `-` between two values of a record type, and `*`, `/` and `%`
+  // of one by its underlying type, call `add_<name>` and the rest, which
+  // `@derive(add)` and `@derive(scale)` make (ADR 0064, section 4). The
+  // function's precondition is where overflow is a goal.
+  R genRecordArith(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt) {
+      std::string other = typeName(c.type);
+      return fail(n, "'" + op + "' is not defined with " + typeName(a.type) +
+                         " on the left and " + other + " on the right; a " +
+                         "derived operator takes the " + other + " first");
+    }
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig) {
+      std::string derive = op == "+" || op == "-"                ? "add"
+                           : op == "*" || op == "/" || op == "%" ? "scale"
+                                                                 : "";
+      if (derive.empty())
+        return fail(n, "'" + op + "' is not defined on " + name);
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(" + derive + ") to '" + name + "'");
+    }
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != c.type)
+      return fail(n,
+                  "'" + op + "' on " + name + " takes " +
+                      (sig->params.size() == 2 ? typeName(sig->params[1].type)
+                                               : std::string("one value")) +
+                      " on the right, found " + typeName(c.type));
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
   // `=` and `<>` on records call `eq_<name>`, which `@derive(eq)` makes.
   R genRecordEq(const Node &n, const std::string &op, TV a,
                 const Node &lhsNode, TV c, const Node &rhsNode) {
     if (op != "=" && op != "<>")
-      return fail(n, "records cannot be compared with '" + op + "'");
+      return genRecordOrder(n, op, a, c);
     auto rt = mlir::dyn_cast<RecordType>(a.type);
     if (!rt || a.type != c.type)
       return fail(n, "'" + op + "' compares two values of one record type, "
