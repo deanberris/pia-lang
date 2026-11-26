@@ -259,7 +259,7 @@ elem   = stmt | "let" lparam { lparam } "=>" elem ;     (* list, record and argu
 
 stmt   = postfix "<-" stmt
        | "if" seq "then" stmt [ "else" stmt ]
-       | "for" pattern "in" or_e [ "step" add_e ] { loop_annot } "do" handled "done"
+       | "for" pattern "in" or_e [ "step" add_e ] { attribute } { loop_annot } "do" handled "done"   (* @place(gpu): a placed sequence, ADR 0068 *)
        | "spread" pattern "in" or_e { attribute } { loop_annot } "do" handled "done"
        | "while" seq { loop_annot } "do" handled "done"
        | quantifier
