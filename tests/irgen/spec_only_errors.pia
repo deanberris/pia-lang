@@ -38,9 +38,14 @@ let spec int_div (n : int) : int = n / 2
 *)
 let spec modulo (x : real) : real = x % 2.0
 
-(* CHECK: spec_only_errors.pia:[[@LINE+2]]:36: error: '1.5f32': floating-point types are not supported yet; a literal with a decimal point is a spec-only real, with no suffix
+(* A suffixed literal is a float, which is not a real.
+// CHECK: spec_only_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: expected real, found f32
 *)
 let spec float (x : real) : real = 1.5f32
+
+(* CHECK: spec_only_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '1.5u8': a literal with a decimal point is a float with the suffix f32 or f64, or a spec-only real with none
+*)
+let spec suffixed (x : real) : real = 1.5u8
 
 (* CHECK: spec_only_errors.pia:[[@LINE+2]]:42: error: 'int' converts an integer, not real
 *)

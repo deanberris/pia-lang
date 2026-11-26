@@ -274,7 +274,7 @@ A comment can be read but not spliced into code. To document generated code, use
 
 ## Derives
 
-`@derive(x)` on a type item calls the metaprogram `derive_x` with the item and adds the items it returns after the type. The prelude defines `derive_eq`. For `let pixel = type { r : u8; g : u8 } @derive(eq)` it makes:
+`@derive(x)` on a type item calls the metaprogram `derive_x` with the item and adds the items it returns after the type. The prelude defines `derive_eq`, and for a distinct type `derive_ord`, `derive_add`, `derive_scale` and `derive_bounds` (ADR 0064, section 4), which make `lt_<t>`, `add_<t>`, `mul_<t>` and the rest that `<`, `+` and `*` on the type call. For `let pixel = type { r : u8; g : u8 } @derive(eq)` it makes:
 
 ```ocaml
 let eq_pixel (a : pixel) (b : pixel) : bool

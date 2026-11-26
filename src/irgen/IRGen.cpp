@@ -1957,6 +1957,8 @@ class Gen {
       if (const Node *t = hoistable(n)) return genTry(n, *t, expected);
     switch (n.kind) {
       case NodeKind::IntLit: {
+        if (Type ft = floatSuffix(n.text))
+          return genFloatConst(n, n.text, false, ft);
         auto lit = sema::parseIntLiteral(n.text);
         // An int literal has no bounds (ADR 0036).
         if (!lit && isExact(expected)) {
@@ -2100,6 +2102,10 @@ class Gen {
 
   R genIntConst(const Node &n, llvm::APInt v, const std::string &suffix,
                 Type expected) {
+    if (suffix.empty() && isFloat(expected))
+      return fail(n, "an integer literal is not a float: write " +
+                         llvm::toString(v, 10, true) + ".0 for an " +
+                         typeName(expected));
     Type t;
     if (suffix.empty() && isExact(expected))
       return exactConst(loc(n), expected, llvm::toString(v, 10, true));
@@ -2124,14 +2130,20 @@ class Gen {
     return TV{c, t};
   }
 
-  // `0.5`, `1.0e3`: a real, exact. Pia has no floating-point types yet.
+  // `0.5`, `1.0e3`: a real, exact, unless a suffix or the context makes
+  // it a float: `0.5f32`, or `0.5` where an f64 is expected.
   R genRealConst(const Node &n, llvm::StringRef text, bool negate,
                  Type expected) {
-    size_t f = text.find_first_of("fiu");
-    if (f != llvm::StringRef::npos)
-      return fail(n, "'" + text.str() + "': floating-point types are not "
-                     "supported yet; a literal with a decimal point is a "
-                     "spec-only real, with no suffix");
+    if (Type ft = floatSuffix(text))
+      return genFloatConst(n, text, negate, ft);
+    if (text.find_first_of("fiu") != llvm::StringRef::npos)
+      return fail(n,
+                  "'" + text.str() +
+                      "': a literal with a decimal point "
+                      "is a float with the suffix f32 or f64, or a spec-only "
+                      "real with none");
+    if (isFloat(expected))
+      return genFloatConst(n, text, negate, expected);
     std::optional<std::string> v = realLiteral(text, negate);
     if (!v) return fail(n, "invalid real literal '" + text.str() + "'");
     (void)expected;  // a mismatch is reported where the value is used
@@ -2187,10 +2199,22 @@ class Gen {
   }
 
   // Lowers both operands. A literal takes its type from the other side, so
-  // `0 < x` and `x < 0` both compare at x's type.
+  // `0 < x` and `x < 0` both compare at x's type. On the right of a record
+  // whose derive defines `op`, it takes that function's second parameter's
+  // type, so `l * 3` scales a distinct type by a u32 (ADR 0064, section 4).
   std::optional<std::pair<TV, TV>> genOperands(const Node &lhs, const Node &rhs,
-                                               Type expected) {
-    if (isLiteral(lhs) && !isLiteral(rhs)) {
+                                               Type expected,
+                                               const std::string &op = "") {
+    // Of two literals, one with a float suffix gives the other its type:
+    // `0.1 + 0.2f64`.
+    auto suffixed = [&](const Node &k) {
+      const Node &v =
+          k.kind == NodeKind::Neg && k.kids.size() == 1 ? *k.kids[0] : k;
+      return (v.kind == NodeKind::FloatLit || v.kind == NodeKind::IntLit) &&
+             floatSuffix(v.text);
+    };
+    if ((isLiteral(lhs) && !isLiteral(rhs)) ||
+        (isLiteral(lhs) && suffixed(rhs) && !suffixed(lhs))) {
       R r = genExpr(rhs, expected);
       if (!r) return std::nullopt;
       R l = genExpr(lhs, r->type);
@@ -2199,9 +2223,37 @@ class Gen {
     }
     R l = genExpr(lhs, expected);
     if (!l) return std::nullopt;
-    R r = genExpr(rhs, l->type);
+    Type want = l->type;
+    if (auto rt = mlir::dyn_cast<RecordType>(l->type))
+      if (const sema::FuncSig *sig = recordOpSig(op, rt))
+        if (sig->params.size() == 2)
+          want = sig->params[1].type;
+    R r = genExpr(rhs, want);
     if (!r) return std::nullopt;
     return std::make_pair(*l, *r);
+  }
+
+  // The name of the function an operator on a record calls: `eq_<t>` for
+  // `=`, which @derive(eq) makes, and `lt_<t>`, `add_<t>`, `mul_<t>` and
+  // the rest, which @derive(ord), @derive(add) and @derive(scale) make
+  // (ADR 0064, section 4). Empty for an operator no derive defines.
+  static std::string recordOpName(const std::string &op, llvm::StringRef type) {
+    static const std::map<std::string, std::string> names = {
+        {"=", "eq"},  {"<>", "eq"}, {"<", "lt"},  {"<=", "le"},
+        {">", "gt"},  {">=", "ge"}, {"+", "add"}, {"-", "sub"},
+        {"*", "mul"}, {"/", "div"}, {"%", "rem"}};
+    auto it = names.find(op);
+    if (it == names.end())
+      return "";
+    return it->second + "_" + type.str();
+  }
+
+  const sema::FuncSig *recordOpSig(const std::string &op, RecordType rt) {
+    std::string name = recordOpName(op, rt.getName());
+    if (name.empty())
+      return nullptr;
+    auto it = sigs_.find(name);
+    return it == sigs_.end() ? nullptr : &it->second;
   }
 
   // Brings two integers to their joined type.
@@ -2251,7 +2303,7 @@ class Gen {
               const Node &rhsNode, Type expected) {
     if (isLogic(op)) return genLogic(n, op, lhsNode, rhsNode);
     if (isComparison(op)) {
-      auto ops = genOperands(lhsNode, rhsNode, Type());
+      auto ops = genOperands(lhsNode, rhsNode, Type(), op);
       if (!ops) return std::nullopt;
       auto [a, c] = *ops;
       Location l = loc(n);
@@ -2263,6 +2315,8 @@ class Gen {
             a.value, c.value);
         return TV{v, boolType()};
       }
+      if (isFloat(a.type) || isFloat(c.type))
+        return genFloatCmp(n, op, a, c);
       if (archetypes_.count(a.type) || archetypes_.count(c.type)) {
         // A contract may compare values of a type parameter's type: what
         // it means is decided for each instance.
@@ -2334,10 +2388,16 @@ class Gen {
     if (isArith(op)) {
       auto ops = genOperands(lhsNode, rhsNode,
                              mlir::isa_and_nonnull<IntType>(expected) ||
-                                     isExact(expected)
+                                     isExact(expected) || isFloat(expected)
                                  ? expected
-                                 : Type());
+                                 : Type(),
+                             op);
       if (!ops) return std::nullopt;
+      if (mlir::isa<RecordType>(ops->first.type) ||
+          mlir::isa<RecordType>(ops->second.type))
+        return genRecordArith(n, op, ops->first, ops->second);
+      if (isFloat(ops->first.type) || isFloat(ops->second.type))
+        return genFloatArith(n, op, ops->first, ops->second);
       if (isExact(ops->first.type) || isExact(ops->second.type))
         return genExactArith(n, op, ops->first, ops->second, lhsNode,
                              rhsNode);
@@ -2390,6 +2450,116 @@ class Gen {
       return TV{v, t};
     }
     return fail(n, "the operator '" + op + "' is not supported yet");
+  }
+
+  // --- floats (M11; ADR 0004, ADR 0012) ----------------------------------
+  //
+  // f32 and f64 are IEEE 754 binary32 and binary64, strict by default: each
+  // operation is one correctly rounded arith op with no fast-math flags, so
+  // codegen neither reassociates nor contracts, and never flushes
+  // subnormals. No float operation raises a goal: overflow is an infinity
+  // and 0/0 a NaN, as IEEE defines them. The verifier's real-valued
+  // encoding of them is ADR 0038's step 1.
+
+  static bool isFloat(Type t) {
+    return mlir::isa_and_nonnull<mlir::FloatType>(t);
+  }
+
+  // The float type a literal's suffix names, as in `0.5f32` or `1f64`.
+  Type floatSuffix(llvm::StringRef text) {
+    if (text.starts_with("0x") || text.starts_with("0X"))
+      return {};
+    if (text.ends_with("f32"))
+      return mlir::Float32Type::get(&ctx_);
+    if (text.ends_with("f64"))
+      return mlir::Float64Type::get(&ctx_);
+    return {};
+  }
+
+  // A float literal, rounded to the nearest value of `t` (ties to even), as
+  // IEEE 754 reads a decimal. One too large for `t`, or one that is not
+  // zero but rounds to zero, is an error rather than an infinity or a zero.
+  R genFloatConst(const Node &n, llvm::StringRef text, bool negate, Type t) {
+    auto ft = mlir::cast<mlir::FloatType>(t);
+    std::string digits;
+    for (char c : text)
+      if (!syntax::isDigitSeparator(c))
+        digits.push_back(c);
+    llvm::StringRef spelling(digits);
+    if (floatSuffix(spelling))
+      spelling = spelling.drop_back(3);
+    llvm::APFloat v(ft.getFloatSemantics());
+    auto status =
+        v.convertFromString(spelling, llvm::APFloat::rmNearestTiesToEven);
+    if (!status) {
+      llvm::consumeError(status.takeError());
+      return fail(n, "invalid float literal '" + text.str() + "'");
+    }
+    if (*status & llvm::APFloat::opOverflow)
+      return fail(n, "'" + text.str() + "' is too large for " + typeName(t) +
+                         ", whose largest finite value is " +
+                         sema::floatText(llvm::APFloat::getLargest(
+                             ft.getFloatSemantics())));
+    if ((*status & llvm::APFloat::opUnderflow) && v.isZero())
+      return fail(n, "'" + text.str() + "' is too small for " + typeName(t) +
+                         ", where it rounds to zero; write 0.0 for zero");
+    if (negate)
+      v.changeSign();
+    Value c = create<mlir::arith::ConstantOp>(
+        loc(n), mlir::cast<mlir::TypedAttr>(b_.getFloatAttr(ft, v)));
+    return TV{c, t};
+  }
+
+  // `+ - * /` on two floats of one type, each one IEEE operation.
+  R genFloatArith(const Node &n, const std::string &op, TV a, TV c) {
+    if (a.type != c.type)
+      return fail(n, "'" + op + "' needs operands of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type) +
+                         floatMixHint(a.type, c.type));
+    Location l = loc(n);
+    Value v;
+    if (op == "+")
+      v = create<mlir::arith::AddFOp>(l, a.value, c.value);
+    else if (op == "-")
+      v = create<mlir::arith::SubFOp>(l, a.value, c.value);
+    else if (op == "*")
+      v = create<mlir::arith::MulFOp>(l, a.value, c.value);
+    else if (op == "/")
+      v = create<mlir::arith::DivFOp>(l, a.value, c.value);
+    else
+      return fail(n, "'" + op + "' is not defined on " + typeName(a.type) +
+                         "; floats have + - * /, negation and comparisons");
+    return TV{v, a.type};
+  }
+
+  // A comparison of two floats as IEEE 754 defines it: NaN is unordered,
+  // so every comparison with it is false except `<>`, and -0.0 = 0.0.
+  R genFloatCmp(const Node &n, const std::string &op, TV a, TV c) {
+    if (a.type != c.type)
+      return fail(n, "'" + op + "' needs operands of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type) +
+                         floatMixHint(a.type, c.type));
+    using P = mlir::arith::CmpFPredicate;
+    P p = op == "="    ? P::OEQ
+          : op == "<>" ? P::UNE
+          : op == "<"  ? P::OLT
+          : op == "<=" ? P::OLE
+          : op == ">"  ? P::OGT
+                       : P::OGE;
+    return TV{create<mlir::arith::CmpFOp>(loc(n), p, a.value, c.value),
+              boolType()};
+  }
+
+  // What to write when a float meets an integer or a real.
+  static std::string floatMixHint(Type a, Type c) {
+    Type other = isFloat(a) ? c : a;
+    if (mlir::isa<IntType>(other))
+      return "; a float literal has a decimal point, such as 2.0, and an "
+             "integer is not converted to a float implicitly";
+    if (mlir::isa<RealType>(other))
+      return "; a real is spec-only, and a float literal in code has the "
+             "suffix f32 or f64, such as 0.5f32";
+    return "";
   }
 
   // `+ - *` on `int` and `real`, and `/` on `real`: exact, so there is
@@ -3452,6 +3622,9 @@ class Gen {
     const Node &operand = *n.kids[0];
     if (operand.kind == NodeKind::FloatLit)
       return genRealConst(n, operand.text, true, expected);
+    if (operand.kind == NodeKind::IntLit)
+      if (Type ft = floatSuffix(operand.text))
+        return genFloatConst(n, operand.text, true, ft);
     if (operand.kind == NodeKind::IntLit && !isExact(expected)) {
       auto lit = sema::parseIntLiteral(operand.text);
       if (!lit) return fail(operand, "invalid integer literal");
@@ -3459,13 +3632,18 @@ class Gen {
     }
     R v = genExpr(operand, expected);
     if (!v) return v;
+    // IEEE negation flips the sign, so -0.0 and 0.0 differ and it is exact.
+    if (isFloat(v->type))
+      return TV{create<mlir::arith::NegFOp>(loc(n), v->value), v->type};
     if (isExact(v->type)) {
       TV zero = exactConst(loc(n), v->type, "0");
       return TV{create<ExactSubOp>(loc(n), v->type, zero.value, v->value),
                 v->type};
     }
     auto t = mlir::dyn_cast<IntType>(v->type);
-    if (!t) return fail(n, "'-' needs an integer, found " + typeName(v->type));
+    if (!t)
+      return fail(n, "'-' needs an integer or a float, found " +
+                         typeName(v->type));
     Value zero = create<ConstantOp>(
         loc(n), t, b_.getIntegerAttr(b_.getIntegerType(kWidth), 0));
     if (!t.contains(llvm::APInt(kWidth, 0)))
@@ -8379,11 +8557,63 @@ class Gen {
     return out;
   }
 
+  // `<`, `<=`, `>` and `>=` on records call `lt_<name>` and the rest,
+  // which `@derive(ord)` makes (ADR 0064, section 4).
+  R genRecordOrder(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt || a.type != c.type)
+      return fail(n, "'" + op + "' compares two values of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type));
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig)
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(ord) to '" + name + "'");
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != a.type || sig->result != boolType())
+      return fail(n, "'" + recordOpName(op, name) + "' must take two " + name +
+                         " values and return bool");
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
+  // `+` and `-` between two values of a record type, and `*`, `/` and `%`
+  // of one by its underlying type, call `add_<name>` and the rest, which
+  // `@derive(add)` and `@derive(scale)` make (ADR 0064, section 4). The
+  // function's precondition is where overflow is a goal.
+  R genRecordArith(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt) {
+      std::string other = typeName(c.type);
+      return fail(n, "'" + op + "' is not defined with " + typeName(a.type) +
+                         " on the left and " + other + " on the right; a " +
+                         "derived operator takes the " + other + " first");
+    }
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig) {
+      std::string derive = op == "+" || op == "-"                ? "add"
+                           : op == "*" || op == "/" || op == "%" ? "scale"
+                                                                 : "";
+      if (derive.empty())
+        return fail(n, "'" + op + "' is not defined on " + name);
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(" + derive + ") to '" + name + "'");
+    }
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != c.type)
+      return fail(n,
+                  "'" + op + "' on " + name + " takes " +
+                      (sig->params.size() == 2 ? typeName(sig->params[1].type)
+                                               : std::string("one value")) +
+                      " on the right, found " + typeName(c.type));
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
   // `=` and `<>` on records call `eq_<name>`, which `@derive(eq)` makes.
   R genRecordEq(const Node &n, const std::string &op, TV a,
                 const Node &lhsNode, TV c, const Node &rhsNode) {
     if (op != "=" && op != "<>")
-      return fail(n, "records cannot be compared with '" + op + "'");
+      return genRecordOrder(n, op, a, c);
     auto rt = mlir::dyn_cast<RecordType>(a.type);
     if (!rt || a.type != c.type)
       return fail(n, "'" + op + "' compares two values of one record type, "
@@ -8490,6 +8720,9 @@ class Gen {
     // when they are the same element of its sort (ADR 0043).
     if (checking_ && standIns_.contains(t)) return standInEq(l, a, b, t);
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
+    if (isFloat(t))
+      return create<mlir::arith::CmpFOp>(l, mlir::arith::CmpFPredicate::OEQ, a,
+                                         b);
     if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
       return create<ExactCmpOp>(l, b_.getI1Type(),
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
@@ -9273,9 +9506,10 @@ class Gen {
   }
 
   bool foreignType(Type t) {
-    if (mlir::isa<IntType>(t) || isBool(t)) return true;
+    if (mlir::isa<IntType>(t) || isBool(t) || isFloat(t))
+      return true;
     if (mlir::isa<ArrayType, SliceType>(t))
-      return mlir::isa<IntType>(elementType(t));
+      return mlir::isa<IntType>(elementType(t)) || isFloat(elementType(t));
     return false;
   }
 
@@ -9295,6 +9529,16 @@ class Gen {
       const sema::Param &p = sig.params[i];
       if (mlir::isa<ArrayType, SliceType>(p.type))
         continue;
+      // C promotes a float to a double, which f64 is.
+      if (p.type.isF64())
+        continue;
+      if (p.type.isF32()) {
+        diags_.error(p.loc, "'" + p.name +
+                                "' is a variadic argument of a C "
+                                "function, which C promotes to double, so it "
+                                "must be an f64, not an f32");
+        return false;
+      }
       auto it = mlir::dyn_cast<IntType>(p.type);
       if (it && it.getStorageWidth() >= 32)
         continue;
@@ -9321,15 +9565,16 @@ class Gen {
       return fail(*body.kids[1], "a C symbol is letters, digits and '_'");
     for (const sema::Param &p : sig.params)
       if (!foreignType(p.type)) {
-        diags_.error(p.loc, "a foreign function takes integers, bools and "
-                            "buffers of integers for now, but '" + p.name +
-                            "' has type " + typeName(p.type));
+        diags_.error(p.loc, "a foreign function takes integers, floats, "
+                            "bools and buffers of integers or floats for "
+                            "now, but '" +
+                                p.name + "' has type " + typeName(p.type));
         return std::nullopt;
       }
     if (!sig.result || !(isUnit(sig.result) || mlir::isa<IntType>(sig.result) ||
-                         isBool(sig.result)))
-      return fail(body, "a foreign function returns unit, an integer or a "
-                        "bool for now");
+                         isBool(sig.result) || isFloat(sig.result)))
+      return fail(body, "a foreign function returns unit, an integer, a "
+                        "float or a bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
     if (deref_ && !mlir::isa<IntType>(sig.result))
