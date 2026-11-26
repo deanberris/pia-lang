@@ -756,12 +756,24 @@ class Gen {
   // from --embed / --embed-path and lowered to `pia.embed` + direct LLVM
   // ConstantDataArray emission.
   void collectEmbeds(const Node &program) {
+    const Node *header = nullptr;
+    for (const syntax::NodePtr &item : program.kids)
+      if (item->kind == NodeKind::ModuleHeader)
+        header = item.get();
     std::string modulePrefix;
-    if (!program.kids.empty() &&
-        program.kids[0]->kind == NodeKind::ModuleHeader) {
-      modulePrefix = program.kids[0]->text;
+    std::set<std::string> exportedEmbeds;
+    if (header) {
+      modulePrefix = header->text;
       std::replace(modulePrefix.begin(), modulePrefix.end(), '.', '$');
       modulePrefix += "$";
+      std::set<std::string> claimed;
+      for (const syntax::NodePtr &path : header->kids[1]->kids)
+        claimed.insert(path->text);
+      for (const syntax::NodePtr &item : program.kids)
+        if (item->kind == NodeKind::Interface && claimed.count(item->text))
+          for (const syntax::NodePtr &k : item->kids)
+            if (k->kind == NodeKind::SigVal && syntax::findSigEmbedAttr(*k))
+              exportedEmbeds.insert(k->text);
     }
     std::map<std::string, std::string> usedSymbols;
     for (auto it = sigs_.begin(); it != sigs_.end();) {
@@ -776,6 +788,24 @@ class Gen {
         it = sigs_.erase(it);
         continue;
       }
+      // An imported `@embed` from another module's `.piai` (ADR 0070 step 3):
+      // its bytes live in the exporting module's object file, so we only record
+      // its exact length and link symbol here.
+      if (sig.item->flags.rfind("import", 0) == 0) {
+        auto meta = syntax::parseInterfaceEmbedAttr(*attr, diags_);
+        if (meta) {
+          std::string sym = meta->symbol;
+          if (sym.empty()) {
+            std::string mangled = sig.name;
+            std::replace(mangled.begin(), mangled.end(), '.', '$');
+            sym = "pia$" + mangled;
+          }
+          embeds_[sig.name] = {slice, std::move(sym),
+                               static_cast<int64_t>(meta->length)};
+        }
+        it = sigs_.erase(it);
+        continue;
+      }
       auto spec = syntax::parseEmbedAttr(*attr, diags_);
       if (!spec) {
         it = sigs_.erase(it);
@@ -787,8 +817,10 @@ class Gen {
         it = sigs_.erase(it);
         continue;
       }
-      std::string sym = spec->hasExplicitSymbol
-                            ? spec->symbol
+      bool isExported = exportedEmbeds.count(sig.name) != 0;
+      std::string sym = spec->hasExplicitSymbol ? spec->symbol
+                        : isExported
+                            ? ("pia$" + modulePrefix + sig.name)
                             : ("__pia_embed_" + modulePrefix + sig.name);
       auto [seenIt, fresh] = usedSymbols.emplace(sym, sig.name);
       if (!fresh) {
@@ -807,7 +839,7 @@ class Gen {
         blob.symbol = std::move(sym);
         blob.section = std::move(spec->section);
         blob.align = spec->align;
-        blob.isExternal = spec->hasExplicitSymbol;
+        blob.isExternal = spec->hasExplicitSymbol || isExported;
         blob.emitLenSymbol = spec->hasExplicitSymbol;
         blob.bytes = std::move(*bytes);
         options_.resolvedEmbeds->push_back(std::move(blob));
@@ -7446,10 +7478,31 @@ class Gen {
                                   typeName(c->second.type));
         continue;
       }
-      if (embeds_.count(r.text)) {
+      if (auto e = embeds_.find(r.text); e != embeds_.end()) {
+        if (!syntax::findSigEmbedAttr(r)) {
+          diags_.error(r.loc,
+                       unmet + "'" + r.text +
+                           "' is an @embed binding; mark it '@embed' in the "
+                           "interface as 'let " +
+                           r.text + " : [u8] @embed'");
+          continue;
+        }
+        if (types_.resolve(type) != Type(e->second.type))
+          diags_.error(r.loc, unmet + "'" + r.text + "' has type " +
+                                  typeName(e->second.type));
+        const std::string &mods = r.kids[0]->kids[0]->text;
+        if (sema::hasModifier(mods, "mutable"))
+          diags_.error(r.loc, unmet +
+                                  "an @embed binding is always 'fixed'; remove "
+                                  "'mutable'");
+        if (!r.kids[2]->kids.empty())
+          diags_.error(r.loc,
+                       unmet + "an @embed binding cannot have contracts");
+        continue;
+      }
+      if (syntax::findSigEmbedAttr(r)) {
         diags_.error(r.loc,
-                     unmet + "exporting an @embed binding in an interface is "
-                             "not supported yet (ADR 0070, step 3)");
+                     unmet + "'" + r.text + "' is not an @embed binding");
         continue;
       }
       if (std::optional<std::string> name = privateType(type, shown))

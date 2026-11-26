@@ -924,7 +924,8 @@ int main(int argc, char **argv) {
     // needs neither metaprograms nor the verifier.
     if (!diags.hasErrors() && emitInterface) {
       for (const pia::syntax::InterfaceArtifact &a :
-           pia::syntax::interfaceArtifacts(*tree, source, literate, diags)) {
+           pia::syntax::interfaceArtifacts(*tree, source, literate, diags,
+                                           &embedOptions)) {
         std::string path = output + "/" + a.fileName();
         std::ofstream out(path, std::ios::binary);
         out << a.text;
@@ -951,8 +952,8 @@ int main(int argc, char **argv) {
     std::vector<pia::syntax::InterfaceArtifact> provided, imported;
     if (!diags.hasErrors() && codegen) {
       pia::syntax::Diagnostics ignored; // the module check reports them
-      provided =
-          pia::syntax::interfaceArtifacts(*tree, source, literate, ignored);
+      provided = pia::syntax::interfaceArtifacts(*tree, source, literate,
+                                                 ignored, &embedOptions);
     }
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)
@@ -979,8 +980,10 @@ int main(int argc, char **argv) {
     }
 #endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
-        mode != "--check" && !emitInterface)
+        mode != "--check" && !emitInterface) {
+      meta.embeds = embedOptions;
       pia::meta::expand(*tree, diags, meta);
+    }
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR

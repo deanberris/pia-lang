@@ -86,21 +86,6 @@ def _pia_library_impl(ctx):
     src = ctx.file.src
     piac = ctx.executable._piac
 
-    # The interfaces need only the source, so importers can start on them
-    # while this module is still being proved.
-    interfaces = ctx.actions.declare_directory(ctx.label.name + ".piai")
-    ctx.actions.run(
-        executable = piac,
-        arguments = ["--emit=interface", "-o", interfaces.path, src.path],
-        inputs = [src],
-        outputs = [interfaces],
-        mnemonic = "PiaInterface",
-        progress_message = "Writing the interfaces of %s" % src.short_path,
-    )
-
-    # Strict dependencies: a module sees the interfaces of the modules it
-    # declares, never those they import in turn, nor any object file.
-    imported = [dep[PiaInfo].interfaces for dep in ctx.attr.deps]
     embed_files = ctx.files.embeds
     seen_basenames = {}
     embed_args = []
@@ -115,6 +100,23 @@ def _pia_library_impl(ctx):
         embed_args.append("--embed=%s=%s" % (f.basename, f.path))
         if f.short_path != f.basename:
             embed_args.append("--embed=%s=%s" % (f.short_path, f.path))
+
+    # The interfaces need only the source (plus `embeds` if an interface
+    # explicitly exports an `@embed` binding, ADR 0070 section 5), so
+    # importers can start on them while this module is still being proved.
+    interfaces = ctx.actions.declare_directory(ctx.label.name + ".piai")
+    ctx.actions.run(
+        executable = piac,
+        arguments = ["--emit=interface", "-o", interfaces.path] + embed_args + [src.path],
+        inputs = [src] + embed_files,
+        outputs = [interfaces],
+        mnemonic = "PiaInterface",
+        progress_message = "Writing the interfaces of %s" % src.short_path,
+    )
+
+    # Strict dependencies: a module sees the interfaces of the modules it
+    # declares, never those they import in turn, nor any object file.
+    imported = [dep[PiaInfo].interfaces for dep in ctx.attr.deps]
     obj = ctx.actions.declare_file(ctx.label.name + ".o")
     args = ["--emit=obj", "-o", obj.path] + _target_args(ctx)
     args += ["--iface-path=" + d.path for d in imported]
@@ -210,6 +212,7 @@ def pia_binary(name, src, deps = [], embeds = [], **kwargs):
         src = src,
         deps = deps,
         embeds = embeds,
+        tags = kwargs.get("tags", []),
         target_compatible_with = kwargs.get("target_compatible_with", []),
     )
     cc_binary(

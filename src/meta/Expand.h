@@ -10,6 +10,7 @@
 #define PIA_META_EXPAND_H
 
 #include "syntax/Diagnostics.h"
+#include "syntax/Embeds.h"
 #include "syntax/Syntax.h"
 
 namespace pia::meta {
@@ -21,6 +22,8 @@ struct Options {
   // `redefine` (ADR 0031). Only `pia repl` sets it; compiled programs
   // never have them.
   bool live = false;
+  // Hermetic lookup options for `@embed` byte access in `let meta` (ADR 0070).
+  syntax::EmbedOptions embeds;
 };
 
 // Expands `program` in place. Reports each failure to `diags` and returns
