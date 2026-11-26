@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed. Dean asked for strong type aliases (2026-11-24), and chose the spelling in section 1, `type` always makes a new type, over a separate `distinct` word (2026-11-24). Steps 1 to 3 are built (#414, #425, #441), and step 4 with `@derive(hash)` and `@derive(json)` on distinct types.
+Status: Accepted (Dean, 2026-11-27, with the answer below). Dean asked for strong type aliases (2026-11-24), and chose the spelling in section 1, `type` always makes a new type, over a separate `distinct` word (2026-11-24). Steps 1 to 3 are built (#414, #425, #441), and step 4 with `@derive(hash)` and `@derive(json)` on distinct types.
 
 ## Context
 
@@ -111,6 +111,6 @@ Implementation, one PR each:
 
 Docs: the tour's Records section and `docs/irgen.md` (types), `docs/meta.md` (`distinct`, `underlying`, the new derives), `docs/grammar.md` (aliases), and the pia-language skill. ADR 0059's `let byte = type u8` example becomes `let byte = u8`.
 
-Open questions:
+Answered questions:
 
-1. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Proposed: yes, as one family.
+1. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Dean (2026-11-27): no. Saturating operators get their own derive target, such as `@derive(saturating_add)`, so `@derive(add)` gives only `+` and `-`. `saturating_add` is not built yet.
