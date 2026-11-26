@@ -33,12 +33,12 @@ int main(void) {
   int bad = 0;
   bad |= check("{\"xx\": -7, \"y\": 200, \"ok\": true}", -7000 + 2001);
   bad |= check("{\"ok\": false, \"y\": 0, \"xx\": 12}", 12000);
-  bad |= check("{\"xx\": 1, \"y\": 256, \"ok\": true}", -2);   // y out of range
-  bad |= check("{\"xx\": 1, \"y\": 2}", -2);                   // ok missing
+  bad |= check("{\"xx\": 1, \"y\": 256, \"ok\": true}", -2); // y out of range
+  bad |= check("{\"xx\": 1, \"y\": 2}", -2);                 // ok missing
   bad |= check("{\"xx\": 1, \"y\": 2, \"ok\": true, \"z\": 0}", -2);
-  bad |= check("{\"xx\": 1, \"xx\": 2, \"ok\": true}", -2);    // twice
-  bad |= check("{\"xx\": 1.5, \"y\": 2, \"ok\": true}", -2);   // a fraction
-  bad |= check("{\"xx\": 1, \"y\": 2, \"ok\": 1}", -2);        // not a bool
+  bad |= check("{\"xx\": 1, \"xx\": 2, \"ok\": true}", -2);  // twice
+  bad |= check("{\"xx\": 1.5, \"y\": 2, \"ok\": true}", -2); // a fraction
+  bad |= check("{\"xx\": 1, \"y\": 2, \"ok\": 1}", -2);      // not a bool
   bad |= check("[1, 2]", -2);
   bad |= check("{\"xx\": 1,", -1);
   int64_t got = round_trip(-123, 45, true, text, sizeof text, cells, 16,
