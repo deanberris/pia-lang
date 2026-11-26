@@ -4926,6 +4926,15 @@ constexpr unsigned long long kAbstractRlimit = 500000;
 // counterexamples).
 constexpr unsigned long long kIntBlastRlimit = 5000000;
 
+// The wall-clock budget of the tracked solve that finds which axioms a
+// proof used (ADR 0036). It only refines a report, so giving up costs
+// nothing but precision: the goal then lists every axiom it was given. The
+// rlimit cannot bound it, since Z3 can grow its memory for minutes while
+// barely counting resources: tests/verify/size_classes.pia:105 took 203 s
+// and 9.7 GB tracked on Z3 5.4.1, against 2.7 s for the whole file
+// untracked, and swapped the 7 GB macOS runner for 24 minutes.
+constexpr unsigned kTrackedTimeoutMs = 10000;
+
 bool isSexprSpace(char c) {
   return c == ' ' || c == '\n' || c == '\r' || c == '\t';
 }
@@ -5143,10 +5152,17 @@ void solve(const Job &job, const Options &options, Outcome &out,
       return std::vector<std::string>(all.begin(), all.end());
     }
     if (std::unique_ptr<z3::solver> t = tracked(ctx, solved, query, p)) {
+      z3::params tp(ctx);
+      tp.set("timeout", std::min(options.timeoutMs, kTrackedTimeoutMs));
+      t->set(tp);
       unsigned long long before = rlimitCount(*t);
       z3::check_result r = t->check();
-      js.cost += rlimitCount(*t) - before;
-      if (r == z3::unsat) return coreAxioms(*t);
+      // Only a finished solve counts: what one that ran out of time spent
+      // depends on the machine, and cost must not (ADR 0032).
+      if (r == z3::unsat) {
+        js.cost += rlimitCount(*t) - before;
+        return coreAxioms(*t);
+      }
     }
     std::set<std::string> all(query.axioms.begin(), query.axioms.end());
     all.insert(query.assumes.begin(), query.assumes.end());

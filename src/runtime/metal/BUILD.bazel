@@ -1,0 +1,35 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The Metal host shim (ADR 0068, section 3): Objective-C with ARC, over
+# Metal, behind a C header. lib/Pia/Gpu.pia declares its calls as trusted
+# externs. macOS only.
+#
+# rules_cc's cc_library takes no .m sources, and objc_library would bring in
+# Apple's rules, so a genrule hands the file over as .c and clang compiles
+# it as Objective-C (-x objective-c).
+genrule(
+    name = "metal_shim_src",
+    srcs = ["metal_shim.m"],
+    outs = ["metal_shim_objc.c"],
+    cmd = "cp $< $@",
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+cc_library(
+    name = "metal",
+    srcs = [":metal_shim_src"],
+    hdrs = ["metal_shim.h"],
+    copts = [
+        "-x",
+        "objective-c",
+        "-fobjc-arc",
+    ],
+    linkopts = [
+        "-framework",
+        "Foundation",
+        "-framework",
+        "Metal",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    visibility = ["//visibility:public"],
+)
