@@ -1,6 +1,7 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tests/lit:lit.bzl", "lit_tests")
-load("//tools/piac:pia.bzl", "pia_binary")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
 load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # The library's tests (ADR 0040, section 11): for each module, a lit test of
@@ -53,6 +54,7 @@ lit_tests(
         "//lib/Pia/Image/Gif:LzwEncode.pia",
         "//lib/Pia/Image/Gif:Quantise.pia",
         "//lib/Pia/Image/Gif:Spec.pia",
+        "//lib/Pia/Llm:Tokenizer.pia",
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
         "//lib/Pia/Mem:Vec.pia",
@@ -73,6 +75,7 @@ lit_tests(
         "json_derive_variant.pia": "large",
         "json_write.pia": "large",
         "time_civil.pia": "large",
+        "tokenizer.pia": "large",
     },
     tools = ["//tools/piac"],
 )
@@ -766,5 +769,27 @@ sh_test(
     srcs = ["zlib_run_test.sh"],
     args = ["$(rootpath :zlib_run)"],
     data = [":zlib_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# The run test's module, called from C with a buffer of piece records,
+# which a Pia function cannot make locally yet, and with tok512.bin and the
+# ids llama2.c's run.c gives each text of Inputs/tokenizer_cases.h.
+pia_library(
+    name = "tokenizer_run",
+    src = "Inputs/tokenizer_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Llm:tokenizer"],
+)
+
+cc_test(
+    name = "tokenizer_run_test",
+    srcs = [
+        "Inputs/tokenizer_cases.h",
+        "Inputs/tokenizer_run_main.c",
+        ":tokenizer_run",
+    ],
+    args = ["$(rootpath Inputs/tok512.bin)"],
+    data = ["Inputs/tok512.bin"],
     target_compatible_with = PIA_TARGETS,
 )

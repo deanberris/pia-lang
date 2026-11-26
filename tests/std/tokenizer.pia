@@ -1,0 +1,29 @@
+(* Pia.Llm.Tokenizer (ADR 0067, M2): every goal is proved, with nothing
+   accepted unproved. load checks a llama2.c tokenizer.bin and indexes its
+   pieces; encode runs run.c's BPE and every id it gives is below the
+   vocabulary size; decode writes each token's bytes; and round_trip shows
+   that decoding what encode gave brings the text back, byte for byte.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Llm/Tokenizer.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Llm.Tokenizer.Tokenizer.piai
+// RUN: piac --verify %S/../../lib/Pia/Llm/Tokenizer.pia | FileCheck %s
+*)
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 477 proved, 0 failed, 0 skipped
+*)
+
+(*
+// IFACE:      {{^}}module Pia.Llm.Tokenizer{{$}}
+// IFACE-NEXT: {{^}}interface Tokenizer = sig{{$}}
+// IFACE:      {{^}}  let spec covers : (s : [u8]) -> (ps : [piece]) -> (v : vocab) -> (text : [u8]) -> (t : u32) -> (a : usize) -> (b : usize) -> bool{{$}}
+// IFACE:      {{^}}  let load : (s : [u8]) -> (ps : borrowed inout mutable [piece]) -> (count : usize) -> result vocab tok_error
+// IFACE:      {{^}}  let encode :
+// IFACE-SAME: forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+// IFACE:      {{^}}  let decode :
+// IFACE:      {{^}}  let round_trip :
+// IFACE-SAME: ensures result = len text ensures forall (k in 0 .. len text). dst.[k] = text.[k]
+// IFACE:      {{^}}end{{$}}
+*)
