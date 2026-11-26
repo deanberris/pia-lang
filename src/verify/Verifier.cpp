@@ -6389,4 +6389,11 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   return outcomes;
 }
 
+std::string solverVersion() {
+  unsigned major = 0, minor = 0, build = 0, revision = 0;
+  Z3_get_version(&major, &minor, &build, &revision);
+  return std::to_string(major) + "." + std::to_string(minor) + "." +
+         std::to_string(build);
+}
+
 }  // namespace pia::verify

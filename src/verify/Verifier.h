@@ -185,6 +185,10 @@ mlir::LogicalResult resolveOverloads(mlir::ModuleOp module,
 // "file:line:col" for the innermost file location in `loc`.
 std::string formatLoc(mlir::Location loc);
 
+// The version of Z3 that decides goals, `5.4.1`, as a certificate records
+// it (ADR 0073).
+std::string solverVersion();
+
 }  // namespace pia::verify
 
 #endif  // PIA_VERIFY_VERIFIER_H

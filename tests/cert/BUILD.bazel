@@ -1,0 +1,13 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+
+# The certificate format and the link check (src/cert, ADR 0073), on
+# certificates made in memory, for the cases piac cannot be made to write:
+# old formats, and objects for another ABI version or target.
+cc_test(
+    name = "certificate_test",
+    srcs = ["certificate_test.cpp"],
+    deps = [
+        "//src/cert",
+        "@googletest//:gtest_main",
+    ],
+)

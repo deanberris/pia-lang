@@ -84,9 +84,10 @@ Read the trust report before shipping: everything in it is something a person ha
 
 ## Proof certificates
 
-Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024).
+Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024). Format 3 also records who proved it (ADR 0073): the Pia ABI version and target (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, or `dev` for a build that is not stamped) and Z3's (`solver z3 5.4.1`). `pia-cert check` refuses objects for different ABI versions or targets, and objects from a piac too old to record an ABI version: compile them again with one piac.
 
 ```sh
+piac --version                             # piac's version, the Pia ABI version and Z3's
 pia-cert dump f.o                          # print the certificate
 pia-cert check a.o b.o main.o              # every required interface is provided, with the same hash
 pia-cert check --stamp=ok.txt a.o b.o      # also write the result, for a build step to depend on

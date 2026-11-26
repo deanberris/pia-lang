@@ -129,7 +129,8 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
 - `src/gpu/Place.{h,cpp}` places spreads on the GPU (ADR 0068, step 3): each `scf.for` IRGen marked `pia.place = "gpu"` has its calls inlined and is checked against the device rules, becomes a `gpu.func` (one thread per iteration), goes through SPIR-V, MSL (`src/gpu/Msl.{h,cpp}`, SPIRV-Cross linked into piac) and `xcrun metal` to a `.metallib`, which is embedded as a constant; the loop becomes a call of the shim's `pia_gpu_run`, whose status replaces the `pia$gpu$status` IRGen left, so the spread evaluates to `result unit gpu_error`. `tests/gpu/placed.pia` and `placed_test.c` check a placed spread against the same spread on the CPU.
 - `src/runtime/metal/metal_shim.{h,m}` is the Metal host shim (ADR 0068, step 2), Objective-C with ARC: devices, shared buffers, libraries from a `.metallib`'s bytes, kernels by name, and a synchronous dispatch, all as integer handles. `lib/Pia/Gpu.pia` is `Pia.Gpu`, its trusted externs and the `@linear` `device`, `buffer t` and `library` over them, with `Gpu.error`. `tests/gpu/gpu_add.pia` and `tests/gpu/dispatch_test.c` run the step 1 kernel on the GPU through both.
-- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, its trusted lowerings, and the Pia ABI version, target, piac and solver versions that proved it), how to read one from an object file, and the link check (docs/abi.md, ADR 0073).
+- `src/version/Version.{h,cpp}` is piac's version, `dev` unless a `--config=release` build stamps it: `src/version/workspace_status.sh` computes it from MODULE.bazel and git, and `src/version/stamp.sh` writes it into the header Version.cpp includes (ADR 0073).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -201,6 +202,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/codegen` | lowering lit tests and C harnesses | the run tests need arm64 macOS or a matching host |
 | `tests/meta` | `--dump-expanded` and proofs of expanded code | |
 | `tests/modules` | interfaces and imports across files | inputs in `tests/modules/Inputs` |
+| `tests/cert` | the certificate format and link check, on certificates made in memory (gtest) | old formats and other ABI versions, which piac cannot be made to write |
 | `tests/memory` | the litmus battery for `Pia.Memory`, one file per family (MP, SB, LB, coherence, rmw, races, multi) | `theory.pia` proves the theory's model |
 | `tests/std` | the `lib/` modules | build the `.piai` files first in local runs |
 | `tests/lint` | lint text and fixes | |

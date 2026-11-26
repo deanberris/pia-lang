@@ -21,6 +21,7 @@ cc_binary(
         "//src/meta",
         "//src/syntax",
         "//src/verify",
+        "//src/version",
         "@llvm-project//llvm:Core",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",

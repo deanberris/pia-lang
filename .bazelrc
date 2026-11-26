@@ -41,6 +41,12 @@ build:lto -c opt
 build:lto --copt=-flto=thin --linkopt=-flto=thin
 build:lto --host_copt=-flto=thin --host_linkopt=-flto=thin
 
+# Stamped builds: piac's version from git (src/version, ADR 0073), for the
+# binaries CI publishes. Only those are stamped, since a stamped piac
+# changes with every commit and so would every test that runs it.
+build:release --stamp
+build:release --workspace_status_command=src/version/workspace_status.sh
+
 # Split DWARF (fission): on ELF, debug info goes to .dwo files beside the
 # objects, so links stay small and fast. Mach-O already works this way: ld64
 # never copies DWARF into the binary, which only points at the objects (or a
