@@ -31,7 +31,15 @@ claude plugin install pia@pia-lang
 
 or, inside Claude Code, `/plugin marketplace add deanberris/pia-lang` and then `/plugin install pia@pia-lang`. The plugin follows the repository's `main` branch, so `claude plugin marketplace update pia-lang` brings the skills up to date with the language. Plugin skills are namespaced, as in `/pia:pia-porting`, and Claude loads them by itself when a task matches.
 
-The language server and the MCP server are the repository's own tools, so they must be on your `PATH`. There are no release binaries before 0.1; build them and link them (a link into `bazel-bin` stays current after each rebuild):
+The language server and the MCP server are the repository's own tools, so they must be on your `PATH`. On Apple silicon macOS and x86-64 Linux, `tools/release/pia-update` installs the prebuilt `pia`, `piac` and `pia-lsp` that CI publishes from every green `main` (the `latest` prerelease) into `~/.local/pia`, linked from `~/.local/bin`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/deanberris/pia-lang/main/tools/release/pia-update | sh
+```
+
+After that, the plugin keeps them current: each new Claude Code session runs `pia-update` in the background, which downloads only when the release has changed, and the new binaries take effect from the session after. `pia-update --check` says whether an update is waiting, and `PIA_NO_AUTO_UPDATE=1` turns the background update off. The hook touches only an install `pia-update` made.
+
+To use your own build instead, build the tools and link them (a link into `bazel-bin` stays current after each rebuild):
 
 ```sh
 bazel build //tools/pia //tools/pia-lsp //tools/piac

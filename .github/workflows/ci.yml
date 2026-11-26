@@ -19,8 +19,8 @@
 # requests it does not run the benchmark, since a macOS runner is slower,
 # scarce and has 7 GB of memory.
 #
-# Runs on main (and manual runs) package and upload stripped `pia` and `piac`
-# binaries (`pia-macos-arm64` and `pia-linux-x86_64`, kept 14 days). When both
+# Runs on main (and manual runs) package and upload stripped `pia`, `piac` and
+# `pia-lsp` binaries (`pia-macos-arm64` and `pia-linux-x86_64`, kept 14 days). When both
 # platforms pass on `main`, `publish-latest` also updates the moving `latest`
 # GitHub prerelease (`pia-linux-x86_64.tar.gz`, `pia-macos-arm64.tar.gz`, and
 # `SHA256SUMS.txt`) so sessions and users can fetch them with
@@ -206,15 +206,15 @@ jobs:
           stage="${{ runner.temp }}/pia-macos-arm64"
           rm -rf "$stage"
           mkdir -p "$stage"
-          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac "$stage/"
-          chmod 755 "$stage/pia" "$stage/piac"
-          strip -x "$stage/pia" "$stage/piac"
-          codesign --force --sign - "$stage/pia" "$stage/piac"
+          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac bazel-bin/tools/pia-lsp/pia-lsp "$stage/"
+          chmod 755 "$stage/pia" "$stage/piac" "$stage/pia-lsp"
+          strip -x "$stage/pia" "$stage/piac" "$stage/pia-lsp"
+          codesign --force --sign - "$stage/pia" "$stage/piac" "$stage/pia-lsp"
           printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
           "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
           printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
-          COPYFILE_DISABLE=1 tar -czf "${{ runner.temp }}/pia-macos-arm64.tar.gz" -C "$stage" pia piac
-          ls -lh "$stage/pia" "$stage/piac" "${{ runner.temp }}/pia-macos-arm64.tar.gz"
+          COPYFILE_DISABLE=1 tar -czf "${{ runner.temp }}/pia-macos-arm64.tar.gz" -C "$stage" pia piac pia-lsp
+          ls -lh "$stage/pia" "$stage/piac" "$stage/pia-lsp" "${{ runner.temp }}/pia-macos-arm64.tar.gz"
 
       - name: Upload binaries
         if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -355,14 +355,14 @@ jobs:
           stage="${{ runner.temp }}/pia-linux-x86_64"
           rm -rf "$stage"
           mkdir -p "$stage"
-          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac "$stage/"
-          chmod 755 "$stage/pia" "$stage/piac"
-          strip "$stage/pia" "$stage/piac"
+          cp -L bazel-bin/tools/pia/pia bazel-bin/tools/piac/piac bazel-bin/tools/pia-lsp/pia-lsp "$stage/"
+          chmod 755 "$stage/pia" "$stage/piac" "$stage/pia-lsp"
+          strip "$stage/pia" "$stage/piac" "$stage/pia-lsp"
           printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
           "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
           printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
-          tar -czf "${{ runner.temp }}/pia-linux-x86_64.tar.gz" -C "$stage" pia piac
-          ls -lh "$stage/pia" "$stage/piac" "${{ runner.temp }}/pia-linux-x86_64.tar.gz"
+          tar -czf "${{ runner.temp }}/pia-linux-x86_64.tar.gz" -C "$stage" pia piac pia-lsp
+          ls -lh "$stage/pia" "$stage/piac" "$stage/pia-lsp" "${{ runner.temp }}/pia-linux-x86_64.tar.gz"
 
       - name: Upload binaries
         if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
@@ -532,7 +532,7 @@ jobs:
           run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           title="Latest build (${short_sha})"
           notes=$(cat <<EOF
-          Prebuilt \`pia\` and \`piac\` binaries from \`main\` commit ${GITHUB_SHA}.
+          Prebuilt \`pia\`, \`piac\` and \`pia-lsp\` binaries from \`main\` commit ${GITHUB_SHA}.
 
           - Workflow run: ${run_url}
           - Assets: \`pia-linux-x86_64.tar.gz\`, \`pia-macos-arm64.tar.gz\`, \`SHA256SUMS.txt\`
