@@ -347,7 +347,8 @@ class Gen {
     }
     if (diags_.hasErrors()) return nullptr;
     resolveCosts();
-    if (diags_.hasErrors()) return nullptr;
+    if (diags_.hasErrors())
+      return nullptr;
     checkGhosts();
     checkAxioms();
     checkModels();
@@ -603,8 +604,8 @@ class Gen {
     BindingPtr spent;
   };
   std::vector<Counter> costs_;
-  std::string costSymbol_;  // the function they belong to
-  bool spentOk_ = false;    // in a loop invariant, an assert or a lemma call
+  std::string costSymbol_; // the function they belong to
+  bool spentOk_ = false;   // in a loop invariant, an assert or a lemma call
   // The call each inferred bound's constant stands for, for its error.
   std::map<mlir::Operation *, syntax::SourceLoc> costSites_;
 
@@ -678,7 +679,8 @@ class Gen {
     }
     // What a function with a cost clause has spent changes in any loop and
     // at any call (ADR 0062).
-    for (const Counter &k : costs_) out.push_back(k.spent);
+    for (const Counter &k : costs_)
+      out.push_back(k.spent);
     return out;
   }
 
@@ -1008,8 +1010,12 @@ class Gen {
         symbol = std::move(savedSymbol);
         ok = savedOk;
       }
-    } costScope{costs_, costSymbol_, spentOk_, std::move(costs_),
-                std::move(costSymbol_), spentOk_};
+    } costScope{costs_,
+                costSymbol_,
+                spentOk_,
+                std::move(costs_),
+                std::move(costSymbol_),
+                spentOk_};
     costs_.clear();
     costSymbol_ = sig.name;
     spentOk_ = false;
@@ -1263,7 +1269,8 @@ class Gen {
       }
     }
 
-    if (!genCostClauses(contracts, ghost_)) return;
+    if (!genCostClauses(contracts, ghost_))
+      return;
 
     // A spec function's body is specification, like a contract: it may
     // use quantifiers, and it is never compiled.
@@ -1490,7 +1497,8 @@ class Gen {
       create<contract::EnsuresOp>(loc(*c), p->value);
     }
     popScope();
-    for (const Counter &k : costs_) genCostGoal(k);
+    for (const Counter &k : costs_)
+      genCostGoal(k);
     create<mlir::func::ReturnOp>(l, rets);
   }
 
@@ -1521,15 +1529,18 @@ class Gen {
         item->kids[2]->kind != NodeKind::Contracts)
       return nullptr;
     for (const syntax::NodePtr &c : item->kids[2]->kids)
-      if (c->kind == NodeKind::Costs && c->text == counter) return c.get();
+      if (c->kind == NodeKind::Costs && c->text == counter)
+        return c.get();
     return nullptr;
   }
 
   static bool hasMeasure(const sema::FuncSig &sig) {
     const Node *item = sig.item;
-    if (!item || item->kids.size() < 3) return false;
+    if (!item || item->kids.size() < 3)
+      return false;
     for (const syntax::NodePtr &c : item->kids[2]->kids)
-      if (c->kind == NodeKind::Decreases) return true;
+      if (c->kind == NodeKind::Decreases)
+        return true;
     return false;
   }
 
@@ -1538,8 +1549,10 @@ class Gen {
   // so `n * m` on u16 values keeps the encoding at 68 bits.
   R genBound(const Node &e) {
     R v = genContractExpr(e, isLiteral(e) ? counterType() : Type());
-    if (!v) return v;
-    if (mlir::isa<UnboundedIntType>(v->type)) return v;
+    if (!v)
+      return v;
+    if (mlir::isa<UnboundedIntType>(v->type))
+      return v;
     if (!mlir::isa<IntType>(v->type))
       return fail(e, "a cost bound is an integer, found " + typeName(v->type));
     return coerce(*v, counterType(), e);
@@ -1548,16 +1561,18 @@ class Gen {
   // `costs c <= e`: a counter, its bound at entry and `spent c`, 0 here.
   bool genCostClauses(const Node &contracts, bool ghost) {
     for (const syntax::NodePtr &c : contracts.kids) {
-      if (c->kind != NodeKind::Costs) continue;
+      if (c->kind != NodeKind::Costs)
+        continue;
       if (ghost) {
         fail(*c, "a spec function or a lemma never runs, so it has no "
                  "cost; a cost clause belongs on code");
         return false;
       }
       if (c->text != "iterations" && c->text != "calls") {
-        fail(*c, "'" + c->text + "' is not a counter yet: a cost clause "
-                 "counts 'iterations' or 'calls', and the calls of a "
-                 "function come later (ADR 0062)");
+        fail(*c, "'" + c->text +
+                     "' is not a counter yet: a cost clause "
+                     "counts 'iterations' or 'calls', and the calls of a "
+                     "function come later (ADR 0062)");
         return false;
       }
       for (const Counter &k : costs_)
@@ -1572,7 +1587,8 @@ class Gen {
         return false;
       }
       R e = genBound(*c->kids[0]);
-      if (!e) return false;
+      if (!e)
+        return false;
       Location l = loc(*c);
       auto spent = std::make_shared<Binding>();
       spent->name = "spent " + c->text;
@@ -1626,12 +1642,14 @@ class Gen {
         // A recursive call is bounded by the function's own clause, which
         // holds by induction on its measure (ADR 0062, section 4).
         if (sig.name == costSymbol_ && !hasMeasure(sig)) {
-          fail(n, "'" + sig.source() + "' calls itself and has a cost "
-                  "clause, so it needs a 'decreases' measure (ADR 0062)");
+          fail(n, "'" + sig.source() +
+                      "' calls itself and has a cost "
+                      "clause, so it needs a 'decreases' measure (ADR 0062)");
           return false;
         }
         std::optional<Value> v = boundAt(n, *clause, sig, operands);
-        if (!v) return false;
+        if (!v)
+          return false;
         part = *v;
       } else {
         // Known only once every function is made: a constant that
@@ -1643,7 +1661,8 @@ class Gen {
         c->setAttr("pia.cost_caller", b_.getStringAttr(costSymbol_));
         costSites_[c] = n.loc;
       }
-      if (k.name == "calls") part = addCost(l, part, counterConst(l, 1));
+      if (k.name == "calls")
+        part = addCost(l, part, counterConst(l, 1));
       k.spent->value = addCost(l, k.spent->value, part);
     }
     return true;
@@ -1665,11 +1684,13 @@ class Gen {
       bind(sig.params[i].name, operands[i], sig.params[i].type, false);
     std::vector<std::map<std::string, Type>> savedTypes =
         types_.replaceTypeScopes({});
-    if (!sig.typeArgs.empty()) types_.pushTypeScope(sig.typeArgs);
+    if (!sig.typeArgs.empty())
+      types_.pushTypeScope(sig.typeArgs);
     R v = genBound(*clause.kids[0]);
     types_.replaceTypeScopes(std::move(savedTypes));
     scopes_ = std::move(savedScopes);
-    if (!v) return std::nullopt;
+    if (!v)
+      return std::nullopt;
     if (mlir::isa<UnboundedIntType>(v->type)) {
       fail(n, "the bound of '" + sig.source() + "' on " + clause.text +
                   " is an int, which a caller cannot add up yet; write it "
@@ -1692,7 +1713,8 @@ class Gen {
       return std::nullopt;
     }
     // A C function has no loop of Pia's: its call is the event.
-    if (f->hasAttr("pia.extern")) return 0;
+    if (f->hasAttr("pia.extern"))
+      return 0;
     if (f->hasAttr(PiaDialect::getImportAttrName()) || f.isExternal()) {
       why = "is defined in another module";
       return std::nullopt;
@@ -1717,16 +1739,19 @@ class Gen {
     uint64_t total = 0;
     for (Block &block : r)
       for (mlir::Operation &op : block) {
-        if (op.getName().getDialectNamespace() == "pia_contract") continue;
+        if (op.getName().getDialectNamespace() == "pia_contract")
+          continue;
         if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
           why = "has a loop";
           return std::nullopt;
         }
         if (auto ifOp = mlir::dyn_cast<mlir::scf::IfOp>(op)) {
           auto t = regionCost(ifOp.getThenRegion(), counter, visiting, why);
-          if (!t) return t;
+          if (!t)
+            return t;
           auto e = regionCost(ifOp.getElseRegion(), counter, visiting, why);
-          if (!e) return e;
+          if (!e)
+            return e;
           total = satAdd(total, std::max(*t, *e));
           continue;
         }
@@ -1757,13 +1782,15 @@ class Gen {
             }
             part = *c;
           }
-          if (counter == "calls") part = satAdd(part, 1);
+          if (counter == "calls")
+            part = satAdd(part, 1);
           total = satAdd(total, part);
           continue;
         }
         for (mlir::Region &inner : op.getRegions()) {
           auto c = regionCost(inner, counter, visiting, why);
-          if (!c) return c;
+          if (!c)
+            return c;
           total = satAdd(total, *c);
         }
       }
@@ -1775,7 +1802,8 @@ class Gen {
     std::set<std::tuple<std::string, std::string, std::string>> reported;
     module_.walk([&](ConstantOp c) {
       auto callee = c->getAttrOfType<mlir::StringAttr>("pia.cost_of");
-      if (!callee) return;
+      if (!callee)
+        return;
       std::string g = callee.getValue().str();
       auto text = [&](llvm::StringRef name) {
         return c->getAttrOfType<mlir::StringAttr>(name).getValue().str();
@@ -1793,7 +1821,8 @@ class Gen {
                                          llvm::APInt(kWidth, *k)));
         return;
       }
-      if (!reported.insert({caller, g, counter}).second) return;
+      if (!reported.insert({caller, g, counter}).second)
+        return;
       diags_.error(costSites_[c.getOperation()],
                    "'" + sourceName(g) + "' has no bound on " + counter +
                        ", so the cost of '" + sourceName(caller) + "' on " +
@@ -3759,7 +3788,8 @@ class Gen {
     // What a function with a cost clause spends in the right operand
     // comes out of the `scf.if` with its value (ADR 0062).
     std::vector<BindingPtr> spent;
-    for (const Counter &k : costs_) spent.push_back(k.spent);
+    for (const Counter &k : costs_)
+      spent.push_back(k.spent);
     llvm::SmallVector<Value> before = values(spent);
     {
       OpBuilder::InsertionGuard guard(b_);
@@ -3777,7 +3807,8 @@ class Gen {
       create<mlir::scf::YieldOp>(l, yields);
     }
     llvm::SmallVector<Type> types{boolType()};
-    for (const BindingPtr &b : spent) types.push_back(b->type);
+    for (const BindingPtr &b : spent)
+      types.push_back(b->type);
     auto ifOp = makeIf(l, types, a->value,
                        rhsInThen ? std::move(rhsBlock) : std::move(constBlock),
                        rhsInThen ? std::move(constBlock) : std::move(rhsBlock));
@@ -4142,10 +4173,12 @@ class Gen {
           (n.kids[1]->text == "iterations" || n.kids[1]->text == "calls")) {
         const std::string &c = n.kids[1]->text;
         if (!spentOk_)
-          return fail(n, "'spent " + c + "' can be used only in loop "
-                         "invariants, 'assert's and lemma calls");
+          return fail(n, "'spent " + c +
+                             "' can be used only in loop "
+                             "invariants, 'assert's and lemma calls");
         for (const Counter &k : costs_)
-          if (k.name == c) return TV{k.spent->value, k.spent->type};
+          if (k.name == c)
+            return TV{k.spent->value, k.spent->type};
         return fail(n, "'spent " + c + "' needs a cost clause on " + c +
                            ", as in 'costs " + c + " <= ...'");
       }
@@ -4215,7 +4248,8 @@ class Gen {
       bool &flag, value;
       ~Restore() { flag = value; }
     } restoreGhost{ghost_, savedGhost}, restoreSpent{spentOk_, spentOk_};
-    if (sig.item && hasFlag(*sig.item, "lemma")) spentOk_ = true;
+    if (sig.item && hasFlag(*sig.item, "lemma"))
+      spentOk_ = true;
     llvm::SmallVector<Value> operands;
     for (size_t i = 0; i < args.size(); ++i) {
       // A spec parameter's argument is specification (ADR 0058). One the
@@ -10356,7 +10390,8 @@ class Gen {
       }
       bind(pattern.text, i, t, false);
       bool ok = genLoopAnnots(annots);
-      if (ok) countIteration(l);
+      if (ok)
+        countIteration(l);
       LoopScope inLoop(frames_);
       Deeper deeper(loopDepth_);
       R r = ok ? genExpr(body, Type()) : std::nullopt;

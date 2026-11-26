@@ -1404,8 +1404,8 @@ class Encoder {
       out.push_back({ObligationKind::ensures, "the postcondition holds"});
     if (auto o = mlir::dyn_cast<contract::ObligationOp>(op)) {
       auto claim = o->getAttrOfType<mlir::StringAttr>("pia.claim");
-      out.push_back({o.getKind(), claim ? claim.getValue().str()
-                                        : "the obligation holds"});
+      out.push_back({o.getKind(),
+                     claim ? claim.getValue().str() : "the obligation holds"});
     }
     if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
       if (auto callee = module_.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))

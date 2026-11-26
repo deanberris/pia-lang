@@ -613,9 +613,9 @@ class Parser {
   NodePtr contract() {
     if (atCosts()) {
       auto c = makeNode(N::Costs, loc());
-      take();  // costs
+      take(); // costs
       c->text = std::string(take().text);
-      take();  // <=
+      take(); // <=
       bool savedContract = contractMode_, savedEnded = clauseEnded_;
       contractMode_ = true;
       clauseEnded_ = false;
@@ -1672,7 +1672,8 @@ class Parser {
     if (argument()) {
       auto app = makeNode(N::Apply, f->loc);
       app->add(std::move(f));
-      while (argument()) app->add(postfix());
+      while (argument())
+        app->add(postfix());
       f = std::move(app);
     }
     // `e?` passes an error on (ADR 0028). It applies to the whole
