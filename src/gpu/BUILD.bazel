@@ -2,14 +2,34 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # The GPU path's lowering to SPIR-V (ADR 0068, step 1): upstream MLIR's gpu
 # and spirv dialects and conversions, linked into piac and pia-opt.
+# SPIR-V to MSL by SPIRV-Cross, which reports errors by exceptions, so this
+# library alone is built with them.
+cc_library(
+    name = "msl",
+    srcs = ["Msl.cpp"],
+    hdrs = ["Msl.h"],
+    copts = ["-fexceptions"],
+    strip_include_prefix = "/src",
+    deps = ["@spirv_cross"],
+)
+
+# Spreads placed on the GPU (ADR 0068, step 3) are outlined, lowered and
+# compiled to a .metallib here, while piac runs.
 cc_library(
     name = "gpu",
-    srcs = ["Spirv.cpp"],
-    hdrs = ["Spirv.h"],
+    srcs = [
+        "Place.cpp",
+        "Spirv.cpp",
+    ],
+    hdrs = [
+        "Place.h",
+        "Spirv.h",
+    ],
     copts = ["-Wno-unused-parameter"],
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
+        ":msl",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:FuncDialect",
@@ -24,5 +44,6 @@ cc_library(
         "@llvm-project//mlir:SPIRVSerialization",
         "@llvm-project//mlir:SPIRVTransforms",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TransformUtils",
     ],
 )

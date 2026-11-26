@@ -4,6 +4,7 @@
 #include "codegen/ArrayResults.h"
 #include "codegen/Lowerings.h"
 #include "codegen/SliceBuffers.h"
+#include "gpu/Place.h"
 
 #include "cert/Certificate.h"
 
@@ -2106,6 +2107,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
                                                              target);
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
+    return mlir::failure();
+  // Spreads placed on the GPU become kernels and shim calls first; the
+  // rest run on all cores (ADR 0068, step 3).
+  if (mlir::failed(pia::gpu::lowerPlacedSpreads(module)))
     return mlir::failure();
   lowerSpreads(module);
   // Tidy the casts and constants the conversion leaves behind.
