@@ -12,14 +12,14 @@ let round_trip (path : [u8]) : result i32 F.errno
   let w = F.create path 420? in
   let wrote = F.write_all w data in
   let shut = F.close w in
-  let u = wrote? in
-  let v = shut? in
+  wrote?;
+  shut?;
   let r = F.open_read path? in
   let back : mutable [u8; 8] = [0; 0; 0; 0; 0; 0; 0; 0] in
   let got = F.read_some r back in
   let shut' = F.close r in
   let n = got? in
-  let v' = shut'? in
+  shut'?;
   if n = 5 && back.[0] = 1 && back.[3] = 250 && back.[4] = 5 then Ok 0 else Ok 2
 
 let main () : i32 =
@@ -32,5 +32,5 @@ let main () : i32 =
   else if gone <> 0 then 3
   else
     (match F.open_read none with
-     | Ok f -> (match F.close f with | Ok u -> 4 | Err e' -> 4)
+     | Ok f -> (match F.close f with | Ok -> 4 | Err e' -> 4)
      | Err e' -> (match e' with | NoEntry -> 0 | _ -> 5))

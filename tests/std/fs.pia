@@ -3,19 +3,19 @@
    both targets, so this test proves the one module for both.
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Sys/Gen/arm64_macos.pia
 // RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Sys/Fs.pia | FileCheck %s
-// RUN: piac --emit=interface --iface-path=%t -o %t %S/../../lib/Pia/Sys/Fs.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Sys/Fs.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Sys.Fs.Fs.piai
 *)
 
 (* Every goal is proved, with no warning.
 // CHECK-NOT: warning
 // CHECK-NOT: failed
-// CHECK: 0 failed, 0 skipped
+// CHECK: 27 proved, 0 failed, 0 skipped
 *)
 
 (* The interface keeps each row's contract.
-// IFACE: let fd = type { raw : i32 } @linear
+// IFACE: let file = type { raw : i32 } @linear
 // IFACE: let read_some
 // IFACE: ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
-// IFACE: let close : (f : moved fd)
+// IFACE: let close : (f : moved file)
 *)
