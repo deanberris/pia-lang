@@ -15,7 +15,7 @@ let plain (x : i32) : i32 = raw x
 *)
 let needless (x : i32) : i32 = unsafe clamp x
 
-(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a foreign function takes integers, bools and buffers of integers for now, but 'p' has type point
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a foreign function takes integers, floats, bools and buffers of integers or floats for now, but 'p' has type point
 *)
 let by_record (p : point) : i32 ensures true = extern "by_record"
 
@@ -36,3 +36,11 @@ let too_many (n : i32) : i32 @variadic(3) ensures true = extern "many_va"
 (* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @variadic is only for a foreign declaration, '= extern "symbol"'
 *)
 let not_foreign (n : i32) : i32 @variadic(1) = n
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @deref is only for a foreign declaration, '= extern "symbol"'
+*)
+let not_foreign_deref (n : i32) : i32 @deref = n
+
+(* CHECK: ffi_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @deref reads an integer through the pointer C returns, so the result must be an integer
+*)
+let deref_bool () : bool @deref ensures true = extern "flag_c"

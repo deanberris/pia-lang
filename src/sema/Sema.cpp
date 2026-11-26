@@ -7,10 +7,12 @@
 #include <set>
 
 #include "dialect/PiaDialect.h"
-#include "syntax/RecTypes.h"
-#include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "syntax/RecTypes.h"
+#include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Error.h"
+#include "llvm/Support/raw_ostream.h"
 
 namespace pia::sema {
 
@@ -84,10 +86,54 @@ std::optional<IntLiteral> parseIntLiteral(std::string_view s) {
   return lit;
 }
 
+std::string floatText(const llvm::APFloat &value) {
+  if (value.isNaN())
+    return "nan";
+  if (value.isInfinity())
+    return value.isNegative() ? "-inf" : "inf";
+  // APFloat prints enough digits for any value of the format; the fewest
+  // significant digits that read back exactly give the shortest spelling.
+  // Zeros stand in for an exponent up to 10^15, as most languages print.
+  llvm::SmallString<32> text;
+  for (unsigned digits = 1; digits <= 17; ++digits) {
+    text.clear();
+    value.toString(text, digits, /*FormatMaxPadding=*/15);
+    llvm::APFloat back(value.getSemantics());
+    auto status =
+        back.convertFromString(text, llvm::APFloat::rmNearestTiesToEven);
+    if (!status) {
+      llvm::consumeError(status.takeError());
+      continue;
+    }
+    if (back.bitwiseIsEqual(value)) {
+      // APFloat pads zeros only up to the precision it is given: 100 at
+      // one digit is 1E+2, so widen the precision to the integer digits.
+      size_t at = text.find_first_of("eE");
+      int exp10 = 0;
+      if (at != llvm::StringRef::npos &&
+          !llvm::StringRef(text).substr(at + 1).ltrim('+').getAsInteger(
+              10, exp10) &&
+          exp10 >= 0 && exp10 < 16 && unsigned(exp10) + 1 > digits) {
+        text.clear();
+        value.toString(text, exp10 + 1, /*FormatMaxPadding=*/15);
+      }
+      break;
+    }
+  }
+  // As a Pia literal: a decimal point before any exponent, and `e`.
+  std::string out(text.str());
+  size_t e = out.find_first_of("eE");
+  std::string mantissa = out.substr(0, e);
+  std::string exponent = e == std::string::npos ? "" : out.substr(e + 1);
+  if (mantissa.find('.') == std::string::npos)
+    mantissa += ".0";
+  return exponent.empty() ? mantissa : mantissa + "e" + exponent;
+}
+
 bool isBuiltinTypeName(std::string_view name) {
-  static const char *names[] = {"u8",  "u16",  "u32",   "u64",  "i8",
-                                "i16", "i32",  "i64",   "usize", "isize",
-                                "bool", "unit", "int",  "real"};
+  static const char *names[] = {"u8",  "u16",  "u32",   "u64",   "i8",   "i16",
+                                "i32", "i64",  "usize", "isize", "bool", "unit",
+                                "int", "real", "f32",   "f64"};
   for (const char *n : names)
     if (name == n) return true;
   return false;
@@ -111,6 +157,10 @@ std::string typeName(mlir::Type t) {
   if (mlir::isa<mlir::NoneType>(t)) return "unit";
   if (t.isInteger(1)) return "bool";
   if (mlir::isa<mlir::IndexType>(t)) return "index";
+  if (t.isF32())
+    return "f32";
+  if (t.isF64())
+    return "f64";
   if (auto it = mlir::dyn_cast<IntType>(t)) {
     llvm::APInt lo = it.getLo().sextOrTrunc(kWidth);
     llvm::APInt hi = it.getHi().sextOrTrunc(kWidth);
@@ -179,6 +229,11 @@ mlir::Type TypeResolver::builtin(std::string_view name) {
   }
   if (name == "bool") return boolType();
   if (name == "unit") return unitType();
+  // IEEE 754 binary32 and binary64, strict by default (ADR 0004, 0012).
+  if (name == "f32")
+    return mlir::Float32Type::get(&ctx_);
+  if (name == "f64")
+    return mlir::Float64Type::get(&ctx_);
   // The spec-only types of ADR 0036: `int` without a range is unbounded.
   if (name == "int") return UnboundedIntType::get(&ctx_);
   if (name == "real") return RealType::get(&ctx_);

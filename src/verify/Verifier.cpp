@@ -518,7 +518,7 @@ class Encoder {
   }
 
   // The sort of a declared constant, so its model value can be read.
-  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted };
+  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted, F32, F64 };
 
   struct Decl {
     std::string exported;  // the SMT-LIB name
@@ -698,6 +698,10 @@ class Encoder {
   Type sortOf(Type t) {
     if (mlir::isa<IntType, mlir::IndexType>(t)) return bvType();
     if (t.isInteger(1)) return boolType();
+    // A float is its IEEE bit pattern, a bit-vector of its own width
+    // (floatSemantics).
+    if (auto f = mlir::dyn_cast<mlir::FloatType>(t))
+      return mlir::smt::BitVectorType::get(ctx_, f.getWidth());
     if (mlir::isa<UnboundedIntType>(t)) return intType();
     if (mlir::isa<RealType>(t)) return realType();
     // A theory's sort is an uninterpreted SMT sort of the same name.
@@ -1174,6 +1178,9 @@ class Encoder {
     Type sort = sortOf(t);
     if (!sort) return std::nullopt;
     Value v = declare(sort, display, !display.empty());
+    // A float's counterexample value is read from its bits as a float.
+    if (!display.empty() && mlir::isa<mlir::FloatType>(t))
+      decls_.back().sort = t.isF32() ? Sort::F32 : Sort::F64;
     if (auto it = mlir::dyn_cast<IntType>(t)) assertTerm(inRange(v, it));
     if (mlir::isa<mlir::IndexType>(t)) assertTerm(inRange(v, indexRange()));
     return v;
@@ -2276,6 +2283,62 @@ class Encoder {
 
   // The value semantics shared by the forward walk and demand encoding.
   // Returns false for ops it does not model.
+  // f32 and f64 (M11) before ADR 0038's encoding: a float is its bit
+  // pattern, so a literal is exact and negation, which flips the sign bit,
+  // is too. The other operations are uninterpreted functions of the bits:
+  // the same operands give the same result, as IEEE 754 promises, and
+  // nothing else is known, so a goal that needs their values fails
+  // rather than being proved wrongly. `=` is IEEE equality, not equality of
+  // bits (NaN <> NaN, -0.0 = 0.0), so it is uninterpreted too, and `<>` is
+  // its negation; `>` and `>=` are `<` and `<=` swapped, as in IEEE 754.
+  Value floatSemantics(Operation *op, llvm::ArrayRef<Value> in) {
+    auto name = [](Type t, llvm::StringRef what) {
+      return ((t.isF32() ? "f32." : "f64.") + what).str();
+    };
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
+      auto f = mlir::dyn_cast<mlir::FloatAttr>(c.getValue());
+      if (!f)
+        return Value();
+      return create<mlir::smt::BVConstantOp>(f.getValue().bitcastToAPInt());
+    }
+    if (mlir::isa<mlir::arith::NegFOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      Type t = mlir::smt::BitVectorType::get(ctx_, w);
+      Value sign = create<mlir::smt::BVConstantOp>(APInt::getSignMask(w));
+      return create<mlir::smt::BVXOrOp>(t, in[0], sign);
+    }
+    if (mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
+                  mlir::arith::DivFOp>(op)) {
+      Type t = op->getResult(0).getType();
+      llvm::StringRef what = mlir::isa<mlir::arith::AddFOp>(op)   ? "add"
+                             : mlir::isa<mlir::arith::SubFOp>(op) ? "sub"
+                             : mlir::isa<mlir::arith::MulFOp>(op) ? "mul"
+                                                                  : "div";
+      return apply(name(t, what), {in[0], in[1]}, sortOf(t));
+    }
+    if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
+      Type t = c.getLhs().getType();
+      using P = mlir::arith::CmpFPredicate;
+      switch (c.getPredicate()) {
+      case P::OEQ:
+        return apply(name(t, "eq"), {in[0], in[1]}, boolType());
+      case P::UNE:
+        return notOf(apply(name(t, "eq"), {in[0], in[1]}, boolType()));
+      case P::OLT:
+        return apply(name(t, "lt"), {in[0], in[1]}, boolType());
+      case P::OLE:
+        return apply(name(t, "le"), {in[0], in[1]}, boolType());
+      case P::OGT:
+        return apply(name(t, "lt"), {in[1], in[0]}, boolType());
+      case P::OGE:
+        return apply(name(t, "le"), {in[1], in[0]}, boolType());
+      default:
+        return Value();
+      }
+    }
+    return Value();
+  }
+
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
                  llvm::DenseMap<Value, Value> &arrays,
                  llvm::DenseMap<Value, Value> &lengths,
@@ -2538,6 +2601,10 @@ class Encoder {
       views[sl.getResult()] = base;
       lengths[sl.getResult()] = bvBin("sub", hi, lo);
       out.push_back(lo);
+      return true;
+    }
+    if (Value r = floatSemantics(op, in)) {
+      out.push_back(r);
       return true;
     }
     if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
@@ -3203,13 +3270,20 @@ class Encoder {
     // and so is a pure function's, so a call in code and one in a contract
     // agree.
     if (hasBody && (isSpecFunction(callee) || definesValue(callee) ||
-                    contractOnly(callee)))
+                    contractOnly(callee))) {
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
         Value r = env_.lookup(call.getResult(k));
         if (app && r) assume(eq(r, app));
       }
+    } else if (hasBody && !call->hasAttr("pia.unsafe") &&
+               isPureFunction(callee)) {
+      llvm::SmallVector<Value> results;
+      for (Value r : call.getResults())
+        results.push_back(env_.lookup(r));
+      bindPureCall(callee, pre, results, guard);
+    }
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
@@ -3335,6 +3409,254 @@ class Encoder {
   bool hasSpecDecl(mlir::func::FuncOp f) {
     return isSpecFunction(f) || isAbstract(f) || definesValue(f) ||
            contractOnly(f);
+  }
+
+  // Side-effect-free check matching sortOf(), so checking purity does not
+  // record unused sorts or datatypes in the query.
+  static bool canEncodeType(Type t) {
+    if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
+                  SortType, RecType, mlir::FloatType>(t) ||
+        t.isInteger(1))
+      return true;
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      return r.getFieldTypes().empty();
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return canEncodeType(a.getElementType());
+    if (auto s = mlir::dyn_cast<SliceType>(t))
+      return canEncodeType(s.getElementType());
+    return false;
+  }
+
+  // An ordinary function in this module that takes no mutable, atomic or
+  // dynamic parameters, returns no buffers, and transitively performs no
+  // atomic, foreign, unsafe, address or imported side-effecting operations is
+  // deterministic: repeated calls on equal arguments return equal values
+  // (#375).
+  bool isPureFunction(mlir::func::FuncOp f) {
+    if (!f || f.isExternal() || f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+        f->hasAttr(PiaDialect::getImportAttrName()) ||
+        f->hasAttr("pia.extern") || f->hasAttr("pia.generic_eq") ||
+        f->hasAttr("pia.out_result") || f.getNumResults() == 0)
+      return false;
+    if (f->hasAttr("pia.generic_proof") &&
+        !(fn_ && fn_->hasAttr("pia.generic_proof")))
+      return false;
+    if (auto m = f->getAttrOfType<mlir::StringAttr>("pia.model")) {
+      auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
+      if (!here)
+        here = fn_->getAttrOfType<mlir::StringAttr>("pia.target");
+      if (!here || here != m)
+        return false;
+    }
+    for (Type r : f.getFunctionType().getResults())
+      if (mlir::isa<ArrayType, SliceType>(r) || !canEncodeType(r))
+        return false;
+    for (unsigned i = 0; i < f.getNumArguments(); ++i) {
+      auto mods = f.getArgAttrOfType<mlir::StringAttr>(
+          i, PiaDialect::getModifiersAttrName());
+      if (mods && (sema::hasModifier(mods.getValue(), "out") ||
+                   sema::hasModifier(mods.getValue(), "inout") ||
+                   sema::hasModifier(mods.getValue(), "mutable")))
+        return false;
+      if (!canEncodeType(f.getFunctionType().getInput(i)))
+        return false;
+    }
+    if (auto it = pureFunction_.find(f.getOperation());
+        it != pureFunction_.end())
+      return it->second;
+    llvm::SmallVector<mlir::func::FuncOp> worklist{f};
+    llvm::DenseSet<Operation *> visited;
+    visited.insert(f.getOperation());
+    bool ok = true;
+    while (!worklist.empty() && ok) {
+      mlir::func::FuncOp cur = worklist.pop_back_val();
+      bool curTerminates =
+          measureOf(cur).has_value() ||
+          llvm::any_of(cur.getFunctionType().getInputs(),
+                       [](Type t) { return mlir::isa<RecType>(t); });
+      cur.walk([&](Operation *op) {
+        if (!ok)
+          return;
+        if (isAtomicOp(op) ||
+            mlir::isa<ForeignOp, ViewOp, ArbitraryOp, AddressOp, AtAddressOp>(
+                op)) {
+          ok = false;
+          return;
+        }
+        if (auto w = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+          bool hasMeasure = false;
+          w.walk([&](contract::DecreasesOp) { hasMeasure = true; });
+          if (!hasMeasure)
+            ok = false;
+          return;
+        }
+        auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+        if (!c)
+          return;
+        if (c->hasAttr("pia.unsafe")) {
+          ok = false;
+          return;
+        }
+        mlir::func::FuncOp callee = calleeOf(c);
+        if (!callee) {
+          ok = false;
+          return;
+        }
+        if (callee == cur) {
+          if (!curTerminates)
+            ok = false;
+          return;
+        }
+        if (callee->hasAttr(PiaDialect::getLemmaAttrName()) ||
+            callee->hasAttr("pia.generic_eq") || isSpecFunction(callee) ||
+            isAbstract(callee) || contractOnly(callee))
+          return;
+        if (callee.isExternal() || callee->hasAttr("pia.extern") ||
+            callee->hasAttr(PiaDialect::getImportAttrName())) {
+          ok = false;
+          return;
+        }
+        if (visited.insert(callee.getOperation()).second)
+          worklist.push_back(callee);
+      });
+    }
+    pureFunction_[f.getOperation()] = ok;
+    return ok;
+  }
+
+  bool flatSpecArgs(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::SmallVectorImpl<Value> &flat) {
+    mlir::Block &entry = callee.getBody().front();
+    for (mlir::BlockArgument a : entry.getArguments()) {
+      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
+        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
+        if (!arr || !len)
+          return false;
+        flat.append({arr, len});
+        // A buffer of slices: its elements' lengths too (ADR 0048), so
+        // calls with different ones are different applications.
+        if (holdsSlices(a.getType())) {
+          Value lens = args.inner.lookup(a);
+          if (!lens)
+            return false;
+          flat.push_back(lens);
+        }
+        continue;
+      }
+      Value v = args.values.lookup(a);
+      if (!v)
+        return false;
+      flat.push_back(v);
+    }
+    return true;
+  }
+
+  Value applySpecFun(mlir::func::FuncOp callee, unsigned k,
+                     llvm::ArrayRef<Value> flat) {
+    auto it = specFuns_.find(callee.getOperation());
+    if (it == specFuns_.end() || k >= it->second.size())
+      return Value();
+    Type rt = callee.getFunctionType().getResult(k);
+    Value fun = it->second[k];
+    return flat.empty() ? fun
+                        : create<mlir::smt::ApplyFuncOp>(
+                              sortOf(rt), fun, mlir::ValueRange(flat));
+  }
+
+  // Lazily declares one uninterpreted function per result for a pure function
+  // and promotes its recorded first call, so single calls add no SMT overhead
+  // (#375).
+  bool ensurePureSpecFun(mlir::func::FuncOp callee) {
+    if (specFuns_.count(callee.getOperation()))
+      return true;
+    if (!isPureFunction(callee))
+      return false;
+    {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToStart(solverBlock_);
+      llvm::SmallVector<Type> domain;
+      for (Type t : callee.getFunctionType().getInputs()) {
+        Type sort = sortOf(t);
+        if (!sort)
+          return false;
+        domain.push_back(sort);
+        if (mlir::isa<ArrayType, SliceType>(t))
+          domain.push_back(bvType());
+        if (holdsSlices(t))
+          domain.push_back(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()));
+      }
+      llvm::SmallVector<Value> funs;
+      for (Type r : callee.getFunctionType().getResults()) {
+        Type sort = sortOf(r);
+        if (!sort)
+          return false;
+        Type ft = domain.empty()
+                      ? sort
+                      : mlir::smt::SMTFuncType::get(ctx_, domain, sort);
+        funs.push_back(declare(ft, "", false));
+      }
+      if (funs.empty())
+        return false;
+      specFuns_[callee.getOperation()] = std::move(funs);
+    }
+    if (auto it = firstPureCall_.find(callee.getOperation());
+        it != firstPureCall_.end()) {
+      FirstPureCall first = std::move(it->second);
+      firstPureCall_.erase(it);
+      OpBuilder::InsertionGuard guard(b_);
+      if (first.after)
+        b_.setInsertionPointAfter(first.after);
+      else
+        b_.setInsertionPointToEnd(solverBlock_);
+      emitPureCallEqs(callee, first.args, first.results, first.pc);
+    }
+    return true;
+  }
+
+  void emitPureCallEqs(mlir::func::FuncOp callee, const Demand &args,
+                       llvm::ArrayRef<Value> results,
+                       llvm::ArrayRef<Value> pc) {
+    llvm::SmallVector<Value> flat;
+    if (!flatSpecArgs(callee, args, flat))
+      return;
+    Value cond;
+    if (!pc.empty()) {
+      cond = pc[0];
+      for (size_t i = 1; i < pc.size(); ++i)
+        cond = andOf(cond, pc[i]);
+    }
+    for (unsigned k = 0; k < results.size(); ++k) {
+      if (!results[k])
+        continue;
+      Value app = applySpecFun(callee, k, flat);
+      if (!app)
+        continue;
+      Value fact = eq(results[k], app);
+      assertTerm(cond ? implies(cond, fact) : fact);
+    }
+  }
+
+  void bindPureCall(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::ArrayRef<Value> results, Value guard) {
+    llvm::SmallVector<Value> pc(pc_.begin(), pc_.end());
+    if (guard)
+      pc.push_back(guard);
+    if (specFuns_.count(callee.getOperation())) {
+      emitPureCallEqs(callee, args, results, pc);
+      return;
+    }
+    if (!firstPureCall_.count(callee.getOperation())) {
+      FirstPureCall first;
+      first.args = args;
+      first.results.assign(results.begin(), results.end());
+      first.pc = std::move(pc);
+      first.after = solverBlock_->empty() ? nullptr : &solverBlock_->back();
+      firstPureCall_[callee.getOperation()] = std::move(first);
+      return;
+    }
+    if (!ensurePureSpecFun(callee))
+      return;
+    emitPureCallEqs(callee, args, results, pc);
   }
 
   // An ordinary function whose body is a definition: one scalar result,
@@ -3589,32 +3911,16 @@ class Encoder {
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
     if (it == specFuns_.end()) return Value();
+    size_t numFuns = it->second.size();
     noteTheoryUse(callee);
     mlir::Block &entry = callee.getBody().front();
     llvm::SmallVector<Value> flat;
-    for (mlir::BlockArgument a : entry.getArguments()) {
-      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
-        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
-        if (!arr || !len) return Value();
-        flat.append({arr, len});
-        // A buffer of slices: its elements' lengths too (ADR 0048), so
-        // calls with different ones are different applications.
-        if (holdsSlices(a.getType())) {
-          Value lens = args.inner.lookup(a);
-          if (!lens) return Value();
-          flat.push_back(lens);
-        }
-      } else {
-        Value v = args.values.lookup(a);
-        if (!v) return Value();
-        flat.push_back(v);
-      }
-    }
+    if (!flatSpecArgs(callee, args, flat))
+      return Value();
     Type rt = callee.getFunctionType().getResult(k);
-    Value fun = it->second[k];
-    Value app = flat.empty() ? fun
-                             : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
-                                                              mlir::ValueRange(flat));
+    Value app = applySpecFun(callee, k, flat);
+    if (!app)
+      return Value();
     frameLink(callee, k, args, app);
     // A pure function's call is its body, where its precondition holds:
     // it has no recursion, so the body is a term, and a fact inside a
@@ -3653,11 +3959,29 @@ class Encoder {
       post.arrays = args.arrays;
       post.lengths = args.lengths;
       post.inner = args.inner;
-      callee.walk([&](mlir::func::ReturnOp ret) {
-        if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
-      });
+      post.oldArrays = args.arrays;
+      post.oldInner = args.inner;
       Value pre = argsInRange(entry, args), facts = boolConst(true);
-      bool ok = callee.getNumResults() == 1;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
+          Value appJ = j == k ? app : applySpecFun(callee, j, flat);
+          if (!appJ)
+            continue;
+          if (j != k)
+            if (auto itJ = mlir::dyn_cast<IntType>(
+                    callee.getFunctionType().getResult(j)))
+              define(inRange(appJ, itJ));
+          if (auto prev = post.values.find(ret.getOperand(j));
+              prev != post.values.end()) {
+            if (prev->second)
+              facts = andOf(facts, eq(appJ, prev->second));
+            continue;
+          }
+          post.values[ret.getOperand(j)] = appJ;
+        }
+      });
+      bool ok =
+          callee.getNumResults() >= 1 && numFuns == callee.getNumResults();
       for (auto r : entry.getOps<contract::RequiresOp>()) {
         Value p = demand(r.getPredicate(), post);
         if (!p) ok = false;
@@ -3671,8 +3995,10 @@ class Encoder {
       ensuresStack_.pop_back();
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
-    // Its body is in its own module: the contract is all there is.
-    if (contractOnly(callee)) return app;
+    // Only spec functions unfold their body past here; an imported or
+    // ordinary pure function is known only by its contract (#375).
+    if (!isSpecFunction(callee))
+      return app;
     // An @opaque function's definition is a fact only where a `reveal`
     // asks for it (ADR 0063). A call met before the reveal gets it then.
     if (callee->hasAttr("pia.opaque") &&
@@ -3718,6 +4044,10 @@ class Encoder {
   // A spec call met while demanding a contract.
   Value demandSpecCall(mlir::func::CallOp call, unsigned k, Demand &d) {
     mlir::func::FuncOp callee = calleeOf(call);
+    if (!callee || callee.isExternal())
+      return Value();
+    if (!specFuns_.count(callee.getOperation()) && !ensurePureSpecFun(callee))
+      return Value();
     mlir::Block &entry = callee.getBody().front();
     Demand args;
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
@@ -3781,6 +4111,18 @@ class Encoder {
 
   // --- demand encoding ---------------------------------------------------
 
+  // Under `old`, a call the walk has already stepped, with its contract
+  // assumed, is already that value when its postconditions do not read
+  // memory, so demanding it needs no uninterpreted function.
+  bool steppedOldCall(mlir::func::CallOp call, Value v, const Demand &d) {
+    if (!d.envForBlockArgs || !env_.lookup(v))
+      return false;
+    return llvm::none_of(
+               call.getOperandTypes(),
+               [](Type t) { return mlir::isa<ArrayType, SliceType>(t); }) ||
+           !ensuresReadMemory(calleeOf(call));
+  }
+
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
     if (Value t = d.memo.lookup(v)) return t;
@@ -3836,9 +4178,11 @@ class Encoder {
       for (Value a : call.getOperands()) args.push_back(demand(a, d));
       result = abstractCall(calleeOf(call), args);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
-               call && (isSpecFunction(calleeOf(call)) ||
-                        definesValue(calleeOf(call)) ||
-                        contractOnly(calleeOf(call)))) {
+               call && !call->hasAttr("pia.unsafe") &&
+               (isSpecFunction(calleeOf(call)) ||
+                definesValue(calleeOf(call)) || contractOnly(calleeOf(call)) ||
+                (isPureFunction(calleeOf(call)) &&
+                 !steppedOldCall(call, v, d)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
@@ -3851,13 +4195,9 @@ class Encoder {
     // Under `old`, a call the walk has already stepped, with its contract
     // assumed, is that value: its operands are the entry values there too,
     // unless it reads a buffer, whose memory `old` reads from entry.
-    if (!result && d.envForBlockArgs)
+    if (!result)
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
-        if (llvm::none_of(call.getOperandTypes(),
-                          [](Type t) {
-                            return mlir::isa<ArrayType, SliceType>(t);
-                          }) ||
-            !ensuresReadMemory(calleeOf(call)))
+        if (steppedOldCall(call, v, d))
           result = env_.lookup(v);
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
@@ -4132,6 +4472,14 @@ class Encoder {
   // result, the definitions being unfolded, and definitions made inside a
   // quantifier, which it takes as hypotheses.
   llvm::DenseMap<Operation *, llvm::SmallVector<Value>> specFuns_;
+  struct FirstPureCall {
+    Demand args;
+    llvm::SmallVector<Value> results;
+    llvm::SmallVector<Value> pc;
+    Operation *after = nullptr;
+  };
+  llvm::DenseMap<Operation *, FirstPureCall> firstPureCall_;
+  llvm::DenseMap<Operation *, bool> pureFunction_;
   llvm::SmallVector<Operation *> specStack_, ensuresStack_;
   std::vector<Value> pendingDefs_;
   unsigned unknowns_ = 0;  // values demand() could not encode
@@ -4564,6 +4912,7 @@ struct Job {
 // What one job did, summed into Stats once every thread has finished.
 struct JobStats {
   bool solved = false, cached = false, sliced = false, unsliced = false;
+  bool intBlasted = false;
   unsigned long long cost = 0;
 };
 
@@ -4727,38 +5076,159 @@ unsigned long long rlimitCount(z3::solver &solver) {
 // reasoning it is for, and small beside the exact query it may save.
 constexpr unsigned long long kAbstractRlimit = 500000;
 
+// The budget of the int-blasting attempt in `solve` (ADR 0066). The
+// quantifier-free nonlinear goals of the benchmark take at most ~600k; 5M
+// leaves comfortable headroom while bounding how long a stalled goal can
+// spend before falling through to the bit-blaster (which also gives
+// counterexamples).
+constexpr unsigned long long kIntBlastRlimit = 5000000;
+
+// The wall-clock budget of the tracked solve that finds which axioms a
+// proof used (ADR 0036). It only refines a report, so giving up costs
+// nothing but precision: the goal then lists every axiom it was given. The
+// rlimit cannot bound it, since Z3 can grow its memory for minutes while
+// barely counting resources: tests/verify/size_classes.pia:105 took 203 s
+// and 9.7 GB tracked on Z3 5.4.1, against 2.7 s for the whole file
+// untracked, and swapped the 7 GB macOS runner for 24 minutes.
+constexpr unsigned kTrackedTimeoutMs = 10000;
+
+bool isSexprSpace(char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
 // The end of the s-expression that starts at `at` in `s`.
 size_t sexprEnd(const std::string &s, size_t at) {
-  while (at < s.size() && s[at] == ' ') ++at;
-  if (at >= s.size()) return at;
+  while (at < s.size() && isSexprSpace(s[at]))
+    ++at;
+  if (at >= s.size())
+    return at;
   if (s[at] != '(') {
-    while (at < s.size() && s[at] != ' ' && s[at] != ')') ++at;
+    while (at < s.size() && !isSexprSpace(s[at]) && s[at] != ')')
+      ++at;
     return at;
   }
   int depth = 0;
   for (; at < s.size(); ++at) {
-    if (s[at] == '(') ++depth;
-    if (s[at] == ')' && --depth == 0) return at + 1;
+    if (s[at] == '(')
+      ++depth;
+    if (s[at] == ')' && --depth == 0)
+      return at + 1;
   }
   return at;
 }
 
+// Whether the operand of `script` that starts at `at` is a literal
+// (`#x...`, `#b...` or `(_ bvN w)`).
+bool literalAt(const std::string &script, size_t at) {
+  while (at < script.size() && isSexprSpace(script[at]))
+    ++at;
+  if (at >= script.size())
+    return false;
+  return script[at] == '#' || script.compare(at, 4, "(_ b") == 0;
+}
+
 // Whether `script` has a `bvsdiv` or `bvsrem` whose divisor is not a
-// literal (`#x...`, `#b...` or `(_ bvN w)`).
+// literal.
 bool dividesByVariable(const std::string &script) {
   for (const char *op : {"(bvsdiv ", "(bvsrem "}) {
     std::string f(op);
     for (size_t at = script.find(f); at != std::string::npos;
-         at = script.find(f, at + 1)) {
-      size_t second = sexprEnd(script, at + f.size());
-      while (second < script.size() && script[second] == ' ') ++second;
-      if (second >= script.size()) continue;
-      bool literal = script[second] == '#' ||
-                     script.compare(second, 4, "(_ b") == 0;
-      if (!literal) return true;
+         at = script.find(f, at + 1))
+      if (!literalAt(script, sexprEnd(script, at + f.size())))
+        return true;
+  }
+  return false;
+}
+
+// Whether the s-expression at `at` in `script` evaluates to a constant
+// bit-vector, using `constLets` for previously bound constant lets.
+// Recognises literals and pure BV ops over constants, so a linear product
+// such as `(max u32 + 1) * n` is not misclassified as nonlinear.
+bool isConstBVTerm(const std::string &script, size_t at,
+                   const std::unordered_set<std::string> &constLets) {
+  while (at < script.size() && isSexprSpace(script[at]))
+    ++at;
+  if (at >= script.size())
+    return false;
+  if (script[at] == '#' || script.compare(at, 4, "(_ b") == 0)
+    return true;
+  if (script[at] != '(') {
+    size_t end = sexprEnd(script, at);
+    return constLets.count(script.substr(at, end - at)) != 0;
+  }
+  size_t opStart = at + 1;
+  while (opStart < script.size() && isSexprSpace(script[opStart]))
+    ++opStart;
+  size_t opEnd = opStart;
+  while (opEnd < script.size() && !isSexprSpace(script[opEnd]) &&
+         script[opEnd] != ')' && script[opEnd] != '(')
+    ++opEnd;
+  llvm::StringRef op(script.data() + opStart, opEnd - opStart);
+  if (op != "bvneg" && op != "bvadd" && op != "bvsub" && op != "bvmul" &&
+      op != "bvsdiv" && op != "bvsrem" && op != "bvsmod" && op != "bvand" &&
+      op != "bvor" && op != "bvxor" && op != "bvshl" && op != "bvashr")
+    return false;
+  size_t end = sexprEnd(script, at);
+  size_t cur = opEnd;
+  bool anyArg = false;
+  while (cur < end) {
+    while (cur < end && isSexprSpace(script[cur]))
+      ++cur;
+    if (cur >= end || script[cur] == ')')
+      break;
+    if (!isConstBVTerm(script, cur, constLets))
+      return false;
+    anyArg = true;
+    cur = sexprEnd(script, cur);
+  }
+  return anyArg;
+}
+
+// Whether `script` is nonlinear: it multiplies two terms neither of which
+// is a constant, or divides by a term that is not one. Those are the goals
+// a bit-blasted multiplier or divider makes slow (ADR 0066).
+bool multipliesVariables(const std::string &script) {
+  std::unordered_set<std::string> constLets;
+  for (size_t i = 0; i < script.size(); ++i) {
+    if (script[i] != '(')
+      continue;
+    if (script.compare(i, 7, "(let ((") == 0) {
+      size_t nameStart = i + 7;
+      size_t nameEnd = sexprEnd(script, nameStart);
+      std::string name = script.substr(nameStart, nameEnd - nameStart);
+      if (isConstBVTerm(script, nameEnd, constLets))
+        constLets.insert(std::move(name));
+      else
+        constLets.erase(name);
+      continue;
+    }
+    if (script.compare(i, 8, "(bvsdiv ") == 0 ||
+        script.compare(i, 8, "(bvsrem ") == 0) {
+      size_t second = sexprEnd(script, i + 8);
+      if (!isConstBVTerm(script, second, constLets))
+        return true;
+      continue;
+    }
+    if (script.compare(i, 7, "(bvmul ") == 0) {
+      size_t first = i + 7;
+      if (isConstBVTerm(script, first, constLets))
+        continue;
+      if (!isConstBVTerm(script, sexprEnd(script, first), constLets))
+        return true;
     }
   }
   return false;
+}
+
+// Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
+// Quantified queries leave int-blasting incomplete and stall on quantified
+// definitions, so only quantifier-free nonlinear queries take this path.
+bool canIntBlast(const std::string &script) {
+  if (script.find("(forall") != std::string::npos ||
+      script.find("(exists") != std::string::npos ||
+      script.find("(lambda") != std::string::npos)
+    return false;
+  return multipliesVariables(script);
 }
 
 // `script` with signed division, remainder and multiplication as the
@@ -4839,10 +5309,17 @@ void solve(const Job &job, const Options &options, Outcome &out,
       return std::vector<std::string>(all.begin(), all.end());
     }
     if (std::unique_ptr<z3::solver> t = tracked(ctx, solved, query, p)) {
+      z3::params tp(ctx);
+      tp.set("timeout", std::min(options.timeoutMs, kTrackedTimeoutMs));
+      t->set(tp);
       unsigned long long before = rlimitCount(*t);
       z3::check_result r = t->check();
-      js.cost += rlimitCount(*t) - before;
-      if (r == z3::unsat) return coreAxioms(*t);
+      // Only a finished solve counts: what one that ran out of time spent
+      // depends on the machine, and cost must not (ADR 0032).
+      if (r == z3::unsat) {
+        js.cost += rlimitCount(*t) - before;
+        return coreAxioms(*t);
+      }
     }
     std::set<std::string> all(query.axioms.begin(), query.axioms.end());
     all.insert(query.assumes.begin(), query.assumes.end());
@@ -4948,6 +5425,54 @@ void solve(const Job &job, const Options &options, Outcome &out,
     } catch (const z3::exception &) {
     }
   }
+  // A quantifier-free nonlinear goal is next given to Z3's int-blasting
+  // solver (ADR 0066). Bit-blasting a 68- or 132-bit multiplier is what
+  // times out on goals such as `a <= b ==> a * c <= b * c`, while the same
+  // goal over integers is decided by nonlinear integer arithmetic in
+  // milliseconds. The translation is exact, both ways, so unsat is a proof.
+  // On sat or unknown the bit-blaster below decides as before, and gives the
+  // counterexample. Goals with a strategy of their own, theory axioms,
+  // assumptions or quantifiers are left to the bit-blaster.
+  if (last != &witness && options.intBlast && job.strategy.empty() &&
+      q.axioms.empty() && q.assumes.empty() && first == &full &&
+      canIntBlast(job.script))
+    try {
+      // In a context of its own, as for the abstract attempt above.
+      z3::context ictx;
+      // Ground applications of uninterpreted functions, such as opaque spec
+      // functions (ADR 0063), stall int-blasting, so Ackermann's reduction
+      // first replaces them with constants and the facts that equal
+      // arguments give equal results.
+      z3::solver blast =
+          (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
+              .mk_solver();
+      z3::params ip(ictx);
+      ip.set("timeout", options.timeoutMs);
+      ip.set("rlimit", static_cast<unsigned>(
+                           options.rlimit ? std::min<unsigned long long>(
+                                                options.rlimit, kIntBlastRlimit)
+                                          : kIntBlastRlimit));
+      // 2 is int-blasting; the `smt` tactic is needed, since the default
+      // solver for bit-vectors runs the bit-blasting tactic first.
+      ip.set("smt.bv.solver", 2u);
+      blast.set(ip);
+      blast.from_string(job.script.c_str());
+      unsigned long long before = rlimitCount(blast);
+      z3::check_result r = blast.check();
+      unsigned long long now = rlimitCount(blast);
+      js.cost += now - before;
+      if (r == z3::unsat) {
+        js.intBlasted = true;
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost)
+          out.cost = now - before;
+        if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, key, now - before, &out.axiomsUsed);
+        return;
+      }
+    } catch (const z3::exception &) {
+    }
   if (last != &witness) try {
     unsigned long long before = rlimitCount(*first);
     result = first->check();
@@ -5063,6 +5588,19 @@ void solve(const Job &job, const Options &options, Outcome &out,
           return recValue(m.get_const_interp(m.get_const_decl(i)));
       return "any";
     }
+    if (d.sort == Sort::F32 || d.sort == Sort::F64) {
+      // A float is its bits (Encoder::floatSemantics): read back as one.
+      bool f32 = d.sort == Sort::F32;
+      z3::expr v = m.eval(ctx.bv_const(name, f32 ? 32 : 64),
+                          /*model_completion=*/true);
+      uint64_t bits = 0;
+      if (!v.is_numeral_u64(bits))
+        return v.to_string();
+      llvm::APFloat x(f32 ? llvm::APFloat::IEEEsingle()
+                          : llvm::APFloat::IEEEdouble(),
+                      APInt(f32 ? 32 : 64, bits));
+      return sema::floatText(x);
+    }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
                  : d.sort == Sort::Int  ? ctx.int_const(name)
                  : d.sort == Sort::Real ? ctx.real_const(name)
@@ -5136,6 +5674,7 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
     st.cached += j.cached;
     st.sliced += j.sliced;
     st.unsliced += j.unsliced;
+    st.intBlasted += j.intBlasted;
     st.cost += j.cost;
   }
   return threads;

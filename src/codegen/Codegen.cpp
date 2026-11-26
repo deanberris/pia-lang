@@ -2,6 +2,7 @@
 
 #include "codegen/Codegen.h"
 #include "codegen/ArrayResults.h"
+#include "codegen/Lowerings.h"
 #include "codegen/SliceBuffers.h"
 
 #include "cert/Certificate.h"
@@ -424,7 +425,7 @@ class CoreTypes : public mlir::TypeConverter {
   // Buffers hold scalars, and recursive values (ADR 0047).
   Type element(Type t) {
     Type c = convertType(t);
-    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType,
+    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType, mlir::FloatType,
                        mlir::LLVM::LLVMStructType>(c))
       return c;
     return {};
@@ -813,17 +814,22 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
     auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
         getTypeConverter()->convertType(op.getType()));
     if (!type) return mlir::failure();
-    auto elem = mlir::dyn_cast<mlir::IntegerType>(type.getElementType());
+    Type elem = type.getElementType();
     auto fn = op->getParentOfType<mlir::func::FuncOp>();
-    if (!elem || !fn) return mlir::failure();
+    if (!mlir::isa<mlir::IntegerType, mlir::FloatType>(elem) || !fn)
+      return mlir::failure();
     Value storage;
     {
       mlir::OpBuilder::InsertionGuard guard(rw);
       rw.setInsertionPointToStart(&fn.getBody().front());
       storage = make<mlir::memref::AllocaOp>(rw, loc, type);
     }
-    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem,
-                                               rw.getIntegerAttr(elem, 0));
+    // Zero is all bits clear for an integer and for a float (+0.0).
+    mlir::TypedAttr zeroAttr =
+        mlir::isa<mlir::FloatType>(elem)
+            ? mlir::TypedAttr(rw.getFloatAttr(elem, 0.0))
+            : mlir::TypedAttr(rw.getIntegerAttr(elem, 0));
+    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem, zeroAttr);
     Value lo = make<mlir::arith::ConstantIndexOp>(rw, loc, 0);
     Value hi = make<mlir::arith::ConstantIndexOp>(
         rw, loc, static_cast<int64_t>(op.getType().getLength()));
@@ -978,13 +984,21 @@ struct ForeignLowering : mlir::OpConversionPattern<ForeignOp> {
       }
       args.push_back(v);
     }
-    if (op->hasAttr("pia.variadic")) {
+    if (op->hasAttr("pia.variadic") || op->hasAttr("pia.deref")) {
       auto module = op->getParentOfType<mlir::ModuleOp>();
       auto callee = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(op.getSymbol());
       if (!callee)
-        return rw.notifyMatchFailure(op, "no variadic declaration");
+        return rw.notifyMatchFailure(op, "no llvm.func declaration");
       auto call = make<mlir::LLVM::CallOp>(rw, loc, callee, args);
-      rw.replaceOp(op, call->getResults());
+      if (!op->hasAttr("pia.deref")) {
+        rw.replaceOp(op, call->getResults());
+        return mlir::success();
+      }
+      // C returned a pointer to the result: read it here, so that the
+      // pointer never reaches Pia (ADR 0057, section 5).
+      Type result = getTypeConverter()->convertType(op.getResult(0).getType());
+      auto load = make<mlir::LLVM::LoadOp>(rw, loc, result, call.getResult());
+      rw.replaceOp(op, load.getResult());
       return mlir::success();
     }
     llvm::SmallVector<Type> results;
@@ -1955,20 +1969,24 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
     llvm::SmallVector<ForeignOp> foreign;
     module.walk([&](ForeignOp op) { foreign.push_back(op); });
     std::set<std::string> declared;
-    // A variadic symbol's named parameters, so that every call of it
-    // agrees on them (ADR 0051).
-    std::map<std::string, std::optional<int64_t>> variadicOf;
+    // A symbol's named parameters if it is variadic (ADR 0051), and
+    // whether it is @deref, so that every call of it agrees.
+    std::map<std::string, std::pair<std::optional<int64_t>, bool>> shapeOf;
     for (ForeignOp op : foreign) {
       std::string sym = op.getSymbol().str();
       std::optional<int64_t> named;
       if (auto v = op->getAttrOfType<mlir::IntegerAttr>("pia.variadic"))
         named = v.getInt();
-      if (auto [it, fresh] = variadicOf.try_emplace(sym, named);
-          !fresh && it->second != named)
+      bool deref = op->hasAttr("pia.deref");
+      if (auto [it, fresh] = shapeOf.try_emplace(sym, named, deref);
+          !fresh && it->second.first != named)
         return op.emitError()
                << "the C symbol '" << sym
                << "' is declared both with and without @variadic, or with "
                   "different numbers of named parameters";
+      else if (!fresh && it->second.second != deref)
+        return op.emitError() << "the C symbol '" << sym
+                              << "' is declared both with and without @deref";
       if (auto own = module.lookupSymbol<mlir::func::FuncOp>(sym);
           own && !own->hasAttr("pia.c")) {
         if (!own->hasAttr("pia.extern"))
@@ -2006,22 +2024,28 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       // func.func cannot say so, and the calling convention differs:
       // Apple arm64 passes the variadic arguments on the stack, and
       // x86_64 System V counts vector registers in %al.
-      if (named) {
-        args.resize(*named);
+      // A @deref function returns a pointer in C, so it is an llvm.func
+      // too, and its call loads the result through it.
+      if (named || deref) {
+        if (named)
+          args.resize(*named);
         Type result = results.empty() ? Type(mlir::LLVM::LLVMVoidType::get(ctx))
                                       : results.front();
+        if (deref)
+          result = ptr;
         auto decl = make<mlir::LLVM::LLVMFuncOp>(
             b, op.getLoc(), sym,
             mlir::LLVM::LLVMFunctionType::get(result, args,
-                                              /*isVarArg=*/true));
+                                              /*isVarArg=*/named.has_value()));
         decl->setAttr("pia.c", b.getUnitAttr());
         for (auto [i, a] : llvm::enumerate(op.getArgs()))
-          if (static_cast<int64_t>(i) < *named)
+          if (!named || static_cast<int64_t>(i) < *named)
             if (auto e = ext(a.getType()))
               decl.setArgAttr(i, *e, b.getUnitAttr());
-        for (Type t : op.getResultTypes())
-          if (auto e = ext(t))
-            decl.setResultAttr(0, *e, b.getUnitAttr());
+        if (!deref)
+          for (Type t : op.getResultTypes())
+            if (auto e = ext(t))
+              decl.setResultAttr(0, *e, b.getUnitAttr());
         continue;
       }
       auto decl = make<mlir::func::FuncOp>(
@@ -2305,6 +2329,11 @@ LogicalResult buildEntry(mlir::ModuleOp module, const Entry &entryInfo) {
 LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   mlir::MLIRContext *ctx = module.getContext();
   loadDialects(*ctx);
+  // A caller that did not apply the lowerings, such as the REPL's JIT,
+  // compiles every body (ADR 0065).
+  if (mlir::failed(applyLowerings(module, /*enabled=*/false)))
+    return mlir::failure();
+  bool lowered = takeLoweredMark(module);
 
   std::vector<Entry> entries;
   for (auto f : llvm::make_early_inc_range(module.getOps<mlir::func::FuncOp>())) {
@@ -2401,6 +2430,10 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     pm.addPass(mlir::createAsyncRuntimeRefCountingOptPass());
     pm.addPass(mlir::createConvertAsyncToLLVMPass());
   }
+  // What a lowering's MLIR uses beyond the core dialects goes down to them
+  // first (ADR 0065).
+  if (lowered)
+    addLoweringPasses(pm);
   pm.addPass(mlir::createSCFToControlFlowPass());
   pm.addPass(mlir::createConvertControlFlowToLLVMPass());
   pm.addPass(mlir::createArithToLLVMConversionPass());
@@ -2463,6 +2496,10 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
   llvm::CodeGenOptLevel level = options.optLevel == 0
                                     ? llvm::CodeGenOptLevel::None
                                     : llvm::CodeGenOptLevel::Default;
+  // Floats are strict IEEE 754 by default (ADR 0004, ADR 0012). LLVM fuses
+  // a multiply and an add into an FMA only when both carry the `contract`
+  // fast-math flag, which IRGen never sets, and it never flushes
+  // subnormals unless a function asks for it.
   std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
       triple, options.cpu, "", llvm::TargetOptions(), llvm::Reloc::PIC_,
       std::nullopt, level));

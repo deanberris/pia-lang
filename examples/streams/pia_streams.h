@@ -84,6 +84,16 @@ uint64_t sediment_basins(
     uint64_t npos2, uint32_t *cnt, uint64_t ncnt, uint64_t *first,
     uint64_t nfirst, uint64_t *next, uint64_t nnext, uint64_t *last,
     uint64_t nlast, uint64_t *gowner, uint64_t ngowner);
+// docs/pull.pia.md.
+uint64_t pull_step(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
+                   uint64_t ndown, const uint32_t *acc, uint64_t nacc,
+                   const uint64_t *order, uint64_t norder, const uint64_t *pos,
+                   uint64_t npos, uint64_t w, const uint32_t *bed0,
+                   uint64_t nbed0, uint32_t *bed, uint64_t nbed, uint32_t *flux,
+                   uint64_t nflux, uint64_t *seen, uint64_t nseen,
+                   uint64_t *gathered, uint64_t ngathered, uint32_t *newbed,
+                   uint64_t nnewbed, uint32_t *newout, uint64_t nnewout,
+                   uint64_t gone);
 // examples/streams/gif.pia.
 uint64_t gif_bound(uint16_t w, uint16_t h, uint16_t nf);
 uint64_t gif_animation(uint16_t w, uint16_t h, const uint8_t *pal,

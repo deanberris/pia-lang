@@ -1,0 +1,38 @@
+# SPIRV-Cross, built for piac's GPU path (ADR 0068): the library, with the
+# GLSL and MSL back ends, and the spirv-cross command-line tool. CMake
+# generates gitversion.h; here it is a genrule.
+load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
+
+genrule(
+    name = "gitversion",
+    outs = ["gitversion.h"],
+    cmd = "echo '#define SPIRV_CROSS_GIT_REVISION \"vulkan-sdk-1.4.350.0\"' > $@",
+)
+
+cc_library(
+    name = "spirv_cross",
+    srcs = [
+        "spirv_cfg.cpp",
+        "spirv_cpp.cpp",
+        "spirv_cross.cpp",
+        "spirv_cross_parsed_ir.cpp",
+        "spirv_cross_util.cpp",
+        "spirv_glsl.cpp",
+        "spirv_hlsl.cpp",
+        "spirv_msl.cpp",
+        "spirv_parser.cpp",
+        "spirv_reflect.cpp",
+    ],
+    hdrs = glob(["*.hpp", "*.h"]),
+    copts = ["-fexceptions"],
+    includes = ["."],
+    visibility = ["//visibility:public"],
+)
+
+cc_binary(
+    name = "spirv-cross",
+    srcs = ["main.cpp", ":gitversion"],
+    copts = ["-fexceptions"],
+    visibility = ["//visibility:public"],
+    deps = [":spirv_cross"],
+)

@@ -176,7 +176,38 @@ let opaque (p : pixel) : pixel
 let luma (p : pixel) : u16 = p.r + p.g + p.b
 ```
 
-`let byte = u8` gives another name to a type: a type is a value, so a `let` can name it. A field of a mutable record can be assigned:
+`let byte = u8` gives another name to a type: a type is a value, so a `let` can name it. `type` always makes a new type, so `let length = type u32` is a type of its own, which never mixes with a `u32` or with another type over one. Every conversion is written, by applying a type to a value: `length 5` makes a length, and `u32 l` takes one apart. The bounds of the type underneath carry over, and a length proves as the number it holds, at no cost:
+
+```ocaml
+let length = type u32
+
+let area (w : length) (h : length) : u64
+  requires u32 w * u32 h <= max u32
+= u32 w * u32 h
+
+let longer (a : length) (b : length) : length
+  ensures u32 result >= u32 a
+= if u32 a >= u32 b then a else b
+```
+
+A length has no operators of its own, so `w * h` is an error rather than a length. Each family of operators is opted into with a derive ([ADR 0064](adr/0064-distinct-types.md)): `ord` compares, `add` gives `+` and `-` between two lengths, `scale` gives `*`, `/` and `%` by a u32 on the right, and `bounds` gives the constants `min_length` and `max_length`. Each is stated in terms of the numbers underneath, and requires that its result fits, so overflow stays the caller's goal:
+
+```ocaml
+let span = type u32 @derive(eq, ord, add, scale, bounds)
+
+let total (a : span) (b : span) : span
+  requires u32 a <= 1000 && u32 b <= 1000
+  ensures u32 result = u32 a + u32 b
+= a + b
+
+let wider (a : span) (b : span) : span
+  ensures u32 result >= u32 a
+= if a < b then b else a
+```
+
+`a * a` is still an error, since a length times a length is an area: a program writes that function itself.
+
+A field of a mutable record can be assigned:
 
 ```ocaml
 let pixel = type { r : u8; g : u8; b : u8; a : u8 }

@@ -1,0 +1,45 @@
+(* What distinct types refuse (ADR 0064, section 3): every conversion is
+   written, so neither a literal nor a value of the underlying type
+   becomes a length, a length is not a u32, and two distinct types over
+   one type do not mix. Nothing is inherited: each operator comes from a
+   derive (section 4), and `scale` multiplies by the underlying type only.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let length = type u32
+let weight = type u32
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:24: error: expected length, found i32
+*)
+let literal : length = 5
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:30: error: expected length, found u32
+*)
+let raw (x : u32) : length = x
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:31: error: expected u32, found length
+*)
+let back (l : length) : u32 = l
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:33: error: expected length, found weight
+*)
+let mix (w : weight) : length = w
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:48: error: '+' is not defined on length; add @derive(add) to 'length'
+*)
+let sum (a : length) (b : length) : length = a + b
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:47: error: '<' is not defined on length; add @derive(ord) to 'length'
+*)
+let less (a : length) (b : length) : bool = a < b
+
+let span = type u32 @derive(scale)
+
+(* A length times a length is an area, not a length.
+// CHECK: distinct_errors.pia:[[@LINE+2]]:34: error: '*' on span takes u32 on the right, found span
+*)
+let square (a : span) : span = a * a
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:32: error: '*' is not defined with i32 on the left and span on the right; a derived operator takes the span first
+*)
+let left (a : span) : span = 3 * a
