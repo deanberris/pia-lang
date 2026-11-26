@@ -1,0 +1,22 @@
+(* The .metallib that metal_library built, embedded directly via @embed
+   (ADR 0070, step 5). Validated at compile time by a metafunction and
+   checked at run time in pure Pia `main`. *)
+let add_metallib : [u8] @embed(file = "add_metallib.metallib", symbol = "pia_test_add_metallib")
+
+let meta check_metallib blob : item =
+  if len blob >= 4 &&
+     blob.[0] = 0x4d && blob.[1] = 0x54 &&
+     blob.[2] = 0x4c && blob.[3] = 0x42
+  then
+    `( let metallib_ok () : bool ensures result = true = true )
+  else
+    fail "embedded library is not a .metallib (missing MTLB magic)"
+
+check_metallib add_metallib
+
+let main () : i32 =
+  if metallib_ok () &&
+     len add_metallib >= 4 &&
+     add_metallib.[0] = 0x4d && add_metallib.[1] = 0x54 &&
+     add_metallib.[2] = 0x4c && add_metallib.[3] = 0x42
+  then 0 else 1

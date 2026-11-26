@@ -212,6 +212,7 @@ def pia_binary(name, src, deps = [], embeds = [], **kwargs):
         src = src,
         deps = deps,
         embeds = embeds,
+        tags = kwargs.get("tags", []),
         target_compatible_with = kwargs.get("target_compatible_with", []),
     )
     cc_binary(
