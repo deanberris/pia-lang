@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/gpu:metal.bzl", "metal_library")
+load("//tools/piac:pia.bzl", "pia_library")
 
 # The GPU toolchain end to end (ADR 0068, step 1): a hand-written gpu.module
 # through piac --emit=spirv, spirv-val, SPIRV-Cross and the Metal compiler.
@@ -57,4 +58,32 @@ cc_test(
     tags = ["manual"],
     target_compatible_with = ["@platforms//os:macos"],
     deps = [":add_metallib_embed"],
+)
+
+# The kernel on the GPU (ADR 0068, step 2): through the Metal shim's C API,
+# and from Pia through Pia.Gpu. It needs a Mac with a GPU and the Metal
+# toolchain.
+pia_library(
+    name = "gpu_add",
+    src = "gpu_add.pia",
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = ["//lib/Pia:gpu"],
+)
+
+cc_test(
+    name = "dispatch_test",
+    srcs = [
+        "dispatch_test.c",
+        ":gpu_add",
+        "//lib/Pia:gpu",
+    ],
+    tags = [
+        "requires-gpu",
+        "requires-metal",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        ":add_metallib_embed",
+        "//src/runtime/metal",
+    ],
 )
