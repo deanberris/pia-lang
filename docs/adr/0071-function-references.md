@@ -37,6 +37,8 @@ let table : [(x : u8) -> u8 requires x < 100; 3] = [succ; twice; succ]
 
 - The function has static lifetime, so a reference to it is a shared borrow that never ends. It may be stored in a `let`, a record field, a variant, a buffer or module state, returned, and sent to another task.
 - A reference can be copied, as any shared borrow can, so one function may sit in many places. The function itself cannot be cloned or duplicated.
+- A reference is a proxy for its function (Dean, 2026-11-27): wherever it is used, it behaves as the function's name would, so it is called, passed on and stored the same way. It is fixed by default, like every binding: `h` names `succ` for as long as `h` lives, and a call through it, where the compiler can see which function it was bound to, is a direct call. A place written `mutable`, such as `let h : mutable (u8 -> u8) = succ` or a `mutable` table slot, can be rebound to another function of the same arrow with `h <- twice`; a call through it is indirect unless the compiler can see the last binding.
+- This is not ADR 0047's `ref t`, which is a counted box that owns a shared value. A function reference owns nothing and counts nothing, so it needs no word of its own.
 - A reference is never null. `option (u8 -> u8)` is the nullable one, laid out as one address with zero as `None`.
 - Function types still never meet `Eq`, `Ord` or `Hash` (ADR 0044): two references cannot be compared.
 
