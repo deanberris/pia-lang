@@ -26,7 +26,7 @@ Status: implemented in M4 ([#5](https://github.com/deanberris/pia-lang/issues/5)
 | `unit` | no value; a function returning unit has no results |
 | `let pixel = type { r : u8; ... }` | `!pia.record<"pixel", r : !pia.int<0, 255>, ...>`, printed as `!pixel` |
 
-Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`. Records are the exception: they are named, so two record types with the same fields are different types. `let byte = u8` is another name for `u8`, and `let percent = int{0..100}` for that range: a `let` whose value is a type names it (ADR 0064). `let byte = type u8` still means the same until ADR 0064, step 2, makes it a new type.
+Types are structural: `u64` and `usize` are the same type. `int{0..255}` is `u8`. Records are the exception: they are named, so two record types with the same fields are different types. `let byte = u8` is another name for `u8`, and `let percent = int{0..100}` for that range: a `let` whose value is a type names it (ADR 0064). `type` makes a new type: `let length = type u32` is a distinct type (ADR 0064, step 2). The expander (`makeDistinct` in `src/meta/Expand.cpp`) makes it a record of one field, `raw#length`, which no source can name, flagged `distinct`, and two conversions, `length#of (x : u32) : length` and `u32#of (x : length) : u32`. A type applied to one value, `length 5` or `u32 l`, is a call of `<type>#of`, so the overloads are told apart by the argument's type. Since records are scalarized before the verifier and codegen, a length proves and runs as a `u32`. Not yet: importing a distinct type, a distinct type with a `where`, derives other than `eq`, and returning one as its scalar in the C ABI.
 
 ## Integers
 
