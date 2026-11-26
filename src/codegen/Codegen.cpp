@@ -1,10 +1,10 @@
 // Codegen v0 (milestone M6). docs/codegen.md describes the lowering.
 
 #include "codegen/Codegen.h"
-#include "gpu/Place.h"
 #include "codegen/ArrayResults.h"
 #include "codegen/Lowerings.h"
 #include "codegen/SliceBuffers.h"
+#include "gpu/Place.h"
 
 #include "cert/Certificate.h"
 

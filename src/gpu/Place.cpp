@@ -47,7 +47,8 @@ mlir::LogicalResult inlineCalls(scf::ForOp f, mlir::ModuleOp module) {
   for (int depth = 0; depth < 32; ++depth) {
     llvm::SmallVector<mlir::func::CallOp> calls;
     f.getBody()->walk([&](mlir::func::CallOp c) { calls.push_back(c); });
-    if (calls.empty()) return mlir::success();
+    if (calls.empty())
+      return mlir::success();
     for (mlir::func::CallOp call : calls) {
       auto callee = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
       if (!callee || callee.isExternal())
@@ -63,7 +64,8 @@ mlir::LogicalResult inlineCalls(scf::ForOp f, mlir::ModuleOp module) {
       mlir::IRMapping map;
       for (auto [arg, v] : llvm::zip(body.getArguments(), call.getOperands()))
         map.map(arg, v);
-      for (Operation &op : body.without_terminator()) b.clone(op, map);
+      for (Operation &op : body.without_terminator())
+        b.clone(op, map);
       auto ret = mlir::cast<mlir::func::ReturnOp>(body.getTerminator());
       for (auto [r, v] : llvm::zip(call.getResults(), ret.getOperands()))
         r.replaceAllUsesWith(map.lookupOrDefault(v));
@@ -94,7 +96,8 @@ mlir::LogicalResult simplifyBuffers(scf::ForOp f) {
     if (f->isAncestor(d.getSource().getParentRegion()->getParentOp()))
       return d.emitError("a buffer made in the body cannot be used") << kRule;
     std::optional<int64_t> index = d.getConstantIndex();
-    if (!index) return d.emitError("a buffer must be one-dimensional") << kRule;
+    if (!index)
+      return d.emitError("a buffer must be one-dimensional") << kRule;
     OpBuilder b(f);
     Value len = b.create<memref::DimOp>(d.getLoc(), d.getSource(), *index);
     d.getResult().replaceAllUsesWith(len);
@@ -120,37 +123,40 @@ bool deviceBuffer(Type t) {
 mlir::LogicalResult checkBody(scf::ForOp f) {
   mlir::LogicalResult result = mlir::success();
   f.getBody()->walk([&](Operation *op) {
-    if (mlir::failed(result)) return;
-    llvm::StringRef dialect = op->getDialect()
-                                  ? op->getDialect()->getNamespace()
-                                  : llvm::StringRef();
+    if (mlir::failed(result))
+      return;
+    llvm::StringRef dialect =
+        op->getDialect() ? op->getDialect()->getNamespace() : llvm::StringRef();
     bool ok = dialect == "arith" ||
               mlir::isa<scf::IfOp, scf::ForOp, scf::WhileOp, scf::YieldOp,
                         scf::ConditionOp, memref::LoadOp, memref::StoreOp>(op);
     if (!ok) {
-      result = op->emitError("'") << op->getName()
-                                  << "' cannot run on the GPU" << kRule;
+      result = op->emitError("'")
+               << op->getName() << "' cannot run on the GPU" << kRule;
       return;
     }
     auto checkType = [&](Type t) {
-      if (deviceInt(t) || mlir::isa<mlir::IndexType>(t)) return true;
+      if (deviceInt(t) || mlir::isa<mlir::IndexType>(t))
+        return true;
       if (mlir::isa<mlir::MemRefType>(t) &&
           mlir::isa<memref::LoadOp, memref::StoreOp>(op)) {
-        if (deviceBuffer(t)) return true;
+        if (deviceBuffer(t))
+          return true;
         result = op->emitError("a buffer of ")
                  << mlir::cast<mlir::MemRefType>(t).getElementType()
                  << " cannot be used on the GPU" << kRule;
         return false;
       }
-      result = op->emitError("a value of type ") << t
-                                                 << " cannot be used on the GPU"
-                                                 << kRule;
+      result = op->emitError("a value of type ")
+               << t << " cannot be used on the GPU" << kRule;
       return false;
     };
     for (Type t : op->getOperandTypes())
-      if (!checkType(t)) return;
+      if (!checkType(t))
+        return;
     for (Type t : op->getResultTypes())
-      if (!checkType(t)) return;
+      if (!checkType(t))
+        return;
   });
   return result;
 }
@@ -167,8 +173,10 @@ struct Capture {
 
 Type heldType(Type t) {
   OpBuilder b(t.getContext());
-  if (mlir::isa<mlir::IndexType>(t)) return b.getI64Type();
-  if (t.isInteger(1)) return b.getI8Type();
+  if (mlir::isa<mlir::IndexType>(t))
+    return b.getI64Type();
+  if (t.isInteger(1))
+    return b.getI8Type();
   return t;
 }
 
@@ -233,7 +241,8 @@ public:
         c.buffer = true;
         for (Operation *user : v.getUsers())
           if (auto s = mlir::dyn_cast<memref::StoreOp>(user))
-            if (s.getMemRef() == v && f->isAncestor(s)) c.written = true;
+            if (s.getMemRef() == v && f->isAncestor(s))
+              c.written = true;
       } else {
         if (!deviceInt(v.getType()) && !mlir::isa<mlir::IndexType>(v.getType()))
           return f.emitError("a value of type ")
@@ -278,12 +287,12 @@ private:
         args.push_back(mlir::MemRefType::get({1}, c.held));
       }
     }
-    args.push_back(mlir::MemRefType::get({1}, i64));  // lo
-    args.push_back(mlir::MemRefType::get({1}, i64));  // hi
+    args.push_back(mlir::MemRefType::get({1}, i64)); // lo
+    args.push_back(mlir::MemRefType::get({1}, i64)); // hi
 
     b.setInsertionPointToStart(gm.getBody());
-    auto kernel = b.create<mlir::gpu::GPUFuncOp>(
-        loc, name, b.getFunctionType(args, {}));
+    auto kernel =
+        b.create<mlir::gpu::GPUFuncOp>(loc, name, b.getFunctionType(args, {}));
     kernel->setAttr(mlir::gpu::GPUDialect::getKernelFuncAttrName(),
                     b.getUnitAttr());
     kernel->setAttr(mlir::spirv::getEntryPointABIAttrName(),
@@ -296,25 +305,25 @@ private:
                                           mlir::ValueRange{zero});
       if (mlir::isa<mlir::IndexType>(want))
         return kb.create<arith::IndexCastOp>(loc, want, v);
-      if (want.isInteger(1)) return kb.create<arith::TruncIOp>(loc, want, v);
+      if (want.isInteger(1))
+        return kb.create<arith::TruncIOp>(loc, want, v);
       return v;
     };
     mlir::IRMapping map;
     for (unsigned i = 0; i < captures.size(); ++i)
-      map.map(captures[i].host,
-              captures[i].buffer
-                  ? Value(entry.getArgument(i))
-                  : scalar(i, captures[i].host.getType()));
+      map.map(captures[i].host, captures[i].buffer
+                                    ? Value(entry.getArgument(i))
+                                    : scalar(i, captures[i].host.getType()));
     Value lo = scalar(captures.size(), kb.getIndexType());
     Value hi = scalar(captures.size() + 1, kb.getIndexType());
     Value g = kb.create<mlir::gpu::GlobalIdOp>(loc, mlir::gpu::Dimension::x);
     Value iv = kb.create<arith::AddIOp>(loc, g, lo);
-    Value in =
-        kb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, iv, hi);
+    Value in = kb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, iv, hi);
     auto guard = kb.create<scf::IfOp>(loc, in, /*withElseRegion=*/false);
     map.map(f.getInductionVar(), iv);
     OpBuilder ib = guard.getThenBodyBuilder();
-    for (Operation &op : f.getBody()->without_terminator()) ib.clone(op, map);
+    for (Operation &op : f.getBody()->without_terminator())
+      ib.clone(op, map);
     kb.create<mlir::gpu::ReturnOp>(loc);
 
     if (mlir::failed(lowerToSpirv(*tmp)))
@@ -346,7 +355,8 @@ private:
     for (Operation *op = f->getNextNode(); op && !status;
          op = op->getNextNode())
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
-        if (call.getCallee() == kStatusSymbol) status = call;
+        if (call.getCallee() == kStatusSymbol)
+          status = call;
     if (!status)
       return f.emitError("internal error: no status after the placed spread");
 
@@ -372,7 +382,8 @@ private:
     unsigned slot = 0;
     auto put = [&](Value addr, Value bytes, bool written) {
       for (Value v : {addr, bytes, word(written ? 1 : 0)})
-        b.create<memref::StoreOp>(loc, v, argv, mlir::ValueRange{index(slot++)});
+        b.create<memref::StoreOp>(loc, v, argv,
+                                  mlir::ValueRange{index(slot++)});
     };
     auto scalar = [&](Value v, Type held) {
       if (mlir::isa<mlir::IndexType>(v.getType()))
@@ -393,17 +404,18 @@ private:
       auto m = mlir::cast<mlir::MemRefType>(c.host.getType());
       int64_t width = m.getElementType().getIntOrFloatBitWidth() / 8;
       auto meta = b.create<memref::ExtractStridedMetadataOp>(loc, c.host);
-      Value base = b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, c.host);
+      Value base =
+          b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, c.host);
       Value off = b.create<arith::MulIOp>(loc, meta.getOffset(), index(width));
       Value addr = b.create<arith::AddIOp>(loc, base, off);
-      Value bytes = b.create<arith::MulIOp>(loc, meta.getSizes()[0],
-                                            index(width));
+      Value bytes =
+          b.create<arith::MulIOp>(loc, meta.getSizes()[0], index(width));
       put(toI64(addr), toI64(bytes), c.written);
     }
     scalar(f.getLowerBound(), i64);
     scalar(f.getUpperBound(), i64);
-    Value count = b.create<arith::SubIOp>(loc, f.getUpperBound(),
-                                          f.getLowerBound());
+    Value count =
+        b.create<arith::SubIOp>(loc, f.getUpperBound(), f.getLowerBound());
     Value threads = toI64(b.create<arith::MaxSIOp>(loc, count, index(0)));
 
     std::string sym = "__pia_gpu_" + std::to_string(count_ - 1);
@@ -413,9 +425,11 @@ private:
                              metallib.size()));
     Value kname = constantBytes(b, module_, loc, sym + "_name",
                                 llvm::ArrayRef<char>(name.data(), name.size()));
-    Value argp = toI64(b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, argv));
+    Value argp =
+        toI64(b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, argv));
 
-    auto runType = b.getFunctionType({i64, i64, i64, i64, i64, i64, i64}, {i32});
+    auto runType =
+        b.getFunctionType({i64, i64, i64, i64, i64, i64, i64}, {i32});
     if (!module_.lookupSymbol("pia_gpu_run")) {
       OpBuilder mb = OpBuilder::atBlockEnd(module_.getBody());
       auto decl = mb.create<mlir::func::FuncOp>(loc, "pia_gpu_run", runType);
@@ -423,8 +437,8 @@ private:
     }
     auto run = b.create<mlir::func::CallOp>(
         loc, "pia_gpu_run", mlir::TypeRange{i32},
-        mlir::ValueRange{lib, word(metallib.size()), kname,
-                         word(name.size()), argp, word(n), threads});
+        mlir::ValueRange{lib, word(metallib.size()), kname, word(name.size()),
+                         argp, word(n), threads});
     b.create<memref::AllocaScopeReturnOp>(loc, run.getResults());
 
     status->getResult(0).replaceAllUsesWith(scope.getResult(0));
@@ -456,11 +470,13 @@ bool xcrun(llvm::ArrayRef<llvm::StringRef> args, const llvm::Twine &errFile,
   std::string message;
   int rc = llvm::sys::ExecuteAndWait(program, argv, std::nullopt, redirects, 0,
                                      0, &message);
-  if (rc == 0) return true;
+  if (rc == 0)
+    return true;
   error = message;
   if (auto buf = llvm::MemoryBuffer::getFile(errPath))
     error += (*buf)->getBuffer().str();
-  if (error.empty()) error = "xcrun failed";
+  if (error.empty())
+    error = "xcrun failed";
   return false;
 }
 
@@ -513,16 +529,20 @@ mlir::LogicalResult lowerPlacedSpreads(mlir::ModuleOp module) {
   llvm::SmallVector<scf::ForOp> placed;
   module.walk([&](scf::ForOp f) {
     auto p = f->getAttrOfType<mlir::StringAttr>("pia.place");
-    if (p && p.getValue() == "gpu") placed.push_back(f);
+    if (p && p.getValue() == "gpu")
+      placed.push_back(f);
   });
-  if (placed.empty()) return mlir::success();
+  if (placed.empty())
+    return mlir::success();
   mlir::MLIRContext *ctx = module.getContext();
   ctx->loadDialect<mlir::gpu::GPUDialect, mlir::spirv::SPIRVDialect>();
   Placer placer(module);
   for (scf::ForOp f : placed)
-    if (mlir::failed(placer.place(f))) return mlir::failure();
+    if (mlir::failed(placer.place(f)))
+      return mlir::failure();
   if (auto decl = module.lookupSymbol<mlir::func::FuncOp>(kStatusSymbol))
-    if (decl.symbolKnownUseEmpty(module)) decl.erase();
+    if (decl.symbolKnownUseEmpty(module))
+      decl.erase();
   return mlir::success();
 }
 

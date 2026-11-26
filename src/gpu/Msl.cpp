@@ -20,7 +20,8 @@ bool spirvToMsl(const std::vector<uint32_t> &spirv, std::string &msl,
     for (const spirv_cross::Resource &r : resources.storage_buffers) {
       spirv_cross::MSLResourceBinding binding;
       binding.stage = spv::ExecutionModelGLCompute;
-      binding.desc_set = compiler.get_decoration(r.id, spv::DecorationDescriptorSet);
+      binding.desc_set =
+          compiler.get_decoration(r.id, spv::DecorationDescriptorSet);
       binding.binding = compiler.get_decoration(r.id, spv::DecorationBinding);
       binding.msl_buffer = binding.binding;
       compiler.add_msl_resource_binding(binding);

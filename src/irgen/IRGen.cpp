@@ -10557,7 +10557,8 @@ class Gen {
       q->kids.push_back(syntax::clone(*a->kids[0]));
       R all = genPredicate(*q);
       if (!all) {
-        if (onGpu) popScope();
+        if (onGpu)
+          popScope();
         return all;
       }
       create<contract::AssumeOp>(
@@ -10573,9 +10574,11 @@ class Gen {
 
   // The function `name` of gpuPrelude_: its LetItem.
   const Node *gpuFunction(const std::string &name) {
-    if (!gpuPrelude_) return nullptr;
+    if (!gpuPrelude_)
+      return nullptr;
     for (const syntax::NodePtr &k : gpuPrelude_->kids)
-      if (k && k->kind == NodeKind::LetItem && k->text == name) return k.get();
+      if (k && k->kind == NodeKind::LetItem && k->text == name)
+        return k.get();
     return nullptr;
   }
 
@@ -10751,16 +10754,19 @@ class Gen {
     if (n.kind == NodeKind::Attribute && n.text == "place")
       return true;
     for (const syntax::NodePtr &k : n.kids)
-      if (k && placesOnGpu(*k)) return true;
+      if (k && placesOnGpu(*k))
+        return true;
     return false;
   }
   // The nodes of gpuPrelude_'s one function: its parameter's type, its
   // result's type and its body.
   static const Node *findKind(const Node &n, NodeKind kind) {
-    if (n.kind == kind) return &n;
+    if (n.kind == kind)
+      return &n;
     for (const syntax::NodePtr &k : n.kids)
       if (k)
-        if (const Node *f = findKind(*k, kind)) return f;
+        if (const Node *f = findKind(*k, kind))
+          return f;
     return nullptr;
   }
   static bool definesResult(const Node &n) {
