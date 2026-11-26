@@ -1,0 +1,18 @@
+(* Pia.Text.Json.Shape (ADR 0045, step 7): every goal of the pieces
+   conformance is built on is proved, with nothing accepted unproved:
+   key_is and find, int_in and read_int, which reads an integer exactly
+   or says the number does not conform, is_bool, and only.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Text.Json.Shape.Shapes.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Shape.pia | FileCheck %s
+*)
+
+(*
+// IFACE: let meta derive_json_dom : list
+// IFACE: let read_int : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> result i64 nonconforming
+// CHECK: 0 failed, 0 skipped
+*)

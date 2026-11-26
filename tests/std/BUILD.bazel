@@ -62,6 +62,7 @@ lit_tests(
         "//lib/Pia/Sys/Gen:arm64_macos.pia",
         "//lib/Pia/Text/Json:Derive.pia",
         "//lib/Pia/Text/Json:Dom.pia",
+        "//lib/Pia/Text/Json:Shape.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -841,6 +842,33 @@ cc_test(
     srcs = [
         "json_dom_run_test.c",
         ":json_dom_run_lib",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# @derive(json_dom) run from C: a point checked and read from parsed
+# documents, and one written with to_dom and read back (ADR 0045, step 7).
+pia_library(
+    name = "json_shape_run_lib",
+    src = "Inputs/json_shape_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:shape",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+cc_test(
+    name = "json_shape_run_test",
+    srcs = [
+        "json_shape_run_test.c",
+        ":json_shape_run_lib",
     ],
     target_compatible_with = PIA_TARGETS,
 )
