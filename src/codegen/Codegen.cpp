@@ -4,6 +4,7 @@
 #include "codegen/ArrayResults.h"
 #include "codegen/Lowerings.h"
 #include "codegen/SliceBuffers.h"
+#include "gpu/Place.h"
 
 #include "cert/Certificate.h"
 
@@ -425,7 +426,7 @@ class CoreTypes : public mlir::TypeConverter {
   // Buffers hold scalars, and recursive values (ADR 0047).
   Type element(Type t) {
     Type c = convertType(t);
-    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType,
+    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType, mlir::FloatType,
                        mlir::LLVM::LLVMStructType>(c))
       return c;
     return {};
@@ -814,17 +815,22 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
     auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
         getTypeConverter()->convertType(op.getType()));
     if (!type) return mlir::failure();
-    auto elem = mlir::dyn_cast<mlir::IntegerType>(type.getElementType());
+    Type elem = type.getElementType();
     auto fn = op->getParentOfType<mlir::func::FuncOp>();
-    if (!elem || !fn) return mlir::failure();
+    if (!mlir::isa<mlir::IntegerType, mlir::FloatType>(elem) || !fn)
+      return mlir::failure();
     Value storage;
     {
       mlir::OpBuilder::InsertionGuard guard(rw);
       rw.setInsertionPointToStart(&fn.getBody().front());
       storage = make<mlir::memref::AllocaOp>(rw, loc, type);
     }
-    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem,
-                                               rw.getIntegerAttr(elem, 0));
+    // Zero is all bits clear for an integer and for a float (+0.0).
+    mlir::TypedAttr zeroAttr =
+        mlir::isa<mlir::FloatType>(elem)
+            ? mlir::TypedAttr(rw.getFloatAttr(elem, 0.0))
+            : mlir::TypedAttr(rw.getIntegerAttr(elem, 0));
+    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem, zeroAttr);
     Value lo = make<mlir::arith::ConstantIndexOp>(rw, loc, 0);
     Value hi = make<mlir::arith::ConstantIndexOp>(
         rw, loc, static_cast<int64_t>(op.getType().getLength()));
@@ -2102,6 +2108,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   if (mlir::failed(
           mlir::applyPartialConversion(module, target, std::move(patterns))))
     return mlir::failure();
+  // Spreads placed on the GPU become kernels and shim calls first; the
+  // rest run on all cores (ADR 0068, step 3).
+  if (mlir::failed(pia::gpu::lowerPlacedSpreads(module)))
+    return mlir::failure();
   lowerSpreads(module);
   // Tidy the casts and constants the conversion leaves behind.
   mlir::PassManager pm(ctx);
@@ -2129,6 +2139,9 @@ struct Entry {
   bool linked = false;
   // The spec-only arguments and results, which C does not see (ADR 0041).
   std::vector<bool> argErased = {}, resultErased = {};
+  // No C entry point, as for a function that takes or returns a
+  // recursive value by value; only its link symbol, if it has one.
+  bool noC = false;
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -2390,8 +2403,12 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     auto byValue = [](Type t) { return mlir::isa<mlir::LLVM::LLVMStructType>(t); };
     if (llvm::any_of(f.getFunctionType().getInputs(), byValue) ||
         llvm::any_of(f.getFunctionType().getResults(), byValue)) {
-      f.setPrivate();
-      continue;
+      // A module's export keeps its link symbol, for importers.
+      if (!e.linked) {
+        f.setPrivate();
+        continue;
+      }
+      e.noC = true;
     }
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
             f, mlir::StringAttr::get(ctx, e.internal), module)))
@@ -2449,7 +2466,8 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
         f.setSymVisibility(std::nullopt);
       }
   for (const Entry &e : entries) {
-    if (mlir::failed(buildEntry(module, e))) return mlir::failure();
+    if (!e.noC && mlir::failed(buildEntry(module, e)))
+      return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
     if (e.linked) {
       internal.setLinkage(mlir::LLVM::Linkage::External);
@@ -2484,6 +2502,10 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
   llvm::CodeGenOptLevel level = options.optLevel == 0
                                     ? llvm::CodeGenOptLevel::None
                                     : llvm::CodeGenOptLevel::Default;
+  // Floats are strict IEEE 754 by default (ADR 0004, ADR 0012). LLVM fuses
+  // a multiply and an add into an FMA only when both carry the `contract`
+  // fast-math flag, which IRGen never sets, and it never flushes
+  // subnormals unless a function asks for it.
   std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
       triple, options.cpu, "", llvm::TargetOptions(), llvm::Reloc::PIC_,
       std::nullopt, level));

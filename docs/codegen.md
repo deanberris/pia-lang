@@ -42,6 +42,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | Pia | Core MLIR |
 | --- | --- |
 | `!pia.int<lo, hi>` | `iN`, as above |
+| `f32`, `f64` | `f32`, `f64` |
 | `[T; n]` | `memref<n x T>` |
 | `[T]` | `memref<? x T, strided<[1], offset: ?>>` |
 | `!pia.atomic<T>` | `memref<1 x T>`, with a `bool` held as `i8` |
@@ -66,6 +67,8 @@ Each `pia.add`, `sub`, `mul`, `div` and `rem` is computed at one width. That wid
 
 `pia.convert` is the same with the input as the exact value. `pia.cmp` extends both sides to a width that holds both ranges. `to_index` and `from_index` become `index_cast` (or `index_castui` when the value is non-negative). `len` becomes `memref.dim`, or a constant for a fixed array. `load` and `store` become `memref.load` and `memref.store`, without bounds checks, because the verifier proved them in bounds.
 
+Floats are already core MLIR: IRGen emits `arith.addf`, `subf`, `mulf`, `divf`, `negf`, `cmpf` and float `arith.constant` directly, with no fast-math flags, so each operation is one IEEE 754 operation rounded to nearest (ADR 0004, ADR 0012). Nothing reassociates them, and LLVM contracts `a * b + c` into an FMA only when both operations carry the `contract` flag, which IRGen never sets, and Pia never sets flush-to-zero, so subnormals are kept. `=` is `cmpf oeq` and `<>` is `cmpf une`, so with a NaN every comparison is false but `<>`. `tests/codegen/floats.pia` checks this against C compiled with `-ffp-contract=off`, bit for bit (`floats_test.c`).
+
 LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@overflow(saturate)` compiles to `llvm.uadd.sat.i8`. In a loop over slices, such as `add_rows` in `tests/codegen/saturate.pia`, LLVM's loop vectoriser turns it into NEON `uqadd.16b`.
 
 ## Atomics
@@ -84,6 +87,7 @@ Each Pia function `f` becomes an internal function. Only the functions a module 
 | --- | --- |
 | an integer | the integer type of its storage width, such as `uint8_t` or `int16_t` |
 | `bool` | `bool` |
+| `f32`, `f64` | `float`, `double` |
 | `[T]` | `const T *data, uint64_t len` (or `T *` when it is written) |
 | `[T; n]` | `const T *data` (or `T *`) |
 
@@ -158,11 +162,14 @@ let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
 ```
 
 - **Splices.** `$name` is the SSA value of the parameter `name`, and `$name.type` its core MLIR type from the table [above](#types), so `$a.type` here is `memref<16xi8>`. A spliced parameter is an integer, a bool, or a buffer of them, which is one value; a record is several, and is refused. Escapes in the string are decoded first (`\n`, `\t`, `\"`, `\\`), and MLIR needs no newlines between ops.
+- **Computed lowerings.** `@lower(gen args)`, where `gen` is a `let meta` that returns a string, runs `gen` during expansion ([meta.md](meta.md)), and the string becomes the attribute's text, as if it were written there; `piac --dump-expanded` shows it. In the arguments, the function's parameters stand for themselves, as names, as a tactic's do, so `name a` is `"a"`. So one metaprogram can write the MLIR for several shapes or element types: tests/codegen/lower_meta.pia computes the matmul above with `@lower(square_matmul 4 a b c "i8" "i32")`. A metaprogram that fails, or returns anything but a string, is an error at the attribute.
 - **Parsing.** After `lowerToCore`, `applyLowerings` (`src/codegen/Lowerings.cpp`) splices in the core arguments, wraps the text as the body of `func.func @pia_lowering` with the function's core signature, adds `return` when the function returns nothing (one that returns an integer or a bool ends with its own `return`), and parses and verifies it with MLIR's parser against the dialects piac registers: `linalg`, `tensor`, `bufferization`, `transform`, `affine` and the core ones. A misspelt op or a type that does not match is an error at the attribute, with MLIR's message and its line and column in the spliced text, which a note prints. The parsed body then replaces the function's, with every op located at the attribute, so a later error points there too. `--emit=core` shows the lowered form, `linalg` included.
+- **Checked first.** The same splice and parse, and the operand-effect check below, run on a copy of the module as soon as IRGen has made it, before anything is proved, in every mode that makes IR (`--emit=mlir`, `--verify`, codegen) and in the REPL, whose JIT still runs the body (`checkLowerings`). So a mistake in the MLIR costs no proving time. A module that `lowerToCore` cannot compile yet is not checked there; codegen says why if it is compiled.
+- **Operand effects.** A lowering may write only the buffers the Pia signature lets it write: those of `out` and `inout` parameters, and the buffers codegen adds, such as an array result's. Every op's memory effects are read through MLIR's `MemoryEffectOpInterface`, following memref's views (`expand_shape`, `subview`, `reinterpret_cast`, `cast`) back to the parameter, so a linalg op whose `outs` view an input, a `memref.store` into one, or a `memref.dealloc` of one is an error that names the op and the parameter. An op with no declared effects that takes an input buffer is refused too, since it could write it. Reading inputs and writing the lowering's own `alloca`s is allowed (tests/irgen/lower_effects.pia).
 - **Passes.** `linalg` on memrefs goes to `scf` loops with `convert-linalg-to-loops`, then `memref.expand_shape` and the other reshapes to plain descriptors with `expand-strided-metadata`, and `affine` to `arith` with `lower-affine`, before the usual passes. `tensor` ops parse, but nothing bufferises them yet (step 6 of the ADR), so a lowering works on the buffers' memrefs.
-- **Trust.** This is step 1 of ADR 0065: piac does not yet prove that the MLIR does what the body does, so `@lower` is allowed only in a file marked `@trusted`, on a function with a Pia body (not an `extern`, a spec function or a lemma), and every lowering is a trusted item. `piac --verify --trust-report` lists it with the ops it uses and the SHA-256 of its spliced text, and the object's certificate records the same hash ([abi.md](abi.md)). A named `linalg` op's own body is generated from its definition, so the ops in it are not listed; a `linalg.generic`'s are.
+- **Trust.** In steps 1 and 2 of ADR 0065 piac does not yet prove that the MLIR does what the body does, so `@lower` is allowed only in a file marked `@trusted`, on a function with a Pia body (not an `extern`, a spec function or a lemma), and every lowering is a trusted item. `piac --verify --trust-report` lists it with the ops it uses and the SHA-256 of its spliced text, and the object's certificate records the same hash ([abi.md](abi.md)). A named `linalg` op's own body is generated from its definition, so the ops in it are not listed; a `linalg.generic`'s are.
 
-`linalg.matmul` adds to its output, so the lowering fills it with zero first, as the body's assignments do; without the fill the differential run below fails, which is the check a trusted lowering has. tests/codegen/lower_linalg.pia is the matmul above, checked at `--emit=core` with and without `--lower=off`, in the trust report and in the certificate, and run from C in lower_linalg_test.c, once from each form. tests/codegen/lower_invalid.pia holds MLIR errors, and tests/irgen/lower_errors.pia and lower_untrusted.pia the rules.
+`linalg.matmul` adds to its output, so the lowering fills it with zero first, as the body's assignments do; without the fill the differential run below fails, which is the check a trusted lowering has. tests/codegen/lower_linalg.pia is the matmul above, checked at `--emit=core` with and without `--lower=off`, in the trust report and in the certificate, and run from C in lower_linalg_test.c, once from each form. tests/codegen/lower_meta.pia computes the same lowering with a metaprogram and is run from the same harness (`lower_meta_run_test`). tests/codegen/lower_invalid.pia holds MLIR errors, tests/irgen/lower_effects.pia the operand-effect check, and tests/irgen/lower_errors.pia, lower_meta_errors.pia and lower_untrusted.pia the rules.
 
 ## Tests
 

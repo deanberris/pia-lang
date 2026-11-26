@@ -14,10 +14,9 @@
 # night on main whatever changed. Running the workflow by hand runs it too.
 # It gates on Linux, in the `bench` job's three shards, with one parallel
 # pass on pull requests and pushes (about 10 minutes a shard), and both
-# passes and their determinism check at night. The macOS job proves the
-# corpus once at night, to check that arm64 costs the same; on pull
-# requests it does not run the benchmark, since a macOS runner is slower,
-# scarce and has 7 GB of memory.
+# passes and their determinism check at night. At night `bench-macos` also
+# proves the corpus in three macOS shards, to check that arm64 costs the
+# same; pull requests do not, since macOS runners are slower and scarcer.
 #
 # Runs on main (and manual runs) package and upload stripped `pia` and `piac`
 # binaries (`pia-macos-arm64` and `pia-linux-x86_64`, kept 14 days). When both
@@ -166,34 +165,34 @@ jobs:
         timeout-minutes: 30
         run: bazel test --config=ci --keep_going //...
 
-      # Build time is a benchmark (ADR 0032). The solver cost is deterministic
-      # and gated against tools/bench/baseline.json; wall times are reported
-      # in the job summary and kept as an artifact. Linux gates every change
-      # (the bench job below); here the corpus is proved once a night, in one
-      # parallel pass, to check that arm64 costs what x86_64 does.
-      - name: Proof build-time benchmark
-        id: bench
+      # Build time is a benchmark (ADR 0032). Linux gates every change (the
+      # bench job below); once a night the bench-macos job proves the corpus
+      # on arm64 too, in three shards, with this job's piac, to check that
+      # arm64 costs what x86_64 does.
+      - name: Keep piac for the benchmark
         if: >-
           steps.test.outcome == 'success' && needs.changes.outputs.bench == 'true' &&
           (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
-        # One pass of the whole corpus on 3 cores. The gate is the solver
-        # cost, not the wall time, so the limit only stops a hang.
-        timeout-minutes: 120
-        run: >-
-          python3 tools/bench/proof_bench.py
-          --piac bazel-bin/tools/piac/piac
-          --host github-macos-15
-          --passes parallel
-          --out bench.json
-          --summary "$GITHUB_STEP_SUMMARY"
+        run: |
+          mkdir -p "${{ runner.temp }}/bench-piac"
+          cp -L bazel-bin/tools/piac/piac "${{ runner.temp }}/bench-piac/piac"
+          # Bazel's outputs are read-only, and strip rewrites the file; Apple
+          # silicon rejects an unsigned Mach-O, so it is signed again.
+          chmod 755 "${{ runner.temp }}/bench-piac/piac"
+          strip -x "${{ runner.temp }}/bench-piac/piac"
+          codesign --force --sign - "${{ runner.temp }}/bench-piac/piac"
+          COPYFILE_DISABLE=1 tar -czf "${{ runner.temp }}/bench-piac.tar.gz" -C "${{ runner.temp }}/bench-piac" piac
 
-      - name: Upload the benchmark
-        if: always() && steps.bench.outcome != 'skipped'
+      - name: Upload piac for the benchmark
+        if: >-
+          steps.test.outcome == 'success' && needs.changes.outputs.bench == 'true' &&
+          (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v4
         with:
-          name: proof-bench
-          path: bench.json
-          if-no-files-found: ignore
+          name: bench-piac-macos
+          path: ${{ runner.temp }}/bench-piac.tar.gz
+          retention-days: 1
+          compression-level: 0
 
       # Prebuilt binaries from main (and manual runs) let cloud sessions and
       # users run `pia repl` and `piac --verify` without building LLVM, MLIR
@@ -452,6 +451,78 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: proof-bench-linux-${{ matrix.shard }}
+          path: bench-${{ matrix.shard }}.json
+          if-no-files-found: ignore
+
+  # One check for branch protection to require, standing for the three
+  # Linux shards: a matrix job's checks are named after its shards when it
+  # runs, but get one unexpanded name when it is skipped, so neither name
+  # can be required. Skipped shards (nothing a gated cost depends on
+  # changed) pass; a failed or cancelled shard, or a failed Linux job when
+  # the benchmark was needed, fails it.
+  bench-gate:
+    name: proof benchmark (Linux)
+    if: always()
+    needs: [changes, linux, bench]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the shards
+        env:
+          NEEDED: ${{ needs.changes.outputs.bench }}
+          LINUX: ${{ needs.linux.result }}
+          SHARDS: ${{ needs.bench.result }}
+        run: |
+          echo "benchmark needed: $NEEDED; Linux job: $LINUX; shards: $SHARDS"
+          if [ "$NEEDED" != true ]; then exit 0; fi
+          test "$SHARDS" = success
+
+  # The nightly arm64 cost check: the corpus in three shards on macos-15,
+  # as the Linux bench job splits it, in one parallel pass, against the same
+  # baseline. Only at night and by hand: three macOS runners per pull request
+  # would take most of the account's concurrent macOS jobs from other runs.
+  bench-macos:
+    name: proof benchmark (macOS, shard ${{ matrix.shard }}/3)
+    if: >-
+      needs.changes.outputs.bench == 'true' && needs.test.result == 'success' &&
+      (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    needs: [changes, test]
+    runs-on: macos-15
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download piac
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-piac-macos
+          path: ${{ runner.temp }}
+
+      - name: Unpack piac
+        run: tar -xzf "${{ runner.temp }}/bench-piac.tar.gz" -C "${{ runner.temp }}"
+
+      - name: Proof build-time benchmark
+        # About 12 minutes a shard on 3 cores. The gate is the solver cost,
+        # not the wall time, so the limit only stops a hang.
+        timeout-minutes: 60
+        run: >-
+          python3 tools/bench/proof_bench.py
+          --piac "${{ runner.temp }}/piac"
+          --host github-macos-15
+          --shard ${{ matrix.shard }}/3
+          --passes parallel
+          --out bench-${{ matrix.shard }}.json
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the benchmark
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: proof-bench-macos-${{ matrix.shard }}
           path: bench-${{ matrix.shard }}.json
           if-no-files-found: ignore
 

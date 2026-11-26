@@ -30,7 +30,7 @@ A `.pia.md` file is literate (only its ` ```pia ` blocks are code); `--literate`
 
 - `--target=<triple>` and `--cpu=<name>`: arm64 macOS (`arm64-apple-macosx14.0.0`, `apple-m1`) is the default, and `x86_64-unknown-linux-gnu` is the second target (ADR 0049). The target is also a theory (`Pia.Target`), so code can prove facts that hold only on one target.
 - `-O0` to `-O3`.
-- `@lower("...")` on a function in a `@trusted` file gives it an MLIR form, such as `linalg.matmul`, that codegen compiles in place of its Pia body (ADR 0065). The body is still proved, and `--trust-report` lists the lowering as a trusted item. `--lower=off` compiles the Pia bodies instead, so a test can compare the two forms.
+- `@lower("...")` on a function in a `@trusted` file gives it an MLIR form, such as `linalg.matmul`, that codegen compiles in place of its Pia body (ADR 0065). The body is still proved, and `--trust-report` lists the lowering as a trusted item. `--lower=off` compiles the Pia bodies instead, so a test can compare the two forms. `@lower(gen args)` takes the string a `let meta` computes, with the parameters passed as names; the MLIR is parsed, and checked to write only `out` and `inout` buffers, before anything is proved, so a bad lowering fails fast in `--verify` too.
 - Each Pia function becomes a C function of the same name, and an `@abi(c)` interface keeps C names for a module's exports. Records and slices pass as documented in [docs/codegen.md](../../docs/codegen.md#c-abi): a slice is a pointer and a length.
 
 To call C from Pia, give the C function a contract; its preconditions are proved at each call and its postconditions are trusted:

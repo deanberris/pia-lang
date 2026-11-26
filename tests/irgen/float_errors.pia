@@ -1,0 +1,39 @@
+(* Errors in f32 and f64 code (M11): floats never mix with integers or
+   reals implicitly, have no integer operators, and a literal must fit its
+   type.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: an integer literal is not a float: write 2.0 for an f32
+*)
+let twice (x : f32) : f32 = x * 2
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '+' needs operands of one type, found f32 and u8; a float literal has a decimal point, such as 2.0, and an integer is not converted to a float implicitly
+*)
+let mixed (x : f32) (n : u8) : f32 = x + n
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '<' needs operands of one type, found f32 and f64
+*)
+let widths (x : f32) (y : f64) : bool = x < y
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '%' is not defined on f64; floats have + - * /, negation and comparisons
+*)
+let modulo (x : f64) (y : f64) : f64 = x % y
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '1.0e39f32' is too large for f32, whose largest finite value is 3.4028235e+38
+*)
+let huge (x : f32) : f32 = x + 1.0e39f32
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '1.0e-400' is too small for f64, where it rounds to zero; write 0.0 for zero
+*)
+let tiny (x : f64) : f64 = x + 1.0e-400
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: expected f64, found f32
+*)
+let narrow (x : f32) : f64 = x
+
+(* A real is spec-only; in code a float literal needs a float context or a
+   suffix.
+// CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this expression has the spec-only type real
+*)
+let unsuffixed (x : u8) : u8 = let y = 0.5 in x

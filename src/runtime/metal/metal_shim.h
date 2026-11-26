@@ -58,6 +58,18 @@ int32_t pia_gpu_dispatch(uint64_t device, uint64_t kernel,
                          const uint64_t *buffers, uint64_t nbuffers,
                          uint64_t threads, uint64_t group, uint64_t timeout_ms);
 
+// What piac generates for a spread placed on the GPU (ADR 0068, step 3):
+// runs the kernel `name` (name_len bytes) of the .metallib at lib (lib_len
+// bytes, embedded in the program) over `threads` threads. args points to
+// nargs triples of uint64_t: a host address, a size in bytes, and whether
+// the kernel writes it. Each is bound in order as a buffer: copied in
+// before the kernel runs, and copied back after it when it is written.
+// The device, each library and each kernel are opened once and kept.
+// Returns PIA_GPU_OK or the error, in Gpu.error's order.
+int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
+                    uint64_t name_len, uint64_t args, uint64_t nargs,
+                    uint64_t threads);
+
 #ifdef __cplusplus
 }
 #endif

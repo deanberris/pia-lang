@@ -1,0 +1,58 @@
+(* Importers of Pia.Llm.Tokenizer see only its interface and its spec
+   functions' definitions, and that is enough to know that a vocabulary
+   of fewer than 259 ids is refused, that every id encode writes is one
+   the model has a row for, that <s> comes first when asked for, that a
+   byte-fallback token decodes to its byte, and that decoding an encoding
+   gives the text back.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Llm/Tokenizer.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Llm.Tokenizer.Tokenizer as T
+
+(* The special ids and the 256 byte-fallback pieces come first, so a
+   smaller vocabulary is never one. *)
+let too_few (s : [u8]) (ps : borrowed inout mutable [T.piece]) (count : int{0..258}) : unit
+= match T.load s ps count with
+  | Ok _ -> assert false
+  | Err _ -> ()
+
+(* Every id is below the vocabulary's size, and <s> is first. *)
+let ids_in_range (s : [u8]) (ps : borrowed inout mutable [T.piece]) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) (k : usize) : unit
+= match T.load s ps 512 with
+  | Err _ -> ()
+  | Ok v ->
+      if len text > 1'000'000 then ()
+      else if len toks >= len text + 3 && len at >= len text + 4 then (
+        let n = T.encode s ps v text true false toks at in
+        assert 1 <= n && toks.[0] = 1;
+        if k < n then assert toks.[k] < 512 else ())
+      else ()
+
+(* A byte-fallback token is one byte, its id less 3. *)
+let byte_token (s : [u8]) (ps : [T.piece]) (dst : borrowed inout mutable [u8]) (b : u8) : unit
+  requires len dst >= 1
+= let t : u32 = b + 3 in
+  let n = T.decode s ps 3 t dst 0 in
+  assert n = 1 && dst.[0] = b
+
+(* The text comes back. *)
+let back (s : [u8]) (ps : borrowed inout mutable [T.piece]) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize])
+    (dst : borrowed inout mutable [u8]) (k : usize) : unit
+= match T.load s ps 512 with
+  | Err _ -> ()
+  | Ok v ->
+      if len text > 1'000'000 then ()
+      else if len toks >= len text + 3 && len at >= len text + 4 && len dst >= len text then (
+        let m = T.round_trip s ps v text toks at dst in
+        assert m = len text;
+        if k < len text then assert dst.[k] = text.[k] else ())
+      else ()
+
+(*
+// CHECK-NOT: warning
+// CHECK-NOT: failed
+// CHECK: 16 proved, 0 failed, 0 skipped
+*)

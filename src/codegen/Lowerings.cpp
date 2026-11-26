@@ -1,9 +1,11 @@
 #include "codegen/Lowerings.h"
 #include "codegen/Codegen.h"
+#include "dialect/PiaDialect.h"
 
 #include <array>
 #include <cctype>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -21,6 +23,8 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "llvm/ADT/StringExtras.h"
@@ -150,6 +154,108 @@ std::string sha256(llvm::StringRef text) {
   return llvm::toHex(digest, /*LowerCase=*/true);
 }
 
+// The argument of `tmp`'s entry block that `v` is, or views through
+// memref's view ops (`expand_shape`, `subview`, `reinterpret_cast`, a
+// `cast`), or nothing.
+std::optional<unsigned> argumentOf(mlir::func::FuncOp tmp, mlir::Value v) {
+  for (;;) {
+    if (auto a = mlir::dyn_cast<mlir::BlockArgument>(v)) {
+      if (a.getOwner() == &tmp.getBody().front())
+        return a.getArgNumber();
+      return std::nullopt;
+    }
+    mlir::Operation *def = v.getDefiningOp();
+    if (auto view = mlir::dyn_cast_or_null<mlir::ViewLikeOpInterface>(def)) {
+      v = view.getViewSource();
+      continue;
+    }
+    if (auto cast = mlir::dyn_cast_or_null<mlir::memref::CastOp>(def)) {
+      v = cast.getSource();
+      continue;
+    }
+    return std::nullopt;
+  }
+}
+
+// Whether a lowering of `f` may write the buffer of argument `i`: an
+// `out` or `inout` parameter, or a buffer codegen added, such as an array
+// result's. Other parameters are inputs (ADR 0065, section 1).
+bool writable(mlir::func::FuncOp f, unsigned i) {
+  if (!f.getArgAttr(i, kName))
+    return true;
+  auto mods = f.getArgAttrOfType<mlir::StringAttr>(
+      i, PiaDialect::getModifiersAttrName());
+  if (!mods)
+    return false;
+  llvm::SmallVector<llvm::StringRef> words;
+  mods.getValue().split(words, ' ', -1, /*KeepEmpty=*/false);
+  return llvm::is_contained(words, "out") || llvm::is_contained(words, "inout");
+}
+
+// The operand-effect check: the MLIR form writes, frees or hands to code
+// whose effects MLIR does not know, only buffers the Pia signature lets it
+// write. `linalg` ops write their `outs`, so a read-only buffer among them
+// is an error, as is a `memref.store` into one.
+mlir::LogicalResult checkEffects(mlir::func::FuncOp f, mlir::func::FuncOp tmp,
+                                 mlir::Location at) {
+  auto param = [&](unsigned i) {
+    auto n = f.getArgAttrOfType<mlir::StringAttr>(i, kName);
+    return n ? n.getValue().str() : "#" + std::to_string(i);
+  };
+  auto readOnly = [&](mlir::Value v) -> std::optional<unsigned> {
+    if (!mlir::isa<mlir::BaseMemRefType>(v.getType()))
+      return std::nullopt;
+    std::optional<unsigned> i = argumentOf(tmp, v);
+    if (i && !writable(f, *i))
+      return i;
+    return std::nullopt;
+  };
+  auto refuse = [&](mlir::Operation *op, unsigned i, llvm::StringRef how) {
+    return mlir::emitError(at)
+           << "the @lower of '" << f.getSymName() << "' " << how << " '$"
+           << param(i) << "' in '" << op->getName() << "', but '" << param(i)
+           << "' is not an 'out' or 'inout' parameter, so the lowering may "
+              "only read it (ADR 0065)";
+  };
+  mlir::WalkResult r = tmp.walk([&](mlir::Operation *op) {
+    if (op == tmp.getOperation() || mlir::isa<mlir::ViewLikeOpInterface>(op) ||
+        mlir::isa<mlir::memref::CastOp>(op))
+      return mlir::WalkResult::advance();
+    auto effects = mlir::dyn_cast<mlir::MemoryEffectOpInterface>(op);
+    if (!effects) {
+      // An op whose effects are its regions' is checked op by op inside;
+      // any other may do anything with the buffers it is given.
+      if (op->hasTrait<mlir::OpTrait::HasRecursiveMemoryEffects>())
+        return mlir::WalkResult::advance();
+      for (mlir::Value v : op->getOperands())
+        if (std::optional<unsigned> i = readOnly(v)) {
+          (void)refuse(op, *i, "passes");
+          return mlir::WalkResult::interrupt();
+        }
+      return mlir::WalkResult::advance();
+    }
+    llvm::SmallVector<mlir::MemoryEffects::EffectInstance> list;
+    effects.getEffects(list);
+    for (const mlir::MemoryEffects::EffectInstance &e : list) {
+      if (!mlir::isa<mlir::MemoryEffects::Write, mlir::MemoryEffects::Free>(
+              e.getEffect()))
+        continue;
+      mlir::Value v = e.getValue();
+      if (!v)
+        continue;
+      if (std::optional<unsigned> i = readOnly(v)) {
+        (void)refuse(op, *i,
+                     mlir::isa<mlir::MemoryEffects::Free>(e.getEffect())
+                         ? "frees"
+                         : "writes");
+        return mlir::WalkResult::interrupt();
+      }
+    }
+    return mlir::WalkResult::advance();
+  });
+  return mlir::failure(r.wasInterrupted());
+}
+
 mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
   mlir::MLIRContext *ctx = f.getContext();
   llvm::StringRef text = f->getAttrOfType<mlir::StringAttr>(kText).getValue();
@@ -212,6 +318,9 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
                         << "' is not valid MLIR: " << message << context;
     return mlir::failure();
   }
+
+  if (mlir::failed(checkEffects(f, tmp, at)))
+    return mlir::failure();
 
   Lowering l{f.getSymName().str(), where(at), *spliced, sha256(*spliced),
              opsOf(tmp)};
@@ -284,6 +393,24 @@ describeLowerings(mlir::ModuleOp module) {
       mlir::failed(applyLowerings(*copy, /*enabled=*/true, &out)))
     return mlir::failure();
   return out;
+}
+
+mlir::LogicalResult checkLowerings(mlir::ModuleOp module) {
+  if (llvm::none_of(module.getOps<mlir::func::FuncOp>(),
+                    [](mlir::func::FuncOp f) { return f->hasAttr(kText); }))
+    return mlir::success();
+  mlir::OwningOpRef<mlir::ModuleOp> copy = module.clone();
+  {
+    // What lowerToCore cannot compile yet is codegen's to report, when
+    // and if the program is compiled; the verifier may still prove it.
+    mlir::ScopedDiagnosticHandler quiet(
+        module.getContext(),
+        [](mlir::Diagnostic &) { return mlir::success(); });
+    eraseContracts(*copy);
+    if (mlir::failed(lowerToCore(*copy)))
+      return mlir::success();
+  }
+  return applyLowerings(*copy, /*enabled=*/true);
 }
 
 bool takeLoweredMark(mlir::ModuleOp module) {

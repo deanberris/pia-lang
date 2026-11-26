@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, floats, `vec<T, k>`, refinement types, cost bounds (`costs`, ADR 0062) and distinct types (`type u8` as a new type, ADR 0064 step 2) are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>`, refinement types, cost bounds (`costs`, ADR 0062) are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -49,9 +49,10 @@ let count_bright (ys : [u16]) : usize
 
 | Form | Meaning |
 | --- | --- |
-| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l` |
+| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)` |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
+| `f32`, `f64`; `0.5f32`, `1f64`, `1.0e-3` | strict IEEE 754 floats: one rounding per operation, no FMA unless licensed, subnormals kept. `+ - * /`, negation and IEEE comparisons (`=` is false on NaN). A literal takes the float type its context expects, else needs the suffix; an integer literal is never a float (`2.0`, not `2`), and nothing mixes floats with integers or `real` implicitly. Proofs see floats as their bits for now: the order and arithmetic facts of ADR 0038 come later, so a goal about float values fails rather than proves |
 | `100'000`, `0xFFFF'FFFF`, `1_000_000`, `42u8` | digits group with `'` (between two digits) or `_`; `,` never groups. A suffix gives a literal its type |
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
@@ -167,6 +168,8 @@ end
 | slow or nonlinear goals | `w * h` or `/ n` in a `requires`, a `forall` in a `requires`, or `@fuel` above 4 | range-typed factors, ranged element types, a lemma, or a helper with its own contract |
 | `requires x < 100` still costs a solver query at each call | a precondition is always sent to Z3 | `int{0..99}` instead |
 | `=` on two records is rejected | records have no built-in equality | `@derive(eq)` on the type |
+| a quantified goal times out though each step is trivial, or proves alone but not beside the rest of its file | Z3's default solver on a quantified bit-vector query is chaotic: unrelated declarations in the query can turn 50 ms into minutes | split the step into a small `let lemma`, and put `@solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")` on the function, as `lib/Pia/Llm/Tokenizer.pia` does |
+| `+` or `<` on a distinct type is rejected | a distinct type inherits no operators | `@derive(add)`, `@derive(ord)` or `@derive(scale)` on it, or unwrap with `u32 l` |
 | an intended failure hangs the test | a failing goal over arrays of arrays with quantifiers can run Z3 for a long time | keep intended failures free of quantifiers |
 | a `// CHECK:` line is ignored, or breaks the parse | `//` is not a Pia comment | put the RUN and CHECK lines inside `(* *)` |
 | a docs `console` block does not match the output | lints print to stderr, so their output is part of it | include the warnings, or pass `--no-lint` |

@@ -190,7 +190,22 @@ let longer (a : length) (b : length) : length
 = if u32 a >= u32 b then a else b
 ```
 
-A length has no operators of its own, so `w * h` is an error rather than a length; derives that add them come later ([ADR 0064](adr/0064-distinct-types.md)).
+A length has no operators of its own, so `w * h` is an error rather than a length. Each family of operators is opted into with a derive ([ADR 0064](adr/0064-distinct-types.md)): `ord` compares, `add` gives `+` and `-` between two lengths, `scale` gives `*`, `/` and `%` by a u32 on the right, and `bounds` gives the constants `min_length` and `max_length`. Each is stated in terms of the numbers underneath, and requires that its result fits, so overflow stays the caller's goal:
+
+```ocaml
+let span = type u32 @derive(eq, ord, add, scale, bounds)
+
+let total (a : span) (b : span) : span
+  requires u32 a <= 1000 && u32 b <= 1000
+  ensures u32 result = u32 a + u32 b
+= a + b
+
+let wider (a : span) (b : span) : span
+  ensures u32 result >= u32 a
+= if a < b then b else a
+```
+
+`a * a` is still an error, since a length times a length is an area: a program writes that function itself.
 
 A field of a mutable record can be assigned:
 

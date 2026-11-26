@@ -1,0 +1,82 @@
+(* f32 and f64 in proofs (M11), before ADR 0038's real-valued encoding. A
+   float is its IEEE bit pattern, so literals are exact and negation, which
+   flips the sign bit, is too. The other operations, and IEEE equality and
+   order, are uninterpreted: what follows from the same operands giving the
+   same result is proved, and anything that needs their values fails
+   rather than being proved wrongly. No float operation raises a goal of
+   its own, since IEEE 754 defines every result, infinities and NaN
+   included.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+(* `>` and `>=` are `<` and `<=` with the operands swapped, and `<>` is not
+   `=`, as IEEE 754 defines them.
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma swapped (a : f32) (b : f32) : unit
+  ensures (a > b) = (b < a) && (a >= b) = (b <= a)
+  ensures (a <> b) <> (a = b)
+= ()
+
+(* Negating twice gives the same bits back, so the same comparisons.
+// CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma neg_neg (x : f64) (y : f64) : unit
+  ensures (-(-x) < y) = (x < y)
+= ()
+
+(* The same operation on the same operands has the same result.
+// CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma congruent (x : f32) (y : f32) (z : f32) : unit
+  ensures (x * y + z < 1.0) = (x * y + z < 1.0)
+= ()
+
+(* A literal is its value, however it is spelled.
+// CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma literal_bits (x : f32) : unit
+  ensures (x < 0.5) = (x < 5.0e-1f32)
+= ()
+
+(* Nothing is known yet about what `+` computes, so commutativity, true of
+   IEEE addition, is not proved until ADR 0038's encoding lands.
+// CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let lemma commutes (x : f32) (y : f32) : unit
+  ensures (x + y < 1.0) = (y + x < 1.0)
+= ()
+
+(* A NaN is neither below nor at least zero, and the counterexample shows
+   a float.
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{.+}}
+*)
+let lemma ordered (x : f32) : unit
+  ensures x < 0.0 || 0.0 <= x
+= ()
+
+(* Index goals in a float loop are proved as in any other.
+// CHECK: floats.pia:[[@LINE+7]]:{{[0-9]+}}: proved: the index is within bounds
+// CHECK: floats.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the index is within bounds
+*)
+let dot (xs : [f32]) (ys : [f32]) : f32
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+
+(* A float function is a value: two calls on the same argument agree.
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let half (x : f64) : f64 = x * 0.5
+
+let halves (x : f64) : bool
+  ensures result = (half x <= half x)
+= half x <= half x
+
+(*
+// CHECK: {{[0-9]+}} proved, 2 failed, 0 skipped
+*)

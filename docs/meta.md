@@ -185,6 +185,10 @@ The prelude's `machine` builds a state machine's theory and its model from a tab
 
 The prelude's `litmus` is a top-level call that builds a lemma from a litmus test, a small concurrent program given as data: threads of `write`, `read`, `store`, `load`, `swap`, `fetch_add` and `barrier` events, and an outcome of `is` and `final` conditions ([theories.md](theories.md#the-memory-model-rc11)). It writes the test's RC11 consistency as boolean matrices over its events, so the lemma is a finite query.
 
+## Lowerings
+
+`@lower(gen args)` on a function runs the metaprogram `gen`, which returns a string of MLIR, and the string becomes the function's lowering, as if `@lower("...")` were written ([ADR 0065](adr/0065-lowerings-written-in-pia.md), [codegen.md](codegen.md#lowerings-written-in-pia)). Among the arguments, the function's parameters stand for themselves, as names, so `concat "$" (name a)` splices the parameter `a`. There are no type values during expansion, so a shape or an element type is passed as an integer or a string (tests/codegen/lower_meta.pia).
+
 ## Tactics
 
 `@by(t args)` on a lemma runs the metaprogram `t`, a tactic, on the lemma's goal ([ADR 0036](adr/0036-library-theories.md), step 6). The tactic gets the goal first, then the arguments. Among the arguments, the lemma's parameters stand for themselves, as names. It returns a list of proof steps, which go before the lemma's body, and the verifier proves them like any others ([verifier.md](verifier.md#solver-strategies-and-tactics)). So a tactic can make a proof possible, or faster, but not wrong.
@@ -274,7 +278,7 @@ A comment can be read but not spliced into code. To document generated code, use
 
 ## Derives
 
-`@derive(x)` on a type item calls the metaprogram `derive_x` with the item and adds the items it returns after the type. The prelude defines `derive_eq`. For `let pixel = type { r : u8; g : u8 } @derive(eq)` it makes:
+`@derive(x)` on a type item calls the metaprogram `derive_x` with the item and adds the items it returns after the type. The prelude defines `derive_eq`, and for a distinct type `derive_ord`, `derive_add`, `derive_scale` and `derive_bounds` (ADR 0064, section 4), which make `lt_<t>`, `add_<t>`, `mul_<t>` and the rest that `<`, `+` and `*` on the type call. For `let pixel = type { r : u8; g : u8 } @derive(eq)` it makes:
 
 ```ocaml
 let eq_pixel (a : pixel) (b : pixel) : bool

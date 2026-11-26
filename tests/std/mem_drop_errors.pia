@@ -1,0 +1,42 @@
+(* A box is dropped at the end of its scope, and dropping requires it
+   full (ADR 0046, step 1), so a box left empty there is a failed goal:
+   it must be filled again, or given to `free`, which in turn requires
+   it empty.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Box.pia
+// RUN: not piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Mem.Alloc.Allocators
+import Pia.Mem.Box.Boxes
+
+(* Released, and never filled or freed.
+// CHECK: mem_drop_errors.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the precondition of 'Pia.Mem.Box.drop<u8>' holds
+*)
+let leaky (mem : borrowed mutable [u8]) : result u8 Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  let b : mutable Pia.Mem.Box.box u8 = Pia.Mem.Box.make<u8> m 7? in
+  Ok (Pia.Mem.Box.release b)
+
+(* Freed while it still holds a value.
+// CHECK: mem_drop_errors.pia:[[@LINE+5]]:{{[0-9]+}}: failed: the precondition of 'Pia.Mem.Box.free<u8>' holds
+*)
+let lost (mem : borrowed mutable [u8]) : result unit Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  let b : Pia.Mem.Box.box u8 = Pia.Mem.Box.make<u8> m 7? in
+  Pia.Mem.Box.free b;
+  Ok ()
+
+(* Emptied, then a `?` that fails leaves through a drop of the empty box.
+// CHECK: mem_drop_errors.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the precondition of 'Pia.Mem.Box.drop<u8>' holds
+*)
+let early (mem : borrowed mutable [u8]) : result unit Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem; used = 0 } in
+  let b : mutable Pia.Mem.Box.box u8 = Pia.Mem.Box.make<u8> m 7? in
+  Pia.Mem.Box.remove b;
+  let c : Pia.Mem.Box.box u8 = Pia.Mem.Box.make<u8> m 8? in
+  Pia.Mem.Box.fill b 9;
+  Ok ()
+
+(*
+// CHECK: 21 proved, 3 failed, 0 skipped
+*)

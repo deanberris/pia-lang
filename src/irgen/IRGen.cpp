@@ -264,10 +264,29 @@ class Gen {
                  "Err of e\n";
     if (usesArenas_ && !definesItem(program, "arena"))
       prelude += "let arena = type { mem : [u8]; used : usize }\n";
+    // A spread placed on the GPU (ADR 0068, step 3) evaluates to
+    // `result unit gpu_error`, the error set placement adds.
+    usesGpu_ = placesOnGpu(program);
+    if (usesGpu_ && !definesItem(program, "gpu_error"))
+      prelude += "let gpu_error = type | Gpu_unavailable | Gpu_out_of_memory "
+                 "| Gpu_fault | Gpu_timeout\n";
     if (!prelude.empty()) {
       syntax::Diagnostics ignored;
       prelude_ = syntax::parseProgram(prelude, ignored);
       if (prelude_) sema::defineTypeItems(*prelude_, types_, diags_);
+    }
+    if (usesGpu_) {
+      // The run's status, 0 or a Gpu.error in its order, as the result.
+      syntax::Diagnostics ignored;
+      gpuPrelude_ = syntax::parseProgram(
+          "let __pia_gpu_result (__pia_gpu_s : i32) : result unit gpu_error "
+          "= if __pia_gpu_s = 0 then Ok () "
+          "else if __pia_gpu_s = 1 then Err Gpu_unavailable "
+          "else if __pia_gpu_s = 2 then Err Gpu_out_of_memory "
+          "else if __pia_gpu_s = 4 then Err Gpu_timeout "
+          "else Err Gpu_fault\n"
+          "let __pia_gpu_ok (__pia_gpu_s : i32) : bool = __pia_gpu_s = 0\n",
+          ignored);
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
@@ -1270,9 +1289,11 @@ class Gen {
       Type saved;
       ~DropScope() { t = saved; }
     } dropScope{dropping_, dropping_};
-    dropping_ = sig.name == "drop" && sig.params.size() == 1
-                    ? sig.params[0].type
-                    : Type();
+    // An instance of a generic drop, `drop<u16>`, is a drop too, and so is
+    // one from another module, `Pia.Mem.Box.drop<u16>`.
+    llvm::StringRef itemName = sig.item ? llvm::StringRef(sig.item->text) : "";
+    bool isDrop = itemName == "drop" || itemName.ends_with(".drop");
+    dropping_ = isDrop && sig.params.size() == 1 ? sig.params[0].type : Type();
     // `= extern "symbol"`: a C function (#55).
     std::string foreign;
     bool isExtern = externSymbol(bodyNode, foreign);
@@ -1300,7 +1321,7 @@ class Gen {
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
           if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
-            const Node &d = dropNode(p.name, p.loc);
+            const Node &d = dropNode(b, p.loc);
             bodyPtr = keep(withCleanup(*bodyPtr, d));
             frames_.back().defers.push_back(&d);
           }
@@ -1864,11 +1885,12 @@ class Gen {
         continue;
       }
       // `@lower("mlir")` gives the function an MLIR form, which codegen
-      // puts in place of the body (ADR 0065). Step 1 takes a string literal
-      // only; a metaprogram that computes one is step 2.
+      // puts in place of the body (ADR 0065). A metaprogram's call,
+      // `@lower(gen args)`, has become the string it computed by now.
       if (a->text == "lower") {
         if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::StringLit) {
-          fail(*a, "@lower takes one string of MLIR, as in "
+          fail(*a, "@lower takes one string of MLIR, or a call of a 'let "
+                   "meta' that computes one, as in "
                    "@lower(\"linalg.matmul ins($a, $b : $a.type, $b.type) "
                    "outs($c : $c.type)\")");
           return false;
@@ -1959,6 +1981,8 @@ class Gen {
       if (const Node *t = hoistable(n)) return genTry(n, *t, expected);
     switch (n.kind) {
       case NodeKind::IntLit: {
+        if (Type ft = floatSuffix(n.text))
+          return genFloatConst(n, n.text, false, ft);
         auto lit = sema::parseIntLiteral(n.text);
         // An int literal has no bounds (ADR 0036).
         if (!lit && isExact(expected)) {
@@ -2102,6 +2126,10 @@ class Gen {
 
   R genIntConst(const Node &n, llvm::APInt v, const std::string &suffix,
                 Type expected) {
+    if (suffix.empty() && isFloat(expected))
+      return fail(n, "an integer literal is not a float: write " +
+                         llvm::toString(v, 10, true) + ".0 for an " +
+                         typeName(expected));
     Type t;
     if (suffix.empty() && isExact(expected))
       return exactConst(loc(n), expected, llvm::toString(v, 10, true));
@@ -2126,14 +2154,20 @@ class Gen {
     return TV{c, t};
   }
 
-  // `0.5`, `1.0e3`: a real, exact. Pia has no floating-point types yet.
+  // `0.5`, `1.0e3`: a real, exact, unless a suffix or the context makes
+  // it a float: `0.5f32`, or `0.5` where an f64 is expected.
   R genRealConst(const Node &n, llvm::StringRef text, bool negate,
                  Type expected) {
-    size_t f = text.find_first_of("fiu");
-    if (f != llvm::StringRef::npos)
-      return fail(n, "'" + text.str() + "': floating-point types are not "
-                     "supported yet; a literal with a decimal point is a "
-                     "spec-only real, with no suffix");
+    if (Type ft = floatSuffix(text))
+      return genFloatConst(n, text, negate, ft);
+    if (text.find_first_of("fiu") != llvm::StringRef::npos)
+      return fail(n,
+                  "'" + text.str() +
+                      "': a literal with a decimal point "
+                      "is a float with the suffix f32 or f64, or a spec-only "
+                      "real with none");
+    if (isFloat(expected))
+      return genFloatConst(n, text, negate, expected);
     std::optional<std::string> v = realLiteral(text, negate);
     if (!v) return fail(n, "invalid real literal '" + text.str() + "'");
     (void)expected;  // a mismatch is reported where the value is used
@@ -2189,10 +2223,22 @@ class Gen {
   }
 
   // Lowers both operands. A literal takes its type from the other side, so
-  // `0 < x` and `x < 0` both compare at x's type.
+  // `0 < x` and `x < 0` both compare at x's type. On the right of a record
+  // whose derive defines `op`, it takes that function's second parameter's
+  // type, so `l * 3` scales a distinct type by a u32 (ADR 0064, section 4).
   std::optional<std::pair<TV, TV>> genOperands(const Node &lhs, const Node &rhs,
-                                               Type expected) {
-    if (isLiteral(lhs) && !isLiteral(rhs)) {
+                                               Type expected,
+                                               const std::string &op = "") {
+    // Of two literals, one with a float suffix gives the other its type:
+    // `0.1 + 0.2f64`.
+    auto suffixed = [&](const Node &k) {
+      const Node &v =
+          k.kind == NodeKind::Neg && k.kids.size() == 1 ? *k.kids[0] : k;
+      return (v.kind == NodeKind::FloatLit || v.kind == NodeKind::IntLit) &&
+             floatSuffix(v.text);
+    };
+    if ((isLiteral(lhs) && !isLiteral(rhs)) ||
+        (isLiteral(lhs) && suffixed(rhs) && !suffixed(lhs))) {
       R r = genExpr(rhs, expected);
       if (!r) return std::nullopt;
       R l = genExpr(lhs, r->type);
@@ -2201,9 +2247,37 @@ class Gen {
     }
     R l = genExpr(lhs, expected);
     if (!l) return std::nullopt;
-    R r = genExpr(rhs, l->type);
+    Type want = l->type;
+    if (auto rt = mlir::dyn_cast<RecordType>(l->type))
+      if (const sema::FuncSig *sig = recordOpSig(op, rt))
+        if (sig->params.size() == 2)
+          want = sig->params[1].type;
+    R r = genExpr(rhs, want);
     if (!r) return std::nullopt;
     return std::make_pair(*l, *r);
+  }
+
+  // The name of the function an operator on a record calls: `eq_<t>` for
+  // `=`, which @derive(eq) makes, and `lt_<t>`, `add_<t>`, `mul_<t>` and
+  // the rest, which @derive(ord), @derive(add) and @derive(scale) make
+  // (ADR 0064, section 4). Empty for an operator no derive defines.
+  static std::string recordOpName(const std::string &op, llvm::StringRef type) {
+    static const std::map<std::string, std::string> names = {
+        {"=", "eq"},  {"<>", "eq"}, {"<", "lt"},  {"<=", "le"},
+        {">", "gt"},  {">=", "ge"}, {"+", "add"}, {"-", "sub"},
+        {"*", "mul"}, {"/", "div"}, {"%", "rem"}};
+    auto it = names.find(op);
+    if (it == names.end())
+      return "";
+    return it->second + "_" + type.str();
+  }
+
+  const sema::FuncSig *recordOpSig(const std::string &op, RecordType rt) {
+    std::string name = recordOpName(op, rt.getName());
+    if (name.empty())
+      return nullptr;
+    auto it = sigs_.find(name);
+    return it == sigs_.end() ? nullptr : &it->second;
   }
 
   // Brings two integers to their joined type.
@@ -2253,7 +2327,7 @@ class Gen {
               const Node &rhsNode, Type expected) {
     if (isLogic(op)) return genLogic(n, op, lhsNode, rhsNode);
     if (isComparison(op)) {
-      auto ops = genOperands(lhsNode, rhsNode, Type());
+      auto ops = genOperands(lhsNode, rhsNode, Type(), op);
       if (!ops) return std::nullopt;
       auto [a, c] = *ops;
       Location l = loc(n);
@@ -2265,6 +2339,8 @@ class Gen {
             a.value, c.value);
         return TV{v, boolType()};
       }
+      if (isFloat(a.type) || isFloat(c.type))
+        return genFloatCmp(n, op, a, c);
       if (archetypes_.count(a.type) || archetypes_.count(c.type)) {
         // A contract may compare values of a type parameter's type: what
         // it means is decided for each instance.
@@ -2336,10 +2412,16 @@ class Gen {
     if (isArith(op)) {
       auto ops = genOperands(lhsNode, rhsNode,
                              mlir::isa_and_nonnull<IntType>(expected) ||
-                                     isExact(expected)
+                                     isExact(expected) || isFloat(expected)
                                  ? expected
-                                 : Type());
+                                 : Type(),
+                             op);
       if (!ops) return std::nullopt;
+      if (mlir::isa<RecordType>(ops->first.type) ||
+          mlir::isa<RecordType>(ops->second.type))
+        return genRecordArith(n, op, ops->first, ops->second);
+      if (isFloat(ops->first.type) || isFloat(ops->second.type))
+        return genFloatArith(n, op, ops->first, ops->second);
       if (isExact(ops->first.type) || isExact(ops->second.type))
         return genExactArith(n, op, ops->first, ops->second, lhsNode,
                              rhsNode);
@@ -2392,6 +2474,116 @@ class Gen {
       return TV{v, t};
     }
     return fail(n, "the operator '" + op + "' is not supported yet");
+  }
+
+  // --- floats (M11; ADR 0004, ADR 0012) ----------------------------------
+  //
+  // f32 and f64 are IEEE 754 binary32 and binary64, strict by default: each
+  // operation is one correctly rounded arith op with no fast-math flags, so
+  // codegen neither reassociates nor contracts, and never flushes
+  // subnormals. No float operation raises a goal: overflow is an infinity
+  // and 0/0 a NaN, as IEEE defines them. The verifier's real-valued
+  // encoding of them is ADR 0038's step 1.
+
+  static bool isFloat(Type t) {
+    return mlir::isa_and_nonnull<mlir::FloatType>(t);
+  }
+
+  // The float type a literal's suffix names, as in `0.5f32` or `1f64`.
+  Type floatSuffix(llvm::StringRef text) {
+    if (text.starts_with("0x") || text.starts_with("0X"))
+      return {};
+    if (text.ends_with("f32"))
+      return mlir::Float32Type::get(&ctx_);
+    if (text.ends_with("f64"))
+      return mlir::Float64Type::get(&ctx_);
+    return {};
+  }
+
+  // A float literal, rounded to the nearest value of `t` (ties to even), as
+  // IEEE 754 reads a decimal. One too large for `t`, or one that is not
+  // zero but rounds to zero, is an error rather than an infinity or a zero.
+  R genFloatConst(const Node &n, llvm::StringRef text, bool negate, Type t) {
+    auto ft = mlir::cast<mlir::FloatType>(t);
+    std::string digits;
+    for (char c : text)
+      if (!syntax::isDigitSeparator(c))
+        digits.push_back(c);
+    llvm::StringRef spelling(digits);
+    if (floatSuffix(spelling))
+      spelling = spelling.drop_back(3);
+    llvm::APFloat v(ft.getFloatSemantics());
+    auto status =
+        v.convertFromString(spelling, llvm::APFloat::rmNearestTiesToEven);
+    if (!status) {
+      llvm::consumeError(status.takeError());
+      return fail(n, "invalid float literal '" + text.str() + "'");
+    }
+    if (*status & llvm::APFloat::opOverflow)
+      return fail(n, "'" + text.str() + "' is too large for " + typeName(t) +
+                         ", whose largest finite value is " +
+                         sema::floatText(llvm::APFloat::getLargest(
+                             ft.getFloatSemantics())));
+    if ((*status & llvm::APFloat::opUnderflow) && v.isZero())
+      return fail(n, "'" + text.str() + "' is too small for " + typeName(t) +
+                         ", where it rounds to zero; write 0.0 for zero");
+    if (negate)
+      v.changeSign();
+    Value c = create<mlir::arith::ConstantOp>(
+        loc(n), mlir::cast<mlir::TypedAttr>(b_.getFloatAttr(ft, v)));
+    return TV{c, t};
+  }
+
+  // `+ - * /` on two floats of one type, each one IEEE operation.
+  R genFloatArith(const Node &n, const std::string &op, TV a, TV c) {
+    if (a.type != c.type)
+      return fail(n, "'" + op + "' needs operands of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type) +
+                         floatMixHint(a.type, c.type));
+    Location l = loc(n);
+    Value v;
+    if (op == "+")
+      v = create<mlir::arith::AddFOp>(l, a.value, c.value);
+    else if (op == "-")
+      v = create<mlir::arith::SubFOp>(l, a.value, c.value);
+    else if (op == "*")
+      v = create<mlir::arith::MulFOp>(l, a.value, c.value);
+    else if (op == "/")
+      v = create<mlir::arith::DivFOp>(l, a.value, c.value);
+    else
+      return fail(n, "'" + op + "' is not defined on " + typeName(a.type) +
+                         "; floats have + - * /, negation and comparisons");
+    return TV{v, a.type};
+  }
+
+  // A comparison of two floats as IEEE 754 defines it: NaN is unordered,
+  // so every comparison with it is false except `<>`, and -0.0 = 0.0.
+  R genFloatCmp(const Node &n, const std::string &op, TV a, TV c) {
+    if (a.type != c.type)
+      return fail(n, "'" + op + "' needs operands of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type) +
+                         floatMixHint(a.type, c.type));
+    using P = mlir::arith::CmpFPredicate;
+    P p = op == "="    ? P::OEQ
+          : op == "<>" ? P::UNE
+          : op == "<"  ? P::OLT
+          : op == "<=" ? P::OLE
+          : op == ">"  ? P::OGT
+                       : P::OGE;
+    return TV{create<mlir::arith::CmpFOp>(loc(n), p, a.value, c.value),
+              boolType()};
+  }
+
+  // What to write when a float meets an integer or a real.
+  static std::string floatMixHint(Type a, Type c) {
+    Type other = isFloat(a) ? c : a;
+    if (mlir::isa<IntType>(other))
+      return "; a float literal has a decimal point, such as 2.0, and an "
+             "integer is not converted to a float implicitly";
+    if (mlir::isa<RealType>(other))
+      return "; a real is spec-only, and a float literal in code has the "
+             "suffix f32 or f64, such as 0.5f32";
+    return "";
   }
 
   // `+ - *` on `int` and `real`, and `/` on `real`: exact, so there is
@@ -3454,6 +3646,9 @@ class Gen {
     const Node &operand = *n.kids[0];
     if (operand.kind == NodeKind::FloatLit)
       return genRealConst(n, operand.text, true, expected);
+    if (operand.kind == NodeKind::IntLit)
+      if (Type ft = floatSuffix(operand.text))
+        return genFloatConst(n, operand.text, true, ft);
     if (operand.kind == NodeKind::IntLit && !isExact(expected)) {
       auto lit = sema::parseIntLiteral(operand.text);
       if (!lit) return fail(operand, "invalid integer literal");
@@ -3461,13 +3656,18 @@ class Gen {
     }
     R v = genExpr(operand, expected);
     if (!v) return v;
+    // IEEE negation flips the sign, so -0.0 and 0.0 differ and it is exact.
+    if (isFloat(v->type))
+      return TV{create<mlir::arith::NegFOp>(loc(n), v->value), v->type};
     if (isExact(v->type)) {
       TV zero = exactConst(loc(n), v->type, "0");
       return TV{create<ExactSubOp>(loc(n), v->type, zero.value, v->value),
                 v->type};
     }
     auto t = mlir::dyn_cast<IntType>(v->type);
-    if (!t) return fail(n, "'-' needs an integer, found " + typeName(v->type));
+    if (!t)
+      return fail(n, "'-' needs an integer or a float, found " +
+                         typeName(v->type));
     Value zero = create<ConstantOp>(
         loc(n), t, b_.getIntegerAttr(b_.getIntegerType(kWidth), 0));
     if (!t.contains(llvm::APInt(kWidth, 0)))
@@ -8381,11 +8581,63 @@ class Gen {
     return out;
   }
 
+  // `<`, `<=`, `>` and `>=` on records call `lt_<name>` and the rest,
+  // which `@derive(ord)` makes (ADR 0064, section 4).
+  R genRecordOrder(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt || a.type != c.type)
+      return fail(n, "'" + op + "' compares two values of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type));
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig)
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(ord) to '" + name + "'");
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != a.type || sig->result != boolType())
+      return fail(n, "'" + recordOpName(op, name) + "' must take two " + name +
+                         " values and return bool");
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
+  // `+` and `-` between two values of a record type, and `*`, `/` and `%`
+  // of one by its underlying type, call `add_<name>` and the rest, which
+  // `@derive(add)` and `@derive(scale)` make (ADR 0064, section 4). The
+  // function's precondition is where overflow is a goal.
+  R genRecordArith(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt) {
+      std::string other = typeName(c.type);
+      return fail(n, "'" + op + "' is not defined with " + typeName(a.type) +
+                         " on the left and " + other + " on the right; a " +
+                         "derived operator takes the " + other + " first");
+    }
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig) {
+      std::string derive = op == "+" || op == "-"                ? "add"
+                           : op == "*" || op == "/" || op == "%" ? "scale"
+                                                                 : "";
+      if (derive.empty())
+        return fail(n, "'" + op + "' is not defined on " + name);
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(" + derive + ") to '" + name + "'");
+    }
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != c.type)
+      return fail(n,
+                  "'" + op + "' on " + name + " takes " +
+                      (sig->params.size() == 2 ? typeName(sig->params[1].type)
+                                               : std::string("one value")) +
+                      " on the right, found " + typeName(c.type));
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
   // `=` and `<>` on records call `eq_<name>`, which `@derive(eq)` makes.
   R genRecordEq(const Node &n, const std::string &op, TV a,
                 const Node &lhsNode, TV c, const Node &rhsNode) {
     if (op != "=" && op != "<>")
-      return fail(n, "records cannot be compared with '" + op + "'");
+      return genRecordOrder(n, op, a, c);
     auto rt = mlir::dyn_cast<RecordType>(a.type);
     if (!rt || a.type != c.type)
       return fail(n, "'" + op + "' compares two values of one record type, "
@@ -8492,6 +8744,9 @@ class Gen {
     // when they are the same element of its sort (ADR 0043).
     if (checking_ && standIns_.contains(t)) return standInEq(l, a, b, t);
     if (mlir::isa<IntType>(t)) return cmp(l, CmpPredicate::eq, a, b);
+    if (isFloat(t))
+      return create<mlir::arith::CmpFOp>(l, mlir::arith::CmpFPredicate::OEQ, a,
+                                         b);
     if (mlir::isa<UnboundedIntType, RealType, SortType>(t))
       return create<ExactCmpOp>(l, b_.getI1Type(),
                                 CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
@@ -9275,9 +9530,10 @@ class Gen {
   }
 
   bool foreignType(Type t) {
-    if (mlir::isa<IntType>(t) || isBool(t)) return true;
+    if (mlir::isa<IntType>(t) || isBool(t) || isFloat(t))
+      return true;
     if (mlir::isa<ArrayType, SliceType>(t))
-      return mlir::isa<IntType>(elementType(t));
+      return mlir::isa<IntType>(elementType(t)) || isFloat(elementType(t));
     return false;
   }
 
@@ -9297,6 +9553,16 @@ class Gen {
       const sema::Param &p = sig.params[i];
       if (mlir::isa<ArrayType, SliceType>(p.type))
         continue;
+      // C promotes a float to a double, which f64 is.
+      if (p.type.isF64())
+        continue;
+      if (p.type.isF32()) {
+        diags_.error(p.loc, "'" + p.name +
+                                "' is a variadic argument of a C "
+                                "function, which C promotes to double, so it "
+                                "must be an f64, not an f32");
+        return false;
+      }
       auto it = mlir::dyn_cast<IntType>(p.type);
       if (it && it.getStorageWidth() >= 32)
         continue;
@@ -9323,15 +9589,16 @@ class Gen {
       return fail(*body.kids[1], "a C symbol is letters, digits and '_'");
     for (const sema::Param &p : sig.params)
       if (!foreignType(p.type)) {
-        diags_.error(p.loc, "a foreign function takes integers, bools and "
-                            "buffers of integers for now, but '" + p.name +
-                            "' has type " + typeName(p.type));
+        diags_.error(p.loc, "a foreign function takes integers, floats, "
+                            "bools and buffers of integers or floats for "
+                            "now, but '" +
+                                p.name + "' has type " + typeName(p.type));
         return std::nullopt;
       }
     if (!sig.result || !(isUnit(sig.result) || mlir::isa<IntType>(sig.result) ||
-                         isBool(sig.result)))
-      return fail(body, "a foreign function returns unit, an integer or a "
-                        "bool for now");
+                         isBool(sig.result) || isFloat(sig.result)))
+      return fail(body, "a foreign function returns unit, an integer, a "
+                        "float or a bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
     if (deref_ && !mlir::isa<IntType>(sig.result))
@@ -9402,16 +9669,60 @@ class Gen {
 
   // --- `drop` (#85) -----------------------------------------------------
 
-  // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
-  // scope: the `Drop` concept, met by name like any other (ADR 0034).
-  bool hasDrop(Type t) {
-    if (!t || copied(t)) return false;
-    for (const sema::FuncSig *f : overloadSet("drop"))
+  // A type has a drop when a `drop (x : moved t) : unit` is in scope: the
+  // `Drop` concept, met by name like any other (ADR 0034). A generic one,
+  // such as `drop (t : type) (b : moved box t)`, gives a drop to each type
+  // its parameter deduces, as it would meet a requirement.
+  bool hasDrop(Type t) { return !dropFor(t).empty(); }
+
+  // The name to call to drop a `t`, or nothing. A type of another module,
+  // `Pia.Mem.Box.box<u8>`, is dropped by that module's drop, as an
+  // importer would not otherwise see it.
+  std::string dropFor(Type t) {
+    if (!t || copied(t))
+      return "";
+    if (meetsDrop(overloadSet("drop"), t))
+      return "drop";
+    std::string from = moduleOf(t);
+    if (!from.empty() && meetsDrop(overloadSet(from + ".drop"), t))
+      return from + ".drop";
+    return "";
+  }
+
+  // The module that defines the record `t`, from its name: "Pia.Mem.Box"
+  // for `Pia.Mem.Box.box<u8>`, or nothing for one of this program.
+  static std::string moduleOf(Type t) {
+    auto rec = mlir::dyn_cast<RecordType>(t);
+    if (!rec)
+      return "";
+    llvm::StringRef name = rec.getName();
+    name = name.take_until([](char c) { return c == '<'; });
+    size_t dot = name.rfind('.');
+    return dot == llvm::StringRef::npos ? "" : name.take_front(dot).str();
+  }
+
+  bool meetsDrop(const std::vector<sema::FuncSig *> &set, Type t) {
+    for (const sema::FuncSig *f : set)
       if (!f->isGeneric() && f->params.size() == 1 &&
           f->params[0].type == t &&
           sema::hasModifier(f->params[0].modifiers, "moved") &&
           f->result && isUnit(f->result))
         return true;
+    for (sema::FuncSig *f : set) {
+      if (!f->isGeneric())
+        continue;
+      std::vector<const Node *> ps = valueParamsOf(*f);
+      if (ps.size() != 1 || ps[0]->kids.empty() ||
+          ps[0]->kids[0]->kind != NodeKind::Annot ||
+          !sema::hasModifier(ps[0]->kids[0]->kids[0]->text, "moved"))
+        continue;
+      std::map<std::string, Type> bound;
+      if (!types_.unify(*ps[0]->kids[0], t, f->typeParams, bound))
+        continue;
+      if (genericMeeting(*f, {t}, {ps[0]->kids[0]->kids[0]->text},
+                         types_.unitType()))
+        return true;
+    }
     return false;
   }
 
@@ -9450,10 +9761,11 @@ class Gen {
   }
 
   // `drop x`, marked so that it runs only where `x` is not consumed.
-  const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
+  const Node &dropNode(const BindingPtr &b, syntax::SourceLoc at) {
+    const std::string &name = b->name;
     auto call = syntax::makeNode(NodeKind::Apply, at);
     call->flags = "drop";
-    call->add(syntax::makeNode(NodeKind::Name, at, "drop"));
+    call->add(syntax::makeNode(NodeKind::Name, at, dropFor(b->type)));
     call->add(syntax::makeNode(NodeKind::Name, at, name));
     return *keep(std::move(call));
   }
@@ -9568,10 +9880,18 @@ class Gen {
   }
 
   // Whether the buffers `b` holds may be written: a borrow that may, or an
-  // `out` or `inout` parameter, whose fields' buffers may be too.
+  // `out` or `inout` parameter, whose fields' buffers may be too. A
+  // `moved mutable` parameter is the callee's alone, so it may be too, as
+  // a box's `drop` moves its value out of its slot.
   static bool writableValue(const Binding &b) {
-    return b.writable || (b.isParam && (sema::hasModifier(b.modifiers, "out") ||
-                                        sema::hasModifier(b.modifiers, "inout")));
+    if (b.writable)
+      return true;
+    if (!b.isParam)
+      return false;
+    return sema::hasModifier(b.modifiers, "out") ||
+           sema::hasModifier(b.modifiers, "inout") ||
+           (sema::hasModifier(b.modifiers, "moved") &&
+            sema::hasModifier(b.modifiers, "mutable"));
   }
 
   // `n` was generated as `other`, a tree made from it.
@@ -10402,7 +10722,16 @@ class Gen {
                       "' is written in this spread, so it "
                       "can only be indexed here: passing it on could reach "
                       "a cell another iteration writes (ADR 0060)");
+    bool onGpu = false;
     for (const syntax::NodePtr &a : attrs.kids) {
+      if (a->text == "place") {
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::Name ||
+            a->kids[0]->text != "gpu")
+          return fail(*a, "@place takes one device, and only @place(gpu) is "
+                          "supported yet; a spread runs on the CPU without it");
+        onGpu = true;
+        continue;
+      }
       if (a->text != "owns")
         return fail(*a, "the attribute @" + a->text +
                             " is not supported on a spread yet");
@@ -10419,6 +10748,11 @@ class Gen {
                                      "' must not be written in the spread");
       sc.owners[a->kids[0]->text] = owner;
     }
+    // A GPU thread writes only its own cell of each buffer (ADR 0068,
+    // section 1): identity ownership, for now.
+    if (onGpu && !sc.owners.empty())
+      return fail(n, "a spread placed on the GPU writes each buffer at its "
+                     "own index only, so it takes no @owns yet (ADR 0068)");
     auto bounds = genRange(iterable);
     if (!bounds)
       return std::nullopt;
@@ -10428,6 +10762,8 @@ class Gen {
     Value step = create<mlir::arith::ConstantIndexOp>(l, 1);
     auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, mlir::ValueRange{});
     forOp->setAttr("pia.spread", b_.getUnitAttr());
+    if (onGpu)
+      forOp->setAttr("pia.place", b_.getStringAttr("gpu"));
     Block *block = forOp.getBody();
     {
       OpBuilder::InsertionGuard guard(b_);
@@ -10499,7 +10835,17 @@ class Gen {
         return r;
     }
     // After the loop, every iteration's `ensures` holds:
-    // `forall (i in lo .. hi). p`.
+    // `forall (i in lo .. hi). p`. On the GPU, only if the run succeeded:
+    // a failed run may leave the buffers part written (ADR 0068, section 5).
+    Value gpuOk;
+    if (onGpu) {
+      pushScope();
+      gpuOk = gpuStatus(n);
+      if (!gpuOk) {
+        popScope();
+        return std::nullopt;
+      }
+    }
     for (const syntax::NodePtr &a : annots.kids) {
       auto q = std::make_unique<Node>();
       q->kind = NodeKind::Quantifier;
@@ -10513,11 +10859,67 @@ class Gen {
       q->kids.push_back(std::move(binder));
       q->kids.push_back(syntax::clone(*a->kids[0]));
       R all = genPredicate(*q);
-      if (!all)
+      if (!all) {
+        if (onGpu)
+          popScope();
         return all;
-      create<contract::AssumeOp>(loc(*a), all->value);
+      }
+      create<contract::AssumeOp>(
+          loc(*a), gpuOk ? implies(loc(*a), gpuOk, all->value) : all->value);
+    }
+    if (onGpu) {
+      R r = gpuItem(n, "__pia_gpu_result", true);
+      popScope();
+      return r;
     }
     return unit();
+  }
+
+  // The function `name` of gpuPrelude_: its LetItem.
+  const Node *gpuFunction(const std::string &name) {
+    if (!gpuPrelude_)
+      return nullptr;
+    for (const syntax::NodePtr &k : gpuPrelude_->kids)
+      if (k && k->kind == NodeKind::LetItem && k->text == name)
+        return k.get();
+    return nullptr;
+  }
+
+  // After a spread placed on the GPU: its run's status, which codegen
+  // supplies (ADR 0068, step 3), bound to `__pia_gpu_s` in the current
+  // scope. To the verifier the status is any i32, so either result may
+  // come back. Returns whether it is 0, the run succeeded.
+  Value gpuStatus(const Node &n) {
+    const Node *ok = gpuFunction("__pia_gpu_ok");
+    const Node *param = ok ? findKind(*ok, NodeKind::Annot) : nullptr;
+    Type i32 = param ? types_.resolveAnnot(*param) : Type();
+    if (!i32) {
+      fail(n, "internal error: no gpu_error prelude");
+      return Value();
+    }
+    auto status = create<ForeignOp>(loc(n), mlir::TypeRange{i32},
+                                    b_.getStringAttr("pia$gpu$status"),
+                                    mlir::ValueRange{});
+    status->setAttr("pia.gpu_status", b_.getUnitAttr());
+    bind("__pia_gpu_s", status.getResult(0), i32, false);
+    R r = gpuItem(n, "__pia_gpu_ok", false);
+    return r ? r->value : Value();
+  }
+
+  // The body of gpuPrelude_'s function `name`, over `__pia_gpu_s`: the
+  // spread's value (`result unit gpu_error`) or whether it succeeded.
+  R gpuItem(const Node &n, const std::string &name, bool isResult) {
+    const Node *item = gpuFunction(name);
+    const Node *ret = item ? findKind(*item, NodeKind::RetAnnot) : nullptr;
+    if (!item || !ret || ret->kids.empty())
+      return fail(n, "internal error: no gpu_error prelude");
+    Type t = types_.resolveAnnot(*ret->kids[0]);
+    if (!t)
+      return fail(n, isResult ? "a spread on the GPU needs the type "
+                                "gpu_error, which this program defines "
+                                "differently"
+                              : "internal error: no bool");
+    return genExpr(*item->kids.back(), t);
   }
 
   R genWhile(const Node &n) {
@@ -10650,6 +11052,26 @@ class Gen {
     return false;
   }
 
+  // Whether some spread in the program has `@place(gpu)`.
+  static bool placesOnGpu(const Node &n) {
+    if (n.kind == NodeKind::Attribute && n.text == "place")
+      return true;
+    for (const syntax::NodePtr &k : n.kids)
+      if (k && placesOnGpu(*k))
+        return true;
+    return false;
+  }
+  // The nodes of gpuPrelude_'s one function: its parameter's type, its
+  // result's type and its body.
+  static const Node *findKind(const Node &n, NodeKind kind) {
+    if (n.kind == kind)
+      return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        if (const Node *f = findKind(*k, kind))
+          return f;
+    return nullptr;
+  }
   static bool definesResult(const Node &n) {
     if ((n.kind == NodeKind::LetItem && n.text == "result") ||
         (n.kind == NodeKind::Ctor && (n.text == "Ok" || n.text == "Err")))
@@ -11250,7 +11672,7 @@ class Gen {
     const Node *bodyNode = n.kids[4].get();
     const Node *drop = nullptr;
     if (needsDrop(b)) {
-      drop = &dropNode(n.text, n.loc);
+      drop = &dropNode(b, n.loc);
       bodyNode = keep(withCleanup(*bodyNode, *drop));
       if (!frames_.empty()) {
         if (frames_.back().tails.count(&n)) addTails(*bodyNode);
@@ -11364,6 +11786,10 @@ class Gen {
   // The prelude's types (`result`, `arena`), when the program does not
   // define them.
   syntax::NodePtr prelude_;
+  // ADR 0068, step 3: the program places a spread on the GPU, and the
+  // function that turns the run's status into `result unit gpu_error`.
+  bool usesGpu_ = false;
+  syntax::NodePtr gpuPrelude_;
   syntax::NodePtr functionConcept_;
   bool usesArenas_ = false;  // the program has a `with_arena`
   std::vector<std::map<std::string, BindingPtr>> scopes_;

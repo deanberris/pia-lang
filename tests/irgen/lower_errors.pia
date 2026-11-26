@@ -17,7 +17,7 @@ let abs32 (x : i32) : i32
   requires x > -2147483648 ensures result >= 0
 = extern "abs"
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:46: error: @lower takes one string of MLIR, as in @lower("linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
+(* CHECK: lower_errors.pia:[[@LINE+2]]:46: error: @lower takes one string of MLIR, or a call of a 'let meta' that computes one, as in @lower("linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
 *)
 let named (a : [u8; 4]) (b : [u8; 4]) : unit @lower(linalg) = ()
 

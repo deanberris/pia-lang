@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "codegen/Codegen.h"
+#include "codegen/Lowerings.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -381,6 +382,10 @@ struct Layout {
 std::optional<Layout> layoutOf(mlir::Type t) {
   if (t.isInteger(1))
     return Layout{1, 1};
+  if (t.isF32())
+    return Layout{4, 4};
+  if (t.isF64())
+    return Layout{8, 8};
   if (auto it = mlir::dyn_cast<IntType>(t)) {
     size_t bytes = it.getStorageWidth() / 8;
     return Layout{bytes, bytes};
@@ -415,9 +420,21 @@ std::string formatInt(IntType it, const unsigned char *p) {
 }
 
 // Formats the value of type `t` stored at `p` in C layout.
+// A float's value, as the shortest literal that reads back as it.
+std::string formatFloat(mlir::Type t, const unsigned char *p) {
+  unsigned bits = t.isF32() ? 32 : 64;
+  uint64_t u = 0;
+  std::memcpy(&u, p, bits / 8); // little endian, like every target Pia has
+  return sema::floatText(llvm::APFloat(t.isF32() ? llvm::APFloat::IEEEsingle()
+                                                 : llvm::APFloat::IEEEdouble(),
+                                       llvm::APInt(bits, u)));
+}
+
 std::string formatValue(mlir::Type t, const unsigned char *p) {
   if (t.isInteger(1))
     return *p ? "true" : "false";
+  if (t.isF32() || t.isF64())
+    return formatFloat(t, p);
   if (auto it = mlir::dyn_cast<IntType>(t))
     return formatInt(it, p);
   auto r = mlir::cast<RecordType>(t);
@@ -445,6 +462,13 @@ std::string callAndFormat(void *fp, mlir::Type t) {
   }
   if (t.isInteger(1))
     return reinterpret_cast<bool (*)()>(fp)() ? "true" : "false";
+  if (t.isF32() || t.isF64()) {
+    unsigned char buf[8] = {0};
+    auto store = [&](auto v) { std::memcpy(buf, &v, sizeof v); };
+    t.isF32() ? store(reinterpret_cast<float (*)()>(fp)())
+              : store(reinterpret_cast<double (*)()>(fp)());
+    return formatFloat(t, buf);
+  }
   if (auto it = mlir::dyn_cast<IntType>(t)) {
     unsigned char buf[8] = {0};
     bool s = it.getLo().isNegative();
@@ -1177,6 +1201,10 @@ struct Session::Impl {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         irgen::generate(*a.tree, kFile, ctx, gd);
     takeDiagnostics(a, gd);
+    // A lowering's MLIR is checked here, although the JIT runs the body
+    // (ADR 0065, step 2).
+    if (module && a.errors.empty())
+      (void)codegen::checkLowerings(*module);
     for (Event &e : mlirErrors)
       a.errors.push_back(std::move(e));
     mlirErrors.clear();

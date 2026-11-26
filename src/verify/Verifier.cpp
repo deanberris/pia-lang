@@ -465,11 +465,25 @@ std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
             return true;
         return false;
       };
+      // A write comes first when it dominates the value's construction,
+      // or when it is nested in an op that comes before the construction
+      // in the construction's block, as a write in a loop that fills a
+      // buffer before the value is built from it.
+      auto before = [&](Operation *m) {
+        if (dom.properlyDominates(op, m))
+          return true;
+        // The innermost block that holds both: there, the op holding the
+        // write must come before the op holding the construction.
+        for (Operation *mm = m; mm && mm != fn.getOperation();
+             mm = mm->getParentOp())
+          if (Operation *a = mm->getBlock()->findAncestorOpInBlock(*op))
+            return a != mm && a->isBeforeInBlock(mm);
+        return false;
+      };
       for (RecMakeOp m : makes)
         if (llvm::any_of(m.getPayload(),
                          [&](Value p) { return rootBuffer(p) == root; }) &&
-            (!dom.properlyDominates(op, m.getOperation()) ||
-             inSameLoop(m.getOperation()))) {
+            (!before(m.getOperation()) || inSameLoop(m.getOperation()))) {
           why = "it writes a buffer after building a recursive value "
                 "with it, which the verifier sees as the buffer's contents "
                 "when it was built";
@@ -505,7 +519,7 @@ class Encoder {
   }
 
   // The sort of a declared constant, so its model value can be read.
-  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted };
+  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted, F32, F64 };
 
   struct Decl {
     std::string exported;  // the SMT-LIB name
@@ -685,6 +699,10 @@ class Encoder {
   Type sortOf(Type t) {
     if (mlir::isa<IntType, mlir::IndexType>(t)) return bvType();
     if (t.isInteger(1)) return boolType();
+    // A float is its IEEE bit pattern, a bit-vector of its own width
+    // (floatSemantics).
+    if (auto f = mlir::dyn_cast<mlir::FloatType>(t))
+      return mlir::smt::BitVectorType::get(ctx_, f.getWidth());
     if (mlir::isa<UnboundedIntType>(t)) return intType();
     if (mlir::isa<RealType>(t)) return realType();
     // A theory's sort is an uninterpreted SMT sort of the same name.
@@ -744,7 +762,36 @@ class Encoder {
     // it puts in a value. Datatypes are then plain, and the depth and size
     // axioms, not Z3's own acyclicity, are what make them well founded.
     llvm::SmallVector<Type> wide;
+    // Leaves that are the field buffers of one buffer of records, which
+    // share its length: each leaf's group, or -1.
+    llvm::SmallVector<int> group;
   };
+
+  // The groups of `t`'s leaves, in the order transforms::recordLeaves
+  // gives them: the field buffers of a buffer of records are one group.
+  static void leafGroups(Type t, llvm::SmallVectorImpl<int> &out, int &next) {
+    auto elementRecord = [](Type b) -> RecordType {
+      if (auto a = mlir::dyn_cast<ArrayType>(b))
+        return mlir::dyn_cast<RecordType>(a.getElementType());
+      if (auto sl = mlir::dyn_cast<SliceType>(b))
+        return mlir::dyn_cast<RecordType>(sl.getElementType());
+      return {};
+    };
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      for (Type f : r.getFieldTypes())
+        leafGroups(f, out, next);
+      return;
+    }
+    if (RecordType r = elementRecord(t)) {
+      llvm::SmallVector<Type> fields;
+      transforms::recordLeaves(r, fields);
+      int g = next++;
+      for (size_t i = 0; i < fields.size(); ++i)
+        out.push_back(g);
+      return;
+    }
+    out.push_back(-1);
+  }
   struct RecInfo {
     std::string sort;  // rec.tree
     std::vector<RecCtor> ctors;
@@ -785,6 +832,8 @@ class Encoder {
           transforms::recordLeaves(p, rc.leaves);
         else
           rc.leaves.push_back(p);
+        int next = 0;
+        leafGroups(p, rc.group, next);
       }
       for (Type leaf : rc.leaves) {
         std::set<std::string> before = recUsed_;
@@ -1132,6 +1181,9 @@ class Encoder {
     Type sort = sortOf(t);
     if (!sort) return std::nullopt;
     Value v = declare(sort, display, !display.empty());
+    // A float's counterexample value is read from its bits as a float.
+    if (!display.empty() && mlir::isa<mlir::FloatType>(t))
+      decls_.back().sort = t.isF32() ? Sort::F32 : Sort::F64;
     if (auto it = mlir::dyn_cast<IntType>(t)) assertTerm(inRange(v, it));
     if (mlir::isa<mlir::IndexType>(t)) assertTerm(inRange(v, indexRange()));
     return v;
@@ -1943,6 +1995,22 @@ class Encoder {
           assertTerm(inRange(results[0], it));
       // A payload's integers are in their ranges, and its buffers' lengths
       // are lengths, as they were when the value was built.
+      // The field buffers of one buffer of records share its length.
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
+        unsigned tag = 0;
+        if (const RecCtor *c =
+                recCtor(pl.getInput().getType(), pl.getCtor(), tag))
+          if (c->group.size() == pl.getNumResults())
+            for (unsigned a = 0; a < pl.getNumResults(); ++a)
+              for (unsigned b = a + 1; b < pl.getNumResults(); ++b)
+                if (c->group[a] >= 0 && c->group[a] == c->group[b]) {
+                  Value la = lengths_.lookup(pl.getResult(a));
+                  Value lb = lengths_.lookup(pl.getResult(b));
+                  if (la && lb)
+                    assertTerm(eq(la, lb));
+                  break;
+                }
+      }
       if (auto pl = mlir::dyn_cast<RecPayloadOp>(op))
         for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
           if (auto it = mlir::dyn_cast<IntType>(r.getType()))
@@ -2220,6 +2288,62 @@ class Encoder {
 
   // The value semantics shared by the forward walk and demand encoding.
   // Returns false for ops it does not model.
+  // f32 and f64 (M11) before ADR 0038's encoding: a float is its bit
+  // pattern, so a literal is exact and negation, which flips the sign bit,
+  // is too. The other operations are uninterpreted functions of the bits:
+  // the same operands give the same result, as IEEE 754 promises, and
+  // nothing else is known, so a goal that needs their values fails
+  // rather than being proved wrongly. `=` is IEEE equality, not equality of
+  // bits (NaN <> NaN, -0.0 = 0.0), so it is uninterpreted too, and `<>` is
+  // its negation; `>` and `>=` are `<` and `<=` swapped, as in IEEE 754.
+  Value floatSemantics(Operation *op, llvm::ArrayRef<Value> in) {
+    auto name = [](Type t, llvm::StringRef what) {
+      return ((t.isF32() ? "f32." : "f64.") + what).str();
+    };
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
+      auto f = mlir::dyn_cast<mlir::FloatAttr>(c.getValue());
+      if (!f)
+        return Value();
+      return create<mlir::smt::BVConstantOp>(f.getValue().bitcastToAPInt());
+    }
+    if (mlir::isa<mlir::arith::NegFOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      Type t = mlir::smt::BitVectorType::get(ctx_, w);
+      Value sign = create<mlir::smt::BVConstantOp>(APInt::getSignMask(w));
+      return create<mlir::smt::BVXOrOp>(t, in[0], sign);
+    }
+    if (mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
+                  mlir::arith::DivFOp>(op)) {
+      Type t = op->getResult(0).getType();
+      llvm::StringRef what = mlir::isa<mlir::arith::AddFOp>(op)   ? "add"
+                             : mlir::isa<mlir::arith::SubFOp>(op) ? "sub"
+                             : mlir::isa<mlir::arith::MulFOp>(op) ? "mul"
+                                                                  : "div";
+      return apply(name(t, what), {in[0], in[1]}, sortOf(t));
+    }
+    if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
+      Type t = c.getLhs().getType();
+      using P = mlir::arith::CmpFPredicate;
+      switch (c.getPredicate()) {
+      case P::OEQ:
+        return apply(name(t, "eq"), {in[0], in[1]}, boolType());
+      case P::UNE:
+        return notOf(apply(name(t, "eq"), {in[0], in[1]}, boolType()));
+      case P::OLT:
+        return apply(name(t, "lt"), {in[0], in[1]}, boolType());
+      case P::OLE:
+        return apply(name(t, "le"), {in[0], in[1]}, boolType());
+      case P::OGT:
+        return apply(name(t, "lt"), {in[1], in[0]}, boolType());
+      case P::OGE:
+        return apply(name(t, "le"), {in[1], in[0]}, boolType());
+      default:
+        return Value();
+      }
+    }
+    return Value();
+  }
+
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
                  llvm::DenseMap<Value, Value> &arrays,
                  llvm::DenseMap<Value, Value> &lengths,
@@ -2484,6 +2608,10 @@ class Encoder {
       out.push_back(lo);
       return true;
     }
+    if (Value r = floatSemantics(op, in)) {
+      out.push_back(r);
+      return true;
+    }
     if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
       if (auto b = mlir::dyn_cast<mlir::BoolAttr>(c.getValue())) {
         out.push_back(boolConst(b.getValue()));
@@ -2734,7 +2862,17 @@ class Encoder {
     Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
     Value st = term(forOp.getStep());
     llvm::SmallVector<Value> inits;
-    for (Value v : forOp.getInitArgs()) inits.push_back(term(v));
+    // A buffer a loop carries, such as the memory of an allocator it
+    // passes on from call to call, has no term: it is tracked by its
+    // contents and length, which `at` reads from the value carried.
+    auto isBuffer = [](Value v) {
+      return mlir::isa<ArrayType, SliceType>(v.getType());
+    };
+    for (Value v : forOp.getInitArgs()) {
+      inits.push_back(term(v));
+      if (isBuffer(v) && arrays_.count(v) && lengths_.count(v))
+        inits.back() = bv(0); // a placeholder: buffers are not terms
+    }
     if (!lb || !ub || !st || llvm::is_contained(inits, Value()))
       return skipLoop(forOp);
     mlir::Block &body = *forOp.getBody();
@@ -2751,14 +2889,27 @@ class Encoder {
            notOf(eq(st, bv(0))), nonzero);
       if (done_) return false;
     }
-    // The values the body's arguments take at iteration `i`.
-    auto at = [&](Value i, llvm::ArrayRef<Value> carried) {
+    // The values the body's arguments take at iteration `i`: `carried`
+    // are their terms, and `from` the values they come from, whose
+    // buffers' contents and lengths a carried buffer has.
+    auto at = [&](Value i, llvm::ArrayRef<Value> carried,
+                  mlir::ValueRange from) {
       Demand d;
       d.values[forOp.getInductionVar()] = i;
-      for (auto [arg, v] : llvm::zip(forOp.getRegionIterArgs(), carried))
-        if (v) d.values[arg] = v;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      for (auto [arg, v, src] :
+           llvm::zip(forOp.getRegionIterArgs(), carried, from)) {
+        if (isBuffer(arg)) {
+          if (Value a = arrays_.lookup(src))
+            d.arrays[arg] = a;
+          if (Value l = lengths_.lookup(src))
+            d.lengths[arg] = l;
+          continue;
+        }
+        if (v)
+          d.values[arg] = v;
+      }
       // `old` inside reads the memory on entry, as it does outside.
       d.oldArrays = entryArrays_;
       d.envOutside = forOp;
@@ -2766,7 +2917,7 @@ class Encoder {
     };
 
     for (auto inv : invariants) {
-      Demand d = at(lb, inits);
+      Demand d = at(lb, inits, forOp.getInitArgs());
       goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
            demandPredicate(inv.getPredicate(), d), false);
       if (done_) return false;
@@ -2790,13 +2941,30 @@ class Encoder {
     env_[forOp.getInductionVar()] = i;
     for (Value arg : forOp.getRegionIterArgs())
       if (auto v = havoc(arg.getType())) env_[arg] = *v;
+    // A carried buffer is a new one in an arbitrary iteration, whose
+    // contents and length the invariants say what they know of.
+    auto freshBuffer = [&](Value b) {
+      Type sort = sortOf(b.getType());
+      if (!sort)
+        return;
+      arrays_[b] = declare(sort, "", false);
+      Value len = declare(bvType(), "", false);
+      assertTerm(inRange(len, indexRange()));
+      lengths_[b] = len;
+      if (holdsSlices(b.getType()))
+        innerLengths_[b] = declare(
+            mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
+    };
+    for (Value arg : forOp.getRegionIterArgs())
+      if (isBuffer(arg))
+        freshBuffer(arg);
     havocBuffers(written);
     llvm::SmallVector<Value> yields;
     bool ok = walkBlock(body, &yields);
     if (ok) {
       Value next = bvBin("add", i, st);
       for (auto inv : invariants) {
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::invariant, inv,
              "the loop invariant holds after each iteration",
              demandPredicate(inv.getPredicate(), d), false);
@@ -2804,7 +2972,7 @@ class Encoder {
       }
       for (auto m : measures) {
         if (done_) break;
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::decreases, m, "the measure decreases",
              decreasesTerm(term(m.getMeasure()), demand(m.getMeasure(), d)),
              false);
@@ -2819,6 +2987,8 @@ class Encoder {
     havocBuffers(written);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
+      if (isBuffer(r))
+        freshBuffer(r);
       auto v = havoc(r.getType());
       if (v) env_[r] = *v;
       results.push_back(v ? *v : Value());
@@ -2831,7 +3001,7 @@ class Encoder {
                               eq(bvBin("srem", bvBin("sub", exit, lb), st),
                                  bv(0)))));
     for (auto inv : invariants) {
-      Demand d = at(exit, results);
+      Demand d = at(exit, results, forOp.getResults());
       if (Value p = demand(inv.getPredicate(), d)) assume(p);
     }
     return true;
@@ -3258,7 +3428,7 @@ class Encoder {
   // record unused sorts or datatypes in the query.
   static bool canEncodeType(Type t) {
     if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
-                  SortType, RecType>(t) ||
+                  SortType, RecType, mlir::FloatType>(t) ||
         t.isInteger(1))
       return true;
     if (auto r = mlir::dyn_cast<RecordType>(t))
@@ -5430,6 +5600,19 @@ void solve(const Job &job, const Options &options, Outcome &out,
         if (m.get_const_decl(i).name().str() == d.exported)
           return recValue(m.get_const_interp(m.get_const_decl(i)));
       return "any";
+    }
+    if (d.sort == Sort::F32 || d.sort == Sort::F64) {
+      // A float is its bits (Encoder::floatSemantics): read back as one.
+      bool f32 = d.sort == Sort::F32;
+      z3::expr v = m.eval(ctx.bv_const(name, f32 ? 32 : 64),
+                          /*model_completion=*/true);
+      uint64_t bits = 0;
+      if (!v.is_numeral_u64(bits))
+        return v.to_string();
+      llvm::APFloat x(f32 ? llvm::APFloat::IEEEsingle()
+                          : llvm::APFloat::IEEEdouble(),
+                      APInt(f32 ? 32 : 64, bits));
+      return sema::floatText(x);
     }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
                  : d.sort == Sort::Int  ? ctx.int_const(name)

@@ -207,7 +207,7 @@ Two types exist only for specifications ([ADR 0036](adr/0036-library-theories.md
 - **`int`**, an unbounded mathematical integer. Bare `int` is unbounded, and `int{lo..hi}` is still a range type: a range is written with its braces right after `int`, so the two spellings cannot be confused ([grammar.md](grammar.md)). The verifier encodes `int` as the SMT `Int` sort. An element of a slice read in a spec function's body keeps its type's range, as it does where code loads one: an element of a `[u32]` is between 0 and 2^32 - 1 there, so a sum of them as an `int` does not decrease.
 - **`real`**, a mathematical real number, encoded as the SMT `Real` sort. It is not a floating-point type.
 
-They have `+`, `-`, `*`, unary `-` and the comparisons, and `real` also has `/`. All of it is exact, so nothing overflows and no `nooverflow` goal is raised. A real division raises a `nonzero` goal for its divisor where it is walked as code, such as in a spec function's body. An integer literal takes either type from the context, and an `int` literal may be larger than any machine type. A literal with a decimal point or an exponent, such as `0.5` or `1.0e3`, is a `real`, read as an exact rational (`1/2`, `1000`), and a suffix such as `0.5f32` is an error until Pia has floating-point types.
+They have `+`, `-`, `*`, unary `-` and the comparisons, and `real` also has `/`. All of it is exact, so nothing overflows and no `nooverflow` goal is raised. A real division raises a `nonzero` goal for its divisor where it is walked as code, such as in a spec function's body. An integer literal takes either type from the context, and an `int` literal may be larger than any machine type. A literal with a decimal point or an exponent, such as `0.5` or `1.0e3`, is a `real`, read as an exact rational (`1/2`, `1000`), unless a float is expected there: a suffix such as `0.5f32` makes it a float, which is not a `real` ("Floats" below).
 
 Conversions are exact, so none raises a goal. `int x` turns any integer into an `int`, and an integer also widens to `int` wherever an `int` is expected, as a range type widens to a larger one. `real x` turns an integer or an `int` into a `real`. There is no conversion back: a value of a machine type cannot come from a specification.
 
@@ -239,6 +239,16 @@ positive.pia:1:32: error: this expression has the spec-only type real; int and r
 So nothing the program computes depends on a spec-only value. The verifier sees spec-only state like any other, and codegen erases it, along with spec functions, lemmas and contracts (see [codegen.md](codegen.md), "Spec-only state").
 
 **Encoding.** `int` uses the upstream `smt` dialect's `Int` sort and its operations. The dialect has no `Real` sort at our LLVM pin, so the verifier extends it in the smallest way that keeps it the one encoding: `real` is written as a sort named `Real`, and the operations the dialect lacks (Real `+ - * /` and comparisons, `to_real`, and `bv2int` for converting a bit-vector) are declared as functions under their SMT-LIB names and applied with `smt.apply_func`. When the query is exported to SMT-LIB, those declarations and the sort's `declare-sort` are dropped, so Z3 reads each use as SMT-LIB's own interpreted symbol. A machine integer becomes an `Int` as `bv2int` of its bit-vector, less `2^w` when it is negative, since `bv2int` reads a bit-vector as unsigned. A real literal `n/d` is `(/ (to_real n) (to_real d))`.
+
+## Floats
+
+`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and that is all the solver knows of it:
+
+- A literal is its exact bits, and negation flips the sign bit, so both are exact.
+- `+`, `-`, `*` and `/` are uninterpreted functions of the bits (`f32.add` and so on): the same operands give the same result, and nothing else is known.
+- `=` is IEEE equality, not equality of bits, since NaN differs from itself and `-0.0 = 0.0`, so it is uninterpreted too. `<>` is its negation, `<` and `<=` are uninterpreted, and `>` and `>=` are `<` and `<=` with the operands swapped.
+
+So a goal that follows from those facts is proved, such as `(a > b) = (b < a)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
 
 ## Spec state
 
