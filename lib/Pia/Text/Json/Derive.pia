@@ -20,6 +20,8 @@ interface Derive = sig
   let meta json_record : list
   (** A variant's codec. *)
   let meta json_variant : list
+  (** A distinct type's codec: the value it wraps (ADR 0064). *)
+  let meta json_distinct : list
   (** The errors reading t can raise, exactly: `<t>_json_error`. *)
   let meta json_errors : type
   (** Which type a call of read_json is for: it carries no value. *)
@@ -559,6 +561,93 @@ let meta json_variant (t : type_decl) : list =
     (concat (map err_mapper recs)
       (concat (if gt ns 0 then [ key_fn ] else []) (concat (if tagged then [ ctor_fn ] else []) [ reader_fn ]))))
 
+(* Whether t is a distinct type (ADR 0064): one field, named `raw#<t>` by
+   the expander, a name no source can write. *)
+let meta is_distinct (t : type_decl) : bool =
+  if eq (length (fields t)) 1 then
+    (let bs = bytes (nth (fields t) 0) in
+     if lt (length bs) 4 then false
+     else and (and (eq (nth bs 0) 114) (eq (nth bs 1) 97)) (and (eq (nth bs 2) 119) (eq (nth bs 3) 35)))
+  else false
+
+(* @derive(json) on a distinct type (ADR 0064, section 4): a length is
+   the JSON value it wraps, so `length 5` is the number 5, not an object.
+   `write_json_<t>` writes the underlying integer or bool; `read_json_<t>`
+   reads one, with the underlying type's range checked as its digits are
+   read, `Range_<t>`, and anything else `Syntax_<t>`, and makes the value
+   with the type's conversion, `length v`. *)
+let meta json_distinct (t : type_decl) : list =
+  let tn = name t in
+  let json_write = let (f) => concat "Pia.Text.Json.Write." f in
+  let json_read = let (f) => concat "Pia.Text.Json.Read." f in
+  let f = nth (fields t) 0 in
+  let u = field_type t f in
+  let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
+  let is_bool = if eq (kind u) "TypeName" then eq (name u) "bool" else false in
+  let unsupported = concat "@derive(json): the distinct type '" (concat tn "' wraps a type that @derive(json) cannot read or write yet; it takes integers, range types and bool") in
+  let supported =
+    if is_bool then true
+    else if eq (kind u) "RangeType" then true
+    else if eq (kind u) "TypeName" then
+      (if fold (let (h) (n) => or h (eq n (name u))) false ints then true else fail unsupported)
+    else fail unsupported in
+  let b = if is_bool then [ 0; 1 ] else range_of u in
+  let lo = nth b 0 in
+  let hi = nth b 1 in
+  let w =
+    if is_bool then [ "write_bool"; 5 ]
+    else if ge lo 0 then
+      (if le hi 255 then [ "write_u8"; 3 ] else if le hi 65535 then [ "write_u16"; 5 ]
+       else if le hi 4294967295 then [ "write_u32"; 10 ] else [ "write_u64"; 20 ])
+    else
+      (if and (ge lo (-128)) (le hi 127) then [ "write_i8"; 4 ] else if and (ge lo (-32768)) (le hi 32767) then [ "write_i16"; 6 ]
+       else if and (ge lo (-2147483648)) (le hi 2147483647) then [ "write_i32"; 11 ] else [ "write_i64"; 20 ]) in
+  let room = nth w 1 in
+  let wname = concat "write_json_" tn in
+  let writer_fn =
+    `( let $wname ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $t) : usize
+         requires $!pos <= len $!dst && len $!dst - $!pos >= $room
+         ensures $!pos < $!result && $!result <= $!pos + $room
+       = $(json_write (nth w 0)) $!dst $!pos $!v.$f ) in
+  let esyn = concat "Syntax_" tn in
+  let erng = concat "Range_" tn in
+  let ename = concat tn "_json_error" in
+  let error_type =
+    if is_bool then `( let $ename = type | $esyn of usize )
+    else `( let $ename = type | $esyn of usize | $erng of usize ) in
+  let rname = concat tn "_json_read" in
+  let read_type = `( let $rname = type { value : $t; stop : usize } ) in
+  let body =
+    if is_bool then
+      `( match $(json_read "read_bool") $!s $!pos with
+         | Ok $!r -> Ok { value = $tn $!r.value; stop = $!r.stop }
+         | Err $!p -> Err ($esyn $!p) )
+    else if ge lo 0 then
+      `( match $(json_read "read_uint") $!s $!pos $hi with
+         | Ok $!r ->
+             if $!r.value < $lo then Err ($erng $!r.start)
+             else (let $!v : $u = $!r.value in Ok { value = $tn $!v; stop = $!r.stop })
+         | Err $!e ->
+             (match $!e with
+              | NotNumber $!p -> Err ($esyn $!p)
+              | OutOfRange $!p -> Err ($erng $!p)) )
+    else
+      `( match $(json_read "read_int") $!s $!pos $lo $hi with
+         | Ok $!r -> (let $!v : $u = $!r.value in Ok { value = $tn $!v; stop = $!r.stop })
+         | Err $!e ->
+             (match $!e with
+              | NotNumber $!p -> Err ($esyn $!p)
+              | OutOfRange $!p -> Err ($erng $!p)) ) in
+  let rfn = concat "read_json_" tn in
+  let reader_fn =
+    `( let $rfn ($!s : [u8]) ($!pos : usize) : result $rname $ename
+         requires $!pos <= len $!s
+         ensures (match $!result with
+           | Ok $!r -> $!pos < $!r.stop && $!r.stop <= len $!s
+           | Err _ -> true)
+       = $body ) in
+  [ writer_fn; error_type; read_type; reader_fn ]
+
 (* @derive(json) (ADR 0045, step 2 to 4; docs/json.md): for a record of
    integers, range types and bools, `write_json_<t>` writes it as a JSON
    object with Pia.Text.Json.Write, into a caller's buffer with the room
@@ -576,6 +665,7 @@ let meta json_variant (t : type_decl) : list =
    fully initialised. Names it binds end in `#field`, which no source can
    write. *)
 let meta json_record (t : type_decl) : list =
+  if is_distinct t then json_distinct t else
   let tn = name t in
   (* The modules' functions by their full paths, spliced as names. *)
   let json_write = let (f) => concat "Pia.Text.Json.Write." f in

@@ -203,6 +203,31 @@ class ReplTest(unittest.TestCase):
         self.assertTrue(r["ok"], r)
         r = self.repl.run("make 3")
         self.assertEqual(kinds(r, "value")[0]["value"], "{ r = 3; g = 7 }")
+        # A one-field record comes back from codegen as its one scalar, in
+        # a register, not through a pointer.
+        self.repl.run("let wrap = type { a : u8 }")
+        r = self.repl.run("let five : wrap = { a = 5 }")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(kinds(r, "defined")[0]["value"], "{ a = 5 }")
+        self.repl.run("let deep = type { w : wrap }")
+        r = self.repl.run("let inner (v : u8) : deep = { w = { a = v } }\ninner 9")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(kinds(r, "value")[0]["value"], "{ w = { a = 9 } }")
+
+    def test_distinct_types(self):
+        # A distinct type shows as the conversion that makes it, and the
+        # conversions the expander writes, `length#of`, are not echoed.
+        r = self.repl.run("let length = type u32")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([e["name"] for e in kinds(r, "defined")], ["length"])
+        r = self.repl.run("let l : length = length 5")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(kinds(r, "defined")[0]["value"], "length 5")
+        self.repl.run("let temp = type i16\nlet pixels = type length")
+        r = self.repl.run("temp (-3)\npixels (length 7)")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([v["value"] for v in kinds(r, "value")],
+                         ["temp (-3)", "pixels (length 7)"])
 
     def test_floats(self):
         # f32 and f64 values show as the shortest literal that reads back

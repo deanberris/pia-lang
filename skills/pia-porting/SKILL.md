@@ -23,7 +23,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | integers | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, all bounded | UB on signed overflow, unsigned wraps | panics in debug, wraps in release | 63-bit, wraps | illegal behaviour |
 | a bounded value | `int{0..99}`, `[int{0..15}]` | a comment | a newtype with a check | a private type | `u7`, a check |
 | type alias | `let byte = u8` | `using byte = uint8_t` | `type Byte = u8` | `type byte = int` | `const Byte = u8` |
-| distinct type (newtype) | `let length = type u32`; `length 5` wraps, `u32 l` unwraps, no implicit conversion; operators from `@derive(ord, add, scale)` | `enum class`, a one-field struct | `struct Length(u32)` | a private type | `enum(u32)` |
+| distinct type (newtype) | `let length = type u32`; `length 5` wraps, `u32 l` unwraps, no implicit conversion; operators from `@derive(ord, add, scale)`, `@derive(hash)` and `@derive(json)` from their modules | `enum class`, a one-field struct | `struct Length(u32)` | a private type | `enum(u32)` |
 | wraparound | `@overflow(wrap)` after the result type | unsigned arithmetic | `wrapping_add`, `Wrapping<T>` | the default | `+%` |
 | saturation | `+\|`, `-\|`, or `@overflow(saturate)` | by hand | `saturating_add` | by hand | `+\|` |
 | checked arithmetic | a `requires`, a guard, or a `result` | `__builtin_add_overflow` | `checked_add` | by hand | `@addWithOverflow` |
@@ -52,7 +52,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): conversions between floats and integers and the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds with `costs` (ADR 0062), `@derive(hash, json)` on distinct types (ADR 0064 step 4), and `spread` on the GPU.
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): conversions between floats and integers and the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds with `costs` (ADR 0062) and `spread` on the GPU.
 
 ## From C and C++
 
