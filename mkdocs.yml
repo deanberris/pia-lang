@@ -73,6 +73,7 @@ nav:
   - "Demo: sediment transport": sediment.pia.md
   - "Demo: sediment by basin, in parallel": basins.pia.md
   - "Demo: sediment in pull form": pull.pia.md
+  - "Demo: D8 directions and the picture on the GPU": placed.pia.md
   - A tour of Pia: tour.md
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
@@ -178,3 +179,7 @@ nav:
       - adr/0068-gpu-compute-through-spirv-and-metal.md
       - adr/0069-pure-and-impure-functions.md
       - adr/0070-raw-binary-embedding.md
+      - adr/0071-function-references.md
+      - adr/0072-drops-run-in-constant-stack.md
+      - adr/0073-prover-identity-abi-version-and-advisories.md
+      - adr/0074-library-types-tensors.md

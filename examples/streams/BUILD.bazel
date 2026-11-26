@@ -146,3 +146,52 @@ sh_test(
     ],
     target_compatible_with = APPLE_SILICON,
 )
+
+# D8 directions and the picture on the GPU (docs/placed.pia.md, ADR 0068,
+# step 3). piac compiles the placed spreads with Xcode's Metal toolchain,
+# outside the sandbox, so this needs a Mac with it installed.
+pia_object(
+    name = "placed_obj",
+    src = "//docs:placed.pia.md",
+    tags = [
+        "no-sandbox",
+        "requires-metal",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)
+
+cc_binary(
+    name = "srtm_gpu",
+    srcs = [
+        "srtm_gpu.c",
+        ":placed_obj",
+    ],
+    tags = ["requires-metal"],
+    target_compatible_with = APPLE_SILICON,
+    deps = [
+        ":demo_io",
+        ":streams_pia",
+        "//src/runtime/metal",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
+)
+
+# The GPU against the CPU on the crop of testdata/README.md. The whole tile
+# is a manual run: bazel run //examples/streams:srtm_gpu -- N46E008.hgt.
+sh_test(
+    name = "srtm_gpu_run_test",
+    srcs = ["srtm_gpu_run_test.sh"],
+    args = [
+        "$(rootpath :srtm_gpu)",
+        "$(rootpath testdata/N46E008_crop256.hgt)",
+    ],
+    data = [
+        "testdata/N46E008_crop256.hgt",
+        ":srtm_gpu",
+    ],
+    tags = [
+        "requires-gpu",
+        "requires-metal",
+    ],
+    target_compatible_with = APPLE_SILICON,
+)

@@ -30,11 +30,11 @@
       "wall_ms_n": 5155.8
     },
     "lib/Pia/Compress/Huffman.pia": {
-      "cost": 118318540,
-      "goals": 255,
-      "solve_ms_n": 22635,
-      "solved": 225,
-      "wall_ms_n": 41334.6
+      "cost": 304583773,
+      "goals": 671,
+      "solve_ms_n": 63110,
+      "solved": 592,
+      "wall_ms_n": 115247.0
     },
     "lib/Pia/Compress/Inflate.pia": {
       "cost": 377232218,
@@ -1215,10 +1215,10 @@
   },
   "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 7526977911,
-    "goals": 12250,
-    "solved": 10858,
+    "cost": 7713243144,
+    "goals": 12666,
+    "solved": 11225,
     "wall_ms_1": 0,
-    "wall_ms_n": 1375776.0
+    "wall_ms_n": 1449688.4
   }
 }

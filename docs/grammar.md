@@ -64,6 +64,8 @@ borrowed moved out inout fixed mutable mod handle defer as
 
 `step` is a keyword only inside a `for` or `spread` header, between the keyword and `do`. Everywhere else it is an ordinary identifier, so a function can still be called `step`. Likewise `reads` is a keyword only first on a line and before a name, where a spec function's `reads` clause starts.
 
+`costs` is a keyword only before a name and `<=`, where a cost clause starts, `costs iterations <= len xs` ([verifier.md](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md)), so a function can still be called `costs`. Its counters `iterations` and `calls` are names only after `costs` and after `spent`, as in `spent iterations`.
+
 `theory`, `sort` and `axiom` are keywords only right after `let`, when a name follows, and `model` only in `let model m :` ([verifier.md](verifier.md#theories)). `spec` and `lemma` are keywords only right after `let` or `let rec`, when a name follows: `let spec sorted ...` defines a spec function and `let lemma split ...` a lemma ([verifier.md](verifier.md#spec-functions-and-lemmas)). `let spec = 3` binds a value called `spec`. Inside a body, `let spec ref : mutable [u8; 4096] = zeros in ...` binds spec state, and `(spec log : inout [u16; 64])` is a spec parameter, where `spec` is a keyword only when a name and a colon follow it, so `(spec : u8)` is still a parameter called `spec`; likewise `spec seen : [u8; 256]` in a record type is a spec field ([verifier.md](verifier.md#spec-state), ADR 0058).
 
 Names such as `result`, `old`, `dyn`, `concept`, `adapter`, `item`, `ident`, `prec`, `left` and `right` are ordinary identifiers that the prelude or the contract checker gives meaning to.
@@ -177,7 +179,8 @@ param     = IDENT | SPLICE_IDENT
           | "(" ")" | "(" "..." ")" ;
 ret_annot = ":" annot { attribute } | attribute { attribute } ;
 contract  = "requires" stmt | "ensures" stmt | "decreases" stmt
-          | "reads" stmt ;   (* a spec function's footprint, ADR 0060 *)
+          | "reads" stmt     (* a spec function's footprint, ADR 0060 *)
+          | "costs" IDENT "<=" stmt ;   (* a cost bound, ADR 0062 *)
 
 lambda    = "let" [ captures ] lparam { lparam } [ ":" annot ] { contract } "=>" seq ;
 captures  = "[" capture { "," capture } "]" ;

@@ -611,10 +611,30 @@ class Parser {
   // `invariant` is a contract of a state (ADR 0031); loops read their own.
   bool atContract() const {
     return at(K::Requires) || at(K::Ensures) || at(K::Decreases) ||
-           at(K::Invariant) || at(K::Reads);
+           at(K::Invariant) || at(K::Reads) || atCosts();
+  }
+
+  // `costs c <= e` (ADR 0062). `costs` is a keyword only here, before a
+  // name and `<=`, so it takes no name away from code.
+  bool atCosts() const {
+    return at(K::Ident) && tok().text == "costs" && kind(1) == K::Ident &&
+           kind(2) == K::Op && tok(2).text == "<=";
   }
 
   NodePtr contract() {
+    if (atCosts()) {
+      auto c = makeNode(N::Costs, loc());
+      take(); // costs
+      c->text = std::string(take().text);
+      take(); // <=
+      bool savedContract = contractMode_, savedEnded = clauseEnded_;
+      contractMode_ = true;
+      clauseEnded_ = false;
+      c->add(stmt());
+      contractMode_ = savedContract;
+      clauseEnded_ = savedEnded;
+      return c;
+    }
     N k = at(K::Requires)    ? N::Requires
           : at(K::Ensures)   ? N::Ensures
           : at(K::Invariant) ? N::Invariant
@@ -1000,7 +1020,7 @@ class Parser {
           expect(K::RParen, "')'");
         }
         args.push_back(std::move(t));
-      } else if (canStartTypeAtom(kind()) && !at(K::Type)) {
+      } else if (canStartTypeAtom(kind()) && !at(K::Type) && !atCosts()) {
         args.push_back(typeAtom());
       } else {
         break;
@@ -1655,10 +1675,16 @@ class Parser {
 
   NodePtr application() {
     NodePtr f = postfix();
-    if (canStartAtom(kind())) {
+    // A cost clause after a predicate ends it: `ensures result <= len xs`
+    // then `costs iterations <= len xs`.
+    auto argument = [&] {
+      return canStartAtom(kind()) && !(contractMode_ && atCosts());
+    };
+    if (argument()) {
       auto app = makeNode(N::Apply, f->loc);
       app->add(std::move(f));
-      while (canStartAtom(kind())) app->add(postfix());
+      while (argument())
+        app->add(postfix());
       f = std::move(app);
     }
     // `e?` passes an error on (ADR 0028). It applies to the whole

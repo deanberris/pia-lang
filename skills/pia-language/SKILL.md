@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>`, refinement types, cost bounds (`costs`, ADR 0062) are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -59,6 +59,7 @@ let count_bright (ys : [u16]) : usize
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
+| `costs iterations <= len xs`, `costs calls <= 0`; `spent iterations` in an invariant | a cost bound (ADR 0062): every clause names its counter, `iterations` (loop iterations) or `calls` (non-spec calls), and is proved at return. A loop needs an invariant on `spent c`. Callees need their own bound, unless they have no loop or recursion. Function counters such as `less` come later. See `tests/verify/costs.pia` |
 | `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). See `tests/verify/spread.pia` |
 | `let rec tree = type \| Leaf \| Node of { l : box tree; k : u32 }` | a recursive type (ADR 0047): proved, with structural recursion needing no `decreases`, but not compiled yet. See `tests/verify/rec_types.pia` |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
@@ -168,6 +169,7 @@ end
 | slow or nonlinear goals | `w * h` or `/ n` in a `requires`, a `forall` in a `requires`, or `@fuel` above 4 | range-typed factors, ranged element types, a lemma, or a helper with its own contract |
 | `requires x < 100` still costs a solver query at each call | a precondition is always sent to Z3 | `int{0..99}` instead |
 | `=` on two records is rejected | records have no built-in equality | `@derive(eq)` on the type |
+| a quantified goal times out though each step is trivial, or proves alone but not beside the rest of its file | Z3's default solver on a quantified bit-vector query is chaotic: unrelated declarations in the query can turn 50 ms into minutes | split the step into a small `let lemma`, and put `@solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")` on the function, as `lib/Pia/Llm/Tokenizer.pia` does |
 | `+` or `<` on a distinct type is rejected | a distinct type inherits no operators | `@derive(add)`, `@derive(ord)` or `@derive(scale)` on it, or unwrap with `u32 l` |
 | an intended failure hangs the test | a failing goal over arrays of arrays with quantifiers can run Z3 for a long time | keep intended failures free of quantifiers |
 | a `// CHECK:` line is ignored, or breaks the parse | `//` is not a Pia comment | put the RUN and CHECK lines inside `(* *)` |

@@ -48,11 +48,12 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | C calls | `let f (x : i32) : i32 ensures ... = extern "f"`; `unsafe f x` if uncontracted | native | `extern "C"`, `unsafe` | `external` | `extern` |
 | assertions | `assert p`, proved, never run | `assert` at run time | `assert!` | `assert` | `std.debug.assert` |
 | loops | `for i in 0 .. n` (half open) with `invariant`; `while` with `decreases` | `for` | `for i in 0..n` | `for i = 0 to n - 1` (inclusive) | `for (0..n) \|i\|` |
+| complexity | `costs iterations <= len xs`, proved (ADR 0062) | a comment | a comment | a comment | a comment |
 | parallel loops | `spread i in 0 .. n do ... done`, proved race-free | OpenMP | rayon | domains | threads |
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): conversions between floats and integers and the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds with `costs` (ADR 0062), `@derive(hash, json)` on distinct types (ADR 0064 step 4), and `spread` on the GPU.
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): conversions between floats and integers and the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds that count calls to a function such as `less` (ADR 0062 step 2), `@derive(hash, json)` on distinct types (ADR 0064 step 4), and `spread` on the GPU.
 
 ## From C and C++
 

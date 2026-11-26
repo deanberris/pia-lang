@@ -22,6 +22,7 @@ cc_library(
     deps = [
         "//src/cert",
         "//src/dialect",
+        "//src/gpu",
         "//src/syntax",
         "//src/transforms",
         "@llvm-project//llvm:AllTargetsCodeGens",
