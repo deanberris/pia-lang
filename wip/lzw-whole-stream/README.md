@@ -98,3 +98,21 @@ invariants through each call.
     and its chain to `S.sym`.
   - `Lzw.pia:387` and `:394`, in `link_new`: `link_tr` for the new entry,
     in the root and entry branches.
+
+## Index-explicit link_tr lemmas (2026-11-26): all of Lzw.pia proves
+
+- Round 1: `link_entry_parts`, `link_root_parts`, `link_entry_make` and
+  `link_root_make` state `link_tr`'s copy relation with the entry's indices
+  explicit, so `link_new` and `sym_is_x` no longer reveal `link_tr`.
+  link_new's two asserts prove; sym_is_x's chain assert and two loop goals
+  did not (509 of 516).
+- Round 2: `sym_chain`, the chain `S.sym t clear c d = S.sym t clear p d =
+  x.[ib + d] = x.[ia + d]` as a lemma of three foralls over d, called with
+  the two output offsets.
+- Now: the whole file, default solver timeout, 689 of 689 goals, cost
+  1.08e9, 229 s on 4 threads. No assume, no @trusted.
+
+    piac --verify --iface-path=if wip/lzw-whole-stream/Lzw.pia
+
+Left for #339: move Ref.pia and Lzw.pia's decode_ref into lib/Pia/Image/Gif
+with a test, and the GIF round trip, which needs the encoder's trace.
