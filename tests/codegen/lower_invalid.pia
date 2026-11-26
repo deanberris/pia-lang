@@ -1,0 +1,23 @@
+(* A lowering's MLIR is parsed and verified with MLIR's own parser once the
+   core types are spliced in (ADR 0065): a misspelt op or a type that does
+   not match is an error at the attribute, with MLIR's message and where
+   in the spliced text it is.
+// RUN: not piac --emit=core --no-lint %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let copy4 (a : [u8; 4]) (b : out mutable [u8; 4]) : unit
+  @lower("memref.cpy $a, $b : $a.type to $b.type")
+= for i in 0 .. 4 do b.[i] <- a.[i] done
+
+let widen (a : [u8; 4]) (b : out mutable [u16; 4]) : unit
+  @lower("memref.copy $a, $b : $a.type to $a.type")
+= for i in 0 .. 4 do b.[i] <- a.[i] done
+
+let id (x : u8) : u8 @lower("") = x
+
+(*
+// CHECK: loc("{{.*}}lower_invalid.pia":10:3): error: the @lower of 'copy4' is not valid MLIR: custom op 'memref.cpy' is unknown (line 1, column 1 of the MLIR after splicing: 'memref.cpy %pia_arg0, %pia_arg1 : memref<4xi8> to memref<4xi8>')
+// CHECK: loc("{{.*}}lower_invalid.pia":14:3): error: the @lower of 'widen' is not valid MLIR: use of value '%pia_arg1' expects different type than prior uses: 'memref<4xi8>' vs 'memref<4xi16>' (line 1, column
+// CHECK: loc("{{.*}}lower_invalid.pia":17:22): error: the @lower of 'id' is not valid MLIR: empty block: expect at least a terminator (the MLIR is the body of a function with the signature of 'id', followed by 'return' when it returns nothing; one that returns a value ends with its own 'return')
+*)
