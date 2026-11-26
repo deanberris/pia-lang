@@ -49,7 +49,7 @@ let count_bright (ys : [u16]) : usize
 
 | Form | Meaning |
 | --- | --- |
-| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)` |
+| `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)`; importing Pia.Core.Hash gives `@derive(hash)`, and Pia.Text.Json.Derive gives `@derive(json)`, which writes the bare value |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
 | `f32`, `f64`; `0.5f32`, `1f64`, `1.0e-3` | strict IEEE 754 floats: one rounding per operation, no FMA unless licensed, subnormals kept. `+ - * /`, negation and IEEE comparisons (`=` is false on NaN). A literal takes the float type its context expects, else needs the suffix; an integer literal is never a float (`2.0`, not `2`), and nothing mixes floats with integers or `real` implicitly. Proofs see floats as their bits for now: the order and arithmetic facts of ADR 0038 come later, so a goal about float values fails rather than proves |

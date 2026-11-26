@@ -2,6 +2,9 @@
 // object retained with CFBridgingRetain, and released with
 // CFBridgingRelease when it is closed or freed.
 
+#include <stdatomic.h>
+#include <unistd.h>
+
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 
@@ -157,6 +160,14 @@ int32_t pia_gpu_dispatch(uint64_t device, uint64_t kernel,
 // kernels, made on first use and kept for the life of the program.
 static uint64_t run_device;
 static NSMutableDictionary<NSNumber *, NSNumber *> *run_libraries;
+static _Atomic uint64_t run_wrapped, run_copied, run_copied_bytes;
+
+void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
+                       uint64_t *copied_bytes) {
+  *wrapped = run_wrapped;
+  *copied = run_copied;
+  *copied_bytes = run_copied_bytes;
+}
 
 int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
                     uint64_t name_len, uint64_t args, uint64_t nargs,
@@ -185,15 +196,34 @@ int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
     NSMutableArray<id<MTLBuffer>> *buffers = [NSMutableArray new];
     uint64_t handles[64];
     if (nargs > 64) return PIA_GPU_FAULT;
+    bool copied[64];
+    const uint64_t page = (uint64_t)getpagesize();
     for (uint64_t i = 0; i < nargs; ++i) {
-      uint64_t bytes = a[3 * i + 1];
-      id<MTLBuffer> b =
-          bytes ? [d.device newBufferWithBytes:(const void *)(uintptr_t)a[3 * i]
-                                        length:bytes
-                                       options:MTLResourceStorageModeShared]
-                : [d.device newBufferWithLength:16
-                                       options:MTLResourceStorageModeShared];
-      if (!b) return PIA_GPU_OUT_OF_MEMORY;
+      uint64_t addr = a[3 * i], bytes = a[3 * i + 1];
+      id<MTLBuffer> b = nil;
+      copied[i] = false;
+      if (bytes && addr % page == 0) {
+        // Shared memory: the kernel reads and writes the host's own pages.
+        uint64_t len = (bytes + page - 1) / page * page;
+        b = [d.device newBufferWithBytesNoCopy:(void *)(uintptr_t)addr
+                                        length:len
+                                       options:MTLResourceStorageModeShared
+                                   deallocator:nil];
+        if (b) ++run_wrapped;
+      }
+      if (!b) {
+        b = bytes ? [d.device newBufferWithBytes:(const void *)(uintptr_t)addr
+                                          length:bytes
+                                         options:MTLResourceStorageModeShared]
+                  : [d.device newBufferWithLength:16
+                                          options:MTLResourceStorageModeShared];
+        if (!b) return PIA_GPU_OUT_OF_MEMORY;
+        copied[i] = bytes != 0;
+        if (copied[i]) {
+          ++run_copied;
+          run_copied_bytes += bytes;
+        }
+      }
       [buffers addObject:b];
       handles[i] = (uint64_t)(uintptr_t)(__bridge void *)b;
     }
@@ -203,7 +233,7 @@ int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
                                  group ? group : 64, 0);
     if (r != PIA_GPU_OK) return r;
     for (uint64_t i = 0; i < nargs; ++i)
-      if (a[3 * i + 2] && a[3 * i + 1])
+      if (copied[i] && a[3 * i + 2])
         memcpy((void *)(uintptr_t)a[3 * i], buffers[i].contents, a[3 * i + 1]);
     return PIA_GPU_OK;
   }

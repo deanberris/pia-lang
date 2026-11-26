@@ -62,13 +62,24 @@ int32_t pia_gpu_dispatch(uint64_t device, uint64_t kernel,
 // runs the kernel `name` (name_len bytes) of the .metallib at lib (lib_len
 // bytes, embedded in the program) over `threads` threads. args points to
 // nargs triples of uint64_t: a host address, a size in bytes, and whether
-// the kernel writes it. Each is bound in order as a buffer: copied in
-// before the kernel runs, and copied back after it when it is written.
-// The device, each library and each kernel are opened once and kept.
-// Returns PIA_GPU_OK or the error, in Gpu.error's order.
+// the kernel writes it. Each is bound in order as a buffer. On Apple
+// silicon the CPU and GPU share memory, so a buffer that starts on a page
+// boundary is wrapped where it is, without a copy: its length is rounded
+// up to a page, and that last page is mapped because the buffer ends in
+// it. Any other buffer is copied in before the kernel runs, and copied
+// back after it when it is written. Either way is safe because the run is
+// synchronous (ADR 0068, section 3): the caller waits, so nothing else
+// touches the buffers while the kernel has them. The device, each library
+// and each kernel are opened once and kept. Returns PIA_GPU_OK or the
+// error, in Gpu.error's order.
 int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
                     uint64_t name_len, uint64_t args, uint64_t nargs,
                     uint64_t threads);
+
+// How pia_gpu_run has bound buffers since the program started: wrapped in
+// place, or copied, and the bytes copied in.
+void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
+                       uint64_t *copied_bytes);
 
 #ifdef __cplusplus
 }
