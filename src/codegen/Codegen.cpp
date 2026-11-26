@@ -2461,7 +2461,8 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
         f.setSymVisibility(std::nullopt);
       }
   for (const Entry &e : entries) {
-    if (!e.noC && mlir::failed(buildEntry(module, e))) return mlir::failure();
+    if (!e.noC && mlir::failed(buildEntry(module, e)))
+      return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
     if (e.linked) {
       internal.setLinkage(mlir::LLVM::Linkage::External);

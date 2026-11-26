@@ -15,8 +15,7 @@ static _Alignas(16) unsigned char cells[64 * 512];
 static uint64_t key_start[16], key_stop[16];
 static _Alignas(16) unsigned char member_values[16 * 512];
 
-static int check(const char *text, size_t ncells, uint8_t depth,
-                 int64_t want) {
+static int check(const char *text, size_t ncells, uint8_t depth, int64_t want) {
   int64_t got = run((const uint8_t *)text, strlen(text), cells, ncells,
                     key_start, 16, key_stop, member_values, depth);
   if (got != want) {
@@ -35,12 +34,12 @@ int main(void) {
   bad |= check("[1, [true, null], {\"a\": \"x\", \"b\": []}]", 16, 16, 8);
   bad |= check("{}", 16, 16, 1);
   bad |= check("[]", 16, 16, 1);
-  bad |= check("[1,]", 16, 16, -2);           // a value expected
-  bad |= check("{\"a\" 1}", 16, 16, -2);      // no colon
-  bad |= check("[[[1]]]", 16, 2, -3);         // three deep, two allowed
+  bad |= check("[1,]", 16, 16, -2);      // a value expected
+  bad |= check("{\"a\" 1}", 16, 16, -2); // no colon
+  bad |= check("[[[1]]]", 16, 2, -3);    // three deep, two allowed
   bad |= check("[[[1]]]", 16, 3, 4);
-  bad |= check("1 2", 16, 16, -4);            // trailing
-  bad |= check("[1, 2, 3]", 2, 16, -5);       // three cells needed
-  bad |= check("[1, @]", 16, 16, -1);         // not a token
+  bad |= check("1 2", 16, 16, -4);      // trailing
+  bad |= check("[1, 2, 3]", 2, 16, -5); // three cells needed
+  bad |= check("[1, @]", 16, 16, -1);   // not a token
   return bad;
 }

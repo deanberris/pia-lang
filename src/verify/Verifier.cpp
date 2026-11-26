@@ -470,7 +470,8 @@ std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
       // in the construction's block, as a write in a loop that fills a
       // buffer before the value is built from it.
       auto before = [&](Operation *m) {
-        if (dom.properlyDominates(op, m)) return true;
+        if (dom.properlyDominates(op, m))
+          return true;
         // The innermost block that holds both: there, the op holding the
         // write must come before the op holding the construction.
         for (Operation *mm = m; mm && mm != fn.getOperation();
@@ -777,14 +778,16 @@ class Encoder {
       return {};
     };
     if (auto r = mlir::dyn_cast<RecordType>(t)) {
-      for (Type f : r.getFieldTypes()) leafGroups(f, out, next);
+      for (Type f : r.getFieldTypes())
+        leafGroups(f, out, next);
       return;
     }
     if (RecordType r = elementRecord(t)) {
       llvm::SmallVector<Type> fields;
       transforms::recordLeaves(r, fields);
       int g = next++;
-      for (size_t i = 0; i < fields.size(); ++i) out.push_back(g);
+      for (size_t i = 0; i < fields.size(); ++i)
+        out.push_back(g);
       return;
     }
     out.push_back(-1);
@@ -1995,14 +1998,16 @@ class Encoder {
       // The field buffers of one buffer of records share its length.
       if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
         unsigned tag = 0;
-        if (const RecCtor *c = recCtor(pl.getInput().getType(), pl.getCtor(), tag))
+        if (const RecCtor *c =
+                recCtor(pl.getInput().getType(), pl.getCtor(), tag))
           if (c->group.size() == pl.getNumResults())
             for (unsigned a = 0; a < pl.getNumResults(); ++a)
               for (unsigned b = a + 1; b < pl.getNumResults(); ++b)
                 if (c->group[a] >= 0 && c->group[a] == c->group[b]) {
                   Value la = lengths_.lookup(pl.getResult(a));
                   Value lb = lengths_.lookup(pl.getResult(b));
-                  if (la && lb) assertTerm(eq(la, lb));
+                  if (la && lb)
+                    assertTerm(eq(la, lb));
                   break;
                 }
       }
@@ -2860,11 +2865,13 @@ class Encoder {
     // A buffer a loop carries, such as the memory of an allocator it
     // passes on from call to call, has no term: it is tracked by its
     // contents and length, which `at` reads from the value carried.
-    auto isBuffer = [](Value v) { return mlir::isa<ArrayType, SliceType>(v.getType()); };
+    auto isBuffer = [](Value v) {
+      return mlir::isa<ArrayType, SliceType>(v.getType());
+    };
     for (Value v : forOp.getInitArgs()) {
       inits.push_back(term(v));
       if (isBuffer(v) && arrays_.count(v) && lengths_.count(v))
-        inits.back() = bv(0);  // a placeholder: buffers are not terms
+        inits.back() = bv(0); // a placeholder: buffers are not terms
     }
     if (!lb || !ub || !st || llvm::is_contained(inits, Value()))
       return skipLoop(forOp);
@@ -2894,11 +2901,14 @@ class Encoder {
       for (auto [arg, v, src] :
            llvm::zip(forOp.getRegionIterArgs(), carried, from)) {
         if (isBuffer(arg)) {
-          if (Value a = arrays_.lookup(src)) d.arrays[arg] = a;
-          if (Value l = lengths_.lookup(src)) d.lengths[arg] = l;
+          if (Value a = arrays_.lookup(src))
+            d.arrays[arg] = a;
+          if (Value l = lengths_.lookup(src))
+            d.lengths[arg] = l;
           continue;
         }
-        if (v) d.values[arg] = v;
+        if (v)
+          d.values[arg] = v;
       }
       // `old` inside reads the memory on entry, as it does outside.
       d.oldArrays = entryArrays_;
@@ -2935,17 +2945,19 @@ class Encoder {
     // contents and length the invariants say what they know of.
     auto freshBuffer = [&](Value b) {
       Type sort = sortOf(b.getType());
-      if (!sort) return;
+      if (!sort)
+        return;
       arrays_[b] = declare(sort, "", false);
       Value len = declare(bvType(), "", false);
       assertTerm(inRange(len, indexRange()));
       lengths_[b] = len;
       if (holdsSlices(b.getType()))
-        innerLengths_[b] =
-            declare(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
+        innerLengths_[b] = declare(
+            mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
     };
     for (Value arg : forOp.getRegionIterArgs())
-      if (isBuffer(arg)) freshBuffer(arg);
+      if (isBuffer(arg))
+        freshBuffer(arg);
     havocBuffers(written);
     llvm::SmallVector<Value> yields;
     bool ok = walkBlock(body, &yields);
@@ -2975,7 +2987,8 @@ class Encoder {
     havocBuffers(written);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
-      if (isBuffer(r)) freshBuffer(r);
+      if (isBuffer(r))
+        freshBuffer(r);
       auto v = havoc(r.getType());
       if (v) env_[r] = *v;
       results.push_back(v ? *v : Value());
