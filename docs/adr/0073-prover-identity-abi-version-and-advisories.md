@@ -2,7 +2,7 @@
 
 Date: 2026-11-26
 
-Status: Proposed
+Status: Accepted (2026-11-26, from Dean's answers on the design questions)
 
 ## Context
 
@@ -132,11 +132,13 @@ Rules run in two places.
 6. **The CI rule.** `tools/migrate/check.py` in CI, and `piac migrate --check` over the repository.
 7. **Runtime.** The launch check, when the runtime's certificate check from abi.md Layer 2 lands.
 
-## Open questions
+## Decisions on the design questions
 
-1. How finely should an advisory revoke: a version range only, or a version range narrowed by the proof engines a module used (proposed)?
-2. What happens to a module that matches an advisory: the check refuses it unless accepted by name (proposed), or warns?
-3. How are builds between releases identified, so that an advisory can name a range: release version plus commit count on `main` (proposed), or the commit alone?
-4. Where do advisories live and how do tools get them: checked in and compiled into the tools, with a flag for a newer set (proposed), or fetched from the site?
-5. How long does a deprecated form keep working: one release as a warning with a fix-it, then an error that still names the fix (proposed), or an error with the fix-it at once?
-6. Should source declare the Pia version it was written for (like a Rust edition, in the module header or the Bazel target), or do rules detect old forms from the source alone (proposed)?
+Dean answered each question on 2026-11-26, in every case with the proposal:
+
+1. **Granularity.** An advisory names a version range, narrowed by the proof engines a module's certificate lists. An advisory with no engines revokes every module in its range.
+2. **Response.** The check refuses a module that matches an advisory, unless that module is accepted by name with `--accept-advisory=ID:Module`, which makes it a trusted item.
+3. **Build identity.** Builds between releases are the release version plus the commit count on `main` and the short commit (`0.1.0+512.9f3c2e1a7b04`). Unstamped builds are `dev`.
+4. **Distribution.** Advisories are checked in under `security/advisories/` and compiled into piac, pia-cert and the runtime. `--advisories=<dir>` adds a newer set. Nothing is fetched over the network.
+5. **Deprecation.** A deprecated form keeps compiling for one release with a `deprecated` warning and a fix-it, then becomes an error that still names the fix.
+6. **Source version.** Source does not declare a Pia version. Rules detect old forms from the source, and `piac migrate --from` takes a version from the user or from a certificate's `prover` line.
