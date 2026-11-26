@@ -132,6 +132,25 @@ jobs:
             echo "No BUILDBUDDY_API_KEY secret; building without the remote cache."
           fi
 
+      # Xcode 26 ships the Metal compiler as a separate component, which
+      # tests/gpu needs for its .metallib (ADR 0068). Without it, the
+      # requires-metal targets are left out, and the summary says so.
+      - name: Metal toolchain
+        run: |
+          if ! xcrun -sdk macosx metal --version > /dev/null 2>&1; then
+            xcodebuild -downloadComponent MetalToolchain || true
+          fi
+          if xcrun -sdk macosx metal --version > /dev/null 2>&1 &&
+             xcrun -sdk macosx -f metallib > /dev/null 2>&1; then
+            echo "Metal toolchain: $(xcrun -sdk macosx metal --version | head -1)"
+          else
+            {
+              echo "common --build_tag_filters=-requires-metal"
+              echo "common --test_tag_filters=-requires-metal"
+            } >> user.bazelrc
+            echo "No Metal toolchain: requires-metal targets skipped" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
       # The step timeouts leave the job time to save what was built.
       - name: Build
         timeout-minutes: 300
