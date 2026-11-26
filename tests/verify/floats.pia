@@ -36,8 +36,8 @@ let lemma neg_neg (x : f64) (y : f64) : unit
 *)
 let lemma order (x : f32) (y : f32) : unit
   ensures (x < y) = (-y < -x)
-  ensures -0.0f32 = 0.0f32 && not (-0.0f32 < 0.0f32)
-  ensures not (x < x) && (x = x) = (x <= x)
+  ensures -0.0f32 = 0.0f32 && (-0.0f32 < 0.0f32) = false
+  ensures (x < x) = false && (x = x) = (x <= x)
 = ()
 
 (* The same operation on the same operands has the same result.
