@@ -229,6 +229,20 @@ let same (p : pixel) (q : pixel) : bool
 = p = q
 ```
 
+A record can carry an invariant over its fields, written `where` after its closing brace. Every value of the type keeps it: a function may assume it of each parameter, and must prove it of its result and of each `out` or `inout` parameter it hands back, so no function restates it and none can break it. Here `width` cannot underflow, and `widen` keeps `lo <= hi`:
+
+```ocaml
+let span = type { lo : u32; hi : u32 } where lo <= hi
+
+let width (s : span) : u32 = s.hi - s.lo
+
+let widen (s : inout mutable span) : unit
+  requires s.hi < max u32
+= s.hi <- s.hi + 1
+```
+
+A field can also carry a refinement of its own, `v : u8 where v <= 100`, which the record's invariant may rely on. [The verifier](verifier.md#theories) has the details.
+
 Arrays and slices can hold records. The compiler stores them as one buffer per field, so a loop over one field reads contiguous memory and vectorises:
 
 ```ocaml
@@ -700,4 +714,4 @@ let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) :
   record_outflow grid (all_reduce add (map outflow_of grid))
 ```
 
-**Floats and SIMD vectors.** `f16`, `f32` and `f64` with strict IEEE semantics by default, `@finite` to prove no NaN or infinity appears, and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on records.
+**Floats and SIMD vectors.** `f16`, `f32` and `f64` with strict IEEE semantics by default, `@finite` to prove no NaN or infinity appears, and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }`.
