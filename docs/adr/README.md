@@ -76,4 +76,5 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0070](0070-raw-binary-embedding.md) | Raw binary embedding: `@embed` for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission | Accepted |
 | [0071](0071-function-references.md) | Function references: a function is a value that travels by reference, checked against its arrow where the reference is made | Accepted |
 | [0072](0072-drops-run-in-constant-stack.md) | A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type | Accepted |
+| [0073](0073-prover-identity-abi-version-and-advisories.md) | Certificates record the piac, solvers and proof engines that proved a module and the Pia ABI version; advisories revoke trust in faulty provers; every breaking change ships a migration rule run by piac and `piac migrate` | Accepted |
 | [0074](0074-library-types-tensors.md) | Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and `Pia.Tensor` over MLIR `tensor` is the proof point | Accepted |
