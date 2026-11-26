@@ -20,12 +20,12 @@ let make (a : u32) (b : u32) : span
 let swapped (a : u32) (b : u32) : span = { lo = b; hi = a }
 
 (* Proved of an inout parameter handed back... *)
-let grow (s : inout span) : unit
+let grow (s : inout mutable span) : unit
   requires s.hi < 4294967295
 = s.hi <- s.hi + 1
 
 (* ...and so a write that breaks it fails. *)
-let shrink (s : inout span) : unit
+let shrink (s : inout mutable span) : unit
   requires s.hi < 4294967295
 = s.lo <- s.hi + 1
 
