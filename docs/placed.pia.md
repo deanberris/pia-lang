@@ -29,6 +29,14 @@ on the SRTM fixture and on a whole tile:
 $ bazel run //examples/streams:srtm_gpu -- /tmp/srtm/N46E008.hgt
 ```
 
+On the whole tile, 3601 × 3601 cells on the iMac, both stages match
+the CPU on every cell. With the device warm, directions take 35 to 52 ms
+on the GPU against 41 ms on the CPU, and the picture 82 ms against 40 to
+50 ms. The first run adds about 70 ms to open the device and load the
+kernel. The GPU is not faster yet because each run copies every buffer in
+and back, and those copies cost more than the kernels. Keeping buffers on
+the device, or wrapping the host's memory without a copy, comes next.
+
 The device rules of ADR 0068, section 1 decide what a body may do. Its
 calls are inlined, since the GPU has no call stack, and after that it may
 use only integer arithmetic of 8 to 64 bits, loads and stores of integer
