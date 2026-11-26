@@ -9,12 +9,17 @@
      byte. A field's name is printable ASCII with no quote or backslash,
      so a key that matches it has no escapes.
    - `int_in s v lo hi`: v is a number with only digits after an optional
-     minus, whose value is from lo to hi. A fraction or an exponent is
+     minus, whose value is from lo to hi, both ends checked. A fraction or an exponent is
      out of every integer type's range, as for the streaming reader.
      `int_value` is that value, and `read_int` reads it, or says the
      number does not conform, from the same digit loop.
    - `is_bool v` and `bool_value v`.
    - `find s items name`: the member called name, or that there is none.
+
+   key_is, int_in, int_value and is_bool are opaque (ADR 0063): a derived
+   type's goals combine them without their bodies, which only the
+   functions here, that decide them, reveal. Unfolded in every member's
+   goals, they made a derived check's proof time out.
 
    The digits are stated by `digits_fit` and `digits_int`, which follow
    the reader's loop digit by digit, so the loop's invariant is the spec
@@ -34,7 +39,7 @@ interface Shapes = sig
       would be a fault of the writer. *)
   let to_dom_error = type | NoRoom | Unparsed of Pia.Text.Json.Dom.dom_error | Unconforming
   (** The span sp of s is name, in quotes. *)
-  let spec key_is : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool
+  let spec key_is : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool @opaque
   (** The digits of s from k to j, after a value of acc, stay at most max. *)
   let spec digits_fit : (acc : u64) -> (s : [u8]) -> (k : usize) -> (j : usize) -> (max : u64) -> bool @opaque
   (** The value of the digits of s from k to j, after a value of acc. *)
@@ -42,16 +47,16 @@ interface Shapes = sig
   (** The magnitude a negative integer from lo may have. *)
   let spec neg_limit : (lo : i64) -> u64
   (** v is an integer from lo to hi, digits after an optional minus. *)
-  let spec int_in : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> bool
+  let spec int_in : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> bool @opaque
   (** The integer v is, when int_in holds. *)
-  let spec int_value : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> i64
+  let spec int_value : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> i64 @opaque
   (** v is true or false. *)
-  let spec is_bool : (v : Pia.Text.Json.Dom.json) -> bool
+  let spec is_bool : (v : Pia.Text.Json.Dom.json) -> bool @opaque
   (** The integer v is, from lo to hi, or that it is not one. *)
   let read_int : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> result i64 nonconforming
     requires lo <= hi
     ensures (match result with
-      | Ok x -> int_in s v lo hi && x = int_value s v lo hi
+      | Ok x -> lo <= x && x <= hi && int_in s v lo hi && x = int_value s v lo hi
       | Err _ -> int_in s v lo hi = false)
   (** The bool v is. *)
   let bool_value : (v : Pia.Text.Json.Dom.json) -> bool
@@ -76,7 +81,7 @@ let nonconforming = type | Nonconforming
 
 let to_dom_error = type | NoRoom | Unparsed of Pia.Text.Json.Dom.dom_error | Unconforming
 
-let spec key_is (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool =
+let spec key_is (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool @opaque =
   if sp.start < sp.stop && sp.stop <= len s then
     (if len name < sp.stop - sp.start then
        sp.stop - sp.start - len name = 2
@@ -143,20 +148,24 @@ let lemma stop (acc : u64) (s : [u8]) (k : usize) (max : u64) : unit
 (* The magnitude a negative integer from lo may have. *)
 let spec neg_limit (lo : i64) : u64 = if lo < 0 then 0 - lo else 0
 
-let spec int_in (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : bool =
+let spec int_in (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : bool @opaque =
   match v with
   | Num sp ->
     if sp.start < sp.stop && sp.stop <= len s then
       (if s.[sp.start] = 0x2D then
          (if lo <= 0 && sp.start + 1 < sp.stop then
             digits_fit 0 s (sp.start + 1) sp.stop (neg_limit lo)
+            && (if hi < 0 then neg_limit hi <= digits_int 0 s (sp.start + 1) sp.stop (neg_limit lo)
+                else true)
           else false)
-       else if 0 <= hi then digits_fit 0 s sp.start sp.stop hi
+       else if 0 <= hi then
+         digits_fit 0 s sp.start sp.stop hi
+         && lo <= digits_int 0 s sp.start sp.stop hi
        else false)
     else false
   | _ -> false
 
-let spec int_value (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : i64 =
+let spec int_value (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : i64 @opaque =
   match v with
   | Num sp ->
     if sp.start < sp.stop && sp.stop <= len s then
@@ -170,7 +179,7 @@ let spec int_value (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64)
     else 0
   | _ -> 0
 
-let spec is_bool (v : Pia.Text.Json.Dom.json) : bool =
+let spec is_bool (v : Pia.Text.Json.Dom.json) : bool @opaque =
   match v with
   | Bool _ -> true
   | _ -> false
@@ -210,8 +219,9 @@ let digits (s : [u8]) (i : usize) (j : usize) (max : u64) : result u64 nonconfor
 let read_int (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : result i64 nonconforming
   requires lo <= hi
   ensures (match result with
-    | Ok x -> int_in s v lo hi && x = int_value s v lo hi
+    | Ok x -> lo <= x && x <= hi && int_in s v lo hi && x = int_value s v lo hi
     | Err _ -> int_in s v lo hi = false)
+  with int_in, int_value
 = match v with
   | Num sp ->
     if sp.start < sp.stop && sp.stop <= len s then
@@ -222,27 +232,35 @@ let read_int (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : res
              assert limit = neg_limit lo;
              let m = digits s (sp.start + 1) sp.stop limit? in
              let neg : i64 = 0 - m in
-             assert int_in s v lo hi;
+             let hl : u64 = if hi < 0 then 0 - hi else 0 in
+             assert hl = neg_limit hi;
+             if hi < 0 && m < hl then Err Nonconforming
+             else
+             (assert int_in s v lo hi;
              assert neg = int_value s v lo hi;
-             Ok neg))
+             Ok neg)))
        else if hi < 0 then Err Nonconforming
        else
          (let m = digits s sp.start sp.stop hi? in
-          assert int_in s v lo hi;
-          assert m = int_value s v lo hi;
-          Ok m))
+          if m < lo then Err Nonconforming
+          else
+            (assert int_in s v lo hi;
+             assert m = int_value s v lo hi;
+             Ok m)))
     else Err Nonconforming
   | _ -> Err Nonconforming
 
 let bool_value (v : Pia.Text.Json.Dom.json) : bool
   requires is_bool v
   ensures result = (v = Pia.Text.Json.Dom.Bool true)
+  with is_bool
 = match v with
   | Bool b -> b
   | _ -> false
 
 let check_bool (v : Pia.Text.Json.Dom.json) : bool
   ensures result = is_bool v
+  with is_bool
 = match v with
   | Bool _ -> true
   | _ -> false
@@ -250,6 +268,7 @@ let check_bool (v : Pia.Text.Json.Dom.json) : bool
 (* Whether the key's span is name in quotes, compared byte by byte. *)
 let key_matches (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool
   ensures result = key_is s sp name
+  with key_is
 = if sp.start < sp.stop && sp.stop <= len s && len name < sp.stop - sp.start
      && sp.stop - sp.start - len name = 2 then
     (if s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22 then
