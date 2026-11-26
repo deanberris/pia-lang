@@ -5,7 +5,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
+    srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
     tools = ["//tools/piac"],
 )
 
@@ -29,6 +29,28 @@ cc_test(
         "saturate_test.c",
         ":saturate_obj",
     ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# floats.pia, f32 and f64 (M11), against C bit for bit. Both sides are
+# strict IEEE 754: no FMA contraction, subnormals kept.
+genrule(
+    name = "floats_obj",
+    srcs = ["floats.pia"],
+    outs = ["floats.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "floats_test",
+    srcs = [
+        "floats_test.c",
+        ":floats_obj",
+    ],
+    copts = ["-ffp-contract=off"],
+    linkopts = ["-lm"],
     target_compatible_with = PIA_TARGETS,
 )
 

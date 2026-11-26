@@ -1,0 +1,97 @@
+(* f32 and f64 (M11), compiled for the platform being built for and run by
+   floats_test.c, which compares every result with C's bit for bit. Floats
+   are strict IEEE 754 (ADR 0004, ADR 0012): each operation is rounded once,
+   to nearest, `a * b + c` is two roundings and never a fused multiply-add,
+   and subnormals are kept. Every goal here must be proved.
+*)
+module Floats : FloatOps
+
+(* What floats_test.c calls, by its C names (ADR 0039). *)
+interface FloatOps @abi(c) = sig
+  let add32 : (a : f32) -> (b : f32) -> f32
+  let sub32 : (a : f32) -> (b : f32) -> f32
+  let mul32 : (a : f32) -> (b : f32) -> f32
+  let div32 : (a : f32) -> (b : f32) -> f32
+  let neg32 : (a : f32) -> f32
+  let add64 : (a : f64) -> (b : f64) -> f64
+  let div64 : (a : f64) -> (b : f64) -> f64
+  let muladd32 : (a : f32) -> (b : f32) -> (c : f32) -> f32
+  let muladd64 : (a : f64) -> (b : f64) -> (c : f64) -> f64
+  let lt32 : (a : f32) -> (b : f32) -> bool
+  let le32 : (a : f32) -> (b : f32) -> bool
+  let gt64 : (a : f64) -> (b : f64) -> bool
+  let ge64 : (a : f64) -> (b : f64) -> bool
+  let eq32 : (a : f32) -> (b : f32) -> bool
+  let ne32 : (a : f32) -> (b : f32) -> bool
+  let tenth32 : (x : f32) -> f32
+  let tenth64 : (x : f64) -> f64
+  let zero : (negative : bool) -> f32
+  let halve : (x : f32) -> f32
+  let poly : (x : f64) -> f64
+  let clamp01 : (x : f32) -> f32
+  let dot : (xs : [f32]) -> (ys : [f32]) -> f32
+    requires len xs = len ys
+  let scale : (xs : [f32]) -> (k : f32) -> (dst : out mutable [f32]) -> unit
+    requires len xs = len dst
+  let point = type { x : f32; y : f32 }
+  let norm2 : (p : point) -> f32
+  let mid : (p : point) -> (q : point) -> point
+end
+
+
+let add32 (a : f32) (b : f32) : f32 = a + b
+let sub32 (a : f32) (b : f32) : f32 = a - b
+let mul32 (a : f32) (b : f32) : f32 = a * b
+let div32 (a : f32) (b : f32) : f32 = a / b
+let neg32 (a : f32) : f32 = -a
+let add64 (a : f64) (b : f64) : f64 = a + b
+let div64 (a : f64) (b : f64) : f64 = a / b
+
+(* Two roundings: the test picks inputs where an FMA would differ. *)
+let muladd32 (a : f32) (b : f32) (c : f32) : f32 = a * b + c
+let muladd64 (a : f64) (b : f64) (c : f64) : f64 = a * b + c
+
+(* IEEE comparisons: with a NaN, all are false but '<>'. *)
+let lt32 (a : f32) (b : f32) : bool = a < b
+let le32 (a : f32) (b : f32) : bool = a <= b
+let gt64 (a : f64) (b : f64) : bool = a > b
+let ge64 (a : f64) (b : f64) : bool = a >= b
+let eq32 (a : f32) (b : f32) : bool = a = b
+let ne32 (a : f32) (b : f32) : bool = a <> b
+
+(* A literal rounds to the nearest value of its type, as C's do; the test
+   passes 0.0, so the sum is the literal. *)
+let tenth32 (x : f32) : f32 = x + 0.1f32
+let tenth64 (x : f64) : f64 = x + 0.1
+
+(* -0.0 is its own value, with the sign bit set. *)
+let zero (negative : bool) : f32 = if negative then -0.0f32 else 0.0f32
+
+(* Half of the smallest normal f32 is a subnormal, which is not flushed. *)
+let halve (x : f32) : f32 = x * 0.5
+
+(* Literals take the type of the other operand: Horner's rule in f64. *)
+let poly (x : f64) : f64 = ((2.5 * x - 1.0) * x + 0.125) * x - 3.0e2
+
+let clamp01 (x : f32) : f32 =
+  if x < 0.0 then 0.0 else if x > 1.0 then 1.0 else x
+
+(* A reduction in order, one rounding per step. *)
+let dot (xs : [f32]) (ys : [f32]) : f32
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+
+let scale (xs : [f32]) (k : f32) (dst : out mutable [f32]) : unit
+  requires len xs = len dst
+=
+  for i in 0..len xs do dst.[i] <- xs.[i] * k done
+
+let point = type { x : f32; y : f32 }
+
+let norm2 (p : point) : f32 = p.x * p.x + p.y * p.y
+
+let mid (p : point) (q : point) : point =
+  { x = (p.x + q.x) * 0.5; y = (p.y + q.y) * 0.5 }

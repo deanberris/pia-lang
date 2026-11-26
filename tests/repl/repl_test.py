@@ -204,6 +204,23 @@ class ReplTest(unittest.TestCase):
         r = self.repl.run("make 3")
         self.assertEqual(kinds(r, "value")[0]["value"], "{ r = 3; g = 7 }")
 
+    def test_floats(self):
+        # f32 and f64 values show as the shortest literal that reads back
+        # as the same value, without the suffix: the type says which.
+        r = self.repl.run("let third (x : f32) : f32 = x / 3.0")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("third 1.0f32\n0.1 + 0.2f64\n-0.0f32\n1.0e30 * 1.0e10f32")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual([(v["type"], v["value"]) for v in kinds(r, "value")],
+                         [("f32", "0.33333334"), ("f64", "0.30000000000000004"),
+                          ("f32", "-0.0"), ("f32", "inf")])
+        self.repl.run("let point = type { x : f32; y : f64 }")
+        r = self.repl.run("let make (s : f32) : point = { x = s; y = 2.0e-3 }")
+        self.assertTrue(r["ok"], r)
+        r = self.repl.run("make 0.5f32")
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(kinds(r, "value")[0]["value"], "{ x = 0.5; y = 0.002 }")
+
     def test_metaprograms_extend_the_environment(self):
         self.repl.run("let pixel = type { r : u8; g : u8 } @derive(eq)")
         r = self.repl.run("eq_pixel { r = 1; g = 2 } { r = 1; g = 2 }")

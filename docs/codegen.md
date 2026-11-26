@@ -42,6 +42,7 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | Pia | Core MLIR |
 | --- | --- |
 | `!pia.int<lo, hi>` | `iN`, as above |
+| `f32`, `f64` | `f32`, `f64` |
 | `[T; n]` | `memref<n x T>` |
 | `[T]` | `memref<? x T, strided<[1], offset: ?>>` |
 | `!pia.atomic<T>` | `memref<1 x T>`, with a `bool` held as `i8` |
@@ -66,6 +67,8 @@ Each `pia.add`, `sub`, `mul`, `div` and `rem` is computed at one width. That wid
 
 `pia.convert` is the same with the input as the exact value. `pia.cmp` extends both sides to a width that holds both ranges. `to_index` and `from_index` become `index_cast` (or `index_castui` when the value is non-negative). `len` becomes `memref.dim`, or a constant for a fixed array. `load` and `store` become `memref.load` and `memref.store`, without bounds checks, because the verifier proved them in bounds.
 
+Floats are already core MLIR: IRGen emits `arith.addf`, `subf`, `mulf`, `divf`, `negf`, `cmpf` and float `arith.constant` directly, with no fast-math flags, so each operation is one IEEE 754 operation rounded to nearest (ADR 0004, ADR 0012). Nothing reassociates them, the target machine is created with `FPOpFusion::Strict`, so `a * b + c` is never contracted into an FMA, and Pia never sets flush-to-zero, so subnormals are kept. `=` is `cmpf oeq` and `<>` is `cmpf une`, so with a NaN every comparison is false but `<>`. `tests/codegen/floats.pia` checks this against C compiled with `-ffp-contract=off`, bit for bit (`floats_test.c`).
+
 LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@overflow(saturate)` compiles to `llvm.uadd.sat.i8`. In a loop over slices, such as `add_rows` in `tests/codegen/saturate.pia`, LLVM's loop vectoriser turns it into NEON `uqadd.16b`.
 
 ## Atomics
@@ -84,6 +87,7 @@ Each Pia function `f` becomes an internal function. Only the functions a module 
 | --- | --- |
 | an integer | the integer type of its storage width, such as `uint8_t` or `int16_t` |
 | `bool` | `bool` |
+| `f32`, `f64` | `float`, `double` |
 | `[T]` | `const T *data, uint64_t len` (or `T *` when it is written) |
 | `[T; n]` | `const T *data` (or `T *`) |
 

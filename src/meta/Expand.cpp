@@ -48,8 +48,8 @@ const Node &preludeProgram() {
 // The type names that resolve without a definition (docs/irgen.md, "Types").
 bool isBuiltinType(const std::string &name) {
   static const std::set<std::string> names = {
-      "u8", "u16", "u32", "u64", "i8",   "i16", "i32",
-      "i64", "usize", "isize", "bool", "unit",
+      "u8",  "u16",   "u32",   "u64", "i8",  "i16",  "i32",
+      "i64", "usize", "isize", "f32", "f64", "bool", "unit",
   };
   return names.count(name);
 }
