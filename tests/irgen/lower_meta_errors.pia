@@ -11,13 +11,13 @@ let meta refuse (n : int) : string =
 
 let meta quoted (v : syntax) : syntax = `( $v )
 
-(* CHECK: lower_meta_errors.pia:[[@LINE+2]]:3: error: the metaprogram 'refuse' failed: only up to 4 elements
+(* CHECK: lower_meta_errors.pia:[[@LINE+3]]:3: error: the metaprogram 'refuse' failed: only up to 4 elements
 *)
 let fill8 (a : out mutable [u8; 8]) (v : u8) : unit
   @lower(refuse 8)
 = for i in 0 .. 8 do a.[i] <- v done
 
-(* CHECK: lower_meta_errors.pia:[[@LINE+2]]:3: error: @lower(quoted ...) must compute a string of MLIR, but the metaprogram 'quoted' returned syntax
+(* CHECK: lower_meta_errors.pia:[[@LINE+3]]:3: error: @lower(quoted ...) must compute a string of MLIR, but the metaprogram 'quoted' returned syntax
 *)
 let fill4 (a : out mutable [u8; 4]) (v : u8) : unit
   @lower(quoted v)

@@ -62,6 +62,6 @@ let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
 // CHECK-NEXT: return
 // CHECK-NOT: scf.for
 
-// TRUST: lower_meta.pia:[[@LINE-24]]:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.expand_shape; sha256 {{[0-9a-f]{64}}})
+// TRUST: lower_meta.pia:[[@LINE-23]]:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.expand_shape; sha256 [[HASH:[0-9a-f]{64}]])
 // TRUST-NEXT: 1 trusted item
 *)
