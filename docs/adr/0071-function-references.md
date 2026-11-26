@@ -82,7 +82,7 @@ A reference to a function that captures nothing has no environment, and is one w
 
 This is what the references are for first, and what makes a `box c` work as Rust's `dyn Trait` does.
 
-**One static table per type and concept.** For each type `t` that is widened into `box c`, the compiler makes one table, a constant record in read-only data, shared by every `box c` that holds a `t` (Dean, 2026-11-27: references in every box would be wasteful). It holds:
+**One static table per type and concept.** For each type `t` that is widened into `box c`, the compiler makes one table, a constant in read-only data, shared by every `box c` that holds a `t` (Dean, 2026-11-27: references in every box would be wasteful). It holds:
 
 - `t`'s size and alignment, in bytes (the ADR 0046 amendment);
 - a reference to `t`'s drop, through a thunk that takes the slot and drops the object in it, or one that does nothing for a type with no drop;
@@ -90,13 +90,15 @@ This is what the references are for first, and what makes a `box c` work as Rust
 
 A `box c` is then two words, the slot and a reference to its table, whatever `c` requires. `area b` on a `box Shape` loads `area` from the table and calls it; dropping the box calls the table's drop, then gives the slot back to its allocator. Where the compiler can see what a box holds, such as straight after `widen`, the call is direct, as it is today.
 
+**Unreachable from Pia** (Dean, 2026-11-27). A table has no name a program can write, no type a program can spell, and no value a program can hold: it is not a field of `box c`, and nothing reads, copies, compares or stores it. Only code the compiler makes uses it, for a call through a box, a drop, and the size and alignment an allocator or a `vec (box c)` needs, which `box c`'s own functions return. So a program cannot call a requirement of a type it never widened, swap a box's table, or keep a reference into one past the box. Metaprograms cannot see tables either, including `Pia.Live`'s in the REPL, which lists the session's definitions but not the tables derived from them.
+
 **Consolidated across modules.** A table is named by its type and concept, `pia$t$<type>$<concept>`, and emitted as a link-once constant in each module that widens a `t` into `box c`, so the linker keeps one copy however many modules make such boxes. Its layout is the concept's requirements in declaration order after the three fixed entries, published with the concept ([ADR 0030](0030-published-object-layouts.md)), so a module that imports `c` can call and drop a box made elsewhere, and ADR 0046's step 6 needs nothing more.
 
 **Checked once.** Each entry is checked where the table is made, against the requirement's arrow with the receiver erased: exactly what ADR 0046's section 4 asks, that what is placed in a box exposes the concept's interface. The verifier's view of a box does not change. A call through it has the requirement's contract and nothing else, and the table itself never appears in a goal.
 
 ### 6a. Tables in the REPL
 
-A table ties a type, a concept and the functions that implement it, so the REPL's redefinition rules ([ADR 0031](0031-verified-repl-and-live-environment.md)) must cover all three. A table is a derived definition in the session's environment, depending on the type, the concept and each implementing function, so every `:redef` of one of them reaches it.
+A table ties a type, a concept and the functions that implement it, so the REPL's redefinition rules ([ADR 0031](0031-verified-repl-and-live-environment.md)) must cover all three. A table is a derived definition the session keeps for itself, out of reach of cells and metaprograms (section 6), depending on the type, the concept and each implementing function, so every `:redef` of one of them reaches it.
 
 - **An implementation changes, and refines.** The table's entry is a thunk that calls through the function's REPL slot, as every call between REPL definitions already does, so a new body proved against the old contract is swapped into the slot and the table does not change. Live boxes carry on.
 - **An implementation stops meeting the concept.** The table's check fails like any dependent's proof, and the redefinition is refused, naming the concept and the type.
