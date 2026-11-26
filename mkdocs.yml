@@ -177,3 +177,4 @@ nav:
       - adr/0067-release-0-1-0-a-proved-small-llm.md
       - adr/0068-gpu-compute-through-spirv-and-metal.md
       - adr/0069-pure-and-impure-functions.md
+      - adr/0070-raw-binary-embedding.md

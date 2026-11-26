@@ -1,0 +1,48 @@
+(* What `@lower` refuses (ADR 0065, step 1): a spec function, a foreign
+   function, an argument that is not one string, a splice of a name that
+   is not a parameter, of a spec parameter or of a record, a '$' that
+   starts no splice, and a result that is not a scalar.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:31: error: @lower applies only to a function that runs, not to a spec function, a lemma or an axiom
+*)
+let spec twice (x : u8) : u16 @lower("arith.addi $x, $x : $x.type") = x + x
+
+(* CHECK: lower_errors.pia:[[@LINE+3]]:3: error: a lowered function keeps its Pia body, which is its specification and its fallback; a foreign function with no body stays '= extern "symbol"' (ADR 0065)
+*)
+let abs32 (x : i32) : i32
+  @lower("%r = math.absi $x : $x.type return %r : i32")
+  requires x > -2147483648 ensures result >= 0
+= extern "abs"
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:46: error: @lower takes one string of MLIR, as in @lower("linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
+*)
+let named (a : [u8; 4]) (b : [u8; 4]) : unit @lower(linalg) = ()
+
+(* CHECK: lower_errors.pia:[[@LINE+3]]:3: error: @lower splices '$c', but 'fill' has no parameter 'c'; its parameters are 'a', 'v'
+*)
+let fill (a : out mutable [u8; 4]) (v : u8) : unit
+  @lower("linalg.fill ins($v : $v.type) outs($c : $a.type)")
+= for i in 0 .. 4 do a.[i] <- v done
+
+(* CHECK: lower_errors.pia:[[@LINE+3]]:3: error: @lower splices '$owner', a spec parameter, which code does not have (ADR 0058)
+*)
+let zero (a : out mutable [u8; 4]) (spec owner : u8) : unit
+  @lower("linalg.fill ins($owner : $owner.type) outs($a : $a.type)")
+= for i in 0 .. 4 do a.[i] <- 0 done
+
+let pixel = type { r : u8; g : u8 }
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, or a buffer of them, in this step
+*)
+let red (p : pixel) : u8 @lower("return $p : i8") = p.r
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:24: error: a '$' in @lower starts a splice: '$name' is the value of the parameter 'name', and '$name.type' its MLIR type
+*)
+let cost (x : u8) : u8 @lower("$ 1") = x
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer or a bool; 'pair' returns pixel
+*)
+let pair (r : u8) (g : u8) : pixel @lower("") = { r = r; g = g }

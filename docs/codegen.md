@@ -30,8 +30,8 @@ The location is written the way piac prints it. Accepted obligations are still r
 ## Stages
 
 1. **Erase contracts.** Every `pia_contract` op is removed: `requires`, `ensures`, `invariant`, `decreases`, `assert`, `assume` and `obligation`. Then everything only they used is removed too, including quantifiers, `old` and the arithmetic inside contracts. An op that writes, or a loop or branch that calls a function which may write (one that takes a buffer, or any call but a spec function's inside it), stays even when only a contract reads its results (tests/codegen/contract_only_loop.pia). That includes calls to ordinary functions and loads: an op whose every use is in a contract, or in another such op, never runs, so it goes even when it is not known to be pure (a call to another module's function is a declaration here). Kept, such code could run a contract's `xs.[result]` when `result = len xs`, since a contract evaluates both sides of `&&`, and LLVM would treat the out-of-bounds load as undefined behaviour (tests/codegen/contract_only.pia). Only ops that write, allocate or free are kept. Spec functions and lemmas (`pia.spec`, `pia.lemma`) are erased with every call to them: they exist only for the verifier. The verifier's `pia.proved` attributes stay.
-2. **Lower `pia` to core dialects.** This uses MLIR dialect conversion, with the type mapping below and the ops after it. `scf`, `func.call` and `func.return` are converted structurally.
-3. **Lower to the `llvm` dialect.** The upstream passes run in this order: `scf` to `cf`, then `cf`, `arith`, `index`, `memref` and `func` to `llvm`, then the reconciliation of casts. Then each public function gets its C entry point.
+2. **Lower `pia` to core dialects.** This uses MLIR dialect conversion, with the type mapping below and the ops after it. `scf`, `func.call` and `func.return` are converted structurally. Then each function marked `@lower` gets its MLIR form in place of its body ([below](#lowerings-written-in-pia)).
+3. **Lower to the `llvm` dialect.** When a lowering was applied, `convert-linalg-to-loops`, `expand-strided-metadata` and `lower-affine` run first. Then the upstream passes run in this order: `scf` to `cf`, then `cf`, `arith`, `index`, `memref` and `func` to `llvm`, then the reconciliation of casts. Then each public function gets its C entry point.
 4. **Translate and optimise.** The module is translated to LLVM IR, given the target's data layout, and run through LLVM's `-O2` pipeline.
 5. **Emit.** The LLVM target machine writes the object file or the assembly.
 
@@ -144,6 +144,29 @@ A C function of no arguments, such as `getpid`, is declared like any Pia functio
 The POSIX declarations are not written by hand. `tools/bindings/gen.py` reads the names in `tools/bindings/posix.toml` from the target's own headers with clang's JSON AST, and the rows of the `Posix` interface in `lib/Pia/Sys/Posix.pia`, and writes `lib/Pia/Sys/Gen/<target>.pia`, the module `Pia.Sys.Posix` for that target ([ADR 0057](adr/0057-posix-module-per-target-behind-one-interface.md)). It holds every constant's value and C type, every struct's size, alignment and field offsets, each row of the interface as an `extern` with the row's modifiers and contract, and the other functions as `extern`s without one, which stay private to the module. A row that does not fit the header fails the generator: a missing symbol, a type of the wrong width, `mutable` or `out` on a `const` pointer, or a variadic mismatch. A pointer becomes a byte buffer. A function Pia cannot declare yet, such as `mmap`, which returns a pointer, is listed at the end of the file with the reason. The bindings workflow regenerates each file on its own platform and fails on any difference, and the build picks the file by platform (`//lib/Pia/Sys:posix`).
 
 Foreign memory comes back as an address, a `usize`, and `unsafe view addr n` makes it a slice (`pia.view`, marked `pia.unsafe`). Codegen builds the memref descriptor an LLVM lowering of a memref expects, with `addr` as its pointer, offset 0, `n` elements and stride 1, so loads, stores and slices of it lower as usual. tests/codegen/pages.pia fills and sums pages from mmap.
+
+## Lowerings written in Pia
+
+`@lower("mlir")` after a function's return type gives it an MLIR form ([ADR 0065](adr/0065-lowerings-written-in-pia.md)). The Pia body stays: the verifier proves it against the contract as usual, callers prove from the contract, and the body is what the REPL's JIT runs and what `piac --lower=off` compiles everywhere, for differential tests. Codegen puts the MLIR in place of the body:
+
+<!-- untested: needs a @trusted file; tests/codegen/lower_linalg.pia is the tested copy -->
+```ocaml
+let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
+  @lower("%a = memref.expand_shape $a [[0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>  %b = memref.expand_shape $b [[0, 1]] output_shape [4, 4] : $b.type into memref<4x4xi8>  %c = memref.expand_shape $c [[0, 1]] output_shape [4, 4] : $c.type into memref<4x4xi32>  %zero = arith.constant 0 : i32  linalg.fill ins(%zero : i32) outs(%c : memref<4x4xi32>)  linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)")
+= for i in 0 .. 4 do
+    for j in 0 .. 4 do
+      c.[i * 4 + j] <- a.[i * 4] * b.[j] + a.[i * 4 + 1] * b.[4 + j]
+        + a.[i * 4 + 2] * b.[8 + j] + a.[i * 4 + 3] * b.[12 + j]
+    done
+  done
+```
+
+- **Splices.** `$name` is the SSA value of the parameter `name`, and `$name.type` its core MLIR type from the table [above](#types), so `$a.type` here is `memref<16xi8>`. A spliced parameter is an integer, a bool, or a buffer of them, which is one value; a record is several, and is refused. Escapes in the string are decoded first (`\n`, `\t`, `\"`, `\\`), and MLIR needs no newlines between ops.
+- **Parsing.** After `lowerToCore`, `applyLowerings` (`src/codegen/Lowerings.cpp`) splices in the core arguments, wraps the text as the body of `func.func @pia_lowering` with the function's core signature, adds `return` when the function returns nothing (one that returns an integer or a bool ends with its own `return`), and parses and verifies it with MLIR's parser against the dialects piac registers: `linalg`, `tensor`, `bufferization`, `transform`, `affine` and the core ones. A misspelt op or a type that does not match is an error at the attribute, with MLIR's message and its line and column in the spliced text, which a note prints. The parsed body then replaces the function's, with every op located at the attribute, so a later error points there too. `--emit=core` shows the lowered form, `linalg` included.
+- **Passes.** `linalg` on memrefs goes to `scf` loops with `convert-linalg-to-loops`, then `memref.expand_shape` and the other reshapes to plain descriptors with `expand-strided-metadata`, and `affine` to `arith` with `lower-affine`, before the usual passes. `tensor` ops parse, but nothing bufferises them yet (step 6 of the ADR), so a lowering works on the buffers' memrefs.
+- **Trust.** This is step 1 of ADR 0065: piac does not yet prove that the MLIR does what the body does, so `@lower` is allowed only in a file marked `@trusted`, on a function with a Pia body (not an `extern`, a spec function or a lemma), and every lowering is a trusted item. `piac --verify --trust-report` lists it with the ops it uses and the SHA-256 of its spliced text, and the object's certificate records the same hash ([abi.md](abi.md)). A named `linalg` op's own body is generated from its definition, so the ops in it are not listed; a `linalg.generic`'s are.
+
+`linalg.matmul` adds to its output, so the lowering fills it with zero first, as the body's assignments do; without the fill the differential run below fails, which is the check a trusted lowering has. tests/codegen/lower_linalg.pia is the matmul above, checked at `--emit=core` with and without `--lower=off`, in the trust report and in the certificate, and run from C in lower_linalg_test.c, once from each form. tests/codegen/lower_invalid.pia holds MLIR errors, and tests/irgen/lower_errors.pia and lower_untrusted.pia the rules.
 
 ## Tests
 

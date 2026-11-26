@@ -59,6 +59,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | solver encodings, theories, triggers | `src/verify/Verifier.cpp`, `Triggers.cpp`, `Strategy.cpp` | `src/irgen/Theories.cpp`; `docs/theories.md` |
 | a lint | `src/syntax/Lint.{h,cpp}` | `docs/idioms.md` table; `tests/lint` |
 | modules, `.piai`, imports | `src/syntax/Interfaces.cpp` | `tools/piac/pia.bzl` (`pia_library`, `pia_binary`); `tests/modules` |
+| a lowering to MLIR (`@lower`, ADR 0065) | `markLowering` in `src/irgen/IRGen.cpp` (the rules), `src/codegen/Lowerings.cpp` (splice, parse, replace the body, the linalg passes) | `--lower` and the trust report in `tools/piac/piac.cpp`, `trusted` lines in `src/cert/Certificate.cpp`; tests in `tests/codegen/lower_linalg.pia` (run by `lower_linalg_run_test` and `lower_linalg_body_run_test`), `tests/codegen/lower_invalid.pia`, `tests/irgen/lower.pia`, `tests/irgen/lower_errors.pia`, `tests/irgen/lower_untrusted.pia` |
 | codegen or the C ABI | `src/codegen/Codegen.cpp` | `docs/codegen.md`, `docs/abi.md`; `tests/codegen` |
 | a target platform | `tools/piac/targets.bzl`, `--target`/`--cpu` in `piac.cpp` | ADR 0049, `docs/adr/0049-targets-are-theories.md` |
 | the dialects | `src/dialect/*.td` | `tests/dialect` (round trips through `pia-opt`) |
@@ -121,9 +122,10 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
 - `src/codegen/ArrayResults.{h,cpp}` turns each array result into a buffer the caller makes, and each return into a copy into it, so arrays are returned by value.
+- `src/codegen/Lowerings.{h,cpp}` puts each `@lower` function's MLIR in place of its body after `lowerToCore`, and adds the passes that take `linalg` to loops (ADR 0065).
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
 - `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
-- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -215,7 +217,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
 - **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation).
-- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories).
+- **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories), 0070 (raw binary embedding via `@embed`).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0068 (GPU compute: SPIR-V, SPIRV-Cross, Metal shim, `@place(gpu)`), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point), 0067 (0.1.0: a proved small LLM on the M3).
 
