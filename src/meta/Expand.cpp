@@ -480,6 +480,9 @@ class Expander {
       // step 6), before its operators expand, so the tactic sees the goal
       // as written.
       if (item->kind == NodeKind::LetItem) changed |= runTactic(*item);
+      // `@lower(gen args)` computes the function's MLIR (ADR 0065, step 2).
+      if (item->kind == NodeKind::LetItem)
+        changed |= runLowering(*item);
       if (item->kind == NodeKind::Theory && item->flags != "call")
         for (NodePtr &m : item->kids)
           if (m->kind == NodeKind::LetItem) changed |= runTactic(*m);
@@ -808,6 +811,76 @@ class Expander {
       body = std::move(seq);
     }
     item.kids[3] = std::move(body);
+    return true;
+  }
+
+  // `@lower(gen args)` on a function runs the metaprogram `gen` on the
+  // arguments, and the string it returns becomes the attribute's MLIR, as
+  // if written there (ADR 0065, step 2). In the arguments, the function's
+  // parameters stand for themselves, as names, as in a tactic's. So a
+  // lowering can depend on a shape, an element type or a target that its
+  // author passes. `@lower("text")` is left as it is; IRGen checks both
+  // the same way, and the MLIR is parsed before anything is proved.
+  bool runLowering(Node &item) {
+    if (item.kids.size() < 4 || item.kids[1]->kind != NodeKind::RetAnnot ||
+        item.kids[1]->kids.size() < 2)
+      return false;
+    Node &attrs = *item.kids[1]->kids[1];
+    Node *lower = nullptr;
+    for (NodePtr &a : attrs.kids)
+      if (a->text == "lower")
+        lower = a.get();
+    if (!lower || lower->kids.size() != 1)
+      return false;
+    const Node &e = *lower->kids[0];
+    const Node &head = e.kind == NodeKind::Apply ? *e.kids[0] : e;
+    // A string, or anything that is not a metaprogram's call, is for IRGen
+    // to accept or explain.
+    if (head.kind != NodeKind::Name || !interp_.isMeta(head.text))
+      return false;
+    std::string who = "the metaprogram '" + head.text + "'";
+    std::vector<std::pair<std::string, ValuePtr>> bindings;
+    for (const NodePtr &p : item.kids[0]->kids)
+      if (p->kind == NodeKind::Param)
+        bindings.emplace_back(p->text, Interpreter::syntaxValue(makeNode(
+                                           NodeKind::Name, p->loc, p->text)));
+    ValuePtr v;
+    try {
+      interp_.setSite(lower->loc);
+      v = interp_.evalWith(e, bindings);
+      produced(head.text, lower->loc);
+    } catch (const Deferred &d) {
+      diags_.error(lower->loc, who + " needs the type '" + d.type + "'");
+      lower->kids.clear();
+      return true;
+    } catch (const MetaError &err) {
+      diags_.error(err.loc, who + " failed: " + err.message);
+      lower->kids.clear();
+      return true;
+    }
+    if (v->kind != Value::Kind::Str) {
+      diags_.error(lower->loc, "@lower(" + head.text +
+                                   " ...) must compute a string of "
+                                   "MLIR, but " +
+                                   who + " returned " +
+                                   Interpreter::kindName(v->kind));
+      lower->kids.clear();
+      return true;
+    }
+    // The string as a literal's spelling, which IRGen decodes.
+    std::string spelling = "\"";
+    for (char c : v->s) {
+      if (c == '\n')
+        spelling += "\\n";
+      else if (c == '\t')
+        spelling += "\\t";
+      else if (c == '"' || c == '\\')
+        spelling += std::string("\\") + c;
+      else
+        spelling += c;
+    }
+    spelling += "\"";
+    lower->kids[0] = makeNode(NodeKind::StringLit, lower->loc, spelling);
     return true;
   }
 

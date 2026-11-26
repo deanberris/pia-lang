@@ -2149,6 +2149,9 @@ struct Entry {
   bool linked = false;
   // The spec-only arguments and results, which C does not see (ADR 0041).
   std::vector<bool> argErased = {}, resultErased = {};
+  // No C entry point, as for a function that takes or returns a
+  // recursive value by value; only its link symbol, if it has one.
+  bool noC = false;
 };
 
 // The C types of one core argument: a buffer is its data pointer, plus its
@@ -2410,8 +2413,12 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
     auto byValue = [](Type t) { return mlir::isa<mlir::LLVM::LLVMStructType>(t); };
     if (llvm::any_of(f.getFunctionType().getInputs(), byValue) ||
         llvm::any_of(f.getFunctionType().getResults(), byValue)) {
-      f.setPrivate();
-      continue;
+      // A module's export keeps its link symbol, for importers.
+      if (!e.linked) {
+        f.setPrivate();
+        continue;
+      }
+      e.noC = true;
     }
     if (mlir::failed(mlir::SymbolTable::replaceAllSymbolUses(
             f, mlir::StringAttr::get(ctx, e.internal), module)))
@@ -2469,7 +2476,8 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
         f.setSymVisibility(std::nullopt);
       }
   for (const Entry &e : entries) {
-    if (mlir::failed(buildEntry(module, e))) return mlir::failure();
+    if (!e.noC && mlir::failed(buildEntry(module, e)))
+      return mlir::failure();
     auto internal = module.lookupSymbol<mlir::LLVM::LLVMFuncOp>(e.internal);
     if (e.linked) {
       internal.setLinkage(mlir::LLVM::Linkage::External);

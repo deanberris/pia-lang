@@ -1,0 +1,67 @@
+(* A lowering computed by a metaprogram (ADR 0065, step 2): `square_matmul`
+   writes the MLIR of lower_linalg.pia's matmul for any size and element
+   types, and `@lower(square_matmul 4 a b c "i8" "i32")` runs it at
+   expansion, so the string it returns is the attribute's text. The
+   parameters stand for themselves, as names. The text is then checked like
+   a written one, before anything is proved. lower_linalg_test.c runs the
+   object against C, as it does lower_linalg.pia's.
+// RUN: piac --dump-expanded %s | FileCheck %s --check-prefix=EXPANDED
+// RUN: piac --emit=core %s | FileCheck %s
+// RUN: piac --verify --trust-report %s | FileCheck %s --check-prefix=TRUST
+*)
+module MatmulMeta @trusted : Exported
+
+(* What lower_linalg_test.c calls, by its C name. *)
+interface Exported @abi(c) = sig
+  let matmul : (a : [i8; 16]) -> (b : [i8; 16]) -> (c : out mutable [i32; 16]) -> unit
+end
+
+(* `$v` viewed as an n x n memref of `t`, named `%v`. *)
+let meta square (v : syntax) (n : int) (t : string) : string =
+  let shape = concat (concat n "x") (concat n (concat "x" t)) in
+  concat (concat "%" (name v))
+    (concat (concat " = memref.expand_shape $" (name v))
+      (concat (concat (concat " [[0, 1]] output_shape [" n) (concat ", " (concat n "] : $")))
+        (concat (name v) (concat ".type into memref<" (concat shape ">\n")))))
+
+(* C = A B for n x n row-major matrices: views of the three buffers, `c`
+   filled with zero, since `linalg.matmul` adds to its output, then the
+   matmul. *)
+let meta square_matmul (n : int) (a : syntax) (b : syntax) (c : syntax)
+    (t : string) (acc : string) : string =
+  let mt = concat (concat (concat "memref<" n) (concat "x" n)) (concat "x" (concat t ">")) in
+  let mc = concat (concat (concat "memref<" n) (concat "x" n)) (concat "x" (concat acc ">")) in
+  let views = concat (square a n t) (concat (square b n t) (square c n acc)) in
+  let zero = concat "%zero = arith.constant 0 : " (concat acc "\n") in
+  let fill = concat "linalg.fill ins(%zero : " (concat acc (concat ") outs(%" (concat (name c) (concat " : " (concat mc ")\n"))))) in
+  let mm = concat (concat (concat "linalg.matmul ins(%" (name a)) (concat ", %" (name b)))
+    (concat (concat " : " mt) (concat (concat ", " mt) (concat (concat ") outs(%" (name c)) (concat " : " (concat mc ")"))))) in
+  concat views (concat zero (concat fill mm))
+
+(* C = A B for row-major 4 x 4 matrices of bytes, with 32-bit sums. *)
+let matmul (a : [i8; 16]) (b : [i8; 16]) (c : out mutable [i32; 16]) : unit
+  @lower(square_matmul 4 a b c "i8" "i32")
+= for i in 0 .. 4 do
+    for j in 0 .. 4 do
+      c.[i * 4 + j] <- a.[i * 4] * b.[j] + a.[i * 4 + 1] * b.[4 + j]
+        + a.[i * 4 + 2] * b.[8 + j] + a.[i * 4 + 3] * b.[12 + j]
+    done
+  done
+
+(*
+// EXPANDED: (Attribute "lower"
+// EXPANDED-NEXT: (StringLit "\"%a = memref.expand_shape $a {{\[\[}}0, 1]] output_shape [4, 4] : $a.type into memref<4x4xi8>\\n%b = {{.*}}linalg.matmul ins(%a, %b : memref<4x4xi8>, memref<4x4xi8>) outs(%c : memref<4x4xi32>)\"")
+
+// CHECK-LABEL: func.func @matmul(%arg0: memref<16xi8>, %arg1: memref<16xi8>, %arg2: memref<16xi32>
+// CHECK-NOT: pia.lower
+// CHECK: memref.expand_shape %arg0 {{\[\[}}0, 1]] output_shape [4, 4] : memref<16xi8> into memref<4x4xi8>
+// CHECK: memref.expand_shape %arg1
+// CHECK: memref.expand_shape %arg2
+// CHECK: linalg.fill
+// CHECK-NEXT: linalg.matmul ins(%{{.*}}, %{{.*}} : memref<4x4xi8>, memref<4x4xi8>) outs(%{{.*}} : memref<4x4xi32>)
+// CHECK-NEXT: return
+// CHECK-NOT: scf.for
+
+// TRUST: lower_meta.pia:[[@LINE-22]]:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.expand_shape; sha256 [[HASH:[0-9a-f]{64}]])
+// TRUST-NEXT: 1 trusted item
+*)
