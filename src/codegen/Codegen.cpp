@@ -424,7 +424,7 @@ class CoreTypes : public mlir::TypeConverter {
   // Buffers hold scalars, and recursive values (ADR 0047).
   Type element(Type t) {
     Type c = convertType(t);
-    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType,
+    if (c && mlir::isa<mlir::IntegerType, mlir::IndexType, mlir::FloatType,
                        mlir::LLVM::LLVMStructType>(c))
       return c;
     return {};
@@ -813,17 +813,22 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
     auto type = mlir::dyn_cast_or_null<mlir::MemRefType>(
         getTypeConverter()->convertType(op.getType()));
     if (!type) return mlir::failure();
-    auto elem = mlir::dyn_cast<mlir::IntegerType>(type.getElementType());
+    Type elem = type.getElementType();
     auto fn = op->getParentOfType<mlir::func::FuncOp>();
-    if (!elem || !fn) return mlir::failure();
+    if (!mlir::isa<mlir::IntegerType, mlir::FloatType>(elem) || !fn)
+      return mlir::failure();
     Value storage;
     {
       mlir::OpBuilder::InsertionGuard guard(rw);
       rw.setInsertionPointToStart(&fn.getBody().front());
       storage = make<mlir::memref::AllocaOp>(rw, loc, type);
     }
-    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem,
-                                               rw.getIntegerAttr(elem, 0));
+    // Zero is all bits clear for an integer and for a float (+0.0).
+    mlir::TypedAttr zeroAttr =
+        mlir::isa<mlir::FloatType>(elem)
+            ? mlir::TypedAttr(rw.getFloatAttr(elem, 0.0))
+            : mlir::TypedAttr(rw.getIntegerAttr(elem, 0));
+    Value zero = make<mlir::arith::ConstantOp>(rw, loc, elem, zeroAttr);
     Value lo = make<mlir::arith::ConstantIndexOp>(rw, loc, 0);
     Value hi = make<mlir::arith::ConstantIndexOp>(
         rw, loc, static_cast<int64_t>(op.getType().getLength()));

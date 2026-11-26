@@ -37,6 +37,8 @@ float clamp01(float x);
 float dot(const float *xs, uint64_t nxs, const float *ys, uint64_t nys);
 void scale(const float *xs, uint64_t nxs, float k, float *dst, uint64_t ndst);
 
+float sum3(float a, float b, float c);
+
 struct point {
   float x, y;
 };
@@ -146,6 +148,8 @@ int main(void) {
   for (int i = 0; i < 64; ++i)
     EXPECT(same32(out[i], xs[i] * 3.0f), "scale[%d]", i);
 
+  EXPECT(same32(sum3(1.0f, 0x1p-24f, 0x1p-24f), (1.0f + 0x1p-24f) + 0x1p-24f),
+         "sum3 = %a", sum3(1.0f, 0x1p-24f, 0x1p-24f));
   EXPECT(same32(norm2(3.0f, 4.0f), 25.0f), "norm2(3, 4) = %a",
          norm2(3.0f, 4.0f));
   struct point p;

@@ -33,6 +33,7 @@ interface FloatOps @abi(c) = sig
     requires len xs = len ys
   let scale : (xs : [f32]) -> (k : f32) -> (dst : out mutable [f32]) -> unit
     requires len xs = len dst
+  let sum3 : (a : f32) -> (b : f32) -> (c : f32) -> f32
   let point = type { x : f32; y : f32 }
   let norm2 : (p : point) -> f32
   let mid : (p : point) -> (q : point) -> point
@@ -88,6 +89,11 @@ let scale (xs : [f32]) (k : f32) (dst : out mutable [f32]) : unit
   requires len xs = len dst
 =
   for i in 0..len xs do dst.[i] <- xs.[i] * k done
+
+(* A local array of floats, zeroed on entry like any other. *)
+let sum3 (a : f32) (b : f32) (c : f32) : f32 =
+  let xs : [f32; 3] = [a; b; c] in
+  xs.[0] + xs.[1] + xs.[2]
 
 let point = type { x : f32; y : f32 }
 
