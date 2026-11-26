@@ -42,20 +42,18 @@ sh_test(
     data = [":add_msl"],
 )
 
-# The build-time .metallib and its embedding. Manual until Xcode's Metal
-# toolchain is on every machine that builds //...; msl_test builds the
-# library at test time meanwhile, and skips when the toolchain is missing.
+# The .metallib, built at build time and embedded (macOS with Xcode's
+# Metal toolchain).
 metal_library(
     name = "add_metallib",
     src = ":add_msl",
     symbol = "pia_test_add_metallib",
-    tags = ["manual"],
 )
 
 cc_test(
     name = "embed_test",
     srcs = ["embed_test.c"],
-    tags = ["manual"],
+    tags = ["requires-metal"],
     target_compatible_with = ["@platforms//os:macos"],
     deps = [":add_metallib_embed"],
 )
