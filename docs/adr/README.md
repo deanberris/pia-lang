@@ -75,3 +75,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0069](0069-pure-and-impure-functions.md) | Pure and impure functions: computed purity, `@pure` assertions, and `@impure` interface boundaries | Accepted |
 | [0070](0070-raw-binary-embedding.md) | Raw binary embedding: `@embed` for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission | Accepted |
 | [0071](0071-function-references.md) | Function references: a function is a value that travels by reference, checked against its arrow where the reference is made | Proposed |
+| [0072](0072-drops-run-in-constant-stack.md) | Drops run in bounded stack: recursive values are dropped by pointer reversal, and nothing else can nest without bound | Proposed |
