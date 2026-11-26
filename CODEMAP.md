@@ -88,6 +88,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/syntax/RecTypes.{h,cpp}` finds the type items that refer to themselves, alone or in cycles, for sema's `let rec` checks and the `needless_rec` lint (ADR 0047).
 - `src/syntax/Diagnostics.h` holds the diagnostics, printed with a caret under the column.
 - `src/syntax/Interfaces.{h,cpp}` holds module headers, `.piai` interface artifacts and import resolution (ADR 0039).
+- `src/syntax/Embeds.{h,cpp}` parses `@embed(...)` attributes and resolves embedded binary assets hermetically from `--embed` and `--embed-path` (ADR 0070).
 - `src/syntax/Lint.{h,cpp}` holds the ADR 0037 lints. They run before expansion, and piac and pia-lsp share them.
 
 ### src/meta: metaprograms
@@ -199,6 +200,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/codegen` | lowering lit tests and C harnesses | the run tests need arm64 macOS or a matching host |
 | `tests/meta` | `--dump-expanded` and proofs of expanded code | |
 | `tests/modules` | interfaces and imports across files | inputs in `tests/modules/Inputs` |
+| `tests/embed` | raw binary embedding via `@embed` (ADR 0070): verification, diagnostics, LLVM IR and native execution | inputs in `tests/embed/Inputs` |
 | `tests/memory` | the litmus battery for `Pia.Memory`, one file per family (MP, SB, LB, coherence, rmw, races, multi) | `theory.pia` proves the theory's model |
 | `tests/std` | the `lib/` modules | build the `.piai` files first in local runs |
 | `tests/lint` | lint text and fixes | |

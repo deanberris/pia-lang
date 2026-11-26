@@ -16,6 +16,7 @@ def _piac_resources(_os, _inputs):
 def pia_object(
         name,
         src,
+        embeds = [],
         allow_unproved = [],
         solver_rlimit = 1200000000,
         solver_timeout_ms = 600000,
@@ -44,11 +45,22 @@ def pia_object(
                      ["--solver-rlimit=%d" % solver_rlimit,
                       "--solver-timeout=%d" % solver_timeout_ms,
                       "--jobs=%d" % PIAC_JOBS])
+    if embeds:
+        embed_locs = " ".join(["$(locations %s)" % e for e in embeds])
+        cmd = (
+            'embed_flags=""; ' +
+            'for f in %s; do embed_flags="$$embed_flags --embed=$$(basename "$$f")=$$f"; done; ' % embed_locs +
+            '$(location //tools/piac) --emit=obj %s $$embed_flags ' % flags +
+            PIAC_TARGET_FLAGS +
+            ' -o $@ $(location %s)' % src
+        )
+    else:
+        cmd = "$(location //tools/piac) --emit=obj %s " % flags + PIAC_TARGET_FLAGS + " -o $@ $<"
     native.genrule(
         name = name,
-        srcs = [src],
+        srcs = [src] + list(embeds),
         outs = [name + ".o"],
-        cmd = "$(location //tools/piac) --emit=obj %s " % flags + PIAC_TARGET_FLAGS + " -o $@ $<",
+        cmd = cmd,
         tools = ["//tools/piac"],
         **kwargs
     )
@@ -89,9 +101,24 @@ def _pia_library_impl(ctx):
     # Strict dependencies: a module sees the interfaces of the modules it
     # declares, never those they import in turn, nor any object file.
     imported = [dep[PiaInfo].interfaces for dep in ctx.attr.deps]
+    embed_files = ctx.files.embeds
+    seen_basenames = {}
+    embed_args = []
+    for f in embed_files:
+        if f.basename in seen_basenames:
+            fail("duplicate embedded file basename %r (%s and %s)" % (
+                f.basename,
+                seen_basenames[f.basename],
+                f.short_path,
+            ))
+        seen_basenames[f.basename] = f.short_path
+        embed_args.append("--embed=%s=%s" % (f.basename, f.path))
+        if f.short_path != f.basename:
+            embed_args.append("--embed=%s=%s" % (f.short_path, f.path))
     obj = ctx.actions.declare_file(ctx.label.name + ".o")
     args = ["--emit=obj", "-o", obj.path] + _target_args(ctx)
     args += ["--iface-path=" + d.path for d in imported]
+    args += embed_args
     args += ["--allow-unproved=" + spec for spec in ctx.attr.allow_unproved]
     args += [
         "--solver-rlimit=%d" % ctx.attr.solver_rlimit,
@@ -102,7 +129,7 @@ def _pia_library_impl(ctx):
     ctx.actions.run(
         executable = piac,
         arguments = args,
-        inputs = [src] + imported,
+        inputs = [src] + imported + embed_files,
         outputs = [obj],
         mnemonic = "PiaCompile",
         resource_set = _piac_resources,
@@ -146,12 +173,14 @@ them byte-identical (a private item, a body, a comment) does not rebuild any
 importer. Each `import M.I` must be provided by a module in `deps`: the
 interfaces of modules further down are not visible (ADR 0039).
 
+`embeds` declares binary files available to `@embed(file = "...")` (ADR 0070).
 `allow_unproved`, `solver_rlimit` and `solver_timeout_ms` are as for
 pia_object.
 """,
     attrs = {
         "src": attr.label(allow_single_file = [".pia", ".pia.md"], mandatory = True),
         "deps": attr.label_list(providers = [PiaInfo]),
+        "embeds": attr.label_list(allow_files = True),
         "allow_unproved": attr.string_list(),
         "solver_rlimit": attr.int(default = 1200000000),
         "solver_timeout_ms": attr.int(default = 600000),
@@ -170,7 +199,7 @@ pia_object.
     },
 )
 
-def pia_binary(name, src, deps = [], **kwargs):
+def pia_binary(name, src, deps = [], embeds = [], **kwargs):
     """A program whose `main` is in the Pia file `src`, which may import `deps`.
 
     It is the module `<name>_main`, built by pia_library, linked as a
@@ -180,6 +209,7 @@ def pia_binary(name, src, deps = [], **kwargs):
         name = name + "_main",
         src = src,
         deps = deps,
+        embeds = embeds,
         target_compatible_with = kwargs.get("target_compatible_with", []),
     )
     cc_binary(

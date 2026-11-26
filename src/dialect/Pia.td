@@ -547,6 +547,20 @@ def Pia_ConstArrayOp : Pia_Op<"const_array", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Pia_EmbedOp : Pia_Op<"embed", [Pure]> {
+  let summary = "a fixed read-only byte slice backed by an embedded binary blob";
+  let description = [{
+    `let blob : [u8] @embed(file = "...")` (ADR 0070): a read-only `[u8]` slice
+    of exact length `length` backed by static binary data emitted directly as an
+    LLVM `ConstantDataArray` under `symbol`. The verifier sees an opaque,
+    deterministic byte array of exact length `length` with no per-byte axioms.
+  }];
+  let arguments = (ins StrAttr:$symbol, I64Attr:$length);
+  let results = (outs Pia_SliceType:$result);
+  let assemblyFormat = "$symbol `len` $length attr-dict `:` type($result)";
+  let hasVerifier = 1;
+}
+
 def Pia_SliceOp : Pia_Op<"slice", [Pure]> {
   let summary = "a view of elements [lo, hi) of a buffer";
   let description = [{

@@ -18,6 +18,7 @@
 
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Support/LLVM.h"
+#include "syntax/Embeds.h"
 
 namespace llvm {
 class LLVMContext;
@@ -52,6 +53,9 @@ struct Options {
   // The object's certificate (src/cert/Certificate.h), encoded, put in the
   // target's certificate section. Empty writes none.
   std::string certificate;
+  // Raw binary blobs resolved from `@embed` bindings (ADR 0070), emitted
+  // directly as LLVM ConstantDataArrays.
+  std::vector<syntax::EmbeddedBlob> embeds;
 };
 
 // The witness symbol of interface `iface` of `module`, whose canonical

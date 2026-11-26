@@ -719,6 +719,43 @@ struct ConstArrayLowering : mlir::OpConversionPattern<ConstArrayOp> {
   }
 };
 
+// Embedded binary blob (ADR 0070): for non-empty blobs, declare an external
+// constant memref.global (populated directly with a ConstantDataArray in
+// translate()) and cast it to a slice; for empty blobs, cast a zero-length
+// stack allocation as in EmptyLowering.
+struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult matchAndRewrite(
+      EmbedOp op, OpAdaptor,
+      mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto sliceType = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!sliceType) return mlir::failure();
+    int64_t len = op.getLength();
+    if (len == 0) {
+      auto none = mlir::MemRefType::get({0}, sliceType.getElementType());
+      Value storage = make<mlir::memref::AllocaOp>(rw, loc, none);
+      rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, storage);
+      return mlir::success();
+    }
+    auto arrType = mlir::MemRefType::get({len}, sliceType.getElementType());
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    llvm::StringRef sym = op.getSymbol();
+    if (!module.lookupSymbol<mlir::memref::GlobalOp>(sym)) {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      make<mlir::memref::GlobalOp>(
+          rw, loc, sym, rw.getStringAttr("private"), arrType,
+          /*initial_value=*/mlir::Attribute(), /*constant=*/true,
+          /*alignment=*/mlir::IntegerAttr());
+    }
+    Value global = make<mlir::memref::GetGlobalOp>(rw, loc, arrType, sym);
+    rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, global);
+    return mlir::success();
+  }
+};
+
 // `xs.[lo .. hi]`: the same storage, from the buffer's offset plus lo, with
 // hi - lo elements.
 struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
@@ -2092,8 +2129,9 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
            LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
            ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
-           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering,
-           RecMakeLowering, RecTagLowering, RecPayloadLowering>(
+           AddressLowering, AbortLowering, ConstArrayLowering, EmbedLowering,
+           ForeignLowering, RecMakeLowering, RecTagLowering,
+           RecPayloadLowering>(
           types, ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
@@ -2581,6 +2619,48 @@ void addWitnesses(llvm::Module &m, const Options &options) {
     llvm::appendToUsed(m, used);
 }
 
+// Populates embedded binary blobs (ADR 0070) directly as LLVM
+// ConstantDataArrays, bypassing per-element MLIR attributes.
+void addEmbeds(llvm::Module &m, const Options &options) {
+  if (options.embeds.empty()) return;
+  llvm::LLVMContext &ctx = m.getContext();
+  std::vector<llvm::GlobalValue *> used;
+  for (const syntax::EmbeddedBlob &blob : options.embeds) {
+    llvm::GlobalVariable *g = m.getNamedGlobal(blob.symbol);
+    if (!g && !blob.isExternal && blob.section.empty())
+      continue;
+    llvm::Constant *data = llvm::ConstantDataArray::get(
+        ctx, llvm::ArrayRef<uint8_t>(blob.bytes));
+    auto linkage = blob.isExternal ? llvm::GlobalValue::ExternalLinkage
+                                   : llvm::GlobalValue::PrivateLinkage;
+    if (g) {
+      g->setInitializer(data);
+      g->setConstant(true);
+      g->setLinkage(linkage);
+    } else {
+      g = new llvm::GlobalVariable(m, data->getType(), /*isConstant=*/true,
+                                   linkage, data, blob.symbol);
+    }
+    g->setAlignment(llvm::Align(blob.align));
+    if (!blob.section.empty()) {
+      g->setSection(blob.section);
+      used.push_back(g);
+    }
+    if (blob.emitLenSymbol) {
+      std::string lenName = blob.symbol + "_len";
+      if (!m.getNamedGlobal(lenName)) {
+        llvm::Type *i64 = llvm::Type::getInt64Ty(ctx);
+        auto *lenVar = new llvm::GlobalVariable(
+            m, i64, /*isConstant=*/true, llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantInt::get(i64, blob.bytes.size()), lenName);
+        lenVar->setAlignment(llvm::Align(8));
+      }
+    }
+  }
+  if (!used.empty())
+    llvm::appendToUsed(m, used);
+}
+
 } // namespace
 
 std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
@@ -2603,6 +2683,7 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
     return nullptr;
   }
   addWitnesses(*m, options);
+  addEmbeds(*m, options);
   return m;
 }
 

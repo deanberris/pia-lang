@@ -273,6 +273,7 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     collectLinear(program);
     collectConstants();
+    collectEmbeds(program);
     if (diags_.hasErrors()) return nullptr;
     // Higher-order functions are called only through specialisations.
     for (auto it = sigs_.begin(); it != sigs_.end();) {
@@ -617,6 +618,7 @@ class Gen {
     if (lookup(name)) what = "a local of the same name";
     else if (overloads_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
+    else if (embeds_.count(name)) what = "the embedded blob '" + name + "'";
     else if (types_.isCtorName(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
@@ -632,7 +634,7 @@ class Gen {
   std::string primed(const std::string &name) {
     std::string p = name + "'";
     while (lookup(p) || overloads_.count(p) || consts_.count(p) ||
-           types_.named(p))
+           embeds_.count(p) || types_.named(p))
       p += "'";
     return p;
   }
@@ -745,6 +747,70 @@ class Gen {
       }
       if (auto values = constValues(body, arr))
         consts_[sig.name] = {arr, *values};
+      it = sigs_.erase(it);
+    }
+  }
+
+  // `let blob : [u8] @embed(file = "...")` (ADR 0070): resolved hermetically
+  // from --embed / --embed-path and lowered to `pia.embed` + direct LLVM
+  // ConstantDataArray emission.
+  void collectEmbeds(const Node &program) {
+    std::string modulePrefix;
+    if (!program.kids.empty() &&
+        program.kids[0]->kind == NodeKind::ModuleHeader) {
+      modulePrefix = program.kids[0]->text;
+      std::replace(modulePrefix.begin(), modulePrefix.end(), '.', '$');
+      modulePrefix += "$";
+    }
+    std::map<std::string, std::string> usedSymbols;
+    for (auto it = sigs_.begin(); it != sigs_.end();) {
+      const sema::FuncSig &sig = it->second;
+      const Node *attr = syntax::findEmbedAttr(*sig.item);
+      if (!attr) {
+        ++it;
+        continue;
+      }
+      auto slice = mlir::dyn_cast_or_null<SliceType>(sig.result);
+      if (!slice) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      auto spec = syntax::parseEmbedAttr(*attr, diags_);
+      if (!spec) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      auto bytes = syntax::resolveEmbedFile(spec->file, options_.embeds,
+                                            attr->loc, diags_);
+      if (!bytes) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      std::string sym = spec->hasExplicitSymbol
+                            ? spec->symbol
+                            : ("__pia_embed_" + modulePrefix + sig.name);
+      auto [seenIt, fresh] = usedSymbols.emplace(sym, sig.name);
+      if (!fresh) {
+        diags_.error(attr->loc,
+                     "duplicate embedded symbol '" + sym +
+                         "' (already used by '" + seenIt->second + "')");
+        it = sigs_.erase(it);
+        continue;
+      }
+      int64_t len = static_cast<int64_t>(bytes->size());
+      embeds_[sig.name] = {slice, sym, len};
+      if (options_.resolvedEmbeds) {
+        syntax::EmbeddedBlob blob;
+        blob.name = sig.name;
+        blob.file = std::move(spec->file);
+        blob.symbol = std::move(sym);
+        blob.section = std::move(spec->section);
+        blob.align = spec->align;
+        blob.isExternal = spec->hasExplicitSymbol;
+        blob.emitLenSymbol = spec->hasExplicitSymbol;
+        blob.bytes = std::move(*bytes);
+        options_.resolvedEmbeds->push_back(std::move(blob));
+      }
       it = sigs_.erase(it);
     }
   }
@@ -875,6 +941,12 @@ class Gen {
   struct Constant {
     ArrayType type;
     mlir::ArrayAttr values;
+  };
+
+  struct EmbedEntry {
+    SliceType type;
+    std::string symbol;
+    int64_t length = 0;
   };
 
   void genFunction(const std::string &name) {
@@ -2181,6 +2253,12 @@ class Gen {
       auto op = create<ConstArrayOp>(loc(n), c->second.type, c->second.values,
                                      b_.getStringAttr(n.text));
       return TV{op.getResult(), c->second.type};
+    }
+    if (auto e = embeds_.find(n.text); e != embeds_.end()) {
+      auto op = create<EmbedOp>(loc(n), e->second.type,
+                                b_.getStringAttr(e->second.symbol),
+                                b_.getI64IntegerAttr(e->second.length));
+      return TV{op.getResult(), e->second.type};
     }
     auto set = overloadSet(n.text);
     if (set.size() > 1)
@@ -7367,6 +7445,12 @@ class Gen {
                                   typeName(c->second.type));
         continue;
       }
+      if (embeds_.count(r.text)) {
+        diags_.error(r.loc,
+                     unmet + "exporting an @embed binding in an interface is "
+                             "not supported yet (ADR 0070, step 3)");
+        continue;
+      }
       if (std::optional<std::string> name = privateType(type, shown))
         diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
                                 "names '" + *name + "', which no interface "
@@ -8517,7 +8601,8 @@ class Gen {
   // Whether a buffer is, or views, read-only constant data.
   static bool isConstantData(Value v) {
     while (auto s = v.getDefiningOp<SliceOp>()) v = s.getBuffer();
-    return v.getDefiningOp<ConstArrayOp>() != nullptr;
+    return v.getDefiningOp<ConstArrayOp>() != nullptr ||
+           v.getDefiningOp<EmbedOp>() != nullptr;
   }
 
   R emitCall(const Node &n, const sema::FuncSig &sig,
@@ -9204,7 +9289,12 @@ class Gen {
       if (obj.kind != NodeKind::Name)
         return fail(obj, "only a named array or slice can be written");
       BindingPtr b = lookup(obj.text);
-      if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      if (!b) {
+        if (consts_.count(obj.text) || embeds_.count(obj.text))
+          return fail(obj, "cannot write to '" + obj.text +
+                               "': it is fixed read-only data");
+        return fail(obj, "unknown name '" + obj.text + "'");
+      }
       Type elem = elementType(b->type);
       if (!elem)
         return fail(obj, "only arrays and slices can be indexed, found " +
@@ -11624,6 +11714,7 @@ class Gen {
   mlir::ModuleOp module_;
   std::map<std::string, sema::FuncSig> sigs_;
   std::map<std::string, Constant> consts_;
+  std::map<std::string, EmbedEntry> embeds_;
   // Exported function symbols (ADR 0039), each with its module's path, or
   // empty for a plain C name.
   std::map<std::string, std::string> exports_;

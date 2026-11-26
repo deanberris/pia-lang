@@ -25,6 +25,7 @@
 
 #include "lsp/Json.h"
 #include "meta/Expand.h"
+#include "syntax/Embeds.h"
 
 namespace pia::repl {
 
@@ -104,6 +105,7 @@ struct Options {
   // name, or a location "[cell]:line" or "[cell]:line:col".
   std::vector<std::string> allowUnproved;
   meta::Options meta;
+  syntax::EmbedOptions embeds;
   unsigned timeoutMs = 10000; // per obligation
   // How long a swap waits for running tasks to leave the definitions it
   // changes together (ADR 0031, "Live redefinition").

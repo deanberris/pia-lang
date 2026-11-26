@@ -1,0 +1,50 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_object")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Raw binary embedding (@embed, ADR 0070): verification, diagnostics, and
+# direct LLVM ConstantDataArray emission.
+lit_tests(
+    name = "embed_tests",
+    srcs = glob(["*.pia"]),
+    data = glob(["Inputs/*.bin"]),
+    tools = ["//tools/piac"],
+)
+
+# End-to-end pure Pia binary embedding raw binary files via Bazel `embeds`.
+pia_binary(
+    name = "embed_run",
+    src = "Inputs/embed_run.pia",
+    embeds = [
+        "Inputs/empty.bin",
+        "Inputs/magic.bin",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+sh_test(
+    name = "embed_run_test",
+    srcs = ["embed_run_test.sh"],
+    args = ["$(rootpath :embed_run)"],
+    data = [":embed_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# C ABI interop: explicit symbol, <symbol>_len, alignment, and Pia reader.
+pia_object(
+    name = "embed_c_obj",
+    src = "Inputs/embed_c.pia",
+    embeds = ["Inputs/magic.bin"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+cc_test(
+    name = "embed_c_test",
+    srcs = [
+        "embed_c_test.c",
+        ":embed_c_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)

@@ -724,6 +724,7 @@ struct Session::Impl {
   std::map<std::string, std::vector<std::string>> stateUses;
   // The expressions of the cell being compiled that take states.
   std::map<std::string, std::vector<std::string>> pendingThunks;
+  std::vector<syntax::EmbeddedBlob> resolvedEmbeds;
   std::set<std::string> pendingSpawnStates;
   std::vector<std::unique_ptr<uint64_t>> retiredStates;
 
@@ -1197,8 +1198,12 @@ struct Session::Impl {
       return mlir::success();
     });
     syntax::Diagnostics gd;
+    resolvedEmbeds.clear();
+    irgen::Options irOpts;
+    irOpts.embeds = options.embeds;
+    irOpts.resolvedEmbeds = &resolvedEmbeds;
     mlir::OwningOpRef<mlir::ModuleOp> module =
-        irgen::generate(*a.tree, kFile, ctx, gd);
+        irgen::generate(*a.tree, kFile, ctx, gd, irOpts);
     takeDiagnostics(a, gd);
     for (Event &e : mlirErrors)
       a.errors.push_back(std::move(e));
@@ -1614,6 +1619,7 @@ struct Session::Impl {
     codegen::Options cg;
     cg.triple = llvm::sys::getProcessTriple();
     cg.cpu = llvm::sys::getHostCPUName().str();
+    cg.embeds = resolvedEmbeds;
     std::string jitError;
     mlir::ExecutionEngineOptions eo;
     auto builder = [&](mlir::Operation *op, llvm::LLVMContext &llvmCtx) {
