@@ -1270,9 +1270,11 @@ class Gen {
       Type saved;
       ~DropScope() { t = saved; }
     } dropScope{dropping_, dropping_};
-    dropping_ = sig.name == "drop" && sig.params.size() == 1
-                    ? sig.params[0].type
-                    : Type();
+    // An instance of a generic drop, `drop<u16>`, is a drop too, and so is
+    // one from another module, `Pia.Mem.Box.drop<u16>`.
+    llvm::StringRef itemName = sig.item ? llvm::StringRef(sig.item->text) : "";
+    bool isDrop = itemName == "drop" || itemName.ends_with(".drop");
+    dropping_ = isDrop && sig.params.size() == 1 ? sig.params[0].type : Type();
     // `= extern "symbol"`: a C function (#55).
     std::string foreign;
     bool isExtern = externSymbol(bodyNode, foreign);
@@ -1298,7 +1300,7 @@ class Gen {
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
           if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
-            const Node &d = dropNode(p.name, p.loc);
+            const Node &d = dropNode(b, p.loc);
             bodyPtr = keep(withCleanup(*bodyPtr, d));
             frames_.back().defers.push_back(&d);
           }
@@ -2199,9 +2201,12 @@ class Gen {
   }
 
   // Lowers both operands. A literal takes its type from the other side, so
-  // `0 < x` and `x < 0` both compare at x's type.
+  // `0 < x` and `x < 0` both compare at x's type. On the right of a record
+  // whose derive defines `op`, it takes that function's second parameter's
+  // type, so `l * 3` scales a distinct type by a u32 (ADR 0064, section 4).
   std::optional<std::pair<TV, TV>> genOperands(const Node &lhs, const Node &rhs,
-                                               Type expected) {
+                                               Type expected,
+                                               const std::string &op = "") {
     // Of two literals, one with a float suffix gives the other its type:
     // `0.1 + 0.2f64`.
     auto suffixed = [&](const Node &k) {
@@ -2220,9 +2225,37 @@ class Gen {
     }
     R l = genExpr(lhs, expected);
     if (!l) return std::nullopt;
-    R r = genExpr(rhs, l->type);
+    Type want = l->type;
+    if (auto rt = mlir::dyn_cast<RecordType>(l->type))
+      if (const sema::FuncSig *sig = recordOpSig(op, rt))
+        if (sig->params.size() == 2)
+          want = sig->params[1].type;
+    R r = genExpr(rhs, want);
     if (!r) return std::nullopt;
     return std::make_pair(*l, *r);
+  }
+
+  // The name of the function an operator on a record calls: `eq_<t>` for
+  // `=`, which @derive(eq) makes, and `lt_<t>`, `add_<t>`, `mul_<t>` and
+  // the rest, which @derive(ord), @derive(add) and @derive(scale) make
+  // (ADR 0064, section 4). Empty for an operator no derive defines.
+  static std::string recordOpName(const std::string &op, llvm::StringRef type) {
+    static const std::map<std::string, std::string> names = {
+        {"=", "eq"},  {"<>", "eq"}, {"<", "lt"},  {"<=", "le"},
+        {">", "gt"},  {">=", "ge"}, {"+", "add"}, {"-", "sub"},
+        {"*", "mul"}, {"/", "div"}, {"%", "rem"}};
+    auto it = names.find(op);
+    if (it == names.end())
+      return "";
+    return it->second + "_" + type.str();
+  }
+
+  const sema::FuncSig *recordOpSig(const std::string &op, RecordType rt) {
+    std::string name = recordOpName(op, rt.getName());
+    if (name.empty())
+      return nullptr;
+    auto it = sigs_.find(name);
+    return it == sigs_.end() ? nullptr : &it->second;
   }
 
   // Brings two integers to their joined type.
@@ -2272,7 +2305,7 @@ class Gen {
               const Node &rhsNode, Type expected) {
     if (isLogic(op)) return genLogic(n, op, lhsNode, rhsNode);
     if (isComparison(op)) {
-      auto ops = genOperands(lhsNode, rhsNode, Type());
+      auto ops = genOperands(lhsNode, rhsNode, Type(), op);
       if (!ops) return std::nullopt;
       auto [a, c] = *ops;
       Location l = loc(n);
@@ -2359,8 +2392,12 @@ class Gen {
                              mlir::isa_and_nonnull<IntType>(expected) ||
                                      isExact(expected) || isFloat(expected)
                                  ? expected
-                                 : Type());
+                                 : Type(),
+                             op);
       if (!ops) return std::nullopt;
+      if (mlir::isa<RecordType>(ops->first.type) ||
+          mlir::isa<RecordType>(ops->second.type))
+        return genRecordArith(n, op, ops->first, ops->second);
       if (isFloat(ops->first.type) || isFloat(ops->second.type))
         return genFloatArith(n, op, ops->first, ops->second);
       if (isExact(ops->first.type) || isExact(ops->second.type))
@@ -8522,11 +8559,63 @@ class Gen {
     return out;
   }
 
+  // `<`, `<=`, `>` and `>=` on records call `lt_<name>` and the rest,
+  // which `@derive(ord)` makes (ADR 0064, section 4).
+  R genRecordOrder(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt || a.type != c.type)
+      return fail(n, "'" + op + "' compares two values of one type, found " +
+                         typeName(a.type) + " and " + typeName(c.type));
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig)
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(ord) to '" + name + "'");
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != a.type || sig->result != boolType())
+      return fail(n, "'" + recordOpName(op, name) + "' must take two " + name +
+                         " values and return bool");
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
+  // `+` and `-` between two values of a record type, and `*`, `/` and `%`
+  // of one by its underlying type, call `add_<name>` and the rest, which
+  // `@derive(add)` and `@derive(scale)` make (ADR 0064, section 4). The
+  // function's precondition is where overflow is a goal.
+  R genRecordArith(const Node &n, const std::string &op, TV a, TV c) {
+    auto rt = mlir::dyn_cast<RecordType>(a.type);
+    if (!rt) {
+      std::string other = typeName(c.type);
+      return fail(n, "'" + op + "' is not defined with " + typeName(a.type) +
+                         " on the left and " + other + " on the right; a " +
+                         "derived operator takes the " + other + " first");
+    }
+    std::string name = rt.getName().str();
+    const sema::FuncSig *sig = recordOpSig(op, rt);
+    if (!sig) {
+      std::string derive = op == "+" || op == "-"                ? "add"
+                           : op == "*" || op == "/" || op == "%" ? "scale"
+                                                                 : "";
+      if (derive.empty())
+        return fail(n, "'" + op + "' is not defined on " + name);
+      return fail(n, "'" + op + "' is not defined on " + name +
+                         "; add @derive(" + derive + ") to '" + name + "'");
+    }
+    if (sig->params.size() != 2 || sig->params[0].type != a.type ||
+        sig->params[1].type != c.type)
+      return fail(n,
+                  "'" + op + "' on " + name + " takes " +
+                      (sig->params.size() == 2 ? typeName(sig->params[1].type)
+                                               : std::string("one value")) +
+                      " on the right, found " + typeName(c.type));
+    return emitCall(n, *sig, {a.value, c.value});
+  }
+
   // `=` and `<>` on records call `eq_<name>`, which `@derive(eq)` makes.
   R genRecordEq(const Node &n, const std::string &op, TV a,
                 const Node &lhsNode, TV c, const Node &rhsNode) {
     if (op != "=" && op != "<>")
-      return fail(n, "records cannot be compared with '" + op + "'");
+      return genRecordOrder(n, op, a, c);
     auto rt = mlir::dyn_cast<RecordType>(a.type);
     if (!rt || a.type != c.type)
       return fail(n, "'" + op + "' compares two values of one record type, "
@@ -9558,16 +9647,60 @@ class Gen {
 
   // --- `drop` (#85) -----------------------------------------------------
 
-  // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
-  // scope: the `Drop` concept, met by name like any other (ADR 0034).
-  bool hasDrop(Type t) {
-    if (!t || copied(t)) return false;
-    for (const sema::FuncSig *f : overloadSet("drop"))
+  // A type has a drop when a `drop (x : moved t) : unit` is in scope: the
+  // `Drop` concept, met by name like any other (ADR 0034). A generic one,
+  // such as `drop (t : type) (b : moved box t)`, gives a drop to each type
+  // its parameter deduces, as it would meet a requirement.
+  bool hasDrop(Type t) { return !dropFor(t).empty(); }
+
+  // The name to call to drop a `t`, or nothing. A type of another module,
+  // `Pia.Mem.Box.box<u8>`, is dropped by that module's drop, as an
+  // importer would not otherwise see it.
+  std::string dropFor(Type t) {
+    if (!t || copied(t))
+      return "";
+    if (meetsDrop(overloadSet("drop"), t))
+      return "drop";
+    std::string from = moduleOf(t);
+    if (!from.empty() && meetsDrop(overloadSet(from + ".drop"), t))
+      return from + ".drop";
+    return "";
+  }
+
+  // The module that defines the record `t`, from its name: "Pia.Mem.Box"
+  // for `Pia.Mem.Box.box<u8>`, or nothing for one of this program.
+  static std::string moduleOf(Type t) {
+    auto rec = mlir::dyn_cast<RecordType>(t);
+    if (!rec)
+      return "";
+    llvm::StringRef name = rec.getName();
+    name = name.take_until([](char c) { return c == '<'; });
+    size_t dot = name.rfind('.');
+    return dot == llvm::StringRef::npos ? "" : name.take_front(dot).str();
+  }
+
+  bool meetsDrop(const std::vector<sema::FuncSig *> &set, Type t) {
+    for (const sema::FuncSig *f : set)
       if (!f->isGeneric() && f->params.size() == 1 &&
           f->params[0].type == t &&
           sema::hasModifier(f->params[0].modifiers, "moved") &&
           f->result && isUnit(f->result))
         return true;
+    for (sema::FuncSig *f : set) {
+      if (!f->isGeneric())
+        continue;
+      std::vector<const Node *> ps = valueParamsOf(*f);
+      if (ps.size() != 1 || ps[0]->kids.empty() ||
+          ps[0]->kids[0]->kind != NodeKind::Annot ||
+          !sema::hasModifier(ps[0]->kids[0]->kids[0]->text, "moved"))
+        continue;
+      std::map<std::string, Type> bound;
+      if (!types_.unify(*ps[0]->kids[0], t, f->typeParams, bound))
+        continue;
+      if (genericMeeting(*f, {t}, {ps[0]->kids[0]->kids[0]->text},
+                         types_.unitType()))
+        return true;
+    }
     return false;
   }
 
@@ -9606,10 +9739,11 @@ class Gen {
   }
 
   // `drop x`, marked so that it runs only where `x` is not consumed.
-  const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
+  const Node &dropNode(const BindingPtr &b, syntax::SourceLoc at) {
+    const std::string &name = b->name;
     auto call = syntax::makeNode(NodeKind::Apply, at);
     call->flags = "drop";
-    call->add(syntax::makeNode(NodeKind::Name, at, "drop"));
+    call->add(syntax::makeNode(NodeKind::Name, at, dropFor(b->type)));
     call->add(syntax::makeNode(NodeKind::Name, at, name));
     return *keep(std::move(call));
   }
@@ -9724,10 +9858,18 @@ class Gen {
   }
 
   // Whether the buffers `b` holds may be written: a borrow that may, or an
-  // `out` or `inout` parameter, whose fields' buffers may be too.
+  // `out` or `inout` parameter, whose fields' buffers may be too. A
+  // `moved mutable` parameter is the callee's alone, so it may be too, as
+  // a box's `drop` moves its value out of its slot.
   static bool writableValue(const Binding &b) {
-    return b.writable || (b.isParam && (sema::hasModifier(b.modifiers, "out") ||
-                                        sema::hasModifier(b.modifiers, "inout")));
+    if (b.writable)
+      return true;
+    if (!b.isParam)
+      return false;
+    return sema::hasModifier(b.modifiers, "out") ||
+           sema::hasModifier(b.modifiers, "inout") ||
+           (sema::hasModifier(b.modifiers, "moved") &&
+            sema::hasModifier(b.modifiers, "mutable"));
   }
 
   // `n` was generated as `other`, a tree made from it.
@@ -11406,7 +11548,7 @@ class Gen {
     const Node *bodyNode = n.kids[4].get();
     const Node *drop = nullptr;
     if (needsDrop(b)) {
-      drop = &dropNode(n.text, n.loc);
+      drop = &dropNode(b, n.loc);
       bodyNode = keep(withCleanup(*bodyNode, *drop));
       if (!frames_.empty()) {
         if (frames_.back().tails.count(&n)) addTails(*bodyNode);
