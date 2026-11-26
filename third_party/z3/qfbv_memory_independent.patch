@@ -1,6 +1,6 @@
 --- a/src/tactic/smtlogics/qfbv_tactic.cpp
 +++ b/src/tactic/smtlogics/qfbv_tactic.cpp
-@@ -107,11 +107,14 @@
+@@ -109,11 +109,14 @@
                                                  using_params(smt, solver_p)),
                                         cond(mk_is_qfbv_probe(),
                                              and_then(mk_bit_blaster_tactic(m),

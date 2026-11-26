@@ -104,7 +104,7 @@ tables.pia:7:25: failed: the index is within bounds
   counterexample: len table = 1, len sizes = 1, complete = false, index = 1, length = 1
 ...
 tables.pia:4:5: failed: the loop invariant holds after each iteration
-  counterexample: len table = 65546, len sizes = 1, complete = false
+  counterexample: len table = 65538, len sizes = 1, complete = false
 2 proved, 4 failed, 0 skipped
 ```
 

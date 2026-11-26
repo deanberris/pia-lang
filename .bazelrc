@@ -13,7 +13,8 @@ build --incompatible_no_implicit_file_export
 build --cxxopt=-std=c++17 --host_cxxopt=-std=c++17
 
 build:linux --force_pic
-build:macos --macos_minimum_os=13.0 --host_macos_minimum_os=13.0
+# Z3 5.4.1 uses C++20 std::format, which Apple libc++ gates on macOS 13.3.
+build:macos --macos_minimum_os=13.3 --host_macos_minimum_os=13.3
 
 # Keep LLVM's warnings quiet; Pia's own targets turn warnings back on.
 build --per_file_copt=external/.*@-w
@@ -61,6 +62,23 @@ common:buildbuddy --remote_cache_compression
 # to watch.
 common:buildbuddy --remote_build_event_upload=minimal
 common:buildbuddy --remote_download_toplevel
+
+# BuildBuddy remote execution: Linux x86_64 builds and tests on BuildBuddy's
+# executors (Ubuntu 24.04, Clang 19 via toolchains_llvm), for CI's Linux job.
+# Needs the API key, as --config=buildbuddy does. macOS builds cannot use it:
+# BuildBuddy's cloud executors are Linux only.
+common:rbe --config=buildbuddy
+common:rbe --remote_executor=grpcs://remote.buildbuddy.io
+common:rbe --platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:rbe --extra_execution_platforms=@toolchains_buildbuddy//platforms:linux_x86_64
+common:rbe --extra_toolchains=@llvm_rbe//:cc-toolchain-x86_64-linux
+# The longest actions are LLVM links and proof tests, under 15 minutes.
+common:rbe --remote_timeout=1h
+# Actions run remotely, so many at once; --local_resources still limits what
+# runs on the machine itself.
+common:rbe --jobs=100
+# The Linux settings, whatever the host.
+build:rbe --config=linux
 
 # Local overrides (remote caches, jobs) go in user.bazelrc, which is ignored.
 try-import %workspace%/user.bazelrc

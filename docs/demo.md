@@ -246,7 +246,7 @@ edges_buggy.pia:13:19: proved: the index is within bounds [smt]
 edges_buggy.pia:13:17: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:13:36: proved: '+' does not overflow usize [smt]
 edges_buggy.pia:13:29: failed: the index is within bounds
-  counterexample: len src = 2311472508747907072, w = 0, m = 2311472508747907071, index = 2311472508747907072, length = 2311472508747907072
+  counterexample: len src = 5764607523034234880, w = 0, m = 5764607523034234879, index = 5764607523034234880, length = 5764607523034234880
 edges_buggy.pia:13:27: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:14:14: proved: '-' does not overflow usize [smt]
 edges_buggy.pia:14:7: proved: the index is within bounds [smt]
@@ -263,7 +263,7 @@ edges_buggy.pia:15:21: proved: the index is within bounds [smt]
 edges_buggy.pia:15:19: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:15:38: proved: '+' does not overflow usize [smt]
 edges_buggy.pia:15:31: failed: the index is within bounds
-  counterexample: len src = 17329207052307791873, w = 8255452159714263041, m = 9073754892593528831, index = 17329207052307791873, length = 17329207052307791873
+  counterexample: len src = 16861477004875137024, w = 3746994889972252672, m = 13114482114902884351, index = 16861477004875137024, length = 16861477004875137024
 edges_buggy.pia:15:29: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:17:5: proved: the divisor is not zero [intervals]
 edges_buggy.pia:17:5: proved: '/' does not overflow u16 [intervals]
@@ -271,7 +271,7 @@ edges_buggy.pia:10:3: proved: the value fits in u8 [smt]
 26 proved, 2 failed, 0 skipped
 ```
 
-Each counterexample is a call that satisfies the precondition and reads past the end; the solver is free to pick enormous sizes, since nothing in the precondition bounds them. In the first, `w` is 0, so the precondition allows `m` to be the last pixel (`m = len src - 1`), and its right neighbour `m + 1` is `len src`, one past the end. In the second, `m + w` is 17329207052307791872, the last pixel again, so `b` is in bounds but `b + 1` is not. In C this compiles and reads whatever is in memory after the buffer. In Pia it does not compile at all:
+Each counterexample is a call that satisfies the precondition and reads past the end; the solver is free to pick enormous sizes, since nothing in the precondition bounds them. In the first, `w` is 0, so the precondition allows `m` to be the last pixel (`m = len src - 1`), and its right neighbour `m + 1` is `len src`, one past the end. In the second, `m + w` is 16861477004875137023, the last pixel again, so `b` is in bounds but `b + 1` is not. In C this compiles and reads whatever is in memory after the buffer. In Pia it does not compile at all:
 
 ```console
 $ piac --emit=obj -o edges_buggy.o edges_buggy.pia
@@ -283,7 +283,7 @@ edges_buggy.pia:13:19: proved: the index is within bounds [smt]
 edges_buggy.pia:13:17: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:13:36: proved: '+' does not overflow usize [smt]
 edges_buggy.pia:13:29: failed: the index is within bounds
-  counterexample: len src = 2311472508747907072, w = 0, m = 2311472508747907071, index = 2311472508747907072, length = 2311472508747907072
+  counterexample: len src = 5764607523034234880, w = 0, m = 5764607523034234879, index = 5764607523034234880, length = 5764607523034234880
 edges_buggy.pia:13:27: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:14:14: proved: '-' does not overflow usize [smt]
 edges_buggy.pia:14:7: proved: the index is within bounds [smt]
@@ -300,7 +300,7 @@ edges_buggy.pia:15:21: proved: the index is within bounds [smt]
 edges_buggy.pia:15:19: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:15:38: proved: '+' does not overflow usize [smt]
 edges_buggy.pia:15:31: failed: the index is within bounds
-  counterexample: len src = 17329207052307791873, w = 8255452159714263041, m = 9073754892593528831, index = 17329207052307791873, length = 17329207052307791873
+  counterexample: len src = 16861477004875137024, w = 3746994889972252672, m = 13114482114902884351, index = 16861477004875137024, length = 16861477004875137024
 edges_buggy.pia:15:29: proved: '+' does not overflow u16 [intervals]
 edges_buggy.pia:17:5: proved: the divisor is not zero [intervals]
 edges_buggy.pia:17:5: proved: '/' does not overflow u16 [intervals]

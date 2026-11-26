@@ -1,0 +1,58 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/gpu:metal.bzl", "metal_library")
+
+# The GPU toolchain end to end (ADR 0068, step 1): a hand-written gpu.module
+# through piac --emit=spirv, spirv-val, SPIRV-Cross and the Metal compiler.
+
+genrule(
+    name = "add_spv",
+    srcs = ["add.mlir"],
+    outs = ["add.spv"],
+    cmd = "$(location //tools/piac) --emit=spirv -o $@ $(location add.mlir)",
+    tools = ["//tools/piac"],
+)
+
+sh_test(
+    name = "spirv_val_test",
+    srcs = ["spirv_val_test.sh"],
+    args = [
+        "$(rootpath @spirv_tools//:spirv-val)",
+        "$(rootpath :add_spv)",
+    ],
+    data = [
+        ":add_spv",
+        "@spirv_tools//:spirv-val",
+    ],
+)
+
+genrule(
+    name = "add_msl",
+    srcs = [":add_spv"],
+    outs = ["add.metal"],
+    cmd = "$(location @spirv_cross//:spirv-cross) $(location :add_spv) --msl --msl-version 20100 --output $@",
+    tools = ["@spirv_cross//:spirv-cross"],
+)
+
+sh_test(
+    name = "msl_test",
+    srcs = ["msl_test.sh"],
+    args = ["$(rootpath :add_msl)"],
+    data = [":add_msl"],
+)
+
+# The .metallib, built at build time and embedded (macOS with Xcode's
+# Metal toolchain).
+metal_library(
+    name = "add_metallib",
+    src = ":add_msl",
+    symbol = "pia_test_add_metallib",
+)
+
+cc_test(
+    name = "embed_test",
+    srcs = ["embed_test.c"],
+    tags = ["requires-metal"],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [":add_metallib_embed"],
+)
