@@ -756,13 +756,13 @@ route still points at `m` itself or strictly downhill: the precondition
 says so of `best`, and the postcondition of the result.
 
 ```pia
-let consider (fill : [u16]) (m : usize) (n : usize) (diagonal : bool)
+let consider (fill : [u16]) (w : usize) (m : usize) (n : usize) (diagonal : bool)
     (best : route) : route
-  requires m < len fill && n < len fill
+  requires m < len fill && n < len fill && w >= 3 && w < max usize && adjacent w m n
   requires best.target = m
-           || (best.target < len fill && fill.[best.target] < fill.[m])
+           || (best.target < len fill && fill.[best.target] < fill.[m] && adjacent w m best.target)
   ensures result.target = m
-          || (result.target < len fill && fill.[result.target] < fill.[m])
+          || (result.target < len fill && fill.[result.target] < fill.[m] && adjacent w m result.target)
 =
   if fill.[n] < fill.[m] then
     (let d : u16 = fill.[m] - fill.[n] in
@@ -775,21 +775,21 @@ The D8 direction of interior cell `m`: the eight neighbours, row by row.
 
 ```pia
 let steepest (fill : [u16]) (w : usize) (r : usize) (m : usize) : usize
-  requires w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
-  ensures result = m || (result < len fill && fill.[result] < fill.[m])
+  requires w >= 3 && w <= r && r + w + w <= len fill && r < m && m + 1 < r + w
+  ensures result = m || (result < len fill && fill.[result] < fill.[m] && adjacent w m result)
 =
   assert w < m && m + w + 1 < len fill;
   let a = m - w in
   let b = m + w in
   let none : route = { target = m; drop = 0 } in
-  let r1 = consider fill m (a - 1) true none in
-  let r2 = consider fill m a false r1 in
-  let r3 = consider fill m (a + 1) true r2 in
-  let r4 = consider fill m (m - 1) false r3 in
-  let r5 = consider fill m (m + 1) false r4 in
-  let r6 = consider fill m (b - 1) true r5 in
-  let r7 = consider fill m b false r6 in
-  let r8 = consider fill m (b + 1) true r7 in
+  let r1 = consider fill w m (a - 1) true none in
+  let r2 = consider fill w m a false r1 in
+  let r3 = consider fill w m (a + 1) true r2 in
+  let r4 = consider fill w m (m - 1) false r3 in
+  let r5 = consider fill w m (m + 1) false r4 in
+  let r6 = consider fill w m (b - 1) true r5 in
+  let r7 = consider fill w m b false r6 in
+  let r8 = consider fill w m (b + 1) true r7 in
   r8.target
 ```
 
@@ -802,13 +802,13 @@ let directions_row (fill : [u16]) (w : usize) (r : usize)
     (down : inout mutable [usize]) : unit
   requires len down = len fill && w >= 3 && w <= r && r + w + w <= len fill
   requires forall (k in 0..len down).
-             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+             down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k] && adjacent w k (down.[k]))
   ensures forall (k in 0..len down).
-            down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+            down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k] && adjacent w k (down.[k]))
 =
   for m in r + 1..r + w - 1
     invariant forall (k in 0..len down).
-                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k] && adjacent w k (down.[k]))
   do
     down.[m] <- steepest fill w r m
   done
@@ -831,7 +831,7 @@ parallel.
 let directions (fill : [u16]) (w : usize) (down : out mutable [usize]) : unit
   requires len down = len fill && w >= 3 && w + w + w <= len fill
   ensures forall (k in 0..len down).
-            down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+            down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k] && adjacent w k (down.[k]))
 =
   for i in 0..len down
     invariant forall (k in 0..i). down.[k] = k
@@ -843,7 +843,7 @@ let directions (fill : [u16]) (w : usize) (down : out mutable [usize]) : unit
   while r <= last
     invariant w <= r && r <= last + w && last + w + w <= len fill
     invariant forall (k in 0..len down).
-                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+                down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k] && adjacent w k (down.[k]))
     decreases last + w - r
   do
     directions_row fill w r down;

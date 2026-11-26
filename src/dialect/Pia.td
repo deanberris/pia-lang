@@ -784,6 +784,19 @@ def Pia_RecMeasureOp : Pia_Op<"rec_measure", [Pure]> {
   let hasVerifier = 1;
 }
 
+def Pia_RecEqOp : Pia_Op<"rec_eq", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "whether two recursive values are equal, in a contract";
+  let description = [{
+    `%e = pia.rec_eq %a, %b : !pia.rec<"tree">` is `a = b` in a contract
+    (ADR 0047): the same constructor and equal payloads, a buffer by its
+    contents. Codegen never sees it; equality in code comes with
+    `@derive(eq)` on recursive types (step 4).
+  }];
+  let arguments = (ins Pia_Rec:$lhs, Pia_Rec:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+}
+
 def Pia_FieldOp : Pia_Op<"field", [Pure]> {
   let summary = "read a field of a record";
   let description = [{ `%r = pia.field %p, "r" : !pia.record<...> -> !pia.int<0, 255>` }];

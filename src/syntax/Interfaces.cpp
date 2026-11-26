@@ -188,6 +188,7 @@ void qualify(Node &n, const std::string &module,
 NodePtr importedType(const Node &shown, const std::string &module,
                      const std::set<std::string> &members, SourceLoc at) {
   auto item = makeNode(N::LetItem, at, module + "." + shown.text);
+  item->flags = shown.flags;  // `rec` (ADR 0047)
   item->add(makeNode(N::Params, at));
   item->add(makeNode(N::None, at));
   item->add(makeNode(N::Contracts, at));

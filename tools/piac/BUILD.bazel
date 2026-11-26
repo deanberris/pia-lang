@@ -16,6 +16,7 @@ cc_binary(
         "//src/cert",
         "//src/codegen",
         "//src/dialect",
+        "//src/gpu",
         "//src/irgen",
         "//src/meta",
         "//src/syntax",
@@ -24,6 +25,7 @@ cc_binary(
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:Parser",
     ],
 )
 

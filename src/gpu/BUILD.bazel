@@ -1,0 +1,28 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# The GPU path's lowering to SPIR-V (ADR 0068, step 1): upstream MLIR's gpu
+# and spirv dialects and conversions, linked into piac and pia-opt.
+cc_library(
+    name = "gpu",
+    srcs = ["Spirv.cpp"],
+    hdrs = ["Spirv.h"],
+    copts = ["-Wno-unused-parameter"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:GPUToSPIRV",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MemRefToSPIRV",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:SPIRVDialect",
+        "@llvm-project//mlir:SPIRVSerialization",
+        "@llvm-project//mlir:SPIRVTransforms",
+        "@llvm-project//mlir:Support",
+    ],
+)

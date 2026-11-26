@@ -15,10 +15,49 @@ bazel_dep(name = "rules_python", version = "1.9.3")
 
 bazel_dep(name = "googletest", version = "1.18.0.bcr.1", dev_dependency = True)
 
+# BuildBuddy's Linux executors (Ubuntu 24.04, as on CI's runner, so the piac
+# it builds runs there too) and a Clang toolchain for them (--config=rbe in
+# .bazelrc). Both macOS and Linux CI build Z3 with Clang so solver costs match
+# the shared baseline (and GCC 13 made Utf8.pia's decode postcondition time
+# out). The Clang toolchain is not registered globally: only --config=rbe
+# selects it via --extra_toolchains, so local and fork-PR builds keep their
+# own toolchain and never download the archive.
+bazel_dep(name = "toolchains_buildbuddy", version = "0.0.4", dev_dependency = True)
+
+buildbuddy = use_extension(
+    "@toolchains_buildbuddy//:extensions.bzl",
+    "buildbuddy",
+    dev_dependency = True,
+)
+buildbuddy.platform(buildbuddy_container_image = "UBUNTU24_04_IMAGE")
+
+bazel_dep(name = "toolchains_llvm", version = "1.13.0", dev_dependency = True)
+
+llvm_rbe = use_extension(
+    "@toolchains_llvm//toolchain/extensions:llvm.bzl",
+    "llvm",
+    dev_dependency = True,
+)
+llvm_rbe.toolchain(
+    name = "llvm_rbe",
+    exec_arch = "amd64",
+    exec_os = "linux",
+    llvm_version = "19.1.7",
+    stdlib = {"": "dynamic-stdc++"},
+)
+use_repo(llvm_rbe, "llvm_rbe")
+
 # --------------------------------------------------------------- Z3
 
-bazel_dep(name = "z3", version = "4.15.2")
+bazel_dep(name = "z3", version = "5.4.1")
 
+# Z3 5.4.1 fixes the bv2int_translator / theory_intblast use-after-free and
+# soundness bugs that crashed 4.15.2 under ADR 0066 (Z3 PRs #10109, #10485,
+# #10707, #11066, #11098, #11166, #11417). BCR does not yet publish 5.4.1 (and
+# BCR's 5.3.1 had a broken strip_prefix), so we fetch the upstream release
+# tarball with archive_override; switch back to single_version_override once
+# 5.4.1+ lands on BCR.
+#
 # Z3's QF_BV tactic simplifies and runs its AIG pass after bit-blasting only
 # while the whole process holds less than 300 MB (MEMLIMIT in
 # qfbv_tactic.cpp). A proof run with many threads holds more, so the same
@@ -26,14 +65,16 @@ bazel_dep(name = "z3", version = "4.15.2")
 # thread, which proof_bench's determinism check caught on
 # lib/Pia/Core/Charconv.pia. The patch always takes the branch a small
 # process takes, so every cost is what a single thread already measured.
-single_version_override(
+archive_override(
     module_name = "z3",
+    integrity = "sha256-WQAsyGrrhFeYpssgD48J5SBbIM1/qwMWvvsuNV45bIM=",
     patch_strip = 1,
     patches = ["//third_party/z3:qfbv_memory_independent.patch"],
-    version = "4.15.2",
+    strip_prefix = "z3-z3-5.4.1",
+    urls = ["https://github.com/Z3Prover/z3/releases/download/z3-5.4.1/z3-5.4.1-source.tar.gz"],
 )
 
-# Z3's BCR module builds with rules_foreign_cc's CMake rule. On macOS,
+# Z3's module builds with rules_foreign_cc's CMake rule. On macOS,
 # apple_support's toolchain links with a different tool (wrapped_clang) from
 # the one it compiles with (wrapped_clang_pp). rules_foreign_cc hands CMake
 # that linker as a relative bazel-out/ path, which breaks once CMake changes
@@ -44,7 +85,27 @@ single_version_override(
     module_name = "rules_foreign_cc",
     patch_strip = 1,
     patches = ["//third_party/rules_foreign_cc:absolute_linker_path.patch"],
-    version = "0.14.0",
+    version = "0.16.0",
+)
+
+# --------------------------------------------------------------- SPIR-V (ADR 0068)
+
+# SPIRV-Tools, for spirv-val on the SPIR-V piac makes for the GPU. 2026.3
+# needs rules_python 2.1, and the LLVM overlay below requires rules_python
+# below 2.0, so it stays at 2026.2.
+bazel_dep(name = "spirv_tools", version = "2026.2")
+
+# SPIRV-Cross translates SPIR-V to the Metal Shading Language. It is not in
+# the Bazel Central Registry, so it is pinned here at a Vulkan SDK tag with
+# its hash, and built by third_party/spirv_cross/BUILD.overlay.
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "spirv_cross",
+    build_file = "//third_party/spirv_cross:BUILD.overlay",
+    sha256 = "fbf9bee521545557357679173d39787a954bd8187e4b2fcaa09044c70201b434",
+    strip_prefix = "SPIRV-Cross-vulkan-sdk-1.4.350.0",
+    urls = ["https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-1.4.350.0.tar.gz"],
 )
 
 # --------------------------------------------------------------- LLVM and MLIR

@@ -1,10 +1,11 @@
 (* Importers of Pia.Core.Charconv know from the interface alone what
    from_chars returns for any input, and what to_chars writes: its
-   digit count, valid digits, and a '-' for a negative value. For
-   from_chars: how many digits it used, their value
-   in the base when it fits, and the value kept on an error, for an
-   unsigned and a signed type and two bases. Concrete inputs are checked
-   at run time by :charconv_run.
+   digit count, valid digits, a '-' for a negative value, and the exact
+   value (`digits_value`) so from_chars reads back what to_chars wrote
+   in any base from 2 to 36 (#306). For from_chars: how many digits it
+   used, their value in the base when it fits, and the value kept on an
+   error, for an unsigned and a signed type and two bases. Concrete
+   inputs are checked at run time by :charconv_run.
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Charconv.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
@@ -50,7 +51,51 @@ let negative (dst : borrowed inout mutable [u8]) (v : i16) : unit
 = let r = C.to_chars dst v 10 in
   assert r.ok ==> dst.[0] = 45
 
+let roundtrip_u8 (dst : borrowed inout mutable [u8]) (v : u8) (base : int{2..36}) (fallback : u8) : unit
+= let w = C.to_chars dst v base in
+  if w.ok && (w.used = len dst || C.digit_value dst.[w.used] base >= base) then (
+    C.digits_value_eq_num dst 0 w.used base (max u8 + 1);
+    C.run_digits dst 0 w.used base;
+    let r = C.from_chars dst base fallback in
+    assert C.is_ok (r.ec) && r.used = w.used && r.value = v)
+
+let roundtrip_u32 (dst : borrowed inout mutable [u8]) (v : u32) (base : int{2..36}) (fallback : u32) : unit
+= let w = C.to_chars dst v base in
+  if w.ok && (w.used = len dst || C.digit_value dst.[w.used] base >= base) then (
+    C.digits_value_eq_num dst 0 w.used base (max u32 + 1);
+    C.run_digits dst 0 w.used base;
+    let r = C.from_chars dst base fallback in
+    assert C.is_ok (r.ec) && r.used = w.used && r.value = v)
+
+let roundtrip_i8 (dst : borrowed inout mutable [u8]) (v : i8) (base : int{2..36}) (fallback : i8) : unit
+= let w = C.to_chars dst v base in
+  if w.ok && (w.used = len dst || C.digit_value dst.[w.used] base >= base) then (
+    if v >= 0 then (
+      C.digits_value_eq_num dst 0 w.used base (max i8 + 1);
+      C.run_digits dst 0 w.used base;
+      let r = C.from_chars dst base fallback in
+      assert C.is_ok (r.ec) && r.used = w.used && r.value = v)
+    else (
+      C.digits_value_eq_num dst 1 w.used base (max i8 + 2);
+      C.run_digits dst 1 w.used base;
+      let r = C.from_chars dst base fallback in
+      assert C.is_ok (r.ec) && r.used = w.used && r.value = v))
+
+let roundtrip_i32 (dst : borrowed inout mutable [u8]) (v : i32) (base : int{2..36}) (fallback : i32) : unit
+= let w = C.to_chars dst v base in
+  if w.ok && (w.used = len dst || C.digit_value dst.[w.used] base >= base) then (
+    if v >= 0 then (
+      C.digits_value_eq_num dst 0 w.used base (max i32 + 1);
+      C.run_digits dst 0 w.used base;
+      let r = C.from_chars dst base fallback in
+      assert C.is_ok (r.ec) && r.used = w.used && r.value = v)
+    else (
+      C.digits_value_eq_num dst 1 w.used base (max i32 + 2);
+      C.run_digits dst 1 w.used base;
+      let r = C.from_chars dst base fallback in
+      assert C.is_ok (r.ec) && r.used = w.used && r.value = v))
+
 (* Every goal is proved.
 // CHECK-NOT: failed
-// CHECK: 21 proved, 0 failed, 0 skipped
+// CHECK: 67 proved, 0 failed, 0 skipped
 *)
