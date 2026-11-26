@@ -91,7 +91,7 @@ Each Pia function `f` becomes an internal function. Only the functions a module 
 | `[T]` | `const T *data, uint64_t len` (or `T *` when it is written) |
 | `[T; n]` | `const T *data` (or `T *`) |
 
-A record parameter is passed as its fields, in declaration order, so `blend (p : pixel) (q : pixel) : pixel` takes eight `uint8_t` arguments. A record result is written through a pointer to a C struct of its fields, which is the last argument. Each field sits at its natural C offset, aligned to its own size:
+A record parameter is passed as its fields, in declaration order, so `blend (p : pixel) (q : pixel) : pixel` takes eight `uint8_t` arguments. A record result is written through a pointer to a C struct of its fields, which is the last argument; a record that flattens to one scalar, such as a one-field record or a distinct type (ADR 0064), returns that scalar instead. Each field sits at its natural C offset, aligned to its own size:
 
 ```c
 struct pixel { uint8_t r, g, b, a; };

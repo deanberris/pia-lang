@@ -1,13 +1,15 @@
 // D8 directions and the picture on the GPU (docs/placed.pia.md), checked
 // against the CPU stages of docs/streams.pia.md on a real SRTM tile, cell
 // for cell (ADR 0068, section 6). Each GPU stage runs twice: the first run
-// also opens the device and loads the kernel.
+// also opens the device and loads the kernel. The buffers are allocated on
+// page boundaries, so the shim wraps them in place, with no copy.
 //
 //   srtm_gpu tile.hgt [threshold]
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "examples/streams/demo_io.h"
 #include "examples/streams/pia_streams.h"
@@ -20,6 +22,30 @@ int32_t render_gpu(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                    uint64_t nfill, const uint32_t *acc, uint64_t nacc,
                    const uint64_t *basin, uint64_t nbasin, uint32_t threshold,
                    uint32_t *rgba, uint64_t nrgba);
+
+void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
+                       uint64_t *copied_bytes);
+
+// A buffer on a page boundary, which the Metal shim wraps without a copy.
+static void *page_alloc(size_t bytes) {
+  void *p = NULL;
+  return posix_memalign(&p, (size_t)getpagesize(), bytes ? bytes : 1) ? NULL
+                                                                     : p;
+}
+
+// How many of the tile's buffer sizes malloc puts on a page boundary.
+static int malloc_aligned(uint64_t n, int *of) {
+  const size_t sizes[] = {n * 2, n * 2, n * 4, n * 8, n * 8, n * 4};
+  int k = 0;
+  *of = (int)(sizeof sizes / sizeof sizes[0]);
+  void *p[sizeof sizes / sizeof sizes[0]];
+  for (int i = 0; i < *of; ++i) {
+    p[i] = malloc(sizes[i]);
+    k += ((uintptr_t)p[i] % (uintptr_t)getpagesize()) == 0;
+  }
+  for (int i = 0; i < *of; ++i) free(p[i]);
+  return k;
+}
 
 static double ms(double a, double b) { return (b - a) * 1e3; }
 
@@ -41,7 +67,9 @@ int main(int argc, char **argv) {
   uint8_t *raw = read_file(resolve(argv[1], in_buf, sizeof in_buf), &bytes);
   if (!raw) return 1;
   uint64_t n = bytes / 2;
-  uint16_t *dem = malloc(n * sizeof *dem);
+  int of;
+  int k = malloc_aligned(n, &of);
+  uint16_t *dem = page_alloc(n * sizeof *dem);
   uint64_t w = bytes % 2 ? 0 : load_hgt(raw, bytes, dem, n);
   free(raw);
   if (w == 0) {
@@ -50,17 +78,19 @@ int main(int argc, char **argv) {
   }
   printf("tile: %llux%llu cells\n", (unsigned long long)w,
          (unsigned long long)(n / w));
+  printf("malloc: %d of %d buffers of the tile's sizes start on a page\n", k,
+         of);
   uint32_t threshold = argc > 2 ? (uint32_t)atol(argv[2])
                                 : (uint32_t)(n / 1000 > 8 ? n / 1000 : 8);
 
-  uint16_t *fill = malloc(n * sizeof *fill);
+  uint16_t *fill = page_alloc(n * sizeof *fill);
   uint64_t *parent = malloc(n * 8), *rank = malloc(n * 8), *link = malloc(n * 8);
   uint64_t *head = malloc(HEIGHTS * 8);
   fill_sinks(dem, n, w, fill, n, parent, n, rank, n, link, n, head, HEIGHTS);
   free(parent), free(rank), free(link), free(head);
 
   int bad = 0;
-  uint64_t *down = malloc(n * 8), *down_gpu = malloc(n * 8);
+  uint64_t *down = malloc(n * 8), *down_gpu = page_alloc(n * 8);
   double c0 = seconds();
   directions(fill, n, w, down, n);
   double c1 = seconds();
@@ -82,11 +112,11 @@ int main(int argc, char **argv) {
          ms(c0, c1), times[1], times[0], (unsigned long long)differ);
   bad |= differ != 0;
 
-  uint32_t *acc = malloc(n * 4);
-  uint64_t *basin = malloc(n * 8);
+  uint32_t *acc = page_alloc(n * 4);
+  uint64_t *basin = page_alloc(n * 8);
   accumulate(fill, n, down, n, acc, n, basin, n);
   uint8_t *rgb = malloc(3 * n);
-  uint32_t *rgba = malloc(n * 4);
+  uint32_t *rgba = page_alloc(n * 4);
   double p0 = seconds();
   render(dem, n, fill, n, acc, n, basin, n, threshold, rgb, 3 * n);
   double p1 = seconds();
@@ -110,5 +140,10 @@ int main(int argc, char **argv) {
          "%llu cells differ\n",
          ms(p0, p1), times[1], times[0], (unsigned long long)differ);
   bad |= differ != 0;
+  uint64_t wrapped, copied, copied_bytes;
+  pia_gpu_run_stats(&wrapped, &copied, &copied_bytes);
+  printf("buffers: %llu wrapped in place, %llu copied (%llu bytes)\n",
+         (unsigned long long)wrapped, (unsigned long long)copied,
+         (unsigned long long)copied_bytes);
   return bad;
 }

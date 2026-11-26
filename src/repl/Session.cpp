@@ -438,6 +438,18 @@ std::string formatValue(mlir::Type t, const unsigned char *p) {
   if (auto it = mlir::dyn_cast<IntType>(t))
     return formatInt(it, p);
   auto r = mlir::cast<RecordType>(t);
+  // A distinct type (ADR 0064) is one field named `raw#<type>`: it shows
+  // as the conversion that makes it, `length 5`.
+  if (r.getFieldTypes().size() == 1) {
+    llvm::StringRef f = r.getFieldNames()[0].getValue();
+    if (f.consume_front("raw#")) {
+      mlir::Type u = r.getFieldTypes()[0];
+      std::string inner = formatValue(u, p);
+      bool wrap =
+          inner[0] == '-' || (mlir::isa<RecordType>(u) && inner[0] != '{');
+      return f.str() + " " + (wrap ? "(" + inner + ")" : inner);
+    }
+  }
   std::string out = "{ ";
   size_t offset = 0;
   for (size_t i = 0; i < r.getFieldTypes().size(); ++i) {
@@ -451,6 +463,51 @@ std::string formatValue(mlir::Type t, const unsigned char *p) {
     offset += fl.size;
   }
   return out + " }";
+}
+
+// Calls a JIT-compiled entry point that takes nothing and returns an integer,
+// a float or a bool, and stores the result at `out` in C layout.
+void callInto(void *fp, mlir::Type t, unsigned char *out) {
+  auto store = [&](auto v) { std::memcpy(out, &v, sizeof v); };
+  if (t.isInteger(1)) {
+    store(reinterpret_cast<bool (*)()>(fp)());
+    return;
+  }
+  if (t.isF32() || t.isF64()) {
+    t.isF32() ? store(reinterpret_cast<float (*)()>(fp)())
+              : store(reinterpret_cast<double (*)()>(fp)());
+    return;
+  }
+  auto it = mlir::cast<IntType>(t);
+  bool s = it.getLo().isNegative();
+  switch (it.getStorageWidth()) {
+  case 8:
+    s ? store(reinterpret_cast<int8_t (*)()>(fp)())
+      : store(reinterpret_cast<uint8_t (*)()>(fp)());
+    break;
+  case 16:
+    s ? store(reinterpret_cast<int16_t (*)()>(fp)())
+      : store(reinterpret_cast<uint16_t (*)()>(fp)());
+    break;
+  case 32:
+    s ? store(reinterpret_cast<int32_t (*)()>(fp)())
+      : store(reinterpret_cast<uint32_t (*)()>(fp)());
+    break;
+  default:
+    s ? store(reinterpret_cast<int64_t (*)()>(fp)())
+      : store(reinterpret_cast<uint64_t (*)()>(fp)());
+    break;
+  }
+}
+
+// The one scalar a record flattens to, or null if it has more than one.
+mlir::Type onlyLeaf(mlir::Type t) {
+  auto r = mlir::dyn_cast<RecordType>(t);
+  if (!r)
+    return t;
+  if (r.getFieldTypes().size() != 1)
+    return nullptr;
+  return onlyLeaf(r.getFieldTypes()[0]);
 }
 
 // Calls a JIT-compiled C entry point that takes no arguments and returns a
@@ -493,7 +550,15 @@ std::string callAndFormat(void *fp, mlir::Type t) {
     }
     return formatInt(it, buf);
   }
-  // A record comes back through a pointer to a C struct of its fields.
+  // Codegen flattens a record into its scalar fields (docs/codegen.md, "C
+  // ABI"). One scalar, as in a one-field record such as a distinct type,
+  // comes back as itself, at offset 0 of the record's C layout.
+  if (mlir::Type leaf = onlyLeaf(t)) {
+    unsigned char buf[8] = {0};
+    callInto(fp, leaf, buf);
+    return formatValue(t, buf);
+  }
+  // More come back through a pointer to a C struct of the fields.
   Layout l = *layoutOf(t);
   std::vector<uint64_t> storage(l.size / 8 + 1, 0);
   reinterpret_cast<void (*)(void *)>(fp)(storage.data());
@@ -502,36 +567,6 @@ std::string callAndFormat(void *fp, mlir::Type t) {
 }
 
 bool showable(mlir::Type t) { return !t || layoutOf(t).has_value(); }
-
-// Calls a JIT-compiled entry point that takes nothing and returns an integer
-// or a bool, and stores the result at `out` in C layout.
-void callInto(void *fp, mlir::Type t, unsigned char *out) {
-  auto store = [&](auto v) { std::memcpy(out, &v, sizeof v); };
-  if (t.isInteger(1)) {
-    store(reinterpret_cast<bool (*)()>(fp)());
-    return;
-  }
-  auto it = mlir::cast<IntType>(t);
-  bool s = it.getLo().isNegative();
-  switch (it.getStorageWidth()) {
-  case 8:
-    s ? store(reinterpret_cast<int8_t (*)()>(fp)())
-      : store(reinterpret_cast<uint8_t (*)()>(fp)());
-    break;
-  case 16:
-    s ? store(reinterpret_cast<int16_t (*)()>(fp)())
-      : store(reinterpret_cast<uint16_t (*)()>(fp)());
-    break;
-  case 32:
-    s ? store(reinterpret_cast<int32_t (*)()>(fp)())
-      : store(reinterpret_cast<uint32_t (*)()>(fp)());
-    break;
-  default:
-    s ? store(reinterpret_cast<int64_t (*)()>(fp)())
-      : store(reinterpret_cast<uint64_t (*)()>(fp)());
-    break;
-  }
-}
 
 // Adds `__pia_thunk_<e>` for each expression `e` that takes states: it calls
 // `e`'s entry point with the states' storage, which the session registers as
@@ -1525,6 +1560,10 @@ struct Session::Impl {
       for (const std::string &n : it.entry.names) {
         if (!types.count(n))
           continue; // a type, metaprogram or operator
+        // A name with `#` is one a metaprogram generated, which no source
+        // can write, such as a distinct type's conversions `length#of`.
+        if (n.find('#') != std::string::npos)
+          continue;
         Event e;
         bool redefined =
             std::find(replaced.begin(), replaced.end(), n) != replaced.end();
@@ -1571,7 +1610,7 @@ struct Session::Impl {
       for (const Event &e : r.events)
         if (e.name == n && (e.kind == Event::Kind::Redefined))
           shown = true;
-      if (shown || !types.count(n))
+      if (shown || !types.count(n) || n.find('#') != std::string::npos)
         continue;
       Event e;
       e.kind = Event::Kind::Redefined;

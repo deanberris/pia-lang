@@ -33,8 +33,8 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0027](0027-coroutines-and-race-freedom.md) | Stackless coroutines, structured tasks, and race freedom proved from permissions | Accepted |
 | [0028](0028-error-propagation-and-cleanup.md) | Errors propagate with `?` to a scope's handler; cleanup runs at scope end | Accepted |
 | [0029](0029-comments-as-syntax-and-literate-pia.md) | Comments are syntax: `\` line comments, doc comments, and literate `.pia.md` files | Accepted |
-| [0030](0030-published-object-layouts.md) | Optimised object layouts are published, and a changed layout fails to load until relinked | Proposed |
-| [0031](0031-verified-repl-and-live-environment.md) | A verified REPL over a reusable session, with proved live redefinition | Proposed |
+| [0030](0030-published-object-layouts.md) | Optimised object layouts are published, and a changed layout fails to load until relinked | Accepted |
+| [0031](0031-verified-repl-and-live-environment.md) | A verified REPL over a reusable session, with proved live redefinition | Accepted |
 | [0032](0032-parallel-sliced-cached-proving.md) | Proofs run in parallel, one goal per solver, sliced, cached and selectable | Accepted |
 | [0033](0033-module-initialisation-and-registries.md) | Module initialisation: registries, proved `@init` hooks, and opt-in dynamic registration | Accepted |
 | [0034](0034-concepts-and-overload-resolution.md) | Concepts are checked signatures with laws; overloads are chosen by type, by constraint entailment and by proved preconditions | Accepted |
@@ -67,7 +67,7 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0061](0061-lean-proved-facts.md) | Lean proves the facts Z3 cannot: lemmas and theory models proved in Lean against generated statements, recorded by statement hash, checked outside the edit loop; cost bounds proved by Z3, their asymptotics in Lean | Accepted |
 | [0062](0062-cost-bounds-in-contracts.md) | Cost bounds are contracts: `costs c <= e` bounds what a function spends on a named counter, tracked by a spec-only `spent c` and proved by Z3 | Accepted |
 | [0063](0063-opaque-spec-functions.md) | Opaque spec functions: a spec function marked `@opaque` keeps its definition out of every goal until a proof reveals it | Accepted |
-| [0064](0064-distinct-types.md) | `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only by applying a type to a value, and inherits only what it derives | Proposed |
+| [0064](0064-distinct-types.md) | `type` always makes a new type: `let length = type u32` is distinct from `u32`, converts only by applying a type to a value, and inherits only what it derives | Accepted |
 | [0065](0065-lowerings-written-in-pia.md) | Pia code extends the compiler's lowering: `@lower` gives a function an MLIR form and a type an MLIR type, the Pia definition stays the specification, and each lowering is proved to refine it or is listed as trusted | Accepted |
 | [0066](0066-int-blasting-for-nonlinear-goals.md) | Nonlinear goals are tried first with Z3's int-blasting solver; cvc5 is deferred, and nothing GPL is used | Accepted |
 | [0067](0067-release-0-1-0-a-proved-small-llm.md) | Release 0.1.0 is a small Llama-architecture LLM ported from PyTorch to Pia, proved where a proof means something, running inference on an M3 on CPU SIMD and on the GPU through linalg | Accepted |
@@ -76,3 +76,5 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0070](0070-raw-binary-embedding.md) | Raw binary embedding: `@embed` for compile-time fixed byte blobs, hermetic roots, opaque verification and direct LLVM emission | Accepted |
 | [0071](0071-function-references.md) | Function references: a function is a value that travels by reference, checked against its arrow where the reference is made | Proposed |
 | [0072](0072-drops-run-in-constant-stack.md) | A drop never grows the stack: every drop is one walk, proved against the recursive drop, with a fixed stack bound per type | Proposed |
+| [0073](0073-prover-identity-abi-version-and-advisories.md) | Certificates record the piac, solvers and proof engines that proved a module and the Pia ABI version; advisories revoke trust in faulty provers; every breaking change ships a migration rule run by piac and `piac migrate` | Accepted |
+| [0074](0074-library-types-tensors.md) | Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and `Pia.Tensor` over MLIR `tensor` is the proof point | Accepted |
