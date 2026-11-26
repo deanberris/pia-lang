@@ -2227,7 +2227,8 @@ bool Session::isComplete(std::string_view text) {
   // contract clause needs the body still to come.
   size_t nl = t.rfind('\n');
   std::string lastLine = trim(t.substr(nl == std::string::npos ? 0 : nl + 1));
-  for (const char *clause : {"requires", "ensures", "decreases", "invariant"}) {
+  for (const char *clause :
+       {"requires", "ensures", "decreases", "invariant", "costs"}) {
     size_t n = std::strlen(clause);
     if (lastLine.compare(0, n, clause) == 0 &&
         (lastLine.size() == n ||
