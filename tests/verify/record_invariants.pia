@@ -1,0 +1,62 @@
+(* A record's invariant, `type { ... } where p` (ADR 0074, step 1): a
+   predicate over all of its fields that every value of the type keeps.
+   A function assumes it of each parameter, and proves it of its result
+   and of each out or inout parameter it hands back, so no function
+   restates it and none can break it.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let span = type { lo : u32; hi : u32 } where lo <= hi
+
+(* Assumed of a parameter: no underflow, with no `requires`. *)
+let width (s : span) : u32 = s.hi - s.lo
+
+(* Proved of a result. *)
+let make (a : u32) (b : u32) : span
+  requires a <= b
+= { lo = a; hi = b }
+
+(* A result that can break it fails at the invariant. *)
+let swapped (a : u32) (b : u32) : span = { lo = b; hi = a }
+
+(* Proved of an inout parameter handed back... *)
+let grow (s : inout span) : unit
+  requires s.hi < 4294967295
+= s.hi <- s.hi + 1
+
+(* ...and so a write that breaks it fails. *)
+let shrink (s : inout span) : unit
+  requires s.hi < 4294967295
+= s.lo <- s.hi + 1
+
+(* The invariant relates fields, and it is assumed after the fields' own
+   refinements, so the product below is in range. *)
+let grid = let (r : region) => type {
+  rows : usize where rows <= 65536;
+  cols : usize where cols <= 65536;
+  cells : borrowed(r) mutable [u8]
+} where len cells = rows * cols
+
+let lemma cell (m : usize) (n : usize) (i : usize) (j : usize) : unit
+  requires m <= 65536 && n <= 65536 && i < m && j < n
+  ensures i * n + j < m * n
+= ()
+
+let at (r : region) (g : grid r) (i : usize) (j : usize) : u8
+  requires i < g.rows && j < g.cols
+= cell g.rows g.cols i j;
+  g.cells.[i * g.cols + j]
+
+(* A caller proves the invariant of what it passes. *)
+let first (r : region) (cells : borrowed(r) mutable [u8]) : u8
+  requires len cells = 4
+= at { rows = 2; cols = 2; cells = cells } 0 0
+
+let wrong (r : region) (cells : borrowed(r) mutable [u8]) : u8
+  requires len cells = 3
+= at { rows = 2; cols = 2; cells = cells } 0 0
+
+// CHECK: record_invariants.pia:9:49: failed: the postcondition holds
+// CHECK: record_invariants.pia:9:49: failed: the postcondition holds
+// CHECK: record_invariants.pia:{{[0-9]+}}:{{[0-9]+}}: failed: the precondition
+// CHECK: proved, 3 failed, 0 skipped

@@ -645,10 +645,16 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     if (attr->text != "linear")
       diags.error(attr->loc, "the attribute @" + attr->text +
                                  " on a type is not supported yet");
+  // `type { ... } where p` on a record is its invariant over all its
+  // fields (ADR 0074, step 1); on any other type it is not built yet.
+  const Node *invariant = nullptr;
   if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
-    diags.error(value.kids[2]->loc,
-                "refinements ('where') are not supported yet");
-    return {};
+    if (body.kind != NodeKind::RecordType) {
+      diags.error(value.kids[2]->loc,
+                  "refinements ('where') are not supported yet");
+      return {};
+    }
+    invariant = value.kids[2].get();
   }
   mlir::MLIRContext *ctx = types.boolType().getContext();
   if (body.kind == NodeKind::Variants)
@@ -695,6 +701,11 @@ static mlir::Type buildType(const std::string &name, const Node &value,
     diags.error(body.loc, "a record needs at least one field");
     return {};
   }
+  // The invariant goes last, after the fields' own refinements, so a field
+  // bound it relies on, such as `rows : usize where rows <= 65536`, is
+  // assumed first. Its empty name means every field is in scope.
+  if (invariant)
+    refined.emplace_back("", invariant);
   if (!refined.empty()) types.refine(name, std::move(refined));
   return RecordType::get(ctx, name, names, fieldTypes, spec);
 }

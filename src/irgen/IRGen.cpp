@@ -1515,6 +1515,14 @@ class Gen {
     if (hasResult) bind("result", rets[0], result, false);
     // So does a result: the function proves its fields' refinements.
     if (hasResult && !refine(rets[0], result, true)) return;
+    // And so does each out or inout parameter it hands back, or a body
+    // could break a record's invariant through one (ADR 0074, step 1).
+    {
+      size_t k = hasResult ? 1 : 0;
+      for (size_t i : threaded(sig))
+        if (!refine(rets[k++], sig.params[i].type, true))
+          return;
+    }
     for (const syntax::NodePtr &c : contracts.kids) {
       if (c->kind != NodeKind::Ensures) continue;
       R p = genPredicate(*c->kids[0]);
@@ -1924,16 +1932,29 @@ class Gen {
     const auto *refs = types_.refinements(rec.getName().str());
     if (!refs) return true;
     for (const auto &[field, pred] : *refs) {
-      auto index = rec.fieldIndex(field);
-      if (!index) continue;
-      Type ft = rec.getFieldTypes()[*index];
       Location l = loc(*pred);
-      Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(field));
       scopes_.emplace_back();
-      scopes_.back()[field] = std::make_shared<Binding>();
-      scopes_.back()[field]->name = field;
-      scopes_.back()[field]->value = f;
-      scopes_.back()[field]->type = ft;
+      // A field's refinement sees that field; the record's invariant (an
+      // empty name, ADR 0074) sees them all.
+      auto bindField = [&](llvm::StringRef name, Type ft) {
+        Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(name));
+        auto binding = std::make_shared<Binding>();
+        binding->name = name.str();
+        binding->value = f;
+        binding->type = ft;
+        scopes_.back()[name.str()] = std::move(binding);
+      };
+      if (field.empty()) {
+        for (auto [n, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
+          bindField(n.getValue(), ft);
+      } else {
+        auto index = rec.fieldIndex(field);
+        if (!index) {
+          scopes_.pop_back();
+          continue;
+        }
+        bindField(field, rec.getFieldTypes()[*index]);
+      }
       R p = genPredicate(*pred);
       scopes_.pop_back();
       if (!p) return false;
