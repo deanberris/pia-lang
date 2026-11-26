@@ -1098,9 +1098,9 @@ class Gen {
       // An imported spec function or lemma has no code in its module, so
       // codegen erases calls to it too. The verifier sees an import.
       if (isSpec || isLemma || isAxiom)
-        fn->setAttr("pia.import_ghost",
-                    b_.getStringAttr(isSpec ? "spec" : isLemma ? "lemma"
-                                                               : "axiom"));
+        fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
+                                                         : isLemma ? "lemma"
+                                                                   : "axiom"));
       genImport(item, sig, fn);
       return;
     }
