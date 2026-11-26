@@ -2474,14 +2474,13 @@ std::unique_ptr<llvm::TargetMachine> targetMachine(const Options &options,
   llvm::CodeGenOptLevel level = options.optLevel == 0
                                     ? llvm::CodeGenOptLevel::None
                                     : llvm::CodeGenOptLevel::Default;
-  // Floats are strict IEEE 754 by default (ADR 0004, ADR 0012): no
-  // multiply and add is fused into an FMA unless the code licenses it, and
-  // subnormals are never flushed, which is LLVM's default.
-  llvm::TargetOptions targetOptions;
-  targetOptions.AllowFPOpFusion = llvm::FPOpFusion::Strict;
-  std::unique_ptr<llvm::TargetMachine> tm(
-      target->createTargetMachine(triple, options.cpu, "", targetOptions,
-                                  llvm::Reloc::PIC_, std::nullopt, level));
+  // Floats are strict IEEE 754 by default (ADR 0004, ADR 0012). LLVM fuses
+  // a multiply and an add into an FMA only when both carry the `contract`
+  // fast-math flag, which IRGen never sets, and it never flushes
+  // subnormals unless a function asks for it.
+  std::unique_ptr<llvm::TargetMachine> tm(target->createTargetMachine(
+      triple, options.cpu, "", llvm::TargetOptions(), llvm::Reloc::PIC_,
+      std::nullopt, level));
   if (!tm) {
     error = "cannot create a target machine for " + options.triple;
     return nullptr;
