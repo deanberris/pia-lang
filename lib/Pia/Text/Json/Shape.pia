@@ -29,6 +29,10 @@ import Pia.Text.Json.Dom.Document as Dom
 interface Shapes = sig
   (** A document that does not have the shape asked for. *)
   let nonconforming = type | Nonconforming
+  (** Why to_dom made no document: the text had no room for the value,
+      or the document read back from it did not parse or conform, which
+      would be a fault of the writer. *)
+  let to_dom_error = type | NoRoom | Unparsed of Pia.Text.Json.Dom.dom_error | Unconforming
   (** The span sp of s is name, in quotes. *)
   let spec key_is : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool
   (** The digits of s from k to j, after a value of acc, stay at most max. *)
@@ -69,6 +73,8 @@ interface Shapes = sig
 end
 
 let nonconforming = type | Nonconforming
+
+let to_dom_error = type | NoRoom | Unparsed of Pia.Text.Json.Dom.dom_error | Unconforming
 
 let spec key_is (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool =
   if sp.start < sp.stop && sp.stop <= len s then
@@ -296,12 +302,13 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
    - `from_dom_json_<t> s v`, which, given that v conforms, is the
      record it denotes, with no failure path: each field is its member's
      value.
+   - `to_dom_json_<t> x text values members`, the document of x over
+     text, which @derive(json)'s writer writes: valid and conforming.
 
    A program that uses it imports Pia.Text.Json.Dom's and Shape's
-   interfaces, writes @derive(json, json_dom) when its fields have
-   @json names, and Spec's, Lex's and Pia.Mem.Alloc's, which theirs name.
-   Not yet: option, array and nested record fields, variants, and
-   to_dom. *)
+   interfaces and Pia.Text.Json.Write's, writes @derive(json, json_dom),
+   since to_dom uses @derive(json)'s writer, and Spec's, Lex's and Pia.Mem.Alloc's, which theirs name.
+   Not yet: option, array and nested record fields, and variants. *)
 let meta derive_json_dom (t : type_decl) : list =
   let tn = name t in
   let shape = let (f) => concat "Pia.Text.Json.Shape." f in
@@ -452,6 +459,38 @@ let meta derive_json_dom (t : type_decl) : list =
        = match $!v with
          | Obj $!o -> $(record_of from_member)
          | _ -> $(record_of lowest) ) in
+  (* to_dom: @derive(json)'s writer writes the value into text, spaces
+     fill the rest, and the document is parsed back and checked. Its Ok
+     is proved valid and conforming by parse's and check's contracts; that
+     the writer's text always conforms, so that Unparsed and Unconforming
+     never happen, is not proved yet: it needs the writer's digits stated
+     as Shape's. The room is the writer's, computed as json_record does. *)
+  let value_room = let (i) =>
+    if bool_field (nth fs i) then 5
+    else (
+      let l = lo i in
+      let h = hi i in
+      if ge l 0 then
+        (if le h 255 then 3 else if le h 65535 then 5 else if le h 4294967295 then 10 else 20)
+      else
+        (if and (ge l (-128)) (le h 127) then 4 else if and (ge l (-32768)) (le h 32767) then 6
+         else if and (ge l (-2147483648)) (le h 2147483647) then 11 else 20)) in
+  let member_room = let (i) => add (add (length (bytes (nth keys i))) 3) (value_room i) in
+  let room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
+  let wname = concat "write_json_" tn in
+  let tname = concat "to_dom_json_" tn in
+  let to_fn =
+    `( let $tname ($!x : $t) ($!text : borrowed inout mutable [u8]) ($!values : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json) ($!members : inout mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member) : result Pia.Text.Json.Dom.json Pia.Text.Json.Shape.to_dom_error
+         ensures (match $!result with
+           | Ok $!v -> Pia.Text.Json.Dom.valid_dom $!text $!v && $cname $!text $!v
+           | Err _ -> true)
+       = if len $!text < $room then Err NoRoom
+         else
+           (let $!n = $wname $!text 0 $!x in
+            for $!k in $!n .. len $!text do $!text.[$!k] <- 0x20 done;
+            match Pia.Text.Json.Dom.parse $!text 1 $!values $!members with
+            | Err $!e -> Err (Unparsed $!e)
+            | Ok $!v -> if $chname $!text $!v then Ok $!v else Err Unconforming) ) in
   concat (concat key_consts (fold (let (acc) (i) => concat acc (field_fns i)) [] idx))
-    [ conforms_fn; check_fn; from_fn ]
+    [ conforms_fn; check_fn; from_fn; to_fn ]
 
