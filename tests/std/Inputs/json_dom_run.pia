@@ -1,0 +1,46 @@
+(* Runs Pia.Text.Json.Dom's parser from C (json_dom_run_test.c): it
+   parses a text into cells the caller lends and returns how many values
+   the document holds, or a negative number for each kind of error. *)
+module JsonDomRun : Run
+
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document as Dom
+
+interface Run @abi(c) = sig
+  let run : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> (max_depth : int{0..255}) -> i64
+end
+
+(* The values in v, itself included, capped at a million. *)
+let rec nodes (r : region) (v : Pia.Text.Json.Dom.json r) : int{0..1000000} = match v with
+  | Arr a ->
+    let total : mutable int{0..1000000} = 1 in
+    for i in 0 .. len a.items
+    do
+      (let n = nodes a.items.[i] in
+       total <- if n <= 1000000 - total then total + n else 1000000)
+    done;
+    total
+  | Obj o ->
+    let total : mutable int{0..1000000} = 1 in
+    for i in 0 .. len o.items
+    do
+      (let n = nodes o.items.[i].value in
+       total <- if n <= 1000000 - total then total + n else 1000000)
+    done;
+    total
+  | _ -> 1
+
+let run (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) (max_depth : int{0..255}) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s max_depth vs ms with
+  | Ok v -> nodes v
+  | Err e ->
+    (match e with
+     | LexError _ -> -1
+     | Misplaced _ -> -2
+     | Depth _ -> -3
+     | Trailing _ -> -4
+     | NoMemory -> -5)

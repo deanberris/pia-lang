@@ -61,6 +61,7 @@ lit_tests(
         "//lib/Pia/Mem:Vec.pia",
         "//lib/Pia/Sys/Gen:arm64_macos.pia",
         "//lib/Pia/Text/Json:Derive.pia",
+        "//lib/Pia/Text/Json:Dom.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -815,5 +816,28 @@ cc_test(
     ],
     args = ["$(rootpath Inputs/tok512.bin)"],
     data = ["Inputs/tok512.bin"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Pia.Text.Json.Dom run from C: parse into cells the test lends, count the
+# document's values, and each kind of error (ADR 0045, step 6).
+pia_library(
+    name = "json_dom_run_lib",
+    src = "Inputs/json_dom_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:spec",
+    ],
+)
+
+cc_test(
+    name = "json_dom_run_test",
+    srcs = [
+        "json_dom_run_test.c",
+        ":json_dom_run_lib",
+    ],
     target_compatible_with = PIA_TARGETS,
 )
