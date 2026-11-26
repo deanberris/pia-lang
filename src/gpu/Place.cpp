@@ -2,6 +2,8 @@
 
 #include "gpu/Place.h"
 
+#include <array>
+
 #include "gpu/Msl.h"
 #include "gpu/Spirv.h"
 
@@ -17,6 +19,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Transforms/RegionUtils.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -36,6 +39,9 @@ using mlir::Value;
 namespace arith = mlir::arith;
 namespace memref = mlir::memref;
 namespace scf = mlir::scf;
+
+// How an argument is passed, as the shim's PIA_GPU_ARG_* say.
+constexpr int64_t kArgRead = 0, kArgWritten = 1, kArgScalar = 2;
 
 const char *const kRule =
     " (a spread placed on the GPU runs integer arithmetic, loads and stores "
@@ -226,10 +232,22 @@ public:
     if (!step || *step != 1)
       return f.emitError("a spread placed on the GPU steps by one");
 
-    // What the body uses from outside: buffers and scalars.
+    std::vector<Capture> captures;
+    if (mlir::failed(capturesOf(f, captures)))
+      return mlir::failure();
+    std::string name = "pia_kernel_" + std::to_string(count_++);
+    std::vector<uint8_t> metallib;
+    if (mlir::failed(compileKernel(f, captures, name, metallib)))
+      return mlir::failure();
+    return callShim(f, captures, name, metallib);
+  }
+
+private:
+  // What the body uses from outside: buffers and scalars.
+  static mlir::LogicalResult capturesOf(scf::ForOp f,
+                                        std::vector<Capture> &captures) {
     llvm::SetVector<Value> used;
     mlir::getUsedValuesDefinedAbove(f.getRegion(), used);
-    std::vector<Capture> captures;
     for (Value v : used) {
       Capture c;
       c.host = v;
@@ -251,15 +269,9 @@ public:
       }
       captures.push_back(c);
     }
-
-    std::string name = "pia_kernel_" + std::to_string(count_++);
-    std::vector<uint8_t> metallib;
-    if (mlir::failed(compileKernel(f, captures, name, metallib)))
-      return mlir::failure();
-    return callShim(f, captures, name, metallib);
+    return mlir::success();
   }
 
-private:
   // The body as a gpu.func `name`, through SPIR-V and MSL to a .metallib.
   // Its arguments are the buffers and scalars in `captures`, then the
   // loop's bounds; thread g runs iteration lo + g, if it is below hi.
@@ -343,29 +355,19 @@ private:
     return mlir::success();
   }
 
-  // Replaces the loop with `pia_gpu_run(lib, name, args, threads)`, and the
-  // status after it with the run's status. Each argument is a triple of
-  // i64: the host address, the size in bytes, and whether the kernel
-  // writes it, so the shim copies it back.
-  mlir::LogicalResult callShim(scf::ForOp f,
-                               const std::vector<Capture> &captures,
-                               const std::string &name,
-                               const std::vector<uint8_t> &metallib) {
-    Operation *status = nullptr;
-    for (Operation *op = f->getNextNode(); op && !status;
-         op = op->getNextNode())
-      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
-        if (call.getCallee() == kStatusSymbol)
-          status = call;
-    if (!status)
-      return f.emitError("internal error: no status after the placed spread");
-
-    Location loc = f.getLoc();
-    OpBuilder b(f);
+  // The arguments of one kernel run, on the host stack: a triple of i64
+  // for each buffer and scalar in `captures`, then the bounds. Each triple
+  // is the host address, the size in bytes, and how it is passed: read,
+  // written, or (in a sequence) a scalar, PIA_GPU_ARG_* of the shim.
+  struct Table {
+    Value args;    // the address of the triples, as an i64
+    size_t count;  // how many triples
+    Value threads; // hi - lo, or 0
+  };
+  Table argTable(OpBuilder &b, Location loc,
+                 const std::vector<Capture> &captures, Value lb, Value ub,
+                 bool sequence) {
     auto i64 = b.getI64Type();
-    auto i32 = b.getI32Type();
-    auto scope = b.create<memref::AllocaScopeOp>(loc, mlir::TypeRange{i32});
-    b.setInsertionPointToStart(&scope.getBodyRegion().emplaceBlock());
     auto index = [&](int64_t v) -> Value {
       return b.create<arith::ConstantIndexOp>(loc, v);
     };
@@ -375,13 +377,12 @@ private:
     auto toI64 = [&](Value v) -> Value {
       return b.create<arith::IndexCastOp>(loc, i64, v);
     };
-
     size_t n = captures.size() + 2;
     auto argsType = mlir::MemRefType::get({static_cast<int64_t>(3 * n)}, i64);
     Value argv = b.create<memref::AllocaOp>(loc, argsType);
     unsigned slot = 0;
-    auto put = [&](Value addr, Value bytes, bool written) {
-      for (Value v : {addr, bytes, word(written ? 1 : 0)})
+    auto put = [&](Value addr, Value bytes, int64_t how) {
+      for (Value v : {addr, bytes, word(how)})
         b.create<memref::StoreOp>(loc, v, argv,
                                   mlir::ValueRange{index(slot++)});
     };
@@ -394,7 +395,8 @@ private:
       Value cell = b.create<memref::AllocaOp>(loc, type);
       b.create<memref::StoreOp>(loc, v, cell, mlir::ValueRange{index(0)});
       Value p = b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, cell);
-      put(toI64(p), word(held.getIntOrFloatBitWidth() / 8), false);
+      put(toI64(p), word(held.getIntOrFloatBitWidth() / 8),
+          sequence ? kArgScalar : kArgRead);
     };
     for (const Capture &c : captures) {
       if (!c.buffer) {
@@ -410,41 +412,214 @@ private:
       Value addr = b.create<arith::AddIOp>(loc, base, off);
       Value bytes =
           b.create<arith::MulIOp>(loc, meta.getSizes()[0], index(width));
-      put(toI64(addr), toI64(bytes), c.written);
+      put(toI64(addr), toI64(bytes), c.written ? kArgWritten : kArgRead);
     }
-    scalar(f.getLowerBound(), i64);
-    scalar(f.getUpperBound(), i64);
-    Value count =
-        b.create<arith::SubIOp>(loc, f.getUpperBound(), f.getLowerBound());
+    scalar(lb, i64);
+    scalar(ub, i64);
+    Value count = b.create<arith::SubIOp>(loc, ub, lb);
     Value threads = toI64(b.create<arith::MaxSIOp>(loc, count, index(0)));
+    Value argp =
+        toI64(b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, argv));
+    return {argp, n, threads};
+  }
 
-    std::string sym = "__pia_gpu_" + std::to_string(count_ - 1);
+  // The kernel's .metallib and name, as constants of the module: their
+  // addresses and sizes as i64.
+  std::array<Value, 4> kernelConstants(OpBuilder &b, Location loc, unsigned id,
+                                       const std::string &name,
+                                       const std::vector<uint8_t> &metallib) {
+    auto i64 = b.getI64Type();
+    std::string sym = "__pia_gpu_" + std::to_string(id);
     Value lib = constantBytes(
         b, module_, loc, sym + "_lib",
         llvm::ArrayRef<char>(reinterpret_cast<const char *>(metallib.data()),
                              metallib.size()));
     Value kname = constantBytes(b, module_, loc, sym + "_name",
                                 llvm::ArrayRef<char>(name.data(), name.size()));
-    Value argp =
-        toI64(b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, argv));
+    return {lib, b.create<arith::ConstantIntOp>(loc, i64, metallib.size()),
+            kname, b.create<arith::ConstantIntOp>(loc, i64, name.size())};
+  }
 
+  // A private declaration of the shim's `symbol`, once.
+  void declare(Location loc, llvm::StringRef symbol, mlir::FunctionType type) {
+    if (module_.lookupSymbol(symbol))
+      return;
+    OpBuilder mb = OpBuilder::atBlockEnd(module_.getBody());
+    auto decl = mb.create<mlir::func::FuncOp>(loc, symbol, type);
+    decl.setPrivate();
+  }
+
+  // The status IRGen left after `f`, which the run's status replaces.
+  static Operation *statusAfter(Operation *f) {
+    for (Operation *op = f->getNextNode(); op; op = op->getNextNode())
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+        if (call.getCallee() == kStatusSymbol)
+          return call;
+    return nullptr;
+  }
+
+  // Replaces the loop with `pia_gpu_run(lib, name, args, threads)`, and the
+  // status after it with the run's status.
+  mlir::LogicalResult callShim(scf::ForOp f,
+                               const std::vector<Capture> &captures,
+                               const std::string &name,
+                               const std::vector<uint8_t> &metallib) {
+    Operation *status = statusAfter(f);
+    if (!status)
+      return f.emitError("internal error: no status after the placed spread");
+
+    Location loc = f.getLoc();
+    OpBuilder b(f);
+    auto i64 = b.getI64Type();
+    auto i32 = b.getI32Type();
+    auto scope = b.create<memref::AllocaScopeOp>(loc, mlir::TypeRange{i32});
+    b.setInsertionPointToStart(&scope.getBodyRegion().emplaceBlock());
+    Table t =
+        argTable(b, loc, captures, f.getLowerBound(), f.getUpperBound(), false);
+    auto k = kernelConstants(b, loc, count_ - 1, name, metallib);
     auto runType =
         b.getFunctionType({i64, i64, i64, i64, i64, i64, i64}, {i32});
-    if (!module_.lookupSymbol("pia_gpu_run")) {
-      OpBuilder mb = OpBuilder::atBlockEnd(module_.getBody());
-      auto decl = mb.create<mlir::func::FuncOp>(loc, "pia_gpu_run", runType);
-      decl.setPrivate();
-    }
+    declare(loc, "pia_gpu_run", runType);
+    Value words = b.create<arith::ConstantIntOp>(loc, i64, t.count);
     auto run = b.create<mlir::func::CallOp>(
         loc, "pia_gpu_run", mlir::TypeRange{i32},
-        mlir::ValueRange{lib, word(metallib.size()), kname, word(name.size()),
-                         argp, word(n), threads});
+        mlir::ValueRange{k[0], k[1], k[2], k[3], t.args, words, t.threads});
     b.create<memref::AllocaScopeReturnOp>(loc, run.getResults());
 
     status->getResult(0).replaceAllUsesWith(scope.getResult(0));
     status->erase();
     f.erase();
     return mlir::success();
+  }
+
+public:
+  // A `for` placed on the GPU (ADR 0068, section 9): its calls are
+  // inlined, each spread in it becomes a kernel and a dispatch of one
+  // command buffer, and the rest of the body runs on the host as it
+  // encodes them. That host code may only compute scalars from buffers no
+  // kernel writes, so that nothing has to come back from the GPU before
+  // the command buffer is committed.
+  mlir::LogicalResult placeSequence(scf::ForOp seq) {
+    if (mlir::failed(inlineCalls(seq, module_)) ||
+        mlir::failed(simplifyBuffers(seq)))
+      return mlir::failure();
+    llvm::SmallVector<scf::ForOp> spreads;
+    seq.getBody()->walk<mlir::WalkOrder::PreOrder>([&](scf::ForOp f) {
+      if (!f->hasAttr("pia.spread"))
+        return mlir::WalkResult::advance();
+      spreads.push_back(f);
+      return mlir::WalkResult::skip();
+    });
+    if (spreads.empty())
+      return seq.emitError("a for loop placed on the GPU has no spread to "
+                           "run there (ADR 0068, section 9)");
+    llvm::DenseSet<Value> written;
+    for (scf::ForOp f : spreads)
+      f.getBody()->walk(
+          [&](memref::StoreOp s) { written.insert(s.getMemRef()); });
+    if (mlir::failed(checkHost(seq, spreads, written)))
+      return mlir::failure();
+
+    Location loc = seq.getLoc();
+    Operation *status = statusAfter(seq);
+    if (!status)
+      return seq.emitError("internal error: no status after the placed for");
+    OpBuilder b(seq);
+    auto i64 = b.getI64Type();
+    auto i32 = b.getI32Type();
+    declare(loc, "pia_gpu_seq_begin", b.getFunctionType({}, {i64}));
+    declare(loc, "pia_gpu_seq_dispatch",
+            b.getFunctionType({i64, i64, i64, i64, i64, i64, i64, i64}, {}));
+    declare(loc, "pia_gpu_seq_end", b.getFunctionType({i64}, {i32}));
+    Value handle =
+        b.create<mlir::func::CallOp>(loc, "pia_gpu_seq_begin",
+                                     mlir::TypeRange{i64}, mlir::ValueRange{})
+            .getResult(0);
+
+    for (scf::ForOp f : spreads) {
+      if (mlir::failed(checkBody(f)))
+        return mlir::failure();
+      std::optional<int64_t> step = mlir::getConstantIntValue(f.getStep());
+      if (!step || *step != 1)
+        return f.emitError("a spread placed on the GPU steps by one");
+      std::vector<Capture> captures;
+      if (mlir::failed(capturesOf(f, captures)))
+        return mlir::failure();
+      unsigned id = count_++;
+      std::string name = "pia_kernel_" + std::to_string(id);
+      std::vector<uint8_t> metallib;
+      if (mlir::failed(compileKernel(f, captures, name, metallib)))
+        return mlir::failure();
+      Location fl = f.getLoc();
+      OpBuilder fb(f);
+      auto scope = fb.create<memref::AllocaScopeOp>(fl, mlir::TypeRange{});
+      fb.setInsertionPointToStart(&scope.getBodyRegion().emplaceBlock());
+      Table t = argTable(fb, fl, captures, f.getLowerBound(), f.getUpperBound(),
+                         true);
+      auto k = kernelConstants(fb, fl, id, name, metallib);
+      Value words = fb.create<arith::ConstantIntOp>(fl, i64, t.count);
+      fb.create<mlir::func::CallOp>(
+          fl, "pia_gpu_seq_dispatch", mlir::TypeRange{},
+          mlir::ValueRange{handle, k[0], k[1], k[2], k[3], t.args, words,
+                           t.threads});
+      fb.create<memref::AllocaScopeReturnOp>(fl, mlir::ValueRange{});
+      f.erase();
+    }
+
+    b.setInsertionPointAfter(seq);
+    auto end = b.create<mlir::func::CallOp>(
+        loc, "pia_gpu_seq_end", mlir::TypeRange{i32}, mlir::ValueRange{handle});
+    status->getResult(0).replaceAllUsesWith(end.getResult(0));
+    status->erase();
+    seq->removeAttr("pia.place");
+    seq->removeAttr("pia.sequence");
+    return mlir::success();
+  }
+
+private:
+  // The host part of a placed sequence: everything but its spreads. It
+  // runs before the GPU does, so it may not write a buffer, or read one a
+  // kernel of the sequence writes.
+  static mlir::LogicalResult checkHost(scf::ForOp seq,
+                                       llvm::ArrayRef<scf::ForOp> spreads,
+                                       const llvm::DenseSet<Value> &written) {
+    const char *rule = " (the host runs a for loop placed on the GPU while "
+                       "it encodes the spreads' dispatches, before any runs: "
+                       "ADR 0068, section 9)";
+    mlir::LogicalResult result = mlir::success();
+    seq.getBody()->walk<mlir::WalkOrder::PreOrder>([&](Operation *op) {
+      if (llvm::is_contained(spreads, op))
+        return mlir::WalkResult::skip();
+      llvm::StringRef dialect = op->getDialect()
+                                    ? op->getDialect()->getNamespace()
+                                    : llvm::StringRef();
+      if (auto load = mlir::dyn_cast<memref::LoadOp>(op)) {
+        if (written.contains(load.getMemRef())) {
+          result = op->emitError("the host cannot read a buffer that a "
+                                 "spread of the sequence writes")
+                   << rule;
+          return mlir::WalkResult::interrupt();
+        }
+        return mlir::WalkResult::advance();
+      }
+      if (mlir::isa<memref::StoreOp>(op)) {
+        result = op->emitError("only the spreads of a for loop placed on the "
+                               "GPU can write a buffer")
+                 << rule;
+        return mlir::WalkResult::interrupt();
+      }
+      bool ok = dialect == "arith" || dialect == "index" ||
+                mlir::isa<scf::IfOp, scf::ForOp, scf::WhileOp, scf::YieldOp,
+                          scf::ConditionOp, memref::DimOp>(op);
+      if (!ok) {
+        result = op->emitError("'")
+                 << op->getName() << "' cannot run in a for loop placed on "
+                 << "the GPU" << rule;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+    return result;
   }
 
   mlir::ModuleOp module_;
@@ -537,7 +712,18 @@ mlir::LogicalResult lowerPlacedSpreads(mlir::ModuleOp module) {
   mlir::MLIRContext *ctx = module.getContext();
   ctx->loadDialect<mlir::gpu::GPUDialect, mlir::spirv::SPIRVDialect>();
   Placer placer(module);
-  for (scf::ForOp f : placed)
+  // Sequences first: their spreads are found, and placed, after their
+  // calls are inlined.
+  llvm::SmallVector<scf::ForOp> spreads;
+  for (scf::ForOp f : placed) {
+    if (!f->hasAttr("pia.sequence")) {
+      spreads.push_back(f);
+      continue;
+    }
+    if (mlir::failed(placer.placeSequence(f)))
+      return mlir::failure();
+  }
+  for (scf::ForOp f : spreads)
     if (mlir::failed(placer.place(f)))
       return mlir::failure();
   if (auto decl = module.lookupSymbol<mlir::func::FuncOp>(kStatusSymbol))

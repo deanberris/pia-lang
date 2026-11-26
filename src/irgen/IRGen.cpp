@@ -10388,6 +10388,21 @@ class Gen {
     const Node &body = *n.kids[4];
     if (pattern.kind != NodeKind::PVar)
       return fail(pattern, "a for loop binds a single name for now");
+    // `@place(gpu)` makes the loop a placed sequence (ADR 0068, section 9):
+    // its spreads become dispatches of one command buffer, and the loop
+    // evaluates to `result unit gpu_error`.
+    bool onGpu = false;
+    if (n.kids.size() > 5)
+      for (const syntax::NodePtr &a : n.kids[5]->kids) {
+        if (a->text != "place")
+          return fail(*a, "the attribute @" + a->text +
+                              " is not supported on a for loop");
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::Name ||
+            a->kids[0]->text != "gpu")
+          return fail(*a, "@place takes one device, and only @place(gpu) is "
+                          "supported yet");
+        onGpu = true;
+      }
     if (iterable.kind != NodeKind::Range)
       return fail(iterable, "a for loop iterates over a range 'lo..hi' for now");
     auto bounds = genRange(iterable);
@@ -10408,7 +10423,21 @@ class Gen {
     }
 
     std::vector<BindingPtr> vars = carried({&annots, &body});
+    // The host runs a placed sequence's body while it encodes the
+    // dispatches, before any of them runs, so nothing it computes can be
+    // carried from one iteration to the next.
+    if (onGpu && !vars.empty())
+      return fail(n, "a for loop placed on the GPU cannot assign '" +
+                         vars[0]->name +
+                         "', which is declared outside it: its body runs on "
+                         "the host before the GPU runs (ADR 0068, section 9)");
+    if (onGpu && stepNode.kind != NodeKind::None)
+      return fail(stepNode, "a for loop placed on the GPU steps by one");
     auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, values(vars));
+    if (onGpu) {
+      forOp->setAttr("pia.place", b_.getStringAttr("gpu"));
+      forOp->setAttr("pia.sequence", b_.getUnitAttr());
+    }
     Block *block = forOp.getBody();
     {
       OpBuilder::InsertionGuard guard(b_);
@@ -10436,7 +10465,30 @@ class Gen {
       if (!r) return r;
     }
     setValues(vars, forOp.getResults());
-    return unit();
+    if (!onGpu)
+      return unit();
+    // The loop is proved as written, so its invariants hold after it on the
+    // CPU. On the GPU they hold only if the run succeeded: a failed run may
+    // leave every buffer the loop writes part written (ADR 0068, section 5),
+    // so each of those is forgotten unless the status is 0.
+    pushScope();
+    Value gpuOk = gpuStatus(n);
+    if (!gpuOk) {
+      popScope();
+      return std::nullopt;
+    }
+    std::set<std::string> written;
+    collectWrittenBuffers(body, written);
+    for (const std::string &name : written) {
+      BindingPtr wb = lookup(name);
+      if (!wb || !elementType(wb->type))
+        continue;
+      auto h = create<contract::HavocOthersOp>(l, wb->value, gpuOk, Value());
+      h->setAttr("pia.unless_ok", b_.getUnitAttr());
+    }
+    R r = gpuItem(n, "__pia_gpu_result", true);
+    popScope();
+    return r;
   }
 
   // --- spread (ADR 0060) --------------------------------------------------
@@ -10751,11 +10803,8 @@ class Gen {
                                      "' must not be written in the spread");
       sc.owners[a->kids[0]->text] = owner;
     }
-    // A GPU thread writes only its own cell of each buffer (ADR 0068,
-    // section 1): identity ownership, for now.
-    if (onGpu && !sc.owners.empty())
-      return fail(n, "a spread placed on the GPU writes each buffer at its "
-                     "own index only, so it takes no @owns yet (ADR 0068)");
+    // On the GPU an owner array is only a proof fact: the kernel writes
+    // where the body says (ADR 0068, section 9).
     auto bounds = genRange(iterable);
     if (!bounds)
       return std::nullopt;

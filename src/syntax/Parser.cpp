@@ -1437,6 +1437,10 @@ class Parser {
         n->add(pattern());
         expect(K::In, "'in'");
         n->add(binary(20));
+        // A `for` takes its attributes after its step, such as the
+        // `@place(gpu)` of a placed sequence (ADR 0068, section 9), and
+        // keeps them last, so its other children stay where they were.
+        NodePtr forAttrs;
         if (spread) {
           n->add(attrs());
         } else if (accept(K::Step)) {
@@ -1444,10 +1448,14 @@ class Parser {
         } else {
           n->add(makeNode(N::None, loc()));
         }
+        if (!spread)
+          forAttrs = attrs();
         n->add(loopAnnots(spread));
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
+        if (forAttrs)
+          n->add(std::move(forAttrs));
         return n;
       }
       case K::While: {
