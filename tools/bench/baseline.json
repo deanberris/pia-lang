@@ -1,23 +1,104 @@
 {
-  "cores": 8,
+  "cores": 4,
   "files": {
+    "docs/basins.pia.md": {
+      "cost": 807298991,
+      "goals": 734,
+      "solve_ms_1": 213988,
+      "solve_ms_n": 107637,
+      "solved": 729,
+      "wall_ms_1": 261759.1,
+      "wall_ms_n": 155557.0
+    },
+    "docs/sediment.pia.md": {
+      "cost": 187597899,
+      "goals": 666,
+      "solve_ms_1": 49716,
+      "solve_ms_n": 20631,
+      "solved": 654,
+      "wall_ms_1": 68715.7,
+      "wall_ms_n": 39877.8
+    },
     "docs/streams.pia.md": {
       "cost": 175984659,
       "goals": 564,
-      "solve_ms_1": 171184,
-      "solve_ms_n": 23145,
+      "solve_ms_1": 44441,
+      "solve_ms_n": 25104,
       "solved": 509,
-      "wall_ms_1": 230806.4,
-      "wall_ms_n": 45425.3
+      "wall_ms_1": 61821.3,
+      "wall_ms_n": 42411.9
     },
     "examples/edges/edges.pia": {
       "cost": 56507407,
       "goals": 115,
-      "solve_ms_1": 11084,
-      "solve_ms_n": 4048,
+      "solve_ms_1": 13189,
+      "solve_ms_n": 6199,
       "solved": 87,
-      "wall_ms_1": 11290.2,
-      "wall_ms_n": 4258.1
+      "wall_ms_1": 13508.7,
+      "wall_ms_n": 6517.3
+    },
+    "lib/Pia/Compress/Huffman.pia": {
+      "cost": 118318540,
+      "goals": 255,
+      "solve_ms_1": 43567,
+      "solve_ms_n": 18267,
+      "solved": 225,
+      "wall_ms_1": 54404.3,
+      "wall_ms_n": 29107.4
+    },
+    "lib/Pia/Compress/Inflate.pia": {
+      "cost": 377232218,
+      "goals": 179,
+      "solve_ms_1": 35941,
+      "solve_ms_n": 18735,
+      "solved": 149,
+      "wall_ms_1": 40537.2,
+      "wall_ms_n": 23303.2
+    },
+    "lib/Pia/Compress/Inflate/Spec.pia": {
+      "cost": 1124870,
+      "goals": 46,
+      "solve_ms_1": 262,
+      "solve_ms_n": 122,
+      "solved": 25,
+      "wall_ms_1": 351.5,
+      "wall_ms_n": 212.3
+    },
+    "lib/Pia/Compress/Zlib.pia": {
+      "cost": 17644552,
+      "goals": 96,
+      "solve_ms_1": 3414,
+      "solve_ms_n": 1473,
+      "solved": 61,
+      "wall_ms_1": 4276.2,
+      "wall_ms_n": 2335.2
+    },
+    "lib/Pia/Core/Algo/BinarySearch.pia": {
+      "cost": 107665070,
+      "goals": 99,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 81,
+      "wall_ms_1": 17018.5,
+      "wall_ms_n": 8185.0
+    },
+    "lib/Pia/Core/Algo/Heap.pia": {
+      "cost": 121754625,
+      "goals": 185,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 167,
+      "wall_ms_1": 78745.1,
+      "wall_ms_n": 65200.1
+    },
+    "lib/Pia/Core/Algo/Merge.pia": {
+      "cost": 67547286,
+      "goals": 57,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 49,
+      "wall_ms_1": 15841.3,
+      "wall_ms_n": 12149.8
     },
     "lib/Pia/Core/Algo/Modify.pia": {
       "cost": 31251546,
@@ -25,8 +106,35 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 83,
-      "wall_ms_1": 3632.5,
-      "wall_ms_n": 1741.7
+      "wall_ms_1": 4789.4,
+      "wall_ms_n": 2565.2
+    },
+    "lib/Pia/Core/Algo/Numeric.pia": {
+      "cost": 19168123,
+      "goals": 165,
+      "solve_ms_1": 1234,
+      "solve_ms_n": 414,
+      "solved": 165,
+      "wall_ms_1": 4968.3,
+      "wall_ms_n": 3054.5
+    },
+    "lib/Pia/Core/Algo/PartialSort.pia": {
+      "cost": 23874519,
+      "goals": 82,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 72,
+      "wall_ms_1": 18352.2,
+      "wall_ms_n": 15667.2
+    },
+    "lib/Pia/Core/Algo/Partition.pia": {
+      "cost": 26739394,
+      "goals": 57,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 47,
+      "wall_ms_1": 5383.0,
+      "wall_ms_n": 4138.8
     },
     "lib/Pia/Core/Algo/Permutation.pia": {
       "cost": 2306867,
@@ -34,8 +142,8 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 18,
-      "wall_ms_1": 917.1,
-      "wall_ms_n": 830.7
+      "wall_ms_1": 732.1,
+      "wall_ms_n": 593.1
     },
     "lib/Pia/Core/Algo/Remove.pia": {
       "cost": 59744562,
@@ -43,8 +151,8 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 34,
-      "wall_ms_1": 6641.9,
-      "wall_ms_n": 5889.5
+      "wall_ms_1": 7441.5,
+      "wall_ms_n": 6412.1
     },
     "lib/Pia/Core/Algo/Search.pia": {
       "cost": 74891146,
@@ -52,8 +160,35 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 401,
-      "wall_ms_1": 26686.7,
-      "wall_ms_n": 22005.5
+      "wall_ms_1": 19235.0,
+      "wall_ms_n": 14232.8
+    },
+    "lib/Pia/Core/Algo/Set.pia": {
+      "cost": 22149908,
+      "goals": 75,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 67,
+      "wall_ms_1": 10211.7,
+      "wall_ms_n": 7363.0
+    },
+    "lib/Pia/Core/Algo/SetSymmetric.pia": {
+      "cost": 175946884,
+      "goals": 66,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 58,
+      "wall_ms_1": 38446.7,
+      "wall_ms_n": 20854.1
+    },
+    "lib/Pia/Core/Algo/SetUnion.pia": {
+      "cost": 122939571,
+      "goals": 65,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 57,
+      "wall_ms_1": 26638.6,
+      "wall_ms_n": 18542.6
     },
     "lib/Pia/Core/Algo/Sort.pia": {
       "cost": 47450211,
@@ -61,53 +196,107 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 62,
-      "wall_ms_1": 19410.7,
-      "wall_ms_n": 15908.1
+      "wall_ms_1": 16497.2,
+      "wall_ms_n": 10266.5
+    },
+    "lib/Pia/Core/Ascii.pia": {
+      "cost": 21369,
+      "goals": 66,
+      "solve_ms_1": 141,
+      "solve_ms_n": 71,
+      "solved": 62,
+      "wall_ms_1": 434.1,
+      "wall_ms_n": 364.6
     },
     "lib/Pia/Core/Bit.pia": {
       "cost": 2126196,
       "goals": 164,
-      "solve_ms_1": 426,
-      "solve_ms_n": 188,
+      "solve_ms_1": 1326,
+      "solve_ms_n": 306,
       "solved": 136,
-      "wall_ms_1": 1073.3,
-      "wall_ms_n": 843.9
+      "wall_ms_1": 2845.3,
+      "wall_ms_n": 1828.2
+    },
+    "lib/Pia/Core/Charconv.pia": {
+      "cost": 230747599,
+      "goals": 421,
+      "solve_ms_1": 97464,
+      "solve_ms_n": 39643,
+      "solved": 404,
+      "wall_ms_1": 112700.8,
+      "wall_ms_n": 54975.5
+    },
+    "lib/Pia/Core/Digits.pia": {
+      "cost": 22135413,
+      "goals": 83,
+      "solve_ms_1": 2978,
+      "solve_ms_n": 1264,
+      "solved": 83,
+      "wall_ms_1": 3582.8,
+      "wall_ms_n": 1871.3
+    },
+    "lib/Pia/Core/Hash.pia": {
+      "cost": 3300421,
+      "goals": 81,
+      "solve_ms_1": 516,
+      "solve_ms_n": 141,
+      "solved": 66,
+      "wall_ms_1": 2206.3,
+      "wall_ms_n": 1510.0
     },
     "lib/Pia/Core/Int.pia": {
       "cost": 18199137,
       "goals": 513,
-      "solve_ms_1": 13295,
-      "solve_ms_n": 2438,
+      "solve_ms_1": 5435,
+      "solve_ms_n": 2536,
       "solved": 473,
-      "wall_ms_1": 31436.0,
-      "wall_ms_n": 27008.2
+      "wall_ms_1": 11658.3,
+      "wall_ms_n": 8708.9
     },
     "lib/Pia/Core/Option.pia": {
       "cost": 9020,
       "goals": 14,
-      "solve_ms_1": 376,
-      "solve_ms_n": 78,
+      "solve_ms_1": 56,
+      "solve_ms_n": 27,
       "solved": 6,
-      "wall_ms_1": 1069.3,
-      "wall_ms_n": 654.0
+      "wall_ms_1": 216.4,
+      "wall_ms_n": 185.5
     },
     "lib/Pia/Core/Order.pia": {
       "cost": 10983832,
       "goals": 525,
-      "solve_ms_1": 669,
-      "solve_ms_n": 287,
+      "solve_ms_1": 1472,
+      "solve_ms_n": 534,
       "solved": 468,
-      "wall_ms_1": 27496.7,
-      "wall_ms_n": 23615.5
+      "wall_ms_1": 15676.1,
+      "wall_ms_n": 14194.5
+    },
+    "lib/Pia/Core/Ratio.pia": {
+      "cost": 111114,
+      "goals": 1,
+      "solve_ms_1": 20,
+      "solve_ms_n": 21,
+      "solved": 1,
+      "wall_ms_1": 43.0,
+      "wall_ms_n": 42.6
     },
     "lib/Pia/Core/Result.pia": {
       "cost": 267499,
       "goals": 118,
-      "solve_ms_1": 266,
-      "solve_ms_n": 158,
+      "solve_ms_1": 272,
+      "solve_ms_n": 169,
       "solved": 110,
-      "wall_ms_1": 3040.7,
-      "wall_ms_n": 3263.5
+      "wall_ms_1": 2001.6,
+      "wall_ms_n": 1937.6
+    },
+    "lib/Pia/Core/Utf8.pia": {
+      "cost": 46370493,
+      "goals": 294,
+      "solve_ms_1": 9753,
+      "solve_ms_n": 6068,
+      "solved": 190,
+      "wall_ms_1": 15301.9,
+      "wall_ms_n": 11605.9
     },
     "lib/Pia/Fn.pia": {
       "cost": 0,
@@ -115,80 +304,593 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 0,
-      "wall_ms_1": 14.5,
-      "wall_ms_n": 14.0
+      "wall_ms_1": 20.5,
+      "wall_ms_n": 19.6
+    },
+    "lib/Pia/Image/Bits.pia": {
+      "cost": 19628609,
+      "goals": 177,
+      "solve_ms_1": 2813,
+      "solve_ms_n": 1149,
+      "solved": 107,
+      "wall_ms_1": 4180.8,
+      "wall_ms_n": 2522.9
+    },
+    "lib/Pia/Image/Gif/Decode.pia": {
+      "cost": 306171765,
+      "goals": 333,
+      "solve_ms_1": 68734,
+      "solve_ms_n": 27736,
+      "solved": 278,
+      "wall_ms_1": 83832.3,
+      "wall_ms_n": 42981.4
+    },
+    "lib/Pia/Image/Gif/Encode.pia": {
+      "cost": 161784154,
+      "goals": 263,
+      "solve_ms_1": 53119,
+      "solve_ms_n": 22109,
+      "solved": 222,
+      "wall_ms_1": 60129.1,
+      "wall_ms_n": 29080.1
+    },
+    "lib/Pia/Image/Gif/Lzw.pia": {
+      "cost": 76160769,
+      "goals": 175,
+      "solve_ms_1": 21428,
+      "solve_ms_n": 10011,
+      "solved": 152,
+      "wall_ms_1": 36340.5,
+      "wall_ms_n": 24919.2
+    },
+    "lib/Pia/Image/Gif/LzwEncode.pia": {
+      "cost": 179914099,
+      "goals": 169,
+      "solve_ms_1": 31393,
+      "solve_ms_n": 13087,
+      "solved": 98,
+      "wall_ms_1": 36072.1,
+      "wall_ms_n": 17713.1
+    },
+    "lib/Pia/Image/Gif/Quantise.pia": {
+      "cost": 122752652,
+      "goals": 343,
+      "solve_ms_1": 37373,
+      "solve_ms_n": 14575,
+      "solved": 240,
+      "wall_ms_1": 42876.3,
+      "wall_ms_n": 20035.8
+    },
+    "lib/Pia/Image/Gif/Spec.pia": {
+      "cost": 24035629,
+      "goals": 128,
+      "solve_ms_1": 4373,
+      "solve_ms_n": 1663,
+      "solved": 91,
+      "wall_ms_1": 5052.2,
+      "wall_ms_n": 2342.5
+    },
+    "lib/Pia/Image/Raster.pia": {
+      "cost": 193586,
+      "goals": 50,
+      "solve_ms_1": 267,
+      "solve_ms_n": 99,
+      "solved": 34,
+      "wall_ms_1": 412.2,
+      "wall_ms_n": 248.2
+    },
+    "lib/Pia/Mem/Alloc.pia": {
+      "cost": 1505855,
+      "goals": 7,
+      "solve_ms_1": 330,
+      "solve_ms_n": 293,
+      "solved": 7,
+      "wall_ms_1": 373.3,
+      "wall_ms_n": 336.6
+    },
+    "lib/Pia/Mem/Box.pia": {
+      "cost": 972797,
+      "goals": 23,
+      "solve_ms_1": 229,
+      "solve_ms_n": 189,
+      "solved": 21,
+      "wall_ms_1": 334.5,
+      "wall_ms_n": 293.9
+    },
+    "lib/Pia/Mem/Vec.pia": {
+      "cost": 2689193,
+      "goals": 37,
+      "solve_ms_1": 530,
+      "solve_ms_n": 385,
+      "solved": 35,
+      "wall_ms_1": 754.2,
+      "wall_ms_n": 609.0
+    },
+    "lib/Pia/Sys/Gen/arm64_macos.pia": {
+      "cost": 2086,
+      "goals": 33,
+      "solve_ms_1": 76,
+      "solve_ms_n": 48,
+      "solved": 33,
+      "wall_ms_1": 816.9,
+      "wall_ms_n": 789.1
+    },
+    "lib/Pia/Sys/Gen/x86_64_linux.pia": {
+      "cost": 2086,
+      "goals": 33,
+      "solve_ms_1": 79,
+      "solve_ms_n": 46,
+      "solved": 33,
+      "wall_ms_1": 1513.0,
+      "wall_ms_n": 1474.5
+    },
+    "lib/Pia/Sys/Posix.pia": {
+      "cost": 0,
+      "goals": 0,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 0,
+      "wall_ms_1": 19.1,
+      "wall_ms_n": 17.5
+    },
+    "lib/Pia/Text/Json/Derive.pia": {
+      "cost": 0,
+      "goals": 0,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 0,
+      "wall_ms_1": 31.4,
+      "wall_ms_n": 30.2
     },
     "lib/Pia/Text/Json/Lex.pia": {
       "cost": 98547117,
       "goals": 179,
-      "solve_ms_1": 6507,
-      "solve_ms_n": 1782,
+      "solve_ms_1": 9333,
+      "solve_ms_n": 3766,
       "solved": 179,
-      "wall_ms_1": 15315.7,
-      "wall_ms_n": 10618.7
+      "wall_ms_1": 17588.5,
+      "wall_ms_n": 12103.8
     },
     "lib/Pia/Text/Json/Read.pia": {
       "cost": 188022092,
       "goals": 101,
-      "solve_ms_1": 30715,
-      "solve_ms_n": 12743,
+      "solve_ms_1": 42949,
+      "solve_ms_n": 20664,
       "solved": 98,
-      "wall_ms_1": 36358.7,
-      "wall_ms_n": 17984.6
+      "wall_ms_1": 48093.5,
+      "wall_ms_n": 25834.6
     },
     "lib/Pia/Text/Json/Spec.pia": {
       "cost": 13441175,
       "goals": 134,
-      "solve_ms_1": 1136,
-      "solve_ms_n": 348,
+      "solve_ms_1": 1921,
+      "solve_ms_n": 696,
       "solved": 134,
-      "wall_ms_1": 2621.5,
-      "wall_ms_n": 1742.0
+      "wall_ms_1": 3292.6,
+      "wall_ms_n": 2059.8
     },
     "lib/Pia/Text/Json/Write.pia": {
       "cost": 471487058,
       "goals": 571,
-      "solve_ms_1": 38650,
-      "solve_ms_n": 13000,
+      "solve_ms_1": 62263,
+      "solve_ms_n": 25862,
       "solved": 561,
-      "wall_ms_1": 81379.0,
-      "wall_ms_n": 56184.7
+      "wall_ms_1": 102036.9,
+      "wall_ms_n": 65632.5
+    },
+    "lib/Pia/Time.pia": {
+      "cost": 2432001563,
+      "goals": 230,
+      "solve_ms_1": 383265,
+      "solve_ms_n": 209150,
+      "solved": 176,
+      "wall_ms_1": 387736.6,
+      "wall_ms_n": 213599.5
+    },
+    "tests/memory/coherence.pia": {
+      "cost": 14995,
+      "goals": 5,
+      "solve_ms_1": 29,
+      "solve_ms_n": 24,
+      "solved": 5,
+      "wall_ms_1": 1355.4,
+      "wall_ms_n": 1355.8
+    },
+    "tests/memory/lb.pia": {
+      "cost": 26716,
+      "goals": 3,
+      "solve_ms_1": 28,
+      "solve_ms_n": 18,
+      "solved": 3,
+      "wall_ms_1": 3111.3,
+      "wall_ms_n": 3095.2
+    },
+    "tests/memory/mp.pia": {
+      "cost": 66185,
+      "goals": 8,
+      "solve_ms_1": 75,
+      "solve_ms_n": 36,
+      "solved": 8,
+      "wall_ms_1": 13755.3,
+      "wall_ms_n": 13750.9
+    },
+    "tests/memory/multi.pia": {
+      "cost": 173615,
+      "goals": 11,
+      "solve_ms_1": 98,
+      "solve_ms_n": 55,
+      "solved": 11,
+      "wall_ms_1": 38844.0,
+      "wall_ms_n": 38828.0
+    },
+    "tests/memory/races.pia": {
+      "cost": 27545,
+      "goals": 4,
+      "solve_ms_1": 36,
+      "solve_ms_n": 20,
+      "solved": 4,
+      "wall_ms_1": 3406.7,
+      "wall_ms_n": 3370.0
+    },
+    "tests/memory/rmw.pia": {
+      "cost": 93705,
+      "goals": 6,
+      "solve_ms_1": 65,
+      "solve_ms_n": 35,
+      "solved": 6,
+      "wall_ms_1": 17060.7,
+      "wall_ms_n": 17024.3
+    },
+    "tests/memory/sb.pia": {
+      "cost": 90268,
+      "goals": 5,
+      "solve_ms_1": 69,
+      "solve_ms_n": 31,
+      "solved": 5,
+      "wall_ms_1": 18285.2,
+      "wall_ms_n": 18266.8
+    },
+    "tests/memory/theory.pia": {
+      "cost": 178792,
+      "goals": 3,
+      "solve_ms_1": 62,
+      "solve_ms_n": 40,
+      "solved": 3,
+      "wall_ms_1": 351.9,
+      "wall_ms_n": 329.6
+    },
+    "tests/verify/adapters.pia": {
+      "cost": 237,
+      "goals": 10,
+      "solve_ms_1": 15,
+      "solve_ms_n": 10,
+      "solved": 7,
+      "wall_ms_1": 62.1,
+      "wall_ms_n": 55.8
+    },
+    "tests/verify/arena.pia": {
+      "cost": 1645279,
+      "goals": 24,
+      "solve_ms_1": 380,
+      "solve_ms_n": 291,
+      "solved": 24,
+      "wall_ms_1": 470.0,
+      "wall_ms_n": 380.4
+    },
+    "tests/verify/array_results.pia": {
+      "cost": 1307,
+      "goals": 32,
+      "solve_ms_1": 35,
+      "solve_ms_n": 18,
+      "solved": 6,
+      "wall_ms_1": 74.9,
+      "wall_ms_n": 62.6
+    },
+    "tests/verify/assumes.pia": {
+      "cost": 1516,
+      "goals": 5,
+      "solve_ms_1": 18,
+      "solve_ms_n": 12,
+      "solved": 3,
+      "wall_ms_1": 42.9,
+      "wall_ms_n": 36.3
+    },
+    "tests/verify/atomics.pia": {
+      "cost": 25618,
+      "goals": 17,
+      "solve_ms_1": 83,
+      "solve_ms_n": 26,
+      "solved": 16,
+      "wall_ms_1": 179.5,
+      "wall_ms_n": 112.2
+    },
+    "tests/verify/bit_counts.pia": {
+      "cost": 13136440,
+      "goals": 13,
+      "solve_ms_1": 4664,
+      "solve_ms_n": 3527,
+      "solved": 12,
+      "wall_ms_1": 4740.3,
+      "wall_ms_n": 3603.6
     },
     "tests/verify/bits.pia": {
       "cost": 11163,
       "goals": 26,
-      "solve_ms_1": 16,
-      "solve_ms_n": 9,
+      "solve_ms_1": 40,
+      "solve_ms_n": 32,
       "solved": 10,
-      "wall_ms_1": 44.3,
-      "wall_ms_n": 33.1
+      "wall_ms_1": 80.5,
+      "wall_ms_n": 70.9
+    },
+    "tests/verify/body_after_ensures.pia": {
+      "cost": 90,
+      "goals": 2,
+      "solve_ms_1": 11,
+      "solve_ms_n": 8,
+      "solved": 2,
+      "wall_ms_1": 33.7,
+      "wall_ms_n": 29.5
+    },
+    "tests/verify/box.pia": {
+      "cost": 2617777,
+      "goals": 25,
+      "solve_ms_1": 669,
+      "solve_ms_n": 603,
+      "solved": 25,
+      "wall_ms_1": 783.0,
+      "wall_ms_n": 718.5
+    },
+    "tests/verify/box_concept.pia": {
+      "cost": 4043407,
+      "goals": 60,
+      "solve_ms_1": 865,
+      "solve_ms_n": 368,
+      "solved": 57,
+      "wall_ms_1": 1204.6,
+      "wall_ms_n": 705.2
+    },
+    "tests/verify/box_errors.pia": {
+      "cost": 2624000,
+      "goals": 24,
+      "solve_ms_1": 673,
+      "solve_ms_n": 600,
+      "solved": 24,
+      "wall_ms_1": 777.5,
+      "wall_ms_n": 705.4
+    },
+    "tests/verify/bump.pia": {
+      "cost": 1639733,
+      "goals": 13,
+      "solve_ms_1": 340,
+      "solve_ms_n": 277,
+      "solved": 13,
+      "wall_ms_1": 401.9,
+      "wall_ms_n": 339.5
+    },
+    "tests/verify/callee_exact.pia": {
+      "cost": 4722,
+      "goals": 2,
+      "solve_ms_1": 29,
+      "solve_ms_n": 19,
+      "solved": 2,
+      "wall_ms_1": 53.8,
+      "wall_ms_n": 41.8
+    },
+    "tests/verify/concept_ranking.pia": {
+      "cost": 104,
+      "goals": 10,
+      "solve_ms_1": 12,
+      "solve_ms_n": 11,
+      "solved": 8,
+      "wall_ms_1": 60.1,
+      "wall_ms_n": 53.0
+    },
+    "tests/verify/concepts.pia": {
+      "cost": 1467,
+      "goals": 11,
+      "solve_ms_1": 41,
+      "solve_ms_n": 15,
+      "solved": 9,
+      "wall_ms_1": 92.2,
+      "wall_ms_n": 68.9
     },
     "tests/verify/consts.pia": {
       "cost": 125876,
       "goals": 14,
-      "solve_ms_1": 15,
-      "solve_ms_n": 9,
+      "solve_ms_1": 87,
+      "solve_ms_n": 63,
       "solved": 8,
-      "wall_ms_1": 40.3,
-      "wall_ms_n": 35.0
+      "wall_ms_1": 123.2,
+      "wall_ms_n": 100.0
+    },
+    "tests/verify/contract_equality.pia": {
+      "cost": 428,
+      "goals": 12,
+      "solve_ms_1": 14,
+      "solve_ms_n": 11,
+      "solved": 8,
+      "wall_ms_1": 56.5,
+      "wall_ms_n": 56.9
+    },
+    "tests/verify/contract_guards.pia": {
+      "cost": 9840,
+      "goals": 12,
+      "solve_ms_1": 35,
+      "solve_ms_n": 26,
+      "solved": 12,
+      "wall_ms_1": 67.8,
+      "wall_ms_n": 59.2
     },
     "tests/verify/contracts.pia": {
       "cost": 16048,
       "goals": 22,
-      "solve_ms_1": 22,
-      "solve_ms_n": 12,
+      "solve_ms_1": 75,
+      "solve_ms_n": 36,
       "solved": 15,
-      "wall_ms_1": 51.6,
-      "wall_ms_n": 42.5
+      "wall_ms_1": 121.2,
+      "wall_ms_n": 82.3
+    },
+    "tests/verify/defer.pia": {
+      "cost": 17194,
+      "goals": 12,
+      "solve_ms_1": 52,
+      "solve_ms_n": 25,
+      "solved": 8,
+      "wall_ms_1": 99.2,
+      "wall_ms_n": 72.0
+    },
+    "tests/verify/digit_separators.pia": {
+      "cost": 46,
+      "goals": 6,
+      "solve_ms_1": 20,
+      "solve_ms_n": 13,
+      "solved": 5,
+      "wall_ms_1": 43.4,
+      "wall_ms_n": 36.0
+    },
+    "tests/verify/distinct_types.pia": {
+      "cost": 43633,
+      "goals": 16,
+      "solve_ms_1": 90,
+      "solve_ms_n": 29,
+      "solved": 13,
+      "wall_ms_1": 146.4,
+      "wall_ms_n": 85.8
+    },
+    "tests/verify/division_facts.pia": {
+      "cost": 744204,
+      "goals": 12,
+      "solve_ms_1": 279,
+      "solve_ms_n": 269,
+      "solved": 12,
+      "wall_ms_1": 335.8,
+      "wall_ms_n": 327.2
     },
     "tests/verify/emit.pia": {
       "cost": 3025,
       "goals": 4,
-      "solve_ms_1": 6,
-      "solve_ms_n": 4,
+      "solve_ms_1": 23,
+      "solve_ms_n": 13,
       "solved": 3,
-      "wall_ms_1": 22.9,
-      "wall_ms_n": 22.3
+      "wall_ms_1": 47.0,
+      "wall_ms_n": 35.9
+    },
+    "tests/verify/error_sets.pia": {
+      "cost": 2713,
+      "goals": 6,
+      "solve_ms_1": 22,
+      "solve_ms_n": 16,
+      "solved": 5,
+      "wall_ms_1": 56.2,
+      "wall_ms_n": 50.5
+    },
+    "tests/verify/ffi.pia": {
+      "cost": 5975,
+      "goals": 4,
+      "solve_ms_1": 27,
+      "solve_ms_n": 15,
+      "solved": 4,
+      "wall_ms_1": 50.0,
+      "wall_ms_n": 38.3
+    },
+    "tests/verify/frames.pia": {
+      "cost": 25487660,
+      "goals": 91,
+      "solve_ms_1": 3087,
+      "solve_ms_n": 1249,
+      "solved": 91,
+      "wall_ms_1": 6810.9,
+      "wall_ms_n": 4981.0
+    },
+    "tests/verify/fuel_counterexamples.pia": {
+      "cost": 113866326,
+      "goals": 7,
+      "solve_ms_1": 41284,
+      "solve_ms_n": 21052,
+      "solved": 7,
+      "wall_ms_1": 41349.0,
+      "wall_ms_n": 21120.2
+    },
+    "tests/verify/function_object.pia": {
+      "cost": 1290208,
+      "goals": 24,
+      "solve_ms_1": 17,
+      "solve_ms_n": 14,
+      "solved": 21,
+      "wall_ms_1": 234.1,
+      "wall_ms_n": 168.8
+    },
+    "tests/verify/generic_functions.pia": {
+      "cost": 511,
+      "goals": 7,
+      "solve_ms_1": 23,
+      "solve_ms_n": 12,
+      "solved": 6,
+      "wall_ms_1": 71.0,
+      "wall_ms_n": 55.4
+    },
+    "tests/verify/generic_meets_concept.pia": {
+      "cost": 4117954,
+      "goals": 38,
+      "solve_ms_1": 879,
+      "solve_ms_n": 413,
+      "solved": 38,
+      "wall_ms_1": 1068.8,
+      "wall_ms_n": 603.3
+    },
+    "tests/verify/generic_proofs.pia": {
+      "cost": 9572991,
+      "goals": 90,
+      "solve_ms_1": 293,
+      "solve_ms_n": 64,
+      "solved": 79,
+      "wall_ms_1": 2277.4,
+      "wall_ms_n": 1492.8
+    },
+    "tests/verify/generic_types.pia": {
+      "cost": 3437,
+      "goals": 5,
+      "solve_ms_1": 31,
+      "solve_ms_n": 16,
+      "solved": 4,
+      "wall_ms_1": 61.1,
+      "wall_ms_n": 46.9
+    },
+    "tests/verify/handlers.pia": {
+      "cost": 66134,
+      "goals": 15,
+      "solve_ms_1": 105,
+      "solve_ms_n": 31,
+      "solved": 15,
+      "wall_ms_1": 163.9,
+      "wall_ms_n": 92.0
+    },
+    "tests/verify/inout_values.pia": {
+      "cost": 5265,
+      "goals": 12,
+      "solve_ms_1": 34,
+      "solve_ms_n": 24,
+      "solved": 12,
+      "wall_ms_1": 73.0,
+      "wall_ms_n": 62.4
+    },
+    "tests/verify/int_blast.pia": {
+      "cost": 3854015,
+      "goals": 7,
+      "solve_ms_1": 1707,
+      "solve_ms_n": 1160,
+      "solved": 7,
+      "wall_ms_1": 1739.9,
+      "wall_ms_n": 1195.8
+    },
+    "tests/verify/int_measures.pia": {
+      "cost": 1196,
+      "goals": 7,
+      "solve_ms_1": 35,
+      "solve_ms_n": 20,
+      "solved": 7,
+      "wall_ms_1": 64.2,
+      "wall_ms_n": 47.9
     },
     "tests/verify/intervals.pia": {
       "cost": 0,
@@ -196,88 +898,673 @@
       "solve_ms_1": 0,
       "solve_ms_n": 0,
       "solved": 0,
-      "wall_ms_1": 15.5,
-      "wall_ms_n": 16.0
+      "wall_ms_1": 20.1,
+      "wall_ms_n": 19.1
+    },
+    "tests/verify/lambda_arrow_contract.pia": {
+      "cost": 8105,
+      "goals": 11,
+      "solve_ms_1": 39,
+      "solve_ms_n": 15,
+      "solved": 9,
+      "wall_ms_1": 104.2,
+      "wall_ms_n": 68.5
+    },
+    "tests/verify/lambda_captures.pia": {
+      "cost": 1285395,
+      "goals": 27,
+      "solve_ms_1": 19,
+      "solve_ms_n": 16,
+      "solved": 23,
+      "wall_ms_1": 247.9,
+      "wall_ms_n": 188.0
+    },
+    "tests/verify/lambda_find.pia": {
+      "cost": 725561,
+      "goals": 19,
+      "solve_ms_1": 32,
+      "solve_ms_n": 12,
+      "solved": 15,
+      "wall_ms_1": 260.6,
+      "wall_ms_n": 171.6
+    },
+    "tests/verify/lambda_generic.pia": {
+      "cost": 528102,
+      "goals": 12,
+      "solve_ms_1": 4,
+      "solve_ms_n": 7,
+      "solved": 9,
+      "wall_ms_1": 116.2,
+      "wall_ms_n": 103.2
+    },
+    "tests/verify/lambda_generic_forms.pia": {
+      "cost": 528722,
+      "goals": 17,
+      "solve_ms_1": 11,
+      "solve_ms_n": 9,
+      "solved": 13,
+      "wall_ms_1": 148.9,
+      "wall_ms_n": 129.1
+    },
+    "tests/verify/lambda_named.pia": {
+      "cost": 682008,
+      "goals": 20,
+      "solve_ms_1": 59,
+      "solve_ms_n": 16,
+      "solved": 17,
+      "wall_ms_1": 218.9,
+      "wall_ms_n": 133.9
+    },
+    "tests/verify/lambda_overloads.pia": {
+      "cost": 1598958,
+      "goals": 31,
+      "solve_ms_1": 8,
+      "solve_ms_n": 8,
+      "solved": 27,
+      "wall_ms_1": 280.8,
+      "wall_ms_n": 205.3
+    },
+    "tests/verify/lambda_requires.pia": {
+      "cost": 1108,
+      "goals": 8,
+      "solve_ms_1": 25,
+      "solve_ms_n": 22,
+      "solved": 8,
+      "wall_ms_1": 55.4,
+      "wall_ms_n": 51.7
+    },
+    "tests/verify/lambda_results.pia": {
+      "cost": 546498,
+      "goals": 15,
+      "solve_ms_1": 14,
+      "solve_ms_n": 13,
+      "solved": 13,
+      "wall_ms_1": 154.9,
+      "wall_ms_n": 142.6
+    },
+    "tests/verify/local_arrays.pia": {
+      "cost": 28339,
+      "goals": 31,
+      "solve_ms_1": 64,
+      "solve_ms_n": 23,
+      "solved": 10,
+      "wall_ms_1": 117.3,
+      "wall_ms_n": 75.3
     },
     "tests/verify/loops.pia": {
       "cost": 1516118,
       "goals": 42,
-      "solve_ms_1": 223,
-      "solve_ms_n": 105,
+      "solve_ms_1": 320,
+      "solve_ms_n": 144,
       "solved": 41,
-      "wall_ms_1": 296.3,
-      "wall_ms_n": 179.3
+      "wall_ms_1": 422.3,
+      "wall_ms_n": 247.5
+    },
+    "tests/verify/machine.pia": {
+      "cost": 28331,
+      "goals": 12,
+      "solve_ms_1": 83,
+      "solve_ms_n": 31,
+      "solved": 12,
+      "wall_ms_1": 218.3,
+      "wall_ms_n": 166.1
+    },
+    "tests/verify/memory_independent_cost.pia": {
+      "cost": 2568,
+      "goals": 3,
+      "solve_ms_1": 15,
+      "solve_ms_n": 11,
+      "solved": 3,
+      "wall_ms_1": 39.9,
+      "wall_ms_n": 34.1
+    },
+    "tests/verify/model_check.pia": {
+      "cost": 1160,
+      "goals": 8,
+      "solve_ms_1": 27,
+      "solve_ms_n": 19,
+      "solved": 7,
+      "wall_ms_1": 58.6,
+      "wall_ms_n": 50.2
+    },
+    "tests/verify/models.pia": {
+      "cost": 32445,
+      "goals": 13,
+      "solve_ms_1": 61,
+      "solve_ms_n": 32,
+      "solved": 13,
+      "wall_ms_1": 127.7,
+      "wall_ms_n": 99.4
+    },
+    "tests/verify/modules.pia": {
+      "cost": 19615,
+      "goals": 13,
+      "solve_ms_1": 42,
+      "solve_ms_n": 26,
+      "solved": 9,
+      "wall_ms_1": 75.9,
+      "wall_ms_n": 60.5
+    },
+    "tests/verify/old_calls.pia": {
+      "cost": 1196,
+      "goals": 6,
+      "solve_ms_1": 21,
+      "solve_ms_n": 17,
+      "solved": 6,
+      "wall_ms_1": 55.9,
+      "wall_ms_n": 51.1
+    },
+    "tests/verify/opaque.pia": {
+      "cost": 7030,
+      "goals": 18,
+      "solve_ms_1": 49,
+      "solve_ms_n": 31,
+      "solved": 16,
+      "wall_ms_1": 88.7,
+      "wall_ms_n": 71.7
     },
     "tests/verify/overflow.pia": {
       "cost": 4910,
       "goals": 5,
-      "solve_ms_1": 8,
-      "solve_ms_n": 5,
+      "solve_ms_1": 32,
+      "solve_ms_n": 16,
       "solved": 4,
-      "wall_ms_1": 25.6,
-      "wall_ms_n": 23.1
+      "wall_ms_1": 55.8,
+      "wall_ms_n": 40.2
+    },
+    "tests/verify/overloads.pia": {
+      "cost": 490,
+      "goals": 12,
+      "solve_ms_1": 19,
+      "solve_ms_n": 13,
+      "solved": 11,
+      "wall_ms_1": 63.2,
+      "wall_ms_n": 57.4
     },
     "tests/verify/parallel.pia": {
       "cost": 3974,
       "goals": 5,
-      "solve_ms_1": 33,
-      "solve_ms_n": 33,
+      "solve_ms_1": 50,
+      "solve_ms_n": 23,
       "solved": 4,
-      "wall_ms_1": 51.5,
-      "wall_ms_n": 49.6
+      "wall_ms_1": 73.4,
+      "wall_ms_n": 46.8
+    },
+    "tests/verify/pool.pia": {
+      "cost": 855171,
+      "goals": 42,
+      "solve_ms_1": 309,
+      "solve_ms_n": 176,
+      "solved": 38,
+      "wall_ms_1": 644.6,
+      "wall_ms_n": 518.6
+    },
+    "tests/verify/pool_alloc.pia": {
+      "cost": 4527982,
+      "goals": 41,
+      "solve_ms_1": 1088,
+      "solve_ms_n": 832,
+      "solved": 31,
+      "wall_ms_1": 1712.5,
+      "wall_ms_n": 1461.6
+    },
+    "tests/verify/pool_owner_errors.pia": {
+      "cost": 5611,
+      "goals": 6,
+      "solve_ms_1": 21,
+      "solve_ms_n": 19,
+      "solved": 6,
+      "wall_ms_1": 52.8,
+      "wall_ms_n": 49.4
+    },
+    "tests/verify/precondition_overloads.pia": {
+      "cost": 1951,
+      "goals": 14,
+      "solve_ms_1": 21,
+      "solve_ms_n": 14,
+      "solved": 14,
+      "wall_ms_1": 125.8,
+      "wall_ms_n": 130.8
     },
     "tests/verify/primes.pia": {
       "cost": 480,
       "goals": 3,
-      "solve_ms_1": 3,
-      "solve_ms_n": 3,
+      "solve_ms_1": 13,
+      "solve_ms_n": 8,
       "solved": 2,
-      "wall_ms_1": 19.0,
-      "wall_ms_n": 17.6
+      "wall_ms_1": 33.1,
+      "wall_ms_n": 27.1
+    },
+    "tests/verify/pure_calls.pia": {
+      "cost": 2923,
+      "goals": 8,
+      "solve_ms_1": 16,
+      "solve_ms_n": 13,
+      "solved": 6,
+      "wall_ms_1": 54.1,
+      "wall_ms_n": 53.7
+    },
+    "tests/verify/pure_contract_calls.pia": {
+      "cost": 7738,
+      "goals": 13,
+      "solve_ms_1": 64,
+      "solve_ms_n": 27,
+      "solved": 10,
+      "wall_ms_1": 106.8,
+      "wall_ms_n": 70.2
+    },
+    "tests/verify/reals.pia": {
+      "cost": 1260713,
+      "goals": 25,
+      "solve_ms_1": 802,
+      "solve_ms_n": 621,
+      "solved": 20,
+      "wall_ms_1": 865.7,
+      "wall_ms_n": 685.9
+    },
+    "tests/verify/rec_aliasing.pia": {
+      "cost": 0,
+      "goals": 2,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 0,
+      "wall_ms_1": 19.6,
+      "wall_ms_n": 18.9
+    },
+    "tests/verify/rec_types.pia": {
+      "cost": 8067,
+      "goals": 14,
+      "solve_ms_1": 40,
+      "solve_ms_n": 25,
+      "solved": 14,
+      "wall_ms_1": 100.5,
+      "wall_ms_n": 86.5
+    },
+    "tests/verify/record_buffers.pia": {
+      "cost": 596075,
+      "goals": 13,
+      "solve_ms_1": 169,
+      "solve_ms_n": 89,
+      "solved": 11,
+      "wall_ms_1": 221.7,
+      "wall_ms_n": 142.4
+    },
+    "tests/verify/record_payloads.pia": {
+      "cost": 1598,
+      "goals": 6,
+      "solve_ms_1": 26,
+      "solve_ms_n": 16,
+      "solved": 3,
+      "wall_ms_1": 57.0,
+      "wall_ms_n": 46.5
     },
     "tests/verify/records.pia": {
       "cost": 1960,
       "goals": 5,
-      "solve_ms_1": 5,
-      "solve_ms_n": 4,
+      "solve_ms_1": 18,
+      "solve_ms_n": 14,
       "solved": 3,
-      "wall_ms_1": 23.9,
-      "wall_ms_n": 22.4
+      "wall_ms_1": 43.6,
+      "wall_ms_n": 39.3
+    },
+    "tests/verify/sediment.pia": {
+      "cost": 39272354,
+      "goals": 159,
+      "solve_ms_1": 6300,
+      "solve_ms_n": 2787,
+      "solved": 159,
+      "wall_ms_1": 8905.7,
+      "wall_ms_n": 5399.0
+    },
+    "tests/verify/sediment_order.pia": {
+      "cost": 131721653,
+      "goals": 242,
+      "solve_ms_1": 34531,
+      "solve_ms_n": 14469,
+      "solved": 242,
+      "wall_ms_1": 38612.7,
+      "wall_ms_n": 18539.4
+    },
+    "tests/verify/sediment_transport.pia": {
+      "cost": 64787462,
+      "goals": 247,
+      "solve_ms_1": 11692,
+      "solve_ms_n": 6673,
+      "solved": 247,
+      "wall_ms_1": 18682.9,
+      "wall_ms_n": 13596.0
+    },
+    "tests/verify/size_classes.pia": {
+      "cost": 24161505,
+      "goals": 49,
+      "solve_ms_1": 154687,
+      "solve_ms_n": 134531,
+      "solved": 39,
+      "wall_ms_1": 155973.5,
+      "wall_ms_n": 135827.9
+    },
+    "tests/verify/slice_aggregates.pia": {
+      "cost": 82099,
+      "goals": 15,
+      "solve_ms_1": 53,
+      "solve_ms_n": 39,
+      "solved": 15,
+      "wall_ms_1": 102.5,
+      "wall_ms_n": 87.3
+    },
+    "tests/verify/slice_buffers.pia": {
+      "cost": 4579,
+      "goals": 15,
+      "solve_ms_1": 58,
+      "solve_ms_n": 35,
+      "solved": 15,
+      "wall_ms_1": 107.3,
+      "wall_ms_n": 84.1
     },
     "tests/verify/slices.pia": {
       "cost": 418469,
       "goals": 24,
-      "solve_ms_1": 69,
-      "solve_ms_n": 36,
+      "solve_ms_1": 111,
+      "solve_ms_n": 65,
       "solved": 23,
-      "wall_ms_1": 109.2,
-      "wall_ms_n": 78.2
+      "wall_ms_1": 171.1,
+      "wall_ms_n": 123.0
+    },
+    "tests/verify/soft_failure.pia": {
+      "cost": 44,
+      "goals": 5,
+      "solve_ms_1": 9,
+      "solve_ms_n": 8,
+      "solved": 4,
+      "wall_ms_1": 43.0,
+      "wall_ms_n": 40.3
+    },
+    "tests/verify/solver.pia": {
+      "cost": 3307,
+      "goals": 5,
+      "solve_ms_1": 7,
+      "solve_ms_n": 10,
+      "solved": 5,
+      "wall_ms_1": 53.8,
+      "wall_ms_n": 57.8
+    },
+    "tests/verify/spec_arg_range.pia": {
+      "cost": 1562957,
+      "goals": 18,
+      "solve_ms_1": 184,
+      "solve_ms_n": 97,
+      "solved": 18,
+      "wall_ms_1": 308.0,
+      "wall_ms_n": 219.8
+    },
+    "tests/verify/spec_buffers.pia": {
+      "cost": 4721,
+      "goals": 10,
+      "solve_ms_1": 33,
+      "solve_ms_n": 30,
+      "solved": 10,
+      "wall_ms_1": 72.3,
+      "wall_ms_n": 68.9
+    },
+    "tests/verify/spec_exact.pia": {
+      "cost": 3640288,
+      "goals": 4,
+      "solve_ms_1": 407,
+      "solve_ms_n": 401,
+      "solved": 4,
+      "wall_ms_1": 435.5,
+      "wall_ms_n": 431.9
+    },
+    "tests/verify/spec_fields.pia": {
+      "cost": 1234133,
+      "goals": 37,
+      "solve_ms_1": 237,
+      "solve_ms_n": 104,
+      "solved": 35,
+      "wall_ms_1": 360.0,
+      "wall_ms_n": 229.8
+    },
+    "tests/verify/spec_locals.pia": {
+      "cost": 3092524,
+      "goals": 35,
+      "solve_ms_1": 436,
+      "solve_ms_n": 223,
+      "solved": 28,
+      "wall_ms_1": 547.1,
+      "wall_ms_n": 334.2
+    },
+    "tests/verify/spec_slice_ranges.pia": {
+      "cost": 1021890,
+      "goals": 15,
+      "solve_ms_1": 210,
+      "solve_ms_n": 80,
+      "solved": 15,
+      "wall_ms_1": 259.5,
+      "wall_ms_n": 131.2
+    },
+    "tests/verify/specs.pia": {
+      "cost": 13702335,
+      "goals": 46,
+      "solve_ms_1": 1484,
+      "solve_ms_n": 1190,
+      "solved": 41,
+      "wall_ms_1": 1677.7,
+      "wall_ms_n": 1382.0
+    },
+    "tests/verify/spread.pia": {
+      "cost": 711531,
+      "goals": 40,
+      "solve_ms_1": 316,
+      "solve_ms_n": 91,
+      "solved": 34,
+      "wall_ms_1": 424.5,
+      "wall_ms_n": 200.5
+    },
+    "tests/verify/spread_ensures.pia": {
+      "cost": 1323209,
+      "goals": 25,
+      "solve_ms_1": 232,
+      "solve_ms_n": 145,
+      "solved": 25,
+      "wall_ms_1": 355.7,
+      "wall_ms_n": 269.8
+    },
+    "tests/verify/tactics.pia": {
+      "cost": 11116124,
+      "goals": 27,
+      "solve_ms_1": 1288,
+      "solve_ms_n": 1068,
+      "solved": 27,
+      "wall_ms_1": 1377.4,
+      "wall_ms_n": 1160.7
+    },
+    "tests/verify/target.pia": {
+      "cost": 333679,
+      "goals": 3,
+      "solve_ms_1": 100,
+      "solve_ms_n": 60,
+      "solved": 3,
+      "wall_ms_1": 148.2,
+      "wall_ms_n": 107.6
+    },
+    "tests/verify/target_items.pia": {
+      "cost": 31826,
+      "goals": 8,
+      "solve_ms_1": 61,
+      "solve_ms_n": 31,
+      "solved": 6,
+      "wall_ms_1": 135.5,
+      "wall_ms_n": 106.4
+    },
+    "tests/verify/target_theory.pia": {
+      "cost": 0,
+      "goals": 0,
+      "solve_ms_1": 0,
+      "solve_ms_n": 0,
+      "solved": 0,
+      "wall_ms_1": 18.0,
+      "wall_ms_n": 17.4
+    },
+    "tests/verify/theory_closure.pia": {
+      "cost": 21233,
+      "goals": 5,
+      "solve_ms_1": 32,
+      "solve_ms_n": 18,
+      "solved": 4,
+      "wall_ms_1": 77.9,
+      "wall_ms_n": 66.0
+    },
+    "tests/verify/theory_lip.pia": {
+      "cost": 106326,
+      "goals": 7,
+      "solve_ms_1": 54,
+      "solve_ms_n": 32,
+      "solved": 7,
+      "wall_ms_1": 201.2,
+      "wall_ms_n": 181.4
+    },
+    "tests/verify/total_metaprograms.pia": {
+      "cost": 116,
+      "goals": 8,
+      "solve_ms_1": 20,
+      "solve_ms_n": 17,
+      "solved": 7,
+      "wall_ms_1": 51.2,
+      "wall_ms_n": 47.4
+    },
+    "tests/verify/trust_checks.pia": {
+      "cost": 4965,
+      "goals": 4,
+      "solve_ms_1": 21,
+      "solve_ms_n": 11,
+      "solved": 3,
+      "wall_ms_1": 75.7,
+      "wall_ms_n": 64.3
+    },
+    "tests/verify/type_aliases.pia": {
+      "cost": 1670,
+      "goals": 9,
+      "solve_ms_1": 21,
+      "solve_ms_n": 15,
+      "solved": 5,
+      "wall_ms_1": 48.5,
+      "wall_ms_n": 41.3
+    },
+    "tests/verify/type_bounds.pia": {
+      "cost": 18959,
+      "goals": 9,
+      "solve_ms_1": 51,
+      "solve_ms_n": 36,
+      "solved": 8,
+      "wall_ms_1": 84.8,
+      "wall_ms_n": 69.3
+    },
+    "tests/verify/type_functions.pia": {
+      "cost": 182,
+      "goals": 15,
+      "solve_ms_1": 21,
+      "solve_ms_n": 13,
+      "solved": 12,
+      "wall_ms_1": 70.4,
+      "wall_ms_n": 65.5
+    },
+    "tests/verify/type_match.pia": {
+      "cost": 278,
+      "goals": 8,
+      "solve_ms_1": 21,
+      "solve_ms_n": 21,
+      "solved": 8,
+      "wall_ms_1": 53.0,
+      "wall_ms_n": 52.6
+    },
+    "tests/verify/vacuity.pia": {
+      "cost": 5566,
+      "goals": 5,
+      "solve_ms_1": 28,
+      "solve_ms_n": 14,
+      "solved": 5,
+      "wall_ms_1": 66.7,
+      "wall_ms_n": 54.7
     },
     "tests/verify/variants.pia": {
       "cost": 1935,
       "goals": 9,
-      "solve_ms_1": 7,
-      "solve_ms_n": 5,
+      "solve_ms_1": 23,
+      "solve_ms_n": 18,
       "solved": 5,
-      "wall_ms_1": 27.7,
-      "wall_ms_n": 24.8
+      "wall_ms_1": 54.1,
+      "wall_ms_n": 47.8
+    },
+    "tests/verify/vec_allocator.pia": {
+      "cost": 2162752,
+      "goals": 28,
+      "solve_ms_1": 496,
+      "solve_ms_n": 264,
+      "solved": 28,
+      "wall_ms_1": 708.8,
+      "wall_ms_n": 480.4
+    },
+    "tests/verify/vec_boxes.pia": {
+      "cost": 6772203,
+      "goals": 71,
+      "solve_ms_1": 1534,
+      "solve_ms_n": 888,
+      "solved": 71,
+      "wall_ms_1": 2361.9,
+      "wall_ms_n": 1718.8
+    },
+    "tests/verify/vec_bump.pia": {
+      "cost": 2930717,
+      "goals": 38,
+      "solve_ms_1": 714,
+      "solve_ms_n": 380,
+      "solved": 38,
+      "wall_ms_1": 901.7,
+      "wall_ms_n": 568.2
+    },
+    "tests/verify/vec_generic.pia": {
+      "cost": 3185700,
+      "goals": 38,
+      "solve_ms_1": 731,
+      "solve_ms_n": 388,
+      "solved": 38,
+      "wall_ms_1": 930.1,
+      "wall_ms_n": 589.9
+    },
+    "tests/verify/vec_region.pia": {
+      "cost": 2715745,
+      "goals": 26,
+      "solve_ms_1": 621,
+      "solve_ms_n": 363,
+      "solved": 26,
+      "wall_ms_1": 794.3,
+      "wall_ms_n": 538.1
+    },
+    "tests/verify/views.pia": {
+      "cost": 1645425,
+      "goals": 10,
+      "solve_ms_1": 364,
+      "solve_ms_n": 303,
+      "solved": 10,
+      "wall_ms_1": 405.8,
+      "wall_ms_n": 346.2
     },
     "tests/verify/widths.pia": {
       "cost": 4027698,
       "goals": 17,
-      "solve_ms_1": 524,
-      "solve_ms_n": 246,
+      "solve_ms_1": 1202,
+      "solve_ms_n": 809,
       "solved": 10,
-      "wall_ms_1": 558.2,
-      "wall_ms_n": 282.3
+      "wall_ms_1": 1252.4,
+      "wall_ms_n": 858.9
     }
   },
-  "host": "BabyHouse-iMac",
+  "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 1257351180,
-    "goals": 3818,
-    "solved": 3487,
-    "wall_ms_1": 500476.9,
-    "wall_ms_n": 238814.2
+    "cost": 7601031647,
+    "goals": 12014,
+    "solved": 10649,
+    "wall_ms_1": 2172088.3,
+    "wall_ms_n": 1371980.1
   }
 }
