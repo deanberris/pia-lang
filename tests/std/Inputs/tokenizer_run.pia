@@ -1,0 +1,81 @@
+(* Runs Pia.Llm.Tokenizer's compiled code, called by tokenizer_run_main.c
+   with tok512.bin's bytes, buffers for the vocabulary, the tokens, their
+   positions and the decoded text, and each text of tokenizer_cases.h with
+   the ids llama2.c's run.c gives it. Each function returns 0 when every
+   check passes, otherwise the number of the first that fails. *)
+module TokenizerRun : Run
+
+import Pia.Llm.Tokenizer.Tokenizer as T
+
+(* What tokenizer_run_main.c calls, by their C names. *)
+interface Run @abi(c) = sig
+  let tokenizer_load_checks : (s : [u8]) -> (ps : borrowed inout mutable [T.piece])
+    -> (dst : borrowed inout mutable [u8]) -> i32
+  let tokenizer_case : (s : [u8]) -> (ps : borrowed inout mutable [T.piece]) -> (text : [u8]) -> (want : [u32])
+    -> (toks : borrowed inout mutable [u32]) -> (at : borrowed inout mutable [usize])
+    -> (dst : borrowed inout mutable [u8]) -> i32
+end
+
+(* The problem load finds, as a number: 0 when it loads. *)
+let code (s : [u8]) (ps : borrowed inout mutable [T.piece]) (count : usize) : int{0..8}
+= match T.load s ps count with
+  | Ok _ -> 0
+  | Err e ->
+      (match e.problem with
+       | Short -> 1 | TooMany -> 2 | TooFew -> 3 | BadLength -> 4 | BadScore -> 5
+       | BadByte -> 6 | NoSpace -> 7 | Trailing -> 8)
+
+(* tok512 loads as 512 ids, its longest piece 7 bytes, and nothing else
+   does: a file cut inside its last piece (a length past the file), or
+   before its first entry is whole, a count one short or one too many, fewer than
+   the byte-fallback pieces, or more than the buffer holds (it holds
+   between 513 and a million). Then decode: a
+   byte-fallback piece is its byte, and the piece " " is empty after <s>
+   and a space after anything else. *)
+let tokenizer_load_checks (s : [u8]) (ps : borrowed inout mutable [T.piece])
+    (dst : borrowed inout mutable [u8]) : i32
+= match T.load s ps 512 with
+  | Err _ -> 1
+  | Ok v ->
+      if v.count <> 512 || v.max_len <> 7 then 2
+      else if len s < 8 || len dst < 1 then 3
+      else if code s.[0 .. len s - 1] ps 512 <> 4 then 4
+      else if code s.[0 .. 3] ps 512 <> 1 || code s.[0 .. 8] ps 512 <> 1 then 5
+      else if code s ps 511 <> 8 then 6
+      else if len ps < 513 || len ps >= 1'000'000 then 7
+      else if code s ps 258 <> 3 then 8
+      else if code s ps 513 <> 1 || code s ps 1'000'000 <> 2 then 9
+      else (
+        match T.load s ps 512 with
+        | Err _ -> 10
+        | Ok w ->
+            if T.decode s ps 3 68 dst 0 <> 1 || dst.[0] <> 65 then 11
+            else if T.decoded_len s ps 1 (w.space) <> 0 then 12
+            else if T.decoded_len s ps 3 (w.space) <> 1 then 13
+            else 0)
+
+(* 0 when text encodes, with <s>, to want, and decodes back to text. *)
+let tokenizer_case (s : [u8]) (ps : borrowed inout mutable [T.piece]) (text : [u8]) (want : [u32])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize])
+    (dst : borrowed inout mutable [u8]) : i32
+= match T.load s ps 512 with
+  | Err _ -> 1
+  | Ok v ->
+      if len text > 1'000'000 then 2
+      else if len toks < len text + 3 || len at < len text + 4 || len dst < len text then 3
+      else (
+        let n = T.encode s ps v text true false toks at in
+        if n <> len want then 4
+        else (
+          let same : mutable bool = true in
+          for i in 0 .. n do
+            if toks.[i] <> want.[i] then same <- false else ()
+          done;
+          if same = false then 5
+          else (
+            let m = T.round_trip s ps v text toks at dst in
+            let back : mutable bool = m = len text in
+            for k in 0 .. len text do
+              if dst.[k] <> text.[k] then back <- false else ()
+            done;
+            if back then 0 else 6)))

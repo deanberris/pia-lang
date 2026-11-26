@@ -1,0 +1,737 @@
+(* Pia.Llm.Tokenizer: the tokenizer of llama2.c (Karpathy, MIT,
+   https://github.com/karpathy/llama2.c), the byte-pair encoding the
+   TinyStories models use, read from llama2.c's tokenizer.bin and proved
+   (ADR 0067, M2). stories260K's tok512.bin is the one in the tests.
+
+   A tokenizer.bin is a little-endian i32, the longest piece's length,
+   then for each of the vocabulary's ids an f32 score, an i32 length and
+   that many bytes, the piece. The file does not say how many ids there
+   are: the model's config does, so `load` is given the count. Ids 0, 1
+   and 2 are <unk>, <s> and </s>, and 3 + b is the byte-fallback piece
+   "<0xHH>" for the byte b, as sentencepiece writes them.
+
+   `load` reads the file into a caller's buffer of `piece` records, the
+   bytes of each piece in the file and its score, and allocates nothing.
+   `encode` is run.c's encode: a space (sentencepiece's dummy prefix),
+   then each UTF-8 character of the text as its piece, or as its bytes'
+   byte-fallback pieces when there is none, then the merge of the
+   adjacent pair whose merged piece scores highest, again and again until
+   no pair merges. `decode` is run.c's decode of one token.
+
+   What is proved: load is total, and on success every piece lies in the
+   file, the byte-fallback pieces are exactly "<0xHH>" and a plain piece
+   " " exists. encode terminates (the merge loop's measure is the token
+   count), every id it writes is below the vocabulary's size, and every
+   token stands for the bytes of the text it came from, in order and
+   with nothing left out (`covers`). From that, `round_trip` proves that
+   decoding the tokens after <s> gives the text back, byte for byte, for
+   every text and every vocabulary load accepts.
+
+   Where this differs from run.c, and why:
+   - The text is a slice of bytes. run.c's is a C string, so it stops at
+     the first NUL; on a text without one the two agree.
+   - Scores are compared as integers. run.c compares f32s; an f32's bits
+     map to an i32 in the same order (`key_of`), -0 and +0 to the same
+     value, so the comparisons agree, and load refuses a NaN score. Until
+     floats exist (ADR 0067, F1) that keeps the tokenizer integer-only.
+   - Lookups scan the vocabulary for the first plain piece with the bytes
+     asked for, where run.c binary-searches a sorted copy. They agree when
+     no two pieces have the same bytes, as in every sentencepiece model.
+   - A pair merges only when both are plain pieces (ids from 259). run.c
+     also tries <s> and the byte-fallback pieces by their text ("<s>",
+     "<0x41>"), which sentencepiece never merges: no piece of a trained
+     vocabulary holds one.
+   - load checks what run.c trusts: that the file holds exactly count
+     entries, that every length is at most the longest and fits, the
+     byte-fallback pieces, and the space. *)
+module Pia.Llm.Tokenizer : Tokenizer
+
+interface Tokenizer = sig
+  (** A piece of the vocabulary: its bytes in the file, from start to
+      stop, and its score, as `key_of` maps the f32's bits. *)
+  let piece = type { start : usize; stop : usize; key : i32 }
+  (** A loaded vocabulary: how many ids, the longest piece the file
+      claims, and the id of the piece " ". *)
+  let vocab = type { count : usize; max_len : u32; space : usize }
+  (** What load refuses: a file that ends early, a buffer smaller than
+      count (or count past the largest i32), fewer than 259 ids, a length
+      past the longest or the file, a NaN score, a byte-fallback piece
+      that is not "<0xHH>", no piece " " after the byte-fallback pieces,
+      or bytes after the last entry. *)
+  let problem = type | Short | TooMany | TooFew | BadLength | BadScore | BadByte | NoSpace | Trailing
+  (** A problem, and the file position it was found at. *)
+  let tok_error = type { problem : problem; at : usize }
+  (** Piece p's bytes lie in a file of n bytes. *)
+  let spec wf : (n : usize) -> (p : piece) -> bool
+  (** v is a vocabulary load gave for file s and pieces ps: at least the
+      259 special and byte-fallback ids, no more than ps holds or an i32
+      counts, and its space a one-byte piece " ". *)
+  let spec usable : (s : [u8]) -> (ps : [piece]) -> (v : vocab) -> bool
+  (** The text encode reads: a space, then text. *)
+  let spec vt : (text : [u8]) -> (k : usize) -> u8
+  (** Token t stands for the bytes of vt from a to b: none for <unk>, <s>
+      and </s>, its byte for a byte-fallback piece, and its own bytes for
+      any other. *)
+  let spec covers : (s : [u8]) -> (ps : [piece]) -> (v : vocab) -> (text : [u8]) -> (t : u32) -> (a : usize) -> (b : usize) -> bool
+  (** How many bytes decode writes for tok after prev. *)
+  let spec dlen : (s : [u8]) -> (ps : [piece]) -> (prev : u32) -> (tok : u32) -> usize
+  (** Where in s the bytes decode writes for a piece start. *)
+  let spec dfrom : (s : [u8]) -> (ps : [piece]) -> (prev : u32) -> (tok : u32) -> usize
+  (** The count pieces of tokenizer.bin s into ps. *)
+  let load : (s : [u8]) -> (ps : borrowed inout mutable [piece]) -> (count : usize) -> result vocab tok_error
+    ensures (match result with
+      | Ok v -> v.count = count && usable s ps v
+                && (forall (j in 0 .. count). wf (len s) ps.[j])
+      | Err _ -> true)
+  (** run.c's encode: the tokens of text into toks, <s> first when bos
+      and </s> last when eos, and how many. Token i stands for vt from
+      at.[i] to at.[i + 1], so the tokens tile the space and text, in
+      order. *)
+  let encode : (s : [u8]) -> (ps : [piece]) -> (v : vocab) -> (text : [u8]) -> (bos : bool) -> (eos : bool)
+    -> (toks : borrowed inout mutable [u32]) -> (at : borrowed inout mutable [usize]) -> usize
+    requires usable s ps v
+    requires len toks >= len text + 3 && len at >= len text + 4
+    ensures result <= len toks && result < len at
+    ensures at.[0] = 0 && at.[result] = (if len text = 0 then 0 else len text + 1)
+    ensures forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+    ensures forall (i in (if bos then 1 else 0) .. (if eos then result - 1 else result)). 3 <= toks.[i]
+    ensures bos ==> 0 < result && toks.[0] = 1
+    ensures bos && 0 < len text ==> 1 < result && 259 <= toks.[1] && at.[1] = 0 && 0 < at.[2]
+    ensures eos ==> 0 < result && toks.[result - 1] = 2
+    ensures forall (i in 0 .. result + 1). at.[i] <= len text + 1
+  (** How many bytes decode writes for tok after prev. *)
+  let decoded_len : (s : [u8]) -> (ps : [piece]) -> (prev : u32) -> (tok : u32) -> usize
+    ensures result = dlen s ps prev tok
+  (** run.c's decode: the bytes of tok after prev into dst at pos, and
+      the position after them. A byte-fallback piece is its byte, and
+      after <s> a piece's leading space is dropped. *)
+  let decode : (s : [u8]) -> (ps : [piece]) -> (prev : u32) -> (tok : u32) -> (dst : borrowed inout mutable [u8]) -> (pos : usize) -> usize
+    requires pos <= len dst && dlen s ps prev tok <= len dst - pos
+    ensures result = pos + dlen s ps prev tok
+    ensures 3 <= tok && tok < 259 ==> dst.[pos] = tok - 3
+    ensures (tok < 3 || 259 <= tok) ==> (forall (j in 0 .. dlen s ps prev tok). dst.[pos + j] = s.[dfrom s ps prev tok + j])
+    ensures forall (k in 0 .. pos). dst.[k] = old (dst.[k])
+  (** The round trip: text encoded with <s>, then each token after <s>
+      decoded after the one before it, is text again, in dst. *)
+  let round_trip : (s : [u8]) -> (ps : [piece]) -> (v : vocab) -> (text : [u8])
+    -> (toks : borrowed inout mutable [u32]) -> (at : borrowed inout mutable [usize]) -> (dst : borrowed inout mutable [u8]) -> usize
+    requires usable s ps v
+    requires len toks >= len text + 3 && len at >= len text + 4 && len dst >= len text
+    ensures result = len text
+    ensures forall (k in 0 .. len text). dst.[k] = text.[k]
+end
+
+let piece = type { start : usize; stop : usize; key : i32 }
+let vocab = type { count : usize; max_len : u32; space : usize }
+let problem = type | Short | TooMany | TooFew | BadLength | BadScore | BadByte | NoSpace | Trailing
+let tok_error = type { problem : problem; at : usize }
+
+let spec wf (n : usize) (p : piece) : bool = p.start <= p.stop && p.stop <= n
+
+let spec usable (s : [u8]) (ps : [piece]) (v : vocab) : bool =
+  if 259 <= v.count && v.count <= max i32 && v.count <= len ps && 259 <= v.space && v.space < v.count then
+    (let sp = ps.[v.space] in
+     if sp.start < len s then sp.stop = sp.start + 1 && s.[sp.start] = 32 else false)
+  else false
+
+(* Four bytes of s at p, little-endian. *)
+let word (s : [u8]) (p : usize) : u32
+  requires p <= len s && len s - p >= 4
+= let b0 : u32 = s.[p] in
+  let b1 : u32 = s.[p + 1] in
+  let b2 : u32 = s.[p + 2] in
+  let b3 : u32 = s.[p + 3] in
+  (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
+
+(* An f32's bits as an integer in the same order as the float: the
+   magnitude, negated when the sign bit is set, so -0 and +0 are both 0. *)
+let key_of (bits : u32) : i32
+= let mag : int{0..2147483647} = bits & 0x7FFF'FFFF in
+  if bits >> 31 = 1 then 0 - mag else mag
+
+let is_nan (bits : u32) : bool = (bits >> 23) & 0xFF = 0xFF && bits & 0x7F'FFFF <> 0
+
+let hex (d : int{0..15}) : u8
+= let w : u8 = d in
+  if w < 10 then 48 + w else 55 + w
+
+(* Whether the piece from a to b is "<0xHH>" for the byte v, as
+   sentencepiece writes a byte-fallback piece, in capitals. *)
+let byte_piece (s : [u8]) (a : usize) (b : usize) (v : int{0..255}) : bool
+  requires a <= b && b <= len s
+= b - a = 6 && s.[a] = 60 && s.[a + 1] = 48 && s.[a + 2] = 120
+  && s.[a + 3] = hex (v >> 4) && s.[a + 4] = hex (v & 15) && s.[a + 5] = 62
+
+let load (s : [u8]) (ps : borrowed inout mutable [piece]) (count : usize) : result vocab tok_error
+  ensures (match result with
+    | Ok v -> v.count = count && usable s ps v
+              && (forall (j in 0 .. count). wf (len s) ps.[j])
+    | Err _ -> true)
+= if len ps < count || count > max i32 then Err { problem = TooMany; at = 0 }
+  else if count < 259 then Err { problem = TooFew; at = 0 }
+  else if len s < 4 then Err { problem = Short; at = 0 }
+  else (
+    let max_len = word s 0 in
+    let p : mutable usize = 4 in
+    let space : mutable usize = count in
+    let fail : mutable bool = false in
+    let why : mutable problem = Short in
+    for j in 0 .. count
+      invariant 4 <= p && p <= len s && count <= len ps
+      invariant space = count || (259 <= space && space < j && ps.[space].start < len s
+                                  && ps.[space].stop = ps.[space].start + 1 && s.[ps.[space].start] = 32)
+      invariant fail || (forall (k in 0 .. j). wf (len s) ps.[k])
+    do
+      if fail then ()
+      else if len s - p < 8 then (why <- Short; fail <- true)
+      else (
+        let bits = word s p in
+        let n = word s (p + 4) in
+        if is_nan bits then (why <- BadScore; fail <- true)
+        else if n > max_len || n > len s - p - 8 then (why <- BadLength; fail <- true)
+        else (
+          let a : usize = p + 8 in
+          let b : usize = a + n in
+          if 3 <= j && j < 259 && byte_piece s a b (j - 3) = false then (why <- BadByte; fail <- true)
+          else (
+            ps.[j] <- { start = a; stop = b; key = key_of bits };
+            if space = count && 259 <= j && n = 1 && s.[a] = 32 then space <- j else ();
+            p <- b)))
+    done;
+    if fail then Err { problem = why; at = p }
+    else if p <> len s then Err { problem = Trailing; at = p }
+    else if space = count then Err { problem = NoSpace; at = p }
+    else Ok { count = count; max_len = max_len; space = space })
+
+(* The bytes of token t, when it has its own: a plain piece's bytes in s. *)
+let spec plain (v : vocab) (t : u32) : bool = 259 <= t && t < v.count
+
+(* Whether piece p's bytes are the xn bytes of xs at xa then the yn bytes
+   of ys at ya. *)
+let spec spells (s : [u8]) (p : piece) (xs : [u8]) (xa : usize) (xn : usize) (ys : [u8]) (ya : usize) (yn : usize) : bool @opaque =
+  if wf (len s) p && xa <= len xs && ya <= len ys then
+    (if xn <= len xs - xa && yn <= len ys - ya && xn <= p.stop - p.start then
+       p.stop - p.start - xn = yn
+       && (forall (k in 0 .. xn). s.[p.start + k] = xs.[xa + k])
+       && (forall (k in 0 .. yn). s.[p.start + xn + k] = ys.[ya + k])
+     else false)
+  else false
+
+let same_bytes (s : [u8]) (p : piece) (xs : [u8]) (xa : usize) (xn : usize) (ys : [u8]) (ya : usize) (yn : usize) : bool
+  ensures result ==> spells s p xs xa xn ys ya yn
+  with spells
+= if p.start > p.stop || p.stop > len s then false
+  else if xa > len xs || xn > len xs - xa || ya > len ys || yn > len ys - ya then false
+  else if xn > p.stop - p.start || p.stop - p.start - xn <> yn then false
+  else (
+    let ok : mutable bool = true in
+    for k in 0 .. xn
+      invariant ok ==> (forall (q in 0 .. k). s.[p.start + q] = xs.[xa + q])
+    do
+      if s.[p.start + k] <> xs.[xa + k] then ok <- false else ()
+    done;
+    for k in 0 .. yn
+      invariant ok ==> (forall (q in 0 .. xn). s.[p.start + q] = xs.[xa + q])
+      invariant ok ==> (forall (q in 0 .. k). s.[p.start + xn + q] = ys.[ya + q])
+    do
+      if s.[p.start + xn + k] <> ys.[ya + k] then ok <- false else ()
+    done;
+    ok)
+
+(* The first plain piece spelled by the two runs of bytes, or v.count. *)
+let find (s : [u8]) (ps : [piece]) (v : vocab) (xs : [u8]) (xa : usize) (xn : usize) (ys : [u8]) (ya : usize) (yn : usize) : usize
+  requires v.count <= len ps
+  ensures result = v.count || (259 <= result && result < v.count && spells s ps.[result] xs xa xn ys ya yn)
+= let hit : mutable usize = v.count in
+  let j : mutable usize = 259 in
+  while j < v.count && hit = v.count
+    invariant 259 <= j && (hit = v.count || (259 <= hit && hit < v.count && spells s ps.[hit] xs xa xn ys ya yn))
+    decreases v.count - j
+  do
+    if same_bytes s ps.[j] xs xa xn ys ya yn then hit <- j else ();
+    j <- j + 1
+  done;
+  hit
+
+(* The text encode reads: a space, the dummy prefix sentencepiece adds,
+   then text. *)
+let spec vt (text : [u8]) (k : usize) : u8 =
+  if k = 0 then 32 else if k <= len text then text.[k - 1] else 0
+
+(* Token t stands for the bytes of vt from a to b: none for <unk>, <s>
+   and </s>, one byte for a byte-fallback piece, and its own bytes for a
+   plain piece. *)
+let spec covers (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (t : u32) (a : usize) (b : usize) : bool @opaque =
+  if a > b then false
+  else if t < 3 then a = b
+  else if t < 259 then b - a = 1 && vt text a = t - 3
+  else if t < v.count && t < len ps then
+    (let p = ps.[t] in
+     if wf (len s) p then
+       p.stop - p.start = b - a
+       && (forall (k in 0 .. b - a). s.[p.start + k] = vt text (a + k))
+     else false)
+  else false
+
+
+let lemma covers_space (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) : unit
+  requires usable s ps v
+  ensures covers s ps v text v.space 0 1
+  with covers
+= ()
+
+let lemma covers_found (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (id : u32) (c : usize) (g : usize) : unit
+  requires 259 <= id && id < v.count && v.count <= len ps && v.count <= max i32
+  requires c <= len text && g <= len text - c
+  requires spells s ps.[id] text c g text 0 0
+  ensures covers s ps v text id (c + 1) (c + 1 + g)
+  with covers, spells
+=   assert (forall (k in 0 .. g). vt text (c + 1 + k) = text.[c + k]);
+  assert (forall (k in 0 .. g). s.[ps.[id].start + k] = text.[c + k]);
+  assert (wf (len s) ps.[id]);
+  assert (ps.[id].stop - ps.[id].start = g);
+  assert (forall (k in 0 .. (c + 1 + g) - (c + 1)). s.[ps.[id].start + k] = vt text ((c + 1) + k))
+
+let lemma covers_special (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (t : u32) (a : usize) : unit
+  requires t < 3
+  ensures covers s ps v text t a a
+  with covers
+= ()
+
+let lemma covers_byte (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (c : usize) : unit
+  requires c < len text
+  ensures covers s ps v text (text.[c] + 3) (c + 1) (c + 2)
+  with covers
+= ()
+
+(* How many bytes of text at c make one step of run.c's UTF-8 loop: a
+   byte, then the continuation bytes after it, up to four in all. *)
+let group (text : [u8]) (c : usize) : int{1..4}
+  requires c < len text
+  ensures c + result <= len text
+= let g : mutable int{1..4} = 1 in
+  while g < 4 && c + g < len text && text.[c + g] & 0xC0 = 0x80
+    invariant c + g <= len text
+    decreases 4 - g
+  do g <- g + 1 done;
+  g
+
+(* The g bytes of text at c as byte-fallback tokens, from toks.[n] on. *)
+let byte_run (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) (n0 : int{0..1}) (c : usize) (g : int{1..4}) (n : usize) : usize
+  requires usable s ps v
+  requires c + g <= len text && n0 < n && n <= n0 + 1 + c
+  requires len toks >= n0 + len text + 1 && len at >= n0 + len text + 2
+  requires at.[n0] = 0 && at.[n] = c + 1 && toks.[n0] = v.space && at.[n0 + 1] = 1
+  requires forall (i in 0 .. n). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  requires forall (i in n0 .. n). 3 <= toks.[i]
+  requires forall (i in 0 .. n + 1). at.[i] <= len text + 1
+  ensures result = n + g
+  ensures at.[n0] = 0 && at.[result] = c + g + 1 && toks.[n0] = v.space && at.[n0 + 1] = 1
+  ensures forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  ensures forall (i in n0 .. result). 3 <= toks.[i]
+  ensures forall (i in 0 .. result + 1). at.[i] <= len text + 1
+  ensures forall (i in 0 .. n0). toks.[i] = old (toks.[i]) && at.[i] = old (at.[i])
+= let m : mutable usize = n in
+  let w : usize = g in
+  for k in 0 .. w
+    invariant c + g <= len text && n <= n0 + 1 + c && len toks >= n0 + len text + 1 && len at >= n0 + len text + 2
+    invariant m = n + k && at.[n0] = 0 && at.[m] = c + k + 1 && toks.[n0] = v.space && at.[n0 + 1] = 1
+    invariant forall (i in 0 .. m). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+    invariant forall (i in n0 .. m). 3 <= toks.[i]
+    invariant forall (i in 0 .. m + 1). at.[i] <= len text + 1
+    invariant forall (i in 0 .. n0). toks.[i] = old (toks.[i]) && at.[i] = old (at.[i])
+  do
+    covers_byte s ps v text (c + k);
+    let b : u32 = text.[c + k] in
+    toks.[m] <- b + 3;
+    at.[m + 1] <- c + k + 2;
+    m <- m + 1
+  done;
+  m
+
+(* The tokens of text before any merge, after toks.[0 .. n] and at the
+   positions of at: the space, then each group as its piece, or as its
+   bytes when no piece spells it. *)
+let split (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) (n0 : int{0..1}) : usize
+  requires usable s ps v
+  requires 0 < len text
+  requires len toks >= n0 + len text + 1 && len at >= n0 + len text + 2
+  requires at.[n0] = 0 && at.[0] = 0
+  requires forall (i in 0 .. n0). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  ensures n0 < result && result <= n0 + len text + 1
+  ensures at.[n0] = 0 && at.[result] = len text + 1
+  ensures toks.[n0] = v.space && at.[n0 + 1] = 1
+  ensures forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  ensures forall (i in n0 .. result). 3 <= toks.[i]
+  ensures forall (i in 0 .. result + 1). at.[i] <= len text + 1
+  ensures forall (i in 0 .. n0). toks.[i] = old (toks.[i]) && at.[i] = old (at.[i])
+= covers_space s ps v text;
+  toks.[n0] <- v.space;
+  at.[n0 + 1] <- 1;
+  let n : mutable usize = n0 + 1 in
+  let c : mutable usize = 0 in
+  while c < len text
+    invariant c <= len text && n0 < n && n <= n0 + 1 + c
+    invariant at.[n0] = 0 && at.[n] = c + 1 && toks.[n0] = v.space && at.[n0 + 1] = 1
+    invariant forall (i in 0 .. n). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+    invariant forall (i in n0 .. n). 3 <= toks.[i]
+    invariant forall (i in 0 .. n + 1). at.[i] <= len text + 1
+    invariant forall (i in 0 .. n0). toks.[i] = old (toks.[i]) && at.[i] = old (at.[i])
+    decreases len text - c
+  do
+    let g = group text c in
+    let id = find s ps v text c g text 0 0 in
+    if id < v.count then (
+      covers_found s ps v text id c g;
+      toks.[n] <- id;
+      at.[n + 1] <- c + g + 1;
+      n <- n + 1)
+    else n <- byte_run s ps v text toks at n0 c g n;
+    c <- c + g
+  done;
+  n
+
+(* Plain pieces a and b, merged, spell plain piece id. *)
+let spec merges (s : [u8]) (ps : [piece]) (v : vocab) (a : u32) (b : u32) (id : u32) : bool @opaque =
+  if 259 <= a && a < v.count && 259 <= b && b < v.count && 259 <= id && id < v.count && v.count <= len ps then
+    (let pa = ps.[a] in
+     let pb = ps.[b] in
+     if wf (len s) pa && wf (len s) pb then
+       spells s ps.[id] s pa.start (pa.stop - pa.start) s pb.start (pb.stop - pb.start)
+     else false)
+  else false
+
+(* The first la + k bytes of merged piece p are vt's from x: a's la, then
+   k of b's, by induction on k. *)
+let lemma merged_upto (s : [u8]) (text : [u8]) (p : piece) (pa : piece) (pb : piece) (x : usize) (y : usize) (k : usize) : unit
+  requires wf (len s) p && wf (len s) pa && wf (len s) pb && x <= y
+  requires spells s p s pa.start (pa.stop - pa.start) s pb.start (pb.stop - pb.start)
+  requires pa.stop - pa.start = y - x
+  requires forall (q in 0 .. y - x). s.[pa.start + q] = vt text (x + q)
+  requires k <= pb.stop - pb.start
+  requires forall (q in 0 .. pb.stop - pb.start). s.[pb.start + q] = vt text (y + q)
+  ensures forall (q in 0 .. (y - x) + k). s.[p.start + q] = vt text (x + q)
+  ensures p.stop - p.start = (y - x) + (pb.stop - pb.start)
+  decreases k
+  with spells
+= if k = 0 then ()
+  else (
+    merged_upto s text p pa pb x y (k - 1);
+    let la : usize = y - x in
+    assert (s.[p.start + la + (k - 1)] = s.[pb.start + (k - 1)]);
+    assert (s.[pb.start + (k - 1)] = vt text (y + (k - 1)));
+    assert (y + (k - 1) = x + (la + (k - 1)));
+    assert (s.[p.start + (la + (k - 1))] = vt text (x + (la + (k - 1)))))
+
+let lemma covers_merge (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (a : u32) (b : u32) (id : u32) (x : usize) (y : usize) (z : usize) : unit
+  requires merges s ps v a b id
+  requires covers s ps v text a x y && covers s ps v text b y z
+  ensures covers s ps v text id x z
+  ensures 259 <= id && id < v.count && x <= y && y <= z
+  with covers, merges, spells
+= merged_upto s text ps.[id] ps.[a] ps.[b] x y (z - y);
+  let p = ps.[id] in
+  assert (x <= y && y <= z && (y - x) + (z - y) = z - x);
+  assert (z - y = ps.[b].stop - ps.[b].start);
+  assert (y - x = ps.[a].stop - ps.[a].start);
+  assert (p.stop - p.start = (y - x) + (ps.[b].stop - ps.[b].start));
+  assert (p.stop - p.start = z - x);
+  assert (forall (q in 0 .. z - x). s.[p.start + q] = vt text (x + q))
+
+(* The merge run.c makes next: the pair of plain pieces in toks.[first .. n]
+   whose merge is a piece of the highest score above -1e10, the leftmost
+   of those tied, or idx = n when there is none. *)
+let pair = type { idx : usize; id : u32 }
+
+(* -1e10 as an f32, through key_of: run.c's floor on a merge's score. *)
+let floor_key : i32 = -1343554297
+
+(* The plain piece that merging toks a and b spells, or v.count. *)
+let pair_merge (s : [u8]) (ps : [piece]) (v : vocab) (a : u32) (b : u32) : usize
+  requires v.count <= len ps
+  ensures result = v.count || (result < v.count && 259 <= a && merges s ps v a b result)
+  with merges
+= if 259 <= a && a < v.count && 259 <= b && b < v.count then (
+    let pa = ps.[a] in
+    let pb = ps.[b] in
+    if pa.start <= pa.stop && pa.stop <= len s && pb.start <= pb.stop && pb.stop <= len s then
+      find s ps v s pa.start (pa.stop - pa.start) s pb.start (pb.stop - pb.start)
+    else v.count)
+  else v.count
+
+let best_pair (s : [u8]) (ps : [piece]) (v : vocab) (toks : [u32]) (first : usize) (n : usize) : pair
+  requires usable s ps v
+  requires first <= n && n <= len toks
+  ensures result.idx = n || (first <= result.idx && result.idx + 1 < n && 259 <= toks.[result.idx]
+                             && merges s ps v toks.[result.idx] toks.[result.idx + 1] result.id)
+= if n - first < 2 then { idx = n; id = 0 }
+  else (
+    let best_i : mutable usize = n in
+    let best_id : mutable u32 = 0 in
+    let best : mutable i32 = floor_key in
+    for i in first .. n - 1
+      invariant best_i = n || (first <= best_i && best_i + 1 < n && 259 <= toks.[best_i]
+                               && merges s ps v toks.[best_i] toks.[best_i + 1] best_id)
+    do
+      let id = pair_merge s ps v toks.[i] toks.[i + 1] in
+      if id < v.count && ps.[id].key > best then (
+        best <- ps.[id].key;
+        best_i <- i;
+        best_id <- id)
+      else ()
+    done;
+    { idx = best_i; id = best_id })
+
+(* Tiles from first to i, at i, and from i + 1 to m are tiles from first to m. *)
+let lemma tiles_join (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (toks : [u32]) (at : [usize]) (first : usize) (i : usize) (m : usize) : unit
+  requires first <= i && i < m && m <= len toks && m < len at
+  requires forall (q in first .. i). toks.[q] < v.count && covers s ps v text toks.[q] at.[q] at.[q + 1]
+  requires toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  requires forall (q in i + 1 .. m). toks.[q] < v.count && covers s ps v text toks.[q] at.[q] at.[q + 1]
+  ensures forall (q in first .. m). toks.[q] < v.count && covers s ps v text toks.[q] at.[q] at.[q + 1]
+= ()
+
+(* Replaces the pair at i with id, the piece their merge spells, and
+   moves the tokens after it down one, as run.c does, keeping at the
+   positions of the tokens that remain. *)
+let merge_at (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize])
+    (f : usize) (n : usize) (i : usize) (id : u32) (l : usize) : unit
+  requires f <= i && i + 1 < n && n <= len toks && n < len at
+  requires merges s ps v toks.[i] toks.[i + 1] id
+  requires forall (q in 0 .. n). toks.[q] < v.count && covers s ps v text toks.[q] at.[q] at.[q + 1]
+  ensures forall (q in 0 .. n - 1). toks.[q] < v.count && covers s ps v text toks.[q] at.[q] at.[q + 1]
+  ensures (forall (q in f .. n). 3 <= old (toks.[q])) ==> (forall (q in f .. n - 1). 3 <= toks.[q])
+  ensures (forall (q in 0 .. n + 1). old (at.[q]) <= l) ==> (forall (q in 0 .. n). at.[q] <= l)
+  ensures forall (q in 0 .. i). toks.[q] = old (toks.[q])
+  ensures forall (q in 0 .. i + 1). at.[q] = old (at.[q])
+  ensures at.[n - 1] = old (at.[n])
+  ensures toks.[i] = id && 259 <= id && old (at.[i + 1]) <= at.[i + 1]
+= covers_merge s ps v text toks.[i] toks.[i + 1] id at.[i] at.[i + 1] at.[i + 2];
+  toks.[i] <- id;
+  for k in i + 1 .. n
+    invariant forall (q in 0 .. i). toks.[q] = old (toks.[q])
+    invariant forall (q in 0 .. i + 1). at.[q] = old (at.[q])
+    invariant toks.[i] = id
+    invariant forall (q in i + 1 .. k). at.[q] = old (at.[q + 1])
+    invariant forall (q in i + 1 .. k). q + 1 < n ==> toks.[q] = old (toks.[q + 1])
+    invariant forall (q in k .. n). toks.[q] = old (toks.[q])
+    invariant forall (q in k .. n + 1). at.[q] = old (at.[q])
+  do
+    at.[k] <- at.[k + 1];
+    if k + 1 < n then toks.[k] <- toks.[k + 1] else ()
+  done;
+  assert (forall (q in i + 1 .. n - 1). toks.[q] = old (toks.[q + 1]) && at.[q] = old (at.[q + 1]) && at.[q + 1] = old (at.[q + 2]));
+  assert (at.[i] = old (at.[i]) && at.[i + 1] = old (at.[i + 2]));
+  assert (forall (q in 0 .. i). toks.[q] = old (toks.[q]) && at.[q] = old (at.[q]) && at.[q + 1] = old (at.[q + 1]));
+  assert (forall (q in i + 1 .. n - 1). covers s ps v text (old (toks.[q + 1])) (old (at.[q + 1])) (old (at.[q + 2])));
+  assert (forall (q in 0 .. i). covers s ps v text (old (toks.[q])) (old (at.[q])) (old (at.[q + 1])));
+  tiles_join s ps v text toks at 0 i (n - 1)
+
+(** run.c's encode: the tokens of text into toks, with <s> first when bos
+    and </s> last when eos, and the result is how many. at.[i] is where
+    token i starts in the text with sentencepiece's dummy-prefix space in
+    front (vt), and at.[i + 1] where it stops. *)
+let encode (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (bos : bool) (eos : bool)
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) : usize
+  requires usable s ps v
+  requires len toks >= len text + 3 && len at >= len text + 4
+  ensures result <= len toks && result < len at
+  ensures at.[0] = 0 && at.[result] = (if len text = 0 then 0 else len text + 1)
+  ensures forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+  ensures forall (i in (if bos then 1 else 0) .. (if eos then result - 1 else result)). 3 <= toks.[i]
+  ensures bos ==> 0 < result && toks.[0] = 1
+  ensures bos && 0 < len text ==> 1 < result && 259 <= toks.[1] && at.[1] = 0 && 0 < at.[2]
+  ensures eos ==> 0 < result && toks.[result - 1] = 2
+  ensures forall (i in 0 .. result + 1). at.[i] <= len text + 1
+= let f : int{0..1} = if bos then 1 else 0 in
+  at.[0] <- 0;
+  if bos then (covers_special s ps v text 1 0; toks.[0] <- 1; at.[1] <- 0) else ();
+  let n : mutable usize = f in
+  if len text > 0 then (
+    n <- split s ps v text toks at f;
+    let going : mutable bool = true in
+    while going
+      invariant f < n && n <= f + len text + 1
+      invariant at.[0] = 0 && at.[f] = 0 && at.[n] = len text + 1
+      invariant forall (i in 0 .. n). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
+      invariant forall (i in f .. n). 3 <= toks.[i]
+      invariant forall (i in 0 .. n + 1). at.[i] <= len text + 1
+      invariant 259 <= toks.[f] && 0 < at.[f + 1]
+      invariant bos ==> toks.[0] = 1
+      decreases n + (if going then 1 else 0)
+    do
+      let bp = best_pair s ps v toks f n in
+      if bp.idx = n then going <- false
+      else (
+        merge_at s ps v text toks at f n bp.idx bp.id (len text + 1);
+        n <- n - 1)
+    done)
+  else ();
+  assert (forall (i in f .. n). 3 <= toks.[i]);
+  if eos then (
+    covers_special s ps v text 2 at.[n];
+    toks.[n] <- 2;
+    at.[n + 1] <- at.[n];
+    n <- n + 1)
+  else ();
+  n
+
+(* What run.c's decode gives for tok after prev: one byte for a byte
+   piece, else the piece's bytes, without a leading space after <s>. *)
+let spec dlen (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize =
+  if 3 <= tok && tok < 259 then 1
+  else if tok < len ps then
+    (let p = ps.[tok] in
+     if wf (len s) p then
+       (if prev = 1 && p.start < p.stop then
+          (if s.[p.start] = 32 then p.stop - p.start - 1 else p.stop - p.start)
+        else p.stop - p.start)
+     else 0)
+  else 0
+
+(* Where in s the bytes of a piece decode starts. *)
+let spec dfrom (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize =
+  if tok < len ps then
+    (let p = ps.[tok] in
+     if wf (len s) p then
+       (if prev = 1 && p.start < p.stop then (if s.[p.start] = 32 then p.start + 1 else p.start) else p.start)
+     else p.start)
+  else 0
+
+(** How many bytes decode writes for tok after prev. *)
+let decoded_len (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize
+  ensures result = dlen s ps prev tok
+= if 3 <= tok && tok < 259 then 1
+  else if tok < len ps then (
+    let p = ps.[tok] in
+    if p.start <= p.stop && p.stop <= len s then
+      (if prev = 1 && p.start < p.stop && s.[p.start] = 32 then p.stop - p.start - 1 else p.stop - p.start)
+    else 0)
+  else 0
+
+(** run.c's decode: the bytes of tok after prev, into dst at pos, and the
+    position after them. *)
+let decode (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) (dst : borrowed inout mutable [u8]) (pos : usize) : usize
+  requires pos <= len dst && dlen s ps prev tok <= len dst - pos
+  ensures result = pos + dlen s ps prev tok
+  ensures 3 <= tok && tok < 259 ==> dst.[pos] = tok - 3
+  ensures (tok < 3 || 259 <= tok) ==> (forall (j in 0 .. dlen s ps prev tok). dst.[pos + j] = s.[dfrom s ps prev tok + j])
+  ensures forall (k in 0 .. pos). dst.[k] = old (dst.[k])
+= if 3 <= tok && tok < 259 then (
+    let b : u8 = tok - 3 in
+    dst.[pos] <- b;
+    pos + 1)
+  else if tok < len ps then (
+    let p = ps.[tok] in
+    if p.start <= p.stop && p.stop <= len s then (
+      let a : usize = if prev = 1 && p.start < p.stop && s.[p.start] = 32 then p.start + 1 else p.start in
+      let n : usize = p.stop - a in
+      assert (a = dfrom s ps prev tok);
+      assert (n = dlen s ps prev tok);
+      assert (n <= len dst - pos);
+      for j in 0 .. n
+        invariant pos + n <= len dst && a + n <= len s
+        invariant forall (q in 0 .. j). dst.[pos + q] = s.[a + q]
+        invariant forall (k in 0 .. pos). dst.[k] = old (dst.[k])
+      do dst.[pos + j] <- s.[a + j] done;
+      pos + n)
+    else pos)
+  else pos
+
+(* What decode writes for token t after prev, when t covers vt from a to
+   b: text from max a 1 - 1 to b - 1. After <s> the token at 0 is plain
+   and starts with the dummy-prefix space, which decode drops. *)
+(* vt from a is text from a - 1. *)
+let lemma vt_shift (text : [u8]) (a : usize) (m : usize) (d : usize) : unit
+  requires m + 1 = a && d <= len text + 1 - a && a <= len text + 1
+  ensures forall (j in 0 .. d). vt text (a + j) = text.[m + j]
+= ()
+
+let lemma decodes_as (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (prev : u32) (t : u32) (a : usize) (b : usize) (m : usize) : unit @solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")
+  requires v.count <= len ps && 3 <= t && t < v.count
+  requires covers s ps v text t a b
+  requires b <= len text + 1
+  requires a = 0 ==> prev = 1 && 259 <= t && a < b && m = 0
+  requires 0 < a ==> prev <> 1 && m + 1 = a
+  ensures a <= b && 1 <= b && m + dlen s ps prev t = b - 1
+  ensures t < 259 ==> t - 3 = text.[m]
+  ensures 259 <= t ==> (forall (j in 0 .. dlen s ps prev t). s.[dfrom s ps prev t + j] = text.[m + j])
+  with covers
+= if a = 0 then (
+    let p = ps.[t] in
+    assert (s.[p.start] = vt text 0);
+    assert (dfrom s ps prev t = p.start + 1 && dlen s ps prev t = b - 1);
+    assert (forall (j in 0 .. b - 1). s.[p.start + (1 + j)] = vt text (1 + j));
+    assert (forall (j in 0 .. b - 1). vt text (1 + j) = text.[m + j]);
+    assert (forall (j in 0 .. b - 1). s.[(p.start + 1) + j] = text.[m + j]))
+  else if t < 259 then ()
+  else (
+    let p = ps.[t] in
+    assert (dfrom s ps prev t = p.start && dlen s ps prev t = b - a);
+    assert (forall (j in 0 .. b - a). s.[p.start + j] = vt text (a + j));
+    vt_shift text a m (b - a))
+
+(* What decode wrote at m is text's bytes there. *)
+let lemma same_run (s : [u8]) (ps : [piece]) (prev : u32) (t : u32) (dst : [u8]) (text : [u8]) (m : usize) (d : usize) : unit @solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")
+  requires 3 <= t && d = dlen s ps prev t
+  requires m <= len dst && d <= len dst - m && m <= len text && d <= len text - m
+  requires t < 259 ==> d = 1 && dst.[m] = t - 3 && t - 3 = text.[m]
+  requires 259 <= t ==> (forall (j in 0 .. d). dst.[m + j] = s.[dfrom s ps prev t + j])
+  requires 259 <= t ==> (forall (j in 0 .. d). s.[dfrom s ps prev t + j] = text.[m + j])
+  ensures forall (j in 0 .. d). dst.[m + j] = text.[m + j]
+= ()
+
+(* Two runs of equal bytes, the first m and the d after them, make one. *)
+let lemma extend (dst : [u8]) (text : [u8]) (m : usize) (d : usize) : unit @solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")
+  requires m <= len dst && m <= len text && d <= len dst - m && d <= len text - m
+  requires forall (k in 0 .. m). dst.[k] = text.[k]
+  requires forall (j in 0 .. d). dst.[m + j] = text.[m + j]
+  ensures forall (k in 0 .. m + d). dst.[k] = text.[k]
+  decreases d
+= if d = 0 then ()
+  else (
+    extend dst text m (d - 1);
+    assert (dst.[m + (d - 1)] = text.[m + (d - 1)]))
+
+(* One step of the round trip: decoding token t, which covers vt from a to
+   b, extends the text in dst from m to b - 1. *)
+let decode_step (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (prev : u32) (t : u32) (a : usize) (b : usize)
+    (dst : borrowed inout mutable [u8]) (m : usize) : usize
+  requires v.count <= len ps && 3 <= t && t < v.count
+  requires covers s ps v text t a b
+  requires b <= len text + 1 && len text <= len dst
+  requires a = 0 ==> prev = 1 && 259 <= t && a < b && m = 0
+  requires 0 < a ==> prev <> 1 && m + 1 = a
+  requires forall (k in 0 .. m). dst.[k] = text.[k]
+  ensures a <= b && 1 <= b && result + 1 = b
+  ensures forall (k in 0 .. result). dst.[k] = text.[k]
+= decodes_as s ps v text prev t a b m;
+  assert (1 <= b && b - 1 <= len dst);
+  assert (m <= len dst && dlen s ps prev t <= len dst - m);
+  let m' = decode s ps prev t dst m in
+  same_run s ps prev t dst text m (m' - m);
+  extend dst text m (m' - m);
+  m'
+
+(** The round trip, run.c's encode with <s> and then its decode of each
+    token after the first: text comes back, byte for byte, into dst. *)
+let round_trip (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
+    (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) (dst : borrowed inout mutable [u8]) : usize
+  requires usable s ps v
+  requires len toks >= len text + 3 && len at >= len text + 4 && len dst >= len text
+  ensures result = len text
+  ensures forall (k in 0 .. len text). dst.[k] = text.[k]
+= let n = encode s ps v text true false toks at in
+  if len text = 0 then 0
+  else (
+    let m : mutable usize = 0 in
+    for i in 1 .. n
+      invariant (i = 1 && m = 0) || (2 <= i && 1 <= at.[i] && m + 1 = at.[i])
+      invariant forall (k in 0 .. m). dst.[k] = text.[k]
+    do
+      m <- decode_step s ps v text toks.[i - 1] toks.[i] at.[i] at.[i + 1] dst m
+    done;
+    m)

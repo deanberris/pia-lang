@@ -177,6 +177,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Image/Gif/Quantise.pia` maps RGB to a palette of at most 256 colours (exact when the input has few enough, else median cut), and holds `encode_rgb_animation`.
 - `lib/Pia/Compress/Huffman.pia` builds and decodes canonical Huffman codes. `lib/Pia/Compress/Inflate/Spec.pia` is RFC 1951's block parts as spec functions, `lib/Pia/Compress/Inflate.pia` decodes deflate, and `lib/Pia/Compress/Zlib.pia` is RFC 1950 with Adler-32 (ADR 0054).
 - `lib/Pia/Format/Safetensors.pia` reads the safetensors container the LLM demo's weights load from: the header's tensor table into a caller's buffer, proved total, with every tensor placed in the data region and the tensors tiling it in order (ADR 0067, M1). Its fixture and run test come from `tests/std/Inputs/safetensors_gen.py`.
+- `lib/Pia/Llm/Tokenizer.pia` is llama2.c's tokenizer (ADR 0067, M2): `load` reads a tokenizer.bin into a buffer of pieces, `encode` and `decode` are run.c's, and `round_trip` proves that decoding an encoding gives the text back. Its run test, `tests/std/Inputs/tokenizer_run_main.c`, checks it against the ids run.c gives the texts of `tests/std/Inputs/tokenizer_cases.h`, which `tests/std/Inputs/tokenizer_gen.py` writes from a run of run.c built with `tests/std/Inputs/tokenizer_ref.c`; `tests/std/Inputs/tok512.bin` is stories260K's tokenizer (MIT).
 
 ### Elsewhere
 
