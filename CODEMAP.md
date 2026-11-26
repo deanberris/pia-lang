@@ -58,6 +58,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | solver encodings, theories, triggers | `src/verify/Verifier.cpp`, `Triggers.cpp`, `Strategy.cpp` | `src/irgen/Theories.cpp`; `docs/theories.md` |
 | a lint | `src/syntax/Lint.{h,cpp}` | `docs/idioms.md` table; `tests/lint` |
 | modules, `.piai`, imports | `src/syntax/Interfaces.cpp` | `tools/piac/pia.bzl` (`pia_library`, `pia_binary`); `tests/modules` |
+| a lowering to MLIR (`@lower`, ADR 0065) | `markLowering` in `src/irgen/IRGen.cpp` (the rules), `src/codegen/Lowerings.cpp` (splice, parse, replace the body, the linalg passes) | `--lower` and the trust report in `tools/piac/piac.cpp`, `trusted` lines in `src/cert/Certificate.cpp`; tests in `tests/codegen/lower_linalg.pia` (run by `lower_linalg_run_test` and `lower_linalg_body_run_test`), `tests/codegen/lower_invalid.pia`, `tests/irgen/lower.pia`, `tests/irgen/lower_errors.pia`, `tests/irgen/lower_untrusted.pia` |
 | codegen or the C ABI | `src/codegen/Codegen.cpp` | `docs/codegen.md`, `docs/abi.md`; `tests/codegen` |
 | a target platform | `tools/piac/targets.bzl`, `--target`/`--cpu` in `piac.cpp` | ADR 0049, `docs/adr/0049-targets-are-theories.md` |
 | the dialects | `src/dialect/*.td` | `tests/dialect` (round trips through `pia-opt`) |
@@ -65,6 +66,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | the language server | `src/lsp/Server.cpp`, `Analysis.cpp` | `tests/lsp`, `editors/vscode` |
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
+| a file format (safetensors) | `lib/Pia/Format`, ADR 0067 | `tests/std/safetensors*`; `tools/llm/export.py` converts a llama2.c checkpoint |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
@@ -120,9 +122,10 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/verify/Strategy.{h,cpp}` holds the `@solver(...)` strategies and the `@by` tactics.
 - `src/codegen/Codegen.{h,cpp}` erases contracts and lowers to LLVM, and from there to objects, assembly and the C ABI (the record out-pointer and one buffer per field). It also writes each object's witness symbols and certificate section.
 - `src/codegen/ArrayResults.{h,cpp}` turns each array result into a buffer the caller makes, and each return into a copy into it, so arrays are returned by value.
+- `src/codegen/Lowerings.{h,cpp}` puts each `@lower` function's MLIR in place of its body after `lowerToCore`, and adds the passes that take `linalg` to loops (ADR 0065).
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
 - `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
-- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes), how to read one from an object file, and the link check (docs/abi.md).
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -146,6 +149,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
+- `tools/llm/export.py` converts a llama2.c checkpoint (karpathy/tinyllamas) to safetensors with the config in `__metadata__` (ADR 0067). It is not run by the build.
 - `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` and the rows of `lib/Pia/Sys/Posix.pia`, which it checks against the headers (ADRs 0051 and 0057). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
 
 ### lib: the standard library, written in Pia (ADR 0023, ADR 0040)
@@ -171,6 +175,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Image/Gif/LzwEncode.pia` is the LZW encoder and the sub-block writer. `lib/Pia/Image/Gif/Encode.pia` is the animated GIF encoder, `encode_animation`, with its proved size bound.
 - `lib/Pia/Image/Gif/Quantise.pia` maps RGB to a palette of at most 256 colours (exact when the input has few enough, else median cut), and holds `encode_rgb_animation`.
 - `lib/Pia/Compress/Huffman.pia` builds and decodes canonical Huffman codes. `lib/Pia/Compress/Inflate/Spec.pia` is RFC 1951's block parts as spec functions, `lib/Pia/Compress/Inflate.pia` decodes deflate, and `lib/Pia/Compress/Zlib.pia` is RFC 1950 with Adler-32 (ADR 0054).
+- `lib/Pia/Format/Safetensors.pia` reads the safetensors container the LLM demo's weights load from: the header's tensor table into a caller's buffer, proved total, with every tensor placed in the data region and the tensors tiling it in order (ADR 0067, M1). Its fixture and run test come from `tests/std/Inputs/safetensors_gen.py`.
 
 ### Elsewhere
 

@@ -1,0 +1,13 @@
+(* A lowering is trusted in step 1 of ADR 0065, so only a file marked
+   @trusted may have one. This file is not.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let copy4 (a : [u8; 4]) (b : out mutable [u8; 4]) : unit
+  @lower("memref.copy $a, $b : $a.type to $b.type")
+= for i in 0 .. 4 do b.[i] <- a.[i] done
+
+(*
+// CHECK: lower_untrusted.pia:7:3: error: @lower is only allowed in a file marked '@trusted' for now: piac does not yet prove that the MLIR does what the body does, so the lowering is a trusted item (ADR 0065, step 1)
+// CHECK-NOT: error
+*)

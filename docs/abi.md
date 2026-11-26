@@ -92,8 +92,8 @@ modules[]    one per Pia module linked into the image:
   uses[]       type name, and the shape or layout hash this module's code was
                compiled against, with a flag if a proof depended on it
   trusted[]    this module's own trusted items: kind (extern contract, @assume,
-               allowed-unproved goal, unsafe call site), symbol, source location,
-               hash of the trusted contract or goal
+               allowed-unproved goal, unsafe call site, lowering), symbol,
+               source location, hash of the trusted contract, goal or MLIR
 strings      string table for the names above
 ```
 
@@ -101,7 +101,7 @@ Decisions behind the format:
 
 - **One certificate per image, with one entry per module.** An image can contain several Pia modules. The static link step merges the modules' object-file certificates into one image certificate and checks the requires against the provides it can already see.
 - **Trusted items are listed per module, not transitively.** A module's certificate records only its own trusted items. The whole trusted base of a program is computed by walking the certificates of every image it loads: `piac link --trust-report` at link time, and `pia-cert trust-report` on a built program. If a dependency replaces a proved body with an `@assume` behind an unchanged interface, the importer's proof is still valid by assume-guarantee, so its certificate should not go stale, but the report must still show the new trusted item. This answers the open question in [docs/stdlib.md](stdlib.md): yes, certificates list trusted contracts, and the linker and the trust report read them.
-- **Four kinds of trusted item.** An `extern` declaration's contract and an `@assume`, both allowed only in `@trusted` modules; an obligation accepted with `--allow-unproved`; and each `unsafe f x` call site, the required spelling for a call to a foreign function declared without a contract. The certificate also flags a module as `@trusted`.
+- **Five kinds of trusted item.** An `extern` declaration's contract and an `@assume`, both allowed only in `@trusted` modules; an obligation accepted with `--allow-unproved`; each `unsafe f x` call site, the required spelling for a call to a foreign function declared without a contract; and a `lowering`, a function whose `@lower` MLIR replaced its proved body, recorded with the function, the ops its MLIR uses and the SHA-256 of the spliced text ([ADR 0065](adr/0065-lowerings-written-in-pia.md); a `schedule` joins it with `@schedule`). The certificate also flags a module as `@trusted`.
 - **`--allow-unproved` goals are trusted items.** An obligation accepted with `--allow-unproved` ([verifier.md](verifier.md)) is recorded the same way as an `@assume`, so "this library has unproved goals" is visible to anyone who loads it.
 - **Fixed-size hashes in the certificate, short ones in symbols.** The certificate holds full 32-byte SHA-256 hashes. Witness symbols use the first 128 bits, base32-encoded, which keeps symbol names short while leaving accidental collisions out of reach.
 
@@ -314,7 +314,7 @@ The standard library ([docs/stdlib.md](stdlib.md) and [ADR 0023](adr/0023-minima
 Each step is a GitHub issue, tracked from M8 ([#9](https://github.com/deanberris/pia-lang/issues/9)) and the follow-up milestones.
 
 1. Canonical interface serialisation and the interface and inline surface hashes ([#40](https://github.com/deanberris/pia-lang/issues/40)).
-2. The certificate format: a small C++ reader and writer, and `pia-cert dump` ([#41](https://github.com/deanberris/pia-lang/issues/41)). Format 1 is implemented in `src/cert`, with a text body that holds the module, provides and requires; the other fields come later.
+2. The certificate format: a small C++ reader and writer, and `pia-cert dump` ([#41](https://github.com/deanberris/pia-lang/issues/41)). Format 1 is implemented in `src/cert`, with a text body that holds the module, provides and requires. Format 2 adds `trusted` lines, so far only for lowerings (`trusted lowering matmul <hash> linalg.matmul,memref.expand_shape`), and piac writes it only for an object that has one, so every other object stays format 1; `pia-cert dump` prints them. The other fields, and the other kinds of trusted item, come later.
 3. Emit `__pia_cert` and `__pia_iface` in objects and merge them into image certificates at link ([#42](https://github.com/deanberris/pia-lang/issues/42)).
 4. Witness symbols: export them from libraries and reference them from importers ([#43](https://github.com/deanberris/pia-lang/issues/43)). Implemented for objects: the hash is over the whole `.piai` text until the inline surface gets its own hash, and the module path is spelled with `$`, as in `pia$w$Image$Pixels$Ops$<hash>`.
 5. The link checker for objects and `.dylib` inputs, including `--trust-report` ([#44](https://github.com/deanberris/pia-lang/issues/44)). `pia-cert check` checks objects, and `pia_library` runs it as a validation action; `.dylib` inputs and the trust report come later.

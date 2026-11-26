@@ -8,6 +8,7 @@
 #include "verify/Triggers.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -1000,6 +1001,7 @@ class Gen {
     opaque_ = false;
     owns_.clear();
     variadic_.reset();
+    lower_ = nullptr;
     deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
@@ -1308,6 +1310,8 @@ class Gen {
                            "'= extern \"symbol\"'");
       return;
     }
+    if (lower_ && !markLowering(*lower_, sig, fn, isExtern))
+      return;
     if (deref_ && !isExtern) {
       fail(*deref_, "@deref is only for a foreign declaration, "
                     "'= extern \"symbol\"'");
@@ -1857,6 +1861,19 @@ class Gen {
         }
         variadic_ = static_cast<unsigned>(lit->value.getZExtValue());
         variadicNode_ = a.get();
+        continue;
+      }
+      // `@lower("mlir")` gives the function an MLIR form, which codegen
+      // puts in place of the body (ADR 0065). Step 1 takes a string literal
+      // only; a metaprogram that computes one is step 2.
+      if (a->text == "lower") {
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::StringLit) {
+          fail(*a, "@lower takes one string of MLIR, as in "
+                   "@lower(\"linalg.matmul ins($a, $b : $a.type, $b.type) "
+                   "outs($c : $c.type)\")");
+          return false;
+        }
+        lower_ = a.get();
         continue;
       }
       // `@deref` on a foreign declaration: the C function returns a
@@ -9122,6 +9139,126 @@ class Gen {
     return false;
   }
 
+  // --- lowerings (ADR 0065) -----------------------------------------
+
+  // Whether codegen can hand `t` to MLIR text as one value: an integer, a
+  // bool, or a buffer of them, which is one memref. A record becomes its
+  // fields and a buffer of records one buffer per field, so neither has a
+  // single value to splice.
+  bool spliceable(Type t) {
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      t = a.getElementType();
+    else if (auto s = mlir::dyn_cast<SliceType>(t))
+      t = s.getElementType();
+    return mlir::isa<IntType>(t) || isBool(t);
+  }
+
+  // Checks `@lower` on `fn` and marks it for codegen: the MLIR text, with
+  // escapes decoded, as `pia.lower`, the attribute's location as
+  // `pia.lower_at` (file:line:col), and each parameter's name as the argument
+  // attribute `pia.lower_name`, which the signature rewrites before codegen
+  // keep with the argument. Step 1 of ADR 0065 has trusted lowerings only, so
+  // the file must be @trusted, and the body stays: the verifier proves it,
+  // and it is what `--lower=off` and the REPL run.
+  bool markLowering(const Node &attr, const sema::FuncSig &sig,
+                    mlir::func::FuncOp fn, bool isExtern) {
+    const std::string &name = sig.source();
+    if (ghost_) {
+      fail(attr, "@lower applies only to a function that runs, not to a "
+                 "spec function, a lemma or an axiom");
+      return false;
+    }
+    if (isExtern) {
+      fail(attr, "a lowered function keeps its Pia body, which is its "
+                 "specification and its fallback; a foreign function with "
+                 "no body stays '= extern \"symbol\"' (ADR 0065)");
+      return false;
+    }
+    if (!trusted_) {
+      fail(attr, "@lower is only allowed in a file marked '@trusted' for "
+                 "now: piac does not yet prove that the MLIR does what the "
+                 "body does, so the lowering is a trusted item (ADR 0065, "
+                 "step 1)");
+      return false;
+    }
+    if (sig.result && !isUnit(sig.result) && !mlir::isa<IntType>(sig.result) &&
+        !isBool(sig.result)) {
+      fail(attr, "a lowered function returns unit, an integer or a bool; '" +
+                     name + "' returns " + typeName(sig.result));
+      return false;
+    }
+    std::string text = unescapeString(attr.kids[0]->text);
+    auto isNameChar = [](char c) {
+      return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+             c == '\'';
+    };
+    for (size_t i = 0; i < text.size(); ++i) {
+      if (text[i] != '$')
+        continue;
+      size_t end = i + 1;
+      while (end < text.size() && isNameChar(text[end]))
+        ++end;
+      std::string splice = text.substr(i + 1, end - i - 1);
+      if (splice.empty() ||
+          std::isdigit(static_cast<unsigned char>(splice[0]))) {
+        fail(attr, "a '$' in @lower starts a splice: '$name' is the value of "
+                   "the parameter 'name', and '$name.type' its MLIR type");
+        return false;
+      }
+      auto p = llvm::find_if(
+          sig.params, [&](const sema::Param &q) { return q.name == splice; });
+      if (p == sig.params.end()) {
+        std::string names;
+        for (const sema::Param &q : sig.params)
+          names += (names.empty() ? "'" : ", '") + q.name + "'";
+        fail(attr, "@lower splices '$" + splice + "', but '" + name +
+                       "' has no parameter '" + splice + "'" +
+                       (names.empty() ? std::string(" (it has none)")
+                                      : "; its parameters are " + names));
+        return false;
+      }
+      if (p->spec) {
+        fail(attr, "@lower splices '$" + splice +
+                       "', a spec parameter, which "
+                       "code does not have (ADR 0058)");
+        return false;
+      }
+      if (!spliceable(p->type)) {
+        fail(attr, "@lower splices '$" + splice + "', of type " +
+                       typeName(p->type) +
+                       "; a splice is an integer, a bool, or a buffer of "
+                       "them, in this step");
+        return false;
+      }
+      i = end - 1;
+    }
+    fn->setAttr("pia.lower", b_.getStringAttr(text));
+    // As text: the printed IR leaves locations out, so a location attribute
+    // would print as an alias nothing defines.
+    fn->setAttr("pia.lower_at",
+                b_.getStringAttr(file_.str() + ":" +
+                                 std::to_string(attr.loc.line) + ":" +
+                                 std::to_string(attr.loc.column)));
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      fn.setArgAttr(i, "pia.lower_name", b_.getStringAttr(sig.params[i].name));
+    return true;
+  }
+
+  // A string literal's text as written, quotes included, to its value.
+  static std::string unescapeString(const std::string &spelling) {
+    std::string out;
+    for (size_t i = 1; i + 1 < spelling.size(); ++i) {
+      char c = spelling[i];
+      if (c != '\\' || i + 2 >= spelling.size()) {
+        out += c;
+        continue;
+      }
+      char e = spelling[++i];
+      out += e == 'n' ? '\n' : e == 't' ? '\t' : e;
+    }
+    return out;
+  }
+
   // --- FFI (#55) -------------------------------------------------------
 
   // Whether `body` is `extern "symbol"`, and the symbol.
@@ -11241,6 +11378,7 @@ class Gen {
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
+  const Node *lower_ = nullptr; // the function's @lower (ADR 0065)
   // `@deref` on the item being generated, or null.
   const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)

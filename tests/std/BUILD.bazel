@@ -1,6 +1,7 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tests/lit:lit.bzl", "lit_tests")
-load("//tools/piac:pia.bzl", "pia_binary")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
 load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 # The library's tests (ADR 0040, section 11): for each module, a lit test of
@@ -45,6 +46,7 @@ lit_tests(
         "//lib/Pia/Compress:Inflate.pia",
         "//lib/Pia/Compress:Zlib.pia",
         "//lib/Pia/Compress/Inflate:Spec.pia",
+        "//lib/Pia/Format:Safetensors.pia",
         "//lib/Pia/Image:Bits.pia",
         "//lib/Pia/Image:Raster.pia",
         "//lib/Pia/Image/Gif:Decode.pia",
@@ -73,6 +75,7 @@ lit_tests(
         "json_derive_array.pia": "large",
         "json_derive_variant.pia": "large",
         "json_write.pia": "large",
+        "safetensors.pia": "large",
         "time_civil.pia": "large",
     },
     tools = ["//tools/piac"],
@@ -785,5 +788,27 @@ sh_test(
     srcs = ["fs_run_test.sh"],
     args = ["$(rootpath :fs_run)"],
     data = [":fs_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# The run test's module, called from C with buffers of tensor records,
+# which a Pia function cannot make locally yet.
+pia_library(
+    name = "safetensors_run",
+    src = "Inputs/safetensors_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Format:safetensors",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+    ],
+)
+
+cc_test(
+    name = "safetensors_run_test",
+    srcs = [
+        "Inputs/safetensors_run_main.c",
+        ":safetensors_run",
+    ],
     target_compatible_with = PIA_TARGETS,
 )
