@@ -454,6 +454,29 @@ jobs:
           path: bench-${{ matrix.shard }}.json
           if-no-files-found: ignore
 
+  # One check for branch protection to require, standing for the three
+  # Linux shards: a matrix job's checks are named after its shards when it
+  # runs, but get one unexpanded name when it is skipped, so neither name
+  # can be required. Skipped shards (nothing a gated cost depends on
+  # changed) pass; a failed or cancelled shard, or a failed Linux job when
+  # the benchmark was needed, fails it.
+  bench-gate:
+    name: proof benchmark (Linux)
+    if: always()
+    needs: [changes, linux, bench]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require the shards
+        env:
+          NEEDED: ${{ needs.changes.outputs.bench }}
+          LINUX: ${{ needs.linux.result }}
+          SHARDS: ${{ needs.bench.result }}
+        run: |
+          echo "benchmark needed: $NEEDED; Linux job: $LINUX; shards: $SHARDS"
+          if [ "$NEEDED" != true ]; then exit 0; fi
+          test "$SHARDS" = success
+
   # The nightly arm64 cost check: the corpus in three shards on macos-15,
   # as the Linux bench job splits it, in one parallel pass, against the same
   # baseline. Only at night and by hand: three macOS runners per pull request
