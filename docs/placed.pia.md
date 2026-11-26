@@ -31,7 +31,7 @@ $ bazel run //examples/streams:srtm_gpu -- /tmp/srtm/N46E008.hgt
 
 On the whole tile, 3601 × 3601 cells on the iMac, both stages match
 the CPU on every cell. With the device warm, directions take 35 to 52 ms
-on the GPU against 41 ms on the CPU, and the picture 82 ms against 40 to
+on the GPU against 41 ms on the CPU, and the picture 66 to 83 ms against 37 to
 50 ms. The first run adds about 70 ms to open the device and load the
 kernel. The GPU is not faster yet because each run copies every buffer in
 and back, and those copies cost more than the kernels. Keeping buffers on
