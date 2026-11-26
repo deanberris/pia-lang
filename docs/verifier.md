@@ -152,6 +152,43 @@ A value of a `let rec` variant ([ADR 0047](adr/0047-recursive-sum-types-and-shar
 
 A counterexample shows a recursive value as its constructor and its payload's fields in order, `Node {_, 7, 4294967295, _, 0}`, where `_` is a buffer (tests/verify/rec_types.pia, tests/verify/rec_aliasing.pia). Equality of recursive values, `@derive(eq)` and structural lemmas come with metaprograms over recursive types (step 4).
 
+## Cost bounds
+
+A function may bound what it spends on a counter with `costs c <= e`, after its other contracts ([ADR 0062](adr/0062-cost-bounds-in-contracts.md)). Every clause names its counter: `iterations` counts each iteration of a loop in the function, and `calls` each call of a function that is not a spec function or a lemma. A function has at most one clause per counter, and each is proved on its own. A function without a clause is generated and proved exactly as before.
+
+```ocaml
+let find (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs iterations <= len xs
+  costs calls <= 0
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> v
+    invariant i <= len xs
+    invariant spent iterations <= i && spent calls = 0
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  i
+```
+
+**`spent c`** is what the function has spent on `c` so far: 0 on entry, one more at the start of each iteration's body, and at each call one more on `calls` plus the callee's own bound on each counter, with its parameters bound to the call's arguments. IRGen keeps it as a mutable local, so it is threaded through `if`s, `&&` and `||`, loops and `?` like any other, and a loop havocs it: an invariant has to bound it, as `spent iterations <= i` does above. `spent c` may appear in loop invariants, `assert`s and lemma calls, and only for a counter the function bounds. At the end of the body, which every `?` reaches as a branch, `spent c <= e` is a goal, "the cost on iterations is within its bound", reported with the contract goals at the clause. `e` is read at the parameters' entry values, so it takes no `old`.
+
+**A callee's bound.** A callee with a clause for the counter contributes its bound at the call's arguments. A callee without one has a bound only if it has no loop and no recursion: the compiler adds up the calls its body makes, through any callees of its own, taking the larger branch of each `if`, and a C function (`= extern`) has 0. That bound is a constant, filled in once every function is made. Any other callee is an error at the call:
+
+```
+report.pia:15:3: error: 'wrapped' has no bound on iterations, so the cost of 'report' on iterations cannot be proved; add 'costs iterations <= ...' to 'wrapped', which calls 'total', which has a loop
+```
+
+A function with a clause that calls itself needs a `decreases` measure, since its own bound is then assumed at the call, as its `ensures` is.
+
+**Encoding.** A count is a `usize`, a bit-vector like every machine integer, and adding to it saturates at 2^64 - 1, which no run reaches, so a bound below that is exact and the additions raise no goal. It is not the `int` that ADR 0062 first described: Z3 relates an `int` to a loop's machine integers through `bv2int`, and the invariant `c = int i` of a loop that adds one to an `int` `c` timed out at 20 seconds, where `spent iterations <= i` proves in under 100 ms. `e` is an integer at its own types, converted to `usize`, so `n * m` on `u8` values keeps the function at 68 bits; an `int` bound is compared through `int spent`, which a caller cannot yet add to its own count. Codegen leaves the counter's arithmetic in place, with nothing reading it, and LLVM removes it, so `find` compiles to the same code with or without its clauses.
+
+**Loops in a costed function.** Bounds multiply loop variables, as in `spent iterations <= i + i * m` for nested loops, and after the loop Z3 would bit-blast `exit * m` and `n * m` as two products it cannot tell are equal. So in a function with a cost clause, a `for` loop with a step of one also states `exit = hi` outright, unconditionally when the bounds' ranges say `lo <= hi`, as for `0..n`. A product of two `usize` values still widens the function to 132 bits and is slow to prove: nested loops over two slices need a lemma that does the multiplication, which is step 2's business with `Pia.Math.Log`.
+
+**Not yet** (ADR 0062's later steps): function counters such as `less`, cost clauses in interfaces, amortised bounds with `old`, and a `spread` in a function with a cost clause, which is an error. tests/verify/costs.pia has proved bounds and a failing one, and tests/irgen/cost_errors.pia and cost_bound_errors.pia the errors.
+
 ## Spec functions and lemmas
 
 `let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions and pure functions of scalars. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call. A spec function imported from another module's interface comes with its definition, which importers unfold, but its goals are proved once, in its own module, not again in each importer (ADR 0039).
