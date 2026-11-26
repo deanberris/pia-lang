@@ -82,8 +82,8 @@ bool validSymbolName(std::string_view s) {
   return true;
 }
 
-std::optional<std::vector<uint8_t>> readBinaryFile(
-    const std::filesystem::path &p, std::string &errOut) {
+std::optional<std::vector<uint8_t>>
+readBinaryFile(const std::filesystem::path &p, std::string &errOut) {
   std::error_code ec;
   if (!std::filesystem::exists(p, ec) || ec) {
     errOut = "does not exist";
@@ -106,16 +106,15 @@ std::optional<std::vector<uint8_t>> readBinaryFile(
   size_t size = static_cast<size_t>(endPos);
   in.seekg(0, std::ios::beg);
   std::vector<uint8_t> bytes(size);
-  if (size > 0 &&
-      !in.read(reinterpret_cast<char *>(bytes.data()),
-               static_cast<std::streamsize>(size))) {
+  if (size > 0 && !in.read(reinterpret_cast<char *>(bytes.data()),
+                           static_cast<std::streamsize>(size))) {
     errOut = "failed while reading";
     return std::nullopt;
   }
   return bytes;
 }
 
-}  // namespace
+} // namespace
 
 bool parseEmbedFlag(std::string_view arg, EmbedOptions &options,
                     bool &invalid) {
@@ -193,8 +192,8 @@ std::optional<std::string> validateEmbedPath(std::string_view path) {
   if (path.front() == '/' || path.front() == '\\')
     return "absolute paths are not allowed; use a relative path with "
            "--embed-path or --embed";
-  if (path.size() >= 2 &&
-      std::isalpha(static_cast<unsigned char>(path[0])) && path[1] == ':')
+  if (path.size() >= 2 && std::isalpha(static_cast<unsigned char>(path[0])) &&
+      path[1] == ':')
     return "absolute paths with a drive prefix are not allowed; use a "
            "relative path with --embed-path or --embed";
   if (path.find('\\') != std::string_view::npos)
@@ -238,9 +237,10 @@ std::optional<EmbedSpec> parseEmbedAttr(const Node &attr, Diagnostics &diags) {
   bool ok = true;
   for (const NodePtr &arg : attr.kids) {
     if (arg->kind != NodeKind::NamedArg || arg->kids.size() != 1) {
-      diags.error(arg->loc,
-                  "@embed arguments must be named: file = \"...\", "
-                  "symbol = \"...\", section = \"...\", align = <power-of-two>");
+      diags.error(
+          arg->loc,
+          "@embed arguments must be named: file = \"...\", "
+          "symbol = \"...\", section = \"...\", align = <power-of-two>");
       ok = false;
       continue;
     }
@@ -334,9 +334,9 @@ std::optional<EmbedSpec> parseEmbedAttr(const Node &attr, Diagnostics &diags) {
   return spec;
 }
 
-std::optional<std::vector<uint8_t>> resolveEmbedFile(
-    const std::string &logicalPath, const EmbedOptions &options, SourceLoc loc,
-    Diagnostics &diags) {
+std::optional<std::vector<uint8_t>>
+resolveEmbedFile(const std::string &logicalPath, const EmbedOptions &options,
+                 SourceLoc loc, Diagnostics &diags) {
   if (auto why = validateEmbedPath(logicalPath)) {
     diags.error(loc, "@embed(file = \"" + logicalPath + "\"): " + *why);
     return std::nullopt;
@@ -386,4 +386,4 @@ std::optional<std::vector<uint8_t>> resolveEmbedFile(
   return std::nullopt;
 }
 
-}  // namespace pia::syntax
+} // namespace pia::syntax

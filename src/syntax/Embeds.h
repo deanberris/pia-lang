@@ -1,5 +1,5 @@
-// Raw binary embedding: @embed(file = ..., symbol = ..., section = ..., align = ...)
-// (ADR 0070).
+// Raw binary embedding: @embed(file = ..., symbol = ..., section = ..., align =
+// ...) (ADR 0070).
 //
 // Parses @embed attributes on top-level fixed `let` bindings and resolves
 // their relative paths hermetically against explicit --embed mappings and
@@ -21,7 +21,8 @@
 
 namespace pia::syntax {
 
-// Hermetic file lookup configuration from CLI flags (`--embed-path`, `--embed`).
+// Hermetic file lookup configuration from CLI flags (`--embed-path`,
+// `--embed`).
 struct EmbedOptions {
   // Search directories checked in flag order (`--embed-path=<dir>`).
   std::vector<std::string> searchPaths;
@@ -41,10 +42,10 @@ struct EmbedSpec {
 
 // A resolved binary blob ready for IRGen and direct LLVM emission.
 struct EmbeddedBlob {
-  std::string name;     // Pia binding name
-  std::string file;     // logical relative path from @embed(file = "...")
-  std::string symbol;   // emitted LLVM/linker symbol name
-  std::string section;  // optional target object section
+  std::string name;    // Pia binding name
+  std::string file;    // logical relative path from @embed(file = "...")
+  std::string symbol;  // emitted LLVM/linker symbol name
+  std::string section; // optional target object section
   uint64_t align = 8;
   bool isExternal = false;
   bool emitLenSymbol = false;
@@ -77,10 +78,10 @@ std::optional<std::string> validateEmbedPath(std::string_view path);
 // Resolves `logicalPath` strictly via `options.explicitMaps` then
 // `options.searchPaths` and reads its raw bytes. Reports an error at `loc`
 // and returns nullopt if not found or unreadable.
-std::optional<std::vector<uint8_t>> resolveEmbedFile(
-    const std::string &logicalPath, const EmbedOptions &options, SourceLoc loc,
-    Diagnostics &diags);
+std::optional<std::vector<uint8_t>>
+resolveEmbedFile(const std::string &logicalPath, const EmbedOptions &options,
+                 SourceLoc loc, Diagnostics &diags);
 
-}  // namespace pia::syntax
+} // namespace pia::syntax
 
-#endif  // PIA_SYNTAX_EMBEDS_H
+#endif // PIA_SYNTAX_EMBEDS_H

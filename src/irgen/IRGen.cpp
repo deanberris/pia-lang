@@ -618,7 +618,8 @@ class Gen {
     if (lookup(name)) what = "a local of the same name";
     else if (overloads_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
-    else if (embeds_.count(name)) what = "the embedded blob '" + name + "'";
+    else if (embeds_.count(name))
+      what = "the embedded blob '" + name + "'";
     else if (types_.isCtorName(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
@@ -791,9 +792,9 @@ class Gen {
                             : ("__pia_embed_" + modulePrefix + sig.name);
       auto [seenIt, fresh] = usedSymbols.emplace(sym, sig.name);
       if (!fresh) {
-        diags_.error(attr->loc,
-                     "duplicate embedded symbol '" + sym +
-                         "' (already used by '" + seenIt->second + "')");
+        diags_.error(attr->loc, "duplicate embedded symbol '" + sym +
+                                    "' (already used by '" + seenIt->second +
+                                    "')");
         it = sigs_.erase(it);
         continue;
       }

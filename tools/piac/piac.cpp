@@ -690,9 +690,9 @@ int main(int argc, char **argv) {
     } else if (bool badEmbed = false;
                pia::syntax::parseEmbedFlag(arg, embedOptions, badEmbed) ||
                badEmbed) {
-      if (badEmbed) return usage();
-    }
-    else if (arg == "-o" && i + 1 < argc)
+      if (badEmbed)
+        return usage();
+    } else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
     else if (arg.rfind("--target=", 0) == 0)

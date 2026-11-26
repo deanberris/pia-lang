@@ -1365,8 +1365,8 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
               resolveSignature(sig, types, diags);
     if (ok && syntax::findEmbedAttr(*item)) {
       auto slice = mlir::dyn_cast_or_null<SliceType>(sig.result);
-      auto elem = slice ? mlir::dyn_cast<IntType>(slice.getElementType())
-                        : IntType();
+      auto elem =
+          slice ? mlir::dyn_cast<IntType>(slice.getElementType()) : IntType();
       if (!slice || !elem || elem.getLo() != 0 || elem.getHi() != 255) {
         diags.error(item->kids[1]->loc,
                     "an @embed binding must have type '[u8]', found " +

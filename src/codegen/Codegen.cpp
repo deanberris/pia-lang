@@ -725,13 +725,14 @@ struct ConstArrayLowering : mlir::OpConversionPattern<ConstArrayOp> {
 // stack allocation as in EmptyLowering.
 struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
   using OpConversionPattern::OpConversionPattern;
-  LogicalResult matchAndRewrite(
-      EmbedOp op, OpAdaptor,
-      mlir::ConversionPatternRewriter &rw) const override {
+  LogicalResult
+  matchAndRewrite(EmbedOp op, OpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
     Location loc = op.getLoc();
     auto sliceType = mlir::dyn_cast_or_null<mlir::MemRefType>(
         getTypeConverter()->convertType(op.getType()));
-    if (!sliceType) return mlir::failure();
+    if (!sliceType)
+      return mlir::failure();
     int64_t len = op.getLength();
     if (len == 0) {
       auto none = mlir::MemRefType::get({0}, sliceType.getElementType());
@@ -2117,22 +2118,20 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns
-      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
-           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
-           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
-           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
-           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
-           AddressLowering, AbortLowering, ConstArrayLowering, EmbedLowering,
-           ForeignLowering, RecMakeLowering, RecTagLowering,
-           RecPayloadLowering>(
-          types, ctx);
+  patterns.add<
+      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
+      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
+      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
+      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
+      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
+      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
+      AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
+      RecMakeLowering, RecTagLowering, RecPayloadLowering>(types, ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
                AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);
@@ -2622,15 +2621,16 @@ void addWitnesses(llvm::Module &m, const Options &options) {
 // Populates embedded binary blobs (ADR 0070) directly as LLVM
 // ConstantDataArrays, bypassing per-element MLIR attributes.
 void addEmbeds(llvm::Module &m, const Options &options) {
-  if (options.embeds.empty()) return;
+  if (options.embeds.empty())
+    return;
   llvm::LLVMContext &ctx = m.getContext();
   std::vector<llvm::GlobalValue *> used;
   for (const syntax::EmbeddedBlob &blob : options.embeds) {
     llvm::GlobalVariable *g = m.getNamedGlobal(blob.symbol);
     if (!g && !blob.isExternal && blob.section.empty())
       continue;
-    llvm::Constant *data = llvm::ConstantDataArray::get(
-        ctx, llvm::ArrayRef<uint8_t>(blob.bytes));
+    llvm::Constant *data =
+        llvm::ConstantDataArray::get(ctx, llvm::ArrayRef<uint8_t>(blob.bytes));
     auto linkage = blob.isExternal ? llvm::GlobalValue::ExternalLinkage
                                    : llvm::GlobalValue::PrivateLinkage;
     if (g) {

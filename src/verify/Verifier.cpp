@@ -2539,7 +2539,8 @@ class Encoder {
     // so repeated reads at equal indices are equal, with zero per-byte axioms.
     if (auto emb = mlir::dyn_cast<EmbedOp>(op)) {
       Type sort = sortOf(emb.getType());
-      if (!sort) return false;
+      if (!sort)
+        return false;
       llvm::StringRef sym = emb.getSymbol();
       auto it = embedArrays_.find(sym);
       Value arr;
@@ -2553,7 +2554,7 @@ class Encoder {
       }
       arrays[emb.getResult()] = arr;
       lengths[emb.getResult()] = bv(emb.getLength());
-      out.push_back(bv(0));  // a placeholder: buffers are not terms
+      out.push_back(bv(0)); // a placeholder: buffers are not terms
       return true;
     }
     // A slice is its buffer's storage from an offset: its length and that
