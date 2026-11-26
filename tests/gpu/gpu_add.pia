@@ -1,0 +1,46 @@
+(* The step 1 kernel, c = a + b over 1024 i32, run on the GPU from Pia
+   through Pia.Gpu (ADR 0068, step 2). dispatch_test.c calls gpu_add with
+   the .metallib that tools/gpu/metal.bzl embedded, and checks c. *)
+module GpuAdd : GpuAddOps
+
+import Pia.Gpu.Gpu as G
+
+interface GpuAddOps @abi(c) = sig
+  (** 0 when c holds a + b, else 1 + the Gpu.error, in its order. *)
+  let gpu_add : (metallib : [u8]) -> (a : [i32]) -> (b : [i32]) -> (c : out mutable [i32]) -> i32
+    requires len a = 1024 && len b = 1024 && len c = 1024
+end
+
+let run (metallib : [u8]) (a : [i32]) (b : [i32]) (c : out mutable [i32]) : result unit G.error
+  requires len a = 1024 && len b = 1024 && len c = 1024
+=
+  let d = G.device_open? in
+  defer G.device_close d;
+  let lib = G.library_load d metallib? in
+  defer G.library_free lib;
+  let ba = G.buffer_new_i32 d 1024? in
+  defer G.buffer_free_i32 ba;
+  let bb = G.buffer_new_i32 d 1024? in
+  defer G.buffer_free_i32 bb;
+  let bc = G.buffer_new_i32 d 1024? in
+  defer G.buffer_free_i32 bc;
+  G.write_i32 ba a;
+  G.write_i32 bb b;
+  let name : [u8; 3] = [97; 100; 100] in
+  let k = G.kernel_get lib name? in
+  let bufs : [u64; 3] = [G.raw_of ba; G.raw_of bb; G.raw_of bc] in
+  G.dispatch d k bufs 1024 64 10000?;
+  G.read_i32 bc c;
+  Ok ()
+
+let gpu_add (metallib : [u8]) (a : [i32]) (b : [i32]) (c : out mutable [i32]) : i32
+  requires len a = 1024 && len b = 1024 && len c = 1024
+=
+  match run metallib a b c with
+  | Ok -> 0
+  | Err e ->
+    (match e with
+     | Gpu_unavailable -> 1
+     | Gpu_out_of_memory -> 2
+     | Gpu_fault -> 3
+     | Gpu_timeout -> 4)
