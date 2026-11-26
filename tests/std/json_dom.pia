@@ -1,0 +1,19 @@
+(* Pia.Text.Json.Dom (ADR 0045, step 6): every goal of the parser is
+   proved, with nothing accepted unproved: it never reads outside the
+   input, its nesting is bounded by max_depth, every container takes one
+   allocation of exactly its length, and the document it returns is
+   valid_dom, each number, string and key a token of its kind.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Text.Json.Dom.Document.piai
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Dom.pia | FileCheck %s
+*)
+
+(*
+// IFACE: let rec json = let (r : region) => type
+// IFACE: let rec member = let (r : region) => type { key : span; value : json r }
+// IFACE: let spec valid_dom : (s : [u8]) -> (v : json) -> bool @opaque
+// CHECK: 0 failed, 0 skipped
+*)

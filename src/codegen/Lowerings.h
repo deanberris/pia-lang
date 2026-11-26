@@ -42,7 +42,9 @@ void loadLoweringDialects(mlir::MLIRContext &ctx);
 // once lowerToCore has given every argument its core type. `$name` becomes
 // the argument for the parameter `name` and `$name.type` its type. The text
 // is parsed as the body of a function with the same signature, followed by
-// `return` when the function returns nothing, and verified. An error is
+// `return` when the function returns nothing, and verified. Then the MLIR
+// may write, free or pass to an op of unknown effects only the buffers of
+// `out` and `inout` parameters (the operand-effect check). An error is
 // reported at the attribute with MLIR's message, and returns failure.
 //
 // With `enabled` false (`piac --lower=off`) every body stays and only the
@@ -56,6 +58,13 @@ mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
 // verifier has just proved: applyLowerings on a copy, after eraseContracts
 // and lowerToCore. Errors are reported as applyLowerings reports them.
 mlir::FailureOr<std::vector<Lowering>> describeLowerings(mlir::ModuleOp module);
+
+// The splice-and-parse check, and the operand-effect check, before
+// anything is proved (ADR 0065, step 2): applyLowerings on a copy, so an
+// error in a lowering's MLIR is reported at the attribute whatever piac
+// was asked to do. A module that lowerToCore cannot compile yet is not
+// checked here; codegen reports why if it is compiled.
+mlir::LogicalResult checkLowerings(mlir::ModuleOp module);
 
 // Whether applyLowerings replaced a body in `module`, and so lowerToLLVM
 // needs addLoweringPasses. Clears the mark.

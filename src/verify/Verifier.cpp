@@ -465,11 +465,25 @@ std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
             return true;
         return false;
       };
+      // A write comes first when it dominates the value's construction,
+      // or when it is nested in an op that comes before the construction
+      // in the construction's block, as a write in a loop that fills a
+      // buffer before the value is built from it.
+      auto before = [&](Operation *m) {
+        if (dom.properlyDominates(op, m))
+          return true;
+        // The innermost block that holds both: there, the op holding the
+        // write must come before the op holding the construction.
+        for (Operation *mm = m; mm && mm != fn.getOperation();
+             mm = mm->getParentOp())
+          if (Operation *a = mm->getBlock()->findAncestorOpInBlock(*op))
+            return a != mm && a->isBeforeInBlock(mm);
+        return false;
+      };
       for (RecMakeOp m : makes)
         if (llvm::any_of(m.getPayload(),
                          [&](Value p) { return rootBuffer(p) == root; }) &&
-            (!dom.properlyDominates(op, m.getOperation()) ||
-             inSameLoop(m.getOperation()))) {
+            (!before(m.getOperation()) || inSameLoop(m.getOperation()))) {
           why = "it writes a buffer after building a recursive value "
                 "with it, which the verifier sees as the buffer's contents "
                 "when it was built";
@@ -748,7 +762,36 @@ class Encoder {
     // it puts in a value. Datatypes are then plain, and the depth and size
     // axioms, not Z3's own acyclicity, are what make them well founded.
     llvm::SmallVector<Type> wide;
+    // Leaves that are the field buffers of one buffer of records, which
+    // share its length: each leaf's group, or -1.
+    llvm::SmallVector<int> group;
   };
+
+  // The groups of `t`'s leaves, in the order transforms::recordLeaves
+  // gives them: the field buffers of a buffer of records are one group.
+  static void leafGroups(Type t, llvm::SmallVectorImpl<int> &out, int &next) {
+    auto elementRecord = [](Type b) -> RecordType {
+      if (auto a = mlir::dyn_cast<ArrayType>(b))
+        return mlir::dyn_cast<RecordType>(a.getElementType());
+      if (auto sl = mlir::dyn_cast<SliceType>(b))
+        return mlir::dyn_cast<RecordType>(sl.getElementType());
+      return {};
+    };
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      for (Type f : r.getFieldTypes())
+        leafGroups(f, out, next);
+      return;
+    }
+    if (RecordType r = elementRecord(t)) {
+      llvm::SmallVector<Type> fields;
+      transforms::recordLeaves(r, fields);
+      int g = next++;
+      for (size_t i = 0; i < fields.size(); ++i)
+        out.push_back(g);
+      return;
+    }
+    out.push_back(-1);
+  }
   struct RecInfo {
     std::string sort;  // rec.tree
     std::vector<RecCtor> ctors;
@@ -789,6 +832,8 @@ class Encoder {
           transforms::recordLeaves(p, rc.leaves);
         else
           rc.leaves.push_back(p);
+        int next = 0;
+        leafGroups(p, rc.group, next);
       }
       for (Type leaf : rc.leaves) {
         std::set<std::string> before = recUsed_;
@@ -1966,6 +2011,22 @@ class Encoder {
           assertTerm(inRange(results[0], it));
       // A payload's integers are in their ranges, and its buffers' lengths
       // are lengths, as they were when the value was built.
+      // The field buffers of one buffer of records share its length.
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
+        unsigned tag = 0;
+        if (const RecCtor *c =
+                recCtor(pl.getInput().getType(), pl.getCtor(), tag))
+          if (c->group.size() == pl.getNumResults())
+            for (unsigned a = 0; a < pl.getNumResults(); ++a)
+              for (unsigned b = a + 1; b < pl.getNumResults(); ++b)
+                if (c->group[a] >= 0 && c->group[a] == c->group[b]) {
+                  Value la = lengths_.lookup(pl.getResult(a));
+                  Value lb = lengths_.lookup(pl.getResult(b));
+                  if (la && lb)
+                    assertTerm(eq(la, lb));
+                  break;
+                }
+      }
       if (auto pl = mlir::dyn_cast<RecPayloadOp>(op))
         for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
           if (auto it = mlir::dyn_cast<IntType>(r.getType()))
@@ -2812,12 +2873,59 @@ class Encoder {
     return declare(boolType(), "", false);
   }
 
+  // After a spread over lo .. hi: an iteration writes only the cells it
+  // owns, so every cell of a written buffer that no iteration of the range
+  // owns holds what it held before the loop. Without this, a spread over
+  // part of a buffer would lose the rest of it (ADR 0068, section 9). The
+  // spread's own HavocOthersOps at the start of the body name each written
+  // buffer and its owner array.
+  void keepUnowned(mlir::Block &body, Value lb, Value ub,
+                   const llvm::DenseMap<Value, Value> &before) {
+    using P = mlir::smt::BVCmpPredicate;
+    for (Operation &op : body) {
+      auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+      if (!h || !h->hasAttr("pia.from_start"))
+        continue;
+      Value root = rootBuffer(h.getBuffer());
+      Value cur = arrays_.lookup(root), old = before.lookup(root);
+      Value len = lengths_.lookup(root);
+      Value owner =
+          h.getOwner() ? arrays_.lookup(rootBuffer(h.getOwner())) : Value();
+      if (!cur || !old || !len || (h.getOwner() && !owner))
+        continue;
+      auto at = mlir::cast<mlir::smt::ArrayType>(cur.getType());
+      assume(forallIndex([&](Value c) {
+        Value in = andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len));
+        Value who = c;
+        if (owner) {
+          auto ot = mlir::cast<mlir::smt::ArrayType>(owner.getType());
+          who = create<mlir::smt::ArraySelectOp>(ot.getRangeType(), owner, c);
+        }
+        Value owned = andOf(cmp(P::sle, lb, who), cmp(P::slt, who, ub));
+        return implies(
+            andOf(in, notOf(owned)),
+            eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), cur, c),
+               create<mlir::smt::ArraySelectOp>(at.getRangeType(), old, c)));
+      }));
+    }
+  }
+
   bool stepFor(mlir::scf::ForOp forOp) {
     using P = mlir::smt::BVCmpPredicate;
     Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
     Value st = term(forOp.getStep());
     llvm::SmallVector<Value> inits;
-    for (Value v : forOp.getInitArgs()) inits.push_back(term(v));
+    // A buffer a loop carries, such as the memory of an allocator it
+    // passes on from call to call, has no term: it is tracked by its
+    // contents and length, which `at` reads from the value carried.
+    auto isBuffer = [](Value v) {
+      return mlir::isa<ArrayType, SliceType>(v.getType());
+    };
+    for (Value v : forOp.getInitArgs()) {
+      inits.push_back(term(v));
+      if (isBuffer(v) && arrays_.count(v) && lengths_.count(v))
+        inits.back() = bv(0); // a placeholder: buffers are not terms
+    }
     if (!lb || !ub || !st || llvm::is_contained(inits, Value()))
       return skipLoop(forOp);
     mlir::Block &body = *forOp.getBody();
@@ -2834,14 +2942,27 @@ class Encoder {
            notOf(eq(st, bv(0))), nonzero);
       if (done_) return false;
     }
-    // The values the body's arguments take at iteration `i`.
-    auto at = [&](Value i, llvm::ArrayRef<Value> carried) {
+    // The values the body's arguments take at iteration `i`: `carried`
+    // are their terms, and `from` the values they come from, whose
+    // buffers' contents and lengths a carried buffer has.
+    auto at = [&](Value i, llvm::ArrayRef<Value> carried,
+                  mlir::ValueRange from) {
       Demand d;
       d.values[forOp.getInductionVar()] = i;
-      for (auto [arg, v] : llvm::zip(forOp.getRegionIterArgs(), carried))
-        if (v) d.values[arg] = v;
       d.arrays = arrays_;
       d.lengths = lengths_;
+      for (auto [arg, v, src] :
+           llvm::zip(forOp.getRegionIterArgs(), carried, from)) {
+        if (isBuffer(arg)) {
+          if (Value a = arrays_.lookup(src))
+            d.arrays[arg] = a;
+          if (Value l = lengths_.lookup(src))
+            d.lengths[arg] = l;
+          continue;
+        }
+        if (v)
+          d.values[arg] = v;
+      }
       // `old` inside reads the memory on entry, as it does outside.
       d.oldArrays = entryArrays_;
       d.envOutside = forOp;
@@ -2849,7 +2970,7 @@ class Encoder {
     };
 
     for (auto inv : invariants) {
-      Demand d = at(lb, inits);
+      Demand d = at(lb, inits, forOp.getInitArgs());
       goal(ObligationKind::invariant, inv, "the loop invariant holds on entry",
            demandPredicate(inv.getPredicate(), d), false);
       if (done_) return false;
@@ -2873,13 +2994,30 @@ class Encoder {
     env_[forOp.getInductionVar()] = i;
     for (Value arg : forOp.getRegionIterArgs())
       if (auto v = havoc(arg.getType())) env_[arg] = *v;
+    // A carried buffer is a new one in an arbitrary iteration, whose
+    // contents and length the invariants say what they know of.
+    auto freshBuffer = [&](Value b) {
+      Type sort = sortOf(b.getType());
+      if (!sort)
+        return;
+      arrays_[b] = declare(sort, "", false);
+      Value len = declare(bvType(), "", false);
+      assertTerm(inRange(len, indexRange()));
+      lengths_[b] = len;
+      if (holdsSlices(b.getType()))
+        innerLengths_[b] = declare(
+            mlir::smt::ArrayType::get(ctx_, bvType(), bvType()), "", false);
+    };
+    for (Value arg : forOp.getRegionIterArgs())
+      if (isBuffer(arg))
+        freshBuffer(arg);
     havocBuffers(written);
     llvm::SmallVector<Value> yields;
     bool ok = walkBlock(body, &yields);
     if (ok) {
       Value next = bvBin("add", i, st);
       for (auto inv : invariants) {
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::invariant, inv,
              "the loop invariant holds after each iteration",
              demandPredicate(inv.getPredicate(), d), false);
@@ -2887,7 +3025,7 @@ class Encoder {
       }
       for (auto m : measures) {
         if (done_) break;
-        Demand d = at(next, yields);
+        Demand d = at(next, yields, body.getTerminator()->getOperands());
         goal(ObligationKind::decreases, m, "the measure decreases",
              decreasesTerm(term(m.getMeasure()), demand(m.getMeasure(), d)),
              false);
@@ -2900,8 +3038,12 @@ class Encoder {
     // loop never ran.
     arrays_ = beforeArrays;
     havocBuffers(written);
+    if (forOp->hasAttr("pia.spread"))
+      keepUnowned(body, lb, ub, beforeArrays);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
+      if (isBuffer(r))
+        freshBuffer(r);
       auto v = havoc(r.getType());
       if (v) env_[r] = *v;
       results.push_back(v ? *v : Value());
@@ -2914,7 +3056,7 @@ class Encoder {
                               eq(bvBin("srem", bvBin("sub", exit, lb), st),
                                  bv(0)))));
     for (auto inv : invariants) {
-      Demand d = at(exit, results);
+      Demand d = at(exit, results, forOp.getResults());
       if (Value p = demand(inv.getPredicate(), d)) assume(p);
     }
     return true;

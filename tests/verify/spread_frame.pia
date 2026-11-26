@@ -1,0 +1,46 @@
+(* After a spread over lo .. hi, the cells no iteration of the range owns
+   keep their values (ADR 0068, section 9): an iteration writes only its
+   own cells. With the identity owner those are the cells outside
+   lo .. hi; with @owns(buf, owner), the cells whose owner is outside it.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let spec at (xs : [usize]) (k : usize) : usize
+  requires k < len xs
+= xs.[k]
+
+(* Part of a buffer, by the identity owner. *)
+let clear_part (v : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo <= hi && hi <= len v
+  ensures forall (q in lo .. hi). v.[q] = 0
+  ensures forall (k in 0 .. len v). (k < lo || k >= hi) ==> v.[k] = old (v.[k])
+= spread q in lo .. hi
+    ensures v.[q] = 0
+  do v.[q] <- 0 done
+
+(* A wave's commit: slot q goes to cell order.[q], whose owner is pos. *)
+let commit (order : [usize]) (pos : [usize]) (src : [u32]) (v : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires len order = len v && len pos = len v && len src = len v && lo <= hi && hi <= len v
+  requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
+  requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+  ensures forall (q in lo .. hi). v.[at order q] = src.[q]
+  ensures forall (k in 0 .. len v). (at pos k < lo || at pos k >= hi) ==> v.[k] = old (v.[k])
+= spread q in lo .. hi @owns(v, pos)
+    ensures v.[order.[q]] = src.[q]
+  do
+    let c = order.[q] in
+    v.[c] <- src.[q]
+  done
+
+(* Wrong: a cell inside the range may change. *)
+let too_much (v : borrowed inout mutable [u32]) (lo : usize) (hi : usize) : unit
+  requires lo < hi && hi <= len v
+  ensures v.[lo] = old (v.[lo])
+= spread q in lo .. hi do v.[q] <- 0 done
+
+(*
+// CHECK: spread_frame.pia:16:3: proved: the postcondition holds
+// CHECK: spread_frame.pia:27:3: proved: the postcondition holds
+// CHECK: spread_frame.pia:38:3: failed: the postcondition holds
+// CHECK: 1 failed
+*)
