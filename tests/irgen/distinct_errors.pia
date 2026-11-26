@@ -1,7 +1,8 @@
 (* What distinct types refuse (ADR 0064, section 3): every conversion is
    written, so neither a literal nor a value of the underlying type
    becomes a length, a length is not a u32, and two distinct types over
-   one type do not mix.
+   one type do not mix. Nothing is inherited: each operator comes from a
+   derive (section 4), and `scale` multiplies by the underlying type only.
 // RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
 *)
 
@@ -24,6 +25,21 @@ let back (l : length) : u32 = l
 *)
 let mix (w : weight) : length = w
 
-(* CHECK: distinct_errors.pia:[[@LINE+2]]:48: error: '+' needs integer operands, found length and length
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:48: error: '+' is not defined on length; add @derive(add) to 'length'
 *)
 let sum (a : length) (b : length) : length = a + b
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '<' is not defined on length; add @derive(ord) to 'length'
+*)
+let less (a : length) (b : length) : bool = a < b
+
+let span = type u32 @derive(scale)
+
+(* A length times a length is an area, not a length.
+// CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '*' on span takes u32 on the right, found span
+*)
+let square (a : span) : span = a * a
+
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: expected span, found
+*)
+let left (a : span) : span = 3 * a
