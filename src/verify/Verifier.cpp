@@ -757,7 +757,34 @@ class Encoder {
     // it puts in a value. Datatypes are then plain, and the depth and size
     // axioms, not Z3's own acyclicity, are what make them well founded.
     llvm::SmallVector<Type> wide;
+    // Leaves that are the field buffers of one buffer of records, which
+    // share its length: each leaf's group, or -1.
+    llvm::SmallVector<int> group;
   };
+
+  // The groups of `t`'s leaves, in the order transforms::recordLeaves
+  // gives them: the field buffers of a buffer of records are one group.
+  static void leafGroups(Type t, llvm::SmallVectorImpl<int> &out, int &next) {
+    auto elementRecord = [](Type b) -> RecordType {
+      if (auto a = mlir::dyn_cast<ArrayType>(b))
+        return mlir::dyn_cast<RecordType>(a.getElementType());
+      if (auto sl = mlir::dyn_cast<SliceType>(b))
+        return mlir::dyn_cast<RecordType>(sl.getElementType());
+      return {};
+    };
+    if (auto r = mlir::dyn_cast<RecordType>(t)) {
+      for (Type f : r.getFieldTypes()) leafGroups(f, out, next);
+      return;
+    }
+    if (RecordType r = elementRecord(t)) {
+      llvm::SmallVector<Type> fields;
+      transforms::recordLeaves(r, fields);
+      int g = next++;
+      for (size_t i = 0; i < fields.size(); ++i) out.push_back(g);
+      return;
+    }
+    out.push_back(-1);
+  }
   struct RecInfo {
     std::string sort;  // rec.tree
     std::vector<RecCtor> ctors;
@@ -798,6 +825,8 @@ class Encoder {
           transforms::recordLeaves(p, rc.leaves);
         else
           rc.leaves.push_back(p);
+        int next = 0;
+        leafGroups(p, rc.group, next);
       }
       for (Type leaf : rc.leaves) {
         std::set<std::string> before = recUsed_;
@@ -1956,6 +1985,20 @@ class Encoder {
           assertTerm(inRange(results[0], it));
       // A payload's integers are in their ranges, and its buffers' lengths
       // are lengths, as they were when the value was built.
+      // The field buffers of one buffer of records share its length.
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
+        unsigned tag = 0;
+        if (const RecCtor *c = recCtor(pl.getInput().getType(), pl.getCtor(), tag))
+          if (c->group.size() == pl.getNumResults())
+            for (unsigned a = 0; a < pl.getNumResults(); ++a)
+              for (unsigned b = a + 1; b < pl.getNumResults(); ++b)
+                if (c->group[a] >= 0 && c->group[a] == c->group[b]) {
+                  Value la = lengths_.lookup(pl.getResult(a));
+                  Value lb = lengths_.lookup(pl.getResult(b));
+                  if (la && lb) assertTerm(eq(la, lb));
+                  break;
+                }
+      }
       if (auto pl = mlir::dyn_cast<RecPayloadOp>(op))
         for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
           if (auto it = mlir::dyn_cast<IntType>(r.getType()))

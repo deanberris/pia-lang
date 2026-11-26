@@ -58,9 +58,9 @@ interface Document = sig
   (** The span sp of s is a string token, as a key must be. *)
   let spec key_ok : (s : [u8]) -> (sp : span) -> bool @opaque
   (** Every number, string and key of v is a token of its kind in s. *)
-  let spec valid_dom : (r : region) -> (s : [u8]) -> (v : json r) -> bool @opaque
+  let spec valid_dom : (s : [u8]) -> (v : json) -> bool @opaque
   (** The whole of s as a document nested at most max_depth deep. *)
-  let parse : (r : region) -> (s : [u8]) -> (max_depth : int{0..255}) -> (values : inout mutable Pia.Mem.Alloc.bump (json r) r) -> (members : inout mutable Pia.Mem.Alloc.bump (member r) r) -> borrowed(r) result (json r) dom_error
+  let parse : (s : [u8]) -> (max_depth : int{0..255}) -> (values : inout mutable Pia.Mem.Alloc.bump json) -> (members : inout mutable Pia.Mem.Alloc.bump member) -> result json dom_error
     ensures (match result with | Ok v -> valid_dom s v | Err _ -> true)
 end
 
@@ -92,7 +92,7 @@ let dom_error = type
 let spec key_ok (s : [u8]) (sp : span) : bool @opaque =
   Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
 
-let rec spec valid_dom (r : region) (s : [u8]) (v : json r) : bool @opaque
+let rec spec valid_dom (s : [u8]) (v : json) : bool @opaque
   decreases depth v
 = match v with
   | JNull -> true
@@ -137,8 +137,8 @@ let role (k : Pia.Text.Json.Spec.kind) : int{0..11}
 (* How many values an array holds, or members an object, from pos, just
    after its opening bracket, to its closing one. A value is counted at
    its first token at the container's own level, and a member at its
-   colon there. Nested containers are passed over; a bracket that does
-   not match is left for the parse to report. *)
+   colon there. Nested containers are passed over. A lex error is the
+   error; a container that does not close is misplaced at its start. *)
 let count (s : [u8]) (pos : usize) (object : bool) : result usize dom_error
   requires pos <= len s
   ensures (match result with | Ok n -> n <= len s | Err _ -> true)
@@ -146,12 +146,13 @@ let count (s : [u8]) (pos : usize) (object : bool) : result usize dom_error
   let level : mutable usize = 0 in
   let n : mutable usize = 0 in
   let closed : mutable bool = false in
+  let why : mutable dom_error = Misplaced pos in
   while closed = false && at < len s
     invariant at <= len s && n <= at && level <= at
     decreases len s - at
   do
     (match token s at with
-     | Err _ -> at <- len s
+     | Err e -> (why <- e; at <- len s)
      | Ok t ->
        (let k = role t.kind in
         if t.stop <= at || k = 11 then at <- len s
@@ -167,7 +168,7 @@ let count (s : [u8]) (pos : usize) (object : bool) : result usize dom_error
               else if closes && level > 0 then level <- level - 1);
              at <- t.stop))))
   done;
-  if closed then Ok n else Err (Misplaced pos)
+  if closed then Ok n else Err why
 
 (* A value read from pos: the value, and the position after it. *)
 let read = let (r : region) => type { value : json r; next : usize }
@@ -184,31 +185,31 @@ let after (s : [u8]) (pos : usize) (last : bool) (close : int{0..11}) : result u
 
 (* Each constructor, with what makes it valid: the one place each case of
    valid_dom is unfolded. *)
-let leaf (r : region) (s : [u8]) (v : json r) : json r
+let leaf (s : [u8]) (v : json) : json
   requires (match v with | JNull -> true | Bool _ -> true | _ -> false)
   ensures valid_dom s result && result = v
   with valid_dom
 = v
 
-let num (r : region) (s : [u8]) (sp : span) : json r
+let num (s : [u8]) (sp : span) : json
   requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.Number sp.start sp.stop
   ensures valid_dom s result
   with valid_dom
 = Num sp
 
-let str (r : region) (s : [u8]) (sp : span) : json r
+let str (s : [u8]) (sp : span) : json
   requires Pia.Text.Json.Spec.token_at s Pia.Text.Json.Spec.String sp.start sp.stop
   ensures valid_dom s result
   with valid_dom
 = Str sp
 
-let arr (r : region) (s : [u8]) (cells : borrowed mutable [json r]) : json r
+let arr (s : [u8]) (cells : borrowed mutable [json]) : json
   requires forall (j in 0 .. len cells). valid_dom s cells.[j]
   ensures valid_dom s result
   with valid_dom
 = Arr { items = cells }
 
-let obj (r : region) (s : [u8]) (cells : borrowed mutable [member r]) : json r
+let obj (s : [u8]) (cells : borrowed mutable [member]) : json
   requires forall (j in 0 .. len cells). key_ok s cells.[j].key
   requires forall (j in 0 .. len cells). valid_dom s cells.[j].value
   ensures valid_dom s result
@@ -233,7 +234,7 @@ let key_colon (s : [u8]) (pos : usize) : result keyed dom_error
      if role colon.kind <> 10 then Err (Misplaced colon.start)
      else Ok { key = { start = key.start; stop = key.stop }; next = colon.stop })
 
-let rec value (r : region) (s : [u8]) (pos : usize) (budget : int{0..255}) (values : inout mutable Pia.Mem.Alloc.bump (json r) r) (members : inout mutable Pia.Mem.Alloc.bump (member r) r) : borrowed(r) result (read r) dom_error
+let rec value (s : [u8]) (pos : usize) (budget : int{0..255}) (values : inout mutable Pia.Mem.Alloc.bump json) (members : inout mutable Pia.Mem.Alloc.bump member) : result read dom_error
   requires pos <= len s
   ensures (match result with | Ok x -> pos <= x.next && x.next <= len s | Err _ -> true)
   ensures (match result with | Ok x -> valid_dom s x.value | Err _ -> true)
@@ -313,7 +314,7 @@ let rec value (r : region) (s : [u8]) (pos : usize) (budget : int{0..255}) (valu
            else Ok { value = v; next = at })))
   else Err (Misplaced t.start)
 
-let parse (r : region) (s : [u8]) (max_depth : int{0..255}) (values : inout mutable Pia.Mem.Alloc.bump (json r) r) (members : inout mutable Pia.Mem.Alloc.bump (member r) r) : borrowed(r) result (json r) dom_error
+let parse (s : [u8]) (max_depth : int{0..255}) (values : inout mutable Pia.Mem.Alloc.bump json) (members : inout mutable Pia.Mem.Alloc.bump member) : result json dom_error
   ensures (match result with | Ok v -> valid_dom s v | Err _ -> true)
 = let x = value s 0 max_depth values members? in
   let t = token s x.next? in

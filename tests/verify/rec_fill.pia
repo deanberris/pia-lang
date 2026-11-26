@@ -1,0 +1,67 @@
+(* A recursive value built from a buffer filled in a loop (ADR 0047): a
+   full tree of arrays, `k` wide and `d` deep, each array's cells taken in
+   one allocation and filled by the recursive calls. The loop carries the
+   allocator, whose memory is a buffer, from call to call: the verifier
+   gives a carried buffer fresh contents and length in an arbitrary
+   iteration, which the invariants describe. Writing the cells before the
+   array is built from them, in a later branch, is not the aliasing the
+   value rule forbids.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let span = type { start : usize; stop : usize }
+let vec = let (t : type) (r : region) => type { items : borrowed(r) mutable [t] }
+let rec json = let (r : region) => type
+  | Null
+  | Num of span
+  | Arr of vec (json r) r
+
+let rec spec valid (r : region) (n : usize) (v : json r) : bool
+  decreases depth v
+= match v with
+  | Null -> true
+  | Num sp -> sp.start < sp.stop && sp.stop <= n
+  | Arr a -> forall (i in 0 .. len a.items). valid n a.items.[i]
+
+(*
+// CHECK: rec_fill.pia:[[@LINE+14]]:8: proved: the loop invariant holds after each iteration [smt]
+// CHECK: rec_fill.pia:[[@LINE+5]]:3: proved: the postcondition holds [smt]
+*)
+let rec tree (r : region) (m : inout mutable bump (json r) r) (d : u8) (k : usize) : result (json r) oom
+  requires m.used <= len m.mem && k <= 4
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with | Ok v -> valid 10 v | Err _ -> true)
+  decreases d
+= if d = 0 then Ok (Num { start = 1; stop = 2 })
+  else
+    (let cells = alloc m k? in
+     let failed : mutable bool = false in
+     for i in 0 .. k
+       invariant m.used <= len m.mem && len m.mem = old (len m.mem)
+       invariant failed || (forall (j in 0 .. i). valid 10 cells.[j])
+     do
+       if failed = false then
+         (match tree m (d - 1) k with
+          | Ok c -> cells.[i] <- c
+          | Err _ -> failed <- true)
+     done;
+     if failed then Err OutOfMemory else Ok (Arr { items = cells }))
+
+(*
+// CHECK: 0 failed, 0 skipped
+*)
