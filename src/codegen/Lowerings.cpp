@@ -403,10 +403,9 @@ mlir::LogicalResult checkLowerings(mlir::ModuleOp module) {
   {
     // What lowerToCore cannot compile yet is codegen's to report, when
     // and if the program is compiled; the verifier may still prove it.
-    mlir::ScopedDiagnosticHandler quiet(module.getContext(),
-                                        [](mlir::Diagnostic &) {
-                                          return mlir::success();
-                                        });
+    mlir::ScopedDiagnosticHandler quiet(
+        module.getContext(),
+        [](mlir::Diagnostic &) { return mlir::success(); });
     eraseContracts(*copy);
     if (mlir::failed(lowerToCore(*copy)))
       return mlir::success();

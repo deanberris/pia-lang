@@ -481,7 +481,8 @@ class Expander {
       // as written.
       if (item->kind == NodeKind::LetItem) changed |= runTactic(*item);
       // `@lower(gen args)` computes the function's MLIR (ADR 0065, step 2).
-      if (item->kind == NodeKind::LetItem) changed |= runLowering(*item);
+      if (item->kind == NodeKind::LetItem)
+        changed |= runLowering(*item);
       if (item->kind == NodeKind::Theory && item->flags != "call")
         for (NodePtr &m : item->kids)
           if (m->kind == NodeKind::LetItem) changed |= runTactic(*m);
@@ -827,8 +828,10 @@ class Expander {
     Node &attrs = *item.kids[1]->kids[1];
     Node *lower = nullptr;
     for (NodePtr &a : attrs.kids)
-      if (a->text == "lower") lower = a.get();
-    if (!lower || lower->kids.size() != 1) return false;
+      if (a->text == "lower")
+        lower = a.get();
+    if (!lower || lower->kids.size() != 1)
+      return false;
     const Node &e = *lower->kids[0];
     const Node &head = e.kind == NodeKind::Apply ? *e.kids[0] : e;
     // A string, or anything that is not a metaprogram's call, is for IRGen
@@ -856,10 +859,11 @@ class Expander {
       return true;
     }
     if (v->kind != Value::Kind::Str) {
-      diags_.error(lower->loc,
-                   "@lower(" + head.text + " ...) must compute a string of "
-                   "MLIR, but " + who + " returned " +
-                       Interpreter::kindName(v->kind));
+      diags_.error(lower->loc, "@lower(" + head.text +
+                                   " ...) must compute a string of "
+                                   "MLIR, but " +
+                                   who + " returned " +
+                                   Interpreter::kindName(v->kind));
       lower->kids.clear();
       return true;
     }

@@ -549,7 +549,8 @@ int compile(mlir::ModuleOp module, const std::string &mode,
     return 1;
   }
   // A lowering's MLIR is checked before anything is proved (ADR 0065).
-  if (mlir::failed(pia::codegen::checkLowerings(module))) return 1;
+  if (mlir::failed(pia::codegen::checkLowerings(module)))
+    return 1;
   std::vector<Outcome> outcomes =
       pia::verify::verifyModule(module, verifyOptions, &stats);
   if (verifyStats) {
@@ -1036,7 +1037,8 @@ int main(int argc, char **argv) {
         }
         // A lowering's MLIR is checked before anything is proved, in
         // every mode (ADR 0065, step 2).
-        if (mlir::failed(pia::codegen::checkLowerings(*module))) return 1;
+        if (mlir::failed(pia::codegen::checkLowerings(*module)))
+          return 1;
         std::vector<pia::verify::Outcome> outcomes =
             pia::verify::verifyModule(*module, options, &stats);
         if (verifyStats) {
@@ -1074,7 +1076,8 @@ int main(int argc, char **argv) {
                        "--allow-unproved=<file:line[:col]>\n";
         if (failed || unproved > 0) return 1;
       } else if (module) {
-        if (mlir::failed(pia::codegen::checkLowerings(*module))) return 1;
+        if (mlir::failed(pia::codegen::checkLowerings(*module)))
+          return 1;
         module->print(llvm::outs());
       }
     }
