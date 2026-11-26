@@ -2,7 +2,7 @@
 
 Date: 2026-11-24
 
-Status: Proposed. Dean asked for strong type aliases (2026-11-24), and chose the spelling in section 1, `type` always makes a new type, over a separate `distinct` word (2026-11-24).
+Status: Accepted (Dean, 2026-11-27, with the answer below). Dean asked for strong type aliases (2026-11-24), and chose the spelling in section 1, `type` always makes a new type, over a separate `distinct` word (2026-11-24). Steps 1 to 3 are built (#414, #425, #441), and step 4 with `@derive(hash)` and `@derive(json)` on distinct types.
 
 ## Context
 
@@ -107,10 +107,10 @@ Implementation, one PR each:
 1. **Aliases spelled `let byte = u8`.** Sema accepts a `let` whose right side is a type expression as an alias, `type <scalar>` keeps meaning an alias for now, and every existing `type`-spelled alias in the repository moves to the new spelling. Tests: `tests/verify/type_aliases.pia`, `tests/irgen/alias_errors.pia`.
 2. **`type e` is distinct.** The prelude's `distinct`, the `@distinct` attribute, the `underlying` builtin, calls of a type as conversions, the diagnostics that suggest them, and one-scalar-field records returned as the scalar in the C ABI. Tests: `tests/verify/distinct_types.pia`, `tests/irgen/distinct_errors.pia`, `tests/codegen/distinct_abi.pia`, `tests/meta/distinct.pia`.
 3. **Derives.** `ord`, `add`, `scale` and `bounds` in the prelude, and `eq` checked on distinct types. Tests: `tests/verify/distinct_derives.pia`.
-4. **`json` and `hash`.** `derive_json` and `Pia.Core.Hash` write and hash the underlying value. Tests in `tests/std`.
+4. **`json` and `hash`.** `derive_json` and `Pia.Core.Hash` write and hash the underlying value: `derive_hash` is exported by Pia.Core.Hash's interface, and `json_record` hands a distinct type to `json_distinct`. Tests: `tests/std/hash_derive.pia`, `tests/std/hash_derive_errors.pia`, `tests/std/json_derive_distinct.pia` and `json_distinct_run_test`.
 
 Docs: the tour's Records section and `docs/irgen.md` (types), `docs/meta.md` (`distinct`, `underlying`, the new derives), `docs/grammar.md` (aliases), and the pia-language skill. ADR 0059's `let byte = type u8` example becomes `let byte = u8`.
 
-Open questions:
+Answered questions:
 
-1. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Proposed: yes, as one family.
+1. Whether `@derive(add)` should also give `+|` and `-|` (saturating) when the underlying type has them. Dean (2026-11-27): no. Saturating operators get their own derive target, such as `@derive(saturating_add)`, so `@derive(add)` gives only `+` and `-`. `saturating_add` is not built yet.
