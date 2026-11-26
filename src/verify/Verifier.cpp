@@ -505,7 +505,7 @@ class Encoder {
   }
 
   // The sort of a declared constant, so its model value can be read.
-  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted };
+  enum class Sort { BitVector, Bool, Int, Real, Uninterpreted, F32, F64 };
 
   struct Decl {
     std::string exported;  // the SMT-LIB name
@@ -685,6 +685,10 @@ class Encoder {
   Type sortOf(Type t) {
     if (mlir::isa<IntType, mlir::IndexType>(t)) return bvType();
     if (t.isInteger(1)) return boolType();
+    // A float is its IEEE bit pattern, a bit-vector of its own width
+    // (floatSemantics).
+    if (auto f = mlir::dyn_cast<mlir::FloatType>(t))
+      return mlir::smt::BitVectorType::get(ctx_, f.getWidth());
     if (mlir::isa<UnboundedIntType>(t)) return intType();
     if (mlir::isa<RealType>(t)) return realType();
     // A theory's sort is an uninterpreted SMT sort of the same name.
@@ -1132,6 +1136,9 @@ class Encoder {
     Type sort = sortOf(t);
     if (!sort) return std::nullopt;
     Value v = declare(sort, display, !display.empty());
+    // A float's counterexample value is read from its bits as a float.
+    if (!display.empty() && mlir::isa<mlir::FloatType>(t))
+      decls_.back().sort = t.isF32() ? Sort::F32 : Sort::F64;
     if (auto it = mlir::dyn_cast<IntType>(t)) assertTerm(inRange(v, it));
     if (mlir::isa<mlir::IndexType>(t)) assertTerm(inRange(v, indexRange()));
     return v;
@@ -2220,6 +2227,62 @@ class Encoder {
 
   // The value semantics shared by the forward walk and demand encoding.
   // Returns false for ops it does not model.
+  // f32 and f64 (M11) before ADR 0038's encoding: a float is its bit
+  // pattern, so a literal is exact and negation, which flips the sign bit,
+  // is too. The other operations are uninterpreted functions of the bits:
+  // the same operands give the same result, as IEEE 754 promises, and
+  // nothing else is known, so a goal that needs their values fails
+  // rather than being proved wrongly. `=` is IEEE equality, not equality of
+  // bits (NaN <> NaN, -0.0 = 0.0), so it is uninterpreted too, and `<>` is
+  // its negation; `>` and `>=` are `<` and `<=` swapped, as in IEEE 754.
+  Value floatSemantics(Operation *op, llvm::ArrayRef<Value> in) {
+    auto name = [](Type t, llvm::StringRef what) {
+      return ((t.isF32() ? "f32." : "f64.") + what).str();
+    };
+    if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
+      auto f = mlir::dyn_cast<mlir::FloatAttr>(c.getValue());
+      if (!f)
+        return Value();
+      return create<mlir::smt::BVConstantOp>(f.getValue().bitcastToAPInt());
+    }
+    if (mlir::isa<mlir::arith::NegFOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      Type t = mlir::smt::BitVectorType::get(ctx_, w);
+      Value sign = create<mlir::smt::BVConstantOp>(APInt::getSignMask(w));
+      return create<mlir::smt::BVXOrOp>(t, in[0], sign);
+    }
+    if (mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
+                  mlir::arith::DivFOp>(op)) {
+      Type t = op->getResult(0).getType();
+      llvm::StringRef what = mlir::isa<mlir::arith::AddFOp>(op)   ? "add"
+                             : mlir::isa<mlir::arith::SubFOp>(op) ? "sub"
+                             : mlir::isa<mlir::arith::MulFOp>(op) ? "mul"
+                                                                  : "div";
+      return apply(name(t, what), {in[0], in[1]}, sortOf(t));
+    }
+    if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
+      Type t = c.getLhs().getType();
+      using P = mlir::arith::CmpFPredicate;
+      switch (c.getPredicate()) {
+      case P::OEQ:
+        return apply(name(t, "eq"), {in[0], in[1]}, boolType());
+      case P::UNE:
+        return notOf(apply(name(t, "eq"), {in[0], in[1]}, boolType()));
+      case P::OLT:
+        return apply(name(t, "lt"), {in[0], in[1]}, boolType());
+      case P::OLE:
+        return apply(name(t, "le"), {in[0], in[1]}, boolType());
+      case P::OGT:
+        return apply(name(t, "lt"), {in[1], in[0]}, boolType());
+      case P::OGE:
+        return apply(name(t, "le"), {in[1], in[0]}, boolType());
+      default:
+        return Value();
+      }
+    }
+    return Value();
+  }
+
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
                  llvm::DenseMap<Value, Value> &arrays,
                  llvm::DenseMap<Value, Value> &lengths,
@@ -2482,6 +2545,10 @@ class Encoder {
       views[sl.getResult()] = base;
       lengths[sl.getResult()] = bvBin("sub", hi, lo);
       out.push_back(lo);
+      return true;
+    }
+    if (Value r = floatSemantics(op, in)) {
+      out.push_back(r);
       return true;
     }
     if (auto c = mlir::dyn_cast<mlir::arith::ConstantOp>(op)) {
@@ -3258,7 +3325,7 @@ class Encoder {
   // record unused sorts or datatypes in the query.
   static bool canEncodeType(Type t) {
     if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
-                  SortType, RecType>(t) ||
+                  SortType, RecType, mlir::FloatType>(t) ||
         t.isInteger(1))
       return true;
     if (auto r = mlir::dyn_cast<RecordType>(t))
@@ -5430,6 +5497,19 @@ void solve(const Job &job, const Options &options, Outcome &out,
         if (m.get_const_decl(i).name().str() == d.exported)
           return recValue(m.get_const_interp(m.get_const_decl(i)));
       return "any";
+    }
+    if (d.sort == Sort::F32 || d.sort == Sort::F64) {
+      // A float is its bits (Encoder::floatSemantics): read back as one.
+      bool f32 = d.sort == Sort::F32;
+      z3::expr v = m.eval(ctx.bv_const(name, f32 ? 32 : 64),
+                          /*model_completion=*/true);
+      uint64_t bits = 0;
+      if (!v.is_numeral_u64(bits))
+        return v.to_string();
+      llvm::APFloat x(f32 ? llvm::APFloat::IEEEsingle()
+                          : llvm::APFloat::IEEEdouble(),
+                      APInt(f32 ? 32 : 64, bits));
+      return sema::floatText(x);
     }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
                  : d.sort == Sort::Int  ? ctx.int_const(name)
