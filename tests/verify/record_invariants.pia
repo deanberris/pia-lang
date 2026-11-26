@@ -48,15 +48,19 @@ let at (r : region) (g : grid r) (i : usize) (j : usize) : u8
   g.cells.[i * g.cols + j]
 
 (* A caller proves the invariant of what it passes. *)
-let first (r : region) (cells : borrowed(r) mutable [u8]) : u8
-  requires len cells = 4
-= at { rows = 2; cols = 2; cells = cells } 0 0
+let corner (r : region) (g : grid r) : u8
+  requires 0 < g.rows && 0 < g.cols
+= at g 0 0
 
-let wrong (r : region) (cells : borrowed(r) mutable [u8]) : u8
-  requires len cells = 3
-= at { rows = 2; cols = 2; cells = cells } 0 0
+let gap (a : u32) (b : u32) : u32
+  requires a <= b
+= width { lo = a; hi = b }
 
+let unchecked_gap (a : u32) (b : u32) : u32 = width { lo = a; hi = b }
+
+(*
 // CHECK: record_invariants.pia:9:49: failed: the postcondition holds
 // CHECK: record_invariants.pia:9:49: failed: the postcondition holds
 // CHECK: record_invariants.pia:{{[0-9]+}}:{{[0-9]+}}: failed: the precondition
 // CHECK: proved, 3 failed, 0 skipped
+*)
