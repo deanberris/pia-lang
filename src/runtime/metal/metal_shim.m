@@ -152,3 +152,59 @@ int32_t pia_gpu_dispatch(uint64_t device, uint64_t kernel,
     return cb.status == MTLCommandBufferStatusCompleted ? PIA_GPU_OK : PIA_GPU_FAULT;
   }
 }
+
+// pia_gpu_run's device, libraries (by the address of their bytes) and
+// kernels, made on first use and kept for the life of the program.
+static uint64_t run_device;
+static NSMutableDictionary<NSNumber *, NSNumber *> *run_libraries;
+
+int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
+                    uint64_t name_len, uint64_t args, uint64_t nargs,
+                    uint64_t threads) {
+  @autoreleasepool {
+    uint64_t kernel = 0;
+    @synchronized([PiaGpuDevice class]) {
+      if (!run_device) run_device = pia_gpu_device_open();
+      if (!run_device) return PIA_GPU_UNAVAILABLE;
+      if (!run_libraries) run_libraries = [NSMutableDictionary new];
+      NSNumber *key = @(lib);
+      uint64_t library = run_libraries[key].unsignedLongLongValue;
+      if (!library) {
+        library = pia_gpu_library_load(run_device,
+                                       (const uint8_t *)(uintptr_t)lib, lib_len);
+        if (!library) return PIA_GPU_FAULT;
+        run_libraries[key] = @(library);
+      }
+      kernel = pia_gpu_kernel_get(library, (const uint8_t *)(uintptr_t)name,
+                                  name_len);
+    }
+    if (!kernel) return PIA_GPU_FAULT;
+    if (threads == 0) return PIA_GPU_OK;
+    PiaGpuDevice *d = borrow(run_device);
+    const uint64_t *a = (const uint64_t *)(uintptr_t)args;
+    NSMutableArray<id<MTLBuffer>> *buffers = [NSMutableArray new];
+    uint64_t handles[64];
+    if (nargs > 64) return PIA_GPU_FAULT;
+    for (uint64_t i = 0; i < nargs; ++i) {
+      uint64_t bytes = a[3 * i + 1];
+      id<MTLBuffer> b =
+          bytes ? [d.device newBufferWithBytes:(const void *)(uintptr_t)a[3 * i]
+                                        length:bytes
+                                       options:MTLResourceStorageModeShared]
+                : [d.device newBufferWithLength:16
+                                       options:MTLResourceStorageModeShared];
+      if (!b) return PIA_GPU_OUT_OF_MEMORY;
+      [buffers addObject:b];
+      handles[i] = (uint64_t)(uintptr_t)(__bridge void *)b;
+    }
+    id<MTLComputePipelineState> pipeline = borrow(kernel);
+    uint64_t group = pipeline.threadExecutionWidth;
+    int32_t r = pia_gpu_dispatch(run_device, kernel, handles, nargs, threads,
+                                 group ? group : 64, 0);
+    if (r != PIA_GPU_OK) return r;
+    for (uint64_t i = 0; i < nargs; ++i)
+      if (a[3 * i + 2] && a[3 * i + 1])
+        memcpy((void *)(uintptr_t)a[3 * i], buffers[i].contents, a[3 * i + 1]);
+    return PIA_GPU_OK;
+  }
+}
