@@ -176,7 +176,6 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `skills/` holds the agent skills, listed in `skills/README.md`. Claude Code finds them through `.claude/skills/*`, which are symlinks. They are `skills/pia-language` (writing Pia), `skills/pia-porting` (a feature map from C, C++, Rust, OCaml, Zig and Go), `skills/pia-idioms` (acting on lints), `skills/pia-contracts` (fixing failed goals), `skills/piac-verify` and `skills/pia-fast-proofs` (running the prover), `skills/piac-build` (compiling, linking, trust reports, certificates), `skills/pia-repl` and `skills/pia-mcp` (cell by cell), and `skills/pia-proof-debugging` (is this C, C++ or Rust correct?).
 - `.claude-plugin/marketplace.json` and `.claude-plugin/plugin.json` make the repository a Claude Code plugin marketplace: the `pia` plugin installs the skills, `pia-lsp` as a language server and `pia mcp` as an MCP server (docs/agents.md).
 - `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
-- `wip/huffman-kraft/` (`README.md`, `kraft.pia`) is unfinished work on Huffman's Kraft lemma (ADR 0054 step 5), not built by Bazel; its README says what is proved.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
 

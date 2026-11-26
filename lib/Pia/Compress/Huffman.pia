@@ -14,9 +14,11 @@
 
    `len_count`, `first_code` and `code_of` are the canonical code itself, the
    three steps of RFC 1951 3.2.2, and `hbits` is the bits of a code as the
-   stream holds them. They are what build and decode are to be proved
-   against for inflate's whole-stream theorem (ADR 0058); for now the RFC's
-   own example is proved of them (`rfc_example`). *)
+   stream holds them. build is proved to fill its table as the canonical
+   code says (`tab_from`), and decode, given such a table and a code
+   within the Kraft bound (`room`, which `kraft_room` gives from `kraft l
+   n <= 32768`), to return the symbol whose code is the bits it read. The
+   RFC's own example is proved of them too (`rfc_example`). *)
 module Pia.Compress.Huffman : Huffman
 
 import Pia.Image.Bits.Bits as B
@@ -40,6 +42,7 @@ interface Huffman = sig
     requires len t = 704 && n <= len l
     ensures result = Complete <==> kraft l n = 32768
     ensures result = Oversubscribed <==> kraft l n > 32768
+    ensures tab_from t l n 1
   let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> (spec l : [u8]) -> (spec h : bool) -> result decoded usize
     requires len t = 704 && pos <= B.nbits s
     requires h ==> n <= len l && room l n 1 && tab_from t l n 1
@@ -49,6 +52,9 @@ interface Huffman = sig
     ensures h ==> (match result with
       | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false)
       | Err _ -> true)
+  let lemma kraft_room : (l : [u8]) -> (n : int{0..320}) -> (b : int{1..16}) -> unit
+    requires n <= len l && kraft l n <= 32768
+    ensures room l n b
 end
 
 (** How complete a code is. *)
@@ -76,7 +82,7 @@ let spec kraft (l : [u8]) (k : int{0..320}) : u32 @opaque
 (** The canonical code of RFC 1951 3.2.2, which build's tables hold and
     decode reads (ADR 0054, step 5): how many of the first k lengths are
     bits long, step 1. *)
-let spec len_count (l : [u8]) (k : int{0..320}) (bits : int{1..15}) : int{0..320}
+let spec len_count (l : [u8]) (k : int{0..320}) (bits : int{1..15}) : int{0..320} @opaque
   requires k <= len l
   ensures result <= k
   decreases k
@@ -125,6 +131,129 @@ let spec room (l : [u8]) (n : int{0..320}) (bits : int{1..16}) : bool @opaque
     if first_code l n b + len_count l n b > B.pow2 b then false
     else room l n (bits + 1))
 
+(* The Kraft sum by length: each length's count times its weight, for
+   the first k lengths. Written out, so each weight is a constant. *)
+(* The Kraft sum by length on values: count i weighs 2^(15 - i). Opaque,
+   so the step lemmas see it as one term. *)
+let spec kflat (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) (a6 : int{0..320}) (a7 : int{0..320}) (a8 : int{0..320}) (a9 : int{0..320}) (a10 : int{0..320}) (a11 : int{0..320}) (a12 : int{0..320}) (a13 : int{0..320}) (a14 : int{0..320}) (a15 : int{0..320}) : u32 @opaque
+= a1 * 16384u32 + a2 * 8192u32 + a3 * 4096u32 + a4 * 2048u32 + a5 * 1024u32 + a6 * 512u32 + a7 * 256u32 + a8 * 128u32 + a9 * 64u32 + a10 * 32u32 + a11 * 16u32 + a12 * 8u32 + a13 * 4u32 + a14 * 2u32 + a15 * 1u32
+
+let spec ksum (l : [u8]) (k : int{0..320}) : u32
+  requires k <= len l
+= kflat (len_count l k 1) (len_count l k 2) (len_count l k 3) (len_count l k 4) (len_count l k 5) (len_count l k 6) (len_count l k 7) (len_count l k 8) (len_count l k 9) (len_count l k 10) (len_count l k 11) (len_count l k 12) (len_count l k 13) (len_count l k 14) (len_count l k 15)
+
+(* One more length adds one to its own count: len_count's step, the
+   only place the step lemmas below reveal it. *)
+let lemma lc_succ (l : [u8]) (k : int{0..319}) (i : int{1..15}) : unit
+  requires k < len l
+  ensures len_count l (k + 1) i = len_count l k i + (if l.[k] = i then 1 else 0)
+  with len_count
+= ()
+
+(* The step lemmas below work on plain values, so that no goal sees
+   len_count: one more length adds one to its own count only. Five
+   lengths at a time keep each goal small. *)
+let lemma g5 (x : u8) (i : int{0..10}) (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) (b1 : int{0..320}) (b2 : int{0..320}) (b3 : int{0..320}) (b4 : int{0..320}) (b5 : int{0..320}) : unit
+  requires b1 = a1 + (if x = i + 1 then 1 else 0) && b2 = a2 + (if x = i + 2 then 1 else 0) && b3 = a3 + (if x = i + 3 then 1 else 0) && b4 = a4 + (if x = i + 4 then 1 else 0) && b5 = a5 + (if x = i + 5 then 1 else 0)
+  ensures b1 + b2 + b3 + b4 + b5 = a1 + a2 + a3 + a4 + a5 + (if i + 1 <= x && x <= i + 5 then 1 else 0)
+= ()
+
+(* Five counts weighted 16, 8, 4, 2, 1. *)
+let spec w5v (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) : u32 = a1 * 16u32 + a2 * 8u32 + a3 * 4u32 + a4 * 2u32 + a5 * 1u32
+
+let lemma gw5 (x : u8) (i : int{0..10}) (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) (b1 : int{0..320}) (b2 : int{0..320}) (b3 : int{0..320}) (b4 : int{0..320}) (b5 : int{0..320}) : unit
+  requires b1 = a1 + (if x = i + 1 then 1 else 0) && b2 = a2 + (if x = i + 2 then 1 else 0) && b3 = a3 + (if x = i + 3 then 1 else 0) && b4 = a4 + (if x = i + 4 then 1 else 0) && b5 = a5 + (if x = i + 5 then 1 else 0)
+  ensures w5v b1 b2 b3 b4 b5 = w5v a1 a2 a3 a4 a5 + (if x = i + 1 then 16 else if x = i + 2 then 8 else if x = i + 3 then 4 else if x = i + 4 then 2 else if x = i + 5 then 1 else 0)
+= ()
+
+(* ksum's step on values: the 15 counts a before and b after. *)
+let lemma ks_vals (x : u8) (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) (a6 : int{0..320}) (a7 : int{0..320}) (a8 : int{0..320}) (a9 : int{0..320}) (a10 : int{0..320}) (a11 : int{0..320}) (a12 : int{0..320}) (a13 : int{0..320}) (a14 : int{0..320}) (a15 : int{0..320}) (b1 : int{0..320}) (b2 : int{0..320}) (b3 : int{0..320}) (b4 : int{0..320}) (b5 : int{0..320}) (b6 : int{0..320}) (b7 : int{0..320}) (b8 : int{0..320}) (b9 : int{0..320}) (b10 : int{0..320}) (b11 : int{0..320}) (b12 : int{0..320}) (b13 : int{0..320}) (b14 : int{0..320}) (b15 : int{0..320}) : unit
+  requires b1 = a1 + (if x = 1 then 1 else 0) && b2 = a2 + (if x = 2 then 1 else 0) && b3 = a3 + (if x = 3 then 1 else 0) && b4 = a4 + (if x = 4 then 1 else 0) && b5 = a5 + (if x = 5 then 1 else 0)
+  requires b6 = a6 + (if x = 6 then 1 else 0) && b7 = a7 + (if x = 7 then 1 else 0) && b8 = a8 + (if x = 8 then 1 else 0) && b9 = a9 + (if x = 9 then 1 else 0) && b10 = a10 + (if x = 10 then 1 else 0)
+  requires b11 = a11 + (if x = 11 then 1 else 0) && b12 = a12 + (if x = 12 then 1 else 0) && b13 = a13 + (if x = 13 then 1 else 0) && b14 = a14 + (if x = 14 then 1 else 0) && b15 = a15 + (if x = 15 then 1 else 0)
+  ensures kflat b1 b2 b3 b4 b5 b6 b7 b8 b9 b10 b11 b12 b13 b14 b15 = kflat a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 + (if 1 <= x && x <= 15 then weight x else 0)
+  with kflat
+= gw5 x 0 a1 a2 a3 a4 a5 b1 b2 b3 b4 b5; gw5 x 5 a6 a7 a8 a9 a10 b6 b7 b8 b9 b10; gw5 x 10 a11 a12 a13 a14 a15 b11 b12 b13 b14 b15;
+  assert a1 * 16384u32 + a2 * 8192u32 + a3 * 4096u32 + a4 * 2048u32 + a5 * 1024u32 + a6 * 512u32 + a7 * 256u32 + a8 * 128u32 + a9 * 64u32 + a10 * 32u32 + a11 * 16u32 + a12 * 8u32 + a13 * 4u32 + a14 * 2u32 + a15 * 1u32 = w5v a1 a2 a3 a4 a5 * 1024u32 + w5v a6 a7 a8 a9 a10 * 32u32 + w5v a11 a12 a13 a14 a15;
+  assert b1 * 16384u32 + b2 * 8192u32 + b3 * 4096u32 + b4 * 2048u32 + b5 * 1024u32 + b6 * 512u32 + b7 * 256u32 + b8 * 128u32 + b9 * 64u32 + b10 * 32u32 + b11 * 16u32 + b12 * 8u32 + b13 * 4u32 + b14 * 2u32 + b15 * 1u32 = w5v b1 b2 b3 b4 b5 * 1024u32 + w5v b6 b7 b8 b9 b10 * 32u32 + w5v b11 b12 b13 b14 b15
+
+(* ctotal's step on values. *)
+let lemma ct_vals (x : u8) (a1 : int{0..320}) (a2 : int{0..320}) (a3 : int{0..320}) (a4 : int{0..320}) (a5 : int{0..320}) (a6 : int{0..320}) (a7 : int{0..320}) (a8 : int{0..320}) (a9 : int{0..320}) (a10 : int{0..320}) (a11 : int{0..320}) (a12 : int{0..320}) (a13 : int{0..320}) (a14 : int{0..320}) (a15 : int{0..320}) (b1 : int{0..320}) (b2 : int{0..320}) (b3 : int{0..320}) (b4 : int{0..320}) (b5 : int{0..320}) (b6 : int{0..320}) (b7 : int{0..320}) (b8 : int{0..320}) (b9 : int{0..320}) (b10 : int{0..320}) (b11 : int{0..320}) (b12 : int{0..320}) (b13 : int{0..320}) (b14 : int{0..320}) (b15 : int{0..320}) : unit
+  requires b1 = a1 + (if x = 1 then 1 else 0) && b2 = a2 + (if x = 2 then 1 else 0) && b3 = a3 + (if x = 3 then 1 else 0) && b4 = a4 + (if x = 4 then 1 else 0) && b5 = a5 + (if x = 5 then 1 else 0)
+  requires b6 = a6 + (if x = 6 then 1 else 0) && b7 = a7 + (if x = 7 then 1 else 0) && b8 = a8 + (if x = 8 then 1 else 0) && b9 = a9 + (if x = 9 then 1 else 0) && b10 = a10 + (if x = 10 then 1 else 0)
+  requires b11 = a11 + (if x = 11 then 1 else 0) && b12 = a12 + (if x = 12 then 1 else 0) && b13 = a13 + (if x = 13 then 1 else 0) && b14 = a14 + (if x = 14 then 1 else 0) && b15 = a15 + (if x = 15 then 1 else 0)
+  ensures b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13 + b14 + b15 = a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 + (if 1 <= x && x <= 15 then 1 else 0)
+= g5 x 0 a1 a2 a3 a4 a5 b1 b2 b3 b4 b5; g5 x 5 a6 a7 a8 a9 a10 b6 b7 b8 b9 b10; g5 x 10 a11 a12 a13 a14 a15 b11 b12 b13 b14 b15;
+  assert a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15 = (a1 + a2 + a3 + a4 + a5) + (a6 + a7 + a8 + a9 + a10) + (a11 + a12 + a13 + a14 + a15);
+  assert b1 + b2 + b3 + b4 + b5 + b6 + b7 + b8 + b9 + b10 + b11 + b12 + b13 + b14 + b15 = (b1 + b2 + b3 + b4 + b5) + (b6 + b7 + b8 + b9 + b10) + (b11 + b12 + b13 + b14 + b15)
+
+(* One more length moves ksum by its weight, when it is 1 to 15. *)
+let lemma ks_step (l : [u8]) (k : int{0..319}) : unit
+  requires k < len l
+  ensures ksum l (k + 1) = ksum l k + (if 1 <= l.[k] && l.[k] <= 15 then weight l.[k] else 0)
+= let k1 : int{1..320} = k + 1 in
+  lc_succ l k 1;
+  lc_succ l k 2;
+  lc_succ l k 3;
+  lc_succ l k 4;
+  lc_succ l k 5;
+  lc_succ l k 6;
+  lc_succ l k 7;
+  lc_succ l k 8;
+  lc_succ l k 9;
+  lc_succ l k 10;
+  lc_succ l k 11;
+  lc_succ l k 12;
+  lc_succ l k 13;
+  lc_succ l k 14;
+  lc_succ l k 15;
+  ks_vals l.[k] (len_count l k 1) (len_count l k 2) (len_count l k 3) (len_count l k 4) (len_count l k 5) (len_count l k 6) (len_count l k 7) (len_count l k 8) (len_count l k 9) (len_count l k 10) (len_count l k 11) (len_count l k 12) (len_count l k 13) (len_count l k 14) (len_count l k 15) (len_count l k1 1) (len_count l k1 2) (len_count l k1 3) (len_count l k1 4) (len_count l k1 5) (len_count l k1 6) (len_count l k1 7) (len_count l k1 8) (len_count l k1 9) (len_count l k1 10) (len_count l k1 11) (len_count l k1 12) (len_count l k1 13) (len_count l k1 14) (len_count l k1 15)
+
+(* The sum by length is at most the Kraft sum, which counts lengths over
+   15 too. *)
+let lemma ks_kraft (l : [u8]) (k : int{0..320}) : unit
+  requires k <= len l
+  ensures ksum l k <= kraft l k
+  decreases k
+  with kraft, len_count, kflat
+= if k > 0 then (let k' : int{0..319} = k - 1 in ks_kraft l k'; ks_step l k') else ()
+
+(* Within the Kraft bound, the codes of length b fit below 2^b: for each
+   b, first_code unfolds to a sum of counts with constant weights. *)
+let lemma room_at (l : [u8]) (n : int{0..320}) (b : int{1..15}) : unit @fuel(16) @allow(deep_fuel)
+  requires n <= len l && kraft l n <= 32768
+  ensures first_code l n b + len_count l n b <= B.pow2 b
+  with kflat
+= ks_kraft l n;
+  if b = 1 then assert first_code l n b + len_count l n b <= 2
+  else if b = 2 then assert first_code l n b + len_count l n b <= 4
+  else if b = 3 then assert first_code l n b + len_count l n b <= 8
+  else if b = 4 then assert first_code l n b + len_count l n b <= 16
+  else if b = 5 then assert first_code l n b + len_count l n b <= 32
+  else if b = 6 then assert first_code l n b + len_count l n b <= 64
+  else if b = 7 then assert first_code l n b + len_count l n b <= 128
+  else if b = 8 then assert first_code l n b + len_count l n b <= 256
+  else if b = 9 then assert first_code l n b + len_count l n b <= 512
+  else if b = 10 then assert first_code l n b + len_count l n b <= 1024
+  else if b = 11 then assert first_code l n b + len_count l n b <= 2048
+  else if b = 12 then assert first_code l n b + len_count l n b <= 4096
+  else if b = 13 then assert first_code l n b + len_count l n b <= 8192
+  else if b = 14 then assert first_code l n b + len_count l n b <= 16384
+  else assert first_code l n b + len_count l n b <= 32768
+
+(* A code within the Kraft bound has room at every length from b up. *)
+let lemma kraft_room (l : [u8]) (n : int{0..320}) (b : int{1..16}) : unit
+  requires n <= len l && kraft l n <= 32768
+  ensures room l n b
+  decreases 16 - b
+  with room
+= if b < 16 then (
+    let bb : int{1..15} = b in
+    room_at l n bb;
+    let b1 : int{1..16} = b + 1 in
+    kraft_room l n b1)
+  else ()
+
 (** The little-endian u16 at t.[i]. *)
 let spec u16at (t : [u8]) (i : usize) : u16
   requires i < len t && 1 < len t - i
@@ -156,6 +285,7 @@ let spec tab_from (t : [u8]) (l : [u8]) (n : int{0..320}) (bits : int{1..16}) : 
 let lemma rfc_example (l : [u8]) : unit @fuel(5) @allow(deep_fuel)
   requires len l = 4 && l.[0] = 2 && l.[1] = 1 && l.[2] = 3 && l.[3] = 3
   ensures code_of l 4 0 = 2 && code_of l 4 1 = 0 && code_of l 4 2 = 6 && code_of l 4 3 = 7
+  with len_count
 = ()
 
 (* weight, in code. *)
@@ -172,10 +302,105 @@ let get16 (t : [u8]) (i : usize) : u16 @allow(duplicate_function)
 
 let put16 (t : borrowed inout mutable [u8]) (i : usize) (v : u16) : unit
   requires i < len t && 1 < len t - i
+  ensures u16at t i = v && len t = old (len t)
+  ensures forall (j in 0 .. len t). j <> i && j <> i + 1 ==> t.[j] = old (t.[j])
 = let lo : u8 = v & 0xFF in
   let hi : u8 = v >> 8 in
   t.[i] <- lo;
   t.[i + 1] <- hi
+
+(* How many of the first k lengths are 1 to 15, written out. *)
+let spec ctotal (l : [u8]) (k : int{0..320}) : int{0..4800}
+  requires k <= len l
+= len_count l k 1 + len_count l k 2 + len_count l k 3 + len_count l k 4 + len_count l k 5 + len_count l k 6 + len_count l k 7 + len_count l k 8 + len_count l k 9 + len_count l k 10 + len_count l k 11 + len_count l k 12 + len_count l k 13 + len_count l k 14 + len_count l k 15
+
+(* At most one per length. *)
+let lemma ct_le (l : [u8]) (k : int{0..320}) : unit
+  requires k <= len l
+  ensures ctotal l k <= k
+  decreases k
+= if k > 0 then (
+    let k' : int{0..319} = k - 1 in
+    ct_le l k';
+    lc_succ l k' 1;
+    lc_succ l k' 2;
+    lc_succ l k' 3;
+    lc_succ l k' 4;
+    lc_succ l k' 5;
+    lc_succ l k' 6;
+    lc_succ l k' 7;
+    lc_succ l k' 8;
+    lc_succ l k' 9;
+    lc_succ l k' 10;
+    lc_succ l k' 11;
+    lc_succ l k' 12;
+    lc_succ l k' 13;
+    lc_succ l k' 14;
+    lc_succ l k' 15;
+    ct_vals l.[k'] (len_count l k' 1) (len_count l k' 2) (len_count l k' 3) (len_count l k' 4) (len_count l k' 5) (len_count l k' 6) (len_count l k' 7) (len_count l k' 8) (len_count l k' 9) (len_count l k' 10) (len_count l k' 11) (len_count l k' 12) (len_count l k' 13) (len_count l k' 14) (len_count l k' 15) (len_count l k 1) (len_count l k 2) (len_count l k 3) (len_count l k 4) (len_count l k 5) (len_count l k 6) (len_count l k 7) (len_count l k 8) (len_count l k 9) (len_count l k 10) (len_count l k 11) (len_count l k 12) (len_count l k 13) (len_count l k 14) (len_count l k 15);
+    assert ctotal l k = ctotal l k' + (if 1 <= l.[k'] && l.[k'] <= 15 then 1 else 0))
+  else ()
+
+(* Length b's symbols end within the n symbols: offs, unfolded for each
+   b, adds the counts below it. *)
+let lemma offs_fit (l : [u8]) (n : int{0..320}) (b : int{1..15}) : unit @fuel(16) @allow(deep_fuel)
+  requires n <= len l
+  ensures offs l n b + len_count l n b <= n
+= ct_le l n;
+  if b = 1 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 2 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 3 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 4 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 5 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 6 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 7 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 8 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 9 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 10 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 11 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 12 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 13 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 14 then assert offs l n b + len_count l n b <= ctotal l n
+  else if b = 15 then assert offs l n b + len_count l n b <= ctotal l n
+  else ()
+
+(* Shorter lengths' symbols come first. *)
+let lemma offs_order (l : [u8]) (n : int{0..320}) : unit
+  requires n <= len l
+  ensures forall (c in 1 .. 16) (d in 1 .. 16). c < d ==> offs l n c + len_count l n c <= offs l n d
+= for d in 2 .. 16
+    invariant forall (c in 1 .. 16) (e in 1 .. d). c < e ==> offs l n c + len_count l n c <= offs l n e
+  do
+    let d' : int{1..15} = d - 1 in
+    assert offs l n d = offs l n d' + len_count l n d'
+  done
+
+(* More symbols, no fewer of each length. *)
+let lemma lc_le (l : [u8]) (a : int{0..320}) (c : int{0..320}) (b : int{1..15}) : unit
+  requires a <= c && c <= len l
+  ensures len_count l a b <= len_count l c b
+  decreases c - a
+  with len_count
+= if c > a then (let c' : int{0..319} = c - 1 in lc_le l a c' b) else ()
+
+(* tab_from from its facts at every length. *)
+let lemma tab_intro (t : [u8]) (l : [u8]) (n : int{0..320}) (b : int{1..16}) : unit
+  requires len t = 704 && n <= len l
+  requires forall (c in 1 .. 16). u16at t (2 * c) = len_count l n c
+  requires forall (c in 1 .. 16). offs l n c + len_count l n c <= 320
+  requires forall (c in 1 .. 16) (r in 0 .. len_count l n c). sym_ok t l n c (offs l n c + r) r
+  ensures tab_from t l n b
+  decreases 16 - b
+  with tab_from
+= if b < 16 then (let b1 : int{1..16} = b + 1 in tab_intro t l n b1) else ()
+
+(* Every length's symbols fit in the table. *)
+let lemma tab_facts (t : [u8]) (l : [u8]) (n : int{0..320}) : unit
+  requires len t = 704 && n <= len l
+  ensures forall (c in 1 .. 16). offs l n c + len_count l n c <= 320
+= for c in 1 .. 16
+    invariant forall (e in 1 .. c). offs l n e + len_count l n e <= 320
+  do offs_fit l n c done
 
 (** Fills table t with the canonical code of the n lengths in l, and says
     whether the code is complete. *)
@@ -183,13 +408,17 @@ let build (l : [u8]) (n : int{0..320}) (t : borrowed inout mutable [u8]) : fill
   requires len t = 704 && n <= len l
   ensures result = Complete <==> kraft l n = 32768
   ensures result = Oversubscribed <==> kraft l n > 32768
-  with kraft
-= for j in 0 .. 704 do t.[j] <- 0 done;
+  ensures tab_from t l n 1
+  with kraft, len_count
+= for j in 0 .. 704
+    invariant len t = 704 && (forall (i in 0 .. j). t.[i] = 0)
+  do t.[j] <- 0 done;
   (* The counts, and the Kraft sum. *)
   let sum : mutable u32 = 0 in
   let k : mutable int{0..320} = 0 in
   while k < n
     invariant k <= n && sum = kraft l k && sum <= kcap k
+    invariant len t = 704 && (forall (c in 1 .. 16). u16at t (2 * c) = len_count l k c)
     decreases n - k
   do
     let len' = l.[k] in
@@ -202,16 +431,29 @@ let build (l : [u8]) (n : int{0..320}) (t : borrowed inout mutable [u8]) : fill
   done;
   (* The offset of each length's first symbol, then the symbols. *)
   let off : mutable u16 = 0 in
-  for len' in 1 .. 16 do
+  for len' in 1 .. 16
+    invariant len t = 704 && (forall (c in 1 .. 16). u16at t (2 * c) = len_count l n c)
+    invariant off = offs l n len'
+    invariant forall (c in 1 .. len'). u16at t (672 + 2 * c) = offs l n c
+  do
     let l' : usize = len' in
+    offs_fit l n len';
     put16 t (672 + 2 * l') off;
     off <- off +| get16 t (2 * l')
   done;
-  for sy in 0 .. n do
+  offs_order l n;
+  for sy in 0 .. n
+    invariant len t = 704 && (forall (c in 1 .. 16). u16at t (2 * c) = len_count l n c)
+    invariant forall (c in 1 .. 16). u16at t (672 + 2 * c) = offs l n c + len_count l sy c
+    invariant forall (c in 1 .. 16). len_count l sy c <= len_count l n c
+    invariant forall (c in 1 .. 16) (r in 0 .. len_count l sy c). sym_ok t l n c (offs l n c + r) r
+  do
     let len' = l.[sy] in
     if len' > 0 && len' <= 15 then (
       let l' : usize = len' in
       let o = get16 t (672 + 2 * l') in
+      lc_le l (sy + 1) n len';
+      offs_fit l n len';
       if o < 320 then (
         let sv : u16 = sy in
         put16 t (32 + 2 * o) sv;
@@ -219,6 +461,8 @@ let build (l : [u8]) (n : int{0..320}) (t : borrowed inout mutable [u8]) : fill
       else ())
     else ()
   done;
+  tab_facts t l n;
+  tab_intro t l n 1;
   if sum = 32768 then Complete else if sum > 32768 then Oversubscribed else Incomplete
 
 (* What tab_from and room say of length b, for decode, which keeps them
