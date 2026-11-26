@@ -1862,11 +1862,12 @@ class Gen {
         continue;
       }
       // `@lower("mlir")` gives the function an MLIR form, which codegen
-      // puts in place of the body (ADR 0065). Step 1 takes a string literal
-      // only; a metaprogram that computes one is step 2.
+      // puts in place of the body (ADR 0065). A metaprogram's call,
+      // `@lower(gen args)`, has become the string it computed by now.
       if (a->text == "lower") {
         if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::StringLit) {
-          fail(*a, "@lower takes one string of MLIR, as in "
+          fail(*a, "@lower takes one string of MLIR, or a call of a 'let "
+                   "meta' that computes one, as in "
                    "@lower(\"linalg.matmul ins($a, $b : $a.type, $b.type) "
                    "outs($c : $c.type)\")");
           return false;

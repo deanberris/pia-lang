@@ -384,3 +384,23 @@ cc_test(
     ],
     target_compatible_with = PIA_TARGETS,
 )
+
+# lower_meta.pia, the same matmul with its MLIR computed by a metaprogram
+# (ADR 0065, step 2), run from the same C harness.
+genrule(
+    name = "lower_meta_obj",
+    srcs = ["lower_meta.pia"],
+    outs = ["lower_meta.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lower_meta_run_test",
+    srcs = [
+        "lower_linalg_test.c",
+        ":lower_meta_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)

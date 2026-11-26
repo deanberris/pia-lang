@@ -16,6 +16,7 @@
 #include <thread>
 
 #include "codegen/Codegen.h"
+#include "codegen/Lowerings.h"
 #include "dialect/PiaDialect.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -1177,6 +1178,10 @@ struct Session::Impl {
     mlir::OwningOpRef<mlir::ModuleOp> module =
         irgen::generate(*a.tree, kFile, ctx, gd);
     takeDiagnostics(a, gd);
+    // A lowering's MLIR is checked here, although the JIT runs the body
+    // (ADR 0065, step 2).
+    if (module && a.errors.empty())
+      (void)codegen::checkLowerings(*module);
     for (Event &e : mlirErrors)
       a.errors.push_back(std::move(e));
     mlirErrors.clear();
