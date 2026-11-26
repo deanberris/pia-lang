@@ -19,8 +19,8 @@ let spec digit_of (b : u8) (base : int{2..36}) : u32
   if v < base then v else base
 
 (*
-// CHECK: memory_independent_cost.pia:15:34: proved: '-' does not overflow u32 [smt] (cost 522)
-// CHECK: memory_independent_cost.pia:16:40: proved: '-' does not overflow u32 [smt] (cost 885)
-// CHECK: memory_independent_cost.pia:17:39: proved: '-' does not overflow u32 [smt] (cost 992)
+// CHECK: memory_independent_cost.pia:15:34: proved: '-' does not overflow u32 [smt] (cost 575)
+// CHECK: memory_independent_cost.pia:16:40: proved: '-' does not overflow u32 [smt] (cost 947)
+// CHECK: memory_independent_cost.pia:17:39: proved: '-' does not overflow u32 [smt] (cost 1046)
 // CHECK: 3 proved, 0 failed, 0 skipped
 *)
