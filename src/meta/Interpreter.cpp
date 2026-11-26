@@ -74,12 +74,21 @@ ValuePtr listValue(std::vector<ValuePtr> xs) {
   return make(std::move(v));
 }
 
+ValuePtr bytesValue(std::shared_ptr<const std::vector<uint8_t>> bs) {
+  Value v;
+  v.kind = K::Bytes;
+  v.bytes = std::move(bs);
+  return make(std::move(v));
+}
+
 const char *kindName(K k) {
   switch (k) {
     case K::Unit: return "unit";
     case K::Int: return "an integer";
     case K::Bool: return "a bool";
     case K::Str: return "a string";
+    case K::Bytes:
+      return "an embedded byte array";
     case K::Syntax: return "syntax";
     case K::List: return "a list";
     case K::Closure: case K::Builtin: return "a function";
@@ -94,7 +103,7 @@ const std::map<std::string, size_t> &metaBuiltins() {
   // clang-format off
   static const std::map<std::string, size_t> table = {
       {"map", 2},   {"fold", 3},   {"fields", 1},
-      {"name", 1},  {"concat", 2}, {"length", 1},
+      {"name", 1},  {"concat", 2}, {"length", 1}, {"len", 1},
       // Lists, for generators (ADR 0056).
       {"nth", 2},     {"zip", 2},    {"range", 1},
       {"reverse", 1}, {"filter", 2}, {"product", 1},
@@ -339,8 +348,35 @@ ValuePtr Interpreter::lookup(const Node &n, const EnvPtr &env) {
   // (ADR 0036, theory-building metaprograms).
   for (const Node *item : listing_) {
     if (item->kind != NodeKind::LetItem) continue;
-    if (item->text == n.text && item->flags.find("meta") == std::string::npos)
+    if (item->text == n.text && item->flags.find("meta") == std::string::npos) {
+      if (const Node *embedAttr = syntax::findEmbedAttr(*item)) {
+        auto cached = embedCache_.find(item->text);
+        if (cached != embedCache_.end())
+          return bytesValue(cached->second);
+        if (item->flags.rfind("import", 0) == 0)
+          throw MetaError{site_,
+                          "imported @embed binding '" + item->text +
+                              "' bytes are not available to metaprograms in "
+                              "importers; inspect them in the defining module"};
+        syntax::Diagnostics d;
+        auto spec = syntax::parseEmbedAttr(*embedAttr, d);
+        if (!spec)
+          throw MetaError{site_, d.hasErrors() ? d.errors()[0].message
+                                               : "invalid @embed attribute"};
+        syntax::EmbedOptions emptyOpts;
+        auto data = syntax::resolveEmbedFile(
+            spec->file, embedOptions_ ? *embedOptions_ : emptyOpts,
+            embedAttr->loc, d);
+        if (!data)
+          throw MetaError{site_, d.hasErrors() ? d.errors()[0].message
+                                               : "cannot read embedded file"};
+        auto ptr =
+            std::make_shared<const std::vector<uint8_t>>(std::move(*data));
+        embedCache_[item->text] = ptr;
+        return bytesValue(std::move(ptr));
+      }
       return syntaxValue(clone(*item));
+    }
     if (item->kids.size() > 3 && item->kids[3]->kind == NodeKind::TypeValue &&
         !item->kids[3]->kids.empty() &&
         item->kids[3]->kids[0]->kind == NodeKind::Variants)
@@ -395,6 +431,28 @@ ValuePtr Interpreter::eval(const Node &n, const EnvPtr &env) {
       std::vector<ValuePtr> xs;
       for (const NodePtr &k : n.kids) xs.push_back(eval(*k, env));
       return listValue(std::move(xs));
+    }
+    case NodeKind::Index: {
+      ValuePtr obj = eval(*n.kids[0], env);
+      ValuePtr idx = eval(*n.kids[1], env);
+      if (obj->kind != K::Bytes && obj->kind != K::List)
+        throw MetaError{site_, std::string("indexing needs an embedded byte "
+                                           "array or list, found ") +
+                                   kindName(obj->kind)};
+      if (idx->kind != K::Int)
+        throw MetaError{site_, std::string("index must be an integer, found ") +
+                                   kindName(idx->kind)};
+      size_t size =
+          obj->kind == K::Bytes ? obj->bytes->size() : obj->list.size();
+      if (idx->i < 0 || static_cast<size_t>(idx->i) >= size)
+        throw MetaError{site_,
+                        "index " + decimal(idx->i) + " is outside a length-" +
+                            std::to_string(size) + " " +
+                            (obj->kind == K::Bytes ? "byte array" : "list")};
+      if (obj->kind == K::Bytes)
+        return intValue(
+            static_cast<MetaInt>((*obj->bytes)[static_cast<size_t>(idx->i)]));
+      return obj->list[static_cast<size_t>(idx->i)];
     }
     case NodeKind::Apply: {
       ValuePtr fn = eval(*n.kids[0], env);
@@ -827,9 +885,25 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     for (const ValuePtr &x : needList(args[2])) acc = apply(args[0], {acc, x});
     return acc;
   }
-  if (name == "length")
+  if (name == "length" || name == "len") {
+    if (args[0]->kind == K::Bytes)
+      return intValue(static_cast<int64_t>(args[0]->bytes->size()));
     return intValue(static_cast<int64_t>(needList(args[0]).size()));
+  }
   if (name == "nth") {
+    if (args[0]->kind == K::Bytes) {
+      if (args[1]->kind != K::Int)
+        throw MetaError{site_, std::string("'nth' needs an integer index, "
+                                           "found ") +
+                                   kindName(args[1]->kind)};
+      const auto &bs = *args[0]->bytes;
+      if (args[1]->i < 0 || static_cast<size_t>(args[1]->i) >= bs.size())
+        throw MetaError{site_, "'nth' index " + decimal(args[1]->i) +
+                                   " is outside a byte array of length " +
+                                   std::to_string(bs.size())};
+      return intValue(
+          static_cast<MetaInt>(bs[static_cast<size_t>(args[1]->i)]));
+    }
     const std::vector<ValuePtr> &xs = needList(args[0]);
     if (args[1]->kind != K::Int)
       throw MetaError{site_, std::string("'nth' needs an integer index, "

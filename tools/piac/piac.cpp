@@ -980,8 +980,10 @@ int main(int argc, char **argv) {
     }
 #endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
-        mode != "--check" && !emitInterface)
+        mode != "--check" && !emitInterface) {
+      meta.embeds = embedOptions;
       pia::meta::expand(*tree, diags, meta);
+    }
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR

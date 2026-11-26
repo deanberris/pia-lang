@@ -936,6 +936,7 @@ struct Session::Impl {
     syntax::Diagnostics d;
     meta::Options mo = options.meta;
     mo.live = true;
+    mo.embeds = options.embeds;
     meta::expand(*a.tree, d, mo);
     takeDiagnostics(a, d);
     if (!a.errors.empty())
