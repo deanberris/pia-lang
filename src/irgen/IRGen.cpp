@@ -1270,9 +1270,11 @@ class Gen {
       Type saved;
       ~DropScope() { t = saved; }
     } dropScope{dropping_, dropping_};
-    dropping_ = sig.name == "drop" && sig.params.size() == 1
-                    ? sig.params[0].type
-                    : Type();
+    // An instance of a generic drop, `drop<u16>`, is a drop too, and so is
+    // one from another module, `Pia.Mem.Box.drop<u16>`.
+    llvm::StringRef itemName = sig.item ? llvm::StringRef(sig.item->text) : "";
+    bool isDrop = itemName == "drop" || itemName.ends_with(".drop");
+    dropping_ = isDrop && sig.params.size() == 1 ? sig.params[0].type : Type();
     // `= extern "symbol"`: a C function (#55).
     std::string foreign;
     bool isExtern = externSymbol(bodyNode, foreign);
@@ -1298,7 +1300,7 @@ class Gen {
       for (const sema::Param &p : sig.params)
         if (sema::hasModifier(p.modifiers, "moved"))
           if (BindingPtr b = lookup(p.name); b && needsDrop(b)) {
-            const Node &d = dropNode(p.name, p.loc);
+            const Node &d = dropNode(b, p.loc);
             bodyPtr = keep(withCleanup(*bodyPtr, d));
             frames_.back().defers.push_back(&d);
           }
@@ -9645,16 +9647,60 @@ class Gen {
 
   // --- `drop` (#85) -----------------------------------------------------
 
-  // A type has a drop when a non-generic `drop (x : moved t) : unit` is in
-  // scope: the `Drop` concept, met by name like any other (ADR 0034).
-  bool hasDrop(Type t) {
-    if (!t || copied(t)) return false;
-    for (const sema::FuncSig *f : overloadSet("drop"))
+  // A type has a drop when a `drop (x : moved t) : unit` is in scope: the
+  // `Drop` concept, met by name like any other (ADR 0034). A generic one,
+  // such as `drop (t : type) (b : moved box t)`, gives a drop to each type
+  // its parameter deduces, as it would meet a requirement.
+  bool hasDrop(Type t) { return !dropFor(t).empty(); }
+
+  // The name to call to drop a `t`, or nothing. A type of another module,
+  // `Pia.Mem.Box.box<u8>`, is dropped by that module's drop, as an
+  // importer would not otherwise see it.
+  std::string dropFor(Type t) {
+    if (!t || copied(t))
+      return "";
+    if (meetsDrop(overloadSet("drop"), t))
+      return "drop";
+    std::string from = moduleOf(t);
+    if (!from.empty() && meetsDrop(overloadSet(from + ".drop"), t))
+      return from + ".drop";
+    return "";
+  }
+
+  // The module that defines the record `t`, from its name: "Pia.Mem.Box"
+  // for `Pia.Mem.Box.box<u8>`, or nothing for one of this program.
+  static std::string moduleOf(Type t) {
+    auto rec = mlir::dyn_cast<RecordType>(t);
+    if (!rec)
+      return "";
+    llvm::StringRef name = rec.getName();
+    name = name.take_until([](char c) { return c == '<'; });
+    size_t dot = name.rfind('.');
+    return dot == llvm::StringRef::npos ? "" : name.take_front(dot).str();
+  }
+
+  bool meetsDrop(const std::vector<sema::FuncSig *> &set, Type t) {
+    for (const sema::FuncSig *f : set)
       if (!f->isGeneric() && f->params.size() == 1 &&
           f->params[0].type == t &&
           sema::hasModifier(f->params[0].modifiers, "moved") &&
           f->result && isUnit(f->result))
         return true;
+    for (sema::FuncSig *f : set) {
+      if (!f->isGeneric())
+        continue;
+      std::vector<const Node *> ps = valueParamsOf(*f);
+      if (ps.size() != 1 || ps[0]->kids.empty() ||
+          ps[0]->kids[0]->kind != NodeKind::Annot ||
+          !sema::hasModifier(ps[0]->kids[0]->kids[0]->text, "moved"))
+        continue;
+      std::map<std::string, Type> bound;
+      if (!types_.unify(*ps[0]->kids[0], t, f->typeParams, bound))
+        continue;
+      if (genericMeeting(*f, {t}, {ps[0]->kids[0]->kids[0]->text},
+                         types_.unitType()))
+        return true;
+    }
     return false;
   }
 
@@ -9693,10 +9739,11 @@ class Gen {
   }
 
   // `drop x`, marked so that it runs only where `x` is not consumed.
-  const Node &dropNode(const std::string &name, syntax::SourceLoc at) {
+  const Node &dropNode(const BindingPtr &b, syntax::SourceLoc at) {
+    const std::string &name = b->name;
     auto call = syntax::makeNode(NodeKind::Apply, at);
     call->flags = "drop";
-    call->add(syntax::makeNode(NodeKind::Name, at, "drop"));
+    call->add(syntax::makeNode(NodeKind::Name, at, dropFor(b->type)));
     call->add(syntax::makeNode(NodeKind::Name, at, name));
     return *keep(std::move(call));
   }
@@ -9811,10 +9858,18 @@ class Gen {
   }
 
   // Whether the buffers `b` holds may be written: a borrow that may, or an
-  // `out` or `inout` parameter, whose fields' buffers may be too.
+  // `out` or `inout` parameter, whose fields' buffers may be too. A
+  // `moved mutable` parameter is the callee's alone, so it may be too, as
+  // a box's `drop` moves its value out of its slot.
   static bool writableValue(const Binding &b) {
-    return b.writable || (b.isParam && (sema::hasModifier(b.modifiers, "out") ||
-                                        sema::hasModifier(b.modifiers, "inout")));
+    if (b.writable)
+      return true;
+    if (!b.isParam)
+      return false;
+    return sema::hasModifier(b.modifiers, "out") ||
+           sema::hasModifier(b.modifiers, "inout") ||
+           (sema::hasModifier(b.modifiers, "moved") &&
+            sema::hasModifier(b.modifiers, "mutable"));
   }
 
   // `n` was generated as `other`, a tree made from it.
@@ -11493,7 +11548,7 @@ class Gen {
     const Node *bodyNode = n.kids[4].get();
     const Node *drop = nullptr;
     if (needsDrop(b)) {
-      drop = &dropNode(n.text, n.loc);
+      drop = &dropNode(b, n.loc);
       bodyNode = keep(withCleanup(*bodyNode, *drop));
       if (!frames_.empty()) {
         if (frames_.back().tails.count(&n)) addTails(*bodyNode);

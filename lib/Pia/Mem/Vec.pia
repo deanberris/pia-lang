@@ -14,7 +14,7 @@
    them, and the old buffer lasts as long as its region. A vector of
    boxes, which moves its elements and checks each slot owns nothing
    when written over (ADR 0048, section 6), is in tests/verify/vec_boxes.pia;
-   it moves here with drop for boxes (ADR 0046, step 2). *)
+   it moves here with drop for boxes (ADR 0046, step 1). *)
 module Pia.Mem.Vec : Vectors
 
 import Pia.Mem.Alloc.Allocators

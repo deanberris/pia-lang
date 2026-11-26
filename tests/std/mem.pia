@@ -13,7 +13,7 @@
 // ALLOC-NOT: failed
 // ALLOC: 7 proved, 0 failed, 0 skipped
 // BOX-NOT: failed
-// BOX: 23 proved, 0 failed, 0 skipped
+// BOX: 29 proved, 0 failed, 0 skipped
 // VEC-NOT: failed
 // VEC: 37 proved, 0 failed, 0 skipped
 *)

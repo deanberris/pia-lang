@@ -1,7 +1,7 @@
 (* Runs Pia.Mem's compiled code, linked by pia_binary: a vector of u8
-   grown twice over a bump in an arena, and a box of u8. It exits 0
-   when every result is right, and otherwise with the number of the
-   first wrong one. *)
+   grown twice over a bump in an arena, and a box of u8 that is emptied,
+   filled, removed and freed. It exits 0 when every result is right, and
+   otherwise with the number of the first wrong one. *)
 import Pia.Mem.Alloc.Allocators
 import Pia.Mem.Box.Boxes
 import Pia.Mem.Vec.Vectors
@@ -38,7 +38,10 @@ let boxes (mem : borrowed mutable [u8]) : i32 =
     let b : mutable Pia.Mem.Box.box u8 = made in
     let x = Pia.Mem.Box.release b in
     Pia.Mem.Box.fill b (x + 1);
-    if Pia.Mem.Box.get b <> 201 then 11
+    let y = Pia.Mem.Box.get b in
+    Pia.Mem.Box.remove b;
+    Pia.Mem.Box.free b;
+    if y <> 201 then 11
     else if m.used <> 1 then 12
     else 0
 
