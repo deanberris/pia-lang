@@ -29,13 +29,20 @@ on the SRTM fixture and on a whole tile:
 $ bazel run //examples/streams:srtm_gpu -- /tmp/srtm/N46E008.hgt
 ```
 
-On the whole tile, 3601 × 3601 cells on the iMac, both stages match
-the CPU on every cell. With the device warm, directions take 35 to 52 ms
-on the GPU against 41 ms on the CPU, and the picture 66 to 83 ms against 37 to
-50 ms. The first run adds about 70 ms to open the device and load the
-kernel. The GPU is not faster yet because each run copies every buffer in
-and back, and those copies cost more than the kernels. Keeping buffers on
-the device, or wrapping the host's memory without a copy, comes next.
+On the iMac the CPU and GPU share memory, so the shim binds each buffer
+where it is, without a copy, when it starts on a page boundary
+(`newBufferWithBytesNoCopy`); only the few scalars, and any buffer that
+does not start on a page, are copied. On the whole tile, 3601 × 3601
+cells, both stages match the CPU on every cell, and over three runs:
+
+| Stage | CPU | GPU, warm | GPU, first run |
+|---|---|---|---|
+| D8 directions | 41 ms | 6 to 16 ms | 50 to 60 ms |
+| The picture | 25 to 30 ms | 9 to 12 ms | 26 to 29 ms |
+
+The first run of directions also opens the device and loads the kernel.
+Before the buffers were wrapped, the copies in and back made both stages
+slower on the GPU than on the CPU (ADR 0068, step 3).
 
 The device rules of ADR 0068, section 1 decide what a body may do. Its
 calls are inlined, since the GPU has no call stack, and after that it may
