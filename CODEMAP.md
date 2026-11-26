@@ -24,11 +24,11 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 
 | What | Command | Where |
 | --- | --- | --- |
-| everything | `bazel build //... && bazel test //...` | the iMac (arm64 macOS), or CI (macOS arm64 and Linux x86_64, `.github/workflows/ci.yml`). Cloud sessions cannot fetch Bazel's dependencies. |
+| everything | `bazel build //... && bazel test //...` | CI (`.github/workflows/ci.yml`, macOS arm64 and Linux x86_64): push the branch and read its checks, which are the merge gate. Cloud sessions cannot fetch Bazel's dependencies; the iMac runs only the GPU demos. |
 | prebuilt `pia` and `piac` | `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'` (or `pia-macos-arm64.tar.gz`) | moving `latest` prerelease on [GitHub Releases](https://github.com/deanberris/pia-lang/releases/tag/latest) (plus `SHA256SUMS.txt`), updated on green `main` runs (`.github/workflows/ci.yml`) |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
-| build queue (iMac) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
+| build queue (iMac, GPU demos only) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
 | prove a file | `bazel-bin/tools/piac/piac --verify f.pia` | see the `piac-verify` and `pia-fast-proofs` skills |
 | doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test` | every `ocaml` block in the listed pages is proved |
 | proof cost gate | `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac` | fails on a Z3 cost regression of more than 10% against `tools/bench/baseline.json` |
@@ -38,7 +38,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | docs site | `pip install -r tools/docs/requirements.txt && mkdocs build --strict` | `.github/workflows/docs.yml` |
 | this map | `python3 tools/codemap/check.py` | pure Python, in CI (`.github/workflows/codemap.yml`) |
 
-**Test format.** Most tests are lit files run by `tests/lit/run_lit.sh`. A `.pia` test keeps its `// RUN:` and `// CHECK:` lines inside a `(* ... *)` comment, because `//` does not start a comment in Pia. `tests/verify/update_expected.py <piac> <test>` rewrites the expected report at the end of a verify test. Run it on the iMac and read the diff before you commit.
+**Test format.** Most tests are lit files run by `tests/lit/run_lit.sh`. A `.pia` test keeps its `// RUN:` and `// CHECK:` lines inside a `(* ... *)` comment, because `//` does not start a comment in Pia. `tests/verify/update_expected.py <piac> <test>` rewrites the expected report at the end of a verify test. Run it with a CI-built piac (the `latest` release, or the PR's `bench-piac-linux` artifact) and read the diff before you commit.
 
 ## 3. To change X, look in Y
 
