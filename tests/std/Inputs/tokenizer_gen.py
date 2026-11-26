@@ -9,6 +9,7 @@ The ids come from a real run of run.c, built with tokenizer_ref.c:
   cc -O2 -w -o tokenizer_ref tests/std/Inputs/tokenizer_ref.c -I. -lm
   python3 tests/std/Inputs/tokenizer_gen.py ./tokenizer_ref \\
       tests/std/Inputs/tok512.bin > tests/std/Inputs/tokenizer_cases.h
+  clang-format -i tests/std/Inputs/tokenizer_cases.h
 
 run.c reads a text up to its first NUL, so no text holds one."""
 

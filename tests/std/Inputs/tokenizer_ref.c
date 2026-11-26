@@ -6,13 +6,12 @@
 #include "run.c"
 #undef main
 
-static int hexval(int c) {
-  return c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10;
-}
+static int hexval(int c) { return c <= '9' ? c - '0' : (c | 0x20) - 'a' + 10; }
 
 int main(int argc, char **argv) {
   if (argc != 3) {
-    fprintf(stderr, "usage: %s tokenizer.bin vocab_size < texts.hex\n", argv[0]);
+    fprintf(stderr, "usage: %s tokenizer.bin vocab_size < texts.hex\n",
+            argv[0]);
     return 2;
   }
   Tokenizer t;
@@ -27,7 +26,8 @@ int main(int argc, char **argv) {
     text[n] = 0;
     int count = 0;
     encode(&t, text, 1, 0, toks, &count);
-    for (int i = 0; i < count; i++) printf("%s%d", i ? " " : "", toks[i]);
+    for (int i = 0; i < count; i++)
+      printf("%s%d", i ? " " : "", toks[i]);
     printf("\n");
   }
   free_tokenizer(&t);

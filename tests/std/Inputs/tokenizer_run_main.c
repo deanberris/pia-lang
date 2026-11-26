@@ -19,9 +19,9 @@ int32_t tokenizer_load_checks(const uint8_t *s, uint64_t s_len, uint64_t *f0,
 int32_t tokenizer_case(const uint8_t *s, uint64_t s_len, uint64_t *f0,
                        uint64_t n, uint64_t *f1, uint64_t *f2,
                        const uint8_t *text, uint64_t text_len,
-                       const uint32_t *want, uint64_t want_len,
-                       uint32_t *toks, uint64_t toks_len, uint64_t *at,
-                       uint64_t at_len, uint8_t *dst, uint64_t dst_len);
+                       const uint32_t *want, uint64_t want_len, uint32_t *toks,
+                       uint64_t toks_len, uint64_t *at, uint64_t at_len,
+                       uint8_t *dst, uint64_t dst_len);
 
 enum { kPieces = 600, kRoom = 1024 };
 
