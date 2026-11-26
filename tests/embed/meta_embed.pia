@@ -13,7 +13,7 @@ let meta check_mtlb blob : item =
      blob.[2] = 0x4c && blob.[3] = 0x42
   then (
     let version = blob.[4] in
-    `( let mtlb_version () : u8 ensures result = $version = $version )
+    `( let mtlb_version () : u8 ensures $!result = $version = $version )
   )
   else
     fail "embedded blob is missing the MTLB magic header"
@@ -22,7 +22,7 @@ check_mtlb magic
 
 let read_ver () : u8
   ensures result = 1
-= mtlb_version ()
+= mtlb_version
 
 (* CHECK: 0 failed, 0 skipped
 // BAD: embedded blob is missing the MTLB magic header

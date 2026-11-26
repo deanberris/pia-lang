@@ -8,14 +8,14 @@ let meta check_metallib blob : item =
      blob.[0] = 0x4d && blob.[1] = 0x54 &&
      blob.[2] = 0x4c && blob.[3] = 0x42
   then
-    `( let metallib_ok () : bool ensures result = true = true )
+    `( let metallib_ok () : bool ensures $!result = true = true )
   else
     fail "embedded library is not a .metallib (missing MTLB magic)"
 
 check_metallib add_metallib
 
 let main () : i32 =
-  if metallib_ok () &&
+  if metallib_ok &&
      len add_metallib >= 4 &&
      add_metallib.[0] = 0x4d && add_metallib.[1] = 0x54 &&
      add_metallib.[2] = 0x4c && add_metallib.[3] = 0x42
