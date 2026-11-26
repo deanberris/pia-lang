@@ -329,6 +329,8 @@ jobs:
         run: |
           mkdir -p "${{ runner.temp }}/bench-piac"
           cp -L bazel-bin/tools/piac/piac "${{ runner.temp }}/bench-piac/piac"
+          # Bazel's outputs are read-only, and strip rewrites the file.
+          chmod 755 "${{ runner.temp }}/bench-piac/piac"
           strip "${{ runner.temp }}/bench-piac/piac"
           tar -czf "${{ runner.temp }}/bench-piac.tar.gz" -C "${{ runner.temp }}/bench-piac" piac
 
