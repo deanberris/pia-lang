@@ -1301,7 +1301,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
         diags.error(embedAttr->loc, "@embed is not allowed inside an adapter");
         continue;
       }
-      if (!item->flags.empty()) {
+      if (!item->flags.empty() && item->flags.rfind("import", 0) != 0) {
         diags.error(item->loc,
                     "an @embed binding cannot be 'rec', 'spec', 'lemma' or "
                     "'meta'");

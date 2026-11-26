@@ -1,0 +1,23 @@
+(* Exported @embed in interfaces, SHA-256 hashing in .piai, and pia-cert
+   mismatch detection (ADR 0070, step 3).
+   Note: `piac --emit=interface` receives only magic.bin (NOT empty.bin),
+   proving private @embed bindings are never read during interface emission.
+// RUN: piac --emit=interface -o %t --embed=magic.bin=%S/Inputs/magic.bin %S/Inputs/kernels.pia
+// RUN: FileCheck %s --check-prefix=PIAI < %t/Kernels.Blobs.piai
+// RUN: piac --emit=obj -o %t/kernels_v1.o --embed=magic.bin=%S/Inputs/magic.bin --embed=empty.bin=%S/Inputs/empty.bin %S/Inputs/kernels.pia
+// RUN: piac --emit=obj -o %t/use_kernels.o --iface-path=%t %S/Inputs/use_kernels.pia
+// RUN: pia-cert check %t/kernels_v1.o %t/use_kernels.o | FileCheck %s --check-prefix=OK
+// RUN: printf 'MTLB\001\002\003\005' > %t/magic_v2.bin
+// RUN: piac --emit=obj -o %t/kernels_v2.o --embed=magic.bin=%t/magic_v2.bin --embed=empty.bin=%S/Inputs/empty.bin %S/Inputs/kernels.pia
+// RUN: not pia-cert check %t/kernels_v2.o %t/use_kernels.o 2>&1 | FileCheck %s --check-prefix=MISMATCH
+
+// PIAI: module Kernels
+// PIAI: interface Blobs = sig
+// PIAI: let add_metallib : [u8] @embed(len = 8, sha256 = "4939087cc273a7919216366b83ec2f364c682e9b21adad3d37076b9106e9a971")
+// PIAI-NOT: secret
+// PIAI: end
+
+// OK: 2 objects link
+// MISMATCH: Kernels.Blobs
+*)
+let dummy () : i32 = 0

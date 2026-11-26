@@ -52,6 +52,14 @@ struct EmbeddedBlob {
   std::vector<uint8_t> bytes;
 };
 
+// Parsed metadata from a `.piai` interface artifact:
+// `let x : [u8] @embed(len = 4096, sha256 = "e3b0...", [symbol = "..."])`.
+struct EmbedInterfaceMeta {
+  uint64_t length = 0;
+  std::string sha256;
+  std::string symbol; // empty for canonical module-mangled link symbol
+};
+
 // Parses `--embed-path=<dir>` or `--embed=<logical>=<physical>` into `options`.
 // Returns true if `arg` was one of those flags and valid; returns false if
 // `arg` is not an embed flag. Sets `invalid = true` if it started with
@@ -64,12 +72,24 @@ bool hasEmbedAttr(const Node &retAnnot);
 // The `@embed` attribute on a `LetItem`, or null if it has none.
 const Node *findEmbedAttr(const Node &letItem);
 
+// The `@embed` attribute on a `SigVal` in an interface, or null if it has none.
+const Node *findSigEmbedAttr(const Node &sigVal);
+
 // Counts how many `@embed` attributes appear on a `LetItem`.
 size_t countEmbedAttrs(const Node &letItem);
 
-// Parses and validates `@embed(...)`. Reports errors to `diags` and returns
-// nullopt on failure.
+// Parses and validates `@embed(...)` on a defining `LetItem`. Reports errors to
+// `diags` and returns nullopt on failure.
 std::optional<EmbedSpec> parseEmbedAttr(const Node &attr, Diagnostics &diags);
+
+// Parses and validates `@embed(len = ..., sha256 = ... [, symbol = ...])` from
+// a `.piai` interface artifact. Reports errors to `diags` and returns nullopt
+// on failure.
+std::optional<EmbedInterfaceMeta> parseInterfaceEmbedAttr(const Node &attr,
+                                                          Diagnostics &diags);
+
+// Lowercase 64-character hex SHA-256 digest of `bytes` (RFC 6234).
+std::string sha256Hex(const std::vector<uint8_t> &bytes);
 
 // Validates that `path` is a safe relative path (no leading `/`, no drive
 // prefix, no `\`, no `..`, no NUL). Returns an error message when invalid.

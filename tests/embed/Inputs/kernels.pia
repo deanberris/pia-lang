@@ -1,0 +1,10 @@
+(* Module exporting an @embed binding in its interface (ADR 0070, step 3).
+   `secret` is private and must not appear in Kernels.Blobs.piai. *)
+module Kernels : Blobs
+
+interface Blobs = sig
+  let add_metallib : [u8] @embed
+end
+
+let add_metallib : [u8] @embed(file = "magic.bin")
+let secret : [u8] @embed(file = "empty.bin")
