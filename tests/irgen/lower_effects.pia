@@ -1,0 +1,43 @@
+(* The operand-effect check (ADR 0065, step 2): a lowering may write only
+   the buffers of `out` and `inout` parameters, seen through memref's views,
+   and the check runs with the parse check, before anything is proved, in
+   every mode. A linalg op writes its `outs`, `memref.store` its memref, and
+   `memref.dealloc` frees one. Reading a buffer and writing a local one is
+   allowed.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+// RUN: not piac --verify --no-lint %s 2>&1 | FileCheck %s --check-prefix=VERIFY
+*)
+@trusted
+
+let fill (a : [u8; 4]) (v : u8) : unit
+  @lower("linalg.fill ins($v : $v.type) outs($a : $a.type)")
+= ()
+
+let poke (a : [u8; 4]) (v : u8) : unit
+  @lower("%z = arith.constant 0 : index\nmemref.store $v, $a[%z] : $a.type")
+= ()
+
+let viewed (a : [u8; 4]) (v : u8) : unit
+  @lower("%e = memref.expand_shape $a [[0, 1]] output_shape [2, 2] : $a.type into memref<2x2xi8>\nlinalg.fill ins($v : $v.type) outs(%e : memref<2x2xi8>)")
+= ()
+
+let freed (a : [u8; 4]) : unit
+  @lower("memref.dealloc $a : $a.type")
+= ()
+
+(* Allowed: `b` is out, `c` inout, and the scratch buffer is the lowering's
+   own. *)
+let copied (a : [u8; 4]) (b : out mutable [u8; 4]) (c : inout mutable [u8; 4]) : unit
+  @lower("%t = memref.alloca() : memref<4xi8>\nmemref.copy $a, %t : $a.type to memref<4xi8>\nmemref.copy %t, $b : memref<4xi8> to $b.type\nmemref.copy $a, $c : $a.type to $c.type")
+= for i in 0 .. 4 do b.[i] <- a.[i]; c.[i] <- a.[i] done
+
+(*
+// CHECK: lower_effects.pia":13:3): error: the @lower of 'fill' writes '$a' in 'linalg.fill', but 'a' is not an 'out' or 'inout' parameter, so the lowering may only read it (ADR 0065)
+// CHECK: lower_effects.pia":17:3): error: the @lower of 'poke' writes '$a' in 'memref.store'
+// CHECK: lower_effects.pia":21:3): error: the @lower of 'viewed' writes '$a' in 'linalg.fill'
+// CHECK: lower_effects.pia":25:3): error: the @lower of 'freed' frees '$a' in 'memref.dealloc'
+// CHECK-NOT: copied
+
+// VERIFY: error: the @lower of 'fill' writes '$a'
+// VERIFY-NOT: proved
+*)
