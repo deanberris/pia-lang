@@ -564,7 +564,10 @@ let parse (s : [u8]) (ts : borrowed inout mutable [tensor]) : result layout st_e
             invariant forall (j in 0 .. cnt). placed (len s) base ts.[j]
             invariant forall (j in 1 .. cnt). ts.[j - 1].stop = ts.[j].start
             invariant cnt = 0 ==> expect = 0
-            invariant cnt > 0 ==> ts.[0].start = base && ts.[cnt - 1].stop = base + expect
+            (* The first and last tensor, per element like the forall above:
+               as `ts.[0]` and `ts.[cnt - 1]` the goal reasons across the
+               store to ts.[cnt] and timed out at 10 s on CI. *)
+            invariant forall (j in 0 .. cnt). (j = 0 ==> ts.[j].start = base) && (j + 1 = cnt ==> ts.[j].stop = base + expect)
             decreases len h - at + (if going then 1 else 0)
           do
             match J.read_key h at with
