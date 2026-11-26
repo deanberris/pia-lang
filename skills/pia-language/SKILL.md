@@ -168,6 +168,7 @@ end
 | slow or nonlinear goals | `w * h` or `/ n` in a `requires`, a `forall` in a `requires`, or `@fuel` above 4 | range-typed factors, ranged element types, a lemma, or a helper with its own contract |
 | `requires x < 100` still costs a solver query at each call | a precondition is always sent to Z3 | `int{0..99}` instead |
 | `=` on two records is rejected | records have no built-in equality | `@derive(eq)` on the type |
+| a quantified goal times out though each step is trivial, or proves alone but not beside the rest of its file | Z3's default solver on a quantified bit-vector query is chaotic: unrelated declarations in the query can turn 50 ms into minutes | split the step into a small `let lemma`, and put `@solver(tactic = "(or-else (try-for (then simplify smt) 20000) (try-for default 20000))")` on the function, as `lib/Pia/Llm/Tokenizer.pia` does |
 | `+` or `<` on a distinct type is rejected | a distinct type inherits no operators | `@derive(add)`, `@derive(ord)` or `@derive(scale)` on it, or unwrap with `u32 l` |
 | an intended failure hangs the test | a failing goal over arrays of arrays with quantifiers can run Z3 for a long time | keep intended failures free of quantifiers |
 | a `// CHECK:` line is ignored, or breaks the parse | `//` is not a Pia comment | put the RUN and CHECK lines inside `(* *)` |

@@ -1,0 +1,20 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Llm (ADR 0067): the parts of the 0.1.0 language model that need no
+# floats. Each module is proved and compiled on its own, and importers
+# build against its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files(["Tokenizer.pia"])
+
+# llama2.c's tokenizer: tests/std/tokenizer.pia checks its goals;
+# tests/std/tokenizer_edges.pia and :tokenizer_run test it through its
+# interface, the run test against llama2.c's own encoder.
+pia_library(
+    name = "tokenizer",
+    src = "Tokenizer.pia",
+    target_compatible_with = PIA_TARGETS,
+)

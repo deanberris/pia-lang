@@ -264,10 +264,29 @@ class Gen {
                  "Err of e\n";
     if (usesArenas_ && !definesItem(program, "arena"))
       prelude += "let arena = type { mem : [u8]; used : usize }\n";
+    // A spread placed on the GPU (ADR 0068, step 3) evaluates to
+    // `result unit gpu_error`, the error set placement adds.
+    usesGpu_ = placesOnGpu(program);
+    if (usesGpu_ && !definesItem(program, "gpu_error"))
+      prelude += "let gpu_error = type | Gpu_unavailable | Gpu_out_of_memory "
+                 "| Gpu_fault | Gpu_timeout\n";
     if (!prelude.empty()) {
       syntax::Diagnostics ignored;
       prelude_ = syntax::parseProgram(prelude, ignored);
       if (prelude_) sema::defineTypeItems(*prelude_, types_, diags_);
+    }
+    if (usesGpu_) {
+      // The run's status, 0 or a Gpu.error in its order, as the result.
+      syntax::Diagnostics ignored;
+      gpuPrelude_ = syntax::parseProgram(
+          "let __pia_gpu_result (__pia_gpu_s : i32) : result unit gpu_error "
+          "= if __pia_gpu_s = 0 then Ok () "
+          "else if __pia_gpu_s = 1 then Err Gpu_unavailable "
+          "else if __pia_gpu_s = 2 then Err Gpu_out_of_memory "
+          "else if __pia_gpu_s = 4 then Err Gpu_timeout "
+          "else Err Gpu_fault\n"
+          "let __pia_gpu_ok (__pia_gpu_s : i32) : bool = __pia_gpu_s = 0\n",
+          ignored);
     }
     sigs_ = sema::collectSignatures(program, types_, diags_);
     if (diags_.hasErrors()) return nullptr;
@@ -1864,11 +1883,12 @@ class Gen {
         continue;
       }
       // `@lower("mlir")` gives the function an MLIR form, which codegen
-      // puts in place of the body (ADR 0065). Step 1 takes a string literal
-      // only; a metaprogram that computes one is step 2.
+      // puts in place of the body (ADR 0065). A metaprogram's call,
+      // `@lower(gen args)`, has become the string it computed by now.
       if (a->text == "lower") {
         if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::StringLit) {
-          fail(*a, "@lower takes one string of MLIR, as in "
+          fail(*a, "@lower takes one string of MLIR, or a call of a 'let "
+                   "meta' that computes one, as in "
                    "@lower(\"linalg.matmul ins($a, $b : $a.type, $b.type) "
                    "outs($c : $c.type)\")");
           return false;
@@ -10700,7 +10720,16 @@ class Gen {
                       "' is written in this spread, so it "
                       "can only be indexed here: passing it on could reach "
                       "a cell another iteration writes (ADR 0060)");
+    bool onGpu = false;
     for (const syntax::NodePtr &a : attrs.kids) {
+      if (a->text == "place") {
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::Name ||
+            a->kids[0]->text != "gpu")
+          return fail(*a, "@place takes one device, and only @place(gpu) is "
+                          "supported yet; a spread runs on the CPU without it");
+        onGpu = true;
+        continue;
+      }
       if (a->text != "owns")
         return fail(*a, "the attribute @" + a->text +
                             " is not supported on a spread yet");
@@ -10717,6 +10746,11 @@ class Gen {
                                      "' must not be written in the spread");
       sc.owners[a->kids[0]->text] = owner;
     }
+    // A GPU thread writes only its own cell of each buffer (ADR 0068,
+    // section 1): identity ownership, for now.
+    if (onGpu && !sc.owners.empty())
+      return fail(n, "a spread placed on the GPU writes each buffer at its "
+                     "own index only, so it takes no @owns yet (ADR 0068)");
     auto bounds = genRange(iterable);
     if (!bounds)
       return std::nullopt;
@@ -10726,6 +10760,8 @@ class Gen {
     Value step = create<mlir::arith::ConstantIndexOp>(l, 1);
     auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, mlir::ValueRange{});
     forOp->setAttr("pia.spread", b_.getUnitAttr());
+    if (onGpu)
+      forOp->setAttr("pia.place", b_.getStringAttr("gpu"));
     Block *block = forOp.getBody();
     {
       OpBuilder::InsertionGuard guard(b_);
@@ -10797,7 +10833,17 @@ class Gen {
         return r;
     }
     // After the loop, every iteration's `ensures` holds:
-    // `forall (i in lo .. hi). p`.
+    // `forall (i in lo .. hi). p`. On the GPU, only if the run succeeded:
+    // a failed run may leave the buffers part written (ADR 0068, section 5).
+    Value gpuOk;
+    if (onGpu) {
+      pushScope();
+      gpuOk = gpuStatus(n);
+      if (!gpuOk) {
+        popScope();
+        return std::nullopt;
+      }
+    }
     for (const syntax::NodePtr &a : annots.kids) {
       auto q = std::make_unique<Node>();
       q->kind = NodeKind::Quantifier;
@@ -10811,11 +10857,67 @@ class Gen {
       q->kids.push_back(std::move(binder));
       q->kids.push_back(syntax::clone(*a->kids[0]));
       R all = genPredicate(*q);
-      if (!all)
+      if (!all) {
+        if (onGpu)
+          popScope();
         return all;
-      create<contract::AssumeOp>(loc(*a), all->value);
+      }
+      create<contract::AssumeOp>(
+          loc(*a), gpuOk ? implies(loc(*a), gpuOk, all->value) : all->value);
+    }
+    if (onGpu) {
+      R r = gpuItem(n, "__pia_gpu_result", true);
+      popScope();
+      return r;
     }
     return unit();
+  }
+
+  // The function `name` of gpuPrelude_: its LetItem.
+  const Node *gpuFunction(const std::string &name) {
+    if (!gpuPrelude_)
+      return nullptr;
+    for (const syntax::NodePtr &k : gpuPrelude_->kids)
+      if (k && k->kind == NodeKind::LetItem && k->text == name)
+        return k.get();
+    return nullptr;
+  }
+
+  // After a spread placed on the GPU: its run's status, which codegen
+  // supplies (ADR 0068, step 3), bound to `__pia_gpu_s` in the current
+  // scope. To the verifier the status is any i32, so either result may
+  // come back. Returns whether it is 0, the run succeeded.
+  Value gpuStatus(const Node &n) {
+    const Node *ok = gpuFunction("__pia_gpu_ok");
+    const Node *param = ok ? findKind(*ok, NodeKind::Annot) : nullptr;
+    Type i32 = param ? types_.resolveAnnot(*param) : Type();
+    if (!i32) {
+      fail(n, "internal error: no gpu_error prelude");
+      return Value();
+    }
+    auto status = create<ForeignOp>(loc(n), mlir::TypeRange{i32},
+                                    b_.getStringAttr("pia$gpu$status"),
+                                    mlir::ValueRange{});
+    status->setAttr("pia.gpu_status", b_.getUnitAttr());
+    bind("__pia_gpu_s", status.getResult(0), i32, false);
+    R r = gpuItem(n, "__pia_gpu_ok", false);
+    return r ? r->value : Value();
+  }
+
+  // The body of gpuPrelude_'s function `name`, over `__pia_gpu_s`: the
+  // spread's value (`result unit gpu_error`) or whether it succeeded.
+  R gpuItem(const Node &n, const std::string &name, bool isResult) {
+    const Node *item = gpuFunction(name);
+    const Node *ret = item ? findKind(*item, NodeKind::RetAnnot) : nullptr;
+    if (!item || !ret || ret->kids.empty())
+      return fail(n, "internal error: no gpu_error prelude");
+    Type t = types_.resolveAnnot(*ret->kids[0]);
+    if (!t)
+      return fail(n, isResult ? "a spread on the GPU needs the type "
+                                "gpu_error, which this program defines "
+                                "differently"
+                              : "internal error: no bool");
+    return genExpr(*item->kids.back(), t);
   }
 
   R genWhile(const Node &n) {
@@ -10948,6 +11050,26 @@ class Gen {
     return false;
   }
 
+  // Whether some spread in the program has `@place(gpu)`.
+  static bool placesOnGpu(const Node &n) {
+    if (n.kind == NodeKind::Attribute && n.text == "place")
+      return true;
+    for (const syntax::NodePtr &k : n.kids)
+      if (k && placesOnGpu(*k))
+        return true;
+    return false;
+  }
+  // The nodes of gpuPrelude_'s one function: its parameter's type, its
+  // result's type and its body.
+  static const Node *findKind(const Node &n, NodeKind kind) {
+    if (n.kind == kind)
+      return &n;
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        if (const Node *f = findKind(*k, kind))
+          return f;
+    return nullptr;
+  }
   static bool definesResult(const Node &n) {
     if ((n.kind == NodeKind::LetItem && n.text == "result") ||
         (n.kind == NodeKind::Ctor && (n.text == "Ok" || n.text == "Err")))
@@ -11662,6 +11784,10 @@ class Gen {
   // The prelude's types (`result`, `arena`), when the program does not
   // define them.
   syntax::NodePtr prelude_;
+  // ADR 0068, step 3: the program places a spread on the GPU, and the
+  // function that turns the run's status into `result unit gpu_error`.
+  bool usesGpu_ = false;
+  syntax::NodePtr gpuPrelude_;
   syntax::NodePtr functionConcept_;
   bool usesArenas_ = false;  // the program has a `with_arena`
   std::vector<std::map<std::string, BindingPtr>> scopes_;

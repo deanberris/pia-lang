@@ -13,6 +13,7 @@ package(default_visibility = ["//visibility:public"])
 # Its tests read the source, to prove it and to write its interfaces.
 exports_files([
     "Derive.pia",
+    "Dom.pia",
     "Lex.pia",
     "Read.pia",
     "Spec.pia",
@@ -66,4 +67,17 @@ pia_library(
     name = "derive",
     src = "Derive.pia",
     target_compatible_with = PIA_TARGETS,
+)
+
+# The document as a recursive type over its text (ADR 0045, step 6):
+# tests/std/json_dom.pia checks its goals, and :json_dom_run_test runs it.
+pia_library(
+    name = "dom",
+    src = "Dom.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":lex",
+        ":spec",
+        "//lib/Pia/Mem:alloc",
+    ],
 )
