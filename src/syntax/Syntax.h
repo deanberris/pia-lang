@@ -51,11 +51,12 @@ namespace pia::syntax {
   X(ParamUnit)                                                               \
   X(ParamHole)                                                               \
   X(RetAnnot)      /* Annot?, Attrs */                                       \
-  X(Contracts)     /* Requires|Ensures|Decreases* */                         \
+  X(Contracts)     /* Requires|Ensures|Decreases|Costs* */                   \
   X(Requires)      /* predicate */                                           \
   X(Ensures)       /* predicate */                                           \
   X(Reads)         /* footprint: `xs.[lo .. hi]` (ADR 0060) */               \
   X(Decreases)     /* measure */                                             \
+  X(Costs)         /* text=counter; bound: `costs c <= e` (ADR 0062) */      \
   X(Invariant)     /* predicate */                                           \
   X(Attrs)         /* Attribute* */                                          \
   X(Attribute)     /* text=name; args */                                     \

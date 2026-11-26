@@ -1,0 +1,24 @@
+(* A callee with a loop or recursion has no bound unless it states one,
+   so a caller that counts its cost names it (ADR 0062).
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let total (xs : [u32]) : u64 =
+  let s : mutable u64 = 0 in
+  for i in 0..len xs invariant s <= i * 4294967295 do s <- s + xs.[i] done;
+  s
+
+let wrapped (xs : [u32]) : u64 = total xs
+
+let report (xs : [u32]) : u64
+  costs iterations <= len xs
+= wrapped xs
+
+let counted (xs : [u32]) : u64
+  costs calls <= 2
+= total xs
+
+(* Expected errors, in order.
+// CHECK: cost_bound_errors.pia:15:3: error: 'wrapped' has no bound on iterations, so the cost of 'report' on iterations cannot be proved; add 'costs iterations <= ...' to 'wrapped', which calls 'total', which has a loop
+// CHECK: cost_bound_errors.pia:19:3: error: 'total' has no bound on calls, so the cost of 'counted' on calls cannot be proved; add 'costs calls <= ...' to 'total', which has a loop
+*)

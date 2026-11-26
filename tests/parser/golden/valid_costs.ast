@@ -1,0 +1,170 @@
+(Program
+  (LetItem "find"
+    (Params
+      (Param "xs"
+        (Annot
+          (Modifiers)
+          (SliceType
+            (TypeName "u32")
+          )
+          (None)
+        )
+      )
+      (Param "v"
+        (Annot
+          (Modifiers)
+          (TypeName "u32")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "usize")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Ensures
+        (Binary "<="
+          (Name "result")
+          (Apply
+            (Name "len")
+            (Name "xs")
+          )
+        )
+      )
+      (Costs "iterations"
+        (Apply
+          (Name "len")
+          (Name "xs")
+        )
+      )
+      (Costs "calls"
+        (IntLit "0")
+      )
+    )
+    (LetIn "i"
+      (Params)
+      (RetAnnot
+        (Annot
+          (Modifiers "mutable")
+          (TypeName "usize")
+          (None)
+        )
+        (Attrs)
+      )
+      (Contracts)
+      (IntLit "0")
+      (Sequence
+        (While
+          (Binary "&&"
+            (Binary "<"
+              (Name "i")
+              (Apply
+                (Name "len")
+                (Name "xs")
+              )
+            )
+            (Binary "<>"
+              (Index
+                (Name "xs")
+                (Name "i")
+              )
+              (Name "v")
+            )
+          )
+          (LoopAnnots
+            (Invariant
+              (Binary "<="
+                (Apply
+                  (Name "spent")
+                  (Name "iterations")
+                )
+                (Name "i")
+              )
+            )
+            (Decreases
+              (Binary "-"
+                (Apply
+                  (Name "len")
+                  (Name "xs")
+                )
+                (Name "i")
+              )
+            )
+          )
+          (Assign
+            (Name "i")
+            (Binary "+"
+              (Name "i")
+              (IntLit "1")
+            )
+          )
+        )
+        (Name "i")
+      )
+    )
+  )
+  (LetItem "pairs"
+    (Params
+      (Param "n"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+      (Param "m"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "unit")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts
+      (Costs "iterations"
+        (Binary "+"
+          (Name "n")
+          (Binary "*"
+            (Name "n")
+            (Name "m")
+          )
+        )
+      )
+    )
+    (Unit)
+  )
+  (LetItem "costs"
+    (Params
+      (Param "x"
+        (Annot
+          (Modifiers)
+          (TypeName "u8")
+          (None)
+        )
+      )
+    )
+    (RetAnnot
+      (Annot
+        (Modifiers)
+        (TypeName "u8")
+        (None)
+      )
+      (Attrs)
+    )
+    (Contracts)
+    (Name "x")
+  )
+)
