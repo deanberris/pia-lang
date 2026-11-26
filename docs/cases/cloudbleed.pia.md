@@ -80,7 +80,7 @@ scan.pia:8:47: failed: '+' does not overflow usize
   counterexample: len html = 18446744073709551615, result = 18446744073709551616
 ...
 scan.pia:5:5: failed: the loop invariant holds after each iteration
-  counterexample: len html = 18446744073709551613
+  counterexample: len html = 18446462598732840960
 ...
 5 proved, 2 failed, 0 skipped
 ```

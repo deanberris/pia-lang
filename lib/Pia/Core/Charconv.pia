@@ -17,11 +17,12 @@
    to_chars dst v base writes v's digits, lower-case, with a '-' first
    for a negative value, and says how many it wrote: ok when they fit in
    dst, and otherwise nothing is written, as C++'s value_too_large. Its
-   contract says each byte is a digit of the base and how many there are
-   (`ndig`, the digits v has), but not yet that they are v's: that
-   round trip with from_chars waits on a proved library of digit
-   arithmetic, since the solver does not prove v = q * base^k + r in
-   reasonable time for more than a few digits (docs/cpp-std.md).
+   contract says each byte is a digit of the base, how many there are
+   (`ndig`, the digits v has), and that their value (`digits_value`) is
+   v (or 0 - v after '-' for a negative value). Together with the
+   exported lemmas `digits_frame`, `digits_value_eq_num` and
+   `run_digits`, an importer proves that `from_chars` reads back the
+   exact value `to_chars` wrote (#306).
 
    Not here yet: from_chars for u64 and i64, whose overflow check divides
    by the base. *)
@@ -36,9 +37,24 @@ interface Charconv = sig
   let is_out_of_range : (e : errc) -> bool
     ensures result <==> (match e with | Ok -> false | Invalid -> false | OutOfRange -> true)
   let spec digit_of : (b : u8) -> (base : int{2..36}) -> u32
+  let spec digit_step : (acc : u64) -> (b : u8) -> (base : int{2..36}) -> u64
+  let spec digits_value : (acc : u64) -> (s : [u8]) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> u64
   let spec num : (s : [u8]) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> (cap : u64) -> u64
   let spec run : (s : [u8]) -> (i : usize) -> (base : int{2..36}) -> usize
   let spec signed_parse : (s : [u8]) -> (base : int{2..36}) -> (pos : u64) -> (neg : u64) -> (value : i64) -> (count : usize) -> (ec : errc) -> (got : i64) -> bool
+  let lemma digits_frame : (s : [u8]) -> (t : [u8]) -> (acc : u64) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> unit
+    requires i <= j && j <= len s && j <= len t
+    requires forall (k in i .. j). s.[k] = t.[k]
+    ensures digits_value acc s i j base = digits_value acc t i j base
+  let lemma digits_value_eq_num : (s : [u8]) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> (cap : u64) -> unit
+    requires i <= j && j <= len s && cap <= max u32 + 1
+    requires digits_value 0 s i j base <= cap
+    ensures num s i j base cap = digits_value 0 s i j base
+  let lemma run_digits : (s : [u8]) -> (i : usize) -> (j : usize) -> (base : int{2..36}) -> unit
+    requires i <= j && j <= len s
+    requires forall (k in i .. j). digit_of s.[k] base < base
+    requires j = len s || digit_of s.[j] base >= base
+    ensures run s i base = j - i
   let digit_value : (b : u8) -> (base : int{2..36}) -> u32
     ensures result = digit_of b base
   let digits = type { mag : u64; used : usize; ec : errc }
@@ -86,53 +102,66 @@ interface Charconv = sig
     ensures result.ok <==> ndig v base 1 <= len dst - start
     ensures result.ok ==> result.used = ndig v base 1
     ensures result.ok = false ==> result.used = 0
+    ensures result.ok ==> digits_value 0 dst start (start + result.used) base = v
     ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
     ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u8) -> (base : int{2..36}) -> chars
     ensures result.ok <==> ndig v base 1 <= len dst
     ensures result.ok ==> result.used = ndig v base 1
+    ensures result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u16) -> (base : int{2..36}) -> chars
     ensures result.ok <==> ndig v base 1 <= len dst
     ensures result.ok ==> result.used = ndig v base 1
+    ensures result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u32) -> (base : int{2..36}) -> chars
     ensures result.ok <==> ndig v base 1 <= len dst
     ensures result.ok ==> result.used = ndig v base 1
+    ensures result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : u64) -> (base : int{2..36}) -> chars
     ensures result.ok <==> ndig v base 1 <= len dst
     ensures result.ok ==> result.used = ndig v base 1
+    ensures result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i8) -> (base : int{2..36}) -> chars
     ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
     ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v >= 0 && result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v < 0 && result.ok ==> digits_value 0 dst 1 result.used base = 0 - v
     ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
     ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i16) -> (base : int{2..36}) -> chars
     ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
     ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v >= 0 && result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v < 0 && result.ok ==> digits_value 0 dst 1 result.used base = 0 - v
     ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
     ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i32) -> (base : int{2..36}) -> chars
     ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
     ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v >= 0 && result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v < 0 && result.ok ==> digits_value 0 dst 1 result.used base = 0 - v
     ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
     ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
   let to_chars : (dst : borrowed inout mutable [u8]) -> (v : i64) -> (base : int{2..36}) -> chars
     ensures v >= 0 ==> (result.ok <==> ndig v base 1 <= len dst)
     ensures v >= 0 && result.ok ==> result.used = ndig v base 1
+    ensures v >= 0 && result.ok ==> digits_value 0 dst 0 result.used base = v
     ensures v < 0 && result.ok ==> dst.[0] = 45 && result.used = 1 + ndig (0 - v) base 1
+    ensures v < 0 && result.ok ==> digits_value 0 dst 1 result.used base = 0 - v
     ensures v >= 0 ==> (forall (k in 0 .. len dst). k < result.used ==> digit_of dst.[k] base < base)
     ensures v < 0 ==> (forall (k in 0 .. len dst). 0 < k && k < result.used ==> digit_of dst.[k] base < base)
     ensures forall (k in 0 .. len dst). result.used <= k ==> dst.[k] = old (dst.[k])
@@ -162,6 +191,20 @@ let spec digit_of (b : u8) (base : int{2..36}) : u32
     else 36 in
   if v < base then v else base
 
+(** One left-fold step: acc * base + digit, saturated at max u64. *)
+let spec digit_step (acc : u64) (b : u8) (base : int{2..36}) : u64 @opaque
+= let d : u64 = if digit_of b base < base then digit_of b base else 0 in
+  let ba : u64 = base in
+  if acc <= max u64 / ba then (acc * ba) +| d else max u64
+
+(** The value of s.[i .. j] in base `base` after digits worth acc,
+    saturated at max u64. *)
+let spec digits_value (acc : u64) (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) : u64 @opaque
+  requires i <= j && j <= len s
+  decreases j - i
+= if i = j then acc
+  else digits_value (digit_step acc s.[i] base) s (i + 1) j base
+
 (** The value of s.[i .. j] in base `base`, saturated at cap: every
     value from cap up means "too big". *)
 let spec num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) : u64
@@ -171,9 +214,7 @@ let spec num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) 
 = if i = j then 0
   else (
     let p = num s i (j - 1) base cap in
-    let d : u64 = if digit_of s.[j - 1] base < base then digit_of s.[j - 1] base else 0 in
-    let b : u64 = base in
-    let x = p * b + d in
+    let x = digit_step p s.[j - 1] base in
     if x > cap then cap else x)
 
 (** How many digits of base `base` s.[i ..] begins with. *)
@@ -182,6 +223,111 @@ let spec run (s : [u8]) (i : usize) (base : int{2..36}) : usize
   ensures i + result <= len s
   decreases len s - i
 = if i = len s then 0 else if digit_of s.[i] base < base then run s (i + 1) base + 1 else 0
+
+let lemma divmod64 (v : u64) (b : u64) : unit
+  requires b >= 2
+  ensures (v / b) * b + v % b = v && v % b < b
+= ()
+
+let lemma digit_step_ge_alg (p : u64) (d : u64) (b : u64) (qm : u64) (rm : u64) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires 2 <= b && b <= 36 && d < b
+  requires qm * b + rm = max u64 && rm < b
+  ensures (if p <= qm then (p * b) +| d else max u64) >= p
+= ()
+
+let lemma digit_step_ge (p : u64) (c : u8) (base : int{2..36}) : unit
+  ensures digit_step p c base >= p
+  with digit_step
+= let d : u64 = if digit_of c base < base then digit_of c base else 0 in
+  let b : u64 = base in
+  divmod64 (max u64) b;
+  digit_step_ge_alg p d b (max u64 / b) (max u64 % b)
+
+let lemma digit_step_u32_alg (p : u64) (d : u64) (b : u64) (qm : u64) (rm : u64) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires 2 <= b && b <= 36 && d < b && p <= max u32
+  requires qm * b + rm = max u64 && rm < b
+  ensures p <= qm && (p * b) +| d = p * b + d
+= ()
+
+let lemma digit_step_u32 (p : u64) (c : u8) (base : int{2..36}) : unit
+  requires p <= max u32 && digit_of c base < base
+  ensures digit_step p c base = p * base + digit_of c base
+  with digit_step
+= let d : u64 = digit_of c base in
+  let b : u64 = base in
+  divmod64 (max u64) b;
+  digit_step_u32_alg p d b (max u64 / b) (max u64 % b)
+
+let lemma digit_step_mono_alg (p : u64) (d : u64) (b : u64) (cap : u64) (qm : u64) (rm : u64) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires 2 <= b && b <= 36 && d < b && cap <= max u32 + 1
+  requires qm * b + rm = max u64 && rm < b
+  requires (if p <= qm then (p * b) +| d else max u64) <= cap
+  ensures p <= cap
+= ()
+
+let lemma digit_step_mono (p : u64) (c : u8) (base : int{2..36}) (cap : u64) : unit
+  requires cap <= max u32 + 1
+  requires digit_step p c base <= cap
+  ensures p <= cap
+  with digit_step
+= let d : u64 = if digit_of c base < base then digit_of c base else 0 in
+  let b : u64 = base in
+  divmod64 (max u64) b;
+  digit_step_mono_alg p d b cap (max u64 / b) (max u64 % b)
+
+let lemma digits_value_empty (acc : u64) (s : [u8]) (i : usize) (base : int{2..36}) : unit
+  requires i <= len s
+  ensures digits_value acc s i i base = acc
+  with digits_value
+= ()
+
+let lemma digits_value_cons (acc : u64) (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) : unit
+  requires i < j && j <= len s
+  ensures digits_value acc s i j base = digits_value (digit_step acc s.[i] base) s (i + 1) j base
+  with digits_value
+= ()
+
+let lemma digits_value_snoc (acc : u64) (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) : unit
+  requires i < j && j <= len s
+  ensures digits_value acc s i j base = digit_step (digits_value acc s i (j - 1) base) s.[j - 1] base
+  decreases j - i
+  with digits_value
+= if i + 1 < j then digits_value_snoc (digit_step acc s.[i] base) s (i + 1) j base
+  else (
+    digits_value_empty (digit_step acc s.[i] base) s (i + 1) base;
+    digits_value_empty acc s i base)
+
+(** Two slices that agree on [i .. j) have the same digits_value. *)
+let lemma digits_frame (s : [u8]) (t : [u8]) (acc : u64) (i : usize) (j : usize) (base : int{2..36}) : unit
+  requires i <= j && j <= len s && j <= len t
+  requires forall (k in i .. j). s.[k] = t.[k]
+  ensures digits_value acc s i j base = digits_value acc t i j base
+  decreases j - i
+  with digits_value
+= if i < j then digits_frame s t (digit_step acc s.[i] base) (i + 1) j base
+
+(** When digits_value fits within cap, num gives the exact same value. *)
+let lemma digits_value_eq_num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) : unit
+  requires i <= j && j <= len s && cap <= max u32 + 1
+  requires digits_value 0 s i j base <= cap
+  ensures num s i j base cap = digits_value 0 s i j base
+  decreases j - i
+= if i = j then digits_value_empty 0 s i base
+  else (
+    digits_value_snoc 0 s i j base;
+    let p = digits_value 0 s i (j - 1) base in
+    digit_step_mono p s.[j - 1] base cap;
+    digits_value_eq_num s i (j - 1) base cap)
+
+(** A run of valid digits in [i .. j) ending at len s or a non-digit has
+    length j - i. *)
+let lemma run_digits (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) : unit
+  requires i <= j && j <= len s
+  requires forall (k in i .. j). digit_of s.[k] base < base
+  requires j = len s || digit_of s.[j] base >= base
+  ensures run s i base = j - i
+  decreases j - i
+= if i < j then run_digits s (i + 1) j base
 
 let digit_value (b : u8) (base : int{2..36}) : u32
   ensures result = digit_of b base
@@ -225,12 +371,13 @@ let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (limit : u64) : 
       let d : u64 = dv in
       assert run s i base = run s (i + 1) base + 1;
       if over then (
+        digit_step_ge (num s start i base (limit + 1)) s.[i] base;
         assert num s start (i + 1) base (limit + 1) > limit;
         i <- i + 1)
       else (
         let next = acc * b + d in
-        assert d = (if digit_of s.[i] base < base then digit_of s.[i] base else 0);
-        assert next = num s start i base (limit + 1) * b + d;
+        digit_step_u32 acc s.[i] base;
+        assert next = digit_step (num s start i base (limit + 1)) s.[i] base;
         assert next <= limit ==> num s start (i + 1) base (limit + 1) = next;
         if next > limit then (
           assert num s start (i + 1) base (limit + 1) > limit;
@@ -322,6 +469,62 @@ let spec ndig (t : u64) (base : int{2..36}) (n : usize) : usize
 = let b : u64 = base in
   if t < b || n = 64 then n else ndig (t / b) base (n + 1)
 
+let spec dig_count (t : u64) (base : int{2..36}) : usize @opaque
+  ensures 1 <= result && result <= 64
+= ndig t base 1
+
+let lemma div_le_half_alg (t : u64) (b : u64) (qt : u64) (rm : u64) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires 2 <= b && b <= 36 && qt * b + rm = t && rm < b
+  ensures qt <= t / 2
+= ()
+
+let lemma step_last_alg (q : u64) (b : u64) (qt : u64) (rm : u64) (qm : u64) (rmm : u64) : unit @solver(tactic = "(using-params smt :bv.solver 2)")
+  requires 2 <= b && b <= 36
+  requires qt * b + rm = q && rm < b
+  requires qm * b + rmm = max u64 && rmm < b
+  ensures qt <= qm && (if qt <= qm then (qt * b) +| rm else max u64) = q
+= ()
+
+let lemma step_last (q : u64) (c : u8) (base : int{2..36}) : unit
+  requires digit_of c base = q % base
+  ensures digit_step (q / base) c base = q
+  with digit_step
+= let b : u64 = base in
+  divmod64 q b;
+  divmod64 (max u64) b;
+  step_last_alg q b (q / b) (q % b) (max u64 / b) (max u64 % b)
+
+let spec fits_bits (t : u64) (k : int{0..64}) : bool
+= if k = 64 then true
+  else if k = 0 then t = 0
+  else (let one : u64 = 1 in let s : u64 = k in t < (one << s))
+
+let lemma fits_step (t : u64) (base : int{2..36}) (k : int{1..64}) : unit
+  requires fits_bits t k
+  ensures fits_bits (t / base) (k - 1)
+= let b : u64 = base in
+  divmod64 t b;
+  div_le_half_alg t b (t / b) (t % b)
+
+let lemma ndig_shift (t : u64) (base : int{2..36}) (n : int{1..64}) (k : int{1..64}) : unit
+  requires n < 64 && n + k = 64 && fits_bits t k
+  ensures ndig t base (n + 1) = ndig t base n + 1
+  decreases k
+= let b : u64 = base in
+  if t >= b then (
+    fits_step t base k;
+    assert k >= 2;
+    ndig_shift (t / b) base (n + 1) (k - 1))
+
+let lemma dig_count_step (q : u64) (base : int{2..36}) : unit
+  ensures dig_count q base > 1 ==> dig_count (q / base) base = dig_count q base - 1
+  ensures dig_count q base = 1 ==> q / base = 0
+  with dig_count
+= let b : u64 = base in
+  if q >= b then (
+    fits_step q base 64;
+    ndig_shift (q / b) base 1 63)
+
 (** The lower-case digit for d. *)
 let digit_char (d : u64) (base : int{2..36}) : u8
   requires d < base
@@ -331,44 +534,84 @@ let digit_char (d : u64) (base : int{2..36}) : u8
 (** What to_chars wrote: `used` bytes from the start, when ok. *)
 let chars = type { used : usize; ok : bool }
 
-(** Writes v's digits in base `base` at dst.[start ..], most significant
-    first, and says how many: ok when they fit. Every byte it writes is a
-    digit of the base, and the rest of dst is as it was. That the digits
-    are v's, so that from_chars reads v back, waits on a proved library
-    of digit arithmetic (docs/cpp-std.md). *)
-let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (base : int{2..36}) : chars
-  requires start <= len dst
-  ensures result.ok <==> ndig v base 1 <= len dst - start
-  ensures result.ok ==> result.used = ndig v base 1
-  ensures result.ok = false ==> result.used = 0
-  ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
-  ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
+let count_digits (v : u64) (base : int{2..36}) : int{1..64}
+  ensures result = ndig v base 1
+  ensures result = dig_count v base
 = let b : u64 = base in
-  let n : mutable usize = 1 in
+  let n : mutable int{1..64} = 1 in
   let t : mutable u64 = v in
   while t >= b && n < 64
-    invariant 1 <= n && n <= 64
     invariant ndig v base 1 = ndig t base n
     decreases 64 - n
   do
     t <- t / b;
     n <- n + 1
   done;
+  (with dig_count in assert dig_count v base = n);
+  n
+
+let put_digit (dst : borrowed inout mutable [u8]) (p : usize) (e : usize) (q : u64) (base : int{2..36}) : u64
+  requires 0 < p && p <= e && e <= len dst
+  ensures digits_value result dst (p - 1) e base = digits_value q (old dst) p e base
+  ensures dig_count q base > 1 ==> dig_count result base = dig_count q base - 1
+  ensures dig_count q base = 1 ==> result = 0
+  ensures digit_of dst.[p - 1] base < base
+  ensures forall (k in 0 .. len dst). k <> p - 1 ==> dst.[k] = old (dst.[k])
+= let b : u64 = base in
+  let c = digit_char (q % b) base in
+  dst.[p - 1] <- c;
+  digits_frame (old dst) dst q p e base;
+  step_last q c base;
+  digits_value_cons (q / b) dst (p - 1) e base;
+  dig_count_step q base;
+  q / b
+
+let fill_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (base : int{2..36}) (n : int{1..64}) : unit
+  requires start + n <= len dst
+  requires n = dig_count v base
+  ensures digits_value 0 dst start (start + n) base = v
+  ensures forall (k in 0 .. len dst). start <= k && k < start + n ==> digit_of dst.[k] base < base
+  ensures forall (k in 0 .. len dst). k < start || start + n <= k ==> dst.[k] = old (dst.[k])
+= let e : usize = start + n in
+  let q : mutable u64 = v in
+  let p : mutable usize = e in
+  digits_value_empty v dst e base;
+  while p > start
+    invariant start <= p && p <= e
+    invariant digits_value q dst p e base = v
+    invariant p > start ==> dig_count q base = p - start
+    invariant p = start ==> q = 0
+    invariant forall (k in 0 .. len dst). p <= k && k < e ==> digit_of dst.[k] base < base
+    invariant forall (k in 0 .. len dst). k < start || e <= k ==> dst.[k] = old (dst.[k])
+    decreases p - start
+  do
+    q <- put_digit dst p e q base;
+    p <- p - 1
+  done
+
+let put_minus (dst : borrowed inout mutable [u8]) (used : usize) (base : int{2..36}) : unit
+  requires 1 + used <= len dst
+  ensures dst.[0] = 45
+  ensures digits_value 0 dst 1 (1 + used) base = digits_value 0 (old dst) 1 (1 + used) base
+  ensures forall (k in 0 .. len dst). k <> 0 ==> dst.[k] = old (dst.[k])
+= dst.[0] <- 45;
+  digits_frame (old dst) dst 0 1 (1 + used) base
+
+(** Writes v's digits in base `base` at dst.[start ..], most significant
+    first, and says how many: ok when they fit. Every byte it writes is a
+    digit of the base, their value is v, and the rest of dst is as it was. *)
+let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (base : int{2..36}) : chars
+  requires start <= len dst
+  ensures result.ok <==> ndig v base 1 <= len dst - start
+  ensures result.ok ==> result.used = ndig v base 1
+  ensures result.ok = false ==> result.used = 0
+  ensures result.ok ==> digits_value 0 dst start (start + result.used) base = v
+  ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
+  ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
+= let n = count_digits v base in
   if n > len dst - start then { used = 0; ok = false }
   else (
-    let q : mutable u64 = v in
-    let p : mutable usize = n in
-    while p > 0
-      invariant p <= n && n <= len dst - start
-      invariant forall (k in 0 .. len dst). start + p <= k && k < start + n ==> digit_of dst.[k] base < base
-      invariant forall (k in 0 .. len dst). k < start || start + n <= k ==> dst.[k] = old (dst.[k])
-      decreases p
-    do
-      p <- p - 1;
-      dst.[start + p] <- digit_char (q % b) base;
-      assert digit_of dst.[start + p] base < base;
-      q <- q / b
-    done;
+    fill_digits dst start v base n;
     { used = n; ok = true })
 
 (* to_chars for the unsigned type `t`: its digits, widened to a u64. *)
@@ -376,6 +619,7 @@ let meta unsigned_to_chars (t : string) : item =
   `( let to_chars ($!dst : borrowed inout mutable [u8]) ($!v : $t) ($!base : int{2..36}) : chars
        ensures $!result.ok <==> ndig $!v $!base 1 <= len $!dst
        ensures $!result.ok ==> $!result.used = ndig $!v $!base 1
+       ensures $!result.ok ==> digits_value 0 $!dst 0 $!result.used $!base = $!v
        ensures forall (k in 0 .. len $!dst). k < $!result.used ==> digit_of $!dst.[k] $!base < $!base
        ensures forall (k in 0 .. len $!dst). $!result.used <= k ==> $!dst.[k] = old ($!dst.[k])
      = let $!w : u64 = $!v in
@@ -387,7 +631,9 @@ let meta signed_to_chars (t : string) : item =
   `( let to_chars ($!dst : borrowed inout mutable [u8]) ($!v : $t) ($!base : int{2..36}) : chars
        ensures $!v >= 0 ==> ($!result.ok <==> ndig $!v $!base 1 <= len $!dst)
        ensures $!v >= 0 && $!result.ok ==> $!result.used = ndig $!v $!base 1
+       ensures $!v >= 0 && $!result.ok ==> digits_value 0 $!dst 0 $!result.used $!base = $!v
        ensures $!v < 0 && $!result.ok ==> $!dst.[0] = 45 && $!result.used = 1 + ndig (0 - $!v) $!base 1
+       ensures $!v < 0 && $!result.ok ==> digits_value 0 $!dst 1 $!result.used $!base = 0 - $!v
        ensures $!v >= 0 ==> (forall (k in 0 .. len $!dst). k < $!result.used ==> digit_of $!dst.[k] $!base < $!base)
        ensures $!v < 0 ==> (forall (k in 0 .. len $!dst). 0 < k && k < $!result.used ==> digit_of $!dst.[k] $!base < $!base)
        ensures forall (k in 0 .. len $!dst). $!result.used <= k ==> $!dst.[k] = old ($!dst.[k])
@@ -397,7 +643,7 @@ let meta signed_to_chars (t : string) : item =
        else (
          let $!m : u64 = if $!w = min i64 then max i64 + 1 else (let $!p : i64 = 0 - $!w in $!p) in
          let $!r = write_digits $!dst 1 $!m $!base in
-         if $!r.ok then ($!dst.[0] <- 45; { used = $!r.used + 1; ok = true })
+         if $!r.ok then (put_minus $!dst $!r.used $!base; { used = $!r.used + 1; ok = true })
          else { used = 0; ok = false }) )
 
 unsigned_to_chars "u8"

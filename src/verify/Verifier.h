@@ -99,6 +99,11 @@ struct Options {
   // second solve can cost far more than the proof, so without it a proof
   // reports every axiom it was given, a superset.
   bool trackAxioms = true;
+  // Int-blasting (ADR 0066): a goal that multiplies or divides two values
+  // that are not constants is first given to Z3's int-blasting solver,
+  // which decides products as integer arithmetic instead of bit-blasting a
+  // multiplier. Off (--no-int-blast) solves every goal as before.
+  bool intBlast = true;
 };
 
 // What one verifyModule call did, for --verify-stats and the build-time
@@ -124,6 +129,7 @@ struct Stats {
   unsigned long long vacuityCost = 0;
   unsigned sliced = 0;       // queries slicing made smaller
   unsigned unsliced = 0;     // sliced queries solved again in full
+  unsigned intBlasted = 0;   // goals int-blasting proved (ADR 0066)
   unsigned threads = 0;
   unsigned long long cost = 0;  // Z3 resource count over every query
   double encodeMs = 0, solveMs = 0;

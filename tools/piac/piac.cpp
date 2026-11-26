@@ -34,6 +34,8 @@
 //                                   a buffer of records, and only when
 //                                   that drops a declaration)
 //   piac --no-slice ...             always solve each goal's full query
+//   piac --no-int-blast ...         bit-blast every goal, nonlinear ones
+//                                   too (ADR 0066)
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr; with
 //                                   theories, each axiom's triggers and the
@@ -98,13 +100,18 @@
 #include "cert/Certificate.h"
 #include "codegen/Codegen.h"
 #include "dialect/PiaDialect.h"
+#include "gpu/Spirv.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Parser/Parser.h"
 #include "verify/Verifier.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #endif
 
@@ -121,12 +128,14 @@ int usage() {
          "             "
          "[--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
          "             [--proof-cache=<dir>] [--slice | --no-slice] "
+         "[--no-int-blast] "
          "[--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
          "             [--explain-overloads=<file:line>]\n"
          "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
+         "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
          "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
@@ -135,6 +144,42 @@ int usage() {
          "[--iface-path=<dir>]...\n";
   return 2;
 }
+
+#ifndef PIA_NO_MLIR
+// Parses an MLIR file holding a gpu.module, lowers it to SPIR-V and writes
+// the binary to `output`.
+int emitSpirv(const std::string &file, const std::string &output) {
+  mlir::DialectRegistry registry;
+  pia::gpu::registerDialects(registry);
+  mlir::MLIRContext ctx(registry);
+  auto buffer = llvm::MemoryBuffer::getFile(file);
+  if (!buffer) {
+    std::cerr << file << ": " << buffer.getError().message() << "\n";
+    return 1;
+  }
+  llvm::SourceMgr sm;
+  sm.AddNewSourceBuffer(std::move(*buffer), llvm::SMLoc());
+  mlir::SourceMgrDiagnosticHandler diagnostics(sm, &ctx);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(sm, &ctx);
+  if (!module)
+    return 1;
+  if (mlir::failed(pia::gpu::lowerToSpirv(*module)))
+    return 1;
+  llvm::SmallVector<uint32_t> binary;
+  if (mlir::failed(pia::gpu::serializeSpirv(*module, binary)))
+    return 1;
+  std::error_code ec;
+  llvm::raw_fd_ostream out(output, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    std::cerr << output << ": " << ec.message() << "\n";
+    return 1;
+  }
+  out.write(reinterpret_cast<const char *>(binary.data()),
+            binary.size() * sizeof(uint32_t));
+  return 0;
+}
+#endif
 
 // Which lints are on: all but those --no-lint names, or none.
 struct LintSwitch {
@@ -282,20 +327,19 @@ std::string obligations(size_t n) {
 // One line, `verify-stats: key=value ...`, that tools/bench reads.
 void printStats(const pia::verify::Stats &st) {
   std::cerr << "verify-stats: goals=" << st.goals
-            << " unselected=" << st.unselected
-            << " intervals=" << st.intervals << " skipped=" << st.skipped
-            << " solved=" << st.solved << " cached=" << st.cached
-            << " sliced=" << st.sliced << " unsliced=" << st.unsliced
-            << " threads=" << st.threads << " cost=" << st.cost
+            << " unselected=" << st.unselected << " intervals=" << st.intervals
+            << " skipped=" << st.skipped << " solved=" << st.solved
+            << " cached=" << st.cached << " sliced=" << st.sliced
+            << " unsliced=" << st.unsliced << " threads=" << st.threads
+            << " cost=" << st.cost
             << " encode_ms=" << static_cast<long long>(st.encodeMs)
             << " solve_ms=" << static_cast<long long>(st.solveMs)
             << " type=" << st.typeGoals << " type_smt=" << st.typeSmt
-            << " type_cost=" << st.typeCost
-            << " contract=" << st.contractGoals
+            << " type_cost=" << st.typeCost << " contract=" << st.contractGoals
             << " contract_smt=" << st.contractSmt
             << " contract_cost=" << st.contractCost
             << " generic=" << st.genericGoals << " instances=" << st.instances
-            << "\n";
+            << " intblast=" << st.intBlasted << "\n";
   // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
   // line above the only `verify-stats:` line.
   // --check-vacuity's extra queries, on a line of their own.
@@ -571,6 +615,7 @@ int main(int argc, char **argv) {
   std::vector<std::string> verifyOnly;
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
+  bool intBlast = true; // --no-int-blast turns it off (ADR 0066)
   bool verifyStats = false;
   bool checkVacuity = false;
   bool trustReport = false;
@@ -585,10 +630,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--dump-ast" || arg == "--dump-expanded" ||
-        arg == "--dump-tokens" || arg == "--check" ||
-        arg == "--emit=mlir" || arg == "--emit=core" || arg == "--emit=llvm" ||
-        arg == "--emit=asm" || arg == "--emit=obj" ||
-        arg == "--emit=interface")
+        arg == "--dump-tokens" || arg == "--check" || arg == "--emit=mlir" ||
+        arg == "--emit=core" || arg == "--emit=llvm" || arg == "--emit=asm" ||
+        arg == "--emit=obj" || arg == "--emit=interface" ||
+        arg == "--emit=spirv")
       mode = arg;
     else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
@@ -651,6 +696,8 @@ int main(int argc, char **argv) {
       slice = 1;
     else if (arg == "--no-slice")
       slice = -1;
+    else if (arg == "--no-int-blast")
+      intBlast = false;
     else if (arg == "--verify-stats")
       verifyStats = true;
     else if (arg == "--check-vacuity")
@@ -734,6 +781,15 @@ int main(int argc, char **argv) {
   if (verify && mode.empty()) mode = "--verify";
   if (verify && mode != "--verify" && mode != "--emit=mlir") return usage();
   if (mode.empty() || file.empty()) return usage();
+#ifndef PIA_NO_MLIR
+  // A hand-written gpu.module, lowered to a SPIR-V binary (ADR 0068, step
+  // 1). Step 3 makes the gpu.module from @place(gpu) spreads.
+  if (mode == "--emit=spirv") {
+    if (output.empty() || verify)
+      return usage();
+    return emitSpirv(file, output);
+  }
+#endif
   if (pia::syntax::isLiterateFileName(file)) literate = true;
   if (showComments && mode != "--dump-ast" && mode != "--dump-expanded")
     return usage();
@@ -910,6 +966,7 @@ int main(int argc, char **argv) {
                       : slice < 0 ? pia::verify::Options::Slice::Off
                                   : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
+      options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
       // Which axioms each proof used is only reported by these, and kept

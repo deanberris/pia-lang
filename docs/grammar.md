@@ -228,7 +228,7 @@ Modifiers come in a fixed order: ownership, then access, then mutability. Each o
 
 `borrowed(m)` in a function's result type names the parameter `m` that the result is borrowed from, as in `let alloc (m : borrowed arena) (n : usize) : result (borrowed(m) out mutable [u8]) OutOfMemory` (#70). It is written with no space before the parenthesis: `borrowed (t)` is `borrowed` before a parenthesised type. Inside a type argument, such as `result`'s, the parenthesised argument carries the modifiers.
 
-A type value is an expression. A `let` whose value names a type, such as `let byte = u8`, `let percent = int{0..100}` or `let bytes = option byte`, is another name for that type, and `type` makes a new one ([ADR 0064](adr/0064-distinct-types.md)). Until step 2 of that ADR lands, `type u8` is still an alias too.
+A type value is an expression. A `let` whose value names a type, such as `let byte = u8`, `let percent = int{0..100}` or `let bytes = option byte`, is another name for that type, and `type` makes a new one ([ADR 0064](adr/0064-distinct-types.md)). So `let length = type u32` is a type distinct from `u32`, and `length 5` and `u32 l` convert between them.
 
 The type value:
 

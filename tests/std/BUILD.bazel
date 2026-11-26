@@ -73,6 +73,7 @@ lit_tests(
         "json_derive_array.pia": "large",
         "json_derive_variant.pia": "large",
         "json_write.pia": "large",
+        "time_civil.pia": "large",
     },
     tools = ["//tools/piac"],
 )
