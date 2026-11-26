@@ -146,22 +146,22 @@ Steps 2 to 4 are built for the verifier (src/irgen/Boxes.cpp), and step 5 for co
 
 Dean (2026-11-26): "`box<Concept> c` should have a special implementation where the size of the element placed in the tag is known, and a reference to the drop function for the item is also known. This would be like a `unique_ptr<T>` with an allocator that knows how to dispatch to the delete implementation of T, but instead of a vtable we have an explicit ref to the type's drop implementation."
 
-So a `box c` is not a tagged union of values, as step 5 built it, and not a pointer to a table, as section 7 sketched it. It owns its object the way a `box t` does, through a slot, and carries what an owner needs to end it without knowing what it holds:
+So a `box c` is not a tagged union of values, as step 5 built it, and not a pointer to a shared table, as section 7 sketched it. It owns its object the way a `box t` does, through a slot, and carries what an owner needs to end it without knowing what it holds:
 
 - **The object's place.** The slot that `make` allocated for the `box t`, kept by `widen`: the object is not copied into the box.
 - **Its size and alignment**, in bytes, of the type `widen` was given. A container that moves or frees the object, such as an allocator that frees one by one or a `vec (box c)` that copies its slots when it grows, uses them without a switch.
-- **A reference to that type's `drop`**: the instance of `drop` for the boxed type (`drop<square>`), or a function that does nothing for a type with no drop. Dropping a `box c` calls it on the object, then gives the slot back to its allocator if the allocator frees one by one. It is a direct reference to one function, not a table: there is no table of the concept's functions.
-- **A tag** saying which of the module's widened types it holds, for calls of the concept's requirements, which stay a switch on the tag within a module (step 5), and a direct call where the tag is known.
+- **A reference to that type's `drop`**: the instance of `drop` for the boxed type (`drop<square>`), or a function that does nothing for a type with no drop. Dropping a `box c` calls it on the object, then gives the slot back to its allocator if the allocator frees one by one. It is a direct reference to one function, held in the box, not in a shared table.
+- **A reference to each of the concept's requirements**, for the boxed type, so a requirement's call through the box is an indirect call, as Rust's `dyn Trait` does through its vtable, but with the references in the box (Dean, 2026-11-27). [ADR 0071](0071-function-references.md), section 6, says how they are made and checked. This replaces step 5's tag and switch; a call is still direct where the compiler can see what the box holds.
 
 What the verifier sees does not change: the contents are still an abstract value, and a requirement's result on the box is still the erased requirement's. Dropping a `box c` requires it full, as dropping a `box t` does, and `remove` and `free` for `box c` follow, so a `box c` can be emptied (closing the gap that a `box c` is always full).
 
-The size and drop also serve ADR 0048's inline slots: a buffer of inline `box c` slots stores each element's size and drop next to it, so moving and dropping elements needs no switch.
+The size and drop also serve ADR 0048's inline slots: a buffer of inline `box c` slots stores each element's size, drop and requirement references next to it, so moving, dropping and calling elements needs no switch.
 
 Implementation, replacing step 5's representation:
 
 1. **Function references in code generation**: a function's address as a value, and an indirect call through it, lowered to LLVM.
-2. **`box c`'s layout**: slot, size, alignment, drop and tag, made by `widen` from a `box t`; requirement calls switch on the tag as before.
+2. **`box c`'s layout**: slot, size, alignment, drop and one reference per requirement, made by `widen` from a `box t`; requirement calls go through the references.
 3. **`drop`, `remove` and `free` for `box c`**, with `drop` called through the reference; tests that a `box Shape` of a type with a drop runs that drop, from Pia and from C.
 4. **Inline `box c` slots** (ADR 0048, section 5) with the size and drop kept per element.
 
-Step 6's cross-module ABI is then the box's layout above, plus a way for an importer to call a requirement through a box whose types it does not know. That needs a decision of its own.
+Step 6's cross-module ABI is then the box's layout above: an importer calls a requirement or the drop through the box's references, so it needs no table layout of its own beyond publishing the layout ([ADR 0030](0030-published-object-layouts.md)).

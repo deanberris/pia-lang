@@ -8,10 +8,12 @@ Status: Proposed
 
 [ADR 0044](0044-function-values-and-lambdas.md) made every function value static: a lambda or a named function passed to a higher-order function is a direct call in that function's instance, and "there is no function pointer and no heap allocation for a static function value, ever". A value whose function is chosen at run time was left to the library's `box` over `Function` ([ADR 0046](0046-box-over-a-type-or-a-concept.md)).
 
-Two things now need a function as a stored value:
+The case that needs this is a box over a concept, `box c` (Dean, 2026-11-27): what Rust's `dyn Trait` is for traits. A `Box<dyn Shape>` in Rust is a pointer to the object and a pointer to a table holding the object's drop, its size and alignment, and one function pointer per method. A `box Shape` must do the same job, ending and calling an object whose type its user does not know, and it can only do it with function references:
 
-- **`box c`'s drop.** The amendment to ADR 0046 of 2026-11-26 gives a `box c` a direct reference to the boxed type's `drop`, "like a `unique_ptr<T>` ... but instead of a vtable we have an explicit ref to the type's drop implementation" (Dean).
-- **Tables and callbacks.** A table of handlers, a state machine's transitions, a C library that takes a callback (`qsort`, `pthread_create`), or C code that calls back into Pia. For a function that captures nothing, a box and an allocator are more than the job needs.
+- **Its drop.** The amendment to ADR 0046 of 2026-11-26 gives a `box c` a direct reference to the boxed type's `drop`, "like a `unique_ptr<T>` ... but instead of a vtable we have an explicit ref to the type's drop implementation" (Dean).
+- **Its requirements.** A call of a concept's requirement through a box must reach the boxed type's implementation. Step 5 of ADR 0046 does it with a switch on a tag, which works only inside the module that knows every widened type. A reference to each requirement's implementation works anywhere, including in a module that imports the box and never saw the types.
+
+The same references then serve tables and callbacks: a table of handlers, a state machine's transitions, a C library that takes a callback (`qsort`, `pthread_create`), or C code that calls back into Pia. For a function that captures nothing, a box and an allocator are more than those need.
 
 Dean decided on 2026-11-27 that function references are visible to programs, and that they need no address operator: "we can treat a function as a value that travels by reference (cannot be cloned or duplicated)". The function itself is never copied, and a reference to it can be (Dean, 2026-11-27).
 
@@ -19,7 +21,7 @@ Dean decided on 2026-11-27 that function references are visible to programs, and
 
 - **C** has function pointers and an implicit decay from a function's name to its address. Nothing stops a call through a pointer of the wrong type.
 - **C++** has the same decay, `std::function` for owning closures, and `std::function_ref` (C++26) for a borrowed callable: a code pointer and a pointer to the callable's state.
-- **Rust** has `fn(A) -> R`, distinct from the `Fn` traits, to which named functions and capture-free closures coerce. It is never null; `Option<fn(...)>` is the nullable form.
+- **Rust** has `fn(A) -> R`, distinct from the `Fn` traits, to which named functions and capture-free closures coerce. It is never null; `Option<fn(...)>` is the nullable form. `dyn Trait` is a fat pointer, the data and a vtable of drop, size, alignment and one `fn` pointer per method, shared by every value of one type and trait.
 
 ## Decision
 
@@ -76,9 +78,16 @@ A reference to a function that captures nothing has no environment, and is one w
 - A reference that crosses into Pia from C, as a parameter of an exported function or the result of an `extern`, is trusted to meet its arrow, and the trust report lists it. A reference made in Pia is proved where it is made.
 - An interface may export a function that takes, stores or returns references. The arrow is part of the signature, so an importer checks its calls against it.
 
-### 6. `box c`'s drop
+### 6. Boxes over concepts
 
-The amendment to ADR 0046 is the first user. A `box c` stores a reference to its object's drop: for each widened type, the compiler makes a thunk that takes the slot and drops the object in it, or one that does nothing for a type with no drop, and `widen` stores a reference to it. Dropping a `box c` calls it. The verifier sees only the arrow, so the box's contract is unchanged.
+This is what the references are for first, and what makes a `box c` work as Rust's `dyn Trait` does. When `widen` makes a `box c` from a `box t`, it stores, beside the slot and the object's size and alignment (the ADR 0046 amendment):
+
+- **A reference to `t`'s drop**, through a thunk that takes the slot and drops the object in it, or one that does nothing for a type with no drop. Dropping the box calls it, then gives the slot back to its allocator.
+- **A reference to `t`'s implementation of each of `c`'s requirements**, through a thunk that takes the slot in the receiver's place and forwards to `t`'s function. `area b` on a `box Shape` is a call through the box's `area` reference.
+
+Each reference is checked once, where `widen` makes it, against the requirement's arrow with the receiver erased, which is exactly the check ADR 0046's section 4 already asks for: what is placed in a box must be proved to expose the concept's interface. So the verifier's view of a box does not change. A call through it has the requirement's contract and nothing else.
+
+The references are stored in the box itself, not in a table the box points to, as Dean asked ("instead of a vtable we have an explicit ref"): a call is one load and one indirect call, and a box is one word wider for each requirement. Where the compiler can see what a box holds, such as straight after `widen`, the call is direct, as it is today. Because a reference is an address, a box made in one module can be called and dropped in another that never saw its type, so ADR 0046's step 6 needs no table layout and no thunks beyond these.
 
 ### 7. What this ADR does not decide
 
@@ -94,7 +103,7 @@ Each step is a PR with lit tests in `tests/verify`, `tests/irgen` and `tests/cod
 2. **Code generation.** Addresses and indirect calls, references in records, variants and buffers, `option` of an arrow as a nullable pointer, and a run test that picks handlers from a table.
 3. **The C boundary.** References as parameters of `extern`s and `@abi(c)` exports, with a test of `qsort` over a Pia comparator and of C calling back into Pia, and the trust report's entries.
 4. **Borrowed closures**: two-word references to capturing lambdas, with ADR 0042's loan checks.
-5. **`box c`'s drop through a reference** (the ADR 0046 amendment, steps 2 and 3).
+5. **Boxes over concepts through references** (the ADR 0046 amendment, steps 2 and 3): `widen` stores the drop and each requirement's reference, calls and drops go through them, and a box made in one module is used in another.
 
 ## Consequences
 
