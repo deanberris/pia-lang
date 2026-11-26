@@ -19,4 +19,6 @@ if [ "$(uname)" = Darwin ]; then
     echo "SKIPPED the .metallib: Xcode's Metal toolchain is not installed" \
       "(xcodebuild -downloadComponent MetalToolchain)"
   fi
+else
+  echo "SKIPPED the .metallib: Metal is macOS only"
 fi

@@ -1,0 +1,631 @@
+(* Pia.Format.Safetensors: the safetensors container (ADR 0067, section 2;
+   https://github.com/huggingface/safetensors), read in pure Pia from the
+   file's bytes, proved total and safe on every input in the way ADR
+   0054's codecs are.
+
+   A file is an 8-byte little-endian length N, a JSON object of N bytes
+   (the header), and the data region after it. Each member of the header
+   names a tensor and gives its dtype, its shape and the begin and end of
+   its bytes, as offsets into the data region:
+
+       {"__metadata__": {"k": "v"},
+        "w": {"dtype": "F32", "shape": [2, 3], "data_offsets": [0, 24]}}
+
+   `parse` reads the header with Pia.Text.Json.Read into a caller's buffer
+   of `tensor` records and allocates nothing. On success every record is
+   `placed`: its name is inside the header, its bytes are inside the data
+   region, its element count is the product of its shape, and its byte
+   length is that count times its dtype's width. The records tile the data
+   region in order, each starting where the one before it ends, from the
+   first byte of the data region to the last byte of the input, so no two
+   overlap and no byte is unaccounted for. Anything else is an error value
+   that says where it went wrong; nothing crashes, and every index is
+   proved in bounds.
+
+   What is stricter than the format, and why:
+   - The members must be in the order of their data. The safetensors
+     library writes them so, and checking the tiling as it reads keeps
+     every goal free of quantifiers over pairs of tensors.
+   - At most four dimensions, which every tensor of a Llama-family model
+     has; the dimensions after the rank are 1.
+   - A tensor's entry has exactly the members dtype, shape and
+     data_offsets, each once.
+   - `__metadata__` is an object whose values are strings, and only its
+     span is kept: a reader that needs a value finds it with
+     Pia.Text.Json.Read. Names are compared as written, without
+     unescaping, as Pia.Text.Json.Read compares a key.
+
+   Element counts and byte lengths are computed in u64 and checked: a
+   count whose product does not fit (`times` saturates) and a byte length
+   past the largest u64 are errors, never wrapped values.
+
+   `find` looks a tensor up by name, and `f32_word` reads an F32 tensor's
+   element as its 32 bits, little-endian, until floats exist (ADR 0067,
+   F1). *)
+module Pia.Format.Safetensors : Safetensors
+
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Read.Reader as J
+
+interface Safetensors = sig
+  (** The element types the format names, from BOOL to F64. *)
+  let dtype = type
+    | Bool | U8 | I8 | F8E5M2 | F8E4M3 | U16 | I16 | F16 | BF16
+    | U32 | I32 | F32 | U64 | I64 | F64
+  (** A dtype's size in bytes. *)
+  let spec width : (d : dtype) -> int{1..8}
+  (** The product a * b, or the largest u64 when it does not fit. *)
+  let spec times : (a : u64) -> (b : u64) -> u64
+  (** b bytes hold exactly c elements of d: b = c * width d. *)
+  let spec sized : (c : u64) -> (d : dtype) -> (b : u64) -> bool
+  (** Whether d is F32. *)
+  let spec is_f32 : (d : dtype) -> bool
+  (** One tensor: its name's bytes in the input, quotes included, its
+      dtype, its shape (rank dimensions; the rest are 1), its element
+      count, and its bytes in the input from start to stop. *)
+  let tensor = type {
+    name_start : usize; name_stop : usize; dtype : dtype; rank : int{0..4};
+    d0 : u64; d1 : u64; d2 : u64; d3 : u64; count : u64;
+    start : usize; stop : usize }
+  (** Where a file's parts are: the data region from data to the end of
+      the input, the number of tensors, and the `__metadata__` object
+      from meta_start to meta_stop (both 0 when there is none). *)
+  let layout = type { data : usize; count : usize; meta_start : usize; meta_stop : usize }
+  (** What went wrong: the input is shorter than its header says, the
+      header is not JSON of the right shape, a tensor's entry has an
+      unknown, repeated or missing member, an unknown dtype, a shape of
+      more than four dimensions, an element count or byte length past the
+      largest u64, a byte length that is not count * width, offsets that
+      do not tile the data region in order, or more tensors than the
+      buffer holds. *)
+  let problem = type
+    | Short | Syntax | BadMember | BadDtype | BadShape | TooLarge
+    | BadSize | BadOffsets | TooMany
+  (** A problem, and the input position it was found at. *)
+  let st_error = type { problem : problem; at : usize }
+  (** t's bytes are within an input of n bytes and are its elements. *)
+  let spec within : (n : usize) -> (t : tensor) -> bool
+  (** t is a tensor of an input of n bytes whose data region starts at
+      base: its name is in the header, its bytes in the data region. *)
+  let spec placed : (n : usize) -> (base : usize) -> (t : tensor) -> bool
+  (** The tensors of s into ts, which must hold them all. *)
+  let parse : (s : [u8]) -> (ts : borrowed inout mutable [tensor]) -> result layout st_error
+    ensures (match result with
+      | Ok l -> l.count <= len ts && 8 <= l.data && l.data <= len s
+                && l.meta_start <= l.meta_stop && l.meta_stop <= l.data
+                && (forall (j in 0 .. l.count). placed (len s) l.data ts.[j])
+                && (forall (j in 1 .. l.count). ts.[j - 1].stop = ts.[j].start)
+                && (l.count = 0 ==> l.data = len s)
+                && (forall (j in 0 .. l.count). (j = 0 ==> ts.[j].start = l.data) && (j + 1 = l.count ==> ts.[j].stop = len s))
+      | Err _ -> true)
+    ensures len s < 8 ==> (match result with | Ok _ -> false | Err _ -> true)
+  (** What find found. *)
+  let found = type | Found of usize | Missing
+  (** The first of ts.[0 .. count] whose name, without its quotes, is
+      name's bytes. *)
+  let find : (s : [u8]) -> (ts : [tensor]) -> (count : usize) -> (name : [u8]) -> found
+    ensures (match result with
+      | Found k -> k < count && k < len ts
+      | Missing -> true)
+  (** Element i of an F32 tensor, as its bits: four bytes, little-endian. *)
+  let f32_word : (s : [u8]) -> (t : tensor) -> (i : usize) -> u32
+    requires within (len s) t && is_f32 t.dtype && i < t.count
+  (** A product of the shape that fits is the exact product. *)
+  let lemma times_exact : (a : u64) -> (b : u64) -> unit
+    requires times a b < max u64
+    ensures times a b = a * b
+end
+
+let dtype = type
+  | Bool | U8 | I8 | F8E5M2 | F8E4M3 | U16 | I16 | F16 | BF16
+  | U32 | I32 | F32 | U64 | I64 | F64
+
+let spec width (d : dtype) : int{1..8} =
+  match d with
+  | Bool -> 1 | U8 -> 1 | I8 -> 1 | F8E5M2 -> 1 | F8E4M3 -> 1
+  | U16 -> 2 | I16 -> 2 | F16 -> 2 | BF16 -> 2
+  | U32 -> 4 | I32 -> 4 | F32 -> 4
+  | U64 -> 8 | I64 -> 8 | F64 -> 8
+
+(* Saturating, so that a shape whose product does not fit has the largest
+   u64 as its count, which parse refuses: once a product saturates it stays
+   saturated unless a later dimension is 0, and then the exact product is
+   0 too. Opaque, so that the three products in every placed tensor's
+   facts are not bit-blasted in goals that never need them (ADR 0063). *)
+let spec times (a : u64) (b : u64) : u64 @overflow(saturate) @opaque = a * b
+
+(* Division by the width, rather than a product, so that the claim has no
+   arithmetic that can overflow. *)
+let spec sized (c : u64) (d : dtype) (b : u64) : bool =
+  if width d = 1 then b = c
+  else if width d = 2 then b % 2 = 0 && b / 2 = c
+  else if width d = 4 then b % 4 = 0 && b / 4 = c
+  else b % 8 = 0 && b / 8 = c
+
+let spec is_f32 (d : dtype) : bool =
+  match d with
+  | F32 -> true
+  | _ -> false
+
+let tensor = type {
+  name_start : usize; name_stop : usize; dtype : dtype; rank : int{0..4};
+  d0 : u64; d1 : u64; d2 : u64; d3 : u64; count : u64;
+  start : usize; stop : usize }
+
+let layout = type { data : usize; count : usize; meta_start : usize; meta_stop : usize }
+
+let problem = type
+  | Short | Syntax | BadMember | BadDtype | BadShape | TooLarge
+  | BadSize | BadOffsets | TooMany
+
+let st_error = type { problem : problem; at : usize }
+
+let spec within (n : usize) (t : tensor) : bool =
+  if t.start <= t.stop && t.stop <= n then sized t.count t.dtype (t.stop - t.start) else false
+
+let spec placed (n : usize) (base : usize) (t : tensor) : bool =
+  within n t && base <= t.start
+  && 8 <= t.name_start && t.name_start < t.name_stop && t.name_stop <= base
+  && t.count = times (times (times t.d0 t.d1) t.d2) t.d3
+  && (t.rank <= 3 ==> t.d3 = 1) && (t.rank <= 2 ==> t.d2 = 1)
+  && (t.rank <= 1 ==> t.d1 = 1) && (t.rank = 0 ==> t.d0 = 1)
+
+let found = type | Found of usize | Missing
+
+let lemma times_exact (a : u64) (b : u64) : unit
+  requires times a b < max u64
+  ensures times a b = a * b
+  with times
+= ()
+
+(* The names the header uses, as bytes. *)
+let w_dtype : [u8; 5] = [100; 116; 121; 112; 101]
+let w_shape : [u8; 5] = [115; 104; 97; 112; 101]
+let w_data_offsets : [u8; 12] = [100; 97; 116; 97; 95; 111; 102; 102; 115; 101; 116; 115]
+let w_metadata : [u8; 12] = [95; 95; 109; 101; 116; 97; 100; 97; 116; 97; 95; 95]
+let w_bool : [u8; 4] = [66; 79; 79; 76]
+let w_u8 : [u8; 2] = [85; 56]
+let w_i8 : [u8; 2] = [73; 56]
+let w_f8_e5m2 : [u8; 7] = [70; 56; 95; 69; 53; 77; 50]
+let w_f8_e4m3 : [u8; 7] = [70; 56; 95; 69; 52; 77; 51]
+let w_u16 : [u8; 3] = [85; 49; 54]
+let w_i16 : [u8; 3] = [73; 49; 54]
+let w_f16 : [u8; 3] = [70; 49; 54]
+let w_bf16 : [u8; 4] = [66; 70; 49; 54]
+let w_u32 : [u8; 3] = [85; 51; 50]
+let w_i32 : [u8; 3] = [73; 51; 50]
+let w_f32 : [u8; 3] = [70; 51; 50]
+let w_u64 : [u8; 3] = [85; 54; 52]
+let w_i64 : [u8; 3] = [73; 54; 52]
+let w_f64 : [u8; 3] = [70; 54; 52]
+
+(* Whether the n bytes of h at a are w. *)
+let same (h : [u8]) (a : usize) (n : usize) (w : [u8]) : bool
+= if n <> len w || a > len h || len h - a < n then false
+  else (
+    let ok : mutable bool = true in
+    for i in 0 .. n
+      invariant a + n <= len h
+    do
+      if h.[a + i] <> w.[i] then ok <- false else ()
+    done;
+    ok)
+
+(* The string token from start to stop, without its quotes, is w. *)
+let token_is (h : [u8]) (start : usize) (stop : usize) (w : [u8]) : bool
+  requires start + 2 <= stop && stop <= len h
+= same h (start + 1) (stop - start - 2) w
+
+let width_of (d : dtype) : int{1..8}
+  ensures result = width d
+= match d with
+  | Bool -> 1 | U8 -> 1 | I8 -> 1 | F8E5M2 -> 1 | F8E4M3 -> 1
+  | U16 -> 2 | I16 -> 2 | F16 -> 2 | BF16 -> 2
+  | U32 -> 4 | I32 -> 4 | F32 -> 4
+  | U64 -> 8 | I64 -> 8 | F64 -> 8
+
+(* The dtype the string token from a to b names. *)
+let dtype_of (h : [u8]) (a : usize) (b : usize) : result dtype usize
+  requires a + 2 <= b && b <= len h
+  ensures (match result with | Ok _ -> true | Err p -> p <= len h)
+= if token_is h a b w_f32 then Ok F32
+  else if token_is h a b w_bf16 then Ok BF16
+  else if token_is h a b w_f16 then Ok F16
+  else if token_is h a b w_i32 then Ok I32
+  else if token_is h a b w_u32 then Ok U32
+  else if token_is h a b w_i64 then Ok I64
+  else if token_is h a b w_u64 then Ok U64
+  else if token_is h a b w_f64 then Ok F64
+  else if token_is h a b w_i16 then Ok I16
+  else if token_is h a b w_u16 then Ok U16
+  else if token_is h a b w_i8 then Ok I8
+  else if token_is h a b w_u8 then Ok U8
+  else if token_is h a b w_bool then Ok Bool
+  else if token_is h a b w_f8_e5m2 then Ok F8E5M2
+  else if token_is h a b w_f8_e4m3 then Ok F8E4M3
+  else Err a
+
+let mul_sat (a : u64) (b : u64) : u64 @overflow(saturate)
+  ensures result = times a b
+  with times
+= a * b
+
+(* The element count of a shape, when it fits below the largest u64. *)
+let elements (d0 : u64) (d1 : u64) (d2 : u64) (d3 : u64) : result u64 problem
+  ensures (match result with
+    | Ok c -> c = times (times (times d0 d1) d2) d3 && c < max u64
+    | Err _ -> true)
+= let c = mul_sat (mul_sat (mul_sat d0 d1) d2) d3 in
+  if c = max u64 then Err TooLarge else Ok c
+
+(* The bytes c elements of d take, when that fits in a u64. *)
+let bytes (c : u64) (d : dtype) : result u64 problem
+  ensures (match result with | Ok b -> sized c d b | Err _ -> true)
+= let w = width_of d in
+  if w = 1 then Ok c
+  else if w = 2 then (if c > 9223372036854775807 then Err TooLarge else Ok (2 * c))
+  else if w = 4 then (if c > 4611686018427387903 then Err TooLarge else Ok (4 * c))
+  else if c > 2305843009213693951 then Err TooLarge else Ok (8 * c)
+
+(* A shape: rank dimensions, the rest 1, and the position after it. *)
+let shape = type { rank : int{0..4}; d0 : u64; d1 : u64; d2 : u64; d3 : u64; next : usize }
+
+(* One dimension of a shape and the `,` or `]` after it. *)
+let dim_read = type { value : u64; next : usize; more : bool }
+
+let dim (h : [u8]) (at : usize) : result dim_read usize
+  requires at <= len h
+  ensures (match result with
+    | Ok v -> at < v.next && v.next <= len h
+    | Err p -> p <= len h)
+= match J.read_uint h at (max u64) with
+  | Err _ -> Err at
+  | Ok v ->
+      (match J.after_element h v.stop with
+       | Err p -> Err p
+       | Ok e -> Ok { value = v.value; next = e.next; more = e.more })
+
+(* The array of at most four dimensions at or after pos. *)
+let read_shape (h : [u8]) (pos : usize) : result shape st_error
+  requires pos <= len h
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len h
+              && (r.rank <= 3 ==> r.d3 = 1) && (r.rank <= 2 ==> r.d2 = 1)
+              && (r.rank <= 1 ==> r.d1 = 1) && (r.rank = 0 ==> r.d0 = 1)
+    | Err e -> e.at <= len h)
+= match J.open_array h pos with
+  | Err p -> Err { problem = Syntax; at = p }
+  | Ok o ->
+      if o.empty then Ok { rank = 0; d0 = 1; d1 = 1; d2 = 1; d3 = 1; next = o.next }
+      else (
+        let d0 : mutable u64 = 1 in
+        let d1 : mutable u64 = 1 in
+        let d2 : mutable u64 = 1 in
+        let d3 : mutable u64 = 1 in
+        let k : mutable int{0..4} = 0 in
+        let at : mutable usize = o.next in
+        let going : mutable bool = true in
+        let fail : mutable bool = false in
+        let why : mutable problem = Syntax in
+        while going
+          invariant pos < at && at <= len h
+          invariant (k <= 3 ==> d3 = 1) && (k <= 2 ==> d2 = 1)
+          invariant (k <= 1 ==> d1 = 1) && (k = 0 ==> d0 = 1)
+          decreases len h - at + (if going then 1 else 0)
+        do
+          if k = 4 then (why <- BadShape; fail <- true; going <- false)
+          else (
+            match dim h at with
+            | Err _ -> (fail <- true; going <- false)
+            | Ok v ->
+                if k = 0 then d0 <- v.value
+                else if k = 1 then d1 <- v.value
+                else if k = 2 then d2 <- v.value
+                else d3 <- v.value;
+                k <- k + 1;
+                at <- v.next;
+                going <- v.more)
+        done;
+        if fail then Err { problem = why; at = at }
+        else Ok { rank = k; d0 = d0; d1 = d1; d2 = d2; d3 = d3; next = at })
+
+(* data_offsets: two offsets, each at most lim, and the position after. *)
+let offsets = type { b : u64; e : u64; next : usize }
+
+(* The two numbers of data_offsets, or where they are not. *)
+let pair (h : [u8]) (pos : usize) (lim : u64) : result offsets usize
+  requires pos <= len h
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len h && r.b <= lim && r.e <= lim
+    | Err p -> p <= len h)
+= match J.open_array h pos with
+  | Err p -> Err p
+  | Ok o ->
+      if o.empty then Err pos
+      else (
+        match J.read_uint h o.next lim with
+        | Err _ -> Err o.next
+        | Ok b ->
+            (match J.after_element h b.stop with
+             | Err p -> Err p
+             | Ok c ->
+                 if c.more = false then Err b.stop
+                 else (
+                   match J.read_uint h c.next lim with
+                   | Err _ -> Err c.next
+                   | Ok e ->
+                       (match J.after_element h e.stop with
+                        | Err p -> Err p
+                        | Ok f ->
+                            if f.more then Err e.stop
+                            else Ok { b = b.value; e = e.value; next = f.next }))))
+
+let read_offsets (h : [u8]) (pos : usize) (lim : u64) : result offsets st_error
+  requires pos <= len h
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len h && r.b <= lim && r.e <= lim
+    | Err e -> e.at <= len h)
+= match pair h pos lim with
+  | Err p -> Err { problem = BadOffsets; at = p }
+  | Ok r -> Ok r
+
+(* A tensor's entry, before its offsets are placed in the input. *)
+let entry = type {
+  dtype : dtype; rank : int{0..4}; d0 : u64; d1 : u64; d2 : u64; d3 : u64;
+  b : u64; e : u64; next : usize }
+
+(* The object {"dtype": ..., "shape": [...], "data_offsets": [b, e]} at or
+   after pos, its members in any order, each exactly once. *)
+let read_entry (h : [u8]) (pos : usize) (lim : u64) : result entry st_error
+  requires pos <= len h
+  ensures (match result with
+    | Ok r -> pos < r.next && r.next <= len h && r.b <= lim && r.e <= lim
+              && (r.rank <= 3 ==> r.d3 = 1) && (r.rank <= 2 ==> r.d2 = 1)
+              && (r.rank <= 1 ==> r.d1 = 1) && (r.rank = 0 ==> r.d0 = 1)
+    | Err e -> e.at <= len h)
+= match J.open_object h pos with
+  | Err p -> Err { problem = Syntax; at = p }
+  | Ok o ->
+      if o.empty then Err { problem = BadMember; at = pos }
+      else (
+        let dt : mutable dtype = U8 in
+        let sh : mutable shape = { rank = 0; d0 = 1; d1 = 1; d2 = 1; d3 = 1; next = 0 } in
+        let off : mutable offsets = { b = 0; e = 0; next = 0 } in
+        let have_d : mutable bool = false in
+        let have_s : mutable bool = false in
+        let have_o : mutable bool = false in
+        let at : mutable usize = o.next in
+        let going : mutable bool = true in
+        let fail : mutable bool = false in
+        let err : mutable st_error = { problem = Syntax; at = 0 } in
+        while going
+          invariant pos < at && at <= len h && err.at <= len h
+          invariant (sh.rank <= 3 ==> sh.d3 = 1) && (sh.rank <= 2 ==> sh.d2 = 1)
+          invariant (sh.rank <= 1 ==> sh.d1 = 1) && (sh.rank = 0 ==> sh.d0 = 1)
+          invariant off.b <= lim && off.e <= lim
+          decreases len h - at + (if going then 1 else 0)
+        do
+          match J.read_key h at with
+          | Err p -> (err <- { problem = Syntax; at = p }; fail <- true; going <- false)
+          | Ok k ->
+              (* Where the member's value ends, or 0 when it is wrong. *)
+              let next : usize =
+                if token_is h k.start k.stop w_dtype && have_d = false then (
+                  match J.read_str h k.next with
+                  | Err p -> (err <- { problem = Syntax; at = p }; 0)
+                  | Ok t ->
+                      (match dtype_of h t.start t.stop with
+                       | Ok d -> (dt <- d; have_d <- true; t.stop)
+                       | Err p -> (err <- { problem = BadDtype; at = p }; 0)))
+                else if token_is h k.start k.stop w_shape && have_s = false then (
+                  match read_shape h k.next with
+                  | Err e -> (err <- e; 0)
+                  | Ok r -> (sh <- r; have_s <- true; r.next))
+                else if token_is h k.start k.stop w_data_offsets && have_o = false then (
+                  match read_offsets h k.next lim with
+                  | Err e -> (err <- e; 0)
+                  | Ok r -> (off <- r; have_o <- true; r.next))
+                else (err <- { problem = BadMember; at = k.start }; 0) in
+              if next > at && next <= len h then (
+                match J.after_member h next with
+                | Err p -> (err <- { problem = Syntax; at = p }; fail <- true; going <- false)
+                | Ok m -> (at <- m.next; going <- m.more))
+              else (fail <- true; going <- false)
+        done;
+        if fail then Err err
+        else if have_d && have_s && have_o then
+          Ok { dtype = dt; rank = sh.rank; d0 = sh.d0; d1 = sh.d1; d2 = sh.d2; d3 = sh.d3;
+               b = off.b; e = off.e; next = at }
+        else Err { problem = BadMember; at = pos })
+
+(* One "name": "value" member of __metadata__ and the `,` or `}` after it. *)
+let meta_member (h : [u8]) (at : usize) : result J.sep usize
+  requires at <= len h
+  ensures (match result with
+    | Ok m -> at < m.next && m.next <= len h
+    | Err p -> p <= len h)
+= match J.read_key h at with
+  | Err p -> Err p
+  | Ok k ->
+      (match J.read_str h k.next with
+       | Err p -> Err p
+       | Ok t -> J.after_member h t.stop)
+
+(* The __metadata__ object at or after pos, whose values are strings:
+   the position after it. *)
+let read_meta (h : [u8]) (pos : usize) : result usize st_error
+  requires pos <= len h
+  ensures (match result with
+    | Ok n -> pos < n && n <= len h
+    | Err e -> e.at <= len h)
+= match J.open_object h pos with
+  | Err p -> Err { problem = Syntax; at = p }
+  | Ok o ->
+      if o.empty then Ok o.next
+      else (
+        let at : mutable usize = o.next in
+        let going : mutable bool = true in
+        let fail : mutable bool = false in
+        let bad : mutable usize = 0 in
+        while going
+          invariant pos < at && at <= len h && bad <= len h
+          decreases len h - at + (if going then 1 else 0)
+        do
+          match meta_member h at with
+          | Err p -> (bad <- p; fail <- true; going <- false)
+          | Ok m -> (at <- m.next; going <- m.more)
+        done;
+        if fail then Err { problem = Syntax; at = bad } else Ok at)
+
+(* The header's length: s's first eight bytes, little-endian. *)
+let le64 (s : [u8]) : u64
+  requires len s >= 8
+= let b0 : u64 = s.[0] in
+  let b1 : u64 = s.[1] in
+  let b2 : u64 = s.[2] in
+  let b3 : u64 = s.[3] in
+  let b4 : u64 = s.[4] in
+  let b5 : u64 = s.[5] in
+  let b6 : u64 = s.[6] in
+  let b7 : u64 = s.[7] in
+  (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24) | (b4 << 32) | (b5 << 40) | (b6 << 48) | (b7 << 56))
+
+(* Whether h from at to its end is JSON whitespace: the padding the
+   format allows after the header's object. *)
+let blank (h : [u8]) (at : usize) : bool
+  requires at <= len h
+= let ok : mutable bool = true in
+  for i in at .. len h do
+    let c = h.[i] in
+    if c = 0x20 || c = 0x09 || c = 0x0A || c = 0x0D then () else ok <- false
+  done;
+  ok
+
+(* The record of the tensor whose name is the key k of a header hl bytes
+   long, and whose entry is r, in an input of n bytes whose data region
+   starts at base: Err when the count of its shape or its byte length
+   does not fit, its offsets do not start at expect or end before they
+   start, or its bytes are not its count times its width. *)
+let place (k : J.key) (r : entry) (hl : usize) (base : usize) (n : usize) (expect : u64) : result tensor st_error
+  requires k.start + 2 <= k.stop && k.stop <= hl && base = 8 + hl && base <= n
+  requires r.b <= n - base && r.e <= n - base
+  requires (r.rank <= 3 ==> r.d3 = 1) && (r.rank <= 2 ==> r.d2 = 1)
+  requires (r.rank <= 1 ==> r.d1 = 1) && (r.rank = 0 ==> r.d0 = 1)
+  ensures (match result with
+    | Ok t -> placed n base t && t.start = base + expect && t.stop = base + r.e
+    | Err e -> e.at <= n)
+= let at : usize = 8 + k.start in
+  match elements r.d0 r.d1 r.d2 r.d3 with
+  | Err p -> Err { problem = p; at = at }
+  | Ok c ->
+      (match bytes c r.dtype with
+       | Err p -> Err { problem = p; at = at }
+       | Ok size ->
+           if r.e < r.b || r.b <> expect then Err { problem = BadOffsets; at = at }
+           else if r.e - r.b <> size then Err { problem = BadSize; at = at }
+           else
+             Ok { name_start = at; name_stop = 8 + k.stop; dtype = r.dtype;
+                  rank = r.rank; d0 = r.d0; d1 = r.d1; d2 = r.d2; d3 = r.d3; count = c;
+                  start = base + r.b; stop = base + r.e })
+
+let parse (s : [u8]) (ts : borrowed inout mutable [tensor]) : result layout st_error
+  ensures (match result with
+    | Ok l -> l.count <= len ts && 8 <= l.data && l.data <= len s
+              && l.meta_start <= l.meta_stop && l.meta_stop <= l.data
+              && (forall (j in 0 .. l.count). placed (len s) l.data ts.[j])
+              && (forall (j in 1 .. l.count). ts.[j - 1].stop = ts.[j].start)
+              && (l.count = 0 ==> l.data = len s)
+              && (forall (j in 0 .. l.count). (j = 0 ==> ts.[j].start = l.data) && (j + 1 = l.count ==> ts.[j].stop = len s))
+    | Err _ -> true)
+  ensures len s < 8 ==> (match result with | Ok _ -> false | Err _ -> true)
+= if len s < 8 then Err { problem = Short; at = len s }
+  else (
+    let n = le64 s in
+    if n > len s - 8 then Err { problem = Short; at = 0 }
+    else (
+      let base : usize = 8 + n in
+      let h = s.[8 .. base] in
+      let lim : u64 = len s - base in
+      match J.open_object h 0 with
+      | Err p -> Err { problem = Syntax; at = 8 + p }
+      | Ok o ->
+          let cnt : mutable usize = 0 in
+          let expect : mutable u64 = 0 in
+          let at : mutable usize = o.next in
+          let meta_start : mutable usize = 0 in
+          let meta_stop : mutable usize = 0 in
+          let going : mutable bool = o.empty = false in
+          let fail : mutable bool = false in
+          let err : mutable st_error = { problem = Syntax; at = 0 } in
+          while going
+            invariant at <= len h && len h = n && base = 8 + n && lim = len s - base
+            invariant cnt <= len ts && expect <= lim
+            invariant meta_start <= meta_stop && meta_stop <= base
+            invariant forall (j in 0 .. cnt). placed (len s) base ts.[j]
+            invariant forall (j in 1 .. cnt). ts.[j - 1].stop = ts.[j].start
+            invariant cnt = 0 ==> expect = 0
+            (* The first and last tensor, per element like the forall above:
+               as `ts.[0]` and `ts.[cnt - 1]` the goal reasons across the
+               store to ts.[cnt] and timed out at 10 s on CI. *)
+            invariant forall (j in 0 .. cnt). (j = 0 ==> ts.[j].start = base) && (j + 1 = cnt ==> ts.[j].stop = base + expect)
+            decreases len h - at + (if going then 1 else 0)
+          do
+            match J.read_key h at with
+            | Err p -> (err <- { problem = Syntax; at = 8 + p }; fail <- true; going <- false)
+            | Ok k ->
+                (* Where the member's value ends, or 0 when it is wrong. *)
+                let next : usize =
+                  if token_is h k.start k.stop w_metadata then (
+                    if meta_stop <> 0 then (err <- { problem = BadMember; at = 8 + k.start }; 0)
+                    else (
+                      match read_meta h k.next with
+                      | Err e -> (err <- { problem = e.problem; at = 8 + e.at }; 0)
+                      | Ok m -> (meta_start <- 8 + k.next; meta_stop <- 8 + m; m)))
+                  else (
+                    match read_entry h k.next lim with
+                    | Err e -> (err <- { problem = e.problem; at = 8 + e.at }; 0)
+                    | Ok r ->
+                        (match place k r (len h) base (len s) expect with
+                         | Err e -> (err <- e; 0)
+                         | Ok t ->
+                             if cnt >= len ts then (err <- { problem = TooMany; at = t.name_start }; 0)
+                             else (
+                               ts.[cnt] <- t;
+                               cnt <- cnt + 1;
+                               expect <- r.e;
+                               r.next))) in
+                if next > at && next <= len h then (
+                  match J.after_member h next with
+                  | Err p -> (err <- { problem = Syntax; at = 8 + p }; fail <- true; going <- false)
+                  | Ok m -> (at <- m.next; going <- m.more))
+                else (fail <- true; going <- false)
+          done;
+          if fail then Err err
+          else if blank h at = false then Err { problem = Syntax; at = 8 + at }
+          else if expect <> lim then Err { problem = BadOffsets; at = base + expect }
+          else Ok { data = base; count = cnt; meta_start = meta_start; meta_stop = meta_stop }))
+
+let find (s : [u8]) (ts : [tensor]) (count : usize) (name : [u8]) : found
+  ensures (match result with
+    | Found k -> k < count && k < len ts
+    | Missing -> true)
+= let n : usize = if count < len ts then count else len ts in
+  let hit : mutable usize = n in
+  for i in 0 .. n
+    invariant hit <= n && n <= count && n <= len ts
+  do
+    let t = ts.[i] in
+    if hit = n && t.name_start < t.name_stop && t.name_stop - t.name_start >= 2 && t.name_stop <= len s
+       && token_is s t.name_start t.name_stop name then hit <- i
+    else ()
+  done;
+  if hit < n then Found hit else Missing
+
+let f32_word (s : [u8]) (t : tensor) (i : usize) : u32
+  requires within (len s) t && is_f32 t.dtype && i < t.count
+= let p : usize = t.start + 4 * i in
+  let b0 : u32 = s.[p] in
+  let b1 : u32 = s.[p + 1] in
+  let b2 : u32 = s.[p + 2] in
+  let b3 : u32 = s.[p + 3] in
+  (b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))

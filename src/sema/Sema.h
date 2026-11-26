@@ -17,12 +17,13 @@
 #include <string_view>
 #include <vector>
 
-#include "llvm/ADT/APInt.h"
 #include "mlir/IR/MLIRContext.h"
-#include "llvm/ADT/DenseMap.h"
 #include "mlir/IR/Types.h"
 #include "syntax/Diagnostics.h"
 #include "syntax/Syntax.h"
+#include "llvm/ADT/APFloat.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
 
 namespace pia::sema {
 
@@ -42,7 +43,12 @@ std::string typeName(mlir::Type type);
 // through arrays, slices and record fields; null when there is none.
 mlir::Type specOnlyPart(mlir::Type type);
 
-// Whether `name` is a builtin type: u8 ... usize, bool, unit, int, real.
+// A float's value as the shortest literal that reads back as the same
+// value, such as `0.1`, `1.0e+30` or `-0.0`; `nan`, `inf` and `-inf`.
+std::string floatText(const llvm::APFloat &value);
+
+// Whether `name` is a builtin type: u8 ... usize, f32, f64, bool, unit,
+// int, real.
 bool isBuiltinTypeName(std::string_view name);
 
 // Whether a modifier list such as "borrowed in mutable" has `word`.

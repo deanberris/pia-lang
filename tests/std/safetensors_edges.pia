@@ -1,0 +1,67 @@
+(* Importers of Pia.Format.Safetensors see only its interface and its spec
+   functions' definitions, and that is enough to know that input shorter
+   than its length field is refused, that every tensor parse returns lies
+   in the input with a byte length that is its count times its width, that
+   neighbours do not overlap, that a count that fits is the exact product
+   of the shape, and that every element of an F32 tensor can be read.
+// RUN: mkdir -p %t
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Format/Safetensors.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Read.Reader as J
+import Pia.Format.Safetensors.Safetensors as T
+
+(* Fewer than 8 bytes is never a file. *)
+let short (s : [u8]) (ts : borrowed inout mutable [T.tensor]) : unit
+  requires len s < 8
+= match T.parse s ts with
+  | Ok _ -> assert false
+  | Err _ -> ()
+
+(* Tensor k of a parsed file: its bytes are in the data region, and the
+   next one starts where it stops. *)
+let in_bounds (s : [u8]) (ts : borrowed inout mutable [T.tensor]) (k : usize) : unit
+= match T.parse s ts with
+  | Ok l ->
+      if k < l.count then (
+        let t = ts.[k] in
+        assert l.data <= t.start && t.start <= t.stop && t.stop <= len s;
+        assert T.within (len s) t;
+        if k + 1 < l.count then assert ts.[k].stop <= ts.[k + 1].start else ())
+      else ()
+  | Err _ -> ()
+
+(* A matrix's count is rows times columns, exactly. *)
+let matrix (s : [u8]) (ts : borrowed inout mutable [T.tensor]) (k : usize) : unit
+  with T.times
+= match T.parse s ts with
+  | Ok l ->
+      if k < l.count then (
+        let t = ts.[k] in
+        if t.rank = 2 then (
+          T.times_exact t.d0 t.d1;
+          assert t.count = t.d0 * t.d1)
+        else ())
+      else ()
+  | Err _ -> ()
+
+(* The last element of an F32 tensor of a parsed file can be read. *)
+let last_word (s : [u8]) (ts : borrowed inout mutable [T.tensor]) (k : usize) : u32
+= match T.parse s ts with
+  | Ok l ->
+      if k < l.count then (
+        let t = ts.[k] in
+        match t.dtype with
+        | F32 -> if t.count > 0 then T.f32_word s t (t.count - 1) else 0
+        | _ -> 0)
+      else 0
+  | Err _ -> 0
+
+(* Every goal is proved.
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)

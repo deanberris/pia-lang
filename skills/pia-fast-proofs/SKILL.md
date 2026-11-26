@@ -76,7 +76,7 @@ verify-stats: goals=243 unselected=0 intervals=21 skipped=0 solved=222 cached=0 
 | `cost` | Z3's deterministic resource count over every query: the number to compare between runs |
 | `encode_ms`, `solve_ms` | wall time; depends on the machine |
 
-Compare `cost`, not milliseconds, when you judge a change to a proof: it does not depend on load, and varies by only about 1% run to run. `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --baseline tools/bench/baseline.json --out bench.json` runs the whole corpus, and CI fails when cost grows by more than 10%.
+Compare `cost`, not milliseconds, when you judge a change to a proof: it does not depend on load, and varies by only about 1% run to run. `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --baseline tools/bench/baseline.json --out bench.json` runs the whole corpus, and CI fails when the cost of any corpus file grows by more than 10%. When a change makes a file legitimately costlier, such as new goals, record its new cost in the same pull request: `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --passes=parallel --only=lib/Pia/Core/Charconv.pia --write-baseline` updates just that file's entry (cost does not depend on the machine, so the iMac or a cloud session's prebuilt `piac` will do), or `--write-baseline --merge=bench-1.json --merge=bench-2.json --merge=bench-3.json` takes every file from CI's `proof-bench-linux-*` artifacts.
 
 ## 4. Threads
 
