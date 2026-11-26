@@ -45,7 +45,7 @@ let leftover (a : length) (k : u32) : length
 (* bounds: the type's own, as values of the type. *)
 let fits (a : length) : bool
   ensures result
-= a <= max_length ()
+= a <= max_length
 
 (* eq and ord together. *)
 let between (lo : length) (x : length) (hi : length) : bool
@@ -61,3 +61,62 @@ let flip (t : temp) : temp
 let warmer (a : temp) (b : temp) : temp
   requires i16 a > -1000 && i16 a < 1000 && i16 b > -1000 && i16 b < 1000
 = if a > b then a - b else b - a
+
+(* Expected report, in order.
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: '+' does not overflow u32 [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: '-' does not overflow u32 [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: '*' does not overflow u32 [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the divisor is not zero [smt]
+// CHECK: distinct_derives.pia:11:23: proved: '/' does not overflow u32 [intervals]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the divisor is not zero [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:23: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:1: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:11:1: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: '+' does not overflow i16 [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: '-' does not overflow i16 [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: '*' does not overflow i16 [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the divisor is not zero [smt]
+// CHECK: distinct_derives.pia:12:21: proved: '/' does not overflow i16 [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the divisor is not zero [smt]
+// CHECK: distinct_derives.pia:12:21: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:1: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:12:1: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:16:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:23:5: proved: the precondition of 'add_length' holds [smt]
+// CHECK: distinct_derives.pia:22:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:28:20: proved: the precondition of 'sub_length' holds [smt]
+// CHECK: distinct_derives.pia:28:31: proved: the precondition of 'sub_length' holds [smt]
+// CHECK: distinct_derives.pia:27:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:34:5: proved: the precondition of 'mul_length' holds [smt]
+// CHECK: distinct_derives.pia:33:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:38:5: proved: the precondition of 'div_length' holds [smt]
+// CHECK: distinct_derives.pia:37:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:43:5: proved: the precondition of 'rem_length' holds [smt]
+// CHECK: distinct_derives.pia:42:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:47:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:52:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:59:5: proved: the precondition of 'mul_temp' holds [smt]
+// CHECK: distinct_derives.pia:58:3: proved: the postcondition holds [smt]
+// CHECK: distinct_derives.pia:63:19: proved: the precondition of 'sub_temp' holds [smt]
+// CHECK: distinct_derives.pia:63:30: proved: the precondition of 'sub_temp' holds [smt]
+// CHECK: 55 proved, 0 failed, 0 skipped
+*)

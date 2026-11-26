@@ -95,12 +95,12 @@ let meta derive_add (t : type_decl) : item =
   let add = concat "add_" n in
   let sub = concat "sub_" n in
   `( let $add ($!a : $t) ($!b : $t) : $t
-       requires $lo <= int ($!a.$f) + int ($!b.$f) && int ($!a.$f) + int ($!b.$f) <= $hi
-       ensures int ($!result.$f) = int ($!a.$f) + int ($!b.$f)
+       requires $lo <= $!a.$f + $!b.$f && $!a.$f + $!b.$f <= $hi
+       ensures $!result.$f = $!a.$f + $!b.$f
      = $n ($!a.$f + $!b.$f)
      let $sub ($!a : $t) ($!b : $t) : $t
-       requires $lo <= int ($!a.$f) - int ($!b.$f) && int ($!a.$f) - int ($!b.$f) <= $hi
-       ensures int ($!result.$f) = int ($!a.$f) - int ($!b.$f)
+       requires $lo <= $!a.$f - $!b.$f && $!a.$f - $!b.$f <= $hi
+       ensures $!result.$f = $!a.$f - $!b.$f
      = $n ($!a.$f - $!b.$f) )
 
 (* @derive(scale): `*`, `/` and `%` by the underlying type, on the right:
@@ -118,8 +118,8 @@ let meta derive_scale (t : type_decl) : item =
   let rem = concat "rem_" n in
   let q = if lo < 0 then `( $!k <> 0 && ($!a.$f <> $lo || $!k <> -1) ) else `( $!k <> 0 ) in
   `( let $mul ($!a : $t) ($!k : $u) : $t
-       requires $lo <= int ($!a.$f) * int $!k && int ($!a.$f) * int $!k <= $hi
-       ensures int ($!result.$f) = int ($!a.$f) * int $!k
+       requires $lo <= $!a.$f * $!k && $!a.$f * $!k <= $hi
+       ensures $!result.$f = $!a.$f * $!k
      = $n ($!a.$f * $!k)
      let $div ($!a : $t) ($!k : $u) : $t
        requires $q

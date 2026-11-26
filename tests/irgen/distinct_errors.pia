@@ -29,17 +29,17 @@ let mix (w : weight) : length = w
 *)
 let sum (a : length) (b : length) : length = a + b
 
-(* CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '<' is not defined on length; add @derive(ord) to 'length'
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:47: error: '<' is not defined on length; add @derive(ord) to 'length'
 *)
 let less (a : length) (b : length) : bool = a < b
 
 let span = type u32 @derive(scale)
 
 (* A length times a length is an area, not a length.
-// CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '*' on span takes u32 on the right, found span
+// CHECK: distinct_errors.pia:[[@LINE+2]]:34: error: '*' on span takes u32 on the right, found span
 *)
 let square (a : span) : span = a * a
 
-(* CHECK: distinct_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: expected span, found
+(* CHECK: distinct_errors.pia:[[@LINE+2]]:32: error: '*' is not defined with i32 on the left and span on the right; a derived operator takes the span first
 *)
 let left (a : span) : span = 3 * a
