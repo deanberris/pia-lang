@@ -33,6 +33,22 @@ bool isCertSection(llvm::StringRef name) {
   return name == "__pia_cert" || name == ".pia_cert";
 }
 
+// The rest of a `trusted <kind> <name> <hash> <detail>` line, whose first
+// two words are already read as `kind` and `name`.
+bool readTrusted(std::istringstream &words, const std::string &kind,
+                 const std::string &name, Certificate &c) {
+  std::string hash, detail;
+  words >> hash >> detail;
+  if (kind.empty() || name.empty() || hash.size() != 64 || detail.empty())
+    return false;
+  Trusted t{kind, name, hash, {}};
+  if (detail != "-")
+    for (llvm::StringRef d : llvm::split(detail, ','))
+      t.detail.push_back(d.str());
+  c.trusted.push_back(std::move(t));
+  return true;
+}
+
 } // namespace
 
 std::string sectionFor(std::string_view triple) {
@@ -57,8 +73,15 @@ std::string encode(const Certificate &c) {
     body += "provides " + i.name + " " + i.hash + "\n";
   for (const Interface &i : c.requires_)
     body += "requires " + i.name + " " + i.hash + "\n";
+  for (const Trusted &t : c.trusted) {
+    std::string detail;
+    for (const std::string &d : t.detail)
+      detail += (detail.empty() ? "" : ",") + d;
+    body += "trusted " + t.kind + " " + t.name + " " + t.hash + " " +
+            (detail.empty() ? "-" : detail) + "\n";
+  }
   std::string out(kMagic, 4);
-  putU32(out, kFormat);
+  putU32(out, c.trusted.empty() ? 1 : kFormat);
   putU32(out, uint32_t(body.size()));
   return out + body;
 }
@@ -68,9 +91,10 @@ std::optional<Certificate> decode(std::string_view bytes, std::string &error) {
     error = "not a Pia certificate";
     return std::nullopt;
   }
-  if (uint32_t format = getU32(bytes, 4); format != kFormat) {
+  uint32_t format = getU32(bytes, 4);
+  if (format < 1 || format > kFormat) {
     error = "certificate format " + std::to_string(format) +
-            " is not supported (this tool reads format " +
+            " is not supported (this tool reads formats 1 to " +
             std::to_string(kFormat) + ")";
     return std::nullopt;
   }
@@ -93,6 +117,9 @@ std::optional<Certificate> decode(std::string_view bytes, std::string &error) {
     } else if ((kind == "provides" || kind == "requires") &&
                hash.size() == 64) {
       (kind == "provides" ? c.provides : c.requires_).push_back({name, hash});
+    } else if (kind == "trusted" && format >= 2 &&
+               readTrusted(words, name, hash, c)) {
+      continue;
     } else {
       error = "the certificate has a malformed line: '" + line + "'";
       return std::nullopt;

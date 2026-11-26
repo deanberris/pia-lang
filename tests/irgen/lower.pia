@@ -1,0 +1,19 @@
+(* `@lower("mlir")` marks a function for codegen and keeps its body
+   (ADR 0065, step 1): the text, with its escapes decoded, the attribute's
+   location, and each parameter's name on its argument.
+// RUN: piac --emit=mlir %s | FileCheck %s
+// RUN: piac --emit=mlir %s | pia-opt | FileCheck %s
+*)
+@trusted
+
+(*
+// CHECK-LABEL: func.func @copy4(
+// CHECK-SAME: {pia.lower_name = "a"}
+// CHECK-SAME: {pia.lower_name = "b", pia.modifiers = "out mutable"}
+// CHECK-SAME: pia.lower = "memref.copy {{.}}a, {{.}}b : {{.}}a.type to {{.}}b.type\0A"
+// CHECK-SAME: pia.lower_at = "{{.*}}lower.pia:[[@LINE+4]]:3"
+// CHECK: pia.store
+*)
+let copy4 (a : [u8; 4]) (b : out mutable [u8; 4]) : unit
+  @lower("memref.copy $a, $b : $a.type to $b.type\n")
+= for i in 0 .. 4 do b.[i] <- a.[i] done

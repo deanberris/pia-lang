@@ -1,17 +1,20 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
 
 # Codegen v0 (milestone M6): erase contracts, lower pia to core MLIR and
-# LLVM, and emit an object file (docs/codegen.md).
+# LLVM, and emit an object file (docs/codegen.md). Linalg, Tensor,
+# Bufferization and Transform are for lowerings written in Pia (ADR 0065).
 cc_library(
     name = "codegen",
     srcs = [
         "ArrayResults.cpp",
         "Codegen.cpp",
+        "Lowerings.cpp",
         "SliceBuffers.cpp",
     ],
     hdrs = [
         "ArrayResults.h",
         "Codegen.h",
+        "Lowerings.h",
         "SliceBuffers.h",
     ],
     strip_include_prefix = "/src",
@@ -27,11 +30,14 @@ cc_library(
         "@llvm-project//llvm:Target",
         "@llvm-project//llvm:TargetParser",
         "@llvm-project//llvm:TransformUtils",
+        "@llvm-project//mlir:AffineDialect",
+        "@llvm-project//mlir:AffineToStandard",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
         "@llvm-project//mlir:AsyncDialect",
         "@llvm-project//mlir:AsyncToLLVM",
         "@llvm-project//mlir:AsyncTransforms",
+        "@llvm-project//mlir:BufferizationDialect",
         "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
         "@llvm-project//mlir:ControlFlowDialect",
         "@llvm-project//mlir:ControlFlowToLLVM",
@@ -43,9 +49,13 @@ cc_library(
         "@llvm-project//mlir:IndexDialect",
         "@llvm-project//mlir:IndexToLLVM",
         "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LinalgDialect",
+        "@llvm-project//mlir:LinalgTransforms",
         "@llvm-project//mlir:LLVMToLLVMIRTranslation",
         "@llvm-project//mlir:MemRefDialect",
         "@llvm-project//mlir:MemRefToLLVM",
+        "@llvm-project//mlir:MemRefTransforms",
+        "@llvm-project//mlir:Parser",
         "@llvm-project//mlir:Pass",
         "@llvm-project//mlir:ReconcileUnrealizedCasts",
         "@llvm-project//mlir:SCFDialect",
@@ -53,7 +63,9 @@ cc_library(
         "@llvm-project//mlir:SCFTransforms",
         "@llvm-project//mlir:SideEffectInterfaces",
         "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:TensorDialect",
         "@llvm-project//mlir:ToLLVMIRTranslation",
+        "@llvm-project//mlir:TransformDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
     ],
