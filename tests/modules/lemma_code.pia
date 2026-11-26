@@ -1,0 +1,22 @@
+(* A call of an imported lemma leaves no code behind: the lemma's module
+   compiles none for it, so a call that stayed would not link.
+// RUN: piac --emit=interface -o %t %S/Inputs/sums.pia
+// RUN: piac --emit=llvm --iface-path=%t %s | FileCheck %s
+*)
+module LemmaCode : Uses
+
+import Calc.Sums.Facts as F
+
+interface Uses @abi(c) = sig
+  let at_least : (n : u8) -> u8
+end
+
+let at_least (n : u8) : u8
+= F.tri_ge n;
+  n
+
+(*
+// CHECK-NOT: tri_ge
+// CHECK: define {{.*}}at_least
+// CHECK-NOT: tri_ge
+*)
