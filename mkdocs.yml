@@ -182,3 +182,4 @@ nav:
       - adr/0071-function-references.md
       - adr/0072-drops-run-in-constant-stack.md
       - adr/0073-prover-identity-abi-version-and-advisories.md
+      - adr/0074-library-types-tensors.md

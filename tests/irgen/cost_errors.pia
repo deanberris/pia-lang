@@ -1,0 +1,51 @@
+(* What a cost clause refuses (ADR 0062, step 1): a counter other than
+   `iterations` and `calls`, two bounds on one counter, `old` in a bound,
+   a bound on a spec function, `spent` outside an invariant, an assert or
+   a lemma call, `spent` without a clause, recursion without a measure,
+   and a spread.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let less_count (n : u8) : unit
+  costs less <= n
+= ()
+
+let twice (n : u8) : unit
+  costs iterations <= n
+  costs iterations <= n + 1
+= ()
+
+let bumped (n : inout u8) : unit
+  costs iterations <= old n
+= ()
+
+let spec size (n : u8) : u8
+  costs calls <= 0
+= n
+
+let promised (n : u8) : u8
+  ensures spent iterations <= n
+  costs iterations <= n
+= n
+
+let unbounded (n : u8) : unit =
+  for i in 0..n invariant spent iterations <= i do () done
+
+let rec down (n : u8) : u8
+  costs calls <= n
+= if n = 0 then 0 else down (n - 1)
+
+let par (xs : borrowed inout mutable [u32]) : unit
+  costs iterations <= len xs
+= spread i in 0 .. len xs do xs.[i] <- 0 done
+
+(* Expected errors, in order.
+// CHECK: cost_errors.pia:10:3: error: 'less' is not a counter yet: a cost clause counts 'iterations' or 'calls', and the calls of a function come later (ADR 0062)
+// CHECK: cost_errors.pia:15:3: error: a second cost clause on iterations; a function has one bound per counter
+// CHECK: cost_errors.pia:19:23: error: a cost bound is read at the parameters' entry values, so it needs no 'old'
+// CHECK: cost_errors.pia:23:3: error: a spec function or a lemma never runs, so it has no cost; a cost clause belongs on code
+// CHECK: cost_errors.pia:27:11: error: 'spent iterations' can be used only in loop invariants, 'assert's and lemma calls
+// CHECK: cost_errors.pia:32:27: error: 'spent iterations' needs a cost clause on iterations, as in 'costs iterations <= ...'
+// CHECK: cost_errors.pia:36:24: error: 'down' calls itself and has a cost clause, so it needs a 'decreases' measure (ADR 0062)
+// CHECK: cost_errors.pia:40:3: error: a spread in a function with a cost clause is not supported yet (ADR 0062)
+*)
