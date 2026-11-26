@@ -2256,8 +2256,21 @@ class Encoder {
 
   // A fresh array that holds a slice's elements, read from `root` at
   // `off`: what a callee sees as its parameter.
+  // Whether a term is the bit-vector constant 0.
+  static bool isZeroBV(Value v) {
+    auto c = v ? v.getDefiningOp<mlir::smt::BVConstantOp>() : nullptr;
+    return c && c.getValue().getValue().isZero();
+  }
+
   Value viewArray(Value root, Value off, Value len) {
     using P = mlir::smt::BVCmpPredicate;
+    // A view from 0 reads what its root does at each index below its
+    // length, and nothing else is read through it: it is the root. So
+    // `xs.[0 .. n]`, as an array is passed where a slice is wanted, is
+    // the same term in code and in a contract, and needs no fact, which a
+    // quantifier could not hold.
+    if (isZeroBV(off))
+      return root;
     Value v = declare(root.getType(), "", false);
     Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
     assertTerm(forallIndex([&](Value i) {
@@ -4090,8 +4103,9 @@ class Encoder {
           Value off = d.views.lookup(actual);
           if (!off) off = views_.lookup(actual);
           // A view needs a fact about a fresh array, which a quantifier
-          // cannot hold.
-          if (!off || quantifierDepth_ > 0) return Value();
+          // cannot hold, unless it starts at 0 and is its root.
+          if (!off || (quantifierDepth_ > 0 && !isZeroBV(off)))
+            return Value();
           arr = viewArray(arr, off, len);
         }
         args.arrays[formal] = arr;
