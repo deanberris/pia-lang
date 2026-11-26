@@ -38,7 +38,8 @@ void pia_gpu_buffer_free(uint64_t buffer);
 
 // A library from the bytes of a .metallib, such as one metal_library
 // embedded (tools/gpu/metal.bzl), or 0 if Metal rejects it.
-uint64_t pia_gpu_library_load(uint64_t device, const uint8_t *bytes, uint64_t n);
+uint64_t pia_gpu_library_load(uint64_t device, const uint8_t *bytes,
+                              uint64_t n);
 void pia_gpu_library_free(uint64_t library);
 
 // The kernel named `name` (n bytes, no NUL needed) in a library, as a
@@ -55,8 +56,7 @@ uint64_t pia_gpu_kernel_get(uint64_t library, const uint8_t *name, uint64_t n);
 // be freed or read until the device is closed.
 int32_t pia_gpu_dispatch(uint64_t device, uint64_t kernel,
                          const uint64_t *buffers, uint64_t nbuffers,
-                         uint64_t threads, uint64_t group,
-                         uint64_t timeout_ms);
+                         uint64_t threads, uint64_t group, uint64_t timeout_ms);
 
 #ifdef __cplusplus
 }
