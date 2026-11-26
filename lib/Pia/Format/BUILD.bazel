@@ -1,0 +1,26 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Format (ADR 0067): file formats read in pure Pia over bytes, proved
+# total on every input. Safetensors is the container the LLM demo's
+# weights load from. Each module is proved and compiled on its own, and
+# importers build against its interface artifacts.
+
+package(default_visibility = ["//visibility:public"])
+
+# Its tests read the source, to prove it and to write its interfaces.
+exports_files(["Safetensors.pia"])
+
+# The safetensors header and tensor table: tests/std/safetensors.pia
+# checks its goals; tests/std/safetensors_edges.pia and :safetensors_run
+# test it through its interface.
+pia_library(
+    name = "safetensors",
+    src = "Safetensors.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:spec",
+    ],
+)

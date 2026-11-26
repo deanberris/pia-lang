@@ -31,3 +31,13 @@ The verifier (`src/verify/Verifier.cpp`, [docs/verifier.md](../verifier.md)) alr
 - Encoding is still sequential and costs time proportional to goals times function size. Making it parallel needs a thread-safe way to build queries outside the module's context (separate contexts per function, or encoding straight to SMT-LIB), and is left for when the benchmark shows it matters.
 - `pia_object` actions run in parallel in Bazel and each also uses every core, so a large build can oversubscribe the machine. That costs throughput, not correctness, because the rlimit decides results. A `solver_jobs` attribute can cap it if the benchmark shows a loss.
 - The Presburger stage (ADR 0020) slots in as another kind of job in the same pool.
+
+### Amendment, 2026-11-24: CI runs the benchmark only when it can move
+
+Dean asked for the benchmark to run only when something that matters to it changes. It proves the corpus twice and took 69 minutes on Linux and 56 on macOS in the run that added this (PR #407), against 8 to 11 minutes for the build and tests, so it was most of a cached CI run, and BuildBuddy's remote execution cannot help, because the benchmark times proofs on the runner itself.
+
+- A `what changed` job in `.github/workflows/ci.yml` passes the changed paths to `tools/bench/needs_bench.py`, and both jobs run the benchmark step only when it says yes. The jobs themselves, and their required checks, run as before; only the step is skipped.
+- What can move a gated cost: the files in `tools/bench/baseline.json` and the library modules they import, transitively; `src/` except the language server, the REPL, code generation and certificates, none of which runs under `piac --verify`; `tools/piac/piac.cpp`; `tools/bench/`; `third_party/`, the module files, `.bazelrc` and `.bazelversion`; and the CI workflow. A file that is not in the baseline is reported as new and never gated, so new library modules, demos and tests do not need a run until they join the baseline.
+- When the job cannot tell what changed, the benchmark runs. Pull requests compare with the base they merge into, pushes to main with the commit before, and queue groups with their base.
+- A nightly run on main (16:00 UTC) builds, tests and benchmarks everything, so a change the path list misses is still caught within a day. A night with no new commits skips it. Running the workflow by hand also runs the benchmark.
+- Over the last 60 commits on main, 28 would have skipped it: ADRs, docs, case studies, skills, CI tweaks, and test-size changes.

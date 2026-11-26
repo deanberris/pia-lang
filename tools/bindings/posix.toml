@@ -75,7 +75,7 @@ headers = [
 ]
 functions = [
   "accept4", "pipe2", "epoll_create1", "epoll_ctl", "epoll_wait",
-  "eventfd", "syscall",
+  "eventfd", "syscall", "__errno_location",
 ]
 constants = [
   "SOCK_NONBLOCK", "SOCK_CLOEXEC", "MSG_NOSIGNAL",
@@ -94,12 +94,15 @@ structs = [
   "io_cqring_offsets", "io_uring_sqe", "io_uring_cqe",
 ]
 
+[x86_64_linux.aliases]
+errno = "__errno_location"
+
 [arm64_macos]
 headers = [
   "sys/event.h",
 ]
 functions = [
-  "kqueue", "kevent",
+  "kqueue", "kevent", "__error",
 ]
 constants = [
   "SO_NOSIGPIPE", "F_NOCACHE",
@@ -110,3 +113,13 @@ constants = [
 structs = [
   "kevent",
 ]
+
+# Each target's own symbol for a row: the thread's errno (ADR 0057,
+# section 5).
+[arm64_macos.aliases]
+errno = "__error"
+
+# Interface rows whose names are not the C symbol they declare: one C
+# variadic function at another arity.
+[aliases]
+open_mode = "open"

@@ -72,10 +72,11 @@ verify-stats: goals=243 unselected=0 intervals=21 skipped=0 solved=222 cached=0 
 | `solved`, `cached` | sent to Z3, and answered by the proof cache |
 | `sliced`, `unsliced` | queries slicing made smaller, and slices solved again in full |
 | `threads` | solver threads used |
+| `intblast` | nonlinear goals proved by Z3's int-blasting solver (ADR 0066) |
 | `cost` | Z3's deterministic resource count over every query: the number to compare between runs |
 | `encode_ms`, `solve_ms` | wall time; depends on the machine |
 
-Compare `cost`, not milliseconds, when you judge a change to a proof: it does not depend on load, and varies by only about 1% run to run. `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --baseline tools/bench/baseline.json --out bench.json` runs the whole corpus, and CI fails when cost grows by more than 10%.
+Compare `cost`, not milliseconds, when you judge a change to a proof: it does not depend on load, and varies by only about 1% run to run. `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --baseline tools/bench/baseline.json --out bench.json` runs the whole corpus, and CI fails when the cost of any corpus file grows by more than 10%. When a change makes a file legitimately costlier, such as new goals, record its new cost in the same pull request: `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac --passes=parallel --only=lib/Pia/Core/Charconv.pia --write-baseline` updates just that file's entry (cost does not depend on the machine, so the iMac or a cloud session's prebuilt `piac` will do), or `--write-baseline --merge=bench-1.json --merge=bench-2.json --merge=bench-3.json` takes every file from CI's `proof-bench-linux-*` artifacts.
 
 ## 4. Threads
 
@@ -89,6 +90,12 @@ Slicing cuts a query down to the goal's cone of influence. It is automatic, and 
 - `--no-slice` always solves the full query, which is the way to check that slicing is not the cause of a surprise.
 
 Slicing never makes a goal fail that would otherwise prove, and a counterexample always comes from the full query.
+
+## 6. Products: int-blasting is automatic
+
+A goal that multiplies two values that are not constants, or divides by one, is first given to Z3's int-blasting solver, which decides it as integer arithmetic instead of building a 68- or 132-bit multiplier ([ADR 0066](../../docs/adr/0066-int-blasting-for-nonlinear-goals.md)). Goals like `a <= b ==> a * c <= b * c` prove in about a second with no lemma and no `@solver` annotation. `intblast=` in `--verify-stats` counts them. If int-blasting cannot prove a goal, the bit-blaster runs as before and gives any counterexample.
+
+- `--no-int-blast` turns the attempt off: use it to compare `cost`, or to rule int-blasting out when a goal surprises you.
 
 ## In the REPL
 

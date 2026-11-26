@@ -1,8 +1,8 @@
-(* Recursive values have no layout until ADR 0047, step 3: piac generates
-   no code for a function that takes, makes or returns one, even with its
-   goals accepted, and says which. A module whose recursive types no
-   function uses compiles as before.
-// RUN: not piac --emit=core --allow-unproved=bump %s 2>&1 | FileCheck %s
+(* Recursive values in core MLIR (ADR 0047, step 3): a struct of the tag
+   and each constructor's payload fields, where a box's slot is its memref
+   descriptor. A constructor inserts its tag and payload into a zero
+   struct; `match` extracts them.
+// RUN: piac --emit=core %s | FileCheck %s
 *)
 
 let box = let (t : type) => type { slot : [t] }
@@ -11,19 +11,27 @@ let rec tree = type
   | Node of { left : box tree; key : u32; right : box tree }
 
 (*
-// CHECK: rec_types.pia":[[@LINE+2]]:1): error: 'leaf' uses a recursive type, which has no code yet (ADR 0047, step 3)
+// CHECK-LABEL: func.func @leaf() -> !llvm.struct<"pia.rec.tree", (i8, struct<(ptr, ptr, i64, array<1 x i64>, array<1 x i64>)>, i32, struct<(ptr, ptr, i64, array<1 x i64>, array<1 x i64>)>)>
+// CHECK: llvm.mlir.zero
+// CHECK: llvm.insertvalue %{{.*}}[0]
 *)
 let leaf () : tree = Leaf
 
 (*
-// CHECK: rec_types.pia":[[@LINE+2]]:1): error: 'bump' uses a recursive type, which has no code yet (ADR 0047, step 3)
+// CHECK-LABEL: func.func @key
+// CHECK: llvm.extractvalue %{{.*}}[0]
+// CHECK: llvm.extractvalue %{{.*}}[2]
 *)
-let bump (t : tree) : u32 =
+let key (t : tree) : u32 =
   match t with
   | Leaf -> 0
-  | Node n -> n.key + 1
+  | Node n -> n.key
 
 (*
-// CHECK-NOT: 'plain'
+// CHECK-LABEL: func.func @node
+// CHECK: builtin.unrealized_conversion_cast %{{.*}} : memref<?x!llvm.struct<"pia.rec.tree"
+// CHECK: llvm.insertvalue %{{.*}}[1]
+// CHECK: llvm.insertvalue %{{.*}}[2]
+// CHECK: llvm.insertvalue %{{.*}}[3]
 *)
-let plain (a : u8) (b : u8) : u16 = a + b
+let node (l : box tree) (k : u32) (r : box tree) : tree = Node { left = l; key = k; right = r }

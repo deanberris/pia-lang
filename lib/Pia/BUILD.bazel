@@ -8,6 +8,7 @@ package(default_visibility = ["//visibility:public"])
 
 exports_files([
     "Fn.pia",
+    "Gpu.pia",
     "Time.pia",
 ])
 
@@ -27,4 +28,13 @@ pia_library(
     src = "Time.pia",
     target_compatible_with = PIA_TARGETS,
     deps = ["//lib/Pia/Core:ratio"],
+)
+
+# Pia.Gpu (ADR 0068): devices, buffers, libraries and synchronous dispatch,
+# over the Metal shim in //src/runtime/metal, whose calls it declares as
+# trusted externs. A program that uses it links that shim.
+pia_library(
+    name = "gpu",
+    src = "Gpu.pia",
+    target_compatible_with = PIA_TARGETS,
 )

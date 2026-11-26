@@ -377,7 +377,7 @@ A metaprogram sees a type only once it is defined. `fields t` on a record whose 
 
 ```ocaml
 let wide = type { v : byte; w : u8 } @derive(eq)
-let meta make_byte () : item = `( let byte = type u8 )
+let meta make_byte () : item = `( let byte = u8 )
 make_byte ()
 ```
 

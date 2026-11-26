@@ -1,0 +1,346 @@
+(* Pia.Gpu: the GPU from Pia (ADR 0068, sections 3 to 5), over the Metal
+   host shim in src/runtime/metal, which is trusted: every `shim_` extern
+   below is a contract piac assumes, and piac --verify --trust-report lists
+   each one.
+
+   - `device`, `buffer t` and `library` are @linear: what is opened is
+     closed or freed, on every path.
+   - Every call that can fail returns a `result` over `error`, Gpu.error.
+     Nothing falls back to the CPU.
+   - `dispatch` is synchronous: when it returns, the kernel has finished,
+     so the CPU may read the buffers it wrote.
+   - Kernels are looked up by name in a library made from a .metallib's
+     bytes, such as one tools/gpu/metal.bzl embeds, so a library piac
+     embeds later (#435) works the same way.
+
+   The functions over buffers are named per element type (buffer_new_i32,
+   write_i32), because an importer mangles an overloaded export that takes
+   one of this module's types differently from this module (#447).
+
+   A buffer's memory is shared with the CPU. `read` and `write` copy
+   through it, and `address` gives its address for an `unsafe view`, until
+   codegen can return a slice and `buffer` can hand out a borrowed one. *)
+module Pia.Gpu : Gpu
+
+interface Gpu = sig
+  (** Why a GPU call failed: no GPU, no memory for a buffer, a kernel that
+      faulted or was not found, or one that did not finish in time. *)
+  let error = type | Gpu_unavailable | Gpu_out_of_memory | Gpu_fault | Gpu_timeout
+  (** The system's GPU and a queue on it. *)
+  let device = type { raw : u64 } @linear
+  (** `n` elements of `t` in memory the GPU and the CPU share. *)
+  let buffer = let (t : type) => type { raw : u64; addr : usize; n : usize } @linear
+  (** Kernels compiled into a .metallib. *)
+  let library = type { raw : u64 } @linear
+  (** One kernel of a library, ready to run. *)
+  let kernel = type { raw : u64 }
+  let device_open : result device error
+  let device_close : (d : moved device) -> unit
+  (** A zeroed buffer of n elements of each integer type a GPU buffer
+      holds, and its release. One name per type, not one overloaded name:
+      see the note at the top. *)
+  let buffer_new_u8 : (d : device) -> (n : usize) -> result (buffer u8) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_u8 : (b : moved buffer u8) -> unit
+  let buffer_new_i8 : (d : device) -> (n : usize) -> result (buffer i8) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_i8 : (b : moved buffer i8) -> unit
+  let buffer_new_u16 : (d : device) -> (n : usize) -> result (buffer u16) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_u16 : (b : moved buffer u16) -> unit
+  let buffer_new_i16 : (d : device) -> (n : usize) -> result (buffer i16) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_i16 : (b : moved buffer i16) -> unit
+  let buffer_new_u32 : (d : device) -> (n : usize) -> result (buffer u32) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_u32 : (b : moved buffer u32) -> unit
+  let buffer_new_i32 : (d : device) -> (n : usize) -> result (buffer i32) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_i32 : (b : moved buffer i32) -> unit
+  let buffer_new_u64 : (d : device) -> (n : usize) -> result (buffer u64) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_u64 : (b : moved buffer u64) -> unit
+  let buffer_new_i64 : (d : device) -> (n : usize) -> result (buffer i64) error
+    requires n >= 1 && n <= 1 << 40
+    ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+  let buffer_free_i64 : (b : moved buffer i64) -> unit
+  let address : (t : type) -> (b : buffer t) -> usize
+  let raw_of : (t : type) -> (b : buffer t) -> u64
+  (** Copies into and out of a buffer, through the memory it shares with
+      the CPU. *)
+  let write_u8 : (b : buffer u8) -> (src : [u8]) -> unit
+    requires len src = b.n
+  let read_u8 : (b : buffer u8) -> (dst : out mutable [u8]) -> unit
+    requires len dst = b.n
+  let write_i8 : (b : buffer i8) -> (src : [i8]) -> unit
+    requires len src = b.n
+  let read_i8 : (b : buffer i8) -> (dst : out mutable [i8]) -> unit
+    requires len dst = b.n
+  let write_u16 : (b : buffer u16) -> (src : [u16]) -> unit
+    requires len src = b.n
+  let read_u16 : (b : buffer u16) -> (dst : out mutable [u16]) -> unit
+    requires len dst = b.n
+  let write_i16 : (b : buffer i16) -> (src : [i16]) -> unit
+    requires len src = b.n
+  let read_i16 : (b : buffer i16) -> (dst : out mutable [i16]) -> unit
+    requires len dst = b.n
+  let write_u32 : (b : buffer u32) -> (src : [u32]) -> unit
+    requires len src = b.n
+  let read_u32 : (b : buffer u32) -> (dst : out mutable [u32]) -> unit
+    requires len dst = b.n
+  let write_i32 : (b : buffer i32) -> (src : [i32]) -> unit
+    requires len src = b.n
+  let read_i32 : (b : buffer i32) -> (dst : out mutable [i32]) -> unit
+    requires len dst = b.n
+  let write_u64 : (b : buffer u64) -> (src : [u64]) -> unit
+    requires len src = b.n
+  let read_u64 : (b : buffer u64) -> (dst : out mutable [u64]) -> unit
+    requires len dst = b.n
+  let write_i64 : (b : buffer i64) -> (src : [i64]) -> unit
+    requires len src = b.n
+  let read_i64 : (b : buffer i64) -> (dst : out mutable [i64]) -> unit
+    requires len dst = b.n
+  let library_load : (d : device) -> (bytes : [u8]) -> result library error
+  let library_free : (l : moved library) -> unit
+  (** The kernel called `name` in `l`, or Gpu_fault if there is none. *)
+  let kernel_get : (l : library) -> (name : [u8]) -> result kernel error
+  (** Runs `k` over `threads` threads, `group` to a threadgroup, with
+      `buffers` (their raw_of) bound in order, and waits for it: at most
+      timeout_ms milliseconds, or as long as it takes when that is 0. *)
+  let dispatch : (d : device) -> (k : kernel) -> (buffers : [u64]) -> (threads : u64) -> (group : u64) -> (timeout_ms : u64) -> result unit error
+    requires group >= 1
+end
+
+let error = type | Gpu_unavailable | Gpu_out_of_memory | Gpu_fault | Gpu_timeout
+
+let device = type { raw : u64 } @linear
+
+let buffer = let (t : type) => type { raw : u64; addr : usize; n : usize } @linear
+
+let library = type { raw : u64 } @linear
+
+let kernel = type { raw : u64 }
+
+let shim_device_open () : u64
+  ensures true
+= extern "pia_gpu_device_open"
+let shim_device_close (d : u64) : unit
+  ensures true
+= extern "pia_gpu_device_close"
+let shim_buffer_new (d : u64) (bytes : u64) : u64
+  ensures true
+= extern "pia_gpu_buffer_new"
+let shim_buffer_contents (b : u64) : usize
+  ensures true
+= extern "pia_gpu_buffer_contents"
+let shim_buffer_free (b : u64) : unit
+  ensures true
+= extern "pia_gpu_buffer_free"
+let shim_library_load (d : u64) (bytes : [u8]) (n : u64) : u64
+  requires n <= len bytes
+= extern "pia_gpu_library_load"
+let shim_library_free (l : u64) : unit
+  ensures true
+= extern "pia_gpu_library_free"
+let shim_kernel_get (l : u64) (name : [u8]) (n : u64) : u64
+  requires n <= len name
+= extern "pia_gpu_kernel_get"
+let shim_dispatch (d : u64) (k : u64) (buffers : [u64]) (nb : u64) (threads : u64) (group : u64) (timeout_ms : u64) : i32
+  requires nb <= len buffers && group >= 1
+  ensures result >= 0 && result <= 4 && result <> 1 && result <> 2
+= extern "pia_gpu_dispatch"
+
+let device_open () : result device error =
+  let h = shim_device_open in
+  if h = 0 then Err Gpu_unavailable else Ok { raw = h }
+
+let device_close (d : moved device) : unit =
+  match d with | { raw } -> shim_device_close raw
+
+let buffer_new_u8 (d : device) (n : usize) : result (buffer u8) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (1 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_u8 (b : moved buffer u8) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_i8 (d : device) (n : usize) : result (buffer i8) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (1 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_i8 (b : moved buffer i8) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_u16 (d : device) (n : usize) : result (buffer u16) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (2 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_u16 (b : moved buffer u16) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_i16 (d : device) (n : usize) : result (buffer i16) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (2 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_i16 (b : moved buffer i16) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_u32 (d : device) (n : usize) : result (buffer u32) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (4 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_u32 (b : moved buffer u32) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_i32 (d : device) (n : usize) : result (buffer i32) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (4 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_i32 (b : moved buffer i32) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_u64 (d : device) (n : usize) : result (buffer u64) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (8 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_u64 (b : moved buffer u64) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let buffer_new_i64 (d : device) (n : usize) : result (buffer i64) error
+  requires n >= 1 && n <= 1 << 40
+  ensures (match result with | Ok b -> b.n = n | Err _ -> true)
+= let h = shim_buffer_new d.raw (8 * n) in
+  if h = 0 then Err Gpu_out_of_memory
+  else Ok { raw = h; addr = shim_buffer_contents h; n = n }
+
+let buffer_free_i64 (b : moved buffer i64) : unit =
+  match b with | { raw; addr; n } -> shim_buffer_free raw
+
+let write_u8 (b : buffer u8) (src : [u8]) : unit
+  requires len src = b.n
+= let mem : mutable [u8] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_u8 (b : buffer u8) (dst : out mutable [u8]) : unit
+  requires len dst = b.n
+= let mem : [u8] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_i8 (b : buffer i8) (src : [i8]) : unit
+  requires len src = b.n
+= let mem : mutable [i8] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_i8 (b : buffer i8) (dst : out mutable [i8]) : unit
+  requires len dst = b.n
+= let mem : [i8] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_u16 (b : buffer u16) (src : [u16]) : unit
+  requires len src = b.n
+= let mem : mutable [u16] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_u16 (b : buffer u16) (dst : out mutable [u16]) : unit
+  requires len dst = b.n
+= let mem : [u16] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_i16 (b : buffer i16) (src : [i16]) : unit
+  requires len src = b.n
+= let mem : mutable [i16] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_i16 (b : buffer i16) (dst : out mutable [i16]) : unit
+  requires len dst = b.n
+= let mem : [i16] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_u32 (b : buffer u32) (src : [u32]) : unit
+  requires len src = b.n
+= let mem : mutable [u32] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_u32 (b : buffer u32) (dst : out mutable [u32]) : unit
+  requires len dst = b.n
+= let mem : [u32] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_i32 (b : buffer i32) (src : [i32]) : unit
+  requires len src = b.n
+= let mem : mutable [i32] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_i32 (b : buffer i32) (dst : out mutable [i32]) : unit
+  requires len dst = b.n
+= let mem : [i32] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_u64 (b : buffer u64) (src : [u64]) : unit
+  requires len src = b.n
+= let mem : mutable [u64] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_u64 (b : buffer u64) (dst : out mutable [u64]) : unit
+  requires len dst = b.n
+= let mem : [u64] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let write_i64 (b : buffer i64) (src : [i64]) : unit
+  requires len src = b.n
+= let mem : mutable [i64] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do mem.[i] <- src.[i] done
+
+let read_i64 (b : buffer i64) (dst : out mutable [i64]) : unit
+  requires len dst = b.n
+= let mem : [i64] = unsafe view b.addr b.n in
+  for i in 0 .. b.n do dst.[i] <- mem.[i] done
+
+let address (t : type) (b : buffer t) : usize = b.addr
+
+let library_load (d : device) (bytes : [u8]) : result library error =
+  let h = shim_library_load d.raw bytes (len bytes) in
+  if h = 0 then Err Gpu_fault else Ok { raw = h }
+
+let library_free (l : moved library) : unit =
+  match l with | { raw } -> shim_library_free raw
+
+let kernel_get (l : library) (name : [u8]) : result kernel error =
+  let h = shim_kernel_get l.raw name (len name) in
+  if h = 0 then Err Gpu_fault else Ok { raw = h }
+
+let raw_of (t : type) (b : buffer t) : u64 = b.raw
+
+let dispatch (d : device) (k : kernel) (buffers : [u64]) (threads : u64) (group : u64) (timeout_ms : u64) : result unit error
+  requires group >= 1
+=
+  let r = shim_dispatch d.raw k.raw buffers (len buffers) threads group timeout_ms in
+  if r = 0 then Ok () else if r = 4 then Err Gpu_timeout else Err Gpu_fault

@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted (2026-11-24)
 
 ## Context
 
@@ -66,12 +66,30 @@ The generated module still declares every symbol listed in `posix.toml`, without
 
 The join is done by the generator, so the metaprogram planned in ADR 0051, section 6, is dropped. `bit_family` and other stamping metaprograms are unaffected.
 
+### 5. Amendment (2026-11-24): `errno` through `@deref`
+
+`Pia.Sys.Fs` decodes `errno` into its error variants ([ADR 0023](0023-minimal-core-self-hosted-stdlib.md)). glibc reaches the thread's `errno` through `int *__errno_location(void)`, and Darwin through `int *__error(void)`. Pia has no foreign pointers, so neither can be declared yet.
+
+A foreign declaration marked `@deref` names a C function that returns a pointer to a value of its Pia result type. The call reads that value, and the pointer never reaches Pia:
+
+```ocaml
+let errno () : i32 @deref
+  ensures true
+= extern "__errno_location"
+```
+
+- **The row.** The interface gains `let errno : i32 @deref` with `ensures true`, because errno can hold any value. The rule that `errno` is meaningful only after a call that returned -1 belongs to `Pia.Sys.Fs`, which reads it only then.
+- **The symbol is per target.** `posix.toml` gains `[<target>.aliases]` tables: `errno = "__errno_location"` on Linux and `errno = "__error"` on macOS. The generator writes `@deref` on the row's extern. It fails unless the C function takes no parameters and returns a pointer to an integer of the row's width and signedness.
+- **Codegen.** The C function is declared as returning `ptr`, and the call is followed by a load of the result type. A `@deref` function returns an integer for now, like any foreign function.
+- **Trust.** `@deref` trusts that the pointer is valid and aligned when the call returns. That is what both manual pages promise. The trust report lists it with the row.
+
 ## Implementation steps
 
 1. `lib/Pia/Sys/Posix.pia` with the `Posix` interface, first for the rows `Pia.Sys.Fs` needs (`open`, `close`, `read`, `write`, `pread`, `pwrite`, `lseek`, `fsync`, `fstat`, `unlink`, the `O_` and `SEEK_` constants and the errno values).
 2. `gen.py` reads the interface, checks each row against the header, and writes `module Pia.Sys.Posix : Posix` with the contracted declarations. Its `@target` attributes go, since the build picks the file.
 3. A `pia_library` per target, selected by platform, and a test that each file meets the interface on its own target (`tests/std`).
-4. Then `Pia.Sys.Fs` (#57) on top, written once for both targets.
+4. `@deref` and the `errno` row (section 5).
+5. Then `Pia.Sys.Fs` (#57) on top, written once for both targets.
 
 ## Consequences
 
@@ -80,6 +98,6 @@ The join is done by the generator, so the metaprogram planned in ADR 0051, secti
 - The trusted surface is the interface file, one row per symbol, each citing its manual page. The trust report lists the rows.
 - The header checks are done in Python, at generation, rather than in a metaprogram. They are stronger, since they see C's `const` and its exact types, but they run only when the file is regenerated, which CI does on every pull request.
 
-## Question for Dean
+## Dean's answer
 
-1. **Where should the overlay be joined?** The recommendation is the generator (section 2): it can check C's `const`-ness and exact types, and a metaprogram cannot see across the per-target files. The alternative is to keep the metaprogram planned in ADR 0051. That needs both targets' declarations in one file under distinct names, every row stamped twice, and a dispatch through `if Target.is` in every target-generic caller.
+1. **Where should the overlay be joined?** In the generator (2026-11-24), as section 2 says.

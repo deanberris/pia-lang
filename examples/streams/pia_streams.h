@@ -9,8 +9,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-uint32_t fill_sinks(const uint16_t *dem, uint64_t ndem, uint64_t w,
-                    uint32_t limit, uint16_t *fill, uint64_t nfill);
+uint64_t load_hgt(const uint8_t *raw, uint64_t nraw, uint16_t *dem,
+                  uint64_t ndem);
+uint64_t fill_sinks(const uint16_t *dem, uint64_t ndem, uint64_t w,
+                    uint16_t *fill, uint64_t nfill, uint64_t *parent,
+                    uint64_t nparent, uint64_t *rank, uint64_t nrank,
+                    uint64_t *next, uint64_t nnext, uint64_t *head,
+                    uint64_t nhead);
 void directions(const uint16_t *fill, uint64_t nfill, uint64_t w,
                 uint64_t *down, uint64_t ndown);
 void accumulate(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
@@ -21,8 +26,10 @@ uint64_t render(const uint16_t *dem, uint64_t ndem, const uint16_t *fill,
                 const uint64_t *basin, uint64_t nbasin, uint32_t threshold,
                 uint8_t *rgb, uint64_t nrgb);
 uint64_t delineate(const uint16_t *dem, uint64_t ndem, uint64_t w,
-                   uint32_t limit, uint32_t threshold, uint16_t *fill,
-                   uint64_t nfill, uint64_t *down, uint64_t ndown,
+                   uint32_t threshold, uint16_t *fill, uint64_t nfill,
+                   uint64_t *parent, uint64_t nparent, uint64_t *rank,
+                   uint64_t nrank, uint64_t *next, uint64_t nnext,
+                   uint64_t *head, uint64_t nhead, uint64_t *down, uint64_t ndown,
                    uint32_t *acc, uint64_t nacc, uint64_t *basin,
                    uint64_t nbasin, uint8_t *rgb, uint64_t nrgb);
 
@@ -77,6 +84,16 @@ uint64_t sediment_basins(
     uint64_t npos2, uint32_t *cnt, uint64_t ncnt, uint64_t *first,
     uint64_t nfirst, uint64_t *next, uint64_t nnext, uint64_t *last,
     uint64_t nlast, uint64_t *gowner, uint64_t ngowner);
+// docs/pull.pia.md.
+uint64_t pull_step(const uint16_t *fill, uint64_t nfill, const uint64_t *down,
+                   uint64_t ndown, const uint32_t *acc, uint64_t nacc,
+                   const uint64_t *order, uint64_t norder, const uint64_t *pos,
+                   uint64_t npos, uint64_t w, const uint32_t *bed0,
+                   uint64_t nbed0, uint32_t *bed, uint64_t nbed, uint32_t *flux,
+                   uint64_t nflux, uint64_t *seen, uint64_t nseen,
+                   uint64_t *gathered, uint64_t ngathered, uint32_t *newbed,
+                   uint64_t nnewbed, uint32_t *newout, uint64_t nnewout,
+                   uint64_t gone);
 // examples/streams/gif.pia.
 uint64_t gif_bound(uint16_t w, uint16_t h, uint16_t nf);
 uint64_t gif_animation(uint16_t w, uint16_t h, const uint8_t *pal,

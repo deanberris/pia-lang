@@ -40,6 +40,7 @@
 #include "mlir/Target/SMTLIB/ExportSMTLIB.h"
 #include "sema/Sema.h"
 #include "transforms/ScalarizeRecords.h"
+#include "mlir/IR/Dominance.h"
 #include "verify/Strategy.h"
 #include "verify/Triggers.h"
 #include "z3++.h"
@@ -73,6 +74,9 @@ constexpr unsigned kBoundWidth = 128;
 
 // The SMT-LIB sort of `real` (see Encoder::realType).
 constexpr llvm::StringLiteral kRealSort = "Real";
+// The SMT-LIB names of a recursive type's datatype (ADR 0047) and its
+// functions start with this, which no Pia name can: `rec` is a keyword.
+constexpr llvm::StringLiteral kRecPrefix = "rec.";
 
 // The SMT-LIB functions the encoder declares under their own names because
 // the smt dialect has no op for them (Encoder::interpreted).
@@ -90,6 +94,11 @@ std::string interpretedSMTLIB(const std::string &smtlib) {
     llvm::StringRef line(smtlib.data() + pos, end - pos);
     pos = end + 1;
     if (line == ("(declare-sort " + kRealSort + " 0)").str()) continue;
+    // A datatype and its functions are declared together (withDatatypes).
+    if (line.starts_with(("(declare-sort " + kRecPrefix).str()) ||
+        line.starts_with(("(declare-fun " + kRecPrefix).str()) ||
+        line.starts_with(("(declare-const " + kRecPrefix).str()))
+      continue;
     bool drop = false;
     for (llvm::StringRef f : kInterpreted)
       if (line.starts_with(("(declare-fun " + f + " (").str())) drop = true;
@@ -375,10 +384,6 @@ llvm::DenseSet<Operation *> specOps(mlir::func::FuncOp fn) {
 
 // The function at the heart of the verifier: a symbolic walk of one
 // function that encodes its ops in the smt dialect.
-// Why a goal over a recursive value is not proved yet.
-constexpr const char *kRecursiveNotVerified =
-    "recursive types are not verified yet (ADR 0047, step 2)";
-
 // Whether `t` is, or holds, a value of a recursive type (ADR 0047).
 bool holdsRecursive(Type t) {
   if (mlir::isa<RecType>(t)) return true;
@@ -403,13 +408,77 @@ bool touchesRecursive(mlir::func::FuncOp fn) {
           if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
         for (Type t : op->getOperandTypes())
           if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
-        for (mlir::Region &r : op->getRegions())
-          for (mlir::Block &b : r)
-            for (Type t : b.getArgumentTypes())
-              if (holdsRecursive(t)) return mlir::WalkResult::interrupt();
         return mlir::WalkResult::advance();
       })
       .wasInterrupted();
+}
+
+// The buffers an op writes: a store's, a copy's destination, and those a
+// call passes as `out` or `inout`.
+llvm::SmallVector<Value> buffersWritten(mlir::ModuleOp module, Operation *op) {
+  llvm::SmallVector<Value> out;
+  if (auto st = mlir::dyn_cast<StoreOp>(op)) out.push_back(st.getBuffer());
+  if (auto cp = mlir::dyn_cast<CopyOp>(op)) out.push_back(cp.getDst());
+  if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
+    if (auto callee = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee()))
+      for (unsigned i = 0; i < call.getNumOperands(); ++i) {
+        if (!mlir::isa<ArrayType, SliceType>(call.getOperand(i).getType()))
+          continue;
+        auto mods = callee.getArgAttrOfType<mlir::StringAttr>(
+            i, PiaDialect::getModifiersAttrName());
+        if (mods && (sema::hasModifier(mods.getValue(), "out") ||
+                     sema::hasModifier(mods.getValue(), "inout")))
+          out.push_back(call.getOperand(i));
+      }
+  return out;
+}
+
+// The proof sees a recursive value as a value (ADR 0047, section 3): a
+// buffer in its payload, such as a box's slot, holds what it held when
+// the value was built. That is what the memory holds while the buffer is
+// owned only by the value, which is why the function may not write a
+// buffer after building a value with it, nor write a buffer taken out of
+// one. Why a function does, or nothing.
+std::optional<std::string> recursiveAliasing(mlir::ModuleOp module,
+                                             mlir::func::FuncOp fn) {
+  llvm::SmallVector<RecMakeOp> makes;
+  fn.walk([&](RecMakeOp m) { makes.push_back(m); });
+  std::optional<std::string> why;
+  mlir::DominanceInfo dom(fn);
+  fn.walk([&](Operation *op) {
+    for (Value b : buffersWritten(module, op)) {
+      Value root = rootBuffer(b);
+      if (root.getDefiningOp<RecPayloadOp>()) {
+        why = "it writes a buffer taken out of a recursive value, which "
+              "the verifier sees as a value; write a copy instead";
+        return mlir::WalkResult::interrupt();
+      }
+      // A view of the buffer's storage counts as the buffer. A write in a
+      // loop that also builds the value comes after the value of an
+      // earlier iteration, even where it comes first in the body.
+      auto inSameLoop = [&](Operation *m) {
+        for (Operation *l = op->getParentOp(); l && l != fn.getOperation();
+             l = l->getParentOp())
+          if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp,
+                        mlir::scf::ParallelOp>(l) &&
+              l->isAncestor(m))
+            return true;
+        return false;
+      };
+      for (RecMakeOp m : makes)
+        if (llvm::any_of(m.getPayload(),
+                         [&](Value p) { return rootBuffer(p) == root; }) &&
+            (!dom.properlyDominates(op, m.getOperation()) ||
+             inSameLoop(m.getOperation()))) {
+          why = "it writes a buffer after building a recursive value "
+                "with it, which the verifier sees as the buffer's contents "
+                "when it was built";
+          return mlir::WalkResult::interrupt();
+        }
+    }
+    return mlir::WalkResult::advance();
+  });
+  return why;
 }
 
 class Encoder {
@@ -445,19 +514,44 @@ class Encoder {
   };
 
   void run() {
-    // Recursive values have no encoding yet (ADR 0047, step 2), so none
-    // of the function's goals is proved: each is unproved, which is a
-    // compile error unless --allow-unproved accepts it.
+    // Recursive values are datatypes (ADR 0047, step 2). Where their
+    // encoding does not hold, every goal of the function is unproved,
+    // which is a compile error unless --allow-unproved accepts it.
     if (touchesRecursive(fn_)) {
-      fn_.walk([&](Operation *op) {
-        for (auto &[kind, claim] : describe(op))
-          skipped(kind, op, claim, kRecursiveNotVerified);
-      });
-      return;
+      std::optional<std::string> why = recursiveAliasing(module_, fn_);
+      if (!why && fn_->hasAttr("pia.generic_proof"))
+        why = "a generic's proof over recursive values is not supported "
+              "yet (ADR 0047)";
+      if (!why)
+        for (auto d : module_.getOps<DatatypeOp>())
+          if (const RecInfo *ri = recInfo(d.getSymName()); !ri || !ri->ok) {
+            why = "the payload of a constructor of '" +
+                  d.getSymName().str() + "' cannot be encoded yet";
+            break;
+          }
+      if (why) {
+        fn_.walk([&](Operation *op) {
+          for (auto &[kind, claim] : describe(op))
+            skipped(kind, op, claim, "not verified: " + *why);
+        });
+        return;
+      }
     }
     declareSpecFunctions();
     mlir::Block &entry = fn_.getBody().front();
     for (unsigned i = 0; i < entry.getNumArguments(); ++i) declareParam(entry.getArgument(i), i);
+    recFacts_ = fn_.walk([&](Operation *op) {
+                     if (mlir::isa<RecMeasureOp>(op))
+                       return mlir::WalkResult::interrupt();
+                     if (auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+                         c && c.getCallee() == fn_.getSymName())
+                       return mlir::WalkResult::interrupt();
+                     return mlir::WalkResult::advance();
+                   }).wasInterrupted();
+    if (recFacts_)
+      for (mlir::BlockArgument a : entry.getArguments())
+        if (auto rt = mlir::dyn_cast<RecType>(a.getType()))
+          if (Value v = term(a)) recLeast(v, rt);
     entryArrays_ = arrays_;
     entryInner_ = innerLengths_;
     walkBlock(entry, nullptr);
@@ -466,6 +560,7 @@ class Encoder {
   bool reachedTarget() const { return done_; }
   // Whether a recursive spec function was left uninterpreted at its fuel.
   bool truncated() const { return truncated_; }
+  const std::set<std::string> &opaqueHidden() const { return opaqueHidden_; }
   void setVacuity(bool v) { vacuity_ = v; }
 
   // The consistency check of a trusted theory (ADR 0036): every axiom of
@@ -488,6 +583,8 @@ class Encoder {
   // The `assume`s the query asserts, as `assume file:line:col`.
   const std::vector<std::string> &sentAssumes() const { return sentAssumes_; }
   const std::set<std::string> &sorts() const { return sorts_; }
+  // The declarations of the datatypes the query uses (ADR 0047).
+  std::string datatypeDecls() { return recDecls(); }
   bool usesTheories() const { return !theoryFuns_.empty(); }
 
   // The axioms a query gets (ADR 0036, "Build time"). With `all` unset,
@@ -613,6 +710,12 @@ class Encoder {
         sorts_.insert(name);
         return mlir::smt::SortType::get(ctx_, name);
       }
+    // A recursive value is a datatype, declared with its constructors
+    // when the query is exported.
+    if (auto r = mlir::dyn_cast<RecType>(t)) {
+      recUsed_.insert(r.getName().str());
+      return mlir::smt::SortType::get(ctx_, recSort(r.getName()));
+    }
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
@@ -622,6 +725,254 @@ class Encoder {
       return e ? mlir::smt::ArrayType::get(ctx_, bvType(), e) : Type();
     }
     return {};
+  }
+
+  // --- recursive types (ADR 0047) ----------------------------------------
+
+  // A datatype's constructor as SMT fields: a payload leaf is one field, a
+  // buffer leaf its contents and its length, and a buffer of slices also
+  // its elements' lengths.
+  struct RecCtor {
+    std::string name;                // the SMT constructor, rec.tree.Node
+    llvm::SmallVector<Type> leaves;  // the payload's leaves
+    llvm::SmallVector<Type> sorts;   // the fields' sorts
+    // For a field that holds a buffer, the buffer's array; null for other
+    // fields. Z3 does not decide datatypes whose constructors hold arrays
+    // well, so the field is a handle of an uninterpreted sort, rec.bufN,
+    // with `rec.bufN.of` the handle of an array and `rec.bufN.at` the
+    // array of a handle: the walk asserts `at (of a) = a` for each array
+    // it puts in a value. Datatypes are then plain, and the depth and size
+    // axioms, not Z3's own acyclicity, are what make them well founded.
+    llvm::SmallVector<Type> wide;
+  };
+  struct RecInfo {
+    std::string sort;  // rec.tree
+    std::vector<RecCtor> ctors;
+    std::set<std::string> holds;  // the datatypes its fields hold
+    bool ok = true;
+  };
+
+  static std::string recSort(llvm::StringRef name) {
+    return (kRecPrefix + smtSymbol(name)).str();
+  }
+
+  // The handle sort of buffers whose array is `wide`, one per array sort.
+  std::string bufSort(Type wide) {
+    auto it = llvm::find(bufSorts_, wide);
+    size_t n = it - bufSorts_.begin();
+    if (it == bufSorts_.end()) bufSorts_.push_back(wide);
+    return (kRecPrefix + "buf" + llvm::Twine(n)).str();
+  }
+
+  // The constructors of the datatype `name` at this query's width.
+  const RecInfo *recInfo(llvm::StringRef name) {
+    auto it = recs_.find(name.str());
+    if (it != recs_.end()) return &it->second;
+    DatatypeOp d;
+    for (auto op : module_.getOps<DatatypeOp>())
+      if (op.getSymName() == name) d = op;
+    if (!d) return nullptr;
+    // Working out the fields uses no datatype: the query still uses only
+    // those it did.
+    std::set<std::string> used = recUsed_;
+    RecInfo info;
+    info.sort = recSort(name);
+    for (auto [i, c] : llvm::enumerate(d.getCtors().getAsValueRange<mlir::StringAttr>())) {
+      RecCtor rc;
+      rc.name = info.sort + "." + smtSymbol(c);
+      if (Type p = d.payloadOf(i)) {
+        if (mlir::isa<RecordType>(p))
+          transforms::recordLeaves(p, rc.leaves);
+        else
+          rc.leaves.push_back(p);
+      }
+      for (Type leaf : rc.leaves) {
+        std::set<std::string> before = recUsed_;
+        Type sort = sortOf(leaf);
+        for (const std::string &u : recUsed_)
+          if (!before.count(u)) info.holds.insert(u);
+        if (auto r = mlir::dyn_cast<RecType>(leaf))
+          info.holds.insert(r.getName().str());
+        if (auto r = recElement(leaf)) info.holds.insert(r.getName().str());
+        if (!sort) {
+          info.ok = false;
+          continue;
+        }
+        auto narrow = [&](Type wide) -> Type {
+          return mlir::smt::SortType::get(ctx_, bufSort(wide));
+        };
+        if (mlir::isa<ArrayType, SliceType>(leaf)) {
+          rc.sorts.push_back(narrow(sort));
+          rc.wide.push_back(sort);
+          rc.sorts.push_back(bvType());
+          rc.wide.push_back(Type());
+          if (holdsSlices(leaf)) {
+            Type lens = mlir::smt::ArrayType::get(ctx_, bvType(), bvType());
+            rc.sorts.push_back(narrow(lens));
+            rc.wide.push_back(lens);
+          }
+        } else {
+          rc.sorts.push_back(sort);
+          rc.wide.push_back(Type());
+        }
+      }
+      info.ctors.push_back(std::move(rc));
+    }
+    recUsed_ = std::move(used);
+    return &recs_.emplace(name.str(), std::move(info)).first->second;
+  }
+
+  static RecType recElement(Type t) {
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return mlir::dyn_cast<RecType>(a.getElementType());
+    if (auto sl = mlir::dyn_cast<SliceType>(t))
+      return mlir::dyn_cast<RecType>(sl.getElementType());
+    return {};
+  }
+
+  // A function of a datatype, declared once per query and replaced by the
+  // datatype's own declaration when the query is exported.
+  Value recApply(const std::string &name, llvm::ArrayRef<Value> args,
+                 Type range) {
+    if (args.empty()) {
+      auto it = interpreted_.find(name);
+      if (it != interpreted_.end()) return it->second;
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToStart(solverBlock_);
+      Value c = create<mlir::smt::DeclareFunOp>(range, b_.getStringAttr(name));
+      interpreted_[name] = c;
+      return c;
+    }
+    return apply(name, args, range);
+  }
+
+  // The constructor `ctor` of `t`, its position and its fields.
+  const RecCtor *recCtor(RecType t, llvm::StringRef ctor, unsigned &tag) {
+    const RecInfo *ri = recInfo(t.getName());
+    if (!ri || !ri->ok) return nullptr;
+    for (auto op : module_.getOps<DatatypeOp>())
+      if (op.getSymName() == t.getName())
+        if (auto k = op.tagOf(ctor)) {
+          tag = *k;
+          return &ri->ctors[*k];
+        }
+    return nullptr;
+  }
+
+  // `depth v` or `size v`: an Int, of which the query knows only the
+  // facts the walk asserts, all ground: a parameter's depth is at least 0
+  // and its size at least 1, and a component's are smaller than its
+  // holder's. That is what a measure needs, and true of every value,
+  // since datatypes are well founded. Ground facts keep a failed goal's
+  // query as quick as a proved one's; quantified axioms did not.
+  Value recMeasure(llvm::StringRef kind, Value v, RecType t) {
+    (kind == "size" ? recSize_ : recDepth_) = true;
+    return recApply(recSort(t.getName()) + "." + kind.str(), {v}, intType());
+  }
+
+  Value intCmp(mlir::smt::IntPredicate p, Value a, Value b) {
+    return create<mlir::smt::IntCmpOp>(boolType(), p, a, b);
+  }
+
+  // The facts that `child`, a component of `holder`, is smaller, when
+  // `cond` holds.
+  void recSmaller(Value child, RecType ct, Value holder, RecType ht,
+                  Value cond) {
+    using IP = mlir::smt::IntPredicate;
+    for (const char *kind : {"depth", "size"}) {
+      Value lt = intCmp(IP::lt, recMeasure(kind, child, ct),
+                        recMeasure(kind, holder, ht));
+      assertTerm(cond ? implies(cond, lt) : lt);
+    }
+  }
+
+  // A value's depth is at least 0 and its size at least 1.
+  void recLeast(Value v, RecType t) {
+    using IP = mlir::smt::IntPredicate;
+    assertTerm(intCmp(IP::ge, recMeasure("depth", v, t), intConst(APInt(64, 0))));
+    assertTerm(intCmp(IP::ge, recMeasure("size", v, t), intConst(APInt(64, 1))));
+  }
+
+  // The datatypes the query uses and those they hold, declared as one
+  // group, each with its tag function, and the measures it uses with
+  // their axioms. Empty when it uses none.
+  std::string recDecls() {
+    if (recUsed_.empty()) return "";
+    std::vector<std::string> order;
+    std::set<std::string> seen;
+    std::vector<std::string> work(recUsed_.begin(), recUsed_.end());
+    while (!work.empty()) {
+      std::string n = work.back();
+      work.pop_back();
+      if (!seen.insert(n).second) continue;
+      const RecInfo *ri = recInfo(n);
+      if (!ri) continue;
+      order.push_back(n);
+      for (const std::string &h : ri->holds) work.push_back(h);
+    }
+    std::sort(order.begin(), order.end());
+    std::string w = std::to_string(width_);
+    auto bvLit = [&](unsigned v) {
+      return "(_ bv" + std::to_string(v) + " " + w + ")";
+    };
+    // The buffer handles the fields of these datatypes use.
+    std::vector<Type> bufs;
+    for (const std::string &n : order)
+      for (const RecCtor &c : recs_.at(n).ctors)
+        for (Type wide : c.wide)
+          if (wide && !llvm::is_contained(bufs, wide)) bufs.push_back(wide);
+    std::string out;
+    for (Type wide : bufs)
+      out += "(declare-sort " + bufSort(wide) + " 0)\n";
+    out += "(declare-datatypes (";
+    for (const std::string &n : order) out += "(" + recSort(n) + " 0) ";
+    out += ") (";
+    for (const std::string &n : order) {
+      out += "(";
+      for (const RecCtor &c : recs_.at(n).ctors) {
+        out += "(" + c.name;
+        for (auto [k, so] : llvm::enumerate(c.sorts))
+          out += " (" + c.name + "." + std::to_string(k) + " " + sortText(so) + ")";
+        out += ")";
+      }
+      out += ")";
+    }
+    out += "))\n";
+    for (Type wide : bufs) {
+      std::string so = bufSort(wide), ws = sortText(wide);
+      out += "(declare-fun " + so + ".at (" + so + ") " + ws + ")\n";
+      out += "(declare-fun " + so + ".of (" + ws + ") " + so + ")\n";
+    }
+    for (const std::string &n : order) {
+      const RecInfo &ri = recs_.at(n);
+      std::string body = bvLit(ri.ctors.size() - 1);
+      for (size_t i = ri.ctors.size() - 1; i-- > 0;)
+        body = "(ite ((_ is " + ri.ctors[i].name + ") x) " + bvLit(i) + " " +
+               body + ")";
+      out += "(define-fun " + ri.sort + ".tag ((x " + ri.sort + ")) (_ BitVec " +
+             w + ") " + body + ")\n";
+    }
+    // The measures, whose facts the walk asserts (recSmaller).
+    for (const char *kind : {"depth", "size"}) {
+      if (std::string(kind) == "depth" ? !recDepth_ : !recSize_) continue;
+      for (const std::string &n : order)
+        out += "(declare-fun " + recs_.at(n).sort + "." + kind + " (" +
+               recs_.at(n).sort + ") Int)\n";
+    }
+    return out;
+  }
+
+  static std::string sortText(Type so) {
+    if (mlir::isa<mlir::smt::BoolType>(so)) return "Bool";
+    if (mlir::isa<mlir::smt::IntType>(so)) return "Int";
+    if (auto b = mlir::dyn_cast<mlir::smt::BitVectorType>(so))
+      return "(_ BitVec " + std::to_string(b.getWidth()) + ")";
+    if (auto a = mlir::dyn_cast<mlir::smt::ArrayType>(so))
+      return "(Array " + sortText(a.getDomainType()) + " " +
+             sortText(a.getRangeType()) + ")";
+    if (auto u = mlir::dyn_cast<mlir::smt::SortType>(so))
+      return u.getIdentifier().getValue().str();
+    return "Bool";
   }
 
   Value bv(const APInt &v) {
@@ -792,6 +1143,14 @@ class Encoder {
   }
 
   // --- parameters and buffers ------------------------------------------
+
+  // A parameter's name, as the source spells it.
+  std::string argName(unsigned index) {
+    mlir::BlockArgument arg = fn_.getArgument(index);
+    if (auto n = mlir::dyn_cast<mlir::NameLoc>(arg.getLoc()))
+      return n.getName().str();
+    return "arg" + std::to_string(index);
+  }
 
   void declareParam(mlir::BlockArgument arg, unsigned index) {
     std::string name = "arg" + std::to_string(index);
@@ -1186,6 +1545,16 @@ class Encoder {
   // Encodes the ops of `block` in order. Returns false once the target
   // goal has been reached. `yields` receives an scf.yield's operands.
   bool walkBlock(mlir::Block &block, llvm::SmallVectorImpl<Value> *yields) {
+    // The reveals made in this block end with it (ADR 0063).
+    blockReveals_.push_back(0);
+    struct EndReveals {
+      Encoder &e;
+      ~EndReveals() {
+        for (unsigned i = 0; i < e.blockReveals_.back(); ++i)
+          e.revealed_.pop_back();
+        e.blockReveals_.pop_back();
+      }
+    } endReveals{*this};
     for (Operation &op : block) {
       if (auto y = mlir::dyn_cast<mlir::scf::YieldOp>(op)) {
         if (yields)
@@ -1209,6 +1578,37 @@ class Encoder {
   bool step(Operation *op) {
     using P = mlir::smt::BVCmpPredicate;
     bool spec = spec_.contains(op);
+
+    // `with f` (ADR 0063): f's definition is a fact for its calls from
+    // here to the end of the scope, and for the calls met before.
+    if (auto r = mlir::dyn_cast<contract::RevealOp>(op)) {
+      llvm::StringRef name = r.getCallee();
+      // The end of `with f in e`.
+      if (r->hasAttr("pia.end")) {
+        auto at = llvm::find(llvm::reverse(revealed_), name);
+        if (at != revealed_.rend()) {
+          revealed_.erase(std::next(at).base());
+          if (!blockReveals_.empty() && blockReveals_.back() > 0)
+            --blockReveals_.back();
+        }
+        return true;
+      }
+      revealed_.push_back(name);
+      if (blockReveals_.empty())
+        blockReveals_.push_back(0);
+      ++blockReveals_.back();
+      std::vector<Hidden> hidden = std::move(hiddenCalls_);
+      hiddenCalls_.clear();
+      for (Hidden &h : hidden) {
+        if (h.callee.getSymName() != name) {
+          hiddenCalls_.push_back(std::move(h));
+          continue;
+        }
+        if (Value again = specCall(h.callee, h.k, h.args))
+          define(eq(h.app, again));
+      }
+      return true;
+    }
 
     if (mlir::isa<mlir::func::ReturnOp>(op)) return true;
 
@@ -1541,6 +1941,49 @@ class Encoder {
       if (auto ld = mlir::dyn_cast<LoadOp>(op))
         if (auto it = mlir::dyn_cast<IntType>(ld.getType()))
           assertTerm(inRange(results[0], it));
+      // A payload's integers are in their ranges, and its buffers' lengths
+      // are lengths, as they were when the value was built.
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op))
+        for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
+          if (auto it = mlir::dyn_cast<IntType>(r.getType()))
+            assertTerm(inRange(t, it));
+          if (Value len = lengths_.lookup(r))
+            assertTerm(inRange(len, indexRange()));
+        }
+      if (auto tg = mlir::dyn_cast<RecTagOp>(op))
+        assertTerm(inRange(results[0], tg.getType()));
+      if (auto pl = mlir::dyn_cast<RecPayloadOp>(op); pl && recFacts_) {
+        RecType ht = pl.getInput().getType();
+        Value x = term(pl.getInput());
+        for (auto [r, t] : llvm::zip(pl.getResults(), results)) {
+          if (auto ct = mlir::dyn_cast<RecType>(r.getType())) {
+            if (x && t) recSmaller(t, ct, x, ht, Value());
+          } else if (recElement(r.getType()) && x) {
+            recHolder_[r] = {x, ht};
+          }
+        }
+      }
+      if (auto ld = mlir::dyn_cast<LoadOp>(op); ld && recFacts_)
+        if (auto ct = mlir::dyn_cast<RecType>(ld.getType())) {
+          Value root = rootBuffer(ld.getBuffer());
+          auto it = recHolder_.find(root);
+          Value at = elementIndex(ld.getBuffer(), operands[1], views_);
+          Value len = lengths_.lookup(root);
+          using P = mlir::smt::BVCmpPredicate;
+          if (it != recHolder_.end() && at && len && results[0])
+            recSmaller(results[0], ct, it->second.first, it->second.second,
+                       andOf(cmp(P::sge, at, bv(0)), cmp(P::slt, at, len)));
+        }
+      // A buffer put in a value is the array of its handle.
+      if (auto mk = mlir::dyn_cast<RecMakeOp>(op))
+        for (Value operand : mk.getPayload())
+          for (Value arr : {arrays_.lookup(operand), innerLengths_.lookup(operand)})
+            if (arr) {
+              std::string so = bufSort(arr.getType());
+              Value h = recApply(so + ".of", {arr},
+                                 mlir::smt::SortType::get(ctx_, so));
+              assertTerm(eq(recApply(so + ".at", {h}, arr.getType()), arr));
+            }
     } else {
       for (Value r : op->getResults())
         if (auto v = havoc(r.getType())) env_[r] = *v;
@@ -1790,6 +2233,84 @@ class Encoder {
         return false;
     if (auto c = mlir::dyn_cast<ConstantOp>(op)) {
       out.push_back(bv(c.getValue()));
+      return true;
+    }
+    // Recursive values (ADR 0047): a constructor applied to the payload's
+    // fields, a buffer as its contents and length; the tag; a payload's
+    // fields, read with the constructor's selectors.
+    if (auto mk = mlir::dyn_cast<RecMakeOp>(op)) {
+      unsigned tag = 0;
+      const RecCtor *c = recCtor(mk.getType(), mk.getCtor(), tag);
+      if (!c) return false;
+      llvm::SmallVector<Value> args;
+      for (auto [v, operand] : llvm::zip(in, op->getOperands())) {
+        Type t = operand.getType();
+        if (!mlir::isa<ArrayType, SliceType>(t)) {
+          args.push_back(v);
+          continue;
+        }
+        // A view of a buffer has no contents of its own to hold.
+        if (rootBuffer(operand) != operand) return false;
+        Value arr = arrays.lookup(operand), len = lengths.lookup(operand);
+        if (!arr || !len) return false;
+        args.push_back(arr);
+        args.push_back(len);
+        if (holdsSlices(t)) {
+          Value lens = inner ? inner->lookup(operand) : Value();
+          if (!lens) lens = innerLengths_.lookup(operand);
+          if (!lens) return false;
+          args.push_back(lens);
+        }
+      }
+      if (args.size() != c->sorts.size()) return false;
+      for (unsigned k = 0; k < args.size(); ++k) {
+        if (c->wide[k]) {
+          if (args[k].getType() != c->wide[k]) return false;
+          args[k] = recApply(bufSort(c->wide[k]) + ".of", {args[k]},
+                             c->sorts[k]);
+        }
+        if (args[k].getType() != c->sorts[k]) return false;
+      }
+      out.push_back(recApply(c->name, args, sortOf(mk.getType())));
+      return true;
+    }
+    if (auto tg = mlir::dyn_cast<RecTagOp>(op)) {
+      out.push_back(recApply(recSort(tg.getInput().getType().getName()) + ".tag",
+                             {in[0]}, bvType()));
+      return true;
+    }
+    if (auto pl = mlir::dyn_cast<RecPayloadOp>(op)) {
+      unsigned tag = 0;
+      const RecCtor *c = recCtor(pl.getInput().getType(), pl.getCtor(), tag);
+      if (!c || c->leaves.size() != pl.getNumResults()) return false;
+      unsigned k = 0;
+      auto field = [&](unsigned i) {
+        std::string sel = c->name + "." + std::to_string(i);
+        Value f = recApply(sel, {in[0]}, c->sorts[i]);
+        return c->wide[i] ? recApply(bufSort(c->wide[i]) + ".at", {f},
+                                     c->wide[i])
+                          : f;
+      };
+      for (auto [r, leaf] : llvm::zip(pl.getResults(), c->leaves)) {
+        if (mlir::isa<ArrayType, SliceType>(leaf)) {
+          arrays[r] = field(k);
+          lengths[r] = field(k + 1);
+          if (holdsSlices(leaf) && &arrays == &arrays_)
+            innerLengths_[r] = field(k + 2);
+          k += holdsSlices(leaf) ? 3 : 2;
+          out.push_back(bv(0));  // a placeholder: buffers are not terms
+          continue;
+        }
+        out.push_back(field(k++));
+      }
+      return true;
+    }
+    if (mlir::isa<RecEqOp>(op)) {
+      out.push_back(eq(in[0], in[1]));
+      return true;
+    }
+    if (auto m = mlir::dyn_cast<RecMeasureOp>(op)) {
+      out.push_back(recMeasure(m.getKind(), in[0], m.getInput().getType()));
       return true;
     }
     if (auto m = arithMode(op)) {
@@ -2518,9 +3039,33 @@ class Encoder {
         if (done_) return false;
       }
     }
+    // Without a measure, recursion on a recursive value is structural
+    // (ADR 0047, section 3): the call terminates when its first argument
+    // of a recursive type is a component of the parameter, of smaller
+    // depth, as a name a `match` binds below the top is.
+    std::optional<unsigned> structural;
     if (hasBody && callee == fn_ && !measureOf(fn_))
+      for (unsigned i = 0; i < fn_.getNumArguments(); ++i)
+        if (mlir::isa<RecType>(fn_.getArgument(i).getType())) {
+          structural = i;
+          break;
+        }
+    if (structural) {
+      auto rt = mlir::cast<RecType>(fn_.getArgument(*structural).getType());
+      Value now = term(fn_.getArgument(*structural));
+      Value next = term(call.getOperand(*structural));
+      Value t = now && next ? decreasesTerm(recMeasure("depth", now, rt),
+                                            recMeasure("depth", next, rt))
+                            : Value();
+      goal(ObligationKind::decreases, call,
+           "the recursion terminates: '" + argName(*structural) +
+               "' is smaller in each recursive call",
+           t ? t : declare(boolType(), "", false), false);
+      if (done_) return false;
+    } else if (hasBody && callee == fn_ && !measureOf(fn_)) {
       skipped(ObligationKind::decreases, call, "the recursion terminates",
               "'" + call.getCallee().str() + "' has no 'decreases' measure");
+    }
     if (hasBody && callee == fn_)
       if (auto m = measureOf(fn_)) {
         // Recursion terminates when each recursive call makes the measure
@@ -2568,13 +3113,20 @@ class Encoder {
     // and so is a pure function's, so a call in code and one in a contract
     // agree.
     if (hasBody && (isSpecFunction(callee) || definesValue(callee) ||
-                    contractOnly(callee)))
+                    contractOnly(callee))) {
       for (unsigned k = 0; k < call.getNumResults(); ++k) {
         Demand args = pre;
         Value app = specCall(callee, k, args);
         Value r = env_.lookup(call.getResult(k));
         if (app && r) assume(eq(r, app));
       }
+    } else if (hasBody && !call->hasAttr("pia.unsafe") &&
+               isPureFunction(callee)) {
+      llvm::SmallVector<Value> results;
+      for (Value r : call.getResults())
+        results.push_back(env_.lookup(r));
+      bindPureCall(callee, pre, results, guard);
+    }
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
@@ -2700,6 +3252,254 @@ class Encoder {
   bool hasSpecDecl(mlir::func::FuncOp f) {
     return isSpecFunction(f) || isAbstract(f) || definesValue(f) ||
            contractOnly(f);
+  }
+
+  // Side-effect-free check matching sortOf(), so checking purity does not
+  // record unused sorts or datatypes in the query.
+  static bool canEncodeType(Type t) {
+    if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
+                  SortType, RecType>(t) ||
+        t.isInteger(1))
+      return true;
+    if (auto r = mlir::dyn_cast<RecordType>(t))
+      return r.getFieldTypes().empty();
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      return canEncodeType(a.getElementType());
+    if (auto s = mlir::dyn_cast<SliceType>(t))
+      return canEncodeType(s.getElementType());
+    return false;
+  }
+
+  // An ordinary function in this module that takes no mutable, atomic or
+  // dynamic parameters, returns no buffers, and transitively performs no
+  // atomic, foreign, unsafe, address or imported side-effecting operations is
+  // deterministic: repeated calls on equal arguments return equal values
+  // (#375).
+  bool isPureFunction(mlir::func::FuncOp f) {
+    if (!f || f.isExternal() || f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+        f->hasAttr(PiaDialect::getImportAttrName()) ||
+        f->hasAttr("pia.extern") || f->hasAttr("pia.generic_eq") ||
+        f->hasAttr("pia.out_result") || f.getNumResults() == 0)
+      return false;
+    if (f->hasAttr("pia.generic_proof") &&
+        !(fn_ && fn_->hasAttr("pia.generic_proof")))
+      return false;
+    if (auto m = f->getAttrOfType<mlir::StringAttr>("pia.model")) {
+      auto here = fn_->getAttrOfType<mlir::StringAttr>("pia.model");
+      if (!here)
+        here = fn_->getAttrOfType<mlir::StringAttr>("pia.target");
+      if (!here || here != m)
+        return false;
+    }
+    for (Type r : f.getFunctionType().getResults())
+      if (mlir::isa<ArrayType, SliceType>(r) || !canEncodeType(r))
+        return false;
+    for (unsigned i = 0; i < f.getNumArguments(); ++i) {
+      auto mods = f.getArgAttrOfType<mlir::StringAttr>(
+          i, PiaDialect::getModifiersAttrName());
+      if (mods && (sema::hasModifier(mods.getValue(), "out") ||
+                   sema::hasModifier(mods.getValue(), "inout") ||
+                   sema::hasModifier(mods.getValue(), "mutable")))
+        return false;
+      if (!canEncodeType(f.getFunctionType().getInput(i)))
+        return false;
+    }
+    if (auto it = pureFunction_.find(f.getOperation());
+        it != pureFunction_.end())
+      return it->second;
+    llvm::SmallVector<mlir::func::FuncOp> worklist{f};
+    llvm::DenseSet<Operation *> visited;
+    visited.insert(f.getOperation());
+    bool ok = true;
+    while (!worklist.empty() && ok) {
+      mlir::func::FuncOp cur = worklist.pop_back_val();
+      bool curTerminates =
+          measureOf(cur).has_value() ||
+          llvm::any_of(cur.getFunctionType().getInputs(),
+                       [](Type t) { return mlir::isa<RecType>(t); });
+      cur.walk([&](Operation *op) {
+        if (!ok)
+          return;
+        if (isAtomicOp(op) ||
+            mlir::isa<ForeignOp, ViewOp, ArbitraryOp, AddressOp, AtAddressOp>(
+                op)) {
+          ok = false;
+          return;
+        }
+        if (auto w = mlir::dyn_cast<mlir::scf::WhileOp>(op)) {
+          bool hasMeasure = false;
+          w.walk([&](contract::DecreasesOp) { hasMeasure = true; });
+          if (!hasMeasure)
+            ok = false;
+          return;
+        }
+        auto c = mlir::dyn_cast<mlir::func::CallOp>(op);
+        if (!c)
+          return;
+        if (c->hasAttr("pia.unsafe")) {
+          ok = false;
+          return;
+        }
+        mlir::func::FuncOp callee = calleeOf(c);
+        if (!callee) {
+          ok = false;
+          return;
+        }
+        if (callee == cur) {
+          if (!curTerminates)
+            ok = false;
+          return;
+        }
+        if (callee->hasAttr(PiaDialect::getLemmaAttrName()) ||
+            callee->hasAttr("pia.generic_eq") || isSpecFunction(callee) ||
+            isAbstract(callee) || contractOnly(callee))
+          return;
+        if (callee.isExternal() || callee->hasAttr("pia.extern") ||
+            callee->hasAttr(PiaDialect::getImportAttrName())) {
+          ok = false;
+          return;
+        }
+        if (visited.insert(callee.getOperation()).second)
+          worklist.push_back(callee);
+      });
+    }
+    pureFunction_[f.getOperation()] = ok;
+    return ok;
+  }
+
+  bool flatSpecArgs(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::SmallVectorImpl<Value> &flat) {
+    mlir::Block &entry = callee.getBody().front();
+    for (mlir::BlockArgument a : entry.getArguments()) {
+      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
+        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
+        if (!arr || !len)
+          return false;
+        flat.append({arr, len});
+        // A buffer of slices: its elements' lengths too (ADR 0048), so
+        // calls with different ones are different applications.
+        if (holdsSlices(a.getType())) {
+          Value lens = args.inner.lookup(a);
+          if (!lens)
+            return false;
+          flat.push_back(lens);
+        }
+        continue;
+      }
+      Value v = args.values.lookup(a);
+      if (!v)
+        return false;
+      flat.push_back(v);
+    }
+    return true;
+  }
+
+  Value applySpecFun(mlir::func::FuncOp callee, unsigned k,
+                     llvm::ArrayRef<Value> flat) {
+    auto it = specFuns_.find(callee.getOperation());
+    if (it == specFuns_.end() || k >= it->second.size())
+      return Value();
+    Type rt = callee.getFunctionType().getResult(k);
+    Value fun = it->second[k];
+    return flat.empty() ? fun
+                        : create<mlir::smt::ApplyFuncOp>(
+                              sortOf(rt), fun, mlir::ValueRange(flat));
+  }
+
+  // Lazily declares one uninterpreted function per result for a pure function
+  // and promotes its recorded first call, so single calls add no SMT overhead
+  // (#375).
+  bool ensurePureSpecFun(mlir::func::FuncOp callee) {
+    if (specFuns_.count(callee.getOperation()))
+      return true;
+    if (!isPureFunction(callee))
+      return false;
+    {
+      OpBuilder::InsertionGuard guard(b_);
+      b_.setInsertionPointToStart(solverBlock_);
+      llvm::SmallVector<Type> domain;
+      for (Type t : callee.getFunctionType().getInputs()) {
+        Type sort = sortOf(t);
+        if (!sort)
+          return false;
+        domain.push_back(sort);
+        if (mlir::isa<ArrayType, SliceType>(t))
+          domain.push_back(bvType());
+        if (holdsSlices(t))
+          domain.push_back(mlir::smt::ArrayType::get(ctx_, bvType(), bvType()));
+      }
+      llvm::SmallVector<Value> funs;
+      for (Type r : callee.getFunctionType().getResults()) {
+        Type sort = sortOf(r);
+        if (!sort)
+          return false;
+        Type ft = domain.empty()
+                      ? sort
+                      : mlir::smt::SMTFuncType::get(ctx_, domain, sort);
+        funs.push_back(declare(ft, "", false));
+      }
+      if (funs.empty())
+        return false;
+      specFuns_[callee.getOperation()] = std::move(funs);
+    }
+    if (auto it = firstPureCall_.find(callee.getOperation());
+        it != firstPureCall_.end()) {
+      FirstPureCall first = std::move(it->second);
+      firstPureCall_.erase(it);
+      OpBuilder::InsertionGuard guard(b_);
+      if (first.after)
+        b_.setInsertionPointAfter(first.after);
+      else
+        b_.setInsertionPointToEnd(solverBlock_);
+      emitPureCallEqs(callee, first.args, first.results, first.pc);
+    }
+    return true;
+  }
+
+  void emitPureCallEqs(mlir::func::FuncOp callee, const Demand &args,
+                       llvm::ArrayRef<Value> results,
+                       llvm::ArrayRef<Value> pc) {
+    llvm::SmallVector<Value> flat;
+    if (!flatSpecArgs(callee, args, flat))
+      return;
+    Value cond;
+    if (!pc.empty()) {
+      cond = pc[0];
+      for (size_t i = 1; i < pc.size(); ++i)
+        cond = andOf(cond, pc[i]);
+    }
+    for (unsigned k = 0; k < results.size(); ++k) {
+      if (!results[k])
+        continue;
+      Value app = applySpecFun(callee, k, flat);
+      if (!app)
+        continue;
+      Value fact = eq(results[k], app);
+      assertTerm(cond ? implies(cond, fact) : fact);
+    }
+  }
+
+  void bindPureCall(mlir::func::FuncOp callee, const Demand &args,
+                    llvm::ArrayRef<Value> results, Value guard) {
+    llvm::SmallVector<Value> pc(pc_.begin(), pc_.end());
+    if (guard)
+      pc.push_back(guard);
+    if (specFuns_.count(callee.getOperation())) {
+      emitPureCallEqs(callee, args, results, pc);
+      return;
+    }
+    if (!firstPureCall_.count(callee.getOperation())) {
+      FirstPureCall first;
+      first.args = args;
+      first.results.assign(results.begin(), results.end());
+      first.pc = std::move(pc);
+      first.after = solverBlock_->empty() ? nullptr : &solverBlock_->back();
+      firstPureCall_[callee.getOperation()] = std::move(first);
+      return;
+    }
+    if (!ensurePureSpecFun(callee))
+      return;
+    emitPureCallEqs(callee, args, results, pc);
   }
 
   // An ordinary function whose body is a definition: one scalar result,
@@ -2954,32 +3754,16 @@ class Encoder {
   Value specCall(mlir::func::FuncOp callee, unsigned k, Demand &args) {
     auto it = specFuns_.find(callee.getOperation());
     if (it == specFuns_.end()) return Value();
+    size_t numFuns = it->second.size();
     noteTheoryUse(callee);
     mlir::Block &entry = callee.getBody().front();
     llvm::SmallVector<Value> flat;
-    for (mlir::BlockArgument a : entry.getArguments()) {
-      if (mlir::isa<ArrayType, SliceType>(a.getType())) {
-        Value arr = args.arrays.lookup(a), len = args.lengths.lookup(a);
-        if (!arr || !len) return Value();
-        flat.append({arr, len});
-        // A buffer of slices: its elements' lengths too (ADR 0048), so
-        // calls with different ones are different applications.
-        if (holdsSlices(a.getType())) {
-          Value lens = args.inner.lookup(a);
-          if (!lens) return Value();
-          flat.push_back(lens);
-        }
-      } else {
-        Value v = args.values.lookup(a);
-        if (!v) return Value();
-        flat.push_back(v);
-      }
-    }
+    if (!flatSpecArgs(callee, args, flat))
+      return Value();
     Type rt = callee.getFunctionType().getResult(k);
-    Value fun = it->second[k];
-    Value app = flat.empty() ? fun
-                             : create<mlir::smt::ApplyFuncOp>(sortOf(rt), fun,
-                                                              mlir::ValueRange(flat));
+    Value app = applySpecFun(callee, k, flat);
+    if (!app)
+      return Value();
     frameLink(callee, k, args, app);
     // A pure function's call is its body, where its precondition holds:
     // it has no recursion, so the body is a term, and a fact inside a
@@ -3018,11 +3802,29 @@ class Encoder {
       post.arrays = args.arrays;
       post.lengths = args.lengths;
       post.inner = args.inner;
-      callee.walk([&](mlir::func::ReturnOp ret) {
-        if (k < ret.getNumOperands()) post.values[ret.getOperand(k)] = app;
-      });
+      post.oldArrays = args.arrays;
+      post.oldInner = args.inner;
       Value pre = argsInRange(entry, args), facts = boolConst(true);
-      bool ok = callee.getNumResults() == 1;
+      callee.walk([&](mlir::func::ReturnOp ret) {
+        for (unsigned j = 0; j < ret.getNumOperands(); ++j) {
+          Value appJ = j == k ? app : applySpecFun(callee, j, flat);
+          if (!appJ)
+            continue;
+          if (j != k)
+            if (auto itJ = mlir::dyn_cast<IntType>(
+                    callee.getFunctionType().getResult(j)))
+              define(inRange(appJ, itJ));
+          if (auto prev = post.values.find(ret.getOperand(j));
+              prev != post.values.end()) {
+            if (prev->second)
+              facts = andOf(facts, eq(appJ, prev->second));
+            continue;
+          }
+          post.values[ret.getOperand(j)] = appJ;
+        }
+      });
+      bool ok =
+          callee.getNumResults() >= 1 && numFuns == callee.getNumResults();
       for (auto r : entry.getOps<contract::RequiresOp>()) {
         Value p = demand(r.getPredicate(), post);
         if (!p) ok = false;
@@ -3036,8 +3838,19 @@ class Encoder {
       ensuresStack_.pop_back();
       if (ok && unknowns_ == before) define(implies(pre, facts));
     }
-    // Its body is in its own module: the contract is all there is.
-    if (contractOnly(callee)) return app;
+    // Only spec functions unfold their body past here; an imported or
+    // ordinary pure function is known only by its contract (#375).
+    if (!isSpecFunction(callee))
+      return app;
+    // An @opaque function's definition is a fact only where a `reveal`
+    // asks for it (ADR 0063). A call met before the reveal gets it then.
+    if (callee->hasAttr("pia.opaque") &&
+        !llvm::is_contained(revealed_, callee.getSymName())) {
+      opaqueHidden_.insert(callee.getSymName().str());
+      if (quantifierDepth_ == 0)
+        hiddenCalls_.push_back({callee, k, args, app});
+      return app;
+    }
     if (static_cast<unsigned>(llvm::count(specStack_, callee.getOperation())) >=
         std::max(fuelOf(callee), minFuel_)) {
       // Unfolded as far as the fuel allows: past here the function is
@@ -3074,6 +3887,10 @@ class Encoder {
   // A spec call met while demanding a contract.
   Value demandSpecCall(mlir::func::CallOp call, unsigned k, Demand &d) {
     mlir::func::FuncOp callee = calleeOf(call);
+    if (!callee || callee.isExternal())
+      return Value();
+    if (!specFuns_.count(callee.getOperation()) && !ensurePureSpecFun(callee))
+      return Value();
     mlir::Block &entry = callee.getBody().front();
     Demand args;
     for (unsigned i = 0; i < call.getNumOperands(); ++i) {
@@ -3137,6 +3954,18 @@ class Encoder {
 
   // --- demand encoding ---------------------------------------------------
 
+  // Under `old`, a call the walk has already stepped, with its contract
+  // assumed, is already that value when its postconditions do not read
+  // memory, so demanding it needs no uninterpreted function.
+  bool steppedOldCall(mlir::func::CallOp call, Value v, const Demand &d) {
+    if (!d.envForBlockArgs || !env_.lookup(v))
+      return false;
+    return llvm::none_of(
+               call.getOperandTypes(),
+               [](Type t) { return mlir::isa<ArrayType, SliceType>(t); }) ||
+           !ensuresReadMemory(calleeOf(call));
+  }
+
   Value demand(Value v, Demand &d) {
     if (Value t = d.values.lookup(v)) return t;
     if (Value t = d.memo.lookup(v)) return t;
@@ -3192,9 +4021,11 @@ class Encoder {
       for (Value a : call.getOperands()) args.push_back(demand(a, d));
       result = abstractCall(calleeOf(call), args);
     } else if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
-               call && (isSpecFunction(calleeOf(call)) ||
-                        definesValue(calleeOf(call)) ||
-                        contractOnly(calleeOf(call)))) {
+               call && !call->hasAttr("pia.unsafe") &&
+               (isSpecFunction(calleeOf(call)) ||
+                definesValue(calleeOf(call)) || contractOnly(calleeOf(call)) ||
+                (isPureFunction(calleeOf(call)) &&
+                 !steppedOldCall(call, v, d)))) {
       result = demandSpecCall(call, mlir::cast<mlir::OpResult>(v).getResultNumber(), d);
     } else {
       llvm::SmallVector<Value> operands;
@@ -3207,13 +4038,9 @@ class Encoder {
     // Under `old`, a call the walk has already stepped, with its contract
     // assumed, is that value: its operands are the entry values there too,
     // unless it reads a buffer, whose memory `old` reads from entry.
-    if (!result && d.envForBlockArgs)
+    if (!result)
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
-        if (llvm::none_of(call.getOperandTypes(),
-                          [](Type t) {
-                            return mlir::isa<ArrayType, SliceType>(t);
-                          }) ||
-            !ensuresReadMemory(calleeOf(call)))
+        if (steppedOldCall(call, v, d))
           result = env_.lookup(v);
     if (!result) {
       // A call or an op the verifier does not model: any value of its type.
@@ -3454,6 +4281,18 @@ class Encoder {
   }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
+  // Recursive types (ADR 0047): each datatype's constructors at this
+  // query's width, those the query uses, and the measures it uses.
+  std::map<std::string, RecInfo> recs_;
+  std::set<std::string> recUsed_;
+  std::vector<Type> bufSorts_;
+  bool recSize_ = false, recDepth_ = false;
+  // Whether the walk asserts the measures' facts: in a function that
+  // recurses or measures a recursive value. And the buffers a payload
+  // holds, with the value holding them, for the facts about their
+  // elements.
+  bool recFacts_ = false;
+  llvm::DenseMap<Value, std::pair<Value, RecType>> recHolder_;
 
   llvm::DenseMap<Value, Value> env_;
   llvm::DenseMap<Value, Value> arrays_, lengths_, entryArrays_;
@@ -3476,6 +4315,14 @@ class Encoder {
   // result, the definitions being unfolded, and definitions made inside a
   // quantifier, which it takes as hypotheses.
   llvm::DenseMap<Operation *, llvm::SmallVector<Value>> specFuns_;
+  struct FirstPureCall {
+    Demand args;
+    llvm::SmallVector<Value> results;
+    llvm::SmallVector<Value> pc;
+    Operation *after = nullptr;
+  };
+  llvm::DenseMap<Operation *, FirstPureCall> firstPureCall_;
+  llvm::DenseMap<Operation *, bool> pureFunction_;
   llvm::SmallVector<Operation *> specStack_, ensuresStack_;
   std::vector<Value> pendingDefs_;
   unsigned unknowns_ = 0;  // values demand() could not encode
@@ -3490,6 +4337,20 @@ class Encoder {
   std::vector<std::string> sentAssumes_;
   unsigned minFuel_ = 0;  // a lemma's @fuel (ADR 0036, tactics)
   bool truncated_ = false;  // an unfolding stopped at the fuel (#188)
+  // ADR 0063: the opaque functions revealed where the walk is, how many
+  // each open block revealed, the calls whose definition an opaque
+  // function kept out (for a later reveal), and the opaque functions a
+  // query used without their definition, for the hint.
+  llvm::SmallVector<llvm::StringRef> revealed_;
+  llvm::SmallVector<unsigned> blockReveals_;
+  struct Hidden {
+    mlir::func::FuncOp callee;
+    unsigned k;
+    Demand args;
+    Value app;
+  };
+  std::vector<Hidden> hiddenCalls_;
+  std::set<std::string> opaqueHidden_;
   bool vacuity_ = false;  // the target's hypotheses, without its negation
 };
 
@@ -3561,6 +4422,7 @@ struct Query {
   bool reached = false;
   bool theories = false;            // it applies a theory function
   bool truncated = false;           // an unfolding stopped at the fuel
+  std::set<std::string> opaque;     // opaque functions left unrevealed
   std::vector<std::string> axioms;  // the axioms it was given
   std::vector<std::string> assumes;  // the `assume`s it asserts
   // A generic's proof over sorts (ADR 0043): its axioms are requirement
@@ -3641,6 +4503,48 @@ std::string declareSorts(const std::string &smtlib,
   return smtlib.substr(0, at) + missing + smtlib.substr(at);
 }
 
+// A model's value for a counterexample. A recursive value (ADR 0047) is
+// its constructor and the payload's fields in order, `Node {_, 7, _}`,
+// where `_` is a buffer, whose contents the model does not list.
+std::string recValue(const z3::expr &e) {
+  if (e.is_app()) {
+    std::string name = e.decl().name().str();
+    if (llvm::StringRef(name).starts_with(kRecPrefix)) {
+      if (e.num_args() == 0 && name.find("!val!") != std::string::npos)
+        return "_";
+      if (e.get_sort().is_datatype()) {
+        std::string out = name.substr(name.rfind('.') + 1);
+        if (e.num_args() == 0) return out;
+        out += " {";
+        for (unsigned i = 0; i < e.num_args(); ++i)
+          out += (i ? ", " : "") + recValue(e.arg(i));
+        return out + "}";
+      }
+    }
+    if (e.is_numeral() && e.get_sort().is_bv()) {
+      // Two's complement at the query's width.
+      unsigned w = e.get_sort().bv_size();
+      APInt v(w, e.get_decimal_string(0), 10);
+      return llvm::toString(v, 10, /*Signed=*/true);
+    }
+  }
+  return e.to_string();
+}
+
+// The query with the declarations of its datatypes (ADR 0047) after its
+// sorts, which their fields may use, and before anything that uses them.
+std::string withDatatypes(const std::string &smtlib, const std::string &decls) {
+  if (decls.empty()) return smtlib;
+  size_t at = 0;
+  while (at < smtlib.size()) {
+    llvm::StringRef rest(smtlib.data() + at, smtlib.size() - at);
+    if (!rest.starts_with(";") && !rest.starts_with("(declare-sort ")) break;
+    size_t end = smtlib.find('\n', at);
+    at = end == std::string::npos ? smtlib.size() : end + 1;
+  }
+  return smtlib.substr(0, at) + decls + smtlib.substr(at);
+}
+
 // Each axiom's assertion as `(assert (! <fact> :named |T.a|))`: the
 // export cannot name an assertion, so the k-th top-level assert, counted
 // as the export prints them, gets the name its AssertOp carries.
@@ -3710,6 +4614,7 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
   q.reached = enc.reachedTarget();
   q.theories = enc.usesTheories();
   q.truncated = enc.truncated();
+  q.opaque = enc.opaqueHidden();
   q.axioms = enc.sentAxioms();
   q.genericProof = fn->hasAttr("pia.generic_proof");
   q.assumes = enc.sentAssumes();
@@ -3731,8 +4636,11 @@ Query buildQuery(mlir::ModuleOp module, mlir::func::FuncOp fn, unsigned width,
     q.smtlib.clear();
   else {
     std::string text = interpretedSMTLIB(q.smtlib);
-    if (!axiomNames.empty()) q.plain = declareSorts(text, enc.sorts());
-    q.smtlib = declareSorts(nameAxioms(text, axiomNames), enc.sorts());
+    std::string recs = enc.datatypeDecls();
+    if (!axiomNames.empty())
+      q.plain = withDatatypes(declareSorts(text, enc.sorts()), recs);
+    q.smtlib = withDatatypes(
+        declareSorts(nameAxioms(text, axiomNames), enc.sorts()), recs);
   }
   return q;
 }
@@ -3847,6 +4755,7 @@ struct Job {
 // What one job did, summed into Stats once every thread has finished.
 struct JobStats {
   bool solved = false, cached = false, sliced = false, unsliced = false;
+  bool intBlasted = false;
   unsigned long long cost = 0;
 };
 
@@ -4010,38 +4919,159 @@ unsigned long long rlimitCount(z3::solver &solver) {
 // reasoning it is for, and small beside the exact query it may save.
 constexpr unsigned long long kAbstractRlimit = 500000;
 
+// The budget of the int-blasting attempt in `solve` (ADR 0066). The
+// quantifier-free nonlinear goals of the benchmark take at most ~600k; 5M
+// leaves comfortable headroom while bounding how long a stalled goal can
+// spend before falling through to the bit-blaster (which also gives
+// counterexamples).
+constexpr unsigned long long kIntBlastRlimit = 5000000;
+
+// The wall-clock budget of the tracked solve that finds which axioms a
+// proof used (ADR 0036). It only refines a report, so giving up costs
+// nothing but precision: the goal then lists every axiom it was given. The
+// rlimit cannot bound it, since Z3 can grow its memory for minutes while
+// barely counting resources: tests/verify/size_classes.pia:105 took 203 s
+// and 9.7 GB tracked on Z3 5.4.1, against 2.7 s for the whole file
+// untracked, and swapped the 7 GB macOS runner for 24 minutes.
+constexpr unsigned kTrackedTimeoutMs = 10000;
+
+bool isSexprSpace(char c) {
+  return c == ' ' || c == '\n' || c == '\r' || c == '\t';
+}
+
 // The end of the s-expression that starts at `at` in `s`.
 size_t sexprEnd(const std::string &s, size_t at) {
-  while (at < s.size() && s[at] == ' ') ++at;
-  if (at >= s.size()) return at;
+  while (at < s.size() && isSexprSpace(s[at]))
+    ++at;
+  if (at >= s.size())
+    return at;
   if (s[at] != '(') {
-    while (at < s.size() && s[at] != ' ' && s[at] != ')') ++at;
+    while (at < s.size() && !isSexprSpace(s[at]) && s[at] != ')')
+      ++at;
     return at;
   }
   int depth = 0;
   for (; at < s.size(); ++at) {
-    if (s[at] == '(') ++depth;
-    if (s[at] == ')' && --depth == 0) return at + 1;
+    if (s[at] == '(')
+      ++depth;
+    if (s[at] == ')' && --depth == 0)
+      return at + 1;
   }
   return at;
 }
 
+// Whether the operand of `script` that starts at `at` is a literal
+// (`#x...`, `#b...` or `(_ bvN w)`).
+bool literalAt(const std::string &script, size_t at) {
+  while (at < script.size() && isSexprSpace(script[at]))
+    ++at;
+  if (at >= script.size())
+    return false;
+  return script[at] == '#' || script.compare(at, 4, "(_ b") == 0;
+}
+
 // Whether `script` has a `bvsdiv` or `bvsrem` whose divisor is not a
-// literal (`#x...`, `#b...` or `(_ bvN w)`).
+// literal.
 bool dividesByVariable(const std::string &script) {
   for (const char *op : {"(bvsdiv ", "(bvsrem "}) {
     std::string f(op);
     for (size_t at = script.find(f); at != std::string::npos;
-         at = script.find(f, at + 1)) {
-      size_t second = sexprEnd(script, at + f.size());
-      while (second < script.size() && script[second] == ' ') ++second;
-      if (second >= script.size()) continue;
-      bool literal = script[second] == '#' ||
-                     script.compare(second, 4, "(_ b") == 0;
-      if (!literal) return true;
+         at = script.find(f, at + 1))
+      if (!literalAt(script, sexprEnd(script, at + f.size())))
+        return true;
+  }
+  return false;
+}
+
+// Whether the s-expression at `at` in `script` evaluates to a constant
+// bit-vector, using `constLets` for previously bound constant lets.
+// Recognises literals and pure BV ops over constants, so a linear product
+// such as `(max u32 + 1) * n` is not misclassified as nonlinear.
+bool isConstBVTerm(const std::string &script, size_t at,
+                   const std::unordered_set<std::string> &constLets) {
+  while (at < script.size() && isSexprSpace(script[at]))
+    ++at;
+  if (at >= script.size())
+    return false;
+  if (script[at] == '#' || script.compare(at, 4, "(_ b") == 0)
+    return true;
+  if (script[at] != '(') {
+    size_t end = sexprEnd(script, at);
+    return constLets.count(script.substr(at, end - at)) != 0;
+  }
+  size_t opStart = at + 1;
+  while (opStart < script.size() && isSexprSpace(script[opStart]))
+    ++opStart;
+  size_t opEnd = opStart;
+  while (opEnd < script.size() && !isSexprSpace(script[opEnd]) &&
+         script[opEnd] != ')' && script[opEnd] != '(')
+    ++opEnd;
+  llvm::StringRef op(script.data() + opStart, opEnd - opStart);
+  if (op != "bvneg" && op != "bvadd" && op != "bvsub" && op != "bvmul" &&
+      op != "bvsdiv" && op != "bvsrem" && op != "bvsmod" && op != "bvand" &&
+      op != "bvor" && op != "bvxor" && op != "bvshl" && op != "bvashr")
+    return false;
+  size_t end = sexprEnd(script, at);
+  size_t cur = opEnd;
+  bool anyArg = false;
+  while (cur < end) {
+    while (cur < end && isSexprSpace(script[cur]))
+      ++cur;
+    if (cur >= end || script[cur] == ')')
+      break;
+    if (!isConstBVTerm(script, cur, constLets))
+      return false;
+    anyArg = true;
+    cur = sexprEnd(script, cur);
+  }
+  return anyArg;
+}
+
+// Whether `script` is nonlinear: it multiplies two terms neither of which
+// is a constant, or divides by a term that is not one. Those are the goals
+// a bit-blasted multiplier or divider makes slow (ADR 0066).
+bool multipliesVariables(const std::string &script) {
+  std::unordered_set<std::string> constLets;
+  for (size_t i = 0; i < script.size(); ++i) {
+    if (script[i] != '(')
+      continue;
+    if (script.compare(i, 7, "(let ((") == 0) {
+      size_t nameStart = i + 7;
+      size_t nameEnd = sexprEnd(script, nameStart);
+      std::string name = script.substr(nameStart, nameEnd - nameStart);
+      if (isConstBVTerm(script, nameEnd, constLets))
+        constLets.insert(std::move(name));
+      else
+        constLets.erase(name);
+      continue;
+    }
+    if (script.compare(i, 8, "(bvsdiv ") == 0 ||
+        script.compare(i, 8, "(bvsrem ") == 0) {
+      size_t second = sexprEnd(script, i + 8);
+      if (!isConstBVTerm(script, second, constLets))
+        return true;
+      continue;
+    }
+    if (script.compare(i, 7, "(bvmul ") == 0) {
+      size_t first = i + 7;
+      if (isConstBVTerm(script, first, constLets))
+        continue;
+      if (!isConstBVTerm(script, sexprEnd(script, first), constLets))
+        return true;
     }
   }
   return false;
+}
+
+// Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
+// Quantified queries leave int-blasting incomplete and stall on quantified
+// definitions, so only quantifier-free nonlinear queries take this path.
+bool canIntBlast(const std::string &script) {
+  if (script.find("(forall") != std::string::npos ||
+      script.find("(exists") != std::string::npos ||
+      script.find("(lambda") != std::string::npos)
+    return false;
+  return multipliesVariables(script);
 }
 
 // `script` with signed division, remainder and multiplication as the
@@ -4122,10 +5152,17 @@ void solve(const Job &job, const Options &options, Outcome &out,
       return std::vector<std::string>(all.begin(), all.end());
     }
     if (std::unique_ptr<z3::solver> t = tracked(ctx, solved, query, p)) {
+      z3::params tp(ctx);
+      tp.set("timeout", std::min(options.timeoutMs, kTrackedTimeoutMs));
+      t->set(tp);
       unsigned long long before = rlimitCount(*t);
       z3::check_result r = t->check();
-      js.cost += rlimitCount(*t) - before;
-      if (r == z3::unsat) return coreAxioms(*t);
+      // Only a finished solve counts: what one that ran out of time spent
+      // depends on the machine, and cost must not (ADR 0032).
+      if (r == z3::unsat) {
+        js.cost += rlimitCount(*t) - before;
+        return coreAxioms(*t);
+      }
     }
     std::set<std::string> all(query.axioms.begin(), query.axioms.end());
     all.insert(query.assumes.begin(), query.assumes.end());
@@ -4231,6 +5268,54 @@ void solve(const Job &job, const Options &options, Outcome &out,
     } catch (const z3::exception &) {
     }
   }
+  // A quantifier-free nonlinear goal is next given to Z3's int-blasting
+  // solver (ADR 0066). Bit-blasting a 68- or 132-bit multiplier is what
+  // times out on goals such as `a <= b ==> a * c <= b * c`, while the same
+  // goal over integers is decided by nonlinear integer arithmetic in
+  // milliseconds. The translation is exact, both ways, so unsat is a proof.
+  // On sat or unknown the bit-blaster below decides as before, and gives the
+  // counterexample. Goals with a strategy of their own, theory axioms,
+  // assumptions or quantifiers are left to the bit-blaster.
+  if (last != &witness && options.intBlast && job.strategy.empty() &&
+      q.axioms.empty() && q.assumes.empty() && first == &full &&
+      canIntBlast(job.script))
+    try {
+      // In a context of its own, as for the abstract attempt above.
+      z3::context ictx;
+      // Ground applications of uninterpreted functions, such as opaque spec
+      // functions (ADR 0063), stall int-blasting, so Ackermann's reduction
+      // first replaces them with constants and the facts that equal
+      // arguments give equal results.
+      z3::solver blast =
+          (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
+              .mk_solver();
+      z3::params ip(ictx);
+      ip.set("timeout", options.timeoutMs);
+      ip.set("rlimit", static_cast<unsigned>(
+                           options.rlimit ? std::min<unsigned long long>(
+                                                options.rlimit, kIntBlastRlimit)
+                                          : kIntBlastRlimit));
+      // 2 is int-blasting; the `smt` tactic is needed, since the default
+      // solver for bit-vectors runs the bit-blasting tactic first.
+      ip.set("smt.bv.solver", 2u);
+      blast.set(ip);
+      blast.from_string(job.script.c_str());
+      unsigned long long before = rlimitCount(blast);
+      z3::check_result r = blast.check();
+      unsigned long long now = rlimitCount(blast);
+      js.cost += now - before;
+      if (r == z3::unsat) {
+        js.intBlasted = true;
+        out.status = Status::Proved;
+        out.method = "smt";
+        if (options.reportCost)
+          out.cost = now - before;
+        if (!key.empty() && (options.trackAxioms || out.axiomsUsed.empty()))
+          cacheStore(options, key, now - before, &out.axiomsUsed);
+        return;
+      }
+    } catch (const z3::exception &) {
+    }
   if (last != &witness) try {
     unsigned long long before = rlimitCount(*first);
     result = first->check();
@@ -4317,7 +5402,12 @@ void solve(const Job &job, const Options &options, Outcome &out,
   }
   // A query that stopped unfolding a recursive spec function at its fuel
   // may fail only for want of fuel (#188).
-  if (answer->truncated)
+  if (!answer->opaque.empty()) {
+    // The source name: a symbol may carry its module or overload.
+    std::string f = *answer->opaque.begin();
+    out.hint =
+        "'" + f + "' is opaque here; 'with " + f + "' may prove it (ADR 0063)";
+  } else if (answer->truncated)
     out.hint = "a recursive spec function was unfolded only as far as its "
                "@fuel allows, so this goal may hold; raise @fuel on the "
                "function or the lemma, or prove the fact by induction in a "
@@ -4338,7 +5428,7 @@ void solve(const Job &job, const Options &options, Outcome &out,
       // `Lip.layer!val!0`; two names that differ are different values.
       for (unsigned i = 0; i < m.num_consts(); ++i)
         if (m.get_const_decl(i).name().str() == d.exported)
-          return m.get_const_interp(m.get_const_decl(i)).to_string();
+          return recValue(m.get_const_interp(m.get_const_decl(i)));
       return "any";
     }
     z3::expr c = d.sort == Sort::Bool  ? ctx.bool_const(name)
@@ -4414,6 +5504,7 @@ unsigned solveAll(std::vector<Job> &jobs, std::vector<Outcome> &outcomes,
     st.cached += j.cached;
     st.sliced += j.sliced;
     st.unsliced += j.unsliced;
+    st.intBlasted += j.intBlasted;
     st.cost += j.cost;
   }
   return threads;

@@ -8,6 +8,7 @@
 #include "verify/Triggers.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -997,8 +998,11 @@ class Gen {
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
+    opaque_ = false;
     owns_.clear();
     variadic_.reset();
+    lower_ = nullptr;
+    deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
     triggers_.clear();
@@ -1094,6 +1098,12 @@ class Gen {
       fail(item, "@fuel applies only to a spec function or a lemma");
       return;
     }
+    if (opaque_ && !isSpec) {
+      fail(item, "@opaque applies only to a spec function (ADR 0063)");
+      return;
+    }
+    if (opaque_)
+      fn->setAttr("pia.opaque", b_.getUnitAttr());
     if (isSpec || isLemma) {
       // Specification code only says what other code means: it cannot
       // write through its parameters (docs/verification.md).
@@ -1135,6 +1145,13 @@ class Gen {
         R m = genContractExpr(*c->kids[0], Type());
         if (!m) return;
         create<contract::DecreasesOp>(loc(*c), m->value);
+      } else if (c->kind == NodeKind::Reveal) {
+        // `with f, g` after the contracts: revealed in the whole body.
+        auto fs = revealed(*c);
+        if (!fs)
+          return;
+        for (const std::string &f : *fs)
+          create<contract::RevealOp>(loc(*c), f);
       } else if (c->kind == NodeKind::Invariant) {
         fail(*c, "'invariant' belongs to a state, which only the REPL "
                  "supports yet (ADR 0031)");
@@ -1291,6 +1308,13 @@ class Gen {
     if (variadic_ && !isExtern) {
       fail(*variadicNode_, "@variadic is only for a foreign declaration, "
                            "'= extern \"symbol\"'");
+      return;
+    }
+    if (lower_ && !markLowering(*lower_, sig, fn, isExtern))
+      return;
+    if (deref_ && !isExtern) {
+      fail(*deref_, "@deref is only for a foreign declaration, "
+                    "'= extern \"symbol\"'");
       return;
     }
     // A function with `@owns(buf, owner, b)` checks every access to `buf`
@@ -1777,6 +1801,12 @@ class Gen {
         }
         continue;
       }
+      // `@opaque` (ADR 0063): the definition is a fact only where a proof
+      // reveals it.
+      if (a->text == "opaque" && a->kids.empty()) {
+        opaque_ = true;
+        continue;
+      }
       if (a->text == "fuel" && a->kids.size() == 1 &&
           a->kids[0]->kind == NodeKind::IntLit) {
         auto lit = sema::parseIntLiteral(a->kids[0]->text);
@@ -1831,6 +1861,26 @@ class Gen {
         }
         variadic_ = static_cast<unsigned>(lit->value.getZExtValue());
         variadicNode_ = a.get();
+        continue;
+      }
+      // `@lower("mlir")` gives the function an MLIR form, which codegen
+      // puts in place of the body (ADR 0065). Step 1 takes a string literal
+      // only; a metaprogram that computes one is step 2.
+      if (a->text == "lower") {
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::StringLit) {
+          fail(*a, "@lower takes one string of MLIR, as in "
+                   "@lower(\"linalg.matmul ins($a, $b : $a.type, $b.type) "
+                   "outs($c : $c.type)\")");
+          return false;
+        }
+        lower_ = a.get();
+        continue;
+      }
+      // `@deref` on a foreign declaration: the C function returns a
+      // pointer to the result, and the call reads through it, so the
+      // pointer never reaches Pia. errno is the case (ADR 0057, section 5).
+      if (a->text == "deref" && a->kids.empty()) {
+        deref_ = a.get();
         continue;
       }
       // `@allow(range_requires)` silences a lint (ADR 0037); lints run on
@@ -2000,6 +2050,8 @@ class Gen {
         return genCleanup(n, expected);
       case NodeKind::LetIn:
         return genLetIn(n, expected);
+      case NodeKind::Reveal:
+        return genReveal(n, expected);
       case NodeKind::Assert:
       case NodeKind::Assume: {
         // An assumption is never checked, so it is a trusted item, and
@@ -2249,6 +2301,23 @@ class Gen {
       }
       if (mlir::isa<RecordType>(a.type) || mlir::isa<RecordType>(c.type))
         return genRecordEq(n, op, a, lhsNode, c, rhsNode);
+      // Recursive values (ADR 0047) compare in contracts, as values.
+      if (mlir::isa<RecType>(a.type) || mlir::isa<RecType>(c.type)) {
+        if ((op != "=" && op != "<>") || a.type != c.type)
+          return fail(n, "'" + op + "' compares two values of one recursive "
+                         "type with '=' or '<>', found " + typeName(a.type) +
+                         " and " + typeName(c.type));
+        if (!contract_)
+          return fail(n, "comparing values of the recursive type " +
+                             typeName(a.type) + " is only supported in "
+                             "contracts yet; code compares them with "
+                             "@derive(eq), which comes with ADR 0047, step 4");
+        Location l = loc(n);
+        Value eq = create<RecEqOp>(l, a.value, c.value);
+        if (op == "<>")
+          eq = create<mlir::arith::XOrIOp>(l, eq, boolConst(l, true));
+        return TV{eq, boolType()};
+      }
       auto u = unify(a, c, n, op, lhsNode, rhsNode);
       if (!u) return std::nullopt;
       CmpPredicate p = op == "="    ? CmpPredicate::eq
@@ -2519,8 +2588,30 @@ class Gen {
       }
       return create<RecordOp>(l, rt, fields).getResult();
     }
+    // A recursive value (ADR 0047): a constructor that needs no value of
+    // the type, which inhabitation guarantees, such as `Leaf`, or one
+    // whose payload has a default without one, such as an empty vec.
+    if (auto rec = mlir::dyn_cast<RecType>(t)) {
+      if (!defaulting_.insert(t).second) return Value();
+      Value out;
+      for (const sema::Ctor *c : types_.ctorsOf(rec)) {
+        llvm::SmallVector<Value> payload;
+        if (c->payload) {
+          Value d = defaultValue(l, c->payload);
+          if (!d) continue;
+          payload.push_back(d);
+        }
+        out = create<RecMakeOp>(l, rec, b_.getStringAttr(c->name), payload)
+                  .getResult();
+        break;
+      }
+      defaulting_.erase(t);
+      return out;
+    }
     return Value();
   }
+  // The recursive types defaultValue is making a value of.
+  llvm::DenseSet<Type> defaulting_;
 
   // `match e with | C x -> a | D -> b | _ -> c` on a variant. It becomes a
   // chain of `if`s on the tag, each arm binding its payload, so carried
@@ -3446,6 +3537,60 @@ class Gen {
     return genExpr(*keep(std::move(neg)), expected);
   }
 
+  // The spec functions a `with f, g` names (ADR 0063), as symbols, or
+  // nothing after an error.
+  std::optional<std::vector<std::string>> revealed(const Node &n) {
+    std::vector<std::string> out;
+    // A clause has only names; an expression ends with its body.
+    size_t names = n.flags == "clause" ? n.kids.size() : n.kids.size() - 1;
+    for (size_t i = 0; i < names; ++i) {
+      const Node &f = *n.kids[i];
+      if (f.kind != NodeKind::Name) {
+        fail(f, "'with' takes the names of spec functions, as in 'with f, g'");
+        return std::nullopt;
+      }
+      auto set = overloadSet(f.text);
+      if (set.size() != 1 || !set[0]->item || !hasFlag(*set[0]->item, "spec")) {
+        fail(f, "'with' reveals spec functions, and '" + f.text +
+                    "' is not one (ADR 0063)");
+        return std::nullopt;
+      }
+      if (!isOpaqueItem(*set[0]->item)) {
+        fail(f, "'" + f.text +
+                    "' is not @opaque, so its definition is "
+                    "always a fact; drop it from 'with'");
+        return std::nullopt;
+      }
+      out.push_back(set[0]->name);
+    }
+    return out;
+  }
+
+  // `with f, g in e`: f and g revealed in e only (ADR 0063).
+  R genReveal(const Node &n, Type expected) {
+    auto fs = revealed(n);
+    if (!fs)
+      return std::nullopt;
+    Location l = loc(n);
+    for (const std::string &f : *fs)
+      create<contract::RevealOp>(l, f);
+    R body = genExpr(*n.kids.back(), expected);
+    for (const std::string &f : *fs)
+      create<contract::RevealOp>(l, f)->setAttr("pia.end", b_.getUnitAttr());
+    return body;
+  }
+
+  // Whether a spec function's definition says @opaque (ADR 0063).
+  static bool isOpaqueItem(const Node &item) {
+    if (item.kids.size() < 2 || item.kids[1]->kind != NodeKind::RetAnnot ||
+        item.kids[1]->kids.size() < 2)
+      return false;
+    for (const syntax::NodePtr &a : item.kids[1]->kids[1]->kids)
+      if (a->text == "opaque")
+        return true;
+    return false;
+  }
+
   R genApply(const Node &n, Type expected) {
     if (n.flags == "drop") return genDrop(n);
     if (n.flags == "region") return genRegion(n, expected);
@@ -3597,6 +3742,28 @@ class Gen {
         Value i = create<LenOp>(l, b_.getIndexType(), buf->value);
         Type usize = types_.usize();
         return TV{create<FromIndexOp>(l, usize, i), usize};
+      }
+      // `depth t` and `size t` of a recursive value (ADR 0047, section
+      // 3): spec-only `int`s, for `decreases` and other contracts.
+      if (fn.text == "depth" || fn.text == "size") {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        R v = genExpr(*n.kids[1], Type());
+        if (!v) return v;
+        unconsume(*n.kids[1]);
+        auto rec = mlir::dyn_cast<RecType>(v->type);
+        if (!rec)
+          return fail(*n.kids[1], "'" + fn.text + "' needs a value of a "
+                                  "recursive type, found " +
+                                      typeName(v->type));
+        if (!contract_ && !ghost_)
+          return fail(n, "'" + fn.text + "' is spec-only: use it in "
+                         "contracts, such as 'decreases " + fn.text +
+                         " t'");
+        Type t = UnboundedIntType::get(&ctx_);
+        return TV{create<RecMeasureOp>(l, t, b_.getStringAttr(fn.text),
+                                       v->value),
+                  t};
       }
       if (fn.text == "old") {
         // A lemma's arguments are spec too: `occurrences_swapped (old xs)
@@ -6932,8 +7099,14 @@ class Gen {
                                   "no interface of '" + header.text +
                                   "' lists");
         const Node *own = typeItem(r.text);
+        bool ownRec = own && own->flags.find("rec") != std::string::npos;
         if (!own)
           diags_.error(r.loc, unmet + "no type '" + r.text + "'");
+        else if (ownRec != (r.flags == "rec"))
+          diags_.error(r.loc, unmet + "the type '" + r.text + "' is " +
+                                  (ownRec ? "" : "not ") +
+                                  "recursive, so the interface must show it "
+                                  "with " + (ownRec ? "'let rec'" : "'let'"));
         else if (!sameTree(*own->kids[3], *r.kids[0]))
           diags_.error(r.loc, unmet + "the type '" + r.text +
                                   "' is defined differently; an interface "
@@ -8326,6 +8499,7 @@ class Gen {
     if (isBool(t))
       return create<mlir::arith::CmpIOp>(l, mlir::arith::CmpIPredicate::eq,
                                          a, b);
+    if (mlir::isa<RecType>(t)) return create<RecEqOp>(l, a, b);
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt) return Value();
     auto field = [&](Value v, llvm::StringRef name, Type ft) -> Value {
@@ -8965,6 +9139,126 @@ class Gen {
     return false;
   }
 
+  // --- lowerings (ADR 0065) -----------------------------------------
+
+  // Whether codegen can hand `t` to MLIR text as one value: an integer, a
+  // bool, or a buffer of them, which is one memref. A record becomes its
+  // fields and a buffer of records one buffer per field, so neither has a
+  // single value to splice.
+  bool spliceable(Type t) {
+    if (auto a = mlir::dyn_cast<ArrayType>(t))
+      t = a.getElementType();
+    else if (auto s = mlir::dyn_cast<SliceType>(t))
+      t = s.getElementType();
+    return mlir::isa<IntType>(t) || isBool(t);
+  }
+
+  // Checks `@lower` on `fn` and marks it for codegen: the MLIR text, with
+  // escapes decoded, as `pia.lower`, the attribute's location as
+  // `pia.lower_at` (file:line:col), and each parameter's name as the argument
+  // attribute `pia.lower_name`, which the signature rewrites before codegen
+  // keep with the argument. Step 1 of ADR 0065 has trusted lowerings only, so
+  // the file must be @trusted, and the body stays: the verifier proves it,
+  // and it is what `--lower=off` and the REPL run.
+  bool markLowering(const Node &attr, const sema::FuncSig &sig,
+                    mlir::func::FuncOp fn, bool isExtern) {
+    const std::string &name = sig.source();
+    if (ghost_) {
+      fail(attr, "@lower applies only to a function that runs, not to a "
+                 "spec function, a lemma or an axiom");
+      return false;
+    }
+    if (isExtern) {
+      fail(attr, "a lowered function keeps its Pia body, which is its "
+                 "specification and its fallback; a foreign function with "
+                 "no body stays '= extern \"symbol\"' (ADR 0065)");
+      return false;
+    }
+    if (!trusted_) {
+      fail(attr, "@lower is only allowed in a file marked '@trusted' for "
+                 "now: piac does not yet prove that the MLIR does what the "
+                 "body does, so the lowering is a trusted item (ADR 0065, "
+                 "step 1)");
+      return false;
+    }
+    if (sig.result && !isUnit(sig.result) && !mlir::isa<IntType>(sig.result) &&
+        !isBool(sig.result)) {
+      fail(attr, "a lowered function returns unit, an integer or a bool; '" +
+                     name + "' returns " + typeName(sig.result));
+      return false;
+    }
+    std::string text = unescapeString(attr.kids[0]->text);
+    auto isNameChar = [](char c) {
+      return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+             c == '\'';
+    };
+    for (size_t i = 0; i < text.size(); ++i) {
+      if (text[i] != '$')
+        continue;
+      size_t end = i + 1;
+      while (end < text.size() && isNameChar(text[end]))
+        ++end;
+      std::string splice = text.substr(i + 1, end - i - 1);
+      if (splice.empty() ||
+          std::isdigit(static_cast<unsigned char>(splice[0]))) {
+        fail(attr, "a '$' in @lower starts a splice: '$name' is the value of "
+                   "the parameter 'name', and '$name.type' its MLIR type");
+        return false;
+      }
+      auto p = llvm::find_if(
+          sig.params, [&](const sema::Param &q) { return q.name == splice; });
+      if (p == sig.params.end()) {
+        std::string names;
+        for (const sema::Param &q : sig.params)
+          names += (names.empty() ? "'" : ", '") + q.name + "'";
+        fail(attr, "@lower splices '$" + splice + "', but '" + name +
+                       "' has no parameter '" + splice + "'" +
+                       (names.empty() ? std::string(" (it has none)")
+                                      : "; its parameters are " + names));
+        return false;
+      }
+      if (p->spec) {
+        fail(attr, "@lower splices '$" + splice +
+                       "', a spec parameter, which "
+                       "code does not have (ADR 0058)");
+        return false;
+      }
+      if (!spliceable(p->type)) {
+        fail(attr, "@lower splices '$" + splice + "', of type " +
+                       typeName(p->type) +
+                       "; a splice is an integer, a bool, or a buffer of "
+                       "them, in this step");
+        return false;
+      }
+      i = end - 1;
+    }
+    fn->setAttr("pia.lower", b_.getStringAttr(text));
+    // As text: the printed IR leaves locations out, so a location attribute
+    // would print as an alias nothing defines.
+    fn->setAttr("pia.lower_at",
+                b_.getStringAttr(file_.str() + ":" +
+                                 std::to_string(attr.loc.line) + ":" +
+                                 std::to_string(attr.loc.column)));
+    for (size_t i = 0; i < sig.params.size(); ++i)
+      fn.setArgAttr(i, "pia.lower_name", b_.getStringAttr(sig.params[i].name));
+    return true;
+  }
+
+  // A string literal's text as written, quotes included, to its value.
+  static std::string unescapeString(const std::string &spelling) {
+    std::string out;
+    for (size_t i = 1; i + 1 < spelling.size(); ++i) {
+      char c = spelling[i];
+      if (c != '\\' || i + 2 >= spelling.size()) {
+        out += c;
+        continue;
+      }
+      char e = spelling[++i];
+      out += e == 'n' ? '\n' : e == 't' ? '\t' : e;
+    }
+    return out;
+  }
+
   // --- FFI (#55) -------------------------------------------------------
 
   // Whether `body` is `extern "symbol"`, and the symbol.
@@ -9040,6 +9334,9 @@ class Gen {
                         "bool for now");
     if (variadic_ && !checkVariadic(sig))
       return std::nullopt;
+    if (deref_ && !mlir::isa<IntType>(sig.result))
+      return fail(*deref_, "@deref reads an integer through the pointer C "
+                           "returns, so the result must be an integer");
     llvm::SmallVector<Type> results;
     if (!isUnit(sig.result)) results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
@@ -9048,6 +9345,8 @@ class Gen {
                                 b_.getStringAttr(symbol), args);
     if (variadic_)
       op->setAttr("pia.variadic", b_.getI64IntegerAttr(*variadic_));
+    if (deref_)
+      op->setAttr("pia.deref", b_.getUnitAttr());
     if (results.empty()) return unit();
     return TV{op.getResult(0), sig.result};
   }
@@ -11128,9 +11427,13 @@ class Gen {
   const Node *statedNode_ = nullptr;
   std::optional<OverflowMode> statedMode_;
   unsigned fuel_ = 0;  // @fuel(n) on the function being generated
+  bool opaque_ = false; // @opaque on it (ADR 0063)
   // @variadic(n) on the foreign declaration being generated (ADR 0051).
   std::optional<unsigned> variadic_;
   const Node *variadicNode_ = nullptr;
+  const Node *lower_ = nullptr; // the function's @lower (ADR 0065)
+  // `@deref` on the item being generated, or null.
+  const Node *deref_ = nullptr;
   std::string solver_;  // @solver(...) on it (ADR 0036)
   bool ghost_ = false;  // generating a spec function or a lemma
   // While a spec write's place is generated, a spec field may be named

@@ -34,6 +34,8 @@
 //                                   a buffer of records, and only when
 //                                   that drops a declaration)
 //   piac --no-slice ...             always solve each goal's full query
+//   piac --no-int-blast ...         bit-blast every goal, nonlinear ones
+//                                   too (ADR 0066)
 //   piac --verify-stats ...         print a summary of the proof work, and
 //                                   how long it took, to stderr; with
 //                                   theories, each axiom's triggers and the
@@ -44,6 +46,10 @@
 //                                   such theory's consistency check
 //   piac --trust-report --why ...   also list, for each trusted axiom, the
 //                                   goals whose proofs used it
+//   piac --lower=off ...            compile each function marked @lower
+//                                   from its Pia body, not its MLIR form,
+//                                   for differential tests (ADR 0065);
+//                                   --lower=on, the default, uses the MLIR
 //   piac --check-vacuity ...        with --verify, solve each goal proved
 //                                   with a trusted axiom or an `assume`
 //                                   again without its negation, and fail
@@ -81,6 +87,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <set>
 #include <sstream>
 #include <string>
@@ -97,14 +104,20 @@
 #ifndef PIA_NO_MLIR
 #include "cert/Certificate.h"
 #include "codegen/Codegen.h"
+#include "codegen/Lowerings.h"
 #include "dialect/PiaDialect.h"
+#include "gpu/Spirv.h"
 #include "irgen/IRGen.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Parser/Parser.h"
 #include "verify/Verifier.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
 #endif
 
@@ -121,20 +134,58 @@ int usage() {
          "             "
          "[--verify-only=<function>|<file.pia>|<file:line[:col]>]...\n"
          "             [--proof-cache=<dir>] [--slice | --no-slice] "
+         "[--no-int-blast] "
          "[--verify-stats] [--trust-report [--why]] [--check-vacuity]\n"
          "             [--explain-overloads=<file:line>]\n"
          "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
+         "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
-         "[--target=<triple>] [--cpu=<name>] [-O<n>]\n"
+         "[--target=<triple>] [--cpu=<name>] [-O<n>] [--lower=on|off]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       Every mode but --emit=interface takes "
          "[--iface-path=<dir>]...\n";
   return 2;
 }
+
+#ifndef PIA_NO_MLIR
+// Parses an MLIR file holding a gpu.module, lowers it to SPIR-V and writes
+// the binary to `output`.
+int emitSpirv(const std::string &file, const std::string &output) {
+  mlir::DialectRegistry registry;
+  pia::gpu::registerDialects(registry);
+  mlir::MLIRContext ctx(registry);
+  auto buffer = llvm::MemoryBuffer::getFile(file);
+  if (!buffer) {
+    std::cerr << file << ": " << buffer.getError().message() << "\n";
+    return 1;
+  }
+  llvm::SourceMgr sm;
+  sm.AddNewSourceBuffer(std::move(*buffer), llvm::SMLoc());
+  mlir::SourceMgrDiagnosticHandler diagnostics(sm, &ctx);
+  mlir::OwningOpRef<mlir::ModuleOp> module =
+      mlir::parseSourceFile<mlir::ModuleOp>(sm, &ctx);
+  if (!module)
+    return 1;
+  if (mlir::failed(pia::gpu::lowerToSpirv(*module)))
+    return 1;
+  llvm::SmallVector<uint32_t> binary;
+  if (mlir::failed(pia::gpu::serializeSpirv(*module, binary)))
+    return 1;
+  std::error_code ec;
+  llvm::raw_fd_ostream out(output, ec, llvm::sys::fs::OF_None);
+  if (ec) {
+    std::cerr << output << ": " << ec.message() << "\n";
+    return 1;
+  }
+  out.write(reinterpret_cast<const char *>(binary.data()),
+            binary.size() * sizeof(uint32_t));
+  return 0;
+}
+#endif
 
 // Which lints are on: all but those --no-lint names, or none.
 struct LintSwitch {
@@ -282,20 +333,19 @@ std::string obligations(size_t n) {
 // One line, `verify-stats: key=value ...`, that tools/bench reads.
 void printStats(const pia::verify::Stats &st) {
   std::cerr << "verify-stats: goals=" << st.goals
-            << " unselected=" << st.unselected
-            << " intervals=" << st.intervals << " skipped=" << st.skipped
-            << " solved=" << st.solved << " cached=" << st.cached
-            << " sliced=" << st.sliced << " unsliced=" << st.unsliced
-            << " threads=" << st.threads << " cost=" << st.cost
+            << " unselected=" << st.unselected << " intervals=" << st.intervals
+            << " skipped=" << st.skipped << " solved=" << st.solved
+            << " cached=" << st.cached << " sliced=" << st.sliced
+            << " unsliced=" << st.unsliced << " threads=" << st.threads
+            << " cost=" << st.cost
             << " encode_ms=" << static_cast<long long>(st.encodeMs)
             << " solve_ms=" << static_cast<long long>(st.solveMs)
             << " type=" << st.typeGoals << " type_smt=" << st.typeSmt
-            << " type_cost=" << st.typeCost
-            << " contract=" << st.contractGoals
+            << " type_cost=" << st.typeCost << " contract=" << st.contractGoals
             << " contract_smt=" << st.contractSmt
             << " contract_cost=" << st.contractCost
             << " generic=" << st.genericGoals << " instances=" << st.instances
-            << "\n";
+            << " intblast=" << st.intBlasted << "\n";
   // Theories (ADR 0036): each axiom's triggers. Their own prefix keeps the
   // line above the only `verify-stats:` line.
   // --check-vacuity's extra queries, on a line of their own.
@@ -335,7 +385,7 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 // and `assume`s (ADR 0023).
 void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
                       const std::vector<pia::verify::Outcome> &outcomes,
-                      bool why, std::ostream &os) {
+                      bool why, bool lower, std::ostream &os) {
   // Each trusted theory's consistency check.
   std::map<std::string, const pia::verify::TheoryCheck *> checks;
   for (const pia::verify::TheoryCheck &c : stats.theories) {
@@ -401,6 +451,27 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
   };
   unsigned n = 0, assumes = 0;
   std::set<std::string> trustedAxioms;  // and `assume file:line:col`
+  // A lowering's MLIR is trusted to do what the proved body does (ADR
+  // 0065, step 1). Its text is known once codegen has spliced in the core
+  // types, so this compiles a copy of the module that far. With
+  // --lower=off no lowering is used, so none is trusted.
+  if (lower) {
+    mlir::FailureOr<std::vector<pia::codegen::Lowering>> lowerings =
+        pia::codegen::describeLowerings(module);
+    if (mlir::failed(lowerings)) {
+      os << "piac: the lowerings could not be compiled, so their trusted "
+            "items are not listed\n";
+    } else {
+      for (const pia::codegen::Lowering &l : *lowerings) {
+        os << l.where << ": trusted: the lowering of '" << l.function
+           << "' to MLIR (";
+        for (size_t i = 0; i < l.ops.size(); ++i)
+          os << (i ? ", " : "") << l.ops[i];
+        os << "; sha256 " << l.hash << ")\n";
+        ++n;
+      }
+    }
+  }
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     if (auto sym = f->getAttrOfType<mlir::StringAttr>("pia.extern")) {
       os << pia::verify::formatLoc(f.getLoc())
@@ -466,9 +537,10 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
 }
 
 int compile(mlir::ModuleOp module, const std::string &mode,
-            const std::string &output, const pia::codegen::Options &options,
+            const std::string &output, pia::codegen::Options options,
             const std::vector<std::string> &allowUnproved,
-            const pia::verify::Options &verifyOptions, bool verifyStats) {
+            const pia::verify::Options &verifyOptions, bool verifyStats,
+            bool lower) {
   using pia::verify::Outcome;
   using pia::verify::Status;
   pia::verify::Stats stats;
@@ -511,6 +583,23 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
   pia::codegen::eraseContracts(module);
   if (mlir::failed(pia::codegen::lowerToCore(module))) return 1;
+  // Each lowering replaces a proved body with MLIR nothing proved, so the
+  // certificate lists it as a trusted item (ADR 0065, docs/abi.md).
+  std::vector<pia::codegen::Lowering> lowerings;
+  if (mlir::failed(pia::codegen::applyLowerings(module, lower, &lowerings)))
+    return 1;
+  if (!lowerings.empty() && !options.certificate.empty()) {
+    std::string error;
+    std::optional<pia::cert::Certificate> cert =
+        pia::cert::decode(options.certificate, error);
+    if (!cert) {
+      std::cerr << "piac: internal error: " << error << "\n";
+      return 1;
+    }
+    for (const pia::codegen::Lowering &l : lowerings)
+      cert->trusted.push_back({"lowering", l.function, l.hash, l.ops});
+    options.certificate = pia::cert::encode(*cert);
+  }
 
   std::error_code ec;
   llvm::raw_fd_ostream out(output.empty() ? "-" : output, ec,
@@ -571,9 +660,11 @@ int main(int argc, char **argv) {
   std::vector<std::string> verifyOnly;
   std::string proofCache;
   int slice = 0;  // 0 automatic, 1 --slice, -1 --no-slice
+  bool intBlast = true; // --no-int-blast turns it off (ADR 0066)
   bool verifyStats = false;
   bool checkVacuity = false;
   bool trustReport = false;
+  bool lower = true; // --lower=off compiles lowered functions' bodies
   bool trustWhy = false;
   std::string explainFile;
   unsigned explainLine = 0;
@@ -585,10 +676,10 @@ int main(int argc, char **argv) {
   for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
     if (arg == "--dump-ast" || arg == "--dump-expanded" ||
-        arg == "--dump-tokens" || arg == "--check" ||
-        arg == "--emit=mlir" || arg == "--emit=core" || arg == "--emit=llvm" ||
-        arg == "--emit=asm" || arg == "--emit=obj" ||
-        arg == "--emit=interface")
+        arg == "--dump-tokens" || arg == "--check" || arg == "--emit=mlir" ||
+        arg == "--emit=core" || arg == "--emit=llvm" || arg == "--emit=asm" ||
+        arg == "--emit=obj" || arg == "--emit=interface" ||
+        arg == "--emit=spirv")
       mode = arg;
     else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
@@ -651,12 +742,16 @@ int main(int argc, char **argv) {
       slice = 1;
     else if (arg == "--no-slice")
       slice = -1;
+    else if (arg == "--no-int-blast")
+      intBlast = false;
     else if (arg == "--verify-stats")
       verifyStats = true;
     else if (arg == "--check-vacuity")
       verify = checkVacuity = true;
     else if (arg == "--trust-report")
       trustReport = true;
+    else if (arg == "--lower=on" || arg == "--lower=off")
+      lower = arg == "--lower=on";
     else if (arg == "--why")
       trustWhy = true;
     else if (arg.rfind("--explain-overloads=", 0) == 0) {
@@ -734,6 +829,15 @@ int main(int argc, char **argv) {
   if (verify && mode.empty()) mode = "--verify";
   if (verify && mode != "--verify" && mode != "--emit=mlir") return usage();
   if (mode.empty() || file.empty()) return usage();
+#ifndef PIA_NO_MLIR
+  // A hand-written gpu.module, lowered to a SPIR-V binary (ADR 0068, step
+  // 1). Step 3 makes the gpu.module from @place(gpu) spreads.
+  if (mode == "--emit=spirv") {
+    if (output.empty() || verify)
+      return usage();
+    return emitSpirv(file, output);
+  }
+#endif
   if (pia::syntax::isLiterateFileName(file)) literate = true;
   if (showComments && mode != "--dump-ast" && mode != "--dump-expanded")
     return usage();
@@ -772,6 +876,7 @@ int main(int argc, char **argv) {
   (void)slice;
   (void)verifyStats;
   (void)trustReport;
+  (void)lower;
   (void)trustWhy;
   (void)explainLine;
   (void)costlyGoal;
@@ -910,6 +1015,7 @@ int main(int argc, char **argv) {
                       : slice < 0 ? pia::verify::Options::Slice::Off
                                   : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
+      options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
       // Which axioms each proof used is only reported by these, and kept
@@ -918,7 +1024,7 @@ int main(int argc, char **argv) {
           verifyStats || trustReport || checkVacuity || !proofCache.empty();
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options,
-                       verifyStats);
+                       verifyStats, lower);
       } else if (module && verify) {
         pia::verify::Stats stats;
         if (mlir::failed(pia::verify::resolveOverloads(*module, options))) {
@@ -933,7 +1039,8 @@ int main(int argc, char **argv) {
           printGoalAxioms(outcomes);
         }
         if (trustReport)
-          printTrustReport(*module, stats, outcomes, trustWhy, std::cout);
+          printTrustReport(*module, stats, outcomes, trustWhy, lower,
+                           std::cout);
         if (checkVacuity && stats.vacuityUnknown)
           std::cerr << "piac: note: --check-vacuity could not decide "
                     << stats.vacuityUnknown << " of " << stats.vacuityChecks

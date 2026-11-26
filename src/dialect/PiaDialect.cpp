@@ -151,6 +151,15 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'" << getLengthOfAttrName() << "' on argument "
                            << argIndex << " must name an earlier argument";
   }
+  // `{pia.lower_name = "a"}`: the parameter a lowering's `$a` names, which
+  // codegen keeps with its argument through the signature rewrites
+  // (ADR 0065).
+  if (attr.getName() == "pia.lower_name") {
+    if (isa<StringAttr>(attr.getValue()))
+      return success();
+    return op->emitError() << "'pia.lower_name' on argument " << argIndex
+                           << " must be a string";
+  }
   if (attr.getName() != getModifiersAttrName())
     return op->emitError() << "unknown pia argument attribute '"
                            << attr.getName() << "'";
@@ -510,6 +519,12 @@ LogicalResult RecPayloadOp::verify() {
   if (!d)
     return emitOpError("no pia.datatype @") << getInput().getType().getName();
   return checkPayload(*this, d, getCtor(), getResultTypes());
+}
+
+LogicalResult RecMeasureOp::verify() {
+  if (getKind() != "depth" && getKind() != "size")
+    return emitOpError("measures 'depth' or 'size', not '") << getKind() << "'";
+  return success();
 }
 
 LogicalResult CopyOp::verify() {

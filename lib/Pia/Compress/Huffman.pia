@@ -28,18 +28,27 @@ interface Huffman = sig
   let spec kcap : (k : int{0..320}) -> u32
   let spec kraft : (l : [u8]) -> (k : int{0..320}) -> u32
   let spec len_count : (l : [u8]) -> (k : int{0..320}) -> (bits : int{1..15}) -> int{0..320}
-  let spec first_code : (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> int
-  let spec code_of : (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> int
-  let spec hbits : (s : [u8]) -> (pos : usize) -> (k : int{0..15}) -> int
+  let spec first_code : (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> u32
+  let spec code_of : (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> u32
+  let spec hbits : (s : [u8]) -> (pos : usize) -> (k : int{0..15}) -> u32
+  let spec room : (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..16}) -> bool
+  let spec offs : (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..16}) -> int{0..4800}
+  let spec u16at : (t : [u8]) -> (i : usize) -> u16
+  let spec sym_ok : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> (i : int{0..319}) -> (r : int{0..320}) -> bool
+  let spec tab_from : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..16}) -> bool
   let build : (l : [u8]) -> (n : int{0..320}) -> (t : borrowed inout mutable [u8]) -> fill
     requires len t = 704 && n <= len l
     ensures result = Complete <==> kraft l n = 32768
     ensures result = Oversubscribed <==> kraft l n > 32768
-  let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> result decoded usize
+  let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> (spec l : [u8]) -> (spec h : bool) -> result decoded usize
     requires len t = 704 && pos <= B.nbits s
+    requires h ==> n <= len l && room l n 1 && tab_from t l n 1
     ensures (match result with
       | Ok d -> pos < d.pos && d.pos - pos <= 15 && d.pos <= B.nbits s && d.sym < n
       | Err p -> p <= B.nbits s)
+    ensures h ==> (match result with
+      | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false)
+      | Err _ -> true)
 end
 
 (** How complete a code is. *)
@@ -58,7 +67,7 @@ let spec kcap (k : int{0..320}) : u32 =
   (let c : int{0..32768} = 32768 in let kk : int{0..320} = k in kk * c)
 
 (** The Kraft sum of the first k lengths, in units of 2^-15. *)
-let spec kraft (l : [u8]) (k : int{0..320}) : u32
+let spec kraft (l : [u8]) (k : int{0..320}) : u32 @opaque
   requires k <= len l
   ensures result <= kcap k
   decreases k
@@ -75,25 +84,72 @@ let spec len_count (l : [u8]) (k : int{0..320}) (bits : int{1..15}) : int{0..320
   else (let k' : int{0..319} = k - 1 in len_count l k' bits + (if l.[k'] = bits then 1 else 0))
 
 (** The first code of length bits, step 2: next_code. *)
-let spec first_code (l : [u8]) (n : int{0..320}) (bits : int{1..15}) : int
+let spec first_code (l : [u8]) (n : int{0..320}) (bits : int{1..15}) : u32
   requires n <= len l
+  ensures result + 640 <= 640 * B.pow2 (bits - 1)
   decreases bits
 = if bits = 1 then 0
   else (let b : int{1..14} = bits - 1 in 2 * (first_code l n b + len_count l n b))
 
 (** Symbol sym's code, step 3: the first code of its length, plus the
     symbols of that length before it. *)
-let spec code_of (l : [u8]) (n : int{0..320}) (sym : int{0..319}) : int
+let spec code_of (l : [u8]) (n : int{0..320}) (sym : int{0..319}) : u32
   requires sym < n && n <= len l && 1 <= l.[sym] && l.[sym] <= 15
 = first_code l n l.[sym] + len_count l sym l.[sym]
 
 (** The k bits at pos read as a Huffman code: deflate packs a code first
     bit first, so the first bit read is the most significant (3.1.1). *)
-let spec hbits (s : [u8]) (pos : usize) (k : int{0..15}) : int
+let spec hbits (s : [u8]) (pos : usize) (k : int{0..15}) : u32
   requires pos <= B.nbits s && k <= B.nbits s - pos
+  ensures result < B.pow2 k
   decreases k
 = if k = 0 then 0
   else (let k' : int{0..14} = k - 1 in 2 * hbits s pos k' + B.bit s (pos + k'))
+
+(** Where length bits' symbols start in a table: how many symbols are
+    shorter. *)
+let spec offs (l : [u8]) (n : int{0..320}) (bits : int{1..16}) : int{0..4800} @fuel(1)
+  requires n <= len l
+  ensures result <= 320 * (bits - 1)
+  decreases bits
+= if bits = 1 then 0
+  else (let b : int{1..15} = bits - 1 in let v : int{0..4800} = offs l n b + len_count l n b in v)
+
+(** From length bits up, the codes of each length fit below 2^bits: what
+    a code within the Kraft bound has, one length at a time. *)
+let spec room (l : [u8]) (n : int{0..320}) (bits : int{1..16}) : bool @opaque
+  requires n <= len l
+  decreases 16 - bits
+= if bits = 16 then true
+  else (let b : int{1..15} = bits in
+    if first_code l n b + len_count l n b > B.pow2 b then false
+    else room l n (bits + 1))
+
+(** The little-endian u16 at t.[i]. *)
+let spec u16at (t : [u8]) (i : usize) : u16
+  requires i < len t && 1 < len t - i
+= let lo : u16 = t.[i] in let hi : u16 = t.[i + 1] in (lo | (hi << 8))
+
+(** The symbol at place i of table t is the r-th symbol of length bits. *)
+let spec sym_ok (t : [u8]) (l : [u8]) (n : int{0..320}) (bits : int{1..15}) (i : int{0..319}) (r : int{0..320}) : bool
+  requires len t = 704 && n <= len l
+= let sy : u16 = u16at t (32 + 2 * i) in
+  if sy >= n then false else l.[sy] = bits && len_count l sy bits = r
+
+(** From length bits up, table t holds the canonical code of the n
+    lengths l: how many codes each length has, and its symbols in
+    order. One length at a time, so decode takes its facts length by
+    length. *)
+let spec tab_from (t : [u8]) (l : [u8]) (n : int{0..320}) (bits : int{1..16}) : bool @opaque
+  requires len t = 704 && n <= len l
+  decreases 16 - bits
+= if bits = 16 then true
+  else (
+    let b : int{1..15} = bits in
+    if u16at t (2 * b) <> len_count l n b then false
+    else if offs l n b + len_count l n b > 320 then false
+    else if tab_from t l n (bits + 1) = false then false
+    else (forall (r in 0 .. len_count l n b). sym_ok t l n b (offs l n b + r) r))
 
 (* RFC 1951's example in 3.2.2: lengths (2, 1, 3, 3) give the codes 10, 0,
    110 and 111. *)
@@ -107,8 +163,9 @@ let weight_of (l : u8) : int{0..32768}
   ensures result = weight l
 = if l = 0 then 0 else if l > 15 then 32768 else (let one : u16 = 32768 in let w : int{0..32768} = one >> l in w)
 
-let get16 (t : [u8]) (i : usize) : u16
+let get16 (t : [u8]) (i : usize) : u16 @allow(duplicate_function)
   requires i < len t && 1 < len t - i
+  ensures result = u16at t i
 = let lo : u16 = t.[i] in
   let hi : u16 = t.[i + 1] in
   (lo | (hi << 8))
@@ -126,6 +183,7 @@ let build (l : [u8]) (n : int{0..320}) (t : borrowed inout mutable [u8]) : fill
   requires len t = 704 && n <= len l
   ensures result = Complete <==> kraft l n = 32768
   ensures result = Oversubscribed <==> kraft l n > 32768
+  with kraft
 = for j in 0 .. 704 do t.[j] <- 0 done;
   (* The counts, and the Kraft sum. *)
   let sum : mutable u32 = 0 in
@@ -163,13 +221,28 @@ let build (l : [u8]) (n : int{0..320}) (t : borrowed inout mutable [u8]) : fill
   done;
   if sum = 32768 then Complete else if sum > 32768 then Oversubscribed else Incomplete
 
+(* What tab_from and room say of length b, for decode, which keeps them
+   opaque: b's count, its symbols in canonical order, room for its codes,
+   and the same from b + 1 up. *)
+let lemma tab_step (h : bool) (t : [u8]) (l : [u8]) (n : int{0..320}) (b : u8) : unit
+  requires len t = 704
+  requires h ==> n <= len l
+  requires h && 1 <= b && b <= 15 ==> tab_from t l n b && room l n b
+  ensures (if h && 1 <= b && b <= 15 then u16at t (2 * b) = len_count l n b && offs l n b + len_count l n b <= 320 && first_code l n b + len_count l n b <= B.pow2 b && tab_from t l n (b + 1) && room l n (b + 1) && (forall (r in 0 .. len_count l n b). sym_ok t l n b (offs l n b + r) r) else true)
+  with tab_from, room
+= ()
+
 (** The symbol whose code starts at bit pos of s, read a bit at a time, or
     where the input ends or names no code. *)
-let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) : result decoded usize
+let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8]) (spec h : bool) : result decoded usize
   requires len t = 704 && pos <= B.nbits s
+  requires h ==> n <= len l && room l n 1 && tab_from t l n 1
   ensures (match result with
     | Ok d -> pos < d.pos && d.pos - pos <= 15 && d.pos <= B.nbits s && d.sym < n
     | Err p -> p <= B.nbits s)
+  ensures h ==> (match result with
+    | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false)
+    | Err _ -> true)
 = let nb = B.bit_len s in
   let p : mutable usize = pos in
   let code : mutable u32 = 0 in
@@ -184,8 +257,13 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) : result decode
     invariant code < 65536 && first < 65536 && index <= 65535
     invariant st = 1 ==> (pos < p && p - pos <= 15 && sym < n)
     invariant st >= 2 ==> p <= nb
+    invariant h && st = 0 && len' <= 15 ==> tab_from t l n len' && room l n len'
+    invariant h && st = 0 && len' <= 15 ==> code = 2 * hbits s pos (len' - 1)
+    invariant h && st = 0 && len' <= 15 ==> first = first_code l n len' && index = offs l n len'
+    invariant h && st = 1 ==> l.[sym] = p - pos && code_of l n sym = hbits s pos (p - pos)
     decreases 17 - len' + (if st = 0 then 1 else 0)
   do
+    tab_step h t l n len';
     if len' > 15 then st <- 3
     else if p >= nb then st <- 2
     else (
@@ -197,6 +275,8 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) : result decode
         let i : u32 = index + (code - first) in
         if i < 320 then (
           let v = get16 t (32 + 2 * i) in
+          assert h ==> sym_ok t l n len' (offs l n len' + (code - first)) (code - first);
+          assert h ==> v < n && l.[v] = len' && len_count l v len' = code - first;
           if v < n then (sym <- v; st <- 1) else st <- 3)
         else st <- 3)
       else (

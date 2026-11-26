@@ -54,6 +54,78 @@ bool isBuiltinType(const std::string &name) {
   return names.count(name);
 }
 
+// `let name = let (t : type) ... => type ...`: a generic type.
+bool isGenericTypeItem(const Node &item) {
+  return item.kind == NodeKind::LetItem && item.kids.size() > 3 &&
+         item.kids[0]->kids.empty() && item.kids[3]->kind == NodeKind::Lambda &&
+         !item.kids[3]->kids.empty() &&
+         item.kids[3]->kids.back()->kind == NodeKind::TypeValue;
+}
+
+// The dotted name of `a.b.c`, or "" when `e` is not a chain of names.
+std::string dottedName(const Node &e) {
+  if (e.kind == NodeKind::Name)
+    return e.text;
+  if (e.kind != NodeKind::Field || e.kids.size() != 1)
+    return "";
+  std::string base = dottedName(*e.kids[0]);
+  return base.empty() ? "" : base + "." + e.text;
+}
+
+// The type that the expression `e` names, written as a type, or null when
+// it names none of `types` (ADR 0064, section 1): `u8`, `byte`,
+// `option u8`, `Pia.Core.Option.option u8`, `[u8; 4]` and `[u8]`. A type
+// is a value, so `let byte = u8` is another name for `u8`, while
+// `let length = type u32` makes a new type.
+NodePtr asType(const Node &e, const std::set<std::string> &types,
+               const std::set<std::string> &generics) {
+  if (e.kind == NodeKind::TypeValue && e.flags == "alias")
+    return clone(*e.kids[0]);
+  std::string name = dottedName(e);
+  if (!name.empty()) {
+    if (!isBuiltinType(name) && !types.count(name))
+      return nullptr;
+    return makeNode(NodeKind::TypeName, e.loc, name);
+  }
+  if (e.kind == NodeKind::Apply && e.kids.size() > 1) {
+    std::string head = dottedName(*e.kids[0]);
+    if (head.empty() || !generics.count(head))
+      return nullptr;
+    auto app = makeNode(NodeKind::TypeApp, e.loc);
+    app->add(makeNode(NodeKind::TypeName, e.kids[0]->loc, head));
+    for (size_t i = 1; i < e.kids.size(); ++i) {
+      const Node &a = *e.kids[i];
+      if (a.kind == NodeKind::IntLit) {
+        app->add(clone(a));
+        continue;
+      }
+      NodePtr t = asType(a, types, generics);
+      if (!t)
+        return nullptr;
+      app->add(std::move(t));
+    }
+    return app;
+  }
+  if (e.kind == NodeKind::ListLit &&
+      (e.kids.size() == 1 || e.kids.size() == 2)) {
+    NodePtr elem = asType(*e.kids[0], types, generics);
+    if (!elem)
+      return nullptr;
+    if (e.kids.size() == 1) {
+      auto slice = makeNode(NodeKind::SliceType, e.loc);
+      slice->add(std::move(elem));
+      return slice;
+    }
+    if (e.kids[1]->kind != NodeKind::IntLit)
+      return nullptr;
+    auto array = makeNode(NodeKind::ArrayType, e.loc);
+    array->add(std::move(elem));
+    array->add(clone(*e.kids[1]));
+    return array;
+  }
+  return nullptr;
+}
+
 // A metaprogram that asked for a type that is not defined yet.
 struct Waiting {
   std::string what;  // "@derive(eq) on 'pixel'" or "the call of 'gen'"
@@ -86,6 +158,9 @@ class Expander {
       producerLoc_ = program_.loc;
       waiting_.clear();
       types_.clear();
+      nameAliases();
+      makeDistinct();
+      convertCalls();
       for (const NodePtr &item : program_.kids)
         if (isTypeItem(*item)) types_.insert(item->text);
       bool changed = runPass();
@@ -120,6 +195,45 @@ class Expander {
   }
 
  private:
+   // `let byte = u8`, and `let buf = option byte` after it: a `let` with
+   // no parameters, annotation or contracts whose value names a type is
+   // another name for that type, the type item `let byte = type u8` marked
+   // "alias" (ADR 0064, section 1). Repeated until nothing changes, so a
+   // chain of aliases resolves in any order.
+   void nameAliases() {
+     std::set<std::string> types, generics;
+     for (const Node *program :
+          {&preludeProgram(), static_cast<const Node *>(&program_)})
+       for (const NodePtr &item : program->kids) {
+         if (isTypeItem(*item))
+           types.insert(item->text);
+         if (isGenericTypeItem(*item))
+           generics.insert(item->text);
+       }
+     for (bool changed = true; changed;) {
+       changed = false;
+       for (NodePtr &item : program_.kids) {
+         if (item->kind != NodeKind::LetItem || item->kids.size() != 4 ||
+             isTypeItem(*item) || isMetaItem(*item) ||
+             !item->kids[0]->kids.empty() ||
+             item->kids[1]->kind != NodeKind::None ||
+             !item->kids[2]->kids.empty())
+           continue;
+         NodePtr t = asType(*item->kids[3], types, generics);
+         if (!t)
+           continue;
+         auto value = makeNode(NodeKind::TypeValue, item->kids[3]->loc);
+         value->flags = "alias";
+         value->add(std::move(t));
+         value->add(makeNode(NodeKind::Attrs, item->kids[3]->loc));
+         value->add(makeNode(NodeKind::None, item->kids[3]->loc));
+         item->kids[3] = std::move(value);
+         types.insert(item->text);
+         changed = true;
+       }
+     }
+   }
+
    // An interface's `let meta m : item` (any result but `concept`) lists a
    // metaprogram, which the module must define (ADR 0039).
    void checkListedMetaprograms() {
@@ -138,6 +252,160 @@ class Expander {
                                     "', which the module does not define");
        }
      }
+   }
+
+   // `let length = type u32`: a new type, distinct from u32 (ADR 0064,
+   // section 2). It becomes a record of one field that no source can name,
+   // since its name holds a `#`, and two conversions:
+   //
+   //   let length = type { raw#length : u32 }          (flagged "distinct")
+   //   let length#of (x : u32) : length  ensures result.raw#length = x
+   //   let u32#of (x : length) : u32     ensures result = x.raw#length
+   //
+   // `length 5` calls the first and `u32 l` the second (convertCalls), so
+   // every conversion is written, and a distinct type over a record or
+   // scalar costs nothing once records are scalarized.
+   void makeDistinct() {
+     std::vector<NodePtr> out;
+     for (NodePtr &item : program_.kids) {
+       if (!isTypeItem(*item) || item->kids[3]->flags == "alias" ||
+           item->flags.find("distinct") != std::string::npos) {
+         out.push_back(std::move(item));
+         continue;
+       }
+       Node &value = *item->kids[3];
+       NodeKind body = value.kids[0]->kind;
+       // A refinement type, `type { n : u32 | n <= 64 }`, names a subset
+       // of its base rather than a new type (ADR 0006).
+       if (body == NodeKind::RecordType || body == NodeKind::Variants ||
+           body == NodeKind::RefinementType ||
+           (body == NodeKind::TypeName && value.kids[0]->text == "#sort")) {
+         out.push_back(std::move(item));
+         continue;
+       }
+       const std::string n = item->text;
+       if (n.find('.') != std::string::npos) {
+         diags_.error(item->loc, "importing the distinct type '" + n +
+                                     "' is not supported yet (ADR 0064)");
+         out.push_back(std::move(item));
+         continue;
+       }
+       if (value.kids.size() > 2 && value.kids[2]->kind != NodeKind::None) {
+         diags_.error(value.kids[2]->loc,
+                      "a distinct type with a 'where' refinement is not "
+                      "supported yet (ADR 0064, section 6)");
+         out.push_back(std::move(item));
+         continue;
+       }
+       SourceLoc at = item->loc;
+       const std::string field = "raw#" + n;
+       NodePtr under = std::move(value.kids[0]);
+       auto annot = [&](NodePtr type) {
+         auto a = makeNode(NodeKind::Annot, at);
+         a->add(makeNode(NodeKind::Modifiers, at));
+         a->add(std::move(type));
+         a->add(makeNode(NodeKind::None, at));
+         return a;
+       };
+       auto record = makeNode(NodeKind::RecordType, at);
+       auto decl = makeNode(NodeKind::FieldDecl, at, field);
+       decl->add(annot(clone(*under)));
+       record->add(std::move(decl));
+       value.kids[0] = std::move(record);
+       item->flags += item->flags.empty() ? "distinct" : " distinct";
+       distinct_[n] = clone(*under);
+
+       auto fn = [&](const std::string &name, NodePtr param, NodePtr result,
+                     NodePtr ensures, NodePtr body) {
+         auto f = makeNode(NodeKind::LetItem, at, name);
+         auto ps = makeNode(NodeKind::Params, at);
+         auto x = makeNode(NodeKind::Param, at, "x");
+         x->add(annot(std::move(param)));
+         ps->add(std::move(x));
+         f->add(std::move(ps));
+         auto ret = makeNode(NodeKind::RetAnnot, at);
+         ret->add(annot(std::move(result)));
+         ret->add(makeNode(NodeKind::Attrs, at));
+         f->add(std::move(ret));
+         auto cs = makeNode(NodeKind::Contracts, at);
+         auto e = makeNode(NodeKind::Ensures, at);
+         e->add(std::move(ensures));
+         cs->add(std::move(e));
+         f->add(std::move(cs));
+         f->add(std::move(body));
+         return f;
+       };
+       auto name = [&](const std::string &t) {
+         return makeNode(NodeKind::Name, at, t);
+       };
+       auto rawOf = [&](const std::string &v) {
+         auto f = makeNode(NodeKind::Field, at, field);
+         f->add(name(v));
+         return f;
+       };
+       auto equals = [&](NodePtr a, NodePtr b) {
+         auto eq = makeNode(NodeKind::Binary, at, "=");
+         eq->add(std::move(a));
+         eq->add(std::move(b));
+         return eq;
+       };
+       auto lit = makeNode(NodeKind::RecordLit, at);
+       auto init = makeNode(NodeKind::FieldInit, at, field);
+       init->add(name("x"));
+       lit->add(std::move(init));
+       NodePtr make =
+           fn(n + "#of", clone(*under), makeNode(NodeKind::TypeName, at, n),
+              equals(rawOf("result"), name("x")), std::move(lit));
+       std::string head = unwrapName(*under);
+       NodePtr raw;
+       if (!head.empty())
+         raw =
+             fn(head + "#of", makeNode(NodeKind::TypeName, at, n),
+                clone(*under), equals(name("result"), rawOf("x")), rawOf("x"));
+       out.push_back(std::move(item));
+       out.push_back(std::move(make));
+       if (raw) {
+         unwrapHeads_.insert(head);
+         out.push_back(std::move(raw));
+       }
+     }
+     program_.kids = std::move(out);
+   }
+
+   // The name that unwraps a distinct type over `t` when applied: `u32` for
+   // u32, `byte` for an alias, `int` for `int{0..100}`, `option` for
+   // `option u8`. Empty for a type no name can be applied for, such as an
+   // array.
+   static std::string unwrapName(const Node &t) {
+     if (t.kind == NodeKind::TypeName || t.kind == NodeKind::RangeType)
+       return t.text;
+     if (t.kind == NodeKind::TypeApp && !t.kids.empty() &&
+         t.kids[0]->kind == NodeKind::TypeName)
+       return t.kids[0]->text;
+     return "";
+   }
+
+   // `length 5` and `u32 l`: a type applied to one value converts it
+   // (ADR 0064, section 2). Both are calls of `<type>#of`, whose overloads
+   // are told apart by their argument's type: with `let pixels = type
+   // length`, `length#of` takes a u32 and makes a length, or takes a pixels
+   // and unwraps it.
+   void convertCalls() {
+     if (distinct_.empty())
+       return;
+     std::function<void(Node &)> walk = [&](Node &e) {
+       for (NodePtr &k : e.kids)
+         walk(*k);
+       if (e.kind != NodeKind::Apply || e.kids.size() != 2 ||
+           e.kids[0]->kind != NodeKind::Name || !e.kids[0]->flags.empty())
+         return;
+       std::string &head = e.kids[0]->text;
+       if (distinct_.count(head) || unwrapHeads_.count(head))
+         head += "#of";
+     };
+     for (NodePtr &item : program_.kids)
+       if (!isMetaItem(*item))
+         walk(*item);
    }
 
   void declare(const Node &program) {
@@ -762,6 +1030,10 @@ class Expander {
   std::map<std::string, const Node *> operators_;
   std::map<std::string, ValuePtr> closures_;
   std::set<std::string> types_;
+  // The distinct types made so far, each with its underlying type, and
+  // the names that unwrap one (makeDistinct).
+  std::map<std::string, NodePtr> distinct_;
+  std::set<std::string> unwrapHeads_;
   std::set<std::string> producers_;
   SourceLoc producerLoc_;  // where the first of them ran in the last pass
   std::vector<Waiting> waiting_;

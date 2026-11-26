@@ -769,6 +769,34 @@ def Pia_RecPayloadOp : Pia_Op<"rec_payload", [NoMemoryEffect]> {
   let hasVerifier = 1;
 }
 
+def Pia_RecMeasureOp : Pia_Op<"rec_measure", [Pure]> {
+  let summary = "the depth or size of a recursive value, spec-only";
+  let description = [{
+    `%d = pia.rec_measure "depth" %t : !pia.rec<"tree">` is `depth t`, and
+    `"size"` is `size t` (ADR 0047, section 3): an `int`, for `decreases`
+    and other contracts. The verifier knows only that each is at least 0
+    (size at least 1) and that a component's is smaller than its
+    holder's, which is what a measure needs.
+  }];
+  let arguments = (ins StrAttr:$kind, Pia_Rec:$input);
+  let results = (outs Pia_UnboundedIntType:$result);
+  let assemblyFormat = "$kind $input attr-dict `:` type($input)";
+  let hasVerifier = 1;
+}
+
+def Pia_RecEqOp : Pia_Op<"rec_eq", [Pure, AllTypesMatch<["lhs", "rhs"]>]> {
+  let summary = "whether two recursive values are equal, in a contract";
+  let description = [{
+    `%e = pia.rec_eq %a, %b : !pia.rec<"tree">` is `a = b` in a contract
+    (ADR 0047): the same constructor and equal payloads, a buffer by its
+    contents. Codegen never sees it; equality in code comes with
+    `@derive(eq)` on recursive types (step 4).
+  }];
+  let arguments = (ins Pia_Rec:$lhs, Pia_Rec:$rhs);
+  let results = (outs I1:$result);
+  let assemblyFormat = "$lhs `,` $rhs attr-dict `:` type($lhs)";
+}
+
 def Pia_FieldOp : Pia_Op<"field", [Pure]> {
   let summary = "read a field of a record";
   let description = [{ `%r = pia.field %p, "r" : !pia.record<...> -> !pia.int<0, 255>` }];

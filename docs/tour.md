@@ -176,7 +176,23 @@ let opaque (p : pixel) : pixel
 let luma (p : pixel) : u16 = p.r + p.g + p.b
 ```
 
-`let byte = type u8` gives another name to a type. A field of a mutable record can be assigned:
+`let byte = u8` gives another name to a type: a type is a value, so a `let` can name it. `type` always makes a new type, so `let length = type u32` is a type of its own, which never mixes with a `u32` or with another type over one. Every conversion is written, by applying a type to a value: `length 5` makes a length, and `u32 l` takes one apart. The bounds of the type underneath carry over, and a length proves as the number it holds, at no cost:
+
+```ocaml
+let length = type u32
+
+let area (w : length) (h : length) : u64
+  requires u32 w * u32 h <= max u32
+= u32 w * u32 h
+
+let longer (a : length) (b : length) : length
+  ensures u32 result >= u32 a
+= if u32 a >= u32 b then a else b
+```
+
+A length has no operators of its own, so `w * h` is an error rather than a length; derives that add them come later ([ADR 0064](adr/0064-distinct-types.md)).
+
+A field of a mutable record can be assigned:
 
 ```ocaml
 let pixel = type { r : u8; g : u8; b : u8; a : u8 }
@@ -569,7 +585,7 @@ let times : u16 = 2 * 3 ** 1
 A top-level call of a metaprogram is replaced by the items it returns, and `@derive(x)` on a type calls the metaprogram `derive_x`. Expansion runs to a fixed point, so a metaprogram can generate code that uses other metaprograms:
 
 ```ocaml
-let meta make_byte () : item = `( let byte = type u8 )
+let meta make_byte () : item = `( let byte = u8 )
 
 make_byte ()
 

@@ -1,0 +1,14 @@
+(* Opaque spec functions (ADR 0063): @opaque, the `with` clause after a
+   function's contracts, and `with f in e`. A `with` after a match's
+   scrutinee still belongs to the match. *)
+let spec small (x : u8) : bool @opaque = x < 10
+
+let shown (x : u8) : u8
+  requires small x
+  ensures result < 20
+  with small, M.big
+= x + x
+
+let scoped (x : u8) : u8
+= (with small in assert x < 10);
+  match x with | 0 -> 1 | _ -> x
