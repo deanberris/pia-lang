@@ -1,0 +1,17 @@
+{
+  "description": "Keeps prebuilt pia, piac and pia-lsp current: when they were installed by tools/release/pia-update, each session start updates them in the background from the latest CI build. Set PIA_NO_AUTO_UPDATE=1 to turn it off.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -z \"${PIA_NO_AUTO_UPDATE:-}\" ] && [ -f \"${PIA_PREFIX:-$HOME/.local/pia}/.pia-update\" ] && (nohup sh \"${CLAUDE_PLUGIN_ROOT}/tools/release/pia-update\" --quiet >\"${PIA_PREFIX:-$HOME/.local/pia}/.pia-update.log\" 2>&1 &) ; exit 0",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

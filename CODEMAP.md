@@ -144,6 +144,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it.
 - `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
+- `tools/release/pia-update` installs or updates the prebuilt `pia`, `piac` and `pia-lsp` from the `latest` prerelease that CI publishes (`publish-latest` in `.github/workflows/ci.yml`); the plugin's `hooks/hooks.json` runs it in the background at session start.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
 - `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` and the rows of `lib/Pia/Sys/Posix.pia`, which it checks against the headers (ADRs 0051 and 0057). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
