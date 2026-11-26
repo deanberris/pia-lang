@@ -1,0 +1,46 @@
+(* A generic `drop` (ADR 0046, step 1): `drop (t : type) (b : moved box t)`
+   gives a drop to every instance of `box`, so a box is dropped at the end
+   of its scope by the instance for its type, and that instance drops the
+   box's value with the value's own drop. A `moved mutable` parameter is
+   the callee's alone, so `drop` may move the value out of its slot.
+// RUN: piac --emit=mlir %s | FileCheck %s
+*)
+
+let box = let (t : type) (r : region) => type { slot : borrowed(r) mutable [t] }
+
+let drop (t : type) (r : region) (b : moved mutable box t r) : unit = (let v = b.slot.[0] in ())
+
+let file = type { fd : u8 }
+let closed (fd : u8) : unit = ()
+let drop (f : moved file) : unit = match f with | { fd } -> closed fd
+
+let files (s : borrowed mutable [file]) : unit =
+  let b : box file = { slot = s } in
+  ()
+
+let words (s : borrowed mutable [u16]) : unit =
+  let b : box u16 = { slot = s } in
+  ()
+
+(* A box given away is not dropped here. *)
+let keep (r : region) (b : moved box u16 r) : unit = ()
+let given (s : borrowed mutable [u16]) : unit =
+  let b : box u16 = { slot = s } in
+  keep b
+
+(*
+// CHECK-LABEL: func.func @files(
+// CHECK: call @"drop<file>"(
+// CHECK-LABEL: func.func @words(
+// CHECK: call @"drop<u16>"(
+// CHECK-LABEL: func.func @given(
+// CHECK-NOT: call @"drop<u16>"(
+// CHECK: return
+// CHECK-LABEL: func.func private @"drop<file>"(
+// CHECK-NOT: call @"drop<file>"(
+// CHECK: call @"drop(file)"(
+// CHECK: return
+// CHECK-LABEL: func.func private @"drop<u16>"(
+// CHECK-NOT: call @
+// CHECK: return
+*)
