@@ -173,14 +173,16 @@ int main(int argc, char **argv) {
   free(rain), free(pend), free(cnt), free(first), free(next), free(last);
   free(owner);
   uint64_t waves = n > 0;
-  for (uint64_t q = 1; q < n; ++q) waves += fill[order[q]] != fill[order[q - 1]];
+  for (uint64_t q = 1; q < n; ++q)
+    waves += fill[order[q]] != fill[order[q - 1]];
   uint32_t *b0 = page_alloc(n * 4), *bc = page_alloc(n * 4),
            *fc = page_alloc(n * 4), *bg = page_alloc(n * 4),
            *fg = page_alloc(n * 4), *nb = page_alloc(n * 4),
            *no = page_alloc(n * 4);
   uint64_t *seen = page_alloc(n * 8), *gath = page_alloc(n * 8);
   uint64_t sent[1] = {0};
-  for (uint64_t i = 0; i < n; ++i) bc[i] = bg[i] = seed;
+  for (uint64_t i = 0; i < n; ++i)
+    bc[i] = bg[i] = seed;
   uint64_t gone_c = 0, gone_g = 0;
   double q0 = seconds();
   for (uint32_t s = 0; s < steps; ++s) {
@@ -196,7 +198,8 @@ int main(int argc, char **argv) {
     int32_t r = pull_step_gpu(fill, n, down, n, acc, n, order, n, pos, n, w, b0,
                               n, bg, n, fg, n, seen, n, gath, n, nb, n, no, n,
                               gone_g, sent, 1);
-    if (s == 0) first_step = ms(g0, seconds());
+    if (s == 0)
+      first_step = ms(g0, seconds());
     if (r != 0) {
       printf("pull: the GPU run failed: %s\n", error_name(r));
       return 1;
@@ -205,7 +208,8 @@ int main(int argc, char **argv) {
   }
   double q2 = seconds();
   differ = 0;
-  for (uint64_t i = 0; i < n; ++i) differ += bc[i] != bg[i] || fc[i] != fg[i];
+  for (uint64_t i = 0; i < n; ++i)
+    differ += bc[i] != bg[i] || fc[i] != fg[i];
   printf("pull: %u steps of %llu waves; CPU %.1f ms a step, GPU %.1f ms a "
          "step (first step %.1f ms); %llu out on both: %s; %llu cells "
          "differ\n",
