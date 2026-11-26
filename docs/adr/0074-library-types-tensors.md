@@ -1,4 +1,4 @@
-# 73. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and `Pia.Tensor` over MLIR `tensor` is the proof point
+# 74. Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and `Pia.Tensor` over MLIR `tensor` is the proof point
 
 Date: 2026-11-27
 
@@ -126,3 +126,7 @@ Each step is one PR and useful on its own.
 
 1. **Shapes in types, or shapes as values?** This ADR puts the shape in the type (section 2). The alternative is shapes as fields with contracts, which works today but makes every client prove shape agreement and index bounds, and costs more to prove (Prototype).
 2. **Destination-passing, or ops that allocate?** This ADR has every op take a `moved` destination (section 4). The alternative is ops that take an allocator and return a result or an error, which reads more like NumPy and puts an allocation and an error path on every op.
+
+## Answers to the open questions
+
+- **Destination-passing (question 2), Dean, 2026-11-27:** every op takes a `moved` destination and returns it, as section 4 says. Only `Pia.Tensor.empty` allocates.
