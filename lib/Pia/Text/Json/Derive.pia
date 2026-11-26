@@ -22,6 +22,8 @@ interface Derive = sig
   let meta json_variant : list
   (** A distinct type's codec: the value it wraps (ADR 0064). *)
   let meta json_distinct : list
+  (** Whether a type is a distinct type: one field the expander named. *)
+  let meta is_distinct : bool
   (** The errors reading t can raise, exactly: `<t>_json_error`. *)
   let meta json_errors : type
   (** Which type a call of read_json is for: it carries no value. *)
@@ -665,7 +667,6 @@ let meta json_distinct (t : type_decl) : list =
    fully initialised. Names it binds end in `#field`, which no source can
    write. *)
 let meta json_record (t : type_decl) : list =
-  if is_distinct t then json_distinct t else
   let tn = name t in
   (* The modules' functions by their full paths, spliced as names. *)
   let json_write = let (f) => concat "Pia.Text.Json.Write." f in
@@ -1006,13 +1007,15 @@ let meta json_record (t : type_decl) : list =
   concat (concat (map member_writer idx) [ writer_fn ])
     (concat [ error_type; read_type; key_fn ] (concat (fold (let (acc) (i) => concat acc (field_reader i)) [] idx) [ reader_fn ]))
 
-(* @derive(json): json_record for a record, json_variant for a variant,
+(* @derive(json): json_record for a record, json_distinct for a distinct
+   type (ADR 0064), json_variant for a variant,
    and for either, the instance of Json: `read_json`, which reads the
    whole text, so that nothing but whitespace follows the value. *)
 let meta derive_json (t : type_decl) : list =
   let tn = name t in
   let codec =
     if eq (kind (nth (children (nth (children t) 3)) 0)) "Variants" then json_variant t
+    else if is_distinct t then json_distinct t
     else json_record t in
   let rfn = concat "read_json_" tn in
   let esyn = concat "Syntax_" tn in
