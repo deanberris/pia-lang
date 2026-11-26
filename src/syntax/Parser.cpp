@@ -1439,7 +1439,8 @@ class Parser {
         n->add(binary(20));
         // A `for` takes its attributes after its step, such as the
         // `@place(gpu)` of a placed sequence (ADR 0068, section 9), and
-        // keeps them last, so its other children stay where they were.
+        // keeps them last, only when there are some, so its other children
+        // stay where they were.
         NodePtr forAttrs;
         if (spread) {
           n->add(attrs());
@@ -1454,7 +1455,7 @@ class Parser {
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
-        if (forAttrs)
+        if (forAttrs && !forAttrs->kids.empty())
           n->add(std::move(forAttrs));
         return n;
       }
