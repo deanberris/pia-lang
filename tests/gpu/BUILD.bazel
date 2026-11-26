@@ -85,3 +85,33 @@ cc_test(
         "//src/runtime/metal",
     ],
 )
+
+# A spread placed on the GPU (ADR 0068, step 3): piac outlines the body,
+# compiles it with Xcode's Metal toolchain (so outside the sandbox) and
+# embeds it; placed_test.c runs it against the same spread on the CPU.
+pia_library(
+    name = "placed",
+    src = "placed.pia",
+    tags = [
+        "no-sandbox",
+        "requires-metal",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+)
+
+cc_test(
+    name = "placed_test",
+    srcs = [
+        "placed_test.c",
+        ":placed",
+    ],
+    tags = [
+        "requires-gpu",
+        "requires-metal",
+    ],
+    target_compatible_with = ["@platforms//os:macos"],
+    deps = [
+        "//src/runtime/metal",
+        "@llvm-project//mlir:mlir_async_runtime",
+    ],
+)

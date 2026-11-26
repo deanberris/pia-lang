@@ -1,7 +1,7 @@
 (* Importers of Pia.Mem instantiate its allocator, box and vec at their own
    types, and prove those instances (ADR 0043): a vector of u16 grown
-   past its first capacity, a box of u32 emptied and filled again, and a
-   bump that runs out.
+   past its first capacity, a box of u32 emptied and filled again, a box
+   of a type with its own drop, and a bump that runs out.
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Box.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Vec.pia
@@ -39,6 +39,21 @@ let boxes (mem : borrowed mutable [u32]) : result u32 Pia.Mem.Alloc.oom =
   Pia.Mem.Box.fill b 0;
   Ok (Pia.Mem.Box.get b)
 
+(* A box of a type with a drop of this module: `remove` drops the value
+   in place, `free` ends the empty box, and `c` is dropped, value and
+   all, at the end of its scope (ADR 0046, step 1). *)
+let conn = type { fd : u8 }
+let closed (fd : u8) : unit = ()
+let drop (c : moved conn) : unit = match c with | { fd } -> closed fd
+
+let conns (mem : borrowed mutable [conn]) : result unit Pia.Mem.Alloc.oom =
+  let m : mutable Pia.Mem.Alloc.bump conn = { mem = mem; used = 0 } in
+  let b : mutable Pia.Mem.Box.box conn = Pia.Mem.Box.make<conn> m { fd = 3 }? in
+  Pia.Mem.Box.remove b;
+  Pia.Mem.Box.free b;
+  let c : Pia.Mem.Box.box conn = Pia.Mem.Box.make<conn> m { fd = 4 }? in
+  Ok ()
+
 (* A bump over nothing has no room, so its first allocation fails. *)
 let empty (mem : borrowed mutable [u8]) : bool =
   let m : mutable Pia.Mem.Alloc.bump u8 = { mem = mem.[0 .. 0]; used = 0 } in
@@ -48,5 +63,5 @@ let empty (mem : borrowed mutable [u8]) : bool =
 
 (*
 // CHECK-NOT: failed
-// CHECK: 71 proved, 0 failed, 0 skipped
+// CHECK: 89 proved, 0 failed, 0 skipped
 *)

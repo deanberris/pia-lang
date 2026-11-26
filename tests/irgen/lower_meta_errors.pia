@@ -1,0 +1,24 @@
+(* What a lowering computed by a metaprogram may get wrong (ADR 0065,
+   step 2): the metaprogram fails, or returns something other than a
+   string. `@lower` of a name that is not a `let meta` is still the
+   one-string error of tests/irgen/lower_errors.pia.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let meta refuse (n : int) : string =
+  if n > 4 then fail "only up to 4 elements" else "linalg.fill"
+
+let meta quoted (v : syntax) : syntax = `( $v )
+
+(* CHECK: lower_meta_errors.pia:[[@LINE+3]]:3: error: the metaprogram 'refuse' failed: only up to 4 elements
+*)
+let fill8 (a : out mutable [u8; 8]) (v : u8) : unit
+  @lower(refuse 8)
+= for i in 0 .. 8 do a.[i] <- v done
+
+(* CHECK: lower_meta_errors.pia:[[@LINE+3]]:3: error: @lower(quoted ...) must compute a string of MLIR, but the metaprogram 'quoted' returned syntax
+*)
+let fill4 (a : out mutable [u8; 4]) (v : u8) : unit
+  @lower(quoted v)
+= for i in 0 .. 4 do a.[i] <- v done
