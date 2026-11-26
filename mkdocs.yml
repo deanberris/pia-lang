@@ -179,3 +179,4 @@ nav:
       - adr/0068-gpu-compute-through-spirv-and-metal.md
       - adr/0069-pure-and-impure-functions.md
       - adr/0070-raw-binary-embedding.md
+      - adr/0073-prover-identity-abi-version-and-advisories.md
