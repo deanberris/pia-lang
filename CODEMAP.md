@@ -125,6 +125,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/codegen/Lowerings.{h,cpp}` puts each `@lower` function's MLIR in place of its body after `lowerToCore`, and adds the passes that take `linalg` to loops (ADR 0065).
 - `src/codegen/SliceBuffers.{h,cpp}` splits each buffer of slices into a buffer of addresses and one of lengths before lowering (ADR 0048, step 3).
 - `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain and embeds it in a `cc_library`. `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
+- `src/runtime/metal/metal_shim.{h,m}` is the Metal host shim (ADR 0068, step 2), Objective-C with ARC: devices, shared buffers, libraries from a `.metallib`'s bytes, kernels by name, and a synchronous dispatch, all as integer handles. `lib/Pia/Gpu.pia` is `Pia.Gpu`, its trusted externs and the `@linear` `device`, `buffer t` and `library` over them, with `Gpu.error`. `tests/gpu/gpu_add.pia` and `tests/gpu/dispatch_test.c` run the step 1 kernel on the GPU through both.
 - `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
 
 ### src/repl, src/lsp: tools on top of the pipeline
@@ -144,7 +145,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
-- `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it.
+- `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` (every corpus file) make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it. CI runs it in three Linux shards (`--shard`, `--passes`); `--write-baseline --merge` folds their `--out` files into the baseline.
 - `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
