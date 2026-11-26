@@ -87,7 +87,7 @@ search.pia:12:26: failed: '+' does not overflow i32
   counterexample: len xs = 2147483647, key = 0, result = 2147483648
 ...
 search.pia:18:39: failed: '+' does not overflow i32
-  counterexample: len xs = 2147483647, key = 2131628096, result = 2147483648
+  counterexample: len xs = 2147483647, key = 264, result = 2147483648
 ...
 13 proved, 2 failed, 0 skipped
 ```
@@ -133,7 +133,7 @@ let search (xs : [i32]) (key : i32) : usize =
 $ piac --verify search_usize.pia
 ...
 search_usize.pia:9:28: failed: '+' does not overflow usize
-  counterexample: len xs = 18446744073709420544, key = 0, result = 18455470898401229053
+  counterexample: len xs = 18446744073709543424, key = 0, result = 32286305728651853941
 ...
 7 proved, 1 failed, 0 skipped
 ```

@@ -123,7 +123,7 @@ $ pia repl < tail.pia
 [1]:2:46: failed: '-' does not overflow usize
   counterexample: len src = 1, len dst = 0, k = 3, result = -2
 [1]:2:22: failed: the index is within bounds
-  counterexample: len src = 18446744073709551615, len dst = 0, k = 18446742974197923840, index = 18446742974197923839, length = 0
+  counterexample: len src = 18446708889337462784, len dst = 0, k = 18446603336221196287, index = 18446603336221196286, length = 0
 [1]: error: 2 obligations failed; nothing was committed
 [2]:3:46: failed: '-' does not overflow usize
   counterexample: len src = 0, len dst = 18446744073709486078, k = 256, result = -256
