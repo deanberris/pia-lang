@@ -1,0 +1,272 @@
+(* Pia.Text.Json.Shape: what @derive(json) builds a type's conformance
+   on (ADR 0045, section 6, step 7). A document conforms to a type when
+   it has the type's shape, and then reads as a value of it with no
+   failure path. These are the pieces for each kind of field, proved
+   once here, so a derived type's conforms, check and from_dom only
+   combine them.
+
+   - `key_is s sp name`: the key's span is the name in quotes, byte for
+     byte. A field's name is printable ASCII with no quote or backslash,
+     so a key that matches it has no escapes.
+   - `int_in s v lo hi`: v is a number with only digits after an optional
+     minus, whose value is from lo to hi. A fraction or an exponent is
+     out of every integer type's range, as for the streaming reader.
+     `int_value` is that value, and `read_int` reads it, or says the
+     number does not conform, from the same digit loop.
+   - `is_bool v` and `bool_value v`.
+   - `find s items name`: the member called name, or that there is none.
+
+   The digits are stated by `digits_fit` and `digits_int`, which follow
+   the reader's loop digit by digit, so the loop's invariant is the spec
+   itself, and nothing is proved by induction. *)
+module Pia.Text.Json.Shape : Shapes
+
+import Pia.Text.Json.Spec.Grammar as Spec
+import Pia.Text.Json.Lex.Lexer
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document as Dom
+
+interface Shapes = sig
+  (** A document that does not have the shape asked for. *)
+  let nonconforming = type | Nonconforming
+  (** The span sp of s is name, in quotes. *)
+  let spec key_is : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool
+  (** The digits of s from k to j, after a value of acc, stay at most max. *)
+  let spec digits_fit : (acc : u64) -> (s : [u8]) -> (k : usize) -> (j : usize) -> (max : u64) -> bool @opaque
+  (** The value of the digits of s from k to j, after a value of acc. *)
+  let spec digits_int : (acc : u64) -> (s : [u8]) -> (k : usize) -> (j : usize) -> (max : u64) -> u64 @opaque
+  (** v is an integer from lo to hi, digits after an optional minus. *)
+  let spec int_in : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> bool
+  (** The integer v is, when int_in holds. *)
+  let spec int_value : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> i64
+  (** v is true or false. *)
+  let spec is_bool : (v : Pia.Text.Json.Dom.json) -> bool
+  (** The integer v is, from lo to hi, or that it is not one. *)
+  let read_int : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> result i64 nonconforming
+    requires lo <= hi
+    ensures (match result with
+      | Ok x -> int_in s v lo hi && x = int_value s v lo hi
+      | Err _ -> int_in s v lo hi = false)
+  (** The bool v is. *)
+  let bool_value : (v : Pia.Text.Json.Dom.json) -> bool
+    requires is_bool v
+    ensures result = (v = Pia.Text.Json.Dom.Bool true)
+  (** Whether v is a bool. *)
+  let check_bool : (v : Pia.Text.Json.Dom.json) -> bool
+    ensures result = is_bool v
+  (** The position of the member called name, or that none is. *)
+  let find : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (name : [u8]) -> result usize nonconforming
+    ensures (match result with
+      | Ok i -> i < len items && key_is s items.[i].key name
+      | Err _ -> forall (i in 0 .. len items). key_is s items.[i].key name = false)
+end
+
+let nonconforming = type | Nonconforming
+
+let spec key_is (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool =
+  if sp.start < sp.stop && sp.stop <= len s then
+    (if len name < sp.stop - sp.start then
+       sp.stop - sp.start - len name = 2
+       && s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22
+       && (forall (k in 0 .. len name). s.[sp.start + 1 + k] = name.[k])
+     else false)
+  else false
+
+(* Both are opaque (ADR 0063): `step` unfolds them one digit at a time,
+   which is all the digit loop's invariant needs. *)
+let rec spec digits_fit (acc : u64) (s : [u8]) (k : usize) (j : usize) (max : u64) : bool @opaque
+  decreases j - k
+= if k < j && j <= len s then
+    (if 0x30 <= s.[k] && s.[k] <= 0x39 then
+       (let d : u64 = s.[k] - 0x30 in
+        if acc < max / 10 || (acc = max / 10 && d <= max % 10) then digits_fit (acc * 10 + d) s (k + 1) j max
+        else false)
+     else false)
+  else true
+
+let rec spec digits_int (acc : u64) (s : [u8]) (k : usize) (j : usize) (max : u64) : u64 @opaque
+  decreases j - k
+= if k < j && j <= len s then
+    (if 0x30 <= s.[k] && s.[k] <= 0x39 then
+       (let d : u64 = s.[k] - 0x30 in
+        if acc < max / 10 || (acc = max / 10 && d <= max % 10) then digits_int (acc * 10 + d) s (k + 1) j max
+        else acc)
+     else acc)
+  else acc
+
+(* One digit more of each: the digit at k, which keeps the value within max. *)
+let lemma advance (acc : u64) (s : [u8]) (k : usize) (j : usize) (max : u64) : unit
+  requires k < j && j <= len s && 0x30 <= s.[k] && s.[k] <= 0x39
+  requires acc < max / 10 || (acc = max / 10 && s.[k] - 0x30 <= max % 10)
+  ensures digits_fit acc s k j max = digits_fit (acc * 10 + (s.[k] - 0x30)) s (k + 1) j max
+  ensures digits_int acc s k j max = digits_int (acc * 10 + (s.[k] - 0x30)) s (k + 1) j max
+  with digits_fit, digits_int
+= ()
+
+(* A byte that is not a digit, or a digit that passes max, fails. *)
+let lemma fails (acc : u64) (s : [u8]) (k : usize) (j : usize) (max : u64) : unit
+  requires k < j && j <= len s
+  requires s.[k] < 0x30 || s.[k] > 0x39
+           || (acc < max / 10 || (acc = max / 10 && s.[k] - 0x30 <= max % 10)) = false
+  ensures digits_fit acc s k j max = false
+  with digits_fit
+= ()
+
+(* A digit more stays within max = q * 10 + r when acc is below q, or is
+   q and the digit at most r (as Pia.Text.Json.Read has it). *)
+let lemma fits (acc : u64) (d : u64) (max : u64) : unit
+  requires d <= 9 && (acc < max / 10 || (acc = max / 10 && d <= max % 10))
+  ensures acc * 10 + d <= max
+= let q = max / 10 in
+  let r = max % 10 in
+  assert max = q * 10 + r
+
+(* The end of each. *)
+let lemma stop (acc : u64) (s : [u8]) (k : usize) (max : u64) : unit
+  ensures digits_fit acc s k k max && digits_int acc s k k max = acc
+  with digits_fit, digits_int
+= ()
+
+(* Where an integer's digits start: after its minus, if it has one. *)
+let spec digits_from (s : [u8]) (sp : Pia.Text.Json.Dom.span) : usize =
+  if Pia.Text.Json.Spec.minus_at s sp.start then sp.start + 1 else sp.start
+
+(* The magnitude a negative integer from lo may have. *)
+let spec neg_limit (lo : i64) : u64 = if lo < 0 then 0 - lo else 0
+
+let spec int_in (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : bool =
+  match v with
+  | Num sp ->
+    if sp.start < sp.stop && sp.stop <= len s then
+      (if s.[sp.start] = 0x2D then
+         (if lo <= 0 && sp.start + 1 < sp.stop then
+            digits_fit 0 s (sp.start + 1) sp.stop (neg_limit lo)
+          else false)
+       else if 0 <= hi then digits_fit 0 s sp.start sp.stop hi
+       else false)
+    else false
+  | _ -> false
+
+let spec int_value (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : i64 =
+  match v with
+  | Num sp ->
+    if sp.start < sp.stop && sp.stop <= len s then
+      (if s.[sp.start] = 0x2D then
+         (let m = digits_int 0 s (sp.start + 1) sp.stop (neg_limit lo) in
+          if m <= neg_limit lo && lo <= 0 then 0 - m else 0)
+       else if 0 <= hi then
+         (let m = digits_int 0 s sp.start sp.stop hi in
+          if m <= hi then m else 0)
+       else 0)
+    else 0
+  | _ -> 0
+
+let spec is_bool (v : Pia.Text.Json.Dom.json) : bool =
+  match v with
+  | Bool _ -> true
+  | _ -> false
+
+(* The digits from i to j, each a digit and the value at most max, or Err
+   at the first that is not or that would pass max. *)
+let digits (s : [u8]) (i : usize) (j : usize) (max : u64) : result u64 nonconforming
+  requires i <= j && j <= len s
+  ensures (match result with
+    | Ok m -> m <= max && digits_fit 0 s i j max && m = digits_int 0 s i j max
+    | Err _ -> digits_fit 0 s i j max = false)
+= let acc : mutable u64 = 0 in
+  let k : mutable usize = i in
+  let bad : mutable bool = false in
+  while k < j && bad = false
+    invariant i <= k && k <= j && acc <= max
+    invariant bad = false ==> digits_fit acc s k j max = digits_fit 0 s i j max
+    invariant bad = false ==> digits_int acc s k j max = digits_int 0 s i j max
+    invariant bad ==> digits_fit 0 s i j max = false
+    decreases j - k + (if bad then 0 else 1)
+  do
+    let b = s.[k] in
+    if b < 0x30 || b > 0x39 then (fails acc s k j max; bad <- true)
+    else
+      (let d : u64 = b - 0x30 in
+       if (acc < max / 10 || (acc = max / 10 && d <= max % 10)) = false then
+         (fails acc s k j max; bad <- true)
+       else
+         (fits acc d max;
+          advance acc s k j max;
+          acc <- acc * 10 + d;
+          k <- k + 1))
+  done;
+  stop acc s k max;
+  if bad then Err Nonconforming else Ok acc
+
+let read_int (s : [u8]) (v : Pia.Text.Json.Dom.json) (lo : i64) (hi : i64) : result i64 nonconforming
+  requires lo <= hi
+  ensures (match result with
+    | Ok x -> int_in s v lo hi && x = int_value s v lo hi
+    | Err _ -> int_in s v lo hi = false)
+= match v with
+  | Num sp ->
+    if sp.start < sp.stop && sp.stop <= len s then
+      (if s.[sp.start] = 0x2D then
+         (if lo > 0 || sp.start + 1 >= sp.stop then Err Nonconforming
+          else
+            (let limit : u64 = 0 - lo in
+             assert limit = neg_limit lo;
+             let m = digits s (sp.start + 1) sp.stop limit? in
+             let neg : i64 = 0 - m in
+             assert int_in s v lo hi;
+             assert neg = int_value s v lo hi;
+             Ok neg))
+       else if hi < 0 then Err Nonconforming
+       else
+         (let m = digits s sp.start sp.stop hi? in
+          assert int_in s v lo hi;
+          assert m = int_value s v lo hi;
+          Ok m))
+    else Err Nonconforming
+  | _ -> Err Nonconforming
+
+let bool_value (v : Pia.Text.Json.Dom.json) : bool
+  requires is_bool v
+  ensures result = (v = Pia.Text.Json.Dom.Bool true)
+= match v with
+  | Bool b -> b
+  | _ -> false
+
+let check_bool (v : Pia.Text.Json.Dom.json) : bool
+  ensures result = is_bool v
+= match v with
+  | Bool _ -> true
+  | _ -> false
+
+(* Whether the key's span is name in quotes, compared byte by byte. *)
+let key_matches (s : [u8]) (sp : Pia.Text.Json.Dom.span) (name : [u8]) : bool
+  ensures result = key_is s sp name
+= if sp.start < sp.stop && sp.stop <= len s && len name < sp.stop - sp.start
+     && sp.stop - sp.start - len name = 2 then
+    (if s.[sp.start] = 0x22 && s.[sp.stop - 1] = 0x22 then
+       (let same : mutable bool = true in
+        for k in 0 .. len name
+          invariant same = (forall (q in 0 .. k). s.[sp.start + 1 + q] = name.[q])
+        do
+          if s.[sp.start + 1 + k] <> name.[k] then same <- false
+        done;
+        same)
+     else false)
+  else false
+
+let find (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) : result usize nonconforming
+  ensures (match result with
+    | Ok i -> i < len items && key_is s items.[i].key name
+    | Err _ -> forall (i in 0 .. len items). key_is s items.[i].key name = false)
+= let at : mutable usize = 0 in
+  let found : mutable bool = false in
+  while at < len items && found = false
+    invariant at <= len items
+    invariant found ==> (at < len items && key_is s items.[at].key name)
+    invariant found = false ==> (forall (i in 0 .. at). key_is s items.[i].key name = false)
+    decreases len items - at + (if found then 0 else 1)
+  do
+    if key_matches s items.[at].key name then found <- true
+    else at <- at + 1
+  done;
+  if found then Ok at else Err Nonconforming
