@@ -69,7 +69,7 @@ let dot (xs : [f32]) (ys : [f32]) : f32
   s
 
 (* A float function is a value: two calls on the same argument agree.
-// CHECK: floats.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
 let half (x : f64) : f64 = x * 0.5
 
