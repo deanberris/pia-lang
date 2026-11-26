@@ -35,6 +35,8 @@ interface Shapes = sig
   let spec digits_fit : (acc : u64) -> (s : [u8]) -> (k : usize) -> (j : usize) -> (max : u64) -> bool @opaque
   (** The value of the digits of s from k to j, after a value of acc. *)
   let spec digits_int : (acc : u64) -> (s : [u8]) -> (k : usize) -> (j : usize) -> (max : u64) -> u64 @opaque
+  (** The magnitude a negative integer from lo may have. *)
+  let spec neg_limit : (lo : i64) -> u64
   (** v is an integer from lo to hi, digits after an optional minus. *)
   let spec int_in : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> bool
   (** The integer v is, when int_in holds. *)
@@ -54,6 +56,11 @@ interface Shapes = sig
   (** Whether v is a bool. *)
   let check_bool : (v : Pia.Text.Json.Dom.json) -> bool
     ensures result = is_bool v
+  (** No member but the one at i is called name. *)
+  let only : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (name : [u8]) -> (i : usize) -> bool
+    ensures result = (forall (j in 0 .. len items). key_is s items.[j].key name ==> j = i)
+  (** @derive(json_dom): a record's conforms, check and from_dom. *)
+  let meta derive_json_dom : list
   (** The position of the member called name, or that none is. *)
   let find : (s : [u8]) -> (items : [Pia.Text.Json.Dom.member]) -> (name : [u8]) -> result usize nonconforming
     ensures (match result with
@@ -126,10 +133,6 @@ let lemma stop (acc : u64) (s : [u8]) (k : usize) (max : u64) : unit
   ensures digits_fit acc s k k max && digits_int acc s k k max = acc
   with digits_fit, digits_int
 = ()
-
-(* Where an integer's digits start: after its minus, if it has one. *)
-let spec digits_from (s : [u8]) (sp : Pia.Text.Json.Dom.span) : usize =
-  if Pia.Text.Json.Spec.minus_at s sp.start then sp.start + 1 else sp.start
 
 (* The magnitude a negative integer from lo may have. *)
 let spec neg_limit (lo : i64) : u64 = if lo < 0 then 0 - lo else 0
@@ -270,3 +273,185 @@ let find (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) : result 
     else at <- at + 1
   done;
   if found then Ok at else Err Nonconforming
+
+let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usize) : bool
+  ensures result = (forall (j in 0 .. len items). key_is s items.[j].key name ==> j = i)
+= let ok : mutable bool = true in
+  for j in 0 .. len items
+    invariant ok = (forall (q in 0 .. j). key_is s items.[q].key name ==> q = i)
+  do
+    if j <> i && key_matches s items.[j].key name then ok <- false
+  done;
+  ok
+
+(* @derive(json_dom) (ADR 0045, section 6, step 7): for a record of
+   integers, range types and bools, with @derive(json)'s member names
+   (@json(name = "...") or the field's own):
+
+   - `conforms_json_<t> s v`, a spec function: v is an object with
+     exactly one member for each field, each called its name, each value
+     a number in its field's range or a bool as its field is, and no
+     other member.
+   - `check_json_<t> s v`, which decides it.
+   - `from_dom_json_<t> s v`, which, given that v conforms, is the
+     record it denotes, with no failure path: each field is its member's
+     value.
+
+   A program that uses it imports Pia.Text.Json.Dom's and Shape's
+   interfaces, writes @derive(json, json_dom) when its fields have
+   @json names, and Spec's, Lex's and Pia.Mem.Alloc's, which theirs name.
+   Not yet: option, array and nested record fields, variants, and
+   to_dom. *)
+let meta derive_json_dom (t : type_decl) : list =
+  let tn = name t in
+  let shape = let (f) => concat "Pia.Text.Json.Shape." f in
+  let fs = fields t in
+  let nf = length fs in
+  let idx = range nf in
+  let key_of = let (f) =>
+    fold (let (acc) (a) =>
+            if eq (nth a 0) "json" then
+              fold (let (acc2) (arg) => if eq (nth arg 0) "name" then nth arg 1 else acc2) acc (nth a 1)
+            else acc)
+         f (field_attrs t f) in
+  let plain = let (k) =>
+    fold (let (ok) (b) => and ok (and (ge b 32) (and (le b 126) (and (ne b 34) (ne b 92))))) (gt (length (bytes k)) 0) (bytes k) in
+  let keys = map (let (f) =>
+      let k = key_of f in
+      if plain k then k
+      else fail (concat "@derive(json_dom): the member name '" (concat k "' needs printable ASCII with no quote or backslash")))
+    fs in
+  let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
+  let bool_field = let (f) =>
+    let ft = field_type t f in if eq (kind ft) "TypeName" then eq (name ft) "bool" else false in
+  let bounds = map (let (f) =>
+      let ft = field_type t f in
+      if bool_field f then [ 0; 0 ]
+      else if or (eq (kind ft) "RangeType")
+                 (and (eq (kind ft) "TypeName") (fold (let (h) (n) => or h (eq n (name ft))) false ints)) then
+        (let b = range_of ft in
+         if gt (nth b 1) 9223372036854775807 then
+           fail (concat "@derive(json_dom): the field '" (concat f "' may be above the largest i64, which a document's conformance cannot state yet"))
+         else b)
+      else fail (concat "@derive(json_dom): the field '" (concat f "' has a type that @derive(json_dom) cannot read yet; it takes integers, range types and bool")))
+    fs in
+  let lo = let (i) => nth (nth bounds i) 0 in
+  let hi = let (i) => nth (nth bounds i) 1 in
+  let kname = let (i) => concat (concat (concat "json_name_" tn) "_") (nth fs i) in
+  (* Each member name as a constant, for the spec and the code alike. *)
+  let key_consts = map (let (i) =>
+      let kn = kname i in
+      let kb = bytes (nth keys i) in
+      let n = length kb in
+      `( let $kn : [u8; $n] = [ $kb ] ))
+    idx in
+  (* Per field: `json_ok_<t>_<f> s items`, a spec function, that
+     exactly one member is called its name and its value conforms;
+     `json_check_<t>_<f>`, which decides it; and `json_value_<t>_<f>`,
+     the field's value given that it holds. Each is one small proof, and
+     the type's own functions only combine them. *)
+  let ok_name = let (i) => concat (concat (concat "json_ok_" tn) "_") (nth fs i) in
+  let check_name = let (i) => concat (concat (concat "json_check_" tn) "_") (nth fs i) in
+  let value_name = let (i) => concat (concat (concat "json_value_" tn) "_") (nth fs i) in
+  let field_fns = let (i) =>
+    let kn = kname i in
+    let okn = ok_name i in
+    let chn = check_name i in
+    let vn = value_name i in
+    let f = nth fs i in
+    let ft = field_type t f in
+    if bool_field f then
+      [ `( let spec $okn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool =
+             exists (json_dom_j in 0 .. len $!items).
+               $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+               && $(shape "is_bool") $!items.[json_dom_j].value
+               && (forall (json_dom_q in 0 .. len $!items).
+                     $(shape "key_is") $!s $!items.[json_dom_q].key $kn ==> json_dom_q = json_dom_j) );
+        `( let $chn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool
+             ensures $!result = $okn $!s $!items
+           = match $(shape "find") $!s $!items $kn with
+             | Err _ -> false
+             | Ok $!i -> $(shape "only") $!s $!items $kn $!i && $(shape "check_bool") $!items.[$!i].value );
+        `( let $vn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool
+             requires $okn $!s $!items
+             ensures forall (json_dom_j in 0 .. len $!items).
+               $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+               ==> $!result = ($!items.[json_dom_j].value = Pia.Text.Json.Dom.Bool true)
+           = match $(shape "find") $!s $!items $kn with
+             | Ok $!i -> $(shape "bool_value") $!items.[$!i].value
+             | Err _ -> false ) ]
+    else
+      (let l = lo i in let h = hi i in
+       [ `( let spec $okn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool =
+              exists (json_dom_j in 0 .. len $!items).
+                $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+                && $(shape "int_in") $!s $!items.[json_dom_j].value $l $h
+                && (forall (json_dom_q in 0 .. len $!items).
+                      $(shape "key_is") $!s $!items.[json_dom_q].key $kn ==> json_dom_q = json_dom_j) );
+         `( let $chn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool
+              ensures $!result = $okn $!s $!items
+             = match $(shape "find") $!s $!items $kn with
+              | Err _ -> false
+              | Ok $!i ->
+                $(shape "only") $!s $!items $kn $!i
+                && (match $(shape "read_int") $!s $!items.[$!i].value $l $h with
+                    | Ok _ -> true
+                    | Err _ -> false) );
+         `( let $vn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : $ft
+              requires $okn $!s $!items
+              ensures forall (json_dom_j in 0 .. len $!items).
+                $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+                ==> $!result = $(shape "int_value") $!s $!items.[json_dom_j].value $l $h
+             = match $(shape "find") $!s $!items $kn with
+              | Ok $!i ->
+                (match $(shape "read_int") $!s $!items.[$!i].value $l $h with
+                 | Ok $!x -> (let $!y : $ft = $!x in $!y)
+                 | Err _ -> (let $!z : $ft = $l in $!z))
+              | Err _ -> (let $!z : $ft = $l in $!z) ) ]) in
+  let all_ok = fold (let (acc) (i) => let okn = ok_name i in `( $acc && $okn $!s $!o.items )) `( len $!o.items = $nf ) idx in
+  let cname = concat "conforms_json_" tn in
+  let conforms_fn =
+    `( let spec $cname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : bool =
+         match $!v with
+         | Obj $!o -> $all_ok
+         | _ -> false ) in
+  let all_check = fold (let (acc) (i) => let chn = check_name i in `( $acc && $chn $!s $!o.items )) `( len $!o.items = $nf ) idx in
+  let chname = concat "check_json_" tn in
+  let check_fn =
+    `( let $chname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : bool
+         ensures $!result = $cname $!s $!v
+       = match $!v with
+         | Obj $!o -> $all_check
+         | _ -> false ) in
+  let lowest = let (i) =>
+    let f = nth fs i in
+    let ft = field_type t f in
+    if bool_field f then `( false ) else (let l = lo i in `( (let $!z : $ft = $l in $!z) )) in
+  let from_member = let (i) => let vn = value_name i in `( $vn $!s $!o.items ) in
+  let record_of = let (val) => (let lit = map (let (i) => [ nth fs i; val i ]) idx in `( { $lit } )) in
+  let field_post = let (i) =>
+    let kn = kname i in
+    let f = nth fs i in
+    if bool_field f then
+      `( (forall (json_dom_j in 0 .. len $!o.items).
+            $(shape "key_is") $!s $!o.items.[json_dom_j].key $kn
+            ==> $!result.$f = ($!o.items.[json_dom_j].value = Pia.Text.Json.Dom.Bool true)) )
+    else
+      (let l = lo i in let h = hi i in
+       `( (forall (json_dom_j in 0 .. len $!o.items).
+             $(shape "key_is") $!s $!o.items.[json_dom_j].key $kn
+             ==> $!result.$f = $(shape "int_value") $!s $!o.items.[json_dom_j].value $l $h) )) in
+  let all_post = fold (let (acc) (i) => `( $acc && $(field_post i) )) `( true ) idx in
+  let fname = concat "from_dom_json_" tn in
+  let from_fn =
+    `( let $fname ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) : $t
+         requires $cname $!s $!v
+         ensures (match $!v with
+           | Obj $!o -> $all_post
+           | _ -> true)
+       = match $!v with
+         | Obj $!o -> $(record_of from_member)
+         | _ -> $(record_of lowest) ) in
+  concat (concat key_consts (fold (let (acc) (i) => concat acc (field_fns i)) [] idx))
+    [ conforms_fn; check_fn; from_fn ]
+
