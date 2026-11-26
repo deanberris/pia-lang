@@ -2,7 +2,7 @@
 
 Date: 2026-11-25
 
-Status: Accepted (2026-11-25, with Dean's answers below). Section 9 and step 4b, a placed sequence, are an amendment Proposed on 2026-11-27.
+Status: Accepted (2026-11-25, with Dean's answers below). Section 9 and step 4b, a placed sequence, are an amendment Accepted on 2026-11-27, with Dean's answer below.
 
 ## Context
 
@@ -98,7 +98,7 @@ A `spread` v0 iteration shares nothing with other iterations, so it cannot use t
 
 Apple's SIMD-group matrix operations (`simdgroup_matrix`) are vendor ops with no SPIR-V equivalent that SPIRV-Cross maps. If used, they are a trusted `@lower` to MSL (ADR 0065, state 3) behind a Pia contract. They are optional.
 
-### 9. A sequence of placed spreads is one command buffer (amendment, Proposed 2026-11-27)
+### 9. A sequence of placed spreads is one command buffer (amendment, Accepted 2026-11-27)
 
 Step 4 put each wave of the sediment pull step on the GPU, one wave per placed `spread`, with the commit pass on the CPU between waves. It is correct, but slow. On the tile N46E008, 3,924 waves a step take 33 to 57 s, against 0.5 s on the CPU. Each wave is one `pia_gpu_run`: it wraps about nine tile-sized buffers, which maps their pages into the GPU's address space, then commits one command buffer and waits. That costs 8 to 15 ms a wave, while the kernel takes only microseconds. A step that waits for the GPU between waves cannot beat the CPU, whatever the shim caches. Dean chose (2026-11-27) to remove the waits: a whole step becomes one command buffer.
 
@@ -122,6 +122,7 @@ The rules, each checked by piac:
 - **Dispatches run in order, each after the one before has finished.** Metal's default serial compute encoder gives this, so the sequence means what the `for` means on the CPU: every spread sees all writes of the spreads before it. A sequence that needs no ordering between two dispatches can say so later, with a concurrent encoder.
 - **The proof does not change.** The `for` is proved as written, with its invariants, and its spreads are proved as in section 1. Placement adds no goal.
 - **Errors are as in section 5.** The sequence evaluates to `result unit gpu_error`. On `Ok`, the `for`'s postcondition holds. On `Err`, every buffer the sequence writes may be partly written, and nothing about it is promised.
+- **After a spread, the cells no iteration of its range owns keep their values.** An iteration writes only cells it owns, so this holds on the CPU and on the GPU, whatever the run's status. Today the verifier forgets every cell of a written buffer after a spread, so a wave's commit could not say that the cells of other waves are unchanged. The verifier gains this frame fact for every spread, placed or not.
 - **A spread in a sequence may own cells through an owner array** (`@owns(buf, owner)`, ADR 0060), not only by identity. On the device an owner is only a proof fact: the kernel writes where the body says. This lifts step 3's rule against `@owns` on the GPU, for spreads in a sequence and on their own. The pull step needs it: the commit writes cell `order.[q]` from slot `q`, and `pos` is its owner array, since `pos.[order.[q]] = q`.
 
 The shim gets one new entry, `pia_gpu_run_sequence`. It takes the kernels, the buffers once, and a table of dispatches, each a kernel, its bounds and its scalars. It wraps each page-aligned buffer once, sets each dispatch's scalars with `setBytes`, and encodes every dispatch into one command buffer. Codegen builds the table on the host stack as the `for` runs, then makes the one call.
@@ -161,6 +162,8 @@ Dean answered on 2026-11-25. Each answer is the proposed option:
 2. ~~Where is MSL compiled?~~ **At build time**, by `xcrun metal` and `metallib`, into a `.metallib` embedded in the object file. No compiler runs or is trusted at run time, and GPU builds need Xcode's Metal toolchain.
 3. ~~The shim's language?~~ **Objective-C with ARC.** It is one small file compiled by clang, with no extra dependency.
 
-## Review question for section 9
+## Answer to the review question for section 9
 
-1. **How is a placed sequence written?** The proposal is `@place(gpu)` on a sequential `for`, so its spreads need no `@place` of their own. The alternative is to keep `@place(gpu)` on each spread and add a new block form, such as `gpu do ... done`, that groups them into one command buffer. That would be a new keyword.
+Dean answered on 2026-11-27:
+
+1. ~~How is a placed sequence written?~~ **`@place(gpu)` on a sequential `for`**, so its spreads need no `@place` of their own, and no new keyword is added. The alternative was a new block form, such as `gpu do ... done`, around spreads that each keep `@place(gpu)`.
