@@ -267,6 +267,21 @@ let pull_step_gpu (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]
      | Gpu_timeout -> 4)
 ```
 
+## How fast it is, so far
+
+Correct, not fast yet. On the whole tile N46E008 (3601 × 3601 cells, 3,924
+waves a step), over three runs of `srtm_gpu`, the GPU step gives the CPU
+step's bed and loads on every cell, and the same mass off the map, but
+takes 33 to 57 s a step against 0.5 s on the CPU. On the 256 × 256 crop
+(2,874 waves) it is 1.1 s against 0.18 s.
+
+The time is in the waves, not the kernel. Each wave is its own run of the
+shim: it wraps about nine tile-sized buffers, which maps their pages into
+the GPU's address space, then commits one command buffer and waits for it,
+about 8 to 15 ms a wave against 0.13 ms on the CPU. The step pays off once
+its waves share one set of wrapped buffers and one command buffer, with the
+commit pass on the GPU too; that is the next step of ADR 0068.
+
 ## What is proved, and what is checked
 
 | Claim | Where |
