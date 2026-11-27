@@ -9,7 +9,7 @@
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Test/Gen.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 // RUN: piac --dump-expanded --iface-path=%t %s | FileCheck --check-prefix=AST %s
-// RUN: not piac --verify --iface-path=%t %S/Inputs/test_gen_spec.pia | FileCheck --check-prefix=SPEC %s
+// RUN: not piac --verify --iface-path=%t %S/Inputs/test_gen_spec.pia | FileCheck --check-prefix=SPEC %S/Inputs/test_gen_spec.pia
 *)
 import Pia.Test.Gen.Gen as G
 
