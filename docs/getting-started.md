@@ -160,9 +160,11 @@ The call is checked against the interface's contract, never against the body of 
 | `piac --emit=mlir f.pia` | print the program in Pia's MLIR dialects |
 | `piac --verify --emit=mlir f.pia` | both, with each proved op marked `pia.proved` |
 | `piac --dump-smt f.pia` | print each SMT query sent to Z3 |
+| `piac --dump-tokens f.pia` | print the token stream |
 | `piac --dump-ast f.pia` | print the syntax tree |
 | `piac --dump-expanded f.pia` | print the syntax tree after metaprograms run |
 | `piac --check f.pia` | parse only |
+| `piac --check --fragment=contracts f.pia` | parse a file of contract clauses alone |
 
 `--target=<triple>` and `--cpu=<name>` choose the machine (`arm64-apple-macosx14.0.0` with `apple-m1`, or `x86_64-unknown-linux-gnu` with `x86-64-v3`; the default is the host), and `-O0` to `-O3` the optimisation level (default `-O2`). `--meta-cycles=N` caps metaprogram expansion (default 32).
 

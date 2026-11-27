@@ -36,6 +36,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | format | `git clang-format origin/main` | CI checks only the lines you changed (`.github/workflows/style.yml`, [docs/style.md](docs/style.md)) |
 | grammar corpus | `python3 tests/grammar/test_grammar.py` | pure Python |
 | docs site | `pip install -r tools/docs/requirements.txt && mkdocs build --strict` | `.github/workflows/docs.yml` |
+| public docs keep up | `python3 tools/docs/check.py` | pure Python, in CI (`.github/workflows/docs-check.yml`) |
 | this map | `python3 tools/codemap/check.py` | pure Python, in CI (`.github/workflows/codemap.yml`) |
 
 **Test format.** Most tests are lit files run by `tests/lit/run_lit.sh`. A `.pia` test keeps its `// RUN:` and `// CHECK:` lines inside a `(* ... *)` comment, because `//` does not start a comment in Pia. `tests/verify/update_expected.py <piac> <test>` rewrites the expected report at the end of a verify test. Run it with a CI-built piac (the `latest` release, or the PR's `bench-piac-linux` artifact) and read the diff before you commit.
@@ -70,7 +71,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
 | a file format (safetensors) | `lib/Pia/Format`, ADR 0067 | `tests/std/safetensors*`; `tools/llm/export.py` converts a llama2.c checkpoint |
 | memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
-| user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel` |
+| user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel`; a feature gets a line in `docs/features.md`, a module in `docs/library.md`; `python3 tools/docs/check.py` lists what is missing |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
 
 **A working example of almost every feature** is in `tests/verify/<feature>.pia`, for example `handlers.pia`, `defer.pia`, `lambda_captures.pia`, `concepts.pia`, `models.pia` and `vec_boxes.pia`. Run `ls tests/verify` and copy from the closest one.
@@ -151,6 +152,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` (every corpus file) make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it. CI runs it in three Linux shards (`--shard`, `--passes`); `--write-baseline --merge` folds their `--out` files into the baseline.
 - `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
+- `tools/docs/check.py` checks the public docs keep up: every lexer keyword, piac and pia flag, attribute in use and lint on some page, every `tests/verify` feature test named (`docs/features.md`), every `lib/Pia` module in `docs/library.md`, pages with examples tested, links out of `docs/` live. `.github/workflows/docs-check.yml` runs it.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
 - `tools/llm/export.py` converts a llama2.c checkpoint (karpathy/tinyllamas) to safetensors with the config in `__metadata__` (ADR 0067). It is not run by the build.
@@ -213,7 +215,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 
 ## 6. Docs and ADRs
 
-User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `comparison.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md`, `basins.pia.md` and `cases/`; `docs/images/` holds images the pages show (`sediment-evolution.gif`, the demo's animation). Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
+User docs (the site, `mkdocs.yml`): `docs/index.md`, `getting-started.md`, `tour.md`, `features.md` (every built feature with its proved example), `library.md` (every `lib/Pia` module), `idioms.md`, `verification.md`, `theories.md`, `repl.md`, `repl-debugging.md`, `agents.md`, `comparison.md`, `status.md`, `demo.md`, `streams.pia.md`, `sediment.pia.md`, `basins.pia.md` and `cases/`; `docs/images/` holds images the pages show (`sediment-evolution.gif`, the demo's animation). Internals: `design.md`, `architecture.md`, `grammar.md`, `irgen.md`, `verifier.md`, `codegen.md`, `meta.md`, `abi.md`, `concurrency.md`, `stdlib.md`, `cpp-std.md`, `init.md` and `style.md`.
 
 ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topic:
 
