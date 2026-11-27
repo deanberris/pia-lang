@@ -1,5 +1,5 @@
 load("//tests/lit:lit.bzl", "lit_tests")
-load("//tools/lean:lean.bzl", "pia_lean_proof")
+load("//tools/lean:lean.bzl", "lean_check_test", "pia_lean_proof")
 
 # Lemmas proved in Lean (ADR 0061). sums_proof runs Lean on Proofs.lean
 # against the statements of sums.pia and writes the receipts that the lit
@@ -31,4 +31,12 @@ lit_tests(
         "//tools/pia-cert",
         "//tools/piac",
     ],
+)
+
+# The verifier's call rule, modelled in Lean: sound for code that runs,
+# sound for erased calls only with the termination goals, modular, and
+# incomplete where a contract is weaker than its body (ADR 0076).
+lean_check_test(
+    name = "call_rule_test",
+    src = "CallRule.lean",
 )

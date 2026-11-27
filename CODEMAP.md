@@ -148,7 +148,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 
 - `tools/piac/piac.cpp` is the compiler driver, where every flag is parsed.
 - `tools/piac/pia.bzl` defines `pia_library` and `pia_binary`. `tools/piac/targets.bzl` defines `PIA_TARGETS` and the flags for each platform.
-- `tools/lean/lean.bzl` defines `pia_lean_proof`, which runs `tools/lean/lean_proof.py`: `piac --emit=lean`, then Lean on the statements and the proofs, then the receipts that `piac --lean-receipt` reads (ADR 0061). The Lean release is pinned in `MODULE.bazel`, and `third_party/lean` picks the one for the machine.
+- `tools/lean/lean.bzl` defines `lean_check_test`, which checks a self-contained Lean file and fails on `sorryAx`, and `pia_lean_proof`, which runs `tools/lean/lean_proof.py`: `piac --emit=lean`, then Lean on the statements and the proofs, then the receipts that `piac --lean-receipt` reads (ADR 0061). The Lean release is pinned in `MODULE.bazel`, and `third_party/lean` picks the one for the machine.
 - `tools/pia/pia.cpp` is the `pia` tool (`pia repl`, `pia mcp`).
 - `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
@@ -216,7 +216,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/dialect` | ODS round trips | |
 | `tests/repl`, `tests/lsp` | end to end over pipes | `tests/repl` runs in shards |
 | `tests/docs` | `doc_examples_test.py`: every doc, case study and skill example | its markers are `<!-- example: -->`, `<!-- expect: fail -->` and `<!-- untested: -->` |
-| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean` |
+| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts, the trust report and certificate lines, `native_decide` only in `@trusted` files; `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`, `native_proof` on `Native.lean`; `call_rule_test` checks `CallRule.lean` |
 | `tests/smoke` | the tools start | |
 | `tests/lit` | `run_lit.sh` and `lit.bzl`, the lit runner | |
 
@@ -231,7 +231,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions), 0066 (int-blasting for nonlinear goals), 0069 (pure and impure functions).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
-- **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation), 0073 (prover identity, ABI version, advisories, migrations).
+- **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation), 0073 (prover identity, ABI version, advisories, migrations), 0076 (transparent exports: importers prove against unfoldable bodies).
 - **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0074 (library types: `Pia.Tensor` over MLIR `tensor`, no new primitive), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories), 0070 (raw binary embedding via `@embed`).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0068 (GPU compute: SPIR-V, SPIRV-Cross, Metal shim, `@place(gpu)`), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime), 0075 (codegen benchmarks against C, C++, Rust and Zig).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point), 0067 (0.1.0: a proved small LLM on the M3).

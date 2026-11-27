@@ -1,0 +1,69 @@
+(* Mutual recursion. A call is taken on its callee's contract, so a
+   cycle of functions that call each other proves its contracts only if
+   the cycle ends: each call within the cycle is a termination goal, as a
+   recursive call is.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+(* Two lemmas that each assume the other. Without measures, nothing shows
+   the cycle ends, so neither proves 'false'. *)
+let lemma a (x : int) : unit
+  ensures false
+= b x
+
+let lemma b (x : int) : unit
+  ensures false
+= a x
+
+(* Measures that go down along every call in the cycle: the calls end. *)
+let is_even (n : usize) : bool
+  decreases n
+= if n = 0 then true else is_odd (n - 1)
+
+let is_odd (n : usize) : bool
+  decreases n
+= if n = 0 then false else is_even (n - 1)
+
+(* Wrong: 'ping' calls 'pong' with the same measure. *)
+let ping (n : usize) : usize
+  decreases n
+= if n = 0 then 0 else pong n
+
+let pong (n : usize) : usize
+  decreases n
+= if n = 0 then 0 else ping (n - 1)
+
+(* A cycle through a contract: 'g' and 'h' are named in a lemma's
+   precondition, which nothing runs. *)
+let g (x : u8) : u8
+  ensures false
+= h x
+
+let h (x : u8) : u8
+  ensures false
+= g x
+
+let lemma l (x : u8) : unit
+  requires g x = 0
+  ensures false
+= ()
+
+(* Expected report, in order.
+// CHECK: mutual_recursion.pia:12:3: skipped: the recursion terminates ['a' and 'b' call each other, and 'a' has no 'decreases' measure]
+// CHECK: mutual_recursion.pia:11:3: proved: the postcondition holds [smt]
+// CHECK: mutual_recursion.pia:16:3: skipped: the recursion terminates ['b' and 'a' call each other, and 'b' has no 'decreases' measure]
+// CHECK: mutual_recursion.pia:15:3: proved: the postcondition holds [smt]
+// CHECK: mutual_recursion.pia:21:37: proved: '-' does not overflow usize [smt]
+// CHECK: mutual_recursion.pia:21:{{[0-9]+}}: proved: the measure of 'is_odd' at the call is below the measure of 'is_even'
+// CHECK: mutual_recursion.pia:25:39: proved: '-' does not overflow usize [smt]
+// CHECK: mutual_recursion.pia:25:{{[0-9]+}}: proved: the measure of 'is_even' at the call is below the measure of 'is_odd'
+// CHECK: mutual_recursion.pia:30:{{[0-9]+}}: failed: the measure of 'pong' at the call is below the measure of 'ping'
+// CHECK: mutual_recursion.pia:34:32: proved: '-' does not overflow usize [smt]
+// CHECK: mutual_recursion.pia:34:{{[0-9]+}}: proved: the measure of 'ping' at the call is below the measure of 'pong'
+// CHECK: mutual_recursion.pia:40:3: skipped: the recursion terminates ['g' and 'h' call each other, and 'g' has no 'decreases' measure]
+// CHECK: mutual_recursion.pia:39:3: proved: the postcondition holds [smt]
+// CHECK: mutual_recursion.pia:44:3: skipped: the recursion terminates ['h' and 'g' call each other, and 'h' has no 'decreases' measure]
+// CHECK: mutual_recursion.pia:43:3: proved: the postcondition holds [smt]
+// CHECK: mutual_recursion.pia:48:3: proved: the postcondition holds [smt]
+// CHECK: 11 proved, 1 failed, 4 skipped
+*)
