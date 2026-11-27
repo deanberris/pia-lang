@@ -31,16 +31,14 @@
 //
 //   trusted native_decide six <hash> six._native.native_decide.ax_1_1
 //
-// Format 3 adds the lemmas proved in Lean (ADR 0061, section 4). They are
+// Format 3 (ADR 0073) holds the lemmas proved in Lean (ADR 0061, section 4),
+// as `proved lean` lines, the spelling ADR 0073 gives them. They are
 // not trusted, since Lean's kernel checked them, but a third status: the
 // lemma, the SHA-256 of its Lean statement and the definitions it uses, the
 // theorem that proves it, the Lean toolchain and the axioms the proof uses,
 // or `-` for none:
 //
 //   proved lean sum_nonneg <hash> Proofs.sum_nonneg <toolchain> propext
-//
-// (ADR 0073 names these lines `proved lean`, and its prover identity lines
-// come with format 4.)
 //
 // piac writes the oldest format that holds what the certificate lists, so
 // objects without Lean facts or trusted items read the same in older tools.

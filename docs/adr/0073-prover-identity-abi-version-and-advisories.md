@@ -29,7 +29,7 @@ The Pia-specific point is that a soundness bug rarely touches every proof. Most 
 
 ### 1. The certificate records the prover
 
-Certificate format 4 adds lines to the text body, after `module` (format 3 is the lemmas proved in Lean, below):
+Certificate format 3 adds lines to the text body, after `module`:
 
 ```text
 module Image.Pixels
@@ -46,12 +46,12 @@ trusted lowering matmul <hash> linalg.matmul
 - `prover` is piac's identity: the release version and, for builds between releases, the number of commits on `main` since the root and the short commit (`0.1.0+512.9f3c2e1a7b04`). The commit count makes builds on `main` totally ordered, so an advisory can name a range. Bazel stamping (`--workspace_status_command`) puts it into `piac` in CI and release builds. An unstamped local build records `piac dev+<commit or "unknown">`, which no advisory range covers and which a deployment policy can refuse (`pia-cert check --require-released`).
 - `solver` names each SMT solver that decided a goal, with its version. Today that is only Z3. The options that change what a proof means (none do today; strategies and rlimits only change whether a proof is found) would be listed here if any ever did.
 - `engines` is the set of proof engines that discharged at least one of the module's goals, from a fixed list in the verifier: `intervals` (interval analysis), `z3` (default solver), `int-blast` ([ADR 0066](0066-int-blasting-for-nonlinear-goals.md)), `presburger` ([ADR 0020](0020-presburger-for-affine-goals.md)), `nlsat` and `float-model` ([ADR 0038](0038-float-kernels-against-real-theories.md)), `uf-div` (division as uninterpreted functions, [verifier.md](../verifier.md)), `theory:<name>` per library theory ([ADR 0036](0036-library-theories.md)), `lemma-cache` (certified instances skipped by importers, [ADR 0043](0043-generic-definitions-proved-once.md)), `proof-cache` (a goal answered by `--proof-cache`), `lean` and `refinement` (ABI baselines). An engine is added to the list in the same PR that adds the engine. The verifier already knows which path proved each goal (`--verify-stats` counts them), so this is a set union, not new analysis.
-- `lean` appears once per Lean toolchain and Mathlib commit used, with the number of receipts. Each Lean-proved item is also a line `proved lean <item> <statement hash> <theorem> <toolchain> <axioms>`, so an advisory against one Lean proof can be precise. These lines are built, as format 3, by step 2 of ADR 0061.
+- `lean` appears once per Lean toolchain and Mathlib commit used, with the number of receipts. Each Lean-proved item is also a line `proved lean <item> <receipt hash>`, so an advisory against one Lean proof can be precise.
 - `abi` is the **Pia ABI version** ([docs/abi.md](../abi.md#abi-evolution)), a single integer in `src/cert/Certificate.h`, and the target triple. It starts at 1. It covers the calling convention, the canonical `.piai` serialisation the interface hashes are taken over, and the certificate format's meaning. The link check refuses two objects with different ABI versions or targets, with the message "built by a piac with Pia ABI 1; this one has ABI 2: rebuild it". The ABI version is also the first thing hashed into every interface hash, as ADR 0024 already says, so a bump changes every witness symbol and dyld refuses a mismatch without the runtime check.
 
 The prover is not hashed into the interface hash or into any witness. Upgrading piac must not, by itself, break every importer: a new compiler with the same ABI version proves the same interface to the same hash. The prover is policy and audit data, which is what ADR 0024 and abi.md already say for "compiler identity".
 
-piac keeps writing the lowest format that holds what it writes (format 1 without trusted items, format 2 with them, format 3 with Lean facts), until format 4 is written by every piac: from then on every object has an `abi` and a `prover` line, so a format 1, 2 or 3 certificate is itself evidence of a build from before this ADR, and `pia-cert check` treats it as `piac unknown` (see 3).
+piac keeps writing the lowest format that holds what it writes (format 1 without trusted items, format 2 with them), until format 3 is written by every piac: from then on every object has an `abi` and a `prover` line, so a format 1 or 2 certificate is itself evidence of a build from before this ADR, and `pia-cert check` treats it as `piac unknown` (see 3).
 
 `piac --version` prints the same identity, the solver versions and the ABI version.
 
@@ -76,7 +76,7 @@ Advisories are data, not code, and are reviewed like any PR. Publishing one is t
 
 ### 3. Checks refuse matching modules
 
-- **`pia-cert check`** (and so every `pia_library` and `pia_binary` validation action, and `piac link`) reads the advisories and refuses an object whose certificate matches one, naming the advisory, the module, the engine and the fix: "Image.Pixels was proved by piac 0.0.0+402, which PIA-2026-0001 says may prove false goals with interval analysis, and its proofs used interval analysis: rebuild it with piac 0.1.0+514 or later". It also refuses a missing or older-format certificate's `piac unknown` once format 4 is the only format piac writes, unless the deployment allows it.
+- **`pia-cert check`** (and so every `pia_library` and `pia_binary` validation action, and `piac link`) reads the advisories and refuses an object whose certificate matches one, naming the advisory, the module, the engine and the fix: "Image.Pixels was proved by piac 0.0.0+402, which PIA-2026-0001 says may prove false goals with interval analysis, and its proofs used interval analysis: rebuild it with piac 0.1.0+514 or later". It also refuses a missing or older-format certificate's `piac unknown` once format 3 is the only format piac writes, unless the deployment allows it.
 - **Importers.** A module proved against an interface whose provider is revoked is not itself unsound (its proof is assume-guarantee), but the program is. The check reports every revoked object, and, transitively, which programs and libraries contain or load one.
 - **Accepting a revocation.** `pia-cert check --accept-advisory=PIA-2026-0001:Image.Pixels` lets that one module through. An accepted advisory becomes a trusted item of the image, listed by `--trust-report` like an `@assume`, so trusting a known-faulty proof is visible and never silent. This follows [ADR 0004](0004-strongest-guarantee-by-default.md): the strongest guarantee is the default, and weakening it is explicit and narrow.
 - **Rebuilding.** Proofs are deterministic under an rlimit ([ADR 0032](0032-parallel-sliced-cached-proving.md)), so the fix for a revoked module is to rebuild it with a fixed piac. In Bazel that happens anyway when piac changes. `pia-cert check --why` lists the modules to rebuild, and an advisory against a library someone else ships says which version to ask for.
@@ -124,7 +124,7 @@ Rules run in two places.
 
 ## Implementation
 
-1. **Identity.** `piac --version`, Bazel stamping in CI and release builds, and the `prover`, `solver` and `abi` lines in a format 4 certificate. The link check refuses mismatched ABI versions and targets. `pia-cert dump` prints the new lines. Skills: `piac-build` (the new lines, `--version`).
+1. **Identity.** `piac --version`, Bazel stamping in CI and release builds, and the `prover`, `solver` and `abi` lines in a format 3 certificate. The link check refuses mismatched ABI versions and targets. `pia-cert dump` prints the new lines. Skills: `piac-build` (the new lines, `--version`).
 2. **Engines and Lean.** The verifier records which engine proved each goal and writes the `engines` line and the Lean receipt lines.
 3. **Advisories.** The TOML format, `security/advisories/`, compiled into `pia-cert`; `pia-cert check` refuses matches, `--accept-advisory`, `--advisories=<dir>`, `--require-released`, `pia-cert advisories`; accepted advisories in `--trust-report`. A test advisory against a fake engine, with objects that match and do not. Skills: `piac-build` and `piac-verify` (the flags), and a page on the site.
 4. **Proof cache.** Refuse cache entries from a solver version an advisory revokes.
