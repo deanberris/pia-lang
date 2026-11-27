@@ -68,12 +68,14 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 | Rule | Builds | Notes |
 | --- | --- | --- |
 | `pia_object(name, src)` | `<name>.o` from one file with no imports | put it in a `cc_library`'s `srcs` to call it from C; `opt_level = 3` passes `-O3` (piac's default is `-O2`) |
-| `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link |
+| `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link, and writes the goal report of its proof as `<name>.goals` (output group `report`) |
 | `pia_binary(name, src, deps)` | a program whose `main` is in `src` | a `pia_library` plus a `cc_binary` |
 
 `load("//tools/lean:lean.bzl", "pia_lean_proof")`: `pia_lean_proof(name, src, proofs)` checks the Lean proofs in `proofs` of the lemmas of `src` proved in Lean and writes `<name>.receipt`, for `piac --lean-receipt=` (ADR 0061, the `pia-lean` skill).
 
 All three take `embeds = [...]` (binary assets available to `@embed(file = "...")`, ADR 0070), `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
+
+`piac --emit=obj --report=f.goals -o f.o f.pia` also writes the goal report, exactly as `--verify` prints it, to `f.goals` (it works with `--verify` and the other emit modes too). `pia_library` passes it, so a test of a library module's goals FileChecks `<name>.goals` from the build instead of proving the module again: put the `pia_library` targets in a `filegroup` with `output_group = "report"` and add it to the test's `data`, as `tests/std/BUILD.bazel` does.
 
 ## Raw binary embedding
 

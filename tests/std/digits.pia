@@ -1,7 +1,7 @@
 (* Pia.Core.Digits (ADR 0040): the lemma library for digit strings, which
    its interface exports as lemmas (#305), with the spec functions they
    are about.
-// RUN: piac --verify %S/../../lib/Pia/Core/Digits.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/digits.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Digits.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Digits.Digits.piai
 *)

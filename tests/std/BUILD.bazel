@@ -4,6 +4,69 @@ load("//tests/lit:lit.bzl", "lit_tests")
 load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
 load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
+# The goal reports of the library modules, written by the build that
+# proved them (pia_library's `report` output group, `<name>.goals`). A
+# module's lit test checks its report, `%S/../../lib/.../<name>.goals`,
+# rather than proving the module a second time (#507).
+filegroup(
+    name = "library_goals",
+    srcs = [
+        "//lib/Pia/Compress/Inflate:spec",
+        "//lib/Pia/Compress:huffman",
+        "//lib/Pia/Compress:inflate",
+        "//lib/Pia/Compress:zlib",
+        "//lib/Pia/Core/Algo:binary_search",
+        "//lib/Pia/Core/Algo:heap",
+        "//lib/Pia/Core/Algo:merge",
+        "//lib/Pia/Core/Algo:modify",
+        "//lib/Pia/Core/Algo:numeric",
+        "//lib/Pia/Core/Algo:partial_sort",
+        "//lib/Pia/Core/Algo:partition",
+        "//lib/Pia/Core/Algo:permutation",
+        "//lib/Pia/Core/Algo:remove",
+        "//lib/Pia/Core/Algo:search",
+        "//lib/Pia/Core/Algo:set",
+        "//lib/Pia/Core/Algo:set_symmetric",
+        "//lib/Pia/Core/Algo:set_union",
+        "//lib/Pia/Core/Algo:sort",
+        "//lib/Pia/Core:ascii",
+        "//lib/Pia/Core:bit",
+        "//lib/Pia/Core:charconv",
+        "//lib/Pia/Core:digits",
+        "//lib/Pia/Core:hash",
+        "//lib/Pia/Core:int",
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
+        "//lib/Pia/Core:ratio",
+        "//lib/Pia/Core:result",
+        "//lib/Pia/Core:utf8",
+        "//lib/Pia/Format:safetensors",
+        "//lib/Pia/Image/Gif:decode",
+        "//lib/Pia/Image/Gif:encode",
+        "//lib/Pia/Image/Gif:lzw",
+        "//lib/Pia/Image/Gif:lzw_encode",
+        "//lib/Pia/Image/Gif:quantise",
+        "//lib/Pia/Image/Gif:ref",
+        "//lib/Pia/Image/Gif:spec",
+        "//lib/Pia/Image:bits",
+        "//lib/Pia/Image:raster",
+        "//lib/Pia/Llm:tokenizer",
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Mem:box",
+        "//lib/Pia/Mem:vec",
+        "//lib/Pia/Sys:fs",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:shape",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+        "//lib/Pia:fn",
+    ],
+    output_group = "report",
+    target_compatible_with = PIA_TARGETS,
+)
+
 # The library's tests (ADR 0040, section 11): for each module, a lit test of
 # its goal counts and interfaces, an importer that proves its edge cases
 # from the interface alone, and a program that runs its compiled code.
@@ -15,6 +78,7 @@ lit_tests(
         "Inputs/ratio_errors.pia",
         "Inputs/time_errors.pia",
         "Inputs/time_overflow.pia",
+        ":library_goals",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
@@ -74,19 +138,13 @@ lit_tests(
     # `bazel test //tests/...` (and on the slower Linux CI runner) they went
     # past the 300 s of a medium test. heap.pia and partial_sort.pia were
     # here too, until the verifier stopped rescanning the module for each
-    # callee, which halved them (21 s and 17 s alone). inflate.pia proves
-    # Huffman's Kraft lemma and table build (671 goals), which took past
-    # 300 s on the macOS runner. gif_lzw.pia proves decode_ref's
-    # whole-stream theorem (about 3 min on 4 threads).
+    # callee, which halved them (21 s and 17 s alone). gif_lzw.pia,
+    # inflate.pia, json_write.pia, safetensors.pia and tokenizer.pia left
+    # when they began reading their modules' goal reports (#507).
     sizes = {
-        "gif_lzw.pia": "large",
-        "inflate.pia": "large",
         "json_derive_array.pia": "large",
         "json_derive_variant.pia": "large",
-        "json_write.pia": "large",
-        "safetensors.pia": "large",
         "time_civil.pia": "large",
-        "tokenizer.pia": "large",
     },
     tools = ["//tools/piac"],
 )

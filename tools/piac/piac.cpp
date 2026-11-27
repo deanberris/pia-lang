@@ -7,6 +7,11 @@
 //   piac --emit=obj -o f.o f.pia    verify, then compile to an object (M6)
 //   piac --emit=asm|llvm|core ...   the same, stopping at assembly, LLVM IR
 //                                   or the core MLIR dialects
+//   piac --report=FILE ...          with --emit=obj|asm|llvm|core or
+//                                   --verify, also write the goal report
+//                                   to FILE, as --verify prints it, so a
+//                                   test can read the proof a build did
+//                                   instead of proving the module again
 //   piac --allow-unproved=SPEC ...  let --verify and codegen accept unproved
 //                                   obligations:
 //                                   all of them in function SPEC, or the ones
@@ -149,7 +154,7 @@ int usage() {
          "             [--no-lint[=<name>]]... [--costly-goal=<n>]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "[--lean-receipt=<file>]...\n"
-         "             <file.pia>\n"
+         "             [--report=<file>] <file.pia>\n"
          "       piac --version\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
@@ -157,7 +162,7 @@ int usage() {
          "       piac --emit=(obj|asm|llvm|core) [-o <out>] "
          "[--target=<triple>] [--cpu=<name>] [-O<n>] [--lower=on|off]\n"
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
-         "<file.pia>\n"
+         "[--report=<file>] <file.pia>\n"
          "       Every mode but --emit=interface takes "
          "[--iface-path=<dir>]... [--embed-path=<dir>]... "
          "[--embed=<logical>=<path>]...\n";
@@ -413,6 +418,22 @@ bool report(const std::vector<pia::verify::Outcome> &outcomes, std::ostream &os,
   os << proved << " proved, " << failed << " failed, " << skipped
      << " skipped\n";
   return failed > 0;
+}
+
+// `--report=<file>`: the report --verify prints, written to `path`.
+// pia_library keeps it as an output, so a test checks the goals the build
+// proved without proving the module a second time. Returns whether it was
+// written.
+bool writeReport(const std::string &path,
+                 const std::vector<pia::verify::Outcome> &outcomes,
+                 const pia::verify::Stats &stats) {
+  std::ofstream out(path, std::ios::binary);
+  report(outcomes, out, false, &stats);
+  out.close();
+  if (out)
+    return true;
+  std::cerr << "piac: cannot write " << path << "\n";
+  return false;
 }
 
 // Whether `--allow-unproved=spec` accepts the unproved obligation `o`: a
@@ -696,7 +717,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
             const std::string &output, pia::codegen::Options options,
             const std::vector<std::string> &allowUnproved,
             const pia::verify::Options &verifyOptions, bool verifyStats,
-            bool lower) {
+            bool lower, const std::string &reportPath) {
   using pia::verify::Outcome;
   using pia::verify::Status;
   pia::verify::Stats stats;
@@ -713,6 +734,9 @@ int compile(mlir::ModuleOp module, const std::string &mode,
     printStats(stats);
     printGoalAxioms(outcomes);
   }
+  // Written before any failure returns, so a failed build still says why.
+  if (!reportPath.empty() && !writeReport(reportPath, outcomes, stats))
+    return 2;
   bool failed = false;
   for (const Outcome &o : outcomes) failed |= o.status == Status::Failed;
   if (failed) {
@@ -816,6 +840,7 @@ int main(int argc, char **argv) {
     if (std::string_view(argv[i]) == "--version")
       return printVersion();
   std::string mode, file, output;
+  std::string reportPath; // --report: where to write the goal report too
   std::vector<std::string> allowUnproved;
   std::vector<std::string> ifacePaths;
   pia::syntax::EmbedOptions embedOptions;
@@ -869,6 +894,10 @@ int main(int argc, char **argv) {
                badEmbed) {
       if (badEmbed)
         return usage();
+    } else if (arg.rfind("--report=", 0) == 0) {
+      if (arg.size() == 9)
+        return usage();
+      reportPath = arg.substr(9);
     } else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
@@ -1031,6 +1060,8 @@ int main(int argc, char **argv) {
   // A partial proof never justifies code, so --verify-only implies --verify.
   if (codegen && verify) return usage();
   if (!allowUnproved.empty() && !codegen && !verify) return usage();
+  if (!reportPath.empty() && !codegen && !verify)
+    return usage();
   if (mode == "--emit=obj" && output.empty()) return usage();
   bool emitInterface = mode == "--emit=interface";
   if (emitInterface && (output.empty() || verify || contracts ||
@@ -1251,7 +1282,7 @@ int main(int argc, char **argv) {
           verifyStats || trustReport || checkVacuity || !proofCache.empty();
       if (module && codegen) {
         return compile(*module, mode, output, cg, allowUnproved, options,
-                       verifyStats, lower);
+                       verifyStats, lower, reportPath);
       } else if (module && verify) {
         pia::verify::Stats stats;
         if (mlir::failed(pia::verify::resolveOverloads(*module, options))) {
@@ -1283,6 +1314,8 @@ int main(int argc, char **argv) {
         bool failed =
             report(outcomes, mode == "--emit=mlir" ? std::cerr : std::cout,
                    solverCost, &stats, goalTimes);
+        if (!reportPath.empty() && !writeReport(reportPath, outcomes, stats))
+          return 2;
         if (lints.on("costly_goal"))
           warnCostly(outcomes,
                      costlyGoal >= 0 ? static_cast<unsigned long long>(costlyGoal)

@@ -4,7 +4,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/BinarySearch.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Set.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/SetSymmetric.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/set_symmetric.goals
 // RUN: mkdir -p %t/y && piac --emit=interface -o %t/y %S/../../lib/Pia/Core/Algo/SetSymmetric.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/y/Pia.Core.Algo.SetSymmetric.SetSymmetric.piai
 *)

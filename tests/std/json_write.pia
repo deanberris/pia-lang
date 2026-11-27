@@ -5,7 +5,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
 // RUN: FileCheck --check-prefix=WRITER %s < %t/Pia.Text.Json.Write.Writer.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Write.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Text/Json/write.goals
 *)
 
 (* The digit count and the digits' value by induction, the digit loops,

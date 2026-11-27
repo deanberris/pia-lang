@@ -4,7 +4,7 @@
    proved at its instances (tests/std/binary_search_edges.pia).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/BinarySearch.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/binary_search.goals
 // RUN: mkdir -p %t/b && piac --emit=interface -o %t/b %S/../../lib/Pia/Core/Algo/BinarySearch.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/b/Pia.Core.Algo.BinarySearch.BinarySearch.piai
 *)

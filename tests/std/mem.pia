@@ -3,10 +3,10 @@
    generic over a record is proved at each instance (ADR 0043). Box and
    Vec are generic over the Allocator concept, which the bump's generic
    `alloc` meets (ADR 0034), and their interfaces carry regions (ADR 0042).
-// RUN: piac --verify %S/../../lib/Pia/Mem/Alloc.pia | FileCheck --check-prefix=ALLOC %s
+// RUN: FileCheck --check-prefix=ALLOC %s < %S/../../lib/Pia/Mem/alloc.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Mem/Box.pia | FileCheck --check-prefix=BOX %s
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Mem/Vec.pia | FileCheck --check-prefix=VEC %s
+// RUN: FileCheck --check-prefix=BOX %s < %S/../../lib/Pia/Mem/box.goals
+// RUN: FileCheck --check-prefix=VEC %s < %S/../../lib/Pia/Mem/vec.goals
 *)
 
 (*

@@ -1,7 +1,7 @@
 (* Pia.Core.Int (ADR 0040): every goal of the module is proved, including
    each overload's interface contract against its own definition, and its
    interfaces are what importers see.
-// RUN: piac --verify %S/../../lib/Pia/Core/Int.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/int.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Int.pia
 // RUN: FileCheck --check-prefix=OPS %s < %t/Pia.Core.Int.Ops.piai
 // RUN: FileCheck --check-prefix=DIV %s < %t/Pia.Core.Int.Div.piai

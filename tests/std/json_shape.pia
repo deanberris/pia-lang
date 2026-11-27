@@ -8,7 +8,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Text.Json.Shape.Shapes.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Shape.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Text/Json/shape.goals
 *)
 
 (*

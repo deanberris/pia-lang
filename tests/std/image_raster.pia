@@ -1,7 +1,7 @@
 (* Pia.Image.Raster (ADR 0054, step 1): image dimensions, the index of a
    sample, and the rows of a rectangle, each proved to lie inside the
    image's samples.
-// RUN: piac --verify %S/../../lib/Pia/Image/Raster.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/raster.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Image/Raster.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Image.Raster.Raster.piai
 *)

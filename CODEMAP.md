@@ -166,7 +166,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 
 ### lib: the standard library, written in Pia (ADR 0023, ADR 0040)
 
-Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests in `tests/std/<module>.pia` and `tests/std/Inputs/<module>_run.pia`. Its mapping from C++ and its status are in `docs/cpp-std.md`.
+Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests in `tests/std/<module>.pia` and `tests/std/Inputs/<module>_run.pia`. The goal-count test does not prove the module again: it FileChecks `<name>.goals`, the report `pia_library` writes with `piac --report` (the `//tests/std:library_goals` filegroup), so a new module goes in that filegroup too. Its mapping from C++ and its status are in `docs/cpp-std.md`.
 
 - `lib/Pia/Fn.pia` holds the laws of function arguments as spec functions, such as `strict_weak_order` (ADR 0044).
 - `lib/Pia/Core/Ascii.pia` is `<cctype>` for ASCII bytes. `lib/Pia/Core/Charconv.pia` is `<charconv>`'s `from_chars` and `to_chars` for integers. `lib/Pia/Core/Digits.pia` is the lemma library for digit strings (`dval`, `pow`, `prepend`, `frame`, `divmod`), which importers call as facts. `lib/Pia/Core/Hash.pia` is `std::hash`: the Hash concept, integer instances, FNV-1a and `@derive(hash)` for distinct types. `lib/Pia/Core/Ratio.pia` is `<ratio>`, as exported metaprograms that fold ratios at compile time. `lib/Pia/Time.pia` is `<chrono>`'s durations, made by metaprograms over Ratio, time points over them, and the civil calendar with both round trips proved. `lib/Pia/Core/Bit.pia` is `<bit>`. `lib/Pia/Core/Int.pia` holds the integer utilities: gcd, midpoint, abs, div and saturating arithmetic.

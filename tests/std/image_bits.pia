@@ -1,7 +1,7 @@
 (* Pia.Image.Bits (ADR 0054, step 1): LSB-first bit fields over a byte
    slice. read_bits and write_bits are proved against bits_at, the field
    as the bits it is made of, through the window lemma.
-// RUN: piac --verify %S/../../lib/Pia/Image/Bits.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/bits.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Image.Bits.Bits.piai
 *)

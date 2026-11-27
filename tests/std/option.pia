@@ -3,7 +3,7 @@
    each instance (ADR 0043). Its interface, Optional, exports the generic
    type and functions (ADR 0039, step 3).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Option.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/option.goals
 // RUN: mkdir -p %t/option && piac --emit=interface -o %t/option %S/../../lib/Pia/Core/Option.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/option/Pia.Core.Option.Optional.piai
 *)

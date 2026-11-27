@@ -6,7 +6,7 @@
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Llm/Tokenizer.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Llm.Tokenizer.Tokenizer.piai
-// RUN: piac --verify %S/../../lib/Pia/Llm/Tokenizer.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Llm/tokenizer.goals
 *)
 
 (*
