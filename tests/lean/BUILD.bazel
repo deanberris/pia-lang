@@ -11,9 +11,24 @@ pia_lean_proof(
     proofs = "Proofs.lean",
 )
 
+# native_proof proves native_trusted.pia's lemma with `native_decide`, which
+# only a `@trusted` file may use; native_untrusted.pia is the same lemma in
+# a file that is not, and fails with the same receipt.
+pia_lean_proof(
+    name = "native_proof",
+    src = "native_trusted.pia",
+    proofs = "Native.lean",
+)
+
 lit_tests(
     name = "lean_tests",
     srcs = glob(["*.pia"]),
-    data = [":sums_proof"],
-    tools = ["//tools/piac"],
+    data = [
+        ":native_proof",
+        ":sums_proof",
+    ],
+    tools = [
+        "//tools/pia-cert",
+        "//tools/piac",
+    ],
 )

@@ -346,7 +346,9 @@ private:
         if (!(hex ? std::isxdigit(static_cast<unsigned char>(digits[i]))
                   : std::isdigit(static_cast<unsigned char>(digits[i]))))
           return unsupported(n, "a literal with a type suffix");
-      return digits;
+      // Typed, since a term of literals alone would otherwise be a `Nat`,
+      // where `0 - 1 = 0` holds and Pia's `int` says it does not.
+      return "(" + digits + " : Int)";
     }
     case N::BoolLit:
       if (m == Mode::Prop)

@@ -178,6 +178,15 @@ Cost in contracts ([ADR 0062](0062-cost-bounds-in-contracts.md)) needs no Lean a
 - A spec function with a `requires` is, outside it, an opaque Lean constant `f'outside` applied to the arguments. Pia says nothing about the function there, and Lean can prove nothing about an opaque constant, so no Lean fact depends on how the translation made the function total.
 - Lean is an `http_archive` of the release for each host, v4.36.0, about 600 MB compressed per platform, and runs only in `pia_lean_proof` actions, locally rather than on the remote executors. The cold and warm build times are in the PR that built it.
 
+**Step 2 as built (2026-11-27).** Certificates and the trust report:
+
+- The certificate has a `proved lean <lemma> <hash> <theorem> <toolchain> <axioms>` line per proved lemma, in format 3, the spelling [ADR 0073](0073-prover-identity-abi-version-and-advisories.md) gives per-item Lean lines; ADR 0073's identity lines move to format 4. There is no Mathlib field until Mathlib is in the build.
+- One hash, still: the Lean closure hash covers the Pia statement and everything it uses, since the translation is a function of them, so a second Pia hash would add nothing a reader could check that this one does not.
+- `native_decide` (`Lean.ofReduceBool`, `Lean.trustCompiler`) fails the goal outside a `@trusted` file, and inside one is a `trusted native_decide` item in the certificate and the trust report.
+- `--trust-report` lists each proved Lean lemma after the trusted items, with its theorem, toolchain, axioms and hash, and with `--why` the goals that use it, then how many proved goals use one.
+- The translation now types every literal as `Int`. A term of literals alone was a `Nat`, where `0 - 1 = 0` holds, so Lean could prove a statement that is false in Pia.
+- `pia-cert audit` replay waits for `pia-cert audit` itself ([docs/abi.md](../abi.md), step 8). Meanwhile a receipt comes only from a `pia_lean_proof` run, and its hash ties it to the statement.
+
 ## Answers to the open questions
 
 Dean answered when he accepted it (2026-11-24):

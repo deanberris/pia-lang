@@ -5,6 +5,13 @@
    use them like any lemma.
 // RUN: piac --emit=lean %s | FileCheck %s --check-prefix=LEAN
 // RUN: piac --verify --lean-receipt=%S/sums_proof.receipt %s | FileCheck %s
+
+   The trust report lists the lemmas proved in Lean, and the goals that use
+   them, and the certificate records each with the same statement hash.
+// RUN: piac --verify --trust-report --why --lean-receipt=%S/sums_proof.receipt %s > %t.trust
+// RUN: piac --emit=obj --lean-receipt=%S/sums_proof.receipt -o %t.o %s
+// RUN: pia-cert dump %t.o > %t.cert
+// RUN: cat %t.trust %t.cert | FileCheck %s --check-prefix=TRUST
 *)
 
 let point = type { x : int; y : int }
@@ -45,13 +52,13 @@ let lemma sum_plus_one (m : int) : unit
 // LEAN: namespace sums
 // LEAN: opaque sum'outside : Int → Int
 // LEAN: def sum (n : Int) : Int :=
-// LEAN-NEXT:   if h_req : (n ≥ 0) then
-// LEAN-NEXT:     (if h_1 : (n = 0) then 0 else (n + (sum (n - 1))))
+// LEAN-NEXT:   if h_req : (n ≥ (0 : Int)) then
+// LEAN-NEXT:     (if h_1 : (n = (0 : Int)) then (0 : Int) else (n + (sum (n - (1 : Int)))))
 // LEAN-NEXT:   else sum'outside n
 // LEAN-NEXT: termination_by (n).toNat
 // LEAN: @[reducible] def sum_nonneg : Prop :=
 // LEAN-NEXT:   ∀ (n : Int),
-// LEAN-NEXT:     (n ≥ 0) → ((sum n) ≥ 0)
+// LEAN-NEXT:     (n ≥ (0 : Int)) → ((sum n) ≥ (0 : Int))
 // LEAN: structure point where
 // LEAN-NEXT:   x : Int
 // LEAN-NEXT:   y : Int
@@ -61,10 +68,10 @@ let lemma sum_plus_one (m : int) : unit
 // LEAN-NEXT:   ∀ (a : Int) (b : Int),
 // LEAN-NEXT:     ((dist { x := a, y := b }) = (a + b))
 // LEAN: def within (p : point) (n : Int) : Bool :=
-// LEAN-NEXT:   ((decide (0 ≤ (p).x)) && (decide ((p).x < n)))
+// LEAN-NEXT:   ((decide ((0 : Int) ≤ (p).x)) && (decide ((p).x < n)))
 // LEAN: @[reducible] def origin_within : Prop :=
 // LEAN-NEXT:   ∀ (n : Int),
-// LEAN-NEXT:     (n ≥ 1) → ((within { x := 0, y := 5 } n) = true)
+// LEAN-NEXT:     (n ≥ (1 : Int)) → ((within { x := (0 : Int), y := (5 : Int) } n) = true)
 // LEAN: end sums
 *)
 
@@ -74,4 +81,19 @@ let lemma sum_plus_one (m : int) : unit
 // CHECK-DAG: proved: the Lean theorem 'Proofs.origin_within' proves 'origin_within' [lean]
 // CHECK-DAG: sums.pia:38:3: proved: the postcondition holds [{{smt|intervals}}]
 // CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+
+(* Expected trust report, then certificate.
+// TRUST: 0 trusted items
+// TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'sum_nonneg', proved by the Lean theorem 'Proofs.sum_nonneg' (leanprover/lean4:v4.36.0; axioms {{.*}}; statement sha256 [[SUM:[0-9a-f]{64}]])
+// TRUST-NEXT: used by: sums.pia:{{.*}}
+// TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'dist_of', proved by the Lean theorem 'Proofs.dist_of'
+// TRUST-NEXT: used by no proved goal
+// TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'origin_within', proved by the Lean theorem 'Proofs.origin_within'
+// TRUST-NEXT: used by no proved goal
+// TRUST-NEXT: 3 lemmas proved in Lean, which rest on Lean's kernel and on piac's translation of the statement into Lean
+// TRUST-NEXT: 0 of {{[0-9]+}} proved goals rest on a trusted axiom
+// TRUST-NEXT: {{[1-9][0-9]*}} of {{[0-9]+}} proved goals use a lemma proved in Lean
+// TRUST: module (program)
+// TRUST: proved lean sum_nonneg [[SUM]] by Proofs.sum_nonneg (leanprover/lean4:v4.36.0; axioms
 *)

@@ -49,6 +49,30 @@ bool readTrusted(std::istringstream &words, const std::string &kind,
   return true;
 }
 
+// The rest of a `proved lean <name> <hash> <theorem> <toolchain> <axioms>`
+// line, whose first three words are already read.
+bool readLean(std::istringstream &words, const std::string &name,
+              Certificate &c) {
+  std::string hash, theorem, toolchain, axioms;
+  words >> hash >> theorem >> toolchain >> axioms;
+  if (name.empty() || hash.size() != 64 || theorem.empty() ||
+      toolchain.empty() || axioms.empty())
+    return false;
+  LeanFact f{name, hash, theorem, toolchain, {}};
+  if (axioms != "-")
+    for (llvm::StringRef a : llvm::split(axioms, ','))
+      f.axioms.push_back(a.str());
+  c.lean.push_back(std::move(f));
+  return true;
+}
+
+std::string joined(const std::vector<std::string> &items) {
+  std::string out;
+  for (const std::string &i : items)
+    out += (out.empty() ? "" : ",") + i;
+  return out.empty() ? "-" : out;
+}
+
 } // namespace
 
 std::string sectionFor(std::string_view triple) {
@@ -73,15 +97,14 @@ std::string encode(const Certificate &c) {
     body += "provides " + i.name + " " + i.hash + "\n";
   for (const Interface &i : c.requires_)
     body += "requires " + i.name + " " + i.hash + "\n";
-  for (const Trusted &t : c.trusted) {
-    std::string detail;
-    for (const std::string &d : t.detail)
-      detail += (detail.empty() ? "" : ",") + d;
+  for (const Trusted &t : c.trusted)
     body += "trusted " + t.kind + " " + t.name + " " + t.hash + " " +
-            (detail.empty() ? "-" : detail) + "\n";
-  }
+            joined(t.detail) + "\n";
+  for (const LeanFact &f : c.lean)
+    body += "proved lean " + f.name + " " + f.statement + " " + f.theorem + " " +
+            f.toolchain + " " + joined(f.axioms) + "\n";
   std::string out(kMagic, 4);
-  putU32(out, c.trusted.empty() ? 1 : kFormat);
+  putU32(out, !c.lean.empty() ? 3 : !c.trusted.empty() ? 2 : 1);
   putU32(out, uint32_t(body.size()));
   return out + body;
 }
@@ -119,6 +142,9 @@ std::optional<Certificate> decode(std::string_view bytes, std::string &error) {
       (kind == "provides" ? c.provides : c.requires_).push_back({name, hash});
     } else if (kind == "trusted" && format >= 2 &&
                readTrusted(words, name, hash, c)) {
+      continue;
+    } else if (kind == "proved" && name == "lean" && format >= 3 &&
+               readLean(words, hash, c)) {
       continue;
     } else {
       error = "the certificate has a malformed line: '" + line + "'";

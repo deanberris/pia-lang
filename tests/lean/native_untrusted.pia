@@ -1,0 +1,15 @@
+(* native_trusted.pia's lemma, in a file that is not `@trusted`. Its Lean
+   proof, from the same receipt, uses `native_decide`, which trusts Lean's
+   compiler, so here it proves nothing (ADR 0061, section 4).
+// RUN: not piac --verify --lean-receipt=%S/native_proof.receipt %s | FileCheck %s
+*)
+
+let lemma product : unit
+  ensures 6 * 7 = 42
+= by lean Native.product
+
+(* Expected report.
+// CHECK: failed: the Lean theorem 'Native.product' proves 'product' [axiom Lean.ofReduceBool]
+// CHECK: hint: the Lean proof uses native_decide, which trusts Lean's compiler; prove it with decide, or mark the file @trusted to list the trust in its certificate
+// CHECK: 0 proved, 1 failed, 0 skipped
+*)

@@ -78,6 +78,13 @@ int main(int argc, char **argv) {
         std::cout << (i ? ", " : " (") << t.detail[i];
       std::cout << (t.detail.empty() ? "\n" : ")\n");
     }
+    for (const pia::cert::LeanFact &f : c.lean) {
+      std::cout << "proved lean " << f.name << " " << f.statement << " by "
+                << f.theorem << " (" << f.toolchain << "; axioms";
+      for (const std::string &a : f.axioms)
+        std::cout << " " << a;
+      std::cout << (f.axioms.empty() ? " none)\n" : ")\n");
+    }
     return 0;
   }
   std::vector<std::string> problems = pia::cert::checkLink(objects);
