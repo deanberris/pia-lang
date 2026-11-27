@@ -390,20 +390,21 @@ let read (fd : i32) (buf : out mutable [u8]) (n : usize) : isize
 `read` returns at most `n`, or `-1`, and writes no more than it returns. It never says what a file contains. Every stronger claim is something the untrusted layer above has to prove. That layer turns integers and errno into types:
 
 ```ocaml
-(* Pia.Sys.Fs, fully proved *)
-let errno = type | Again | BadFd | Interrupted | Invalid | IoError | NoSpace | NoEntry | Denied | Other of i32
-let fd = type { raw : i32 } @linear where raw >= 0           (* only built from a successful open *)
+(* Pia.Sys.Fs, fully proved (lib/Pia/Sys/Fs.pia): 27 goals, no trusted rows of its own *)
+let errno = type
+  | Again | BadFd | Interrupted | Invalid | IoError | NoSpace | NoEntry
+  | Denied | Exists | IsDir | NotDir | TooMany | Broken | Other of i32
+let file = type { raw : i32 } @linear                        (* only built from a successful open *)
 
-let open_read (path : str) : result fd = ...
-let close (f : moved fd) : result unit = ...
-let read_some (f : fd) (buf : out mutable [u8]) : result usize
-  ensures match result with Ok n -> n <= len buf && written buf 0 n | Err _ -> true
-  = ...
-let write_all (f : fd) (buf : [u8]) : result unit           (* loops over write, retrying Interrupted *)
-  = ...
+let open_read : (path : [u8]) -> result file errno            (* path ends in a NUL *)
+let create : (path : [u8]) -> (mode : int{0..4095}) -> result file errno
+let read_some : (f : file) -> (buf : out mutable [u8]) -> result usize errno
+  ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
+let write_all : (f : file) -> (buf : [u8]) -> result unit errno  (* retries short and interrupted writes *)
+let close : (f : moved file) -> result unit errno
 ```
 
-`Err` carries a decoded `errno`, never a sentinel, and `match` must handle it. `raw` is not exported, so only `Pia.Sys` can make or unwrap an `fd`. Forgetting `close` is a type error. `errno` itself is `*__error()` on macOS, which `Pia.Sys.Posix` reads through `addr`, so it is a few lines of trusted Pia rather than a C helper.
+`Err` carries a decoded `errno`, never a sentinel, and `match` must handle it. The errno values and open flags are `Pia.Sys.Posix`'s opaque constants, so the same module builds for macOS and Linux. Forgetting `close` is a type error, and closing twice is a use after a move. `errno` itself is `*__error()` on macOS and `*__errno_location()` on Linux, which `Pia.Sys.Posix` declares with `@deref` (ADR 0057), so it is one row rather than a C helper. Not built yet: hiding `raw` from importers, `fstat`, seeking and directories.
 
 The first set of declarations, enough for files, memory, time, threads and the demos:
 
@@ -554,7 +555,7 @@ The GIF and inflate codecs ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md
 - **`Pia.Image.Gif.Lzw`:** each code writes exactly the string that the dictionary in `Pia.Image.Gif.Spec` gives it. `decode_ref` also proves the whole-stream theorem. `Pia.Image.Gif.Ref` writes GIF89a's LZW reading of a code stream as a spec, and whenever x is what that reading gives for a stream and x fits in the output, decoding returns `Ok (len x)` with x in the output. The trace and x are spec parameters ([ADR 0058](adr/0058-spec-buffers.md)), so codegen erases them. `decode` is the same code with the check turned off.
 - **`Pia.Image.Gif.Decode`:** `info` accepts exactly the files that the block grammar accepts.
 - **`Pia.Image.Gif.Encode`:** the stream `encode_animation` writes parses with `info` and fits its proved size bound.
-- **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read. `kraft_room` shows that an over-subscribed set of code lengths can't build.
+- **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read, and fails only when no symbol's code is there. `prefix_free` proves that the canonical code is prefix-free, so the symbol `decode` returns is the only one it could be. `kraft_room` shows that an over-subscribed set of code lengths can't build.
 - **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written.
 
 These large specs are `@opaque` ([ADR 0063](adr/0063-opaque-spec-functions.md)), and only small step lemmas reveal them. That keeps the loops' goals small enough to prove.

@@ -60,9 +60,11 @@ lit_tests(
         "//lib/Pia/Mem:Alloc.pia",
         "//lib/Pia/Mem:Box.pia",
         "//lib/Pia/Mem:Vec.pia",
+        "//lib/Pia/Sys:Fs.pia",
         "//lib/Pia/Sys/Gen:arm64_macos.pia",
         "//lib/Pia/Text/Json:Derive.pia",
         "//lib/Pia/Text/Json:Dom.pia",
+        "//lib/Pia/Text/Json:Shape.pia",
         "//lib/Pia/Text/Json:Lex.pia",
         "//lib/Pia/Text/Json:Read.pia",
         "//lib/Pia/Text/Json:Spec.pia",
@@ -802,6 +804,24 @@ sh_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+pia_binary(
+    name = "fs_run",
+    src = "Inputs/fs_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Sys:fs",
+        "//lib/Pia/Sys:posix",
+    ],
+)
+
+sh_test(
+    name = "fs_run_test",
+    srcs = ["fs_run_test.sh"],
+    args = ["$(rootpath :fs_run)"],
+    data = [":fs_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # The run test's module, called from C with buffers of tensor records,
 # which a Pia function cannot make locally yet.
 pia_library(
@@ -865,6 +885,33 @@ cc_test(
     srcs = [
         "json_dom_run_test.c",
         ":json_dom_run_lib",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# @derive(json_dom) run from C: a point checked and read from parsed
+# documents, and one written with to_dom and read back (ADR 0045, step 7).
+pia_library(
+    name = "json_shape_run_lib",
+    src = "Inputs/json_shape_run.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        "//lib/Pia/Mem:alloc",
+        "//lib/Pia/Text/Json:derive",
+        "//lib/Pia/Text/Json:dom",
+        "//lib/Pia/Text/Json:lex",
+        "//lib/Pia/Text/Json:read",
+        "//lib/Pia/Text/Json:shape",
+        "//lib/Pia/Text/Json:spec",
+        "//lib/Pia/Text/Json:write",
+    ],
+)
+
+cc_test(
+    name = "json_shape_run_test",
+    srcs = [
+        "json_shape_run_test.c",
+        ":json_shape_run_lib",
     ],
     target_compatible_with = PIA_TARGETS,
 )

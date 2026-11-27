@@ -67,6 +67,7 @@ Allocators, boxes and vectors, with no garbage collector and every allocation fa
 | [`Pia.Text.Json.Read`](../lib/Pia/Text/Json/Read.pia) | The token readers that derived decoders are built from |
 | [`Pia.Text.Json.Derive`](../lib/Pia/Text/Json/Derive.pia) | `@derive(json)`: the metaprograms that write a JSON codec for a type |
 | [`Pia.Text.Json.Dom`](../lib/Pia/Text/Json/Dom.pia) | A JSON document as a recursive sum type over spans of its input, copying no text ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)) |
+| [`Pia.Text.Json.Shape`](../lib/Pia/Text/Json/Shape.pia) | Checks that a JSON DOM has the shape of a type, and builds that type from it, with `@derive(json_dom)` ([JSON](json.md)) |
 | [`Pia.Format.Safetensors`](../lib/Pia/Format/Safetensors.pia) | The safetensors container that model weights come in, read from a file's bytes and proved total and safe on every input ([ADR 0067](adr/0067-release-0-1-0-a-proved-small-llm.md)) |
 | [`Pia.Llm.Tokenizer`](../lib/Pia/Llm/Tokenizer.pia) | llama2.c's byte-pair tokenizer, read from its `tokenizer.bin` and proved ([ADR 0067](adr/0067-release-0-1-0-a-proved-small-llm.md)) |
 
@@ -95,6 +96,7 @@ The codecs are proved total and safe on every input, and allocate nothing: the c
 | Module | What it gives |
 | --- | --- |
 | [`Pia.Sys.Posix`](../lib/Pia/Sys/Posix.pia) | The contracts of the POSIX functions Pia calls, as one interface that every target meets ([ADR 0057](adr/0057-posix-module-per-target-behind-one-interface.md)) |
+| [`Pia.Sys.Fs`](../lib/Pia/Sys/Fs.pia) | Files over `Pia.Sys.Posix`, written once for both targets: a `@linear` `file` that must be closed exactly once, `open_read`, `create`, `read_some`, `write_all` and `close`, each failing with a decoded `errno` |
 | [`Pia.Sys.Gen.arm64_macos`](../lib/Pia/Sys/Gen/arm64_macos.pia) | The bindings for arm64 macOS, generated from the system headers by `tools/bindings/gen.py`, which CI checks are current |
 | [`Pia.Sys.Gen.x86_64_linux`](../lib/Pia/Sys/Gen/x86_64_linux.pia) | The same for x86_64 Linux |
 | [`Pia.Gpu`](../lib/Pia/Gpu.pia) | Devices, buffers and kernels on the GPU through a Metal host shim, which `--trust-report` lists as trusted ([ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md)) |
