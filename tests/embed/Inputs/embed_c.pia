@@ -1,0 +1,16 @@
+(* C ABI symbol binding test for @embed(symbol = ..., align = ...) (ADR 0070). *)
+module EmbedC : Api
+
+interface Api @abi(c) = sig
+  let check_magic : i32
+end
+
+let magic : [u8] @embed(file = "magic.bin", symbol = "pia_embed_c_magic", align = 16)
+
+let check_magic : i32 =
+  if len magic = 8 &&
+     magic.[0] = 0x4d && magic.[1] = 0x54 &&
+     magic.[2] = 0x4c && magic.[3] = 0x42 &&
+     magic.[4] = 1 && magic.[5] = 2 &&
+     magic.[6] = 3 && magic.[7] = 4
+  then 0 else 1

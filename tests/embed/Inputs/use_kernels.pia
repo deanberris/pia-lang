@@ -1,0 +1,12 @@
+(* Importer reading an exported @embed binding across module boundaries
+   (ADR 0070, step 3). Proves exact length 8 from Kernels.Blobs.piai and
+   verifies the bytes at run time. *)
+import Kernels.Blobs
+
+let main () : i32 =
+  if len Kernels.add_metallib = 8 &&
+     Kernels.add_metallib.[0] = 0x4d && Kernels.add_metallib.[1] = 0x54 &&
+     Kernels.add_metallib.[2] = 0x4c && Kernels.add_metallib.[3] = 0x42 &&
+     Kernels.add_metallib.[4] = 1 && Kernels.add_metallib.[5] = 2 &&
+     Kernels.add_metallib.[6] = 3 && Kernels.add_metallib.[7] = 4
+  then 0 else 1

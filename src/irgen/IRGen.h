@@ -12,6 +12,7 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OwningOpRef.h"
 #include "syntax/Diagnostics.h"
+#include "syntax/Embeds.h"
 #include "syntax/Syntax.h"
 
 namespace pia::irgen {
@@ -34,6 +35,11 @@ struct Options {
   // The triple code is generated for, which picks the model of the
   // built-in theory `Target` (ADR 0049); empty for the host's.
   std::string triple;
+  // Hermetic lookup options for `@embed(file = ...)` (ADR 0070).
+  syntax::EmbedOptions embeds;
+  // If non-null, populated with every resolved `@embed` blob in source order
+  // so codegen can emit them directly as LLVM ConstantDataArrays.
+  std::vector<syntax::EmbeddedBlob> *resolvedEmbeds = nullptr;
 };
 
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &program,

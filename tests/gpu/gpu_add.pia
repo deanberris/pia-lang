@@ -1,22 +1,24 @@
 (* The step 1 kernel, c = a + b over 1024 i32, run on the GPU from Pia
-   through Pia.Gpu (ADR 0068, step 2). dispatch_test.c calls gpu_add with
-   the .metallib that tools/gpu/metal.bzl embedded, and checks c. *)
+   through Pia.Gpu (ADR 0068, step 2; ADR 0070, step 5). Embeds the
+   .metallib directly via @embed and exposes its C symbol for dispatch_test.c. *)
 module GpuAdd : GpuAddOps
 
 import Pia.Gpu.Gpu as G
 
+let add_metallib : [u8] @embed(file = "add_metallib.metallib", symbol = "pia_test_add_metallib")
+
 interface GpuAddOps @abi(c) = sig
   (** 0 when c holds a + b, else 1 + the Gpu.error, in its order. *)
-  let gpu_add : (metallib : [u8]) -> (a : [i32]) -> (b : [i32]) -> (c : out mutable [i32]) -> i32
+  let gpu_add : (a : [i32]) -> (b : [i32]) -> (c : out mutable [i32]) -> i32
     requires len a = 1024 && len b = 1024 && len c = 1024
 end
 
-let run (metallib : [u8]) (a : [i32]) (b : [i32]) (c : out mutable [i32]) : result unit G.error
+let run (a : [i32]) (b : [i32]) (c : out mutable [i32]) : result unit G.error
   requires len a = 1024 && len b = 1024 && len c = 1024
 =
   let d = G.device_open? in
   defer G.device_close d;
-  let lib = G.library_load d metallib? in
+  let lib = G.library_load d add_metallib? in
   defer G.library_free lib;
   let ba = G.buffer_new_i32 d 1024? in
   defer G.buffer_free_i32 ba;
@@ -33,10 +35,10 @@ let run (metallib : [u8]) (a : [i32]) (b : [i32]) (c : out mutable [i32]) : resu
   G.read_i32 bc c;
   Ok ()
 
-let gpu_add (metallib : [u8]) (a : [i32]) (b : [i32]) (c : out mutable [i32]) : i32
+let gpu_add (a : [i32]) (b : [i32]) (c : out mutable [i32]) : i32
   requires len a = 1024 && len b = 1024 && len c = 1024
 =
-  match run metallib a b c with
+  match run a b c with
   | Ok -> 0
   | Err e ->
     (match e with

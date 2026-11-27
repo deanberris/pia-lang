@@ -1,7 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
 load("//tools/gpu:metal.bzl", "metal_library")
-load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_library")
 
 # The GPU toolchain end to end (ADR 0068, step 1): a hand-written gpu.module
 # through piac --emit=spirv, spirv-val, SPIRV-Cross and the Metal compiler.
@@ -42,28 +42,38 @@ sh_test(
     data = [":add_msl"],
 )
 
-# The .metallib, built at build time and embedded (macOS with Xcode's
-# Metal toolchain).
+# The .metallib, built at build time and embedded directly via `@embed`
+# (ADR 0068, ADR 0070 step 5; macOS with Xcode's Metal toolchain).
 metal_library(
     name = "add_metallib",
     src = ":add_msl",
-    symbol = "pia_test_add_metallib",
 )
 
-cc_test(
-    name = "embed_test",
-    srcs = ["embed_test.c"],
+pia_binary(
+    name = "embed_test_bin",
+    src = "embed_test.pia",
+    embeds = [":add_metallib"],
     tags = ["requires-metal"],
     target_compatible_with = ["@platforms//os:macos"],
-    deps = [":add_metallib_embed"],
+)
+
+sh_test(
+    name = "embed_test",
+    srcs = ["embed_test.sh"],
+    args = ["$(rootpath :embed_test_bin)"],
+    data = [":embed_test_bin"],
+    tags = ["requires-metal"],
+    target_compatible_with = ["@platforms//os:macos"],
 )
 
 # The kernel on the GPU (ADR 0068, step 2): through the Metal shim's C API,
-# and from Pia through Pia.Gpu. It needs a Mac with a GPU and the Metal
-# toolchain.
+# and from Pia through Pia.Gpu, using the `@embed`-ed .metallib from `gpu_add`.
+# It needs a Mac with a GPU and the Metal toolchain.
 pia_library(
     name = "gpu_add",
     src = "gpu_add.pia",
+    embeds = [":add_metallib"],
+    tags = ["requires-metal"],
     target_compatible_with = ["@platforms//os:macos"],
     deps = ["//lib/Pia:gpu"],
 )
@@ -81,7 +91,6 @@ cc_test(
     ],
     target_compatible_with = ["@platforms//os:macos"],
     deps = [
-        ":add_metallib_embed",
         "//src/runtime/metal",
     ],
 )

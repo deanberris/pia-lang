@@ -1,0 +1,30 @@
+(* Raw binary embedding verification (ADR 0070): exact constant length,
+   in-bounds indexing, deterministic repeated reads, slicing, and zero-length
+   blobs all prove cleanly with zero per-byte SMT axioms.
+// RUN: piac --verify --embed-path=%S/Inputs %s | FileCheck %s
+*)
+let magic : [u8] @embed(file = "magic.bin")
+let empty : [u8] @embed(file = "empty.bin")
+
+let magic_len () : usize
+  ensures result = 8
+= len magic
+
+let empty_len () : usize
+  ensures result = 0
+= len empty
+
+let first_byte () : u8 = magic.[0]
+
+let last_byte () : u8 = magic.[7]
+
+let deterministic (i : int{0..7}) : bool
+  ensures result = true
+= magic.[i] = magic.[i]
+
+let slice_len () : usize
+  ensures result = 4
+= len (magic.[2 .. 6])
+
+(* CHECK: 0 failed, 0 skipped
+*)

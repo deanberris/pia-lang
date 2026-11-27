@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "syntax/Diagnostics.h"
+#include "syntax/Embeds.h"
 #include "syntax/Syntax.h"
 
 namespace pia::syntax {
@@ -34,11 +35,11 @@ struct InterfaceArtifact {
 
 // The artifacts of the interfaces `program` declares, from the tokens of
 // `source`, which `program` was parsed from. A program with interfaces
-// needs a module header, which names them.
-std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
-                                                  std::string_view source,
-                                                  bool literate,
-                                                  Diagnostics &diags);
+// needs a module header, which names them. `embeds` is consulted only when an
+// interface explicitly exports an `@embed` binding (ADR 0070, section 5).
+std::vector<InterfaceArtifact>
+interfaceArtifacts(const Node &program, std::string_view source, bool literate,
+                   Diagnostics &diags, const EmbedOptions *embeds = nullptr);
 
 // Replaces each `import M.I` with the items of `M.I.piai`, found in the
 // first directory of `paths` that has it, and rewrites `M.f` in the

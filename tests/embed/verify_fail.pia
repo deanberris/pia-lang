@@ -1,0 +1,21 @@
+(* Raw binary embedding verifier rejection tests (ADR 0070): out-of-bounds
+   reads fail, indexing an empty blob fails, and byte contents are opaque to
+   Z3 (zero per-byte axioms).
+// RUN: not piac --verify --embed-path=%S/Inputs %s | FileCheck %s
+*)
+let magic : [u8] @embed(file = "magic.bin")
+let empty : [u8] @embed(file = "empty.bin")
+
+let bad_oob () : u8 = magic.[8]
+
+let bad_empty () : u8 = empty.[0]
+
+let bad_opaque () : bool
+  ensures result = true
+= magic.[0] = 0x4d
+
+(* CHECK: failed: the index is within bounds
+// CHECK: failed: the index is within bounds
+// CHECK: failed: the postcondition holds
+// CHECK: 3 failed, 0 skipped
+*)
