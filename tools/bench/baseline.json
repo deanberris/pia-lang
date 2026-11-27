@@ -261,11 +261,11 @@
       "wall_ms_n": 36765.2
     },
     "lib/Pia/Image/Gif/Lzw.pia": {
-      "cost": 76160769,
-      "goals": 175,
-      "solve_ms_n": 10301,
-      "solved": 152,
-      "wall_ms_n": 25335.7
+      "cost": 1090525552,
+      "goals": 630,
+      "solve_ms_n": 76089,
+      "solved": 612,
+      "wall_ms_n": 168059.1
     },
     "lib/Pia/Image/Gif/LzwEncode.pia": {
       "cost": 179914099,
@@ -280,6 +280,13 @@
       "solve_ms_n": 16997,
       "solved": 240,
       "wall_ms_n": 26702.3
+    },
+    "lib/Pia/Image/Gif/Ref.pia": {
+      "cost": 35814464,
+      "goals": 201,
+      "solve_ms_n": 2154,
+      "solved": 192,
+      "wall_ms_n": 5234.6
     },
     "lib/Pia/Image/Gif/Spec.pia": {
       "cost": 24035629,
@@ -1215,10 +1222,10 @@
   },
   "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 7713243144,
-    "goals": 12666,
-    "solved": 11225,
+    "cost": 8763422391,
+    "goals": 13322,
+    "solved": 11877,
     "wall_ms_1": 0,
-    "wall_ms_n": 1449688.4
+    "wall_ms_n": 1597646.4
   }
 }
