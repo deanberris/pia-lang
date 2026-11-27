@@ -78,7 +78,7 @@ lit_tests(
     # past the 300 s of a medium test. heap.pia and partial_sort.pia were
     # here too, until the verifier stopped rescanning the module for each
     # callee, which halved them (21 s and 17 s alone). inflate.pia proves
-    # Huffman's Kraft lemma, table build and prefix-freeness (776 goals), which took past
+    # Huffman's Kraft lemma, table build and prefix-freeness (825 goals), which took past
     # 300 s on the macOS runner. gif_lzw.pia proves decode_ref's
     # whole-stream theorem (about 3 min on 4 threads).
     sizes = {
