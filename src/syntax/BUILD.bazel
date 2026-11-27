@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS")
 
 # Lexer, parser and syntax tree (milestone M2). No LLVM dependency, so the
 # front end builds and tests in seconds.
@@ -7,6 +8,7 @@ cc_library(
     srcs = [
         "Comments.cpp",
         "Interfaces.cpp",
+        "Lean.cpp",
         "Lexer.cpp",
         "Lint.cpp",
         "Parser.cpp",
@@ -18,6 +20,7 @@ cc_library(
         "Comments.h",
         "Diagnostics.h",
         "Interfaces.h",
+        "Lean.h",
         "Lexer.h",
         "Lint.h",
         "Parser.h",
@@ -25,7 +28,7 @@ cc_library(
         "Syntax.h",
         "Token.h",
     ],
-    copts = ["-Wall", "-Wextra", "-Werror"],
+    copts = PIA_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
 )

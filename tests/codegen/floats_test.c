@@ -4,7 +4,9 @@
 // strict too: BUILD.bazel compiles this file with -ffp-contract=off, so
 // `a * b + c` is two roundings on both sides.
 
+#if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
+#endif
 
 #include <float.h>
 #include <math.h>
@@ -44,6 +46,18 @@ struct point {
 };
 float norm2(float x, float y);
 void mid(float px, float py, float qx, float qy, struct point *out);
+float of_i32(int32_t n);
+double of_u64(uint64_t n);
+double widen(float x);
+float narrow(double x);
+int32_t trunc_i32(float x);
+uint8_t trunc_u8(double x);
+uint32_t to_bits32(float x);
+float from_bits32(uint32_t u);
+uint64_t to_bits64(double x);
+double from_bits64(uint64_t u);
+float fabs32(float x);
+float mean(const float *xs, uint64_t n);
 
 static int failures = 0;
 
@@ -155,6 +169,40 @@ int main(void) {
   struct point p;
   mid(1.0f, 2.0f, 4.0f, -2.0f, &p);
   EXPECT(same32(p.x, 2.5f) && same32(p.y, 0.0f), "mid = {%a, %a}", p.x, p.y);
+
+  // Conversions, against C's casts.
+  int32_t ints[] = {0, 1, -1, 16777217, -16777217, 2147483647, INT32_MIN,
+                    123456789};
+  for (size_t i = 0; i < sizeof ints / sizeof ints[0]; ++i)
+    EXPECT(same32(of_i32(ints[i]), (float)ints[i]), "of_i32(%d)", ints[i]);
+  uint64_t longs[] = {0, 1, 9007199254740993ull, UINT64_MAX,
+                      0x8000000000000001ull};
+  for (size_t i = 0; i < sizeof longs / sizeof longs[0]; ++i)
+    EXPECT(same64(of_u64(longs[i]), (double)longs[i]), "of_u64(%llu)",
+           (unsigned long long)longs[i]);
+  for (size_t i = 0; i < n; ++i) {
+    float a = special[i];
+    EXPECT(same64(widen(a), (double)a), "widen(%a)", a);
+    EXPECT(same32(narrow((double)a), a), "narrow(%a)", a);
+    EXPECT(to_bits32(a) == bits32(a), "to_bits32(%a)", a);
+    EXPECT(bits32(from_bits32(bits32(a))) == bits32(a), "from_bits32(%a)", a);
+    EXPECT(to_bits64((double)a) == bits64((double)a), "to_bits64(%a)", a);
+    EXPECT(bits64(from_bits64(bits64((double)a))) == bits64((double)a),
+           "from_bits64(%a)", a);
+    EXPECT(same32(fabs32(a), fabsf(a)), "fabs32(%a)", a);
+    if (a >= -2147483648.0f && a < 2147483648.0f)
+      EXPECT(trunc_i32(a) == (int32_t)a, "trunc_i32(%a)", a);
+    if (a > -1.0f && a < 256.0f)
+      EXPECT(trunc_u8((double)a) == (uint8_t)a, "trunc_u8(%a)", (double)a);
+  }
+  EXPECT(same32(narrow(0.1), 0.1f), "narrow(0.1) = %a", narrow(0.1));
+  EXPECT(trunc_i32(-2147483648.0f) == INT32_MIN, "trunc_i32(-2^31)");
+  EXPECT(trunc_i32(-2.75f) == -2, "trunc_i32(-2.75)");
+  EXPECT(trunc_u8(255.9) == 255, "trunc_u8(255.9)");
+  EXPECT(trunc_u8(-0.9) == 0, "trunc_u8(-0.9)");
+  float total = 0.0f;
+  for (int i = 0; i < 64; ++i) total = total + xs[i];
+  EXPECT(same32(mean(xs, 64), total / 64.0f), "mean = %a", mean(xs, 64));
 
   if (failures) {
     fprintf(stderr, "%d failures\n", failures);

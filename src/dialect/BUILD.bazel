@@ -1,5 +1,6 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Pia's MLIR dialects (milestone M3, ADR 0018): pia, pia_contract, pia_par.
 
@@ -81,6 +82,7 @@ cc_library(
         "ParDialect.h",
         "PiaDialect.h",
     ],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

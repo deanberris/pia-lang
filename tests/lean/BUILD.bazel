@@ -1,0 +1,19 @@
+load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/lean:lean.bzl", "pia_lean_proof")
+
+# Lemmas proved in Lean (ADR 0061). sums_proof runs Lean on Proofs.lean
+# against the statements of sums.pia and writes the receipts that the lit
+# tests pass to piac: sums.pia is proved with them, and sums_stale.pia,
+# whose `sum` has changed since, is not.
+pia_lean_proof(
+    name = "sums_proof",
+    src = "sums.pia",
+    proofs = "Proofs.lean",
+)
+
+lit_tests(
+    name = "lean_tests",
+    srcs = glob(["*.pia"]),
+    data = [":sums_proof"],
+    tools = ["//tools/piac"],
+)

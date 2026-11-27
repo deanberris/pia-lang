@@ -587,6 +587,54 @@ struct ConvertLowering : mlir::OpConversionPattern<ConvertOp> {
   }
 };
 
+// Floats and integers (M11). A range integer is held in its repr, whose
+// signedness says which LLVM conversion reads it. Truncation toward zero is
+// what fptosi and fptoui do, and the verifier proved the result fits the
+// target's range, so neither can produce LLVM's poison.
+struct IntToFloatLowering : mlir::OpConversionPattern<IntToFloatOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(IntToFloatOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Type t = op.getResult().getType();
+    if (reprOf(mlir::cast<IntType>(op.getInput().getType())).isSigned)
+      rw.replaceOpWithNewOp<mlir::arith::SIToFPOp>(op, t, adaptor.getInput());
+    else
+      rw.replaceOpWithNewOp<mlir::arith::UIToFPOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+struct FloatToIntLowering : mlir::OpConversionPattern<FloatToIntOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(FloatToIntOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Repr r = reprOf(mlir::cast<IntType>(op.getResult().getType()));
+    Type t = rw.getIntegerType(r.width);
+    if (r.isSigned)
+      rw.replaceOpWithNewOp<mlir::arith::FPToSIOp>(op, t, adaptor.getInput());
+    else
+      rw.replaceOpWithNewOp<mlir::arith::FPToUIOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+// IRGen gives `to_bits` and `from_bits` the unsigned type of the float's
+// width, whose repr is that width, so both are a bitcast.
+template <typename OpTy>
+struct BitcastLowering : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+  using OpAdaptor = typename OpTy::Adaptor;
+  LogicalResult
+  matchAndRewrite(OpTy op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Type t = this->getTypeConverter()->convertType(op.getResult().getType());
+    rw.replaceOpWithNewOp<mlir::arith::BitcastOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
 struct CmpLowering : mlir::OpConversionPattern<CmpOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -1598,16 +1646,17 @@ void eraseSpecState(mlir::ModuleOp module) {
       if (!r->second.test(i))
         kept.push_back(call.getResult(i).getType());
     OpBuilder b(call);
-    auto fresh = b.create<mlir::func::CallOp>(call.getLoc(), call.getCallee(),
-                                              kept, call.getOperands());
+    auto fresh = make<mlir::func::CallOp>(b, call.getLoc(), call.getCallee(),
+                                          kept, call.getOperands());
     unsigned k = 0;
     for (unsigned i = 0; i < call.getNumResults(); ++i)
       if (!r->second.test(i))
         call.getResult(i).replaceAllUsesWith(fresh.getResult(k++));
     call.erase();
   }
-  for (auto &[op, r] : specResults) {
-    auto f = mlir::cast<mlir::func::FuncOp>(op);
+  for (auto &entry : specResults) {
+    auto f = mlir::cast<mlir::func::FuncOp>(entry.first);
+    const llvm::BitVector &r = entry.second;
     f.walk([&](mlir::func::ReturnOp ret) { ret->eraseOperands(r); });
     (void)f.eraseResults(r);
   }
@@ -1709,6 +1758,16 @@ void eraseContracts(mlir::ModuleOp module) {
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     auto from = f->getAttrOfType<mlir::StringAttr>(PiaDialect::getImportAttrName());
     if (!from) continue;
+    // An imported lemma or spec function has no code in its module: it is
+    // erased here with the local ones, calls and all.
+    if (auto ghost = f->getAttrOfType<mlir::StringAttr>("pia.import_ghost")) {
+      f->setAttr(ghost.getValue() == "spec"    ? PiaDialect::getSpecAttrName()
+                 : ghost.getValue() == "lemma" ? PiaDialect::getLemmaAttrName()
+                                               : PiaDialect::getAxiomAttrName(),
+                 mlir::UnitAttr::get(module.getContext()));
+      f->removeAttr(PiaDialect::getImportAttrName());
+      continue;
+    }
     llvm::StringRef local = f.getSymName();
     local.consume_front(from.getValue());
     local.consume_front(".");
@@ -1919,8 +1978,8 @@ static void lowerSpreads(mlir::ModuleOp module) {
   });
   for (mlir::scf::ForOp f : spreads) {
     mlir::OpBuilder b(f);
-    auto par = b.create<mlir::scf::ParallelOp>(
-        f.getLoc(), mlir::ValueRange{f.getLowerBound()},
+    auto par = make<mlir::scf::ParallelOp>(
+        b, f.getLoc(), mlir::ValueRange{f.getLowerBound()},
         mlir::ValueRange{f.getUpperBound()}, mlir::ValueRange{f.getStep()});
     mlir::Block *src = f.getBody();
     mlir::Block *dst = par.getBody();
@@ -2096,6 +2155,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering,
            RecMakeLowering, RecTagLowering, RecPayloadLowering>(
           types, ctx);
+  // Floats and integers (M11).
+  patterns.add<IntToFloatLowering, FloatToIntLowering,
+               BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,
+                                                                       ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
                AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);

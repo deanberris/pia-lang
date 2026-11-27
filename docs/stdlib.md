@@ -71,7 +71,7 @@ New builtins, each one or two MLIR ops, with exact SMT semantics (`bvand`, `bvsh
 | `narrow e` | narrowing conversion, the explicit form of what assignment does now | the value fits |
 | `wrap_to t e`, `sat_to t e` | conversion with a stated overflow mode | none |
 | `mul_wide a b` | the full product in a type twice as wide, `u32 -> u32 -> u64` | none |
-| `bits` `from_bits` | reinterpret, once floats exist | none |
+| `to_bits` `from_bits` | reinterpret a float's IEEE encoding (built, M11) | none |
 
 Their operators use C's symbols (Dean, 2026-11-21) and go in the prelude as metaprograms, like `+` today:
 
@@ -533,7 +533,7 @@ flowchart TD
 
 | Layer | Needs from the core | Contents (all Pia) |
 | --- | --- | --- |
-| `Pia.Prelude` | modules | operators, `derive_eq`, `derive_ord`, `derive_add`, `derive_scale`, `derive_bounds`, later `derive_hash` |
+| `Pia.Prelude` | modules | operators, `derive_eq`, `derive_ord`, `derive_add`, `derive_scale`, `derive_bounds`; `derive_hash` is Pia.Core.Hash's |
 | `Pia.Core` | groups 1 to 6 | `option` `result` `ordering`; `Eq` `Ord` `Hash` `Numeric`; integer utilities and `Arith` lemmas; slice algorithms (`fill` `copy` `equal` `find` `reverse` `rotate` `binary_search` `sort` `partition`); fixed-capacity containers (`array_vec`, `bitset`, `ring`); `crc32` `adler32` `fnv`; UTF-8 validation; formatting integers into a buffer and parsing them |
 | `Pia.Sys.Posix` | group 8 | the trusted libSystem declarations, and nothing else |
 | `Pia.Rt` | groups 8 and 9 | the trap entry point, signal handlers, stack traces |

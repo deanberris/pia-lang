@@ -1,0 +1,45 @@
+(* sums.pia with `sum` changed since its Lean proofs were checked: the
+   statement of `sum_nonneg` uses `sum`, so its receipt from sums_proof is
+   stale and its goal fails. The other two lemmas do not use `sum`, so
+   their receipts still prove them (ADR 0061).
+// RUN: not piac --verify --lean-receipt=%S/sums_proof.receipt %s | FileCheck %s
+*)
+
+let point = type { x : int; y : int }
+
+let spec within (p : point) (n : int) : bool = 0 <= p.x && p.x < n
+
+let spec dist (p : point) : int = p.x + p.y
+
+let rec spec sum (n : int) : int
+  requires n >= 0
+  decreases n
+= if n = 0 then 1 else n + sum (n - 1)
+
+let lemma sum_nonneg (n : int) : unit
+  requires n >= 0
+  ensures sum n >= 0
+= by lean Proofs.sum_nonneg
+
+let lemma dist_of (a : int) (b : int) : unit
+  ensures dist { x = a; y = b } = a + b
+= by lean Proofs.dist_of
+
+let lemma origin_within (n : int) : unit
+  requires n >= 1
+  ensures within { x = 0; y = 5 } n
+= by lean Proofs.origin_within
+
+(* Proved by Z3, from the Lean lemma. *)
+let lemma sum_plus_one (m : int) : unit
+  requires m >= 0
+  ensures sum m + 1 > 0
+= sum_nonneg m
+
+(* Expected report.
+// CHECK-DAG: failed: the Lean theorem 'Proofs.sum_nonneg' proves 'sum_nonneg' [stale receipt]
+// CHECK-DAG: hint: the statement or a definition it uses changed since the proof was checked; build its pia_lean_proof target again
+// CHECK-DAG: proved: the Lean theorem 'Proofs.dist_of' proves 'dist_of' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Proofs.origin_within' proves 'origin_within' [lean]
+// CHECK: {{[0-9]+}} proved, 1 failed, 0 skipped
+*)

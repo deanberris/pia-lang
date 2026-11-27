@@ -1,0 +1,23 @@
+(* A literate module (.pia.md) exports spec functions with their
+   definitions: the artifact is plain Pia, so it is read back as plain Pia,
+   not as Markdown, when piac checks that each definition reads back as it
+   was written (#259).
+// RUN: piac --emit=interface -o %t %S/Inputs/lit_squares.pia.md
+// RUN: FileCheck --check-prefix=PIAI %s < %t/Num.Squares.Squares.piai
+// RUN: piac --verify --no-lint --iface-path=%t %s | FileCheck %s
+*)
+import Num.Squares.Squares as S
+
+let below (x : u8) : unit
+  requires S.small x
+  ensures x < 10
+  with S.small
+= ()
+
+(*
+// PIAI: let spec sq (x : u8) : u16
+// PIAI-NEXT: = x * x
+// PIAI: let spec small (x : u8) : bool @opaque
+// PIAI-NEXT: = sq x < 100
+// CHECK: 1 proved, 0 failed, 0 skipped
+*)

@@ -53,6 +53,9 @@ interface Hash = sig
   let spec hash_fold : (t : type where Hash t) -> (xs : [t]) -> (n : usize) -> u64
   (** The hash of a slice of any Hash type. *)
   let hash_all : (t : type where Hash t) -> (xs : [t]) -> u64
+  (** @derive(hash) on a distinct type (ADR 0064, section 4): `same` and
+      `hash` on the value it wraps, so the type meets Hash. *)
+  let meta derive_hash : list
 end
 
 (** C++: std::hash, with the law that makes a hash table correct. *)
@@ -148,3 +151,26 @@ let hash_all (t : type where Hash t) (xs : [t]) : u64
     i <- i + 1
   done;
   h
+
+(* @derive(hash): for a distinct type, `let length = type u32
+   @derive(hash)` (ADR 0064, sections 4 and 6), `same` and `hash` on the
+   value it wraps, which meet the concept Hash, so `hash_all<length>`
+   works; the laws are proved at each instance (ADR 0034). `hash` is the
+   underlying type's, called by its full path, so a length hashes as the
+   u32 it holds. It takes any type of one field whose type is an integer
+   type with a hash here. Outside quotes it uses the builtins by name. *)
+let meta derive_hash (t : type_decl) : list =
+  let fs = fields t in
+  let ints = [ "u8"; "u16"; "u32"; "u64"; "i8"; "i16"; "i32"; "i64" ] in
+  let f =
+    if eq (length fs) 1 then nth fs 0
+    else fail (concat "@derive(hash) needs a type of one integer field, such as 'let length = type u32'; '" (concat (name t) "' is not one")) in
+  let u = field_type t f in
+  let hashed =
+    if eq (kind u) "TypeName" then fold (let (h) (n) => or h (eq n (name u))) false ints else false in
+  let checked =
+    if hashed then true
+    else fail (concat "@derive(hash): '" (concat (name t) "' wraps a type with no hash in Pia.Core.Hash; it hashes u8, u16, u32, u64, i8, i16, i32 and i64")) in
+  let h = "Pia.Core.Hash.hash" in
+  [ `( let same ($!a : $t) ($!b : $t) : bool ensures $!result <==> $!a.$f = $!b.$f = $!a.$f = $!b.$f );
+    `( let hash ($!a : $t) : u64 ensures $!result = $h $!a.$f = $h $!a.$f ) ]

@@ -67,7 +67,7 @@ Each `pia.add`, `sub`, `mul`, `div` and `rem` is computed at one width. That wid
 
 `pia.convert` is the same with the input as the exact value. `pia.cmp` extends both sides to a width that holds both ranges. `to_index` and `from_index` become `index_cast` (or `index_castui` when the value is non-negative). `len` becomes `memref.dim`, or a constant for a fixed array. `load` and `store` become `memref.load` and `memref.store`, without bounds checks, because the verifier proved them in bounds.
 
-Floats are already core MLIR: IRGen emits `arith.addf`, `subf`, `mulf`, `divf`, `negf`, `cmpf` and float `arith.constant` directly, with no fast-math flags, so each operation is one IEEE 754 operation rounded to nearest (ADR 0004, ADR 0012). Nothing reassociates them, and LLVM contracts `a * b + c` into an FMA only when both operations carry the `contract` flag, which IRGen never sets, and Pia never sets flush-to-zero, so subnormals are kept. `=` is `cmpf oeq` and `<>` is `cmpf une`, so with a NaN every comparison is false but `<>`. `tests/codegen/floats.pia` checks this against C compiled with `-ffp-contract=off`, bit for bit (`floats_test.c`).
+Floats are already core MLIR: IRGen emits `arith.addf`, `subf`, `mulf`, `divf`, `negf`, `cmpf` and float `arith.constant` directly, with no fast-math flags, so each operation is one IEEE 754 operation rounded to nearest (ADR 0004, ADR 0012). Nothing reassociates them, and LLVM contracts `a * b + c` into an FMA only when both operations carry the `contract` flag, which IRGen never sets, and Pia never sets flush-to-zero, so subnormals are kept. `=` is `cmpf oeq` and `<>` is `cmpf une`, so with a NaN every comparison is false but `<>`. Conversions are `pia` ops that lower to LLVM's: `f32 n` of an integer is `sitofp` or `uitofp` by the signedness of its storage, `f64 x` and `f32 x` between the widths are `arith.extf` and `arith.truncf`, `i32 x` of a float is `fptosi` or `fptoui` at the target's storage width, whose result the verifier proved is in range so it is never poison, and `to_bits` and `from_bits` are `arith.bitcast`. `tests/codegen/floats.pia` checks this against C compiled with `-ffp-contract=off`, bit for bit (`floats_test.c`).
 
 LLVM recognises the widen-clamp-truncate pattern, so `add_px` on `u8` with `@overflow(saturate)` compiles to `llvm.uadd.sat.i8`. In a loop over slices, such as `add_rows` in `tests/codegen/saturate.pia`, LLVM's loop vectoriser turns it into NEON `uqadd.16b`.
 
@@ -91,7 +91,7 @@ Each Pia function `f` becomes an internal function. Only the functions a module 
 | `[T]` | `const T *data, uint64_t len` (or `T *` when it is written) |
 | `[T; n]` | `const T *data` (or `T *`) |
 
-A record parameter is passed as its fields, in declaration order, so `blend (p : pixel) (q : pixel) : pixel` takes eight `uint8_t` arguments. A record result is written through a pointer to a C struct of its fields, which is the last argument. Each field sits at its natural C offset, aligned to its own size:
+A record parameter is passed as its fields, in declaration order, so `blend (p : pixel) (q : pixel) : pixel` takes eight `uint8_t` arguments. A record result is written through a pointer to a C struct of its fields, which is the last argument; a record that flattens to one scalar, such as a one-field record or a distinct type (ADR 0064), returns that scalar instead. Each field sits at its natural C offset, aligned to its own size:
 
 ```c
 struct pixel { uint8_t r, g, b, a; };

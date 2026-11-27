@@ -108,6 +108,29 @@ http_archive(
     urls = ["https://github.com/KhronosGroup/SPIRV-Cross/archive/refs/tags/vulkan-sdk-1.4.350.0.tar.gz"],
 )
 
+# Lean 4 checks the proofs of lemmas proved in Lean (ADR 0061). It runs only
+# in pia_lean_proof actions (tools/lean/lean.bzl), never in piac, so it is
+# fetched only when one is built. One release per host, pinned with its hash;
+# third_party/lean:lean picks the one for the machine running the action.
+# Mathlib is not needed yet.
+LEAN_VERSION = "4.36.0"
+
+http_archive(
+    name = "lean_toolchain_linux_x86_64",
+    build_file = "//third_party/lean:BUILD.overlay",
+    sha256 = "2b7ab1ed8b92d2e6abfaf41344823b510064dbc9c0260cac73eb496ab2dea6eb",
+    strip_prefix = "lean-%s-linux" % LEAN_VERSION,
+    urls = ["https://github.com/leanprover/lean4/releases/download/v%s/lean-%s-linux.tar.zst" % (LEAN_VERSION, LEAN_VERSION)],
+)
+
+http_archive(
+    name = "lean_toolchain_macos_arm64",
+    build_file = "//third_party/lean:BUILD.overlay",
+    sha256 = "49acada8749ad1343eff1224a3d2510ac61ed53363d37b5e738e8c587e7deabd",
+    strip_prefix = "lean-%s-darwin_aarch64" % LEAN_VERSION,
+    urls = ["https://github.com/leanprover/lean4/releases/download/v%s/lean-%s-darwin_aarch64.tar.zst" % (LEAN_VERSION, LEAN_VERSION)],
+)
+
 # --------------------------------------------------------------- LLVM and MLIR
 #
 # LLVM's Bazel build lives in llvm-project at utils/bazel. Its MODULE.bazel

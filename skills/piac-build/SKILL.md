@@ -71,6 +71,8 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 | `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link |
 | `pia_binary(name, src, deps)` | a program whose `main` is in `src` | a `pia_library` plus a `cc_binary` |
 
+`load("//tools/lean:lean.bzl", "pia_lean_proof")`: `pia_lean_proof(name, src, proofs)` checks the Lean proofs in `proofs` of the lemmas of `src` proved in Lean and writes `<name>.receipt`, for `piac --lean-receipt=` (ADR 0061, the `pia-lean` skill).
+
 All three take `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
 
 ## What a build trusts

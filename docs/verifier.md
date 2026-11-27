@@ -152,6 +152,43 @@ A value of a `let rec` variant ([ADR 0047](adr/0047-recursive-sum-types-and-shar
 
 A counterexample shows a recursive value as its constructor and its payload's fields in order, `Node {_, 7, 4294967295, _, 0}`, where `_` is a buffer (tests/verify/rec_types.pia, tests/verify/rec_aliasing.pia). Equality of recursive values, `@derive(eq)` and structural lemmas come with metaprograms over recursive types (step 4).
 
+## Cost bounds
+
+A function may bound what it spends on a counter with `costs c <= e`, after its other contracts ([ADR 0062](adr/0062-cost-bounds-in-contracts.md)). Every clause names its counter: `iterations` counts each iteration of a loop in the function, and `calls` each call of a function that is not a spec function or a lemma. A function has at most one clause per counter, and each is proved on its own. A function without a clause is generated and proved exactly as before.
+
+```ocaml
+let find (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs iterations <= len xs
+  costs calls <= 0
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> v
+    invariant i <= len xs
+    invariant spent iterations <= i && spent calls = 0
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  i
+```
+
+**`spent c`** is what the function has spent on `c` so far: 0 on entry, one more at the start of each iteration's body, and at each call one more on `calls` plus the callee's own bound on each counter, with its parameters bound to the call's arguments. IRGen keeps it as a mutable local, so it is threaded through `if`s, `&&` and `||`, loops and `?` like any other, and a loop havocs it: an invariant has to bound it, as `spent iterations <= i` does above. `spent c` may appear in loop invariants, `assert`s and lemma calls, and only for a counter the function bounds. At the end of the body, which every `?` reaches as a branch, `spent c <= e` is a goal, "the cost on iterations is within its bound", reported with the contract goals at the clause. `e` is read at the parameters' entry values, so it takes no `old`.
+
+**A callee's bound.** A callee with a clause for the counter contributes its bound at the call's arguments. A callee without one has a bound only if it has no loop and no recursion: the compiler adds up the calls its body makes, through any callees of its own, taking the larger branch of each `if`, and a C function (`= extern`) has 0. That bound is a constant, filled in once every function is made. Any other callee is an error at the call:
+
+```
+report.pia:15:3: error: 'wrapped' has no bound on iterations, so the cost of 'report' on iterations cannot be proved; add 'costs iterations <= ...' to 'wrapped', which calls 'total', which has a loop
+```
+
+A function with a clause that calls itself needs a `decreases` measure, since its own bound is then assumed at the call, as its `ensures` is.
+
+**Encoding.** A count is a `usize`, a bit-vector like every machine integer, and adding to it saturates at 2^64 - 1, which no run reaches, so a bound below that is exact and the additions raise no goal. It is not the `int` that ADR 0062 first described: Z3 relates an `int` to a loop's machine integers through `bv2int`, and the invariant `c = int i` of a loop that adds one to an `int` `c` timed out at 20 seconds, where `spent iterations <= i` proves in under 100 ms. `e` is an integer at its own types, converted to `usize`, so `n * m` on `u8` values keeps the function at 68 bits; an `int` bound is compared through `int spent`, which a caller cannot yet add to its own count. Codegen leaves the counter's arithmetic in place, with nothing reading it, and LLVM removes it, so `find` compiles to the same code with or without its clauses.
+
+**Loops in a costed function.** Bounds multiply loop variables, as in `spent iterations <= i + i * m` for nested loops, and after the loop Z3 would bit-blast `exit * m` and `n * m` as two products it cannot tell are equal. So in a function with a cost clause, a `for` loop with a step of one also states `exit = hi` outright, unconditionally when the bounds' ranges say `lo <= hi`, as for `0..n`. A product of two `usize` values still widens the function to 132 bits and is slow to prove: nested loops over two slices need a lemma that does the multiplication, which is step 2's business with `Pia.Math.Log`.
+
+**Not yet** (ADR 0062's later steps): function counters such as `less`, cost clauses in interfaces, amortised bounds with `old`, and a `spread` in a function with a cost clause, which is an error. tests/verify/costs.pia has proved bounds and a failing one, and tests/irgen/cost_errors.pia and cost_bound_errors.pia the errors.
+
 ## Spec functions and lemmas
 
 `let spec f ...` defines a spec function: pure and total, used to say what code means. Contracts, other spec functions and lemmas can call it. Code cannot, and codegen erases it. It cannot loop, write a buffer, `abort`, or call anything but spec functions and pure functions of scalars. A recursive one needs `decreases`, and spec functions cannot be mutually recursive yet. Its body is checked like any function's: its own goals, its `ensures`, and its measure at each recursive call. A spec function imported from another module's interface comes with its definition, which importers unfold, but its goals are proved once, in its own module, not again in each importer (ADR 0039).
@@ -200,6 +237,8 @@ Parameters of spec functions and lemmas cannot be `out`, `inout` or `mutable`. `
 
 **Pure functions of scalars.** An ordinary function with scalar parameters and one scalar result, whose body has no loop, buffer access, `abort` or recursion, and calls only other such functions, always returns exactly what its body computes. A call to one, in a contract, a spec function or code, is its body's value where its precondition holds: with no precondition the call is the body's term itself, and with one it is `if pre then body else F a`. Since that needs no definition as a fact, it keeps its meaning inside an assumed `forall`, as in a callee's `ensures forall (k in 0..result). p xs.[k] = false`. A call in a contract to one without a precondition, whose arguments are loads, constants or other such calls, is specification like the arithmetic around it, so it may be guarded: `result < len xs ==> p xs.[result]` reads `xs.[result]` only where it is in bounds. This is what makes a lambda's body known where it is passed (ADR 0044): the lambda is a private function `lambda@file.pia:line:col`, and the specialisation of the higher-order function calls it. A function object's `apply` is one too once its record is split into fields, and so is a capturing lambda's, which unfolds at the call with the captured values (unless it reads a captured buffer), and so is a call of a generic proof's abstract function, a concept requirement such as `same xs.[result] v` in an `ensures`. So a generic's contract that names a concept function, such as `ensures result = (if less b a then b else a)` in `min`, means `b < a` at the `u8` instance, where `less` is `a < b`, and a spec function over `Ord t` can call `less` (`lex_from` in `lib/Pia/Core/Order.pia`). A call to any other function in a contract is still an unknown value, constrained only by the callee's own `ensures` (tests/verify/pure_calls.pia). A call in a contract to a function with a precondition, such as a spec function, is needed only where its value can matter, so its precondition is a goal, and its postconditions are facts, under the short-circuit guard it sits behind: the right operand of `a ==> b` and of `a && b` where `a` holds, and of `a || b` where `a` does not. `r < len xs ==> ok xs r` checks `ok`'s `requires k < len xs` only where `r < len xs`, as `xs.[r]` would be read there; `ok xs r || r < len xs`, with the call on the left, checks it everywhere (#282, tests/verify/contract_guards.pia). The guard is followed along single uses up to the contract; a call whose value is used twice, or which code reads, is checked unguarded.
 
+**Lemmas proved in Lean** ([ADR 0061](adr/0061-lean-proved-facts.md)). A lemma whose body is `by lean T` is proved by the Lean 4 theorem `T` instead of the solver. It states only `requires` and `ensures`, and callers use it like any lemma. `piac --emit=lean` translates its statement, `∀ params, requires → ensures`, into a Lean `Prop`, together with the spec functions and record types it uses, over `int` and `bool`: a spec function is a `def`, an opaque constant outside its precondition, where Pia says nothing either, and ending by its `decreases` measure, and a record is a `structure`. The `pia_lean_proof` rule (`tools/lean/lean.bzl`) runs the pinned Lean release on the statements and the proofs, checks that `T` has the statement's type, and writes a receipt with the statement hash, the SHA-256 of the Lean text of the statement and of every definition it uses, and the axioms `T` depends on. `piac --verify --lean-receipt=<file>` reads receipts: the lemma's one goal, "the Lean theorem 'T' proves 'l'", is proved `[lean]` when a receipt has its current hash and only Lean's own axioms (`propext`, `Classical.choice`, `Quot.sound`) or those of `native_decide`, and fails otherwise: `[no receipt]`, `[stale receipt]` when the lemma or anything it uses has changed since, or `[axiom X]`, `sorryAx` included. Lean never runs in `piac`, the REPL or the language server. Step 1 translates only `int`, `bool` and records of them, with `+ - *`, comparisons, the logical operators, `if`, `let`, record literals, fields and updates, calls, and quantifiers in a lemma's contracts; anything else is an `--emit=lean` error (tests/lean, tests/verify/by_lean.pia).
+
 ## Spec-only `int` and `real`
 
 Two types exist only for specifications ([ADR 0036](adr/0036-library-theories.md), step 1):
@@ -242,13 +281,14 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 
 ## Floats
 
-`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and that is all the solver knows of it:
+`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and the solver knows this much of it:
 
-- A literal is its exact bits, and negation flips the sign bit, so both are exact.
-- `+`, `-`, `*` and `/` are uninterpreted functions of the bits (`f32.add` and so on): the same operands give the same result, and nothing else is known.
-- `=` is IEEE equality, not equality of bits, since NaN differs from itself and `-0.0 = 0.0`, so it is uninterpreted too. `<>` is its negation, `<` and `<=` are uninterpreted, and `>` and `>=` are `<` and `<=` with the operands swapped.
+- A literal is its exact bits, and negation flips the sign bit, so both are exact. So are `to_bits x`, the bits as a `u32` or `u64`, and `from_bits u`, the float a `u32` or `u64` encodes.
+- `=`, `<` and `<=` are IEEE's, computed from the bits: a NaN (exponent all ones, fraction not zero) is unordered, so every comparison with it is false, and the other floats are ordered as their magnitudes with their signs are, so `-0.0 = 0.0` and the infinities lie past every finite float. `<>` is not `=`, and `>` and `>=` are `<` and `<=` with the operands swapped.
+- `+`, `-`, `*` and `/`, `f32 n` of an integer, and `f64 x` and `f32 x` between the widths are uninterpreted functions of the bits (`f32.add` and so on): the same operands give the same result, and nothing else is known.
+- `i32 x`, or any integer type applied to a float, truncates toward zero and raises a `nooverflow` goal, "the float is a number that fits in i32 when truncated": `x` is not NaN and lies strictly between `lo - 1` and `hi + 1` for the type's range `[lo, hi]`, so the C conversion it compiles to is defined. Each bound is compared as the float nearest it inside that interval when it is not a float itself, so `-1.0 < x && x < 256.0` is exactly the goal for a `u8`. The result is uninterpreted, within the type's range.
 
-So a goal that follows from those facts is proved, such as `(a > b) = (b < a)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
+So a goal that follows from those facts is proved, such as `(x < y) = (-y < -x)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits, such as `x = nan`. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
 
 ## Spec state
 
