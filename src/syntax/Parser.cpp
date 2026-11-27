@@ -1064,6 +1064,13 @@ class Parser {
           expect(K::RParen, "')'");
         }
         args.push_back(std::move(t));
+      } else if (at(K::LBracket)) {
+        // A type, `[u8; 4]`, or else a shape, `[4; 4]` (ADR 0074): a list of
+        // extents for a value parameter.
+        NodePtr t = attempt([&] { return typeAtom(); });
+        if (!t)
+          t = atom();
+        args.push_back(std::move(t));
       } else if (canStartTypeAtom(kind()) && !at(K::Type) && !atCosts()) {
         args.push_back(typeAtom());
       } else {

@@ -407,6 +407,24 @@ The type arguments are deduced. A constructor takes its instance from the type i
 
 A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. A function can be generic over one: a name in a value parameter's place that no parameter declares, `n` in `(b : block t n)`, is deduced from the argument like a type parameter, and in the body and contracts it is the argument's value. Each instance is proved on its own.
 
+A value parameter can also be a shape, `(s : shape)`: a list of extents such as `[4; 4]`, whose length is its rank, so one type covers vectors, matrices and every other rank. In the body, and in a function generic over it, `s` is a constant `[usize; r]`, so `len s` is the rank and `s.[i]` an extent. A function names the extents it needs, `[m; k]`, or the whole shape, `s`:
+
+```ocaml
+let grid = let (s : shape) (r : region) => type {
+  data : borrowed(r) [u8]
+} where len s = 2 && len data = s.[0] * s.[1]
+
+let corner (r : region) (g : grid [4; 4] r) : u8 = g.data.[15]
+
+let first (r : region) (g : grid [m; k] r) : u8
+  requires 0 < m && 0 < k
+= g.data.[0]
+
+let cells (r : region) (g : grid s r) : usize
+  ensures result = s.[0] * s.[1]
+= len g.data
+```
+
 ```ocaml
 let block = let (t : type) (n : usize) => type { cells : [t; n] }
 

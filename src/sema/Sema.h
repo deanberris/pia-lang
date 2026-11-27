@@ -155,6 +155,9 @@ class TypeResolver {
   struct ValueArg {
     mlir::Type type;
     llvm::APInt value;
+    // A `(s : shape)` parameter's extents, `[4; 4]`, when `isShape`.
+    bool isShape = false;
+    std::vector<llvm::APInt> shape = {};
   };
   using ValueArgs = std::map<std::string, ValueArg>;
   const ValueArgs *valueArgs(const std::string &record) const {
@@ -273,6 +276,9 @@ class TypeResolver {
   std::optional<llvm::APInt> constantBound(const syntax::Node &n);
   // The value of the argument `n` to a value parameter of type `want`.
   std::optional<llvm::APInt> valueArg(const syntax::Node &n, mlir::Type want);
+  // The argument `n` to a `(s : shape)` parameter, `[4; 4]` or `[m; k]`:
+  // a tuple of int{v..v}, one per extent. Null after an error.
+  mlir::Type shapeArg(const syntax::Node &n);
 
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
@@ -305,6 +311,14 @@ bool isGenericTypeItem(const syntax::Node &item);
 // The core builtins that operators expand to, and `len` and `old`
 // (docs/meta.md). No definition may take their names.
 bool isCoreBuiltin(std::string_view name);
+
+// `[4; 4]`, `[m; k]` or `s`: the extents written in a shape argument, or
+// null when `n` is a single name (a whole shape) or no list.
+std::optional<std::vector<const syntax::Node *>>
+shapeElements(const syntax::Node &n);
+// A shape argument's type, tuple<int{4..4}, int{4..4}>, spelled `[4; 4]`;
+// nullopt for any other type.
+std::optional<std::string> spellShape(mlir::Type t);
 
 struct Param {
   std::string name;

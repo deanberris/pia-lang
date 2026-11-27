@@ -146,4 +146,4 @@ Each step is one PR and useful on its own.
 
 Steps 3 to 5 build on this: step 3 adds `@lower` on types and the tensor case of `$result`, step 4's trusted lowerings are ADR 0078 rules, and step 5 proves them.
 
-Steps 1 and 2 are built: record invariants (PR #472), and value parameters on types and on functions (PRs #499 and #515). Integer arguments only so far. Shape lists, `tensor t [m; k]`, are still to come in step 2.
+Steps 1 and 2 are built: record invariants (PR #472), and value parameters on types and on functions (PRs #499 and #515). Shapes, `(s : shape)` with `[4; 4]` or `[m; k]`, complete step 2 with literal extents; a `?` extent needs a field to carry it, so it comes with step 3.

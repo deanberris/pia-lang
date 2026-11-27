@@ -1180,6 +1180,15 @@ class Gen {
       auto a = sig.typeArgs.find(name);
       if (a == sig.typeArgs.end())
         continue;
+      // A whole shape, `s` in `(a : matrix s r)`.
+      if (auto tuple = mlir::dyn_cast<mlir::TupleType>(a->second)) {
+        llvm::SmallVector<llvm::APInt> extents;
+        for (Type e : tuple.getTypes())
+          extents.push_back(mlir::cast<IntType>(e).getLo());
+        auto [value, type] = shapeConstant(l, extents);
+        bind(name, value, type, false);
+        continue;
+      }
       auto single = mlir::dyn_cast<IntType>(a->second);
       if (!single || single.getLo() != single.getHi())
         continue;
@@ -2087,6 +2096,20 @@ class Gen {
     return false;
   }
 
+  // A shape's extents as a constant `[usize; r]` (ADR 0074), so `len s`
+  // is its rank and `s.[i]` an extent.
+  std::pair<Value, Type> shapeConstant(Location l,
+                                       llvm::ArrayRef<llvm::APInt> extents) {
+    Type t = ArrayType::get(&ctx_, extents.size(), types_.usize());
+    llvm::SmallVector<mlir::Attribute> values;
+    for (const llvm::APInt &e : extents)
+      values.push_back(
+          b_.getIntegerAttr(b_.getIntegerType(kWidth), e.sextOrTrunc(kWidth)));
+    Value c =
+        create<ConstArrayOp>(l, t, b_.getArrayAttr(values), mlir::StringAttr());
+    return {c, t};
+  }
+
   bool refine(Value v, Type t, bool ensures) {
     if (!refined(t)) return true;
     auto rec = mlir::cast<RecordType>(t);
@@ -2116,10 +2139,16 @@ class Gen {
         for (const auto &[name, arg] : *values) {
           auto binding = std::make_shared<Binding>();
           binding->name = name;
-          binding->value = create<ConstantOp>(
-              l, arg.type,
-              b_.getIntegerAttr(b_.getIntegerType(kWidth), arg.value));
-          binding->type = arg.type;
+          if (arg.isShape) {
+            auto [value, type] = shapeConstant(l, arg.shape);
+            binding->value = value;
+            binding->type = type;
+          } else {
+            binding->value = create<ConstantOp>(
+                l, arg.type,
+                b_.getIntegerAttr(b_.getIntegerType(kWidth), arg.value));
+            binding->type = arg.type;
+          }
           scopes_.back()[name] = std::move(binding);
         }
       if (field.empty()) {

@@ -186,6 +186,8 @@ std::string typeName(mlir::Type t) {
   if (mlir::isa<RealType>(t)) return "real";
   if (auto so = mlir::dyn_cast<SortType>(t)) return so.getName().str();
   if (auto r = mlir::dyn_cast<RecType>(t)) return r.getName().str();
+  if (auto s = spellShape(t))
+    return *s;
   std::string out;
   llvm::raw_string_ostream os(out);
   t.print(os);
@@ -303,6 +305,72 @@ std::optional<llvm::APInt> TypeResolver::valueArg(const Node &n,
   return v->sextOrTrunc(kWidth);
 }
 
+std::optional<std::vector<const Node *>> shapeElements(const Node &n) {
+  std::vector<const Node *> out;
+  switch (n.kind) {
+  case NodeKind::ListLit: // `[4; 4]`
+    for (const syntax::NodePtr &k : n.kids)
+      out.push_back(k.get());
+    return out;
+  case NodeKind::ArrayType: // `[m; k]`, which parses as a type
+    out.push_back(n.kids[0].get());
+    out.push_back(n.kids[1].get());
+    return out;
+  case NodeKind::SliceType: // `[m]`
+    out.push_back(n.kids[0].get());
+    return out;
+  default:
+    return std::nullopt;
+  }
+}
+
+std::optional<std::string> spellShape(mlir::Type t) {
+  auto tuple = mlir::dyn_cast_or_null<mlir::TupleType>(t);
+  if (!tuple)
+    return std::nullopt;
+  std::string out = "[";
+  for (size_t i = 0; i < tuple.size(); ++i) {
+    auto single = mlir::dyn_cast<IntType>(tuple.getType(i));
+    if (!single || single.getLo() != single.getHi())
+      return std::nullopt;
+    out += (i ? "; " : "") +
+           llvm::toString(single.getLo().sextOrTrunc(kWidth), 10, true);
+  }
+  return out + "]";
+}
+
+mlir::Type TypeResolver::shapeArg(const Node &n) {
+  // `s`, a shape the body or the function was given whole.
+  if (n.kind == NodeKind::Name || n.kind == NodeKind::TypeName) {
+    if (auto it = values_.find(n.text);
+        it != values_.end() && it->second.isShape) {
+      llvm::SmallVector<mlir::Type> extents;
+      for (const llvm::APInt &e : it->second.shape)
+        extents.push_back(IntType::get(&ctx_, e, e));
+      return mlir::TupleType::get(&ctx_, extents);
+    }
+    for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
+      if (auto p = it->find(n.text); p != it->end()) {
+        if (spellShape(p->second))
+          return p->second;
+        break;
+      }
+  }
+  auto elements = shapeElements(n);
+  if (!elements) {
+    diags_.error(n.loc, "a shape is a list of extents, as in '[4; 4]'");
+    return {};
+  }
+  llvm::SmallVector<mlir::Type> extents;
+  for (const Node *e : *elements) {
+    auto v = valueArg(*e, usize());
+    if (!v)
+      return {};
+    extents.push_back(IntType::get(&ctx_, *v, *v));
+  }
+  return mlir::TupleType::get(&ctx_, extents);
+}
+
 bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
   // A buffer whose elements hold slices is a buffer of slices (ADR 0048),
   // one per slice field; a slice in a variant's payload is not yet.
@@ -380,6 +448,13 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       for (size_t i = 1; i < type.kids.size(); ++i) {
         const Node *valueType =
             i - 1 < g->valueTypes.size() ? g->valueTypes[i - 1] : nullptr;
+        if (valueType && valueType->text == "shape") {
+          mlir::Type s = shapeArg(*type.kids[i]);
+          if (!s)
+            return {};
+          args.push_back(s);
+          continue;
+        }
         if (valueType) {
           mlir::Type want = resolve(*valueType);
           if (!want)
@@ -431,7 +506,8 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       if (!plainElement(elem, type.kids[0]->loc)) return {};
       const Node &len = *type.kids[1];
       if (len.kind == NodeKind::Name || len.kind == NodeKind::TypeName)
-        if (auto v = values_.find(len.text); v != values_.end()) {
+        if (auto v = values_.find(len.text);
+            v != values_.end() && !v->second.isShape) {
           if (v->second.value.isNegative() ||
               v->second.value.ugt(unsignedMax(64))) {
             diags_.error(len.loc,
@@ -590,6 +666,23 @@ bool TypeResolver::unify(const Node &written, mlir::Type actual,
                          const std::vector<std::string> &params,
                          std::map<std::string, mlir::Type> &bound) const {
   if (!actual) return true;
+  // `[m; k]` against a shape argument, tuple<int{2..2}, int{3..3}>: each
+  // name binds to its extent (ADR 0074).
+  if (auto tuple = mlir::dyn_cast<mlir::TupleType>(actual))
+    if (auto elements = shapeElements(written)) {
+      if (elements->size() != tuple.size())
+        return false;
+      for (size_t i = 0; i < elements->size(); ++i) {
+        const Node &e = *(*elements)[i];
+        if ((e.kind != NodeKind::TypeName && e.kind != NodeKind::Name) ||
+            std::find(params.begin(), params.end(), e.text) == params.end())
+          continue;
+        auto [it, fresh] = bound.emplace(e.text, tuple.getType(i));
+        if (!fresh && it->second != tuple.getType(i))
+          return false;
+      }
+      return true;
+    }
   switch (written.kind) {
     case NodeKind::TypeName: {
       if (std::find(params.begin(), params.end(), written.text) == params.end())
@@ -804,6 +897,22 @@ mlir::Type TypeResolver::instantiate(const std::string &name,
       key += (i ? ", " : "") + typeName(args[i]);
       continue;
     }
+    if (valueType->text == "shape") {
+      std::optional<std::string> spelled = spellShape(args[i]);
+      if (!spelled) {
+        diags_.error(at, "'" + g->params[i] + "' of '" + name +
+                             "' is a shape: give its extents, as in '[4; 4]'");
+        return {};
+      }
+      key += (i ? ", " : "") + *spelled;
+      ValueArg arg{usize(), llvm::APInt(kWidth, 0)};
+      arg.isShape = true;
+      auto tuple = mlir::cast<mlir::TupleType>(args[i]);
+      for (mlir::Type e : tuple.getTypes())
+        arg.shape.push_back(mlir::cast<IntType>(e).getLo().sextOrTrunc(kWidth));
+      values[g->params[i]] = std::move(arg);
+      continue;
+    }
     auto single = mlir::dyn_cast<IntType>(args[i]);
     if (!single || single.getLo() != single.getHi()) {
       diags_.error(at, "'" + g->params[i] + "' of '" + name +
@@ -910,11 +1019,16 @@ void defineGenericType(const Node &item, TypeResolver &types,
       g.valueTypes.push_back(nullptr);
       continue;
     }
+    // `(s : shape)`: a list of extents, `[4; 4]`, whose length is its rank.
+    if (annot.kids[1]->text == "shape") {
+      g.valueTypes.push_back(annot.kids[1].get());
+      continue;
+    }
     mlir::Type t = types.builtin(annot.kids[1]->text);
     if (!t || !mlir::isa<IntType>(t)) {
       diags.error(annot.loc, "the value parameter '" + g.params[i] +
                                  "' must have an integer type, such as "
-                                 "usize, for now");
+                                 "usize, or be a shape, for now");
       return;
     }
     g.valueTypes.push_back(annot.kids[1].get());
@@ -1244,18 +1358,27 @@ static void valueParamsIn(const Node &t, TypeResolver &types,
     if (const Generic *g = types.generic(t.kids[0]->text))
       for (size_t i = 1; i < t.kids.size() && i - 1 < g->valueTypes.size();
            ++i) {
-        const Node &a = *t.kids[i];
-        if (!g->valueTypes[i - 1] ||
-            (a.kind != NodeKind::TypeName && a.kind != NodeKind::Name) ||
-            declared.count(a.text) ||
-            // A type's name stays a type, and is an error here.
-            types.builtin(a.text) || types.named(a.text) ||
-            types.generic(a.text) ||
-            std::find(sig.typeParams.begin(), sig.typeParams.end(), a.text) !=
-                sig.typeParams.end())
-          continue;
-        sig.typeParams.push_back(a.text);
-        sig.valueParams.push_back(a.text);
+        const Node &arg = *t.kids[i];
+        // `[m; k]` in a shape's place names one value parameter per extent;
+        // a single name, `s`, names the whole shape.
+        std::vector<const Node *> names{&arg};
+        if (g->valueTypes[i - 1] && g->valueTypes[i - 1]->text == "shape")
+          if (auto elements = shapeElements(arg))
+            names = *elements;
+        for (const Node *n : names) {
+          const Node &a = *n;
+          if (!g->valueTypes[i - 1] ||
+              (a.kind != NodeKind::TypeName && a.kind != NodeKind::Name) ||
+              declared.count(a.text) ||
+              // A type's name stays a type, and is an error here.
+              types.builtin(a.text) || types.named(a.text) ||
+              types.generic(a.text) ||
+              std::find(sig.typeParams.begin(), sig.typeParams.end(), a.text) !=
+                  sig.typeParams.end())
+            continue;
+          sig.typeParams.push_back(a.text);
+          sig.valueParams.push_back(a.text);
+        }
       }
   for (const syntax::NodePtr &k : t.kids)
     valueParamsIn(*k, types, declared, sig);

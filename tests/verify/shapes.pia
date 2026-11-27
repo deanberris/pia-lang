@@ -1,0 +1,38 @@
+(* Shapes (ADR 0074, step 2): a `(s : shape)` value parameter takes a
+   list of extents, `[4; 4]`, whose length is the rank, so one type covers
+   vectors, matrices and every other rank. In the type's body, and in a
+   function generic over it, `s` is a constant `[usize; r]`: `len s` is the
+   rank and `s.[i]` an extent.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let grid = let (s : shape) (r : region) => type {
+  data : borrowed(r) [u8]
+} where len s = 2 && len data = s.[0] * s.[1]
+
+(* A literal shape: the invariant says there are 16 cells. *)
+let corner (r : region) (g : grid [4; 4] r) : u8 = g.data.[15]
+
+let beyond (r : region) (g : grid [4; 4] r) : u8 = g.data.[16]
+
+(* A function generic over the extents: `m` and `k` are deduced from the
+   argument, and are its extents in the body and contracts. *)
+let first (r : region) (g : grid [m; k] r) : u8
+  requires 0 < m && 0 < k
+= g.data.[0]
+
+let first_of (r : region) (g : grid [2; 3] r) : u8 = first g
+
+(* Or over the whole shape. *)
+let cells (r : region) (g : grid s r) : usize
+  ensures result = s.[0] * s.[1]
+= len g.data
+
+let six (r : region) (g : grid [2; 3] r) : usize
+  ensures result = 6
+= cells g
+
+(*
+// CHECK: shapes.pia:16:{{[0-9]+}}: failed: the index is within bounds
+// CHECK: proved, 1 failed, 0 skipped
+*)
