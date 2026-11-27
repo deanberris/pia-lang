@@ -1273,9 +1273,9 @@ class Parser {
       if (trailing) {
         NodePtr as = std::move(trailing);
         NodePtr where = makeNode(N::None, loc());
-        for (NodePtr &a : attrs()->kids) as->add(std::move(a));
+        addAttrs(*as);
         if (accept(K::Where)) where = stmt();
-        for (NodePtr &a : attrs()->kids) as->add(std::move(a));
+        addAttrs(*as);
         n->add(std::move(as));
         n->add(std::move(where));
         return n;
@@ -1286,10 +1286,19 @@ class Parser {
     NodePtr as = attrs();
     NodePtr where = makeNode(N::None, loc());
     if (accept(K::Where)) where = stmt();
-    for (NodePtr &a : attrs()->kids) as->add(std::move(a));
+    addAttrs(*as);
     n->add(std::move(as));
     n->add(std::move(where));
     return n;
+  }
+
+  // Moves the attributes that follow into `as`. They are parsed into a
+  // named list first: a range-for over `attrs()->kids` would iterate a
+  // list whose owner is already destroyed.
+  void addAttrs(Node &as) {
+    NodePtr more = attrs();
+    for (NodePtr &a : more->kids)
+      as.add(std::move(a));
   }
 
   NodePtr attrs() {

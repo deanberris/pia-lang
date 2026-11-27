@@ -1,0 +1,61 @@
+(* `@lower` on a type (ADR 0074, step 3a): a record names the MLIR type its
+   values have, a memref view of the field that holds its elements, and a
+   lowering that splices a value of it gets that view. `mat8` keeps its
+   bytes in an array, which `expand_shape` views as 4 x 4. `grid` is
+   generic over its element type and shape, `$t` and `$s` in its MLIR
+   type, and keeps its elements in a borrowed slice, which may start part
+   way into its storage: codegen casts it to the 16 elements the body
+   proves it has, and the view keeps a dynamic offset. An `inout` grid is
+   written through its loan, so the function returns it as it came in.
+// RUN: piac --emit=core %s | FileCheck %s
+// RUN: piac --emit=core --lower=off %s | FileCheck %s --check-prefix=BODY
+// RUN: piac --emit=llvm -O0 %s | FileCheck %s --check-prefix=LLVM
+// RUN: piac --verify --trust-report %s | FileCheck %s --check-prefix=PROOF
+*)
+@trusted
+
+let mat8 = type { data : [i8; 16] } @lower("memref<4x4xi8>", data)
+
+let grid = let (t : type) (s : shape) (r : region) => type {
+  data : borrowed(r) mutable [t]
+} where len s = 2 && len data = s.[0] * s.[1]
+  @lower("memref<$s x $t>", data)
+
+(* C = A B for row-major 4 x 4 matrices of bytes, with 32-bit sums. *)
+let matmul (r : region) (a : mat8) (b : mat8) (c : inout grid i32 [4; 4] r)
+  : unit
+  @lower("%zero = arith.constant 0 : i32\nlinalg.fill ins(%zero : i32) outs($c : $c.type)\nlinalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)")
+= for i in 0 .. 4 do
+    for j in 0 .. 4 do
+      c.data.[i * 4 + j] <- a.data.[i * 4] * b.data.[j]
+        + a.data.[i * 4 + 1] * b.data.[4 + j]
+        + a.data.[i * 4 + 2] * b.data.[8 + j]
+        + a.data.[i * 4 + 3] * b.data.[12 + j]
+    done
+  done
+
+(*
+// CHECK-LABEL: func.func @matmul(
+// CHECK-SAME: memref<16xi8>
+// CHECK-SAME: -> memref<?xi32, strided<[1], offset: ?>>
+// CHECK-NOT: pia.lower
+// CHECK-DAG: memref.cast %{{.*}} : memref<?xi32, strided<[1], offset: ?>> to memref<16xi32, strided<[1], offset: ?>>
+// CHECK-DAG: memref.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [4, 4] : memref<16xi32, strided<[1], offset: ?>> into memref<4x4xi32, strided<[4, 1], offset: ?>>
+// CHECK-DAG: memref.expand_shape %{{.*}} {{\[\[}}0, 1]] output_shape [4, 4] : memref<16xi8> into memref<4x4xi8>
+// CHECK: linalg.fill
+// CHECK-NEXT: linalg.matmul ins(%{{.*}}, %{{.*}} : memref<4x4xi8>, memref<4x4xi8>) outs(%{{.*}} : memref<4x4xi32, strided<[4, 1], offset: ?>>)
+// CHECK-NEXT: return %{{.*}} : memref<?xi32, strided<[1], offset: ?>>
+// CHECK-NOT: scf.for
+
+// BODY-LABEL: func.func @matmul(
+// BODY-NOT: pia.lower
+// BODY-NOT: linalg
+// BODY: scf.for
+
+// LLVM-LABEL: define {{.*}}@matmul(
+// LLVM-NOT: linalg
+
+// PROOF: lower_type.pia:27:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.cast, memref.expand_shape; sha256 {{[0-9a-f]+}})
+// PROOF: lower_type.pia:25:{{[0-9]+}}: proved: 'c.data' holds 16 elements, as the @lower of grid<i32, [4; 4], {{.*}}> views it
+// PROOF: 0 failed, 0 skipped
+*)

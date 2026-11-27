@@ -160,6 +160,27 @@ LogicalResult PiaDialect::verifyRegionArgAttribute(Operation *op, unsigned,
     return op->emitError() << "'pia.lower_name' on argument " << argIndex
                            << " must be a string";
   }
+  // `{pia.lower_view = {field, shape, type, text, at, element?}}`: a
+  // value of a lowered type, which a lowering splices as a view of its
+  // buffer (ADR 0074, section 3).
+  if (attr.getName() == "pia.lower_view") {
+    auto d = dyn_cast<DictionaryAttr>(attr.getValue());
+    if (d && d.getAs<IntegerAttr>("field") &&
+        d.getAs<DenseI64ArrayAttr>("shape") && d.getAs<StringAttr>("type") &&
+        d.getAs<StringAttr>("text") && d.getAs<StringAttr>("at"))
+      return success();
+    return op->emitError() << "'pia.lower_view' on argument " << argIndex
+                           << " must be a dictionary with field, shape, "
+                              "type, text and at";
+  }
+  // `{pia.lower_threaded}`: an `out` or `inout` value a lowering returns
+  // as it came in (ADR 0074, section 3).
+  if (attr.getName() == "pia.lower_threaded") {
+    if (isa<UnitAttr>(attr.getValue()))
+      return success();
+    return op->emitError() << "'pia.lower_threaded' on argument " << argIndex
+                           << " must be a unit attribute";
+  }
   if (attr.getName() != getModifiersAttrName())
     return op->emitError() << "unknown pia argument attribute '"
                            << attr.getName() << "'";

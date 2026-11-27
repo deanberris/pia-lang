@@ -425,6 +425,8 @@ let cells (r : region) (g : grid s r) : usize
 = len g.data
 ```
 
+A record can also say what it is in MLIR. `@lower("memref<$s x i8>", data)` after `grid`'s invariant makes each value of it a `memref` view of its bytes, 4 x 4 for `grid [4; 4] r`, where `$s` is the shape and `i8` is how MLIR spells a byte. A function's own `@lower` that splices a `grid` then works on that view, as in `linalg.matmul ins($a, $b : $a.type, $b.type) outs($c : $c.type)`. The Pia definition is still what the verifier reasons about. This is how a library type such as a tensor reaches MLIR without a new primitive ([codegen.md](codegen.md#lowerings-written-in-pia), [ADR 0074](adr/0074-library-types-tensors.md)).
+
 ```ocaml
 let block = let (t : type) (n : usize) => type { cells : [t; n] }
 
