@@ -183,23 +183,34 @@ let io_error = type | Closed | Cxx of box Exception
 
 As built: tests/verify/box_error_payload.pia proves an error set whose `Cxx` case holds a boxed `not_found` or `overflow`, passed on by `?` and handled through the box, and tests/codegen/box_error_payload.pia runs it from C. Within a module this uses step 5's tagged union. A payload boxed in one module and handled in another needs the amendment's tables, ADR 0071's section 6, which come next. A payload whose type has a drop is not dropped through the box until the amendment's step 3.
 
-## Amendment, 2026-11-27: a box's object is one object, behind one pointer
+## Amendment, 2026-11-27: a `box c` is one cache line, with small objects inline
 
-Dean chose this (2026-11-27) so that a `box c` can be made in one module and used in another, which the boxed error payloads of the note above need before 0.1.0.
+Dean (2026-11-27), so that a `box c` can be made in one module and used in another, which the boxed error payloads of the note above need before 0.1.0: the box holds a reference to a descriptor generated for the boxed type and hidden from the language, "the aligned storage laid out at the end of the box ... proved and computed to have the maximum bytes that fit in a cache line, and for anything bigger we have a pointer to a block that's been allocated at construction time of the object. Every box should have a lease on the allocator and the allocator must outlive the box provably. This is the small object optimisation."
 
-**The problem.** A buffer of records compiles to one buffer per field ([codegen](../codegen.md)), and a box's slot is a buffer of one record, so a boxed `rect` is two pointers, one for `w` and one for `h`. A table's function has no single address to take for the object, and the size and alignment that the amendment above puts in the table describe no object in memory. Step 5's tagged union got around this by copying the fields into the box, which works only while one module knows every type it holds.
+**The problem it solves.** A buffer of records compiles to one buffer per field ([codegen](../codegen.md)), and a box's slot is a buffer of one record, so a boxed `rect` is two pointers, one per field. A descriptor shared by every box of a type cannot say where one box's fields are, and a box holding one pointer per field has a size that depends on what it holds. Step 5's tagged union got around this by copying the fields into the box, which works only while one module knows every type it holds.
 
-**The decision.** A box's object is one object, in its type's record layout ([ADR 0030](0030-published-object-layouts.md)'s `c` layout: fields in declaration order, each at its natural alignment, padded to the largest), behind one pointer. Section 7 already says this: `box t` is one pointer, and `box c` is two words, the object's address and its table's.
+**The layout.** A `box c` is one cache line of the target (`Target.cache_line`, ADR 0049: 64 bytes on x86_64 Linux, 128 on Apple silicon), aligned to it:
 
-- **Layout belongs to the type**, so the rule is modular. A record declared `@layout(c)` has buffers of structs: one pointer, its elements contiguous, as recursive types' buffers already are ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)). Without it, a record's buffers stay one buffer per field, which is what vectorises.
-- **What `widen` takes.** A type can be widened into a `box c` when its object is one object: a scalar, a recursive type, or a `@layout(c)` record. Widening any other record is an error that suggests `@layout(c)`. A `box t` over any type still works, since nothing erases it.
-- **Proofs do not change.** Layout never changes a proof (ADR 0030): the slot is still `[t]` of length 1, and `b.slot.[0]` means what it did.
-- **The table** (ADR 0071, section 6) is a link-once constant `pia$t$<type>$<concept>`: the type's size and alignment, a thunk that drops the object at an address, and one thunk per requirement callable through a box, taking the object's address in the receiver's place and the requirement's other arguments. Each thunk calls the type's own function, which the use check at `widen` proved to meet the requirement.
-- **A call through a box** loads the requirement's thunk from the table and calls it indirectly. To the verifier it is a proxy carrying the requirement's contract (the `pia.proxy` pattern of ADR 0071, which mutable references use), so a proof through a box is unchanged. Where the compiler can see which table a box holds, such as right after `widen`, the call is direct.
-- **Across modules.** The table's layout is the concept's: its requirements in declaration order, after size, alignment and drop. So an interface may show a `box c`, a module may box values of a concept it imports, and the refusals of step 5 go. To C, a `box c` is `struct { void *object; const void *table; }`, and only Pia code reads the table.
+- a reference to the boxed type's **descriptor**;
+- the **lease**: a borrow of the allocator the box was made from, so the borrow rules ([ADR 0042](0042-lifetimes-liveness-and-escape-analysis.md)) prove the allocator outlives the box. An allocator with no fields leases in no bytes;
+- the rest, the **inline storage**. A type whose size and alignment fit is stored there, in its C layout ([ADR 0030](0030-published-object-layouts.md)'s `c`: fields in declaration order, each at its natural alignment), with offsets codegen deduces from the type. A larger type is stored in one block of that layout, allocated through the lease when the box is made, and the inline storage holds the block's address.
 
-This replaces step 5's tagged union. Implementation:
+Whether a type is inline is decided by its size, so the descriptor knows it and the box has no run-time flag. `size_of t <= capacity` is a fact codegen computes per target, as `size_of` is today (ADR 0035). Nothing is written on the type, and every type can be boxed: buffers of records elsewhere stay one buffer per field, which is what vectorises.
 
-1. **`@layout(c)` records**: buffers of structs in codegen, one pointer per buffer, with a C harness that reads them as C structs.
-2. **`box c` as object and table, within a module**: `widen` stores the table's address, calls and drops go through it, direct calls where the table is known. tests/codegen/box_concept.pia and box_error_payload.pia move to `@layout(c)` records and the two-word box.
-3. **Across modules**: an interface shows a `box c`, and a test boxes an error payload in one module and handles it in another.
+**The descriptor** is ADR 0071's table (section 6), one link-once constant per type and concept, `pia$t$<type>$<concept>`, unreachable from Pia: the type's size and alignment, whether it is inline, a thunk that drops the object at an address (and, out of line, gives the block back through the lease), and one thunk per requirement callable through a box, taking the object's address in the receiver's place. A call through a box loads the thunk and calls it, one indirection, as Rust's `dyn` does and without C++'s hop from the object to its vtable pointer. Where the compiler can see which descriptor a box holds, as right after it is made, the call is direct. To the verifier a call through a box is a proxy carrying the requirement's contract (the `pia.proxy` pattern of ADR 0071), so proofs through a box do not change.
+
+**Making and moving.**
+
+- `box.make alloc v : result (box c) oom` makes a `box c` from a value of any type that meets `c`, running the use check as `widen` does (section 3). It can fail only for a type too large for the inline storage, and for one that fits it ensures `Ok`, so callers prove that case needs no handler. `widen` from a full `box t` stays, for code that already holds one.
+- Moving a box copies its cache line, which is sound because a Pia value never points into itself (ADR 0042).
+- Dropping a box calls the descriptor's drop, then ends the lease.
+
+**Across modules.** The descriptor's layout is the concept's: its requirements in declaration order after the fixed entries, published with the concept ([ADR 0030](0030-published-object-layouts.md)). So an interface may show a `box c`, a module may box values of a concept it imports, and step 5's refusals go. A `box c` is part of each target's ABI as one cache line; to C it is an opaque, aligned block of that size, and C code calls into it only through Pia.
+
+This replaces step 5's tagged union, and ADR 0048 section 5's inline slots sized to the widest widened type: a buffer of `box c` is a buffer of cache lines.
+
+Implementation:
+
+1. **The layout within a module**: `box c` as a cache line with the descriptor reference, the lease and the inline storage; `make` and `widen` storing inline or out of line; calls and drops through the descriptor; direct calls where it is known. tests/codegen/box_concept.pia and box_error_payload.pia move to it, with C harnesses that treat the box as an opaque block.
+2. **Across modules**: an interface shows a `box c`, and a test boxes an error payload in one module and handles it in another.
+3. **Buffers of boxes**: `vec (box c)` over cache-line elements.
