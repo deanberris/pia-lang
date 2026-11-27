@@ -30,7 +30,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
 | build queue (iMac, GPU demos only) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 6 jobs per build |
 | prove a file | `bazel-bin/tools/piac/piac --verify f.pia` | see the `piac-verify` and `pia-fast-proofs` skills |
-| doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test` | every `ocaml` block in the listed pages is proved |
+| doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test //tests/docs:json_docs_test` | every `ocaml` block in the listed pages is proved |
 | proof cost gate | `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac` | fails on a Z3 cost regression of more than 10% against `tools/bench/baseline.json` |
 | quick C++ check without Bazel | `g++ -std=c++17 -Isrc -fsyntax-only src/syntax/Lint.cpp` | works for `src/syntax`, `src/lsp`, `src/meta`, and the parts of `src/repl` that do not use LLVM |
 | format | `git clang-format origin/main` | CI checks only the lines you changed (`.github/workflows/style.yml`, [docs/style.md](docs/style.md)) |
@@ -133,7 +133,8 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/gpu/Spirv.{h,cpp}` is the GPU path's lowering (ADR 0068, step 1): it registers the `gpu` and `spirv` dialects, lowers a `gpu.module` to a `spirv.module` with upstream MLIR passes, and serialises it to a SPIR-V binary. `piac --emit=spirv` and `pia-opt` use it. `tools/gpu/metal.bzl` builds a `.metallib` from MSL with Xcode's Metal toolchain (embedded by Pia targets via `@embed`, ADR 0070). `third_party/spirv_cross` builds SPIRV-Cross, which translates SPIR-V to MSL; SPIRV-Tools comes from the Bazel Central Registry. `tests/gpu` takes a hand-written kernel through all of it.
 - `src/gpu/Place.{h,cpp}` places spreads on the GPU (ADR 0068, step 3): each `scf.for` IRGen marked `pia.place = "gpu"` has its calls inlined and is checked against the device rules, becomes a `gpu.func` (one thread per iteration), goes through SPIR-V, MSL (`src/gpu/Msl.{h,cpp}`, SPIRV-Cross linked into piac) and `xcrun metal` to a `.metallib`, which is embedded as a constant; the loop becomes a call of the shim's `pia_gpu_run`, whose status replaces the `pia$gpu$status` IRGen left, so the spread evaluates to `result unit gpu_error`. `tests/gpu/placed.pia` and `placed_test.c` check a placed spread against the same spread on the CPU.
 - `src/runtime/metal/metal_shim.{h,m}` is the Metal host shim (ADR 0068, step 2), Objective-C with ARC: devices, shared buffers, libraries from a `.metallib`'s bytes, kernels by name, and a synchronous dispatch, all as integer handles. `pia_gpu_run`, which placed spreads call, wraps page-aligned host buffers without a copy (unified memory) and copies the rest. `lib/Pia/Gpu.pia` is `Pia.Gpu`, its trusted externs and the `@linear` `device`, `buffer t` and `library` over them, with `Gpu.error`. `tests/gpu/gpu_add.pia` and `tests/gpu/dispatch_test.c` run the step 1 kernel on the GPU through both.
-- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, and its trusted lowerings), how to read one from an object file, and the link check (docs/abi.md).
+- `src/cert/Certificate.{h,cpp}` is the proof certificate an object carries (the interfaces it provides and imports, with their hashes, its trusted lowerings, and the Pia ABI version, target, piac and solver versions that proved it), how to read one from an object file, and the link check (docs/abi.md, ADR 0073).
+- `src/version/Version.{h,cpp}` is piac's version, `dev` unless a `--config=release` build stamps it: `src/version/workspace_status.sh` computes it from MODULE.bazel and git, and `src/version/stamp.sh` writes it into the header Version.cpp includes (ADR 0073).
 
 ### src/repl, src/lsp: tools on top of the pipeline
 
@@ -148,12 +149,13 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 
 - `tools/piac/piac.cpp` is the compiler driver, where every flag is parsed.
 - `tools/piac/pia.bzl` defines `pia_library` and `pia_binary`. `tools/piac/targets.bzl` defines `PIA_TARGETS` and the flags for each platform.
-- `tools/lean/lean.bzl` defines `pia_lean_proof`, which runs `tools/lean/lean_proof.py`: `piac --emit=lean`, then Lean on the statements and the proofs, then the receipts that `piac --lean-receipt` reads (ADR 0061). The Lean release is pinned in `MODULE.bazel`, and `third_party/lean` picks the one for the machine.
+- `tools/lean/lean.bzl` defines `lean_check_test`, which checks a self-contained Lean file and fails on `sorryAx`, and `pia_lean_proof`, which runs `tools/lean/lean_proof.py`: `piac --emit=lean`, then Lean on the statements and the proofs, then the receipts that `piac --lean-receipt` reads (ADR 0061). The Lean release is pinned in `MODULE.bazel`, and `third_party/lean` picks the one for the machine.
 - `tools/pia/pia.cpp` is the `pia` tool (`pia repl`, `pia mcp`).
 - `tools/pia-cert/pia-cert.cpp` is `pia-cert dump` and `pia-cert check`, which read and check the certificates in Pia objects.
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/copts.bzl` holds the compiler warning flags (`-Wall`, `-Wextra`, `-Werror`) for Pia's C, C++ and Objective-C targets. `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` (every corpus file) make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it. CI runs it in three Linux shards (`--shard`, `--passes`); `--write-baseline --merge` folds their `--out` files into the baseline.
+- `tools/bench/codegen_bench.py` runs the codegen benchmarks' binaries (ADR 0075) and reports cachegrind instruction counts and wall times against each problem's reference and C control; the Linux CI job puts the report in its summary. Report only.
 - `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/docs/check.py` checks the public docs keep up: every lexer keyword, piac and pia flag, attribute in use and lint on some page, every `tests/verify` feature test named (`docs/features.md`), every `lib/Pia` module in `docs/library.md`, pages with examples tested, links out of `docs/` live. `.github/workflows/docs-check.yml` runs it.
@@ -177,7 +179,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `lib/Pia/Core/Algo/Set.pia` holds `includes`, `set_intersection` and `set_difference`. `lib/Pia/Core/Algo/SetUnion.pia` holds `set_union`.
 - `lib/Pia/Core/Algo/SetSymmetric.pia` holds `set_symmetric_difference`, in its own module so it proves in parallel with `set_union`.
 - `lib/Pia/Core/Algo/Numeric.pia` is `<numeric>`.
-- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens, and `lib/Pia/Text/Json/Read.pia` the token readers `@derive(json)` builds on, and `lib/Pia/Text/Json/Derive.pia` exports `@derive(json)` itself, for records, variants and distinct types, with the concept `Json`, `Json.read` and `json_errors`. `lib/Pia/Text/Json/Dom.pia` is the document as a recursive type over its text, with `valid_dom` and a parser proved to produce one (ADR 0045, ADR 0047).
+- `lib/Pia/Text/Json/Spec.pia` is the RFC 8259 token grammar as spec functions. `lib/Pia/Text/Json/Lex.pia` is a tokenizer proved against it, `lib/Pia/Text/Json/Write.pia` a writer proved to produce its tokens, and `lib/Pia/Text/Json/Read.pia` the token readers `@derive(json)` builds on, and `lib/Pia/Text/Json/Derive.pia` exports `@derive(json)` itself, for records, variants and distinct types, with the concept `Json`, `Json.read` and `json_errors`. `lib/Pia/Text/Json/Dom.pia` is the document as a recursive type over its text, with `valid_dom` and a parser proved to produce one (ADR 0045, ADR 0047). `lib/Pia/Text/Json/Shape.pia` is what a document's conformance to a type is built on, and `@derive(json_dom)`, which writes a record's `conforms`, `check`, `from_dom` and `to_dom`.
 - `lib/Pia/Sys/Posix.pia` is the `Posix` interface, the contract overlay: one row per POSIX function or constant (ADR 0057). `lib/Pia/Sys/Gen/arm64_macos.pia` and `lib/Pia/Sys/Gen/x86_64_linux.pia` are the module `Pia.Sys.Posix` for each target, generated by `tools/bindings/gen.py` from the headers and that interface: constants, struct layouts, the rows as contracted externs, and the other functions as private externs. Never edit them by hand. `//lib/Pia/Sys:posix` picks one by platform. `tests/irgen/sys_gen.pia` proves both, and `tests/std/posix_import.pia` imports one.
 - `lib/Pia/Sys/Fs.pia` is files over `Pia.Sys.Posix`, written once for both targets: a decoded `errno` variant, a `@linear` `file`, `open_read`, `create`, `read_some`, `write_all` and `close` (#57). `tests/std/fs.pia`, `tests/std/fs_edges.pia` and `:fs_run_test` test it.
 - `lib/Pia/Image/Bits.pia` reads and writes LSB-first bit fields over a byte slice, for GIF and deflate. `lib/Pia/Image/Raster.pia` holds image dimensions, sample indices and rectangles (ADR 0054).
@@ -198,6 +200,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
+- `bench/codegen` holds the codegen benchmarks (ADR 0075): one package per problem (`bench/codegen/nqueen`: the Pia port, its C driver `main.c`, the C control `control.c` and a README of what the proof changed), `defs.bzl`'s `codegen_benchmark` macro, which builds the Pia, C, C++, Rust and Zig programs and a `<problem>_test` that they print the same answer, `flags.bzl` (every program's flags), `same_output_test.sh` and `problems.json` (each problem's inputs and programs). `third_party/benchmarks` holds the reference programs, one directory per suite with its licence (`plb2`, CC0), patched by genrules where they must change.
 
 ## 5. Tests
 
@@ -208,6 +211,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/codegen` | lowering lit tests and C harnesses | the run tests need arm64 macOS or a matching host |
 | `tests/meta` | `--dump-expanded` and proofs of expanded code | |
 | `tests/modules` | interfaces and imports across files | inputs in `tests/modules/Inputs` |
+| `tests/cert` | the certificate format and link check, on certificates made in memory (gtest) | old formats and other ABI versions, which piac cannot be made to write |
 | `tests/embed` | raw binary embedding via `@embed` (ADR 0070): verification, diagnostics, LLVM IR and native execution | inputs in `tests/embed/Inputs` |
 | `tests/memory` | the litmus battery for `Pia.Memory`, one file per family (MP, SB, LB, coherence, rmw, races, multi) | `theory.pia` proves the theory's model |
 | `tests/std` | the `lib/` modules | build the `.piai` files first in local runs |
@@ -216,7 +220,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 | `tests/dialect` | ODS round trips | |
 | `tests/repl`, `tests/lsp` | end to end over pipes | `tests/repl` runs in shards |
 | `tests/docs` | `doc_examples_test.py`: every doc, case study and skill example | its markers are `<!-- example: -->`, `<!-- expect: fail -->` and `<!-- untested: -->` |
-| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts | `sums_proof` runs Lean on `Proofs.lean` |
+| `tests/lean` | lemmas proved in Lean (ADR 0061): `--emit=lean`, receipts from `pia_lean_proof`, stale receipts; `CallRule.lean`, the verifier's call rule proved sound, modular and incomplete (ADR 0076) | `sums_proof` runs Lean on `Proofs.lean`; `call_rule_test` checks `CallRule.lean` |
 | `tests/smoke` | the tools start | |
 | `tests/lit` | `run_lit.sh` and `lit.bzl`, the lit runner | |
 
@@ -231,7 +235,7 @@ ADRs are in `docs/adr/NNNN-title.md`. The index is `docs/adr/README.md`. By topi
 - **Proof:** 0004 (strongest guarantee by default), 0006 (contracts, module state), 0020 (Presburger), 0032 (parallel, sliced, cached proving), 0036 (library theories), 0037 (idioms and lints), 0038 (floats against real theories), 0049 (targets as theories), 0058 (spec buffers), 0061 (Lean-proved lemmas and models, asymptotics), 0062 (cost bounds in contracts), 0063 (opaque spec functions), 0066 (int-blasting for nonlinear goals), 0069 (pure and impure functions).
 - **Errors and memory:** 0026 (memory manager), 0028 (`?`, handlers, `defer`), 0041 (allocators), 0042 (lifetimes).
 - **Metaprograms:** 0007 (fixed-point expansion), 0008 (operators).
-- **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation), 0073 (prover identity, ABI version, advisories, migrations).
+- **Modules, ABI and trust:** 0010 (interfaces, certificates), 0024 (published certificates), 0030 (layouts), 0033 (initialisation), 0073 (prover identity, ABI version, advisories, migrations), 0076 (transparent exports: importers prove against unfoldable bodies).
 - **Compiler and tools:** 0001 (ADRs), 0011 (MLIR and Z3), 0017 (Bazel), 0018 (dialects), 0065 (lowerings written in Pia: `@lower`, `@schedule`, linalg to SPIR-V), 0074 (library types: `Pia.Tensor` over MLIR `tensor`, no new primitive), 0021 (LSP), 0025 (sanitizers), 0031 (REPL), 0056 (tests generated from contracts and theories), 0070 (raw binary embedding via `@embed`).
 - **Performance and parallelism:** 0012 (FP reassociation), 0013 (auto-vectorisation), 0014 (concurrency), 0015 (device placement), 0068 (GPU compute: SPIR-V, SPIRV-Cross, Metal shim, `@place(gpu)`), 0027 (coroutines, race freedom), 0050 (senders and receivers, io_uring and kqueue), 0052 (atomics), 0053 (protocols checked by Z3 and CHC), 0060 (`spread` v0: ownership and runtime), 0075 (codegen benchmarks against C, C++, Rust and Zig).
 - **Library and demos:** 0016 (streams demo), 0023 (minimal core, self-hosted stdlib), 0040 (C++23 std), 0045 (JSON), 0054 (GIF and inflate codecs), 0055 (sediment transport in fixed point), 0067 (0.1.0: a proved small LLM on the M3).

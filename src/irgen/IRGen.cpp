@@ -1099,6 +1099,10 @@ class Gen {
       fn->setAttr("pia.assert_claim", b_.getStringAttr(a->second));
     if (auto c = certified_.find(sig.name); c != certified_.end())
       fn->setAttr("pia.certified", b_.getStringAttr(c->second));
+    // A function reference's wrapper: callers see only the arrow's
+    // contract, not the body (ADR 0071, section 3).
+    if (references_.count(sig.name))
+      fn->setAttr("pia.reference", b_.getUnitAttr());
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
@@ -5660,7 +5664,8 @@ class Gen {
   // the function's contract is checked against the arrow's.
   std::optional<std::string> functionArgument(const Node &name,
                                               const Arrow &arrow,
-                                              const std::string &what) {
+                                              const std::string &what,
+                                              bool reference = false) {
     std::vector<sema::FuncSig *> set = overloadSet(name.text);
     if (set.size() != 1) {
       fail(name, "'" + name.text + "' is overloaded, and passing an overload "
@@ -5680,13 +5685,17 @@ class Gen {
                      " takes " + plural(arrow.domains.size(), "argument"));
       return std::nullopt;
     }
-    if (!arrow.contracts || arrow.contracts->kids.empty()) return f.name;
+    if (!reference && (!arrow.contracts || arrow.contracts->kids.empty()))
+      return f.name;
     std::string symbol = f.name + "@" + placeOf(name);
     if (sigs_.count(symbol)) return symbol;
+    if (reference)
+      references_.insert(symbol);
     const Node *fRet = retAnnotOf(f);
     if (!fRet) {
-      fail(name, "'" + name.text + "' needs its return type written to be "
-                 "passed as a function with a contract");
+      fail(name, "'" + name.text + "' needs its return type written to be " +
+                     (reference ? "referred to"
+                                : "passed as a function with a contract"));
       return std::nullopt;
     }
     syntax::SourceLoc at = name.loc;
@@ -12297,6 +12306,47 @@ class Gen {
     return r;
   }
 
+  // A `let` of a function type: the reference is a proxy for the function
+  // (ADR 0071, section 1), so the body calls the function itself, through
+  // the arrow's contract when it has one.
+  R genReferenceLet(const Node &n, Type expected) {
+    const Node &annot = *n.kids[1]->kids[0];
+    const Node &value = *n.kids[3];
+    const std::string &mods = annot.kids[0]->text;
+    if (sema::hasModifier(mods, "mutable"))
+      return fail(annot, "a mutable function reference, which can be "
+                         "rebound, comes with ADR 0071's step 2");
+    if (!mods.empty())
+      return fail(annot, "a function reference takes no modifiers");
+    if (contract_ || ghost_)
+      return fail(n, "a function reference is code, not part of a contract");
+    if (!checkFresh(n.text, n.loc))
+      return std::nullopt;
+    Arrow arrow = arrowOf(*annot.kids[1]);
+    std::optional<std::string> symbol;
+    if (value.kind == NodeKind::Name && !lookup(value.text) &&
+        !overloadSet(value.text).empty()) {
+      symbol = functionArgument(value, arrow, "'" + n.text + "'",
+                                /*reference=*/true);
+    } else if (value.kind == NodeKind::Name && lookup(value.text)) {
+      return fail(value, "'" + value.text +
+                             "' is a local; a function "
+                             "reference names a top-level function (ADR 0071)");
+    } else {
+      return fail(value, "a function reference is made from a top-level "
+                         "function's name, as in 'let " +
+                             n.text + " : u8 -> u8 = succ' (ADR 0071)");
+    }
+    if (!symbol)
+      return std::nullopt;
+    NodePtr body = syntax::clone(*n.kids[4]);
+    std::map<std::string, std::string> rename{{n.text, *symbol}};
+    if (body->kind == NodeKind::Name && body->text == n.text)
+      body->text = *symbol;
+    renameNames(*body, rename, nullptr);
+    return genExpr(*keep(std::move(body)), expected);
+  }
+
   R genLetIn(const Node &n, Type expected) {
     const Node &params = *n.kids[0];
     const Node &ret = *n.kids[1];
@@ -12327,6 +12377,15 @@ class Gen {
       renameNames(*body, rename, nullptr);
       return genExpr(*keep(std::move(body)), expected);
     }
+    // `let h : (x : u8) -> u8 requires x < 100 = succ in h y`: a local
+    // reference to a function (ADR 0071). It is fixed, so every call
+    // through it reaches the function it was bound to, and is a direct
+    // call of that function, or of a wrapper with the arrow's contract,
+    // which checks the function against the arrow once, here.
+    if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+        ret.kids[0]->kind == NodeKind::Annot &&
+        ret.kids[0]->kids[1]->kind == NodeKind::ArrowType)
+      return genReferenceLet(n, expected);
     // `let spec ref : mutable [u8; 4096] = zeros`: spec state (ADR 0058).
     bool isSpecLet = hasFlag(n, "spec");
     Type declared;
@@ -12601,6 +12660,8 @@ class Gen {
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
+  // Wrappers that function references call (ADR 0071): opaque to callers.
+  std::set<std::string> references_;
   // Lemmas queued and functions matched to requirements, in order, so a
   // concept check can tell which are its own (certify).
   std::vector<std::string> queuedLog_, matchedLog_;

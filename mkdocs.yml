@@ -79,6 +79,7 @@ nav:
   - Feature index: features.md
   - The standard library today: library.md
   - Idiomatic Pia: idioms.md
+  - JSON: json.md
   - How verification works: verification.md
   - "Theories: teaching the verifier a domain": theories.md
   - Debugging C++ with the REPL: repl-debugging.md
@@ -187,3 +188,4 @@ nav:
       - adr/0073-prover-identity-abi-version-and-advisories.md
       - adr/0074-library-types-tensors.md
       - adr/0075-codegen-benchmarks-against-c-cpp-rust-zig.md
+      - adr/0076-transparent-exports.md

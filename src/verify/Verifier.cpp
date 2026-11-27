@@ -243,11 +243,10 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   // arbitrary value with the interface's contract, which is not a
   // definition (ADR 0039).
   if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
-      f->hasAttr(PiaDialect::getImportAttrName()) ||
-      f->hasAttr("pia.extern") ||
+      f->hasAttr(PiaDialect::getImportAttrName()) || f->hasAttr("pia.extern") ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
       f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
-      f.getNumResults() != 1)
+      f->hasAttr("pia.reference") || f.getNumResults() != 1)
     return false;
   auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
   if (!scalar(f.getFunctionType().getResult(0))) return false;
@@ -2939,6 +2938,13 @@ class Encoder {
     return std::nullopt;
   }
 
+  // Whether two functions are in one cycle of calls (markRecursiveGroups).
+  static bool sameRecursiveGroup(mlir::func::FuncOp a, mlir::func::FuncOp b) {
+    auto ga = a->getAttrOfType<mlir::IntegerAttr>("pia.recursive_group");
+    auto gb = b->getAttrOfType<mlir::IntegerAttr>("pia.recursive_group");
+    return ga && gb && ga.getInt() == gb.getInt();
+  }
+
   // A measure that is not negative now and smaller next time.
   Value decreasesTerm(Value now, Value next) {
     using P = mlir::smt::BVCmpPredicate;
@@ -3455,6 +3461,32 @@ class Encoder {
              decreasesTerm(now, next), false);
         if (done_) return false;
       }
+    // Mutual recursion: the callee may call back into this function,
+    // so its contract can be assumed here only if the cycle ends. It does
+    // when every function in the cycle has a measure and each call within
+    // the cycle lands on a smaller one: the callee's measure at the
+    // arguments is below this function's at entry, and not negative.
+    if (hasBody && callee != fn_ && sameRecursiveGroup(fn_, callee)) {
+      auto mine = measureOf(fn_), theirs = measureOf(callee);
+      if (!mine || !theirs) {
+        std::string missing =
+            (!mine ? fn_.getSymName() : callee.getSymName()).str();
+        skipped(ObligationKind::decreases, call, "the recursion terminates",
+                "'" + fn_.getSymName().str() + "' and '" +
+                    callee.getSymName().str() + "' call each other, and '" +
+                    missing + "' has no 'decreases' measure");
+      } else {
+        Value now = term(mine->getMeasure());
+        Value next = demand(theirs->getMeasure(), pre);
+        goal(ObligationKind::decreases, call,
+             "the measure of '" + callee.getSymName().str() +
+                 "' at the call is below the measure of '" +
+                 fn_.getSymName().str() + "'",
+             decreasesTerm(now, next), false);
+        if (done_)
+          return false;
+      }
+    }
     for (Value r : call.getResults()) {
       // A buffer returned by value is a fresh array, with its length.
       if (mlir::isa<ArrayType, SliceType>(r.getType())) {
@@ -6194,6 +6226,90 @@ static bool dischargedByGeneric(mlir::ModuleOp module, mlir::func::FuncOp inst,
   return true;
 }
 
+// Marks each function in a cycle of two or more functions that call each
+// other with `pia.recursive_group`, one number per cycle (a strongly
+// connected component of the call graph). A call is taken on its callee's
+// contract, and a cycle of calls that each assume the next one's contract
+// proves anything, `ensures false` included, unless something shows the
+// cycle ends; so a call within a group is a termination goal. Calls
+// in contracts count, since a lemma or a contract may run the cycle.
+// Imported functions are only contracts here, and imports form a DAG, so
+// a cycle never leaves the module.
+static void markRecursiveGroups(mlir::ModuleOp module) {
+  llvm::SmallVector<mlir::func::FuncOp> fns;
+  llvm::DenseMap<Operation *, unsigned> index;
+  for (auto fn : module.getOps<mlir::func::FuncOp>()) {
+    fn->removeAttr("pia.recursive_group");
+    if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))
+      continue;
+    index[fn.getOperation()] = fns.size();
+    fns.push_back(fn);
+  }
+  std::vector<llvm::SmallVector<unsigned>> edges(fns.size());
+  llvm::DenseMap<mlir::StringAttr, Operation *> byName;
+  for (auto fn : fns)
+    byName[fn.getSymNameAttr()] = fn.getOperation();
+  for (unsigned i = 0; i < fns.size(); ++i)
+    fns[i].walk([&](mlir::func::CallOp c) {
+      auto hit = byName.find(c.getCalleeAttr().getAttr());
+      if (hit != byName.end())
+        edges[i].push_back(index[hit->second]);
+    });
+  // Tarjan's algorithm, iterative so a long chain of calls cannot exhaust
+  // the stack.
+  constexpr unsigned unseen = ~0u;
+  std::vector<unsigned> order(fns.size(), unseen), low(fns.size(), 0);
+  std::vector<bool> onStack(fns.size(), false);
+  std::vector<unsigned> stack;
+  unsigned next = 0;
+  int64_t group = 0;
+  OpBuilder b(module.getContext());
+  for (unsigned root = 0; root < fns.size(); ++root) {
+    if (order[root] != unseen)
+      continue;
+    std::vector<std::pair<unsigned, unsigned>> work{{root, 0}};
+    order[root] = low[root] = next++;
+    stack.push_back(root);
+    onStack[root] = true;
+    while (!work.empty()) {
+      unsigned v = work.back().first;
+      if (work.back().second < edges[v].size()) {
+        unsigned w = edges[v][work.back().second++];
+        if (order[w] == unseen) {
+          order[w] = low[w] = next++;
+          stack.push_back(w);
+          onStack[w] = true;
+          work.push_back({w, 0});
+        } else if (onStack[w]) {
+          low[v] = std::min(low[v], order[w]);
+        }
+        continue;
+      }
+      unsigned done = v;
+      work.pop_back();
+      if (!work.empty())
+        low[work.back().first] = std::min(low[work.back().first], low[done]);
+      if (low[done] != order[done])
+        continue;
+      llvm::SmallVector<unsigned> members;
+      unsigned w;
+      do {
+        w = stack.back();
+        stack.pop_back();
+        onStack[w] = false;
+        members.push_back(w);
+      } while (w != done);
+      // A function that only calls itself is direct recursion, which
+      // stepCall already checks.
+      if (members.size() < 2)
+        continue;
+      for (unsigned m : members)
+        fns[m]->setAttr("pia.recursive_group", b.getI64IntegerAttr(group));
+      ++group;
+    }
+  }
+}
+
 std::vector<Outcome> verifyModule(mlir::ModuleOp module,
                                   const Options &options, Stats *stats) {
   auto start = std::chrono::steady_clock::now();
@@ -6201,6 +6317,7 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
   module.getContext()->loadDialect<mlir::smt::SMTDialect>();
   // The encoding has no records: each record value becomes its fields.
   (void)transforms::scalarizeRecords(module);
+  markRecursiveGroups(module);
   // Encoding uses the module's MLIR context, so it runs on this thread;
   // only solving is parallel.
   std::vector<Outcome> outcomes;
@@ -6608,6 +6725,13 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     }
   if (stats) *stats = st;
   return outcomes;
+}
+
+std::string solverVersion() {
+  unsigned major = 0, minor = 0, build = 0, revision = 0;
+  Z3_get_version(&major, &minor, &build, &revision);
+  return std::to_string(major) + "." + std::to_string(minor) + "." +
+         std::to_string(build);
 }
 
 }  // namespace pia::verify
