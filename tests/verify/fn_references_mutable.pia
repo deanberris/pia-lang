@@ -1,0 +1,78 @@
+(* A mutable function reference (ADR 0071) can be rebound with `<-`. Each
+   function bound to it is checked against the arrow's contract where it
+   is bound, and a call through it is indirect and sees only that
+   contract, whichever function it holds.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+let keep (x : u8) : u8 ensures result = x = x
+
+(* Each of succ, twice and keep gives at least its argument. *)
+let pick (op : u8) (y : u8) : u8 requires y < 100 ensures result >= y =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = keep in
+  if op = 1 then h <- succ else if op = 2 then h <- twice else ();
+  h y
+
+(* Rebound in a loop, the reference still keeps v from shrinking. *)
+let grow (n : u8) (y : u8) : u8 ensures result >= y =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = succ in
+  let v : mutable u8 = y in
+  for i in 0 .. n
+    invariant v >= y
+  do
+    if v < 100 then v <- h v else ();
+    if i % 2 = 0 then h <- twice else h <- succ
+  done;
+  v
+
+(* twice 0 is 0, so twice does not meet an arrow that promises more. *)
+let strict (y : u8) : u8 requires y < 100 =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result > x = succ in
+  h <- twice;
+  h y
+
+(* A call through 'h' knows only 'result >= x', not which function ran. *)
+let exact (y : u8) : u8 requires y < 100 ensures result = y + 1 =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = succ in
+  h y
+
+(*
+// CHECK: fn_references_mutable.pia:8:69: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_references_mutable.pia:8:41: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:9:70: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_references_mutable.pia:9:42: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:10:24: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:16:3: proved: the precondition of 'h@fn_references_mutable.pia:14:20' holds [smt]
+// CHECK: fn_references_mutable.pia:13:51: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:23:5: proved: the loop invariant holds on entry [smt]
+// CHECK: fn_references_mutable.pia:22:7: proved: the index fits in u8 [smt]
+// CHECK: fn_references_mutable.pia:25:26: proved: the precondition of 'h@fn_references_mutable.pia:20:20' holds [smt]
+// CHECK: fn_references_mutable.pia:26:10: proved: the divisor is not zero [intervals]
+// CHECK: fn_references_mutable.pia:23:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: fn_references_mutable.pia:19:33: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:34:3: proved: the precondition of 'h@fn_references_mutable.pia:32:20' holds [smt]
+// CHECK: fn_references_mutable.pia:39:3: proved: the precondition of 'h@fn_references_mutable.pia:38:20' holds [smt]
+// CHECK: fn_references_mutable.pia:37:42: failed: the postcondition holds
+// CHECK-NEXT: counterexample: y = {{-?[0-9]+}}
+// CHECK: fn_references_mutable.pia:14:75: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:15:23: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references_mutable.pia:15:23: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:15:53: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_references_mutable.pia:15:53: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:20:75: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references_mutable.pia:20:75: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:26:28: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_references_mutable.pia:26:28: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:26:44: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references_mutable.pia:26:44: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:32:74: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references_mutable.pia:32:74: proved: the postcondition holds [smt]
+// CHECK: fn_references_mutable.pia:33:8: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_references_mutable.pia:33:8: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: fn_references_mutable.pia:38:75: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references_mutable.pia:38:75: proved: the postcondition holds [smt]
+// CHECK: 31 proved, 2 failed, 0 skipped
+*)

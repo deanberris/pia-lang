@@ -380,11 +380,11 @@
       "wall_ms_n": 66240.0
     },
     "lib/Pia/Time.pia": {
-      "cost": 2432001563,
-      "goals": 230,
-      "solve_ms_n": 209122,
-      "solved": 176,
-      "wall_ms_n": 213578.3
+      "cost": 803930194,
+      "goals": 232,
+      "solve_ms_n": 46500,
+      "solved": 178,
+      "wall_ms_n": 52100.0
     },
     "tests/memory/coherence.pia": {
       "cost": 14995,

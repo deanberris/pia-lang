@@ -267,6 +267,14 @@ std::optional<llvm::APInt> TypeResolver::valueArg(const Node &n,
     // Inside a generic's body, its own value parameter: `vec t n`.
     if (auto it = values_.find(n.text); it != values_.end())
       v = it->second.value;
+    // A generic function's value parameter, bound to int{v..v}.
+    for (auto it = typeScopes_.rbegin(); !v && it != typeScopes_.rend(); ++it)
+      if (auto p = it->find(n.text); p != it->end()) {
+        auto single = mlir::dyn_cast<IntType>(p->second);
+        if (single && single.getLo() == single.getHi())
+          v = single.getLo();
+        break;
+      }
   } else if (n.kind == NodeKind::IntLit) {
     auto lit = parseIntLiteral(n.text);
     if (lit && lit->suffix.empty())
@@ -1226,6 +1234,43 @@ void defineTypeItems(const Node &program, TypeResolver &types,
   defineTypes(program, types, diags);
 }
 
+// The names in a value parameter's place in `t`, `n` in `vec u8 n`, that
+// are no parameter of `sig`'s function: its implicit value parameters
+// (ADR 0074), added to its type parameters.
+static void valueParamsIn(const Node &t, TypeResolver &types,
+                          const std::set<std::string> &declared, FuncSig &sig) {
+  if (t.kind == NodeKind::TypeApp && !t.kids.empty() &&
+      t.kids[0]->kind == NodeKind::TypeName)
+    if (const Generic *g = types.generic(t.kids[0]->text))
+      for (size_t i = 1; i < t.kids.size() && i - 1 < g->valueTypes.size();
+           ++i) {
+        const Node &a = *t.kids[i];
+        if (!g->valueTypes[i - 1] ||
+            (a.kind != NodeKind::TypeName && a.kind != NodeKind::Name) ||
+            declared.count(a.text) ||
+            // A type's name stays a type, and is an error here.
+            types.builtin(a.text) || types.named(a.text) ||
+            types.generic(a.text) ||
+            std::find(sig.typeParams.begin(), sig.typeParams.end(), a.text) !=
+                sig.typeParams.end())
+          continue;
+        sig.typeParams.push_back(a.text);
+        sig.valueParams.push_back(a.text);
+      }
+  for (const syntax::NodePtr &k : t.kids)
+    valueParamsIn(*k, types, declared, sig);
+}
+
+static void implicitValueParams(const Node &item, TypeResolver &types,
+                                FuncSig &sig) {
+  std::set<std::string> declared;
+  for (const syntax::NodePtr &p : item.kids[0]->kids)
+    declared.insert(p->text);
+  for (const syntax::NodePtr &p : item.kids[0]->kids)
+    valueParamsIn(*p, types, declared, sig);
+  valueParamsIn(*item.kids[1], types, declared, sig);
+}
+
 // "regions:r,s" (irgen/Regions.cpp) -> {r, s}.
 static std::vector<std::string> regionsOf(llvm::StringRef flags) {
   std::vector<std::string> out;
@@ -1480,6 +1525,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       }
     for (const syntax::NodePtr &p : item->kids[0]->kids)
       if (isFunctionParam(*p)) sig.fnParams.push_back(p->text);
+    implicitValueParams(*item, types, sig);
     // A generic function's types are resolved for each instance, and a
     // higher-order function's for each specialisation (ADR 0044).
     bool ok = sig.isGeneric() || sig.isHigherOrder() ||

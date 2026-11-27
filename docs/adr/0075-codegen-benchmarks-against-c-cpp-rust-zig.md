@@ -74,6 +74,8 @@ Wall times in the cloud vary by 5% between runs; instruction counts do not vary 
 
 ## Decision
 
+**Principle (Dean, 2026-11-27): every gap a benchmark finds is fixed on principle, for every Pia program.** The benchmarks show where Pia's codegen falls short. A fix goes into the compiler, a pass or the library, and it makes every program with that shape faster. Nothing is tuned to a benchmark: no flag, rule, pattern or library function that exists for one benchmark program, and no change that matches a benchmark's code. A fix that helps a benchmark but no other program is not a fix.
+
 ### 1. Two lanes: same algorithm (the headline) and best known (the stretch)
 
 - **Same algorithm.** The Pia port and every reference run one algorithm, as plb2 requires. This is the codegen comparison Dean asked for, and the number we publish first. When a proof forces the Pia port away from the reference's shape (as nqueen's recursion did), the benchmark also carries a C **control**: the Pia program transcribed back into C, so that "codegen" and "algorithm" separate.

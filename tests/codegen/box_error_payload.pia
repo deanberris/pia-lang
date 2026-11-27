@@ -1,0 +1,86 @@
+(* tests/verify/box_error_payload.pia, compiled and run (ADR 0046,
+   2026-11-27 note): an error set whose `Cxx` case carries a
+   `box Exception`, filled with a not_found or an overflow, passed on by
+   `?` and handled by calling `code` through the box. In this module
+   `box Exception` is the tagged union of the two types it widens (ADR
+   0046, step 5), so the handler's call is a switch on the tag.
+   box_error_payload_test.c checks each case. Every goal is proved.
+*)
+module BoxErrorPayload : Run
+
+(* What box_error_payload_test.c calls, by its C name (ADR 0039). *)
+interface Run @abi(c) = sig
+  let not_found = type { id : u16 }
+  let overflow = type { limit : u32 }
+  let run : (nf : borrowed mutable [not_found]) -> (ov : borrowed mutable [overflow]) -> (x : u8) -> u32
+    requires len nf = 1 && len ov = 1
+end
+
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b.slot = 1 && b.state = 1
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+(* What every error in the open case offers: a code that is never 0. *)
+let meta Exception (t : type) : concept = sig
+  let code : (e : t) -> u32 ensures result > 0
+end
+
+let not_found = type { id : u16 }
+let code (e : not_found) : u32 ensures result > 0 = 400 + e.id
+
+let overflow = type { limit : u32 }
+let code (e : overflow) : u32 ensures result > 0 = if e.limit = 0 then 1 else e.limit
+
+(* A closed set with one open case. *)
+let io_error = type | Closed | Cxx of box Exception
+
+let fail (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : result u8 (io_error | oom)
+  requires len nf = 1 && len ov = 1
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let mn : mutable bump not_found = { mem = nf; used = 0 } in
+  let mo : mutable bump overflow = { mem = ov; used = 0 } in
+  if x = 0 then Err Closed
+  else if x = 1 then (let b = make mn { id = 4 }? in Err (Cxx (widen b)))
+  else if x = 2 then (let b = make mo { limit = 77 }? in Err (Cxx (widen b)))
+  else Ok x
+
+(* `?` passes the open case on like any other error. *)
+let twice (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : result u8 (io_error | oom)
+  requires len nf = 1 && len ov = 1
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let v = fail nf ov x? in
+  Ok v
+
+(* What box_error_payload_test.c calls: 2 for Closed, 404 and 77 from the
+   boxed errors' codes, 1 when nothing fails. *)
+let run (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : u32
+  requires len nf = 1 && len ov = 1
+  ensures result > 0
+= (let v = twice nf ov x? in 1
+   handle
+   | Closed -> 2
+   | OutOfMemory -> 3
+   | Cxx e -> code e)

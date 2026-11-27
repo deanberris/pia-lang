@@ -405,7 +405,7 @@ let reserve (n : usize) : result unit oom =
 
 The type arguments are deduced. A constructor takes its instance from the type it is expected to have, as `Err OutOfMemory` does from `reserve`'s result, or else from its payload, as `Some v` does. A call takes them from its arguments, then from the type it is expected to have. To force a choice, give them: `unwrap_or<u16> (Some v) 0`, or by name, `unwrap_or<t = u16>`. A generic function needs its return type written, and recursive generic types, such as a list, are not supported yet.
 
-A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. Functions that are generic over a value parameter, such as one `last` for every `n`, are not supported yet.
+A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. A function can be generic over one: a name in a value parameter's place that no parameter declares, `n` in `(b : block t n)`, is deduced from the argument like a type parameter, and in the body and contracts it is the argument's value. Each instance is proved on its own.
 
 ```ocaml
 let block = let (t : type) (n : usize) => type { cells : [t; n] }
@@ -417,6 +417,14 @@ let row = let (n : usize) (r : region) => type {
 } where len data = n
 
 let last (r : region) (v : row 8 r) : u8 = v.data.[7]
+
+let size (t : type) (b : block t n) : usize
+  ensures result = n
+= len b.cells
+
+let four (b : block u8 4) : usize
+  ensures result = 4
+= size b
 ```
 
 ### Concepts
@@ -752,7 +760,20 @@ let quarter (x : u8) : u8 =
   g (g x)
 ```
 
-A reference is fixed, like every binding. Rebinding one, `let h : mutable (u8 -> u8) = succ`, references stored in records and buffers, and calls that are indirect in the compiled code come later.
+A reference is fixed, like every binding, unless it is `mutable`. A mutable reference is rebound with `<-`, each function bound to it is proved against the arrow where it is bound, and a call through it is an indirect call that sees only the arrow's contract, whichever function it holds:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+
+let pick (op : u8) (y : u8) : u8 requires y < 100 ensures result >= y =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = succ in
+  if op = 2 then h <- twice else ();
+  h y
+```
+
+The parentheses make `mutable` the reference's, not its parameter's. A stored reference takes and returns integers, bools and floats for now; copies of a mutable reference, references in records and buffers, and references passed to C come later.
 
 ## Parallel loops
 
@@ -820,6 +841,8 @@ let wide = type { v : byte; w : u8 } @derive(eq)
 ```
 
 Quotes are hygienic: names a quote binds are renamed so they cannot capture yours, and free names in a quote refer to where the metaprogram is defined. [Metaprograms](meta.md) describes the interpreter, its builtins and the expansion loop.
+
+Metaprograms also write tests. `G.cases f`, from `Pia.Test.Gen`, reads `f`'s parameter types and contract and writes, for each combination of boundary values its `requires` allows, a lemma that some result can meet `f`'s `ensures` there and a lemma that `f` does. A contract that no result can meet, such as `ensures result = a + b` on a `u8` result, fails as a *specification failure* at the inputs that break it ([tests from contracts](meta.md#tests-from-contracts)).
 
 ## Comments and literate programs
 

@@ -99,6 +99,9 @@ struct Binding {
   bool arena = false;
   // A lambda's closure, which borrows what it captures (ADR 0044).
   bool closure = false;
+  // A mutable function reference's arrow, which every function bound to
+  // it is checked against (ADR 0071).
+  const Node *arrowType = nullptr;
   // Its referenced captures: each field, and the variable that sees the
   // field's value after each call.
   std::vector<std::pair<std::string, std::shared_ptr<Binding>>> refs;
@@ -1102,6 +1105,8 @@ class Gen {
       fn->setAttr("pia.certified", b_.getStringAttr(c->second));
     // A function reference's wrapper: callers see only the arrow's
     // contract, not the body (ADR 0071, section 3).
+    if (proxies_.count(sig.name))
+      fn->setAttr("pia.proxy", b_.getUnitAttr());
     if (references_.count(sig.name))
       fn->setAttr("pia.reference", b_.getUnitAttr());
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
@@ -1169,6 +1174,22 @@ class Gen {
       if (p.regions.empty() && holdsRegionField(p.type))
         b->lenders.push_back(regionBinding("'" + p.name + "'", p.name));
     }
+    // An instance's value parameters are constants: `n` is 8 in the
+    // instance of `last` for a `row 8 r` (ADR 0074).
+    for (const std::string &name : sig.valueParams) {
+      auto a = sig.typeArgs.find(name);
+      if (a == sig.typeArgs.end())
+        continue;
+      auto single = mlir::dyn_cast<IntType>(a->second);
+      if (!single || single.getLo() != single.getHi())
+        continue;
+      llvm::APInt v = single.getLo().sextOrTrunc(kWidth);
+      Type t = v.isNegative() ? types_.builtin("i64") : types_.usize();
+      bind(name,
+           create<ConstantOp>(l, t,
+                              b_.getIntegerAttr(b_.getIntegerType(kWidth), v)),
+           t, false);
+    }
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
@@ -1176,6 +1197,7 @@ class Gen {
     owns_.clear();
     variadic_.reset();
     lower_ = nullptr;
+    case_ = nullptr;
     deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
@@ -1233,6 +1255,8 @@ class Gen {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
     }
+    if (case_ && !genCase(*case_, isLemma, fn))
+      return;
     // A theory's abstract spec function has no body: to the verifier it is
     // an uninterpreted function (ADR 0036).
     if (hasFlag(item, "abstract")) {
@@ -2387,6 +2411,46 @@ class Gen {
   }
 
   // `@overflow(wrap)` on the return annotation sets the function's mode.
+  // A generated case says what it checks, so that its goal reads as the
+  // case and not as a lemma's postcondition (ADR 0056). A specification
+  // check that fails means no result could meet the contract at the case's
+  // inputs: the contract is wrong, whatever the code does, and the hint
+  // says so rather than letting the case pass from a contradiction.
+  bool genCase(const Node &a, bool isLemma, mlir::func::FuncOp fn) {
+    const char *usage = "@case takes spec or oracle, the function and the "
+                        "case's number, as in @case(spec, clamp, 3)";
+    if (!isLemma) {
+      fail(a, "@case applies only to a lemma");
+      return false;
+    }
+    if (a.kids.size() != 3 || a.kids[0]->kind != NodeKind::Name ||
+        a.kids[1]->kind != NodeKind::Name ||
+        a.kids[2]->kind != NodeKind::IntLit) {
+      fail(a, usage);
+      return false;
+    }
+    const std::string &what = a.kids[0]->text;
+    std::string f = "'" + a.kids[1]->text + "'";
+    std::string k = "case " + a.kids[2]->text + ": ";
+    std::string claim, hint;
+    if (what == "spec") {
+      claim = k + "some result can meet the ensures of " + f;
+      hint = "specification failure: no value of " + f +
+             "'s result type satisfies its ensures at these inputs, so the "
+             "contract is wrong, whatever the code does; correct the ensures, "
+             "or add a requires that rules these inputs out";
+    } else if (what == "oracle") {
+      claim = k + f + " meets its ensures";
+      hint = f + " breaks its contract at these inputs";
+    } else {
+      fail(a, usage);
+      return false;
+    }
+    fn->setAttr("pia.obligation", b_.getStringAttr(claim));
+    fn->setAttr("pia.case_failure", b_.getStringAttr(hint));
+    return true;
+  }
+
   bool genAttributes(const Node &attrs) {
     for (const syntax::NodePtr &a : attrs.kids) {
       if (a->text == "overflow" && a->kids.size() == 1 &&
@@ -2499,6 +2563,12 @@ class Gen {
             return k->kind == NodeKind::Name;
           })) {
         owns_.push_back(a.get());
+        continue;
+      }
+      // `@case(spec, f, k)` or `@case(oracle, f, k)` on a lemma that a
+      // test generator wrote (ADR 0056); checked once the lemma is known.
+      if (a->text == "case") {
+        case_ = a.get();
         continue;
       }
       if (a->text == "allow" && !a->kids.empty()) {
@@ -4527,6 +4597,11 @@ class Gen {
     // A name a quote made resolves where the metaprogram was defined, never
     // to a local at the expansion site (docs/meta.md, "Hygiene").
     bool local = fn.flags.empty() && lookup(fn.text);
+    // `h x` through a mutable function reference (ADR 0071).
+    if (local && !targs)
+      if (BindingPtr h = lookup(fn.text);
+          mlir::isa<mlir::FunctionType>(h->type))
+        return genReferenceCall(n, h, expected);
     // `g x` for a function object `g` is `apply g x` (ADR 0044, section 4).
     if (local && !targs)
       if (BindingPtr g = lookup(fn.text);
@@ -8318,6 +8393,10 @@ class Gen {
   // function, and every instance it made, is thrown away.
   void checkDefinition(const std::string &symbol) {
     const sema::FuncSig &generic = sigs_.at(symbol);
+    // A value parameter has no stand-in: `vec u8 n` is a type only for a
+    // known n, so each instance is checked and proved on its own.
+    if (!generic.valueParams.empty())
+      return;
     AdlScope adl(adlModule_, fromModule(*generic.item));
     std::map<std::string, Type> bound;
     for (const std::string &t : generic.typeParams) {
@@ -9193,8 +9272,16 @@ class Gen {
                                  const Choice &choice = {}) {
     const std::vector<std::string> &params = generic.typeParams;
     std::string key = generic.name + "<";
-    for (size_t i = 0; i < params.size(); ++i)
-      key += (i ? ", " : "") + typeName(bound[params[i]]);
+    for (size_t i = 0; i < params.size(); ++i) {
+      // A value parameter's argument, int{8..8}, is spelled 8.
+      auto single = mlir::dyn_cast_or_null<IntType>(bound[params[i]]);
+      bool value = single && single.getLo() == single.getHi() &&
+                   llvm::is_contained(generic.valueParams, params[i]);
+      key +=
+          (i ? ", " : "") +
+          (value ? llvm::toString(single.getLo().sextOrTrunc(kWidth), 10, true)
+                 : typeName(bound[params[i]]));
+    }
     // An instance made through adapters is its own instance.
     for (auto &[concept_key, adapter] : choice.adapterFor)
       key += ", " + concept_key.substr(0, concept_key.find('<')) + " = " +
@@ -9934,6 +10021,16 @@ class Gen {
       }
       if (mlir::isa<ArrayType, SliceType>(b->type))
         return fail(place, "assigning a whole array is not supported yet");
+      // `h <- twice`: rebinding a mutable function reference (ADR 0071).
+      if (auto ft = mlir::dyn_cast<mlir::FunctionType>(b->type);
+          ft && b->arrowType) {
+        R v = referenceValue(valueNode, arrowOf(*b->arrowType), ft,
+                             "'" + place.text + "'");
+        if (!v)
+          return std::nullopt;
+        b->value = v->value;
+        return unit();
+      }
       if (!notLent(b, place, "assigned")) return std::nullopt;
       R v = genExpr(valueNode, b->type);
       if (!v) return v;
@@ -12363,9 +12460,8 @@ class Gen {
     const Node &annot = *n.kids[1]->kids[0];
     const Node &value = *n.kids[3];
     const std::string &mods = annot.kids[0]->text;
-    if (sema::hasModifier(mods, "mutable"))
-      return fail(annot, "a mutable function reference, which can be "
-                         "rebound, comes with ADR 0071's step 2");
+    if (mods == "mutable")
+      return genMutableReferenceLet(n, expected);
     if (!mods.empty())
       return fail(annot, "a function reference takes no modifiers");
     if (contract_ || ghost_)
@@ -12395,6 +12491,187 @@ class Gen {
       body->text = *symbol;
     renameNames(*body, rename, nullptr);
     return genExpr(*keep(std::move(body)), expected);
+  }
+
+  // The function type a reference to `arrow` holds at run time, or null
+  // with an error when its parameters or result are not yet ones a
+  // reference can carry.
+  mlir::FunctionType referenceType(const Arrow &arrow, const Node &at) {
+    llvm::SmallVector<Type> inputs, results;
+    auto scalar = [&](Type t) {
+      return t && (mlir::isa<IntType>(t) || isBool(t) || isFloat(t));
+    };
+    for (const Node *d : arrow.domains) {
+      if (!d->kids[0]->text.empty()) {
+        fail(*d, "a parameter of a stored function reference takes no "
+                 "modifiers yet (ADR 0071)");
+        return {};
+      }
+      Type t = types_.resolve(*d->kids[1]);
+      if (!scalar(t)) {
+        fail(*d, "a stored function reference takes integers, bools and "
+                 "floats for now (ADR 0071)");
+        return {};
+      }
+      inputs.push_back(t);
+    }
+    Type r = types_.resolve(*arrow.result);
+    if (!scalar(r) && !(r && isUnit(r))) {
+      fail(*arrow.result, "a stored function reference returns an integer, "
+                          "a bool, a float or unit for now (ADR 0071)");
+      return {};
+    }
+    if (!isUnit(r))
+      results.push_back(r);
+    return b_.getFunctionType(inputs, results);
+  }
+
+  // The function every call through a mutable reference to `arrow` goes
+  // to: its first parameter is the reference, its contract is the arrow's,
+  // and its body calls the reference. Every function the reference can
+  // hold was checked against the arrow where it was bound, so the
+  // verifier takes the contract as given and callers see only it.
+  std::optional<std::string> referenceProxy(const std::string &name,
+                                            const Arrow &arrow,
+                                            mlir::FunctionType ft,
+                                            const Node &at_) {
+    std::string symbol = name + "@" + placeOf(at_);
+    if (sigs_.count(symbol))
+      return symbol;
+    syntax::SourceLoc at = at_.loc;
+    auto item = syntax::makeNode(NodeKind::LetItem, at, symbol);
+    Node *params = item->add(syntax::makeNode(NodeKind::Params, at));
+    auto call = syntax::makeNode(NodeKind::Apply, at);
+    const std::string self = "pia$reference";
+    call->add(syntax::makeNode(NodeKind::Name, at, self));
+    // The reference's own parameter is typed below: no type written in Pia
+    // names a function's address.
+    Node *first = params->add(syntax::makeNode(NodeKind::Param, at, self));
+    first->add(annotOf(*syntax::makeNode(NodeKind::TypeName, at, "bool"), at));
+    for (size_t i = 0; i < arrow.domains.size(); ++i) {
+      const Node &d = *arrow.domains[i];
+      std::string pname = d.text.empty() ? "pia$a" + std::to_string(i) : d.text;
+      Node *p = params->add(syntax::makeNode(NodeKind::Param, at, pname));
+      auto a = syntax::makeNode(NodeKind::Annot, at);
+      for (const NodePtr &k : d.kids)
+        a->add(syntax::clone(*k));
+      p->add(std::move(a));
+      call->add(syntax::makeNode(NodeKind::Name, at, pname));
+    }
+    item->add(retAnnotNode(annotOf(*arrow.result, at), at));
+    Node *cs = item->add(syntax::makeNode(NodeKind::Contracts, at));
+    arrowContracts(arrow, NodeKind::Requires, {}, *cs);
+    arrowContracts(arrow, NodeKind::Ensures, {}, *cs, at);
+    item->add(std::move(call));
+    sema::FuncSig sig;
+    sig.name = symbol;
+    sig.item = item.get();
+    synthesized_.push_back(std::move(item));
+    if (!sema::resolveSignature(sig, types_, diags_))
+      return std::nullopt;
+    sig.params[0].type = ft;
+    sigs_.emplace(symbol, std::move(sig));
+    overloads_[symbol].push_back(symbol);
+    pendingInstances_.push_back(symbol);
+    proxies_.insert(symbol);
+    return symbol;
+  }
+
+  // The reference a mutable function reference is bound or rebound to:
+  // the address of `value`, a top-level function checked against `arrow`.
+  R referenceValue(const Node &value, const Arrow &arrow, mlir::FunctionType ft,
+                   const std::string &what) {
+    if (value.kind != NodeKind::Name || !value.flags.empty() ||
+        overloadSet(value.text).empty() || lookup(value.text)) {
+      if (value.kind == NodeKind::Name && lookup(value.text))
+        return fail(value, "'" + value.text +
+                               "' is a local; a mutable "
+                               "function reference is bound to a top-level "
+                               "function by its name (ADR 0071)");
+      return fail(value, "a function reference is made from a top-level "
+                         "function's name, as in 'let h : mutable (u8 -> "
+                         "u8) = succ' (ADR 0071)");
+    }
+    std::optional<std::string> symbol =
+        functionArgument(value, arrow, what, /*reference=*/true);
+    if (!symbol)
+      return std::nullopt;
+    auto c = create<mlir::func::ConstantOp>(
+        loc(value), ft, mlir::FlatSymbolRefAttr::get(b_.getContext(), *symbol));
+    return TV{c.getResult(), ft};
+  }
+
+  // `let h : mutable (u8 -> u8) = succ in ... h <- twice ...` (ADR 0071,
+  // section 1): the reference is a value, the address of the function it
+  // was last bound to, and a call through it is indirect.
+  R genMutableReferenceLet(const Node &n, Type expected) {
+    const Node &annot = *n.kids[1]->kids[0];
+    const Node &arrowNode = *annot.kids[1];
+    Arrow arrow = arrowOf(arrowNode);
+    mlir::FunctionType ft = referenceType(arrow, arrowNode);
+    if (!ft)
+      return std::nullopt;
+    if (!referenceProxy(n.text, arrow, ft, arrowNode))
+      return std::nullopt;
+    R v = referenceValue(*n.kids[3], arrow, ft, "'" + n.text + "'");
+    if (!v)
+      return std::nullopt;
+    pushScope();
+    BindingPtr b = bind(n.text, v->value, ft, /*isMutable=*/true);
+    b->arrowType = &arrowNode;
+    b->scope = n.kids[4].get();
+    R body = genExpr(*n.kids[4], expected);
+    popScope();
+    return body;
+  }
+
+  // `h x` through a mutable function reference: a call of its proxy, or,
+  // in the proxy itself, the indirect call.
+  R genReferenceCall(const Node &n, const BindingPtr &h, Type expected) {
+    std::vector<const Node *> args;
+    for (size_t i = 1; i < n.kids.size(); ++i)
+      args.push_back(n.kids[i].get());
+    auto ft = mlir::cast<mlir::FunctionType>(h->type);
+    if (!h->arrowType && !(h->isParam && h->name == "pia$reference"))
+      return fail(n, "'" + h->name +
+                         "' is a copy of a mutable function "
+                         "reference; call the reference itself, as copies come "
+                         "later (ADR 0071)");
+    if (!h->arrowType) {
+      // The proxy's own parameter.
+      if (args.size() != ft.getNumInputs())
+        return fail(n, "the reference takes " +
+                           plural(ft.getNumInputs(), "argument"));
+      llvm::SmallVector<Value> operands;
+      for (size_t i = 0; i < args.size(); ++i) {
+        R a = genExpr(*args[i], ft.getInput(i));
+        R c = a ? coerce(*a, ft.getInput(i), *args[i]) : std::nullopt;
+        if (!c)
+          return std::nullopt;
+        operands.push_back(c->value);
+      }
+      auto call =
+          create<mlir::func::CallIndirectOp>(loc(n), h->value, operands);
+      if (ft.getNumResults() == 0)
+        return unit();
+      return TV{call.getResult(0), ft.getResult(0)};
+    }
+    if (contract_ || ghost_)
+      return fail(n, "a call through a mutable function reference is code, "
+                     "not part of a contract");
+    Arrow arrow = arrowOf(*h->arrowType);
+    std::optional<std::string> proxy =
+        referenceProxy(h->name, arrow, ft, *h->arrowType);
+    if (!proxy)
+      return std::nullopt;
+    auto self = syntax::makeNode(NodeKind::Name, n.kids[0]->loc, h->name);
+    std::vector<const Node *> all{keep(std::move(self))};
+    all.insert(all.end(), args.begin(), args.end());
+    std::vector<std::optional<TV>> early(all.size());
+    early[0] = TV{h->value, ft};
+    R r = genCall(n, sigs_.at(*proxy), all, &early);
+    (void)expected;
+    return r;
   }
 
   R genLetIn(const Node &n, Type expected) {
@@ -12706,12 +12983,15 @@ class Gen {
   bool specPlace_ = false;
   bool specFieldSeen_ = false;
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
+  const Node *case_ = nullptr; // a generated test case's @case (ADR 0056)
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
   // Wrappers that function references call (ADR 0071): opaque to callers.
   std::set<std::string> references_;
+  // The functions calls through mutable references go to (ADR 0071).
+  std::set<std::string> proxies_;
   // Lemmas queued and functions matched to requirements, in order, so a
   // concept check can tell which are its own (certify).
   std::vector<std::string> queuedLog_, matchedLog_;

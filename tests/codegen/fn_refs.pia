@@ -1,0 +1,40 @@
+(* Mutable function references (ADR 0071), compiled and run from C by
+   fn_refs_test.c: a reference rebound in a loop, called indirectly.
+   Each function bound to it is a wrapper with the arrow's contract, and
+   the call is through its address.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$pick"(
+// CHECK: select {{.*}}ptr @"twice@
+// CHECK: call i8 %{{[0-9]+}}(
+// CHECK-LABEL: define {{.*}}$apply_ops"(
+// CHECK: phi ptr
+// CHECK: call i8 %{{[0-9]+}}(
+*)
+module FnRefs : Refs
+
+interface Refs @abi(c) = sig
+  let pick : (op : u8) -> (y : u8) -> u8
+  let apply_ops : (n : u8) -> (y : u8) -> u8
+end
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+let keep (x : u8) : u8 ensures result = x = x
+
+(* The operation numbered op, applied to y. *)
+let pick (op : u8) (y : u8) : u8 =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = keep in
+  if op = 1 then h <- succ else if op = 2 then h <- twice else ();
+  if y < 100 then h y else y
+
+(* succ and twice in turn, n times, while the value stays small. *)
+let apply_ops (n : u8) (y : u8) : u8 =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = succ in
+  let v : mutable u8 = y in
+  for i in 0 .. n do
+    if v < 100 then v <- h v else ();
+    if i % 2 = 0 then h <- twice else h <- succ
+  done;
+  v

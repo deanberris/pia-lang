@@ -246,7 +246,8 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
       f->hasAttr(PiaDialect::getImportAttrName()) || f->hasAttr("pia.extern") ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
       f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
-      f->hasAttr("pia.reference") || f.getNumResults() != 1)
+      f->hasAttr("pia.reference") || f->hasAttr("pia.proxy") ||
+      f.getNumResults() != 1)
     return false;
   auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
   if (!scalar(f.getFunctionType().getResult(0))) return false;
@@ -738,6 +739,12 @@ class Encoder {
     if (auto r = mlir::dyn_cast<RecType>(t)) {
       recUsed_.insert(r.getName().str());
       return mlir::smt::SortType::get(ctx_, recSort(r.getName()));
+    }
+    // A function reference (ADR 0071) is an address the proof never looks
+    // into: calls through it go to its proxy, whose contract is the arrow's.
+    if (mlir::isa<mlir::FunctionType>(t)) {
+      sorts_.insert("pia.fnref");
+      return mlir::smt::SortType::get(ctx_, "pia.fnref");
     }
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       Type e = sortOf(a.getElementType());
@@ -3684,7 +3691,7 @@ class Encoder {
   // record unused sorts or datatypes in the query.
   static bool canEncodeType(Type t) {
     if (mlir::isa<IntType, mlir::IndexType, UnboundedIntType, RealType,
-                  SortType, RecType, mlir::FloatType>(t) ||
+                  SortType, RecType, mlir::FloatType, mlir::FunctionType>(t) ||
         t.isInteger(1))
       return true;
     if (auto r = mlir::dyn_cast<RecordType>(t))
@@ -3704,8 +3711,9 @@ class Encoder {
   bool isPureFunction(mlir::func::FuncOp f) {
     if (!f || f.isExternal() || f->hasAttr(PiaDialect::getLemmaAttrName()) ||
         f->hasAttr(PiaDialect::getImportAttrName()) ||
-        f->hasAttr("pia.extern") || f->hasAttr("pia.generic_eq") ||
-        f->hasAttr("pia.out_result") || f.getNumResults() == 0)
+        f->hasAttr("pia.extern") || f->hasAttr("pia.proxy") ||
+        f->hasAttr("pia.generic_eq") || f->hasAttr("pia.out_result") ||
+        f.getNumResults() == 0)
       return false;
     if (f->hasAttr("pia.generic_proof") &&
         !(fn_ && fn_->hasAttr("pia.generic_proof")))
@@ -3781,6 +3789,7 @@ class Encoder {
             isAbstract(callee) || contractOnly(callee))
           return;
         if (callee.isExternal() || callee->hasAttr("pia.extern") ||
+            callee->hasAttr("pia.proxy") ||
             callee->hasAttr(PiaDialect::getImportAttrName())) {
           ok = false;
           return;
@@ -6518,8 +6527,12 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     // An imported function is proved by its own module (ADR 0039).
     if (fn.isExternal() || fn->hasAttr(PiaDialect::getImportAttrName()))
       continue;
-    // A foreign function's contract is trusted, not proved (#55).
-    if (fn->hasAttr("pia.extern")) continue;
+    // A foreign function's contract is trusted, not proved (#55). So is a
+    // mutable function reference's proxy: every function the reference
+    // can hold was checked against the proxy's contract where it was
+    // bound (ADR 0071).
+    if (fn->hasAttr("pia.extern") || fn->hasAttr("pia.proxy"))
+      continue;
     // A spec function from another module's interface is proved there.
     if (fn->hasAttr("pia.spec_from")) continue;
     // A witness copy only explains another function's failures.
@@ -6708,6 +6721,19 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.typeSmt += smt;
       st.typeCost += o.cost;
     }
+  }
+  // A generated test case that fails says what its failure means
+  // (ADR 0056): for a specification check, that the contract cannot be met.
+  for (size_t i = 0; i < outcomes.size(); ++i) {
+    if (outcomes[i].status != Status::Failed)
+      continue;
+    auto fn = opOf[i]->getParentOfType<mlir::func::FuncOp>();
+    if (!fn)
+      fn = mlir::dyn_cast<mlir::func::FuncOp>(opOf[i]);
+    if (!fn)
+      continue;
+    if (auto h = fn->getAttrOfType<mlir::StringAttr>("pia.case_failure"))
+      outcomes[i].hint = h.getValue().str();
   }
   if (options.checkVacuity) checkVacuity(module, proofs, outcomes, opOf, options, st);
   // Per op: whether every goal it raises holds, and how.
