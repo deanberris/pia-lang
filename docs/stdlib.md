@@ -548,6 +548,18 @@ flowchart TD
 
 Every function in every layer has a contract that is proved when the library builds. Proved means at least the strongest-guarantee defaults (no overflow, in bounds, terminates). Where specification functions allow, it also means functional correctness: `sort` returns a sorted permutation of its input, `binary_search` finds the element if it is there, and `write_all` writes every byte or returns `Err`. The codecs are good stress tests: inflate's back-references need `distance <= bytes written so far`, Huffman decoding needs bounded table indices, LZW needs the code table to stay within 4096 entries, and the decoded image's length is proved against the header's `width * height * channels`, which is why multiplication comes first.
 
+### What the codecs prove
+
+The GIF and inflate codecs ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md)) are built. Each one is total and safe on every input, allocates nothing, and writes into a buffer the caller lends it. Beyond safety, they prove the following:
+
+- **`Pia.Image.Gif.Lzw`:** each code writes exactly the string that the dictionary in `Pia.Image.Gif.Spec` gives it. `decode_ref` also proves the whole-stream theorem. `Pia.Image.Gif.Ref` writes GIF89a's LZW reading of a code stream as a spec, and whenever x is what that reading gives for a stream and x fits in the output, decoding returns `Ok (len x)` with x in the output. The trace and x are spec parameters ([ADR 0058](adr/0058-spec-buffers.md)), so codegen erases them. `decode` is the same code with the check turned off.
+- **`Pia.Image.Gif.Decode`:** `info` accepts exactly the files that the block grammar accepts.
+- **`Pia.Image.Gif.Encode`:** the stream `encode_animation` writes parses with `info` and fits its proved size bound.
+- **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read. `kraft_room` shows that an over-subscribed set of code lengths can't build.
+- **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written.
+
+These large specs are `@opaque` ([ADR 0063](adr/0063-opaque-spec-functions.md)), and only small step lemmas reveal them. That keeps the loops' goals small enough to prove.
+
 ## Suggested order
 
 Each step unlocks a usable slice of the library, and the order follows the roadmap:
