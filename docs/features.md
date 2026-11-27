@@ -65,7 +65,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Lambdas and function values | [tour](tour.md#function-values), [ADR 0044](adr/0044-function-values-and-lambdas.md) | [lambda_find](../tests/verify/lambda_find.pia), [lambda_generic](../tests/verify/lambda_generic.pia), [lambda_generic_forms](../tests/verify/lambda_generic_forms.pia), [lambda_named](../tests/verify/lambda_named.pia), [lambda_overloads](../tests/verify/lambda_overloads.pia) |
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
-| Function references: `let h : (x : u8) -> u8 requires ... = succ` | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia) |
+| Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory
