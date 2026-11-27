@@ -895,19 +895,14 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   }
 };
 
-// `unsafe view addr n`: a memref descriptor over foreign memory, built
-// as the LLVM struct a memref lowers to, so its uses lower as usual.
-// The memref descriptor of the `length` elements at the address `addr`,
-// an i64: no offset, unit stride.
-Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
-              mlir::MemRefType type, Value addr, Value length) {
+// Builds a memref descriptor `{p, p, 0, [n], [1]}` for `n` elements at `p`.
+Value sliceFromPtr(mlir::ConversionPatternRewriter &rw, Location loc,
+                   mlir::MemRefType type, Value p, Value n) {
   auto i64 = rw.getI64Type();
   auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
   auto dims = mlir::LLVM::LLVMArrayType::get(i64, 1);
   auto desc = mlir::LLVM::LLVMStructType::getLiteral(
       rw.getContext(), {ptr, ptr, i64, dims, dims});
-  Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
-  Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, length);
   Value zero =
       make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(0));
   Value one =
@@ -925,6 +920,61 @@ Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
                                                 mlir::ValueRange{d})
       .getResult(0);
 }
+
+// `unsafe view addr n`: a memref descriptor over foreign memory, built
+// as the LLVM struct a memref lowers to, so its uses lower as usual.
+// The memref descriptor of the `length` elements at the address `addr`,
+// an i64: no offset, unit stride.
+Value sliceAt(mlir::ConversionPatternRewriter &rw, Location loc,
+              mlir::MemRefType type, Value addr, Value length) {
+  auto i64 = rw.getI64Type();
+  auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+  Value p = make<mlir::LLVM::IntToPtrOp>(rw, loc, ptr, addr);
+  Value n = make<mlir::arith::IndexCastOp>(rw, loc, i64, length);
+  return sliceFromPtr(rw, loc, type, p, n);
+}
+
+// Embedded binary blob (ADR 0070): for non-empty blobs, declare an external
+// constant llvm.mlir.global (populated directly with a ConstantDataArray in
+// translate()) and wrap its address in a slice descriptor; for empty blobs,
+// cast a zero-length stack allocation as in EmptyLowering.
+struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(EmbedOp op, OpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    auto sliceType = mlir::dyn_cast_or_null<mlir::MemRefType>(
+        getTypeConverter()->convertType(op.getType()));
+    if (!sliceType)
+      return mlir::failure();
+    int64_t len = op.getLength();
+    if (len == 0) {
+      auto none = mlir::MemRefType::get({0}, sliceType.getElementType());
+      Value storage = make<mlir::memref::AllocaOp>(rw, loc, none);
+      rw.replaceOpWithNewOp<mlir::memref::CastOp>(op, sliceType, storage);
+      return mlir::success();
+    }
+    auto i8 = rw.getI8Type();
+    auto i64 = rw.getI64Type();
+    auto arrType = mlir::LLVM::LLVMArrayType::get(i8, len);
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    llvm::StringRef sym = op.getSymbol();
+    if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      make<mlir::LLVM::GlobalOp>(rw, loc, arrType, /*isConstant=*/true,
+                                 mlir::LLVM::Linkage::External, sym,
+                                 mlir::Attribute());
+    }
+    auto ptr = mlir::LLVM::LLVMPointerType::get(rw.getContext());
+    Value p = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
+    Value n =
+        make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(len));
+    rw.replaceOp(op, sliceFromPtr(rw, loc, sliceType, p, n));
+    return mlir::success();
+  }
+};
 
 struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -2140,21 +2190,20 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns
-      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
-           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
-           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
-           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
-           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
-           ErasedLowering, RegionLowering, CopyLowering, ViewLowering, AtAddressLowering,
-           AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering,
-           RecMakeLowering, RecTagLowering, RecPayloadLowering>(
-          types, ctx);
+  patterns.add<
+      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
+      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
+      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
+      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
+      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
+      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
+      AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
+      RecMakeLowering, RecTagLowering, RecPayloadLowering>(types, ctx);
   // Floats and integers (M11).
   patterns.add<IntToFloatLowering, FloatToIntLowering,
                BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,
@@ -2657,6 +2706,49 @@ void addWitnesses(llvm::Module &m, const Options &options) {
     llvm::appendToUsed(m, used);
 }
 
+// Populates embedded binary blobs (ADR 0070) directly as LLVM
+// ConstantDataArrays, bypassing per-element MLIR attributes.
+void addEmbeds(llvm::Module &m, const Options &options) {
+  if (options.embeds.empty())
+    return;
+  llvm::LLVMContext &ctx = m.getContext();
+  std::vector<llvm::GlobalValue *> used;
+  for (const syntax::EmbeddedBlob &blob : options.embeds) {
+    llvm::GlobalVariable *g = m.getNamedGlobal(blob.symbol);
+    if (!g && !blob.isExternal && blob.section.empty())
+      continue;
+    llvm::Constant *data =
+        llvm::ConstantDataArray::get(ctx, llvm::ArrayRef<uint8_t>(blob.bytes));
+    auto linkage = blob.isExternal ? llvm::GlobalValue::ExternalLinkage
+                                   : llvm::GlobalValue::PrivateLinkage;
+    if (g) {
+      g->setInitializer(data);
+      g->setConstant(true);
+      g->setLinkage(linkage);
+    } else {
+      g = new llvm::GlobalVariable(m, data->getType(), /*isConstant=*/true,
+                                   linkage, data, blob.symbol);
+    }
+    g->setAlignment(llvm::Align(blob.align));
+    if (!blob.section.empty()) {
+      g->setSection(blob.section);
+      used.push_back(g);
+    }
+    if (blob.emitLenSymbol) {
+      std::string lenName = blob.symbol + "_len";
+      if (!m.getNamedGlobal(lenName)) {
+        llvm::Type *i64 = llvm::Type::getInt64Ty(ctx);
+        auto *lenVar = new llvm::GlobalVariable(
+            m, i64, /*isConstant=*/true, llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantInt::get(i64, blob.bytes.size()), lenName);
+        lenVar->setAlignment(llvm::Align(8));
+      }
+    }
+  }
+  if (!used.empty())
+    llvm::appendToUsed(m, used);
+}
+
 } // namespace
 
 std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
@@ -2679,6 +2771,7 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
     return nullptr;
   }
   addWitnesses(*m, options);
+  addEmbeds(*m, options);
   return m;
 }
 

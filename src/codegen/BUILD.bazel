@@ -25,6 +25,7 @@ cc_library(
         "//src/cert",
         "//src/dialect",
         "//src/gpu",
+        "//src/syntax",
         "//src/transforms",
         "@llvm-project//llvm:AllTargetsCodeGens",
         "@llvm-project//llvm:Core",

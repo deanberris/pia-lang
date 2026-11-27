@@ -8,6 +8,7 @@
 
 #include "dialect/PiaDialect.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "syntax/Embeds.h"
 #include "syntax/RecTypes.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1296,6 +1297,51 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     // Type-level metaprograms run in IRGen, when a type or a `where`
     // predicate calls them (ADR 0035).
     if (syntax::isTypeLevelMetaItem(*item) && adapter.empty()) continue;
+    if (const Node *embedAttr = syntax::findEmbedAttr(*item)) {
+      if (!adapter.empty()) {
+        diags.error(embedAttr->loc, "@embed is not allowed inside an adapter");
+        continue;
+      }
+      if (!item->flags.empty() && item->flags.rfind("import", 0) != 0) {
+        diags.error(item->loc,
+                    "an @embed binding cannot be 'rec', 'spec', 'lemma' or "
+                    "'meta'");
+        continue;
+      }
+      if (syntax::countEmbedAttrs(*item) > 1) {
+        diags.error(embedAttr->loc,
+                    "a binding cannot have more than one @embed attribute");
+        continue;
+      }
+      if (!item->kids[0]->kids.empty()) {
+        diags.error(item->kids[0]->loc,
+                    "an @embed binding cannot take parameters");
+        continue;
+      }
+      if (!item->kids[2]->kids.empty()) {
+        diags.error(item->kids[2]->loc,
+                    "an @embed binding cannot have contracts");
+        continue;
+      }
+      const Node &ret = *item->kids[1];
+      if (ret.kind != NodeKind::RetAnnot || ret.kids.empty() ||
+          ret.kids[0]->kind != NodeKind::Annot) {
+        diags.error(embedAttr->loc,
+                    "an @embed binding must declare type '[u8]'");
+        continue;
+      }
+      const std::string &mods = ret.kids[0]->kids[0]->text;
+      if (hasModifier(mods, "mutable")) {
+        diags.error(ret.kids[0]->loc,
+                    "an @embed binding is always 'fixed'; remove 'mutable'");
+        continue;
+      }
+      if (!mods.empty() && mods != "fixed") {
+        diags.error(ret.kids[0]->loc,
+                    "an @embed binding cannot have modifier '" + mods + "'");
+        continue;
+      }
+    }
     if (item->flags.find("meta") != std::string::npos) {
       diags.error(item->loc, "metaprograms are not supported yet");
       continue;
@@ -1318,6 +1364,17 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
     // higher-order function's for each specialisation (ADR 0044).
     bool ok = sig.isGeneric() || sig.isHigherOrder() ||
               resolveSignature(sig, types, diags);
+    if (ok && syntax::findEmbedAttr(*item)) {
+      auto slice = mlir::dyn_cast_or_null<SliceType>(sig.result);
+      auto elem =
+          slice ? mlir::dyn_cast<IntType>(slice.getElementType()) : IntType();
+      if (!slice || !elem || elem.getLo() != 0 || elem.getHi() != 255) {
+        diags.error(item->kids[1]->loc,
+                    "an @embed binding must have type '[u8]', found " +
+                        (sig.result ? typeName(sig.result) : std::string("?")));
+        ok = false;
+      }
+    }
     if (isCoreBuiltin(sig.name)) {
       diags.error(item->loc, "'" + sig.name + "' is a core builtin; Pia does "
                              "not allow shadowing (ADR 0022), so rename it "

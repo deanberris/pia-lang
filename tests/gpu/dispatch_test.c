@@ -8,12 +8,11 @@
 
 #include "src/runtime/metal/metal_shim.h"
 
-extern const unsigned char pia_test_add_metallib[];
-extern const unsigned long pia_test_add_metallib_len;
+extern const uint8_t pia_test_add_metallib[];
+extern const uint64_t pia_test_add_metallib_len;
 
-int32_t gpu_add(const uint8_t *metallib, uint64_t nmetallib, const int32_t *a,
-                uint64_t na, const int32_t *b, uint64_t nb, int32_t *c,
-                uint64_t nc);
+int32_t gpu_add(const int32_t *a, uint64_t na, const int32_t *b, uint64_t nb,
+                int32_t *c, uint64_t nc);
 
 enum { N = 1024 };
 
@@ -62,8 +61,7 @@ int main(void) {
 
   // From Pia.
   memset(c, 0, sizeof c);
-  r = gpu_add(pia_test_add_metallib, pia_test_add_metallib_len, a, N, b, N, c,
-              N);
+  r = gpu_add(a, N, b, N, c, N);
   if (r != 0) {
     fprintf(stderr, "gpu_add: %d\n", r);
     return 1;

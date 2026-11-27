@@ -146,6 +146,12 @@ let copy_trace (src : [u8; 8]) (dst : out [u8]) : unit
   done
 ```
 
+**A whole-stream theorem** ("the decoder's output is what the format's reading of the input gives") goes in this shape, which `lib/Pia/Image/Gif/Lzw.pia`'s `decode_ref` and `lib/Pia/Compress/Huffman.pia`'s `decode` use:
+
+- **Write the reading as a trace spec.** Its spec parameters hold what each step read and wrote (positions, codes, output offsets). Make it a recursion over the steps (`lzw_from j`), not `forall j. step j`, because a quantified step in a loop's context swamps every goal of the loop.
+- **Make the big specs `@opaque`.** Reveal them only in one small lemma per kind of step, and state those lemmas' facts with explicit indices, one array cell per fact. Two foralls that have to match each other's terms are what time out.
+- **Take the theorem as a guard.** The function takes the reading as spec parameters and a `spec h : bool`, requires `h ==> reading_ok ...`, and ensures `h ==> result = ...`. The plain entry point calls it with `h = false` and any spec arrays, so codegen erases the extra parameters and there is one copy of the code.
+
 ## Pitfalls
 
 - **Calls to ordinary functions or constants inside contracts are unknown values.** `requires a < limit`, where `limit` is a `let` constant, does not give the solver `limit`'s value. Write the literal, or use a spec function.
