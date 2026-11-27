@@ -293,19 +293,19 @@ cc_test(
 # fn_refs.pia, mutable function references called through their
 # addresses (ADR 0071), run against the same steps in C.
 genrule(
-    name = "fn_refs_obj",
+    name = "fn_refs_run_obj",
     srcs = ["fn_refs.pia"],
-    outs = ["fn_refs.o"],
+    outs = ["fn_refs_run.o"],
     cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
     target_compatible_with = PIA_TARGETS,
     tools = ["//tools/piac"],
 )
 
 cc_test(
-    name = "fn_refs_test",
+    name = "fn_refs_run_test",
     srcs = [
         "fn_refs_test.c",
-        ":fn_refs_obj",
+        ":fn_refs_run_obj",
     ],
     target_compatible_with = PIA_TARGETS,
 )
