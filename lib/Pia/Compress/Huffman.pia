@@ -61,6 +61,10 @@ interface Huffman = sig
     requires a <= b && b <= len l
     requires forall (i in a .. b). l.[i] = c
     ensures kraft l b = kraft l a + (b - a) * weight c
+  let lemma kraft_same : (l : [u8]) -> (m : [u8]) -> (n : int{0..320}) -> unit
+    requires n <= len l && n <= len m
+    requires forall (i in 0 .. n). l.[i] = m.[i]
+    ensures kraft l n = kraft m n
   let lemma code_same : (l : [u8]) -> (m : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> unit
     requires n <= len l && n <= len m && sym < n && 1 <= l.[sym] && l.[sym] <= 15
     requires forall (i in 0 .. n). l.[i] = m.[i]
@@ -646,6 +650,16 @@ let lemma no_code (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) (sym : i
 
 (* The Kraft sum over a run of equal lengths, for a code given as runs,
    as the fixed code is. *)
+(** The Kraft sum depends only on the lengths, not on which buffer
+    holds them. *)
+let lemma kraft_same (l : [u8]) (m : [u8]) (n : int{0..320}) : unit
+  requires n <= len l && n <= len m
+  requires forall (i in 0 .. n). l.[i] = m.[i]
+  ensures kraft l n = kraft m n
+  decreases n
+  with kraft
+= if n > 0 then (let n' : int{0..319} = n - 1 in kraft_same l m n') else ()
+
 let lemma kraft_run (l : [u8]) (a : int{0..320}) (b : int{0..320}) (c : u8) : unit
   requires a <= b && b <= len l
   requires forall (i in a .. b). l.[i] = c
