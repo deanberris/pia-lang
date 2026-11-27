@@ -1,6 +1,6 @@
 (* Pia.Core.Ratio (ADR 0040, phase 1.10): <ratio> as metaprograms that
    fold ratios at compile time, exported with their definitions.
-// RUN: piac --verify %S/../../lib/Pia/Core/Ratio.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/ratio.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Ratio.Ratio.piai
 *)

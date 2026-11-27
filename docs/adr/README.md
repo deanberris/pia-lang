@@ -82,3 +82,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0076](0076-transparent-exports.md) | Transparent exports: an exported function the verifier can unfold is exported with its body, so a module boundary never changes what proves; `@opaque` keeps one contract-only | Proposed |
 | [0077](0077-definitions-inherit-interface-contracts.md) | A definition that states no contract takes the contract of the interface that lists it, so a module writes each contract once | Proposed |
 | [0078](0078-pia-lib-ops-with-proved-substitutions.md) | Library functions lower to `pia_lib.call`, a Pia-owned op whose meaning is its Pia body; a late pass expands it or substitutes an upstream op through a rule proved against the body | Proposed |
+| [0079](0079-pia-module-format.md) | Pia IR: a versioned op schema Pia controls, in lock-step with piac, encoding every op piac uses, with deprecations and migrations, not MLIR bytecode | Proposed |

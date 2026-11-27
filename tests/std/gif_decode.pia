@@ -11,7 +11,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
 // RUN: FileCheck --check-prefix=BLOCKS %s < %t/Pia.Image.Gif.Spec.Blocks.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Decode.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/Gif/decode.goals
 // RUN: FileCheck --check-prefix=DECODE %s < %t/Pia.Image.Gif.Decode.Decode.piai
 *)
 

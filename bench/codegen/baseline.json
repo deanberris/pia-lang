@@ -1,0 +1,22 @@
+{
+  "host": "Intel(R) Xeon(R) 6975P-C",
+  "problems": {
+    "nqueen": {
+      "c": {
+        "instructions": 63805631
+      },
+      "control": {
+        "instructions": 96230851
+      },
+      "pia": {
+        "instructions": 95533145
+      },
+      "rust": {
+        "instructions": 61307314
+      },
+      "zig": {
+        "instructions": 62638021
+      }
+    }
+  }
+}

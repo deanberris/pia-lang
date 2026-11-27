@@ -5,7 +5,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Heap.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/PartialSort.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/partial_sort.goals
 // RUN: mkdir -p %t/q && piac --emit=interface -o %t/q %S/../../lib/Pia/Core/Algo/PartialSort.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/q/Pia.Core.Algo.PartialSort.PartialSort.piai
 *)

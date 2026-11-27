@@ -2836,6 +2836,13 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
     error = "translation to LLVM IR failed";
     return nullptr;
   }
+  // Kernels placed on the GPU are built in the background from the
+  // moment the program loads (ADR 0068, section 9). The constructor is
+  // internal, so each object keeps its own.
+  if (llvm::Function *warm = m->getFunction(pia::gpu::kWarmSymbol)) {
+    warm->setLinkage(llvm::GlobalValue::InternalLinkage);
+    llvm::appendToGlobalCtors(*m, warm, /*Priority=*/65535);
+  }
   m->setTargetTriple(tm->getTargetTriple());
   m->setDataLayout(tm->createDataLayout());
   auto optimise =

@@ -12,9 +12,9 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Decode.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/LzwEncode.pia | FileCheck --check-prefix=LZWE %s
+// RUN: FileCheck --check-prefix=LZWE %s < %S/../../lib/Pia/Image/Gif/lzw_encode.goals
 // RUN: FileCheck --check-prefix=LZWI %s < %t/Pia.Image.Gif.LzwEncode.LzwEncode.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Encode.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/Gif/encode.goals
 // RUN: FileCheck --check-prefix=ENC %s < %t/Pia.Image.Gif.Encode.Encode.piai
 *)
 

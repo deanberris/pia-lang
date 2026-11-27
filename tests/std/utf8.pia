@@ -1,7 +1,7 @@
 (* Pia.Core.Utf8 (ADR 0040, phase 1.9): sequence_length, decode, encode
    and valid, by the Unicode standard's table 3-7, with both round trips
    proved.
-// RUN: piac --verify %S/../../lib/Pia/Core/Utf8.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/utf8.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Utf8.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Utf8.Utf8.piai
 *)

@@ -11,7 +11,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/LzwEncode.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Encode.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Quantise.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Quantise.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/Gif/quantise.goals
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Image.Gif.Quantise.Quantise.piai
 *)
 

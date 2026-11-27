@@ -122,7 +122,12 @@ def _pia_library_impl(ctx):
     # declares, never those they import in turn, nor any object file.
     imported = [dep[PiaInfo].interfaces for dep in ctx.attr.deps]
     obj = ctx.actions.declare_file(ctx.label.name + ".o")
-    args = ["--emit=obj", "-o", obj.path] + _target_args(ctx)
+
+    # The goal report, as `piac --verify` prints it. A test of the module's
+    # goals reads it (the `report` output group) instead of proving the
+    # module a second time.
+    goals = ctx.actions.declare_file(ctx.label.name + ".goals")
+    args = ["--emit=obj", "-o", obj.path, "--report=" + goals.path] + _target_args(ctx)
     args += ["--iface-path=" + d.path for d in imported]
     args += embed_args
     args += ["--allow-unproved=" + spec for spec in ctx.attr.allow_unproved]
@@ -136,7 +141,7 @@ def _pia_library_impl(ctx):
         executable = piac,
         arguments = args,
         inputs = [src] + imported + embed_files,
-        outputs = [obj],
+        outputs = [obj, goals],
         mnemonic = "PiaCompile",
         resource_set = _piac_resources,
         progress_message = "Proving and compiling %s" % src.short_path,
@@ -161,6 +166,7 @@ def _pia_library_impl(ctx):
         PiaInfo(interfaces = interfaces, objects = objects),
         OutputGroupInfo(
             interfaces = depset([interfaces]),
+            report = depset([goals]),
             _validation = depset([checked]),
         ),
     ]
@@ -178,6 +184,11 @@ Importers depend only on its interface artifacts, `<name>.piai/`, which
 them byte-identical (a private item, a body, a comment) does not rebuild any
 importer. Each `import M.I` must be provided by a module in `deps`: the
 interfaces of modules further down are not visible (ADR 0039).
+
+Its `report` output group is `<name>.goals`, the goal report of the
+proof the build did, exactly as `piac --verify` prints it (`--report`). A
+test of the module's goals checks that file rather than proving the
+module again.
 
 `embeds` declares binary files available to `@embed(file = "...")` (ADR 0070).
 `allow_unproved`, `solver_rlimit` and `solver_timeout_ms` are as for

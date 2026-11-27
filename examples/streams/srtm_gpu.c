@@ -2,7 +2,9 @@
 // sediment pull step with each wave on the GPU (docs/pull_gpu.pia.md),
 // checked against the CPU (docs/streams.pia.md, docs/pull.pia.md) on a real
 // SRTM tile, cell for cell (ADR 0068, section 6). Each GPU stage runs at
-// least twice: the first run also opens the device and loads the kernel.
+// least twice: the first run may also wait for the device, the library and
+// the kernel's pipeline, which the shim pre-warms from the moment the
+// program loads (set PIA_GPU_WARM=0 to time a cold first run).
 // The buffers are allocated on page boundaries, so the shim wraps them in
 // place, with no copy.
 //
@@ -41,6 +43,7 @@ int32_t pull_step_gpu(const uint16_t *fill, uint64_t nfill,
 void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
                        uint64_t *copied_bytes);
 void pia_gpu_sequence_stats(uint64_t *dispatches);
+void pia_gpu_warm_stats(uint64_t *warmed);
 
 // A buffer on a page boundary, which the Metal shim wraps without a copy.
 static void *page_alloc(size_t bytes) {
@@ -230,5 +233,8 @@ int main(int argc, char **argv) {
          "dispatches in sequences\n",
          (unsigned long long)wrapped, (unsigned long long)copied,
          (unsigned long long)copied_bytes, (unsigned long long)dispatches);
+  uint64_t warmed;
+  pia_gpu_warm_stats(&warmed);
+  printf("pre-warmed: %llu kernels\n", (unsigned long long)warmed);
   return bad;
 }

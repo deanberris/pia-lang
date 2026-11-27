@@ -1,0 +1,21 @@
+(* `piac --report=<file>` (#507): with --emit=obj, piac also writes the goal
+   report to the file, exactly as --verify prints it, so a test can check
+   the goals a build proved without proving the module again. pia_library
+   keeps it as `<name>.goals`. The file is written by --verify too, and
+   --report with a mode that proves nothing is a usage error.
+// RUN: piac --emit=obj --report=%t/obj.goals -o %t/report.o %s
+// RUN: FileCheck %s < %t/obj.goals
+// RUN: piac --verify %s > %t/verify.out
+// RUN: diff %t/verify.out %t/obj.goals
+// RUN: piac --verify --report=%t/verify.goals %s > /dev/null
+// RUN: diff %t/verify.out %t/verify.goals
+// RUN: not piac --check --report=%t/check.goals %s 2>&1 | FileCheck %s --check-prefix=USAGE
+*)
+
+(*
+// CHECK: report.pia:{{[0-9]+}}:{{[0-9]+}}: proved:
+// CHECK: 3 proved, 0 failed, 0 skipped
+// USAGE: usage: piac
+*)
+
+let halve (x : u32) : u32 ensures result <= x = x / 2

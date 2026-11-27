@@ -2,7 +2,7 @@
    once, over its element type (ADR 0043), and its interface exports the
    generic functions.
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Modify.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/modify.goals
 // RUN: mkdir -p %t/modify && piac --emit=interface -o %t/modify %S/../../lib/Pia/Core/Algo/Modify.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/modify/Pia.Core.Algo.Modify.Modify.piai
 *)

@@ -4,7 +4,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/BinarySearch.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Set.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/SetUnion.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/set_union.goals
 // RUN: mkdir -p %t/u && piac --emit=interface -o %t/u %S/../../lib/Pia/Core/Algo/SetUnion.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/u/Pia.Core.Algo.SetUnion.SetUnion.piai
 *)

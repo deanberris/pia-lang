@@ -1,6 +1,6 @@
 (* Pia.Core.Ascii (ADR 0040, phase 1.9): <cctype> for ASCII bytes, each
    classifier exact, with the digit and hex digit round trips.
-// RUN: piac --verify %S/../../lib/Pia/Core/Ascii.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/ascii.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ascii.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Ascii.Ascii.piai
 *)

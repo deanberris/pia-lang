@@ -75,6 +75,7 @@ nav:
   - "Demo: sediment in pull form": pull.pia.md
   - "Demo: D8 directions and the picture on the GPU": placed.pia.md
   - "Demo: the sediment pull step on the GPU": pull_gpu.pia.md
+  - "Demo: CPU and GPU, side by side": gpu-demo.md
   - A tour of Pia: tour.md
   - Feature index: features.md
   - The standard library today: library.md
@@ -192,3 +193,4 @@ nav:
       - adr/0076-transparent-exports.md
       - adr/0077-definitions-inherit-interface-contracts.md
       - adr/0078-pia-lib-ops-with-proved-substitutions.md
+      - adr/0079-pia-module-format.md

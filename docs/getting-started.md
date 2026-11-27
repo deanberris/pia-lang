@@ -186,6 +186,7 @@ The call is checked against the interface's contract, never against the body of 
 | `piac --verify f.pia` | prove every goal and print a report |
 | `piac --emit=obj -o f.o f.pia` | prove, then compile to an object file |
 | `piac --emit=asm f.pia` | prove, then print assembly (also `llvm`, `core`) |
+| `piac --emit=obj --report=f.goals -o f.o f.pia` | the same, also writing the goal report `--verify` prints to `f.goals`; `pia_library` keeps it as `<name>.goals`, so a test can check what the build proved without proving it again |
 | `piac --emit=interface -o dir f.pia` | write the module's interface artifacts to `dir` |
 | `piac --verify --iface-path=dir f.pia` | prove a program that imports interfaces found in `dir` |
 | `piac --emit=mlir f.pia` | print the program in Pia's MLIR dialects |

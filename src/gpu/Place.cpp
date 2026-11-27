@@ -446,6 +446,8 @@ private:
                              metallib.size()));
     Value kname = constantBytes(b, module_, loc, sym + "_name",
                                 llvm::ArrayRef<char>(name.data(), name.size()));
+    kernels_.push_back({sym, static_cast<int64_t>(metallib.size()),
+                        static_cast<int64_t>(name.size())});
     return {lib, make<arith::ConstantIntOp>(b, loc, i64, metallib.size()),
             kname, make<arith::ConstantIntOp>(b, loc, i64, name.size())};
   }
@@ -633,8 +635,49 @@ private:
     return result;
   }
 
+public:
+  // `__pia_gpu_warm`, which calls the shim's `pia_gpu_warm` for each kernel
+  // placed so far. Codegen runs it when the program loads, so the pipelines
+  // are built while the program starts rather than on each kernel's first
+  // run (ADR 0068, section 9).
+  void addWarm(Location loc) {
+    if (kernels_.empty())
+      return;
+    OpBuilder mb = OpBuilder::atBlockEnd(module_.getBody());
+    auto i64 = mb.getI64Type();
+    declare(loc, "pia_gpu_warm", mb.getFunctionType({i64, i64, i64, i64}, {}));
+    auto warm = make<mlir::func::FuncOp>(mb, loc, kWarmSymbol,
+                                         mb.getFunctionType({}, {}));
+    warm.setPrivate();
+    OpBuilder b = OpBuilder::atBlockBegin(warm.addEntryBlock());
+    auto address = [&](llvm::StringRef global, int64_t bytes) -> Value {
+      auto type = mlir::MemRefType::get({bytes}, b.getI8Type());
+      Value g = make<memref::GetGlobalOp>(b, loc, type, global);
+      Value p = make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, g);
+      return make<arith::IndexCastOp>(b, loc, i64, p);
+    };
+    auto word = [&](int64_t v) -> Value {
+      return make<arith::ConstantIntOp>(b, loc, i64, v);
+    };
+    for (const Kernel &k : kernels_)
+      make<mlir::func::CallOp>(
+          b, loc, "pia_gpu_warm", mlir::TypeRange{},
+          mlir::ValueRange{
+              address(k.sym + "_lib", k.libBytes), word(k.libBytes),
+              address(k.sym + "_name", k.nameBytes), word(k.nameBytes)});
+    make<mlir::func::ReturnOp>(b, loc);
+  }
+
+private:
+  // A kernel's constants: `sym`_lib and `sym`_name, and their sizes.
+  struct Kernel {
+    std::string sym;
+    int64_t libBytes, nameBytes;
+  };
+
   mlir::ModuleOp module_;
   unsigned count_ = 0;
+  std::vector<Kernel> kernels_;
 };
 
 // Runs `xcrun` with `args`, its errors in `error`.
@@ -737,6 +780,7 @@ mlir::LogicalResult lowerPlacedSpreads(mlir::ModuleOp module) {
   for (scf::ForOp f : spreads)
     if (mlir::failed(placer.place(f)))
       return mlir::failure();
+  placer.addWarm(module.getLoc());
   if (auto decl = module.lookupSymbol<mlir::func::FuncOp>(kStatusSymbol))
     if (decl.symbolKnownUseEmpty(module))
       decl.erase();
