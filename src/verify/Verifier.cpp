@@ -1731,6 +1731,22 @@ class Encoder {
       derived_[cur] = {before, Value(), owner, iv};
       return true;
     }
+    if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+        h && h->hasAttr("pia.unless_ok")) {
+      // After a for loop placed on the GPU: every cell of a buffer it
+      // writes is unknown unless the run succeeded, `iv` (ADR 0068,
+      // section 5).
+      Value root = rootBuffer(h.getBuffer());
+      Value old = arrays_.lookup(root);
+      Value ok = term(h.getIv());
+      if (!old || !ok) {
+        havocArray(root);
+        return true;
+      }
+      Value fresh = declare(old.getType(), "", false);
+      setArray(root, ite(ok, old, fresh));
+      return true;
+    }
     if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op)) {
       // The cells of a spread's buffer that other iterations own take
       // unknown values (ADR 0060): forall c, if the iteration owns c,

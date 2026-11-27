@@ -52,6 +52,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | complexity | `costs iterations <= len xs`, proved (ADR 0062) | a comment | a comment | a comment | a comment |
 | theorems Z3 cannot prove | `let lemma l ... = by lean T`, proved in Lean 4 (ADR 0061, `pia-lean`) | none | none (Verus, Kani outside the language) | none (Coq outside the language) | none |
 | parallel loops | `spread i in 0 .. n do ... done`, proved race-free; `@place(gpu)` on a Mac's GPU | OpenMP | rayon | domains | threads |
+| a sequence of GPU kernels | `for k in 0 .. n @place(gpu) do ... done`, its spreads one command buffer | CUDA streams, Metal command buffers | wgpu command encoders | — | — |
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
