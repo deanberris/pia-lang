@@ -133,8 +133,8 @@ Each run's report follows the project's report format: per problem, the input, P
 1. This ADR.
 2. `bench/codegen/nqueen` and the harness: Bazel targets for C, Rust and Zig through `rules_rust` and `rules_zig`, the output test, `codegen_bench.py`, and a `codegen benchmark (Linux)` report job in CI.
 3. The rest of wave 1, one problem a PR, each with its proof stats and first numbers.
-4. The nightly macOS wall-time run.
-5. Wave 2 as its features land; then the best-known lane with `spread`.
+4. The nightly macOS wall-time run, and the Linux instruction gate once wave 1 is complete.
+5. Wave 2 as its features land, and the multithreaded best-known programs against `spread`; the hand-vectorised ones after M10.
 
 ## Consequences
 
@@ -148,3 +148,11 @@ Each run's report follows the project's report format: per problem, the input, P
 1. Should a codegen regression gate PRs, on the instruction count against the baseline, as the proof benchmark does? Proposed: report only until wave 1 is complete, then gate at +5% instructions on Linux.
 2. Where should Apple Silicon wall times come from: the nightly macOS CI job (an M1 VM, shared), or occasional runs on the iMac (Dean's M3, the 0.1.0 target)? Proposed: CI nightly for tracking, the iMac only for a published comparison, by hand and with Dean's say-so.
 3. Should the best-known lane be built at all before `vec<T, k>`? Proposed: yes for the multithreaded programs with `spread`, no for the hand-vectorised ones until M10.
+
+## Answers to the open questions
+
+Dean, 2026-11-27:
+
+1. **Gating:** report only until wave 1 is complete, then gate PRs at +5% instructions on Linux against `bench/codegen/baseline.json`.
+2. **Apple Silicon timings:** the nightly macOS CI job tracks them. The iMac (Dean's M3) runs only a published comparison, by hand and with Dean's say-so.
+3. **Best-known lane before `vec<T, k>`:** build the multithreaded programs now, against `spread`. Leave the hand-vectorised references out until M10.
