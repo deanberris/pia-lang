@@ -2737,6 +2737,29 @@ class Encoder {
       out.push_back(bv(0));  // a placeholder: buffers are not terms
       return true;
     }
+    // Embedded binary blob (ADR 0070): exact constant length, opaque u8
+    // contents. Every use of the same symbol shares one top-level SMT array
+    // so repeated reads at equal indices are equal, with zero per-byte axioms.
+    if (auto emb = mlir::dyn_cast<EmbedOp>(op)) {
+      Type sort = sortOf(emb.getType());
+      if (!sort)
+        return false;
+      llvm::StringRef sym = emb.getSymbol();
+      auto it = embedArrays_.find(sym);
+      Value arr;
+      if (it != embedArrays_.end()) {
+        arr = it->second;
+      } else {
+        OpBuilder::InsertionGuard guard(b_);
+        b_.setInsertionPointToStart(solverBlock_);
+        arr = declare(sort, "", false);
+        embedArrays_[sym] = arr;
+      }
+      arrays[emb.getResult()] = arr;
+      lengths[emb.getResult()] = bv(emb.getLength());
+      out.push_back(bv(0)); // a placeholder: buffers are not terms
+      return true;
+    }
     // A slice is its buffer's storage from an offset: its length and that
     // offset are tracked, and its elements are read and written in the
     // root buffer. The result term is a placeholder; buffers are not terms.
@@ -4653,6 +4676,7 @@ class Encoder {
   }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
+  llvm::StringMap<Value> embedArrays_;
   // Recursive types (ADR 0047): each datatype's constructors at this
   // query's width, those the query uses, and the measures it uses.
   std::map<std::string, RecInfo> recs_;

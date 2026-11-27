@@ -432,6 +432,17 @@ LogicalResult ConstArrayOp::verify() {
   return success();
 }
 
+LogicalResult EmbedOp::verify() {
+  if (getSymbol().empty())
+    return emitOpError("symbol name must not be empty");
+  if (getLength() < 0)
+    return emitOpError("length must be non-negative");
+  auto elem = mlir::dyn_cast<IntType>(getResult().getType().getElementType());
+  if (!elem || elem.getLo() != 0 || elem.getHi() != 255)
+    return emitOpError("result must be a slice of u8");
+  return success();
+}
+
 LogicalResult SliceOp::verify() {
   if (getResult().getType().getElementType() !=
       elementTypeOf(getBuffer().getType()))

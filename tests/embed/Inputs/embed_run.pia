@@ -1,0 +1,17 @@
+(* End-to-end pure Pia binary embedding binary blobs via @embed (ADR 0070).
+   Exits 0 when length, bytes, slicing, and helper-function passing all match. *)
+let magic : [u8] @embed(file = "magic.bin")
+let empty : [u8] @embed(file = "empty.bin")
+
+let sum4 (xs : [u8]) : u32
+  requires len xs = 4
+= xs.[0] + xs.[1] + xs.[2] + xs.[3]
+
+let main () : i32 =
+  if len magic = 8 && len empty = 0 &&
+     magic.[0] = 0x4d && magic.[1] = 0x54 &&
+     magic.[2] = 0x4c && magic.[3] = 0x42 &&
+     magic.[4] = 1 && magic.[5] = 2 &&
+     magic.[6] = 3 && magic.[7] = 4 &&
+     sum4 (magic.[4 .. 8]) = 10
+  then 0 else 1

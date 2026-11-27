@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "syntax/Comments.h"
+#include "syntax/Embeds.h"
 #include "syntax/Lexer.h"
 
 namespace pia::syntax {
@@ -469,6 +470,16 @@ class Parser {
       contracts->add(reveal(/*clause=*/true));
 
     NodePtr body;
+    if (hasEmbedAttr(*n->kids[1])) {
+      if (bodyless != Bodyless::No)
+        fail("@embed is not allowed inside a theory or model");
+      if (!allowItem || at(K::In))
+        fail("@embed is only allowed on top-level 'let' bindings");
+      if (at(K::Eq))
+        fail("an @embed binding cannot have a '= ...' body");
+      n->add(makeNode(N::None, loc()));
+      return n;
+    }
     if (bodyless == Bodyless::Axiom) {
       // An axiom has no body, so its last clause is never split at `=`.
       n->add(makeNode(N::None, loc()));
