@@ -75,6 +75,8 @@ nav:
   - "Demo: sediment in pull form": pull.pia.md
   - "Demo: D8 directions and the picture on the GPU": placed.pia.md
   - A tour of Pia: tour.md
+  - Feature index: features.md
+  - The standard library today: library.md
   - Idiomatic Pia: idioms.md
   - How verification works: verification.md
   - "Theories: teaching the verifier a domain": theories.md

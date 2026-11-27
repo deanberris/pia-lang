@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread` runs on the CPU only. Porting from another language: `pia-porting` has the feature map.
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved and compiled, and a `spread` runs on the GPU under `@place(gpu)`. [docs/features.md](../../docs/features.md) lists every built feature with its proved example. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -149,7 +149,7 @@ interface Clamp = sig
 end
 ```
 
-`import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/cpp-std.md` and three tests in `tests/std`.
+`import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/library.md` and `docs/cpp-std.md`, and three tests in `tests/std`. A new language feature gets a line in `docs/features.md` for its `tests/verify` example and is taught in `docs/tour.md`; `python3 tools/docs/check.py` fails until both are there.
 
 **C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`.
 
