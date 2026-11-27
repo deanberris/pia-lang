@@ -88,6 +88,7 @@ The codecs are proved total and safe on every input, and allocate nothing: the c
 | [`Pia.Image.Gif.Quantise`](../lib/Pia/Image/Gif/Quantise.pia) | An RGB raster to a palette of at most 256 colours and an index raster |
 | [`Pia.Compress.Huffman`](../lib/Pia/Compress/Huffman.pia) | Canonical Huffman codes as deflate defines them, with the completeness check and decoding |
 | [`Pia.Compress.Inflate.Spec`](../lib/Pia/Compress/Inflate/Spec.pia) | The parts of a deflate block, as spec functions |
+| [`Pia.Compress.Inflate.Ref`](../lib/Pia/Compress/Inflate/Ref.pia) | What a Huffman block of a deflate stream says, as a trace of its symbols (`blk_ok`), which `Inflate`'s `codes_ref` is proved against |
 | [`Pia.Compress.Inflate`](../lib/Pia/Compress/Inflate.pia) | Deflate decoding into a caller's buffer, after zlib's `puff.c` |
 | [`Pia.Compress.Zlib`](../lib/Pia/Compress/Zlib.pia) | The zlib format, with `adler32` proved equal to RFC 1950's definition |
 

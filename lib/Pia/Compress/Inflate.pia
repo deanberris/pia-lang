@@ -10,14 +10,17 @@
    the output; the length and distance of each code are Inflate.Spec's
    base plus extra bits; a stored block's LEN is the complement of its
    NLEN; the code length code is complete; and a literal/length or
-   distance code is complete, or a single code. That the whole output is
-   the stream's meaning waits on ADR 0058's ghost state; the run tests
-   compare it with zlib's. *)
+   distance code is complete, or a single code. codes_ref proves a
+   Huffman block's theorem: given tables built from code lengths ll and
+   dl, and x what the block's trace (Inflate.Ref) writes, it writes x.
+   The whole stream's theorem is next; the run tests compare the output
+   with zlib's. *)
 module Pia.Compress.Inflate : Inflate
 
 import Pia.Image.Bits.Bits as B
 import Pia.Compress.Huffman.Huffman as H
 import Pia.Compress.Inflate.Spec.Deflate as F
+import Pia.Compress.Inflate.Ref.Ref as R
 
 interface Inflate = sig
   let inflate_error = type
@@ -105,67 +108,192 @@ let stored (s : [u8]) (p : usize) (dst : borrowed inout mutable [u8]) (o : usize
 (* The n-bit field at p, which the caller has checked is there. *)
 let field (s : [u8]) (p : usize) (n : int{0..16}) : u32
   requires p + n <= B.nbits s
-  ensures result < B.pow2 n
+  ensures result < B.pow2 n && result = B.bits_at s p n
 = B.read_bits s p n
 
-(* The literals and back-references of a Huffman block, from bit p, up to
-   its end code. *)
-let codes (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usize) (ltab : [u8]) (nl : int{1..288}) (dtab : [u8]) (nd : int{1..30}) : result at inflate_error
+(* What the trace says, where h holds, for codes_ref's loop: where it
+   starts, and what its symbol j is. *)
+let lemma start_when (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
+  requires h ==> R.blk_ok s ll nl dl nd x p0 o0 k tp ts td to
+  ensures h ==> 1 <= k && k <= len tp && k <= len ts && k <= len td && k <= len to
+  ensures h ==> tp.[0] = p0 && to.[0] = o0 && R.blk_from s ll nl dl nd x k tp ts td to 0
+= if h then R.ok_start s ll nl dl nd x p0 o0 k tp ts td to else ()
+
+let lemma step_when (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) : unit
+  requires h ==> k <= len tp && k <= len ts && k <= len td && k <= len to && j < k
+  requires h ==> R.blk_from s ll nl dl nd x k tp ts td to j
+  ensures h ==> R.code_at s tp.[j] ll nl ts.[j] && to.[j] <= len x
+  ensures h && j + 1 < k ==> R.blk_step s ll nl dl nd x tp ts td to j && R.blk_from s ll nl dl nd x k tp ts td to (j + 1)
+  ensures h && j + 1 < k ==> ts.[j] <> 256 && ts.[j] <= 285 && to.[j] <= to.[j + 1] && to.[j + 1] <= len x
+  ensures h && j + 1 = k ==> ts.[j] = 256
+= if h then (
+    R.from_step s ll nl dl nd x k tp ts td to j;
+    if j + 1 < k then R.step_code s ll nl dl nd x tp ts td to j else ())
+  else ()
+
+(* The trace's facts for a literal at symbol j, the next at q. *)
+let lemma lit_when (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) : unit
+  requires h ==> k <= len tp && k <= len ts && k <= len td && k <= len to && j + 1 < k
+  requires h ==> R.blk_step s ll nl dl nd x tp ts td to j && ts.[j] < 256
+  requires h ==> ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+  ensures h ==> tp.[j + 1] = q && to.[j + 1] - to.[j] = 1 && to.[j] < len x && x.[to.[j]] = ts.[j]
+= if h then R.step_lit s ll nl dl nd x tp ts td to j q else ()
+
+(* The trace's facts for length code 257 + c at symbol j, its extra bits
+   at q. *)
+let lemma len_when (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) : unit
+  requires h ==> k <= len tp && k <= len ts && k <= len td && k <= len to && j + 1 < k
+  requires h ==> R.blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires h ==> ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+  ensures h ==> F.len_extra c <= B.nbits s - q && td.[j] <= 29 && R.code_at s (q + F.len_extra c) dl nd td.[j]
+= if h then R.step_len s ll nl dl nd x tp ts td to j q c else ()
+
+(* The trace's facts for that code's distance code dc and copy, the
+   distance's extra bits at qx. *)
+let lemma dist_when (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) (qx : usize) (dc : int{0..29}) : unit
+  requires h ==> k <= len tp && k <= len ts && k <= len td && k <= len to && j + 1 < k
+  requires h ==> R.blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires h ==> ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+  requires h ==> td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc]
+  ensures h ==> F.dist_extra dc <= B.nbits s - qx && tp.[j + 1] = qx + F.dist_extra dc
+= if h then R.step_dist s ll nl dl nd x tp ts td to j q c qx dc else ()
+
+(* The trace's facts for that code's copy of n bytes from dist back. *)
+let lemma copy_at (h : bool) (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) (qx : usize) (dc : int{0..29}) (n : usize) (dist : usize) : unit
+  requires h ==> k <= len tp && k <= len ts && k <= len td && k <= len to && j + 1 < k
+  requires h ==> R.blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires h ==> ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+  requires h ==> td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc] && F.dist_extra dc <= B.nbits s - qx
+  requires h ==> n = F.len_base c + B.bits_at s q (F.len_extra c) && dist = F.dist_base dc + B.bits_at s qx (F.dist_extra dc)
+  ensures h ==> to.[j + 1] - to.[j] = n && R.copy_ok x to.[j] n dist
+= if h then R.step_copy s ll nl dl nd x tp ts td to j q c qx dc n dist else ()
+
+(* The symbol decode read at p is the trace's, because the code is
+   prefix-free. *)
+let lemma sym_when (h : bool) (s : [u8]) (p : usize) (q : usize) (l : [u8]) (n : int{0..320}) (ts : [int{0..319}]) (j : usize) (b : u16) : unit
+  requires h ==> j < len ts && R.code_at s p l n ts.[j]
+  requires h ==> b < n && n <= len l && p < q && q - p <= 15 && q <= B.nbits s
+  requires h ==> l.[b] = q - p && H.code_of l n b = H.hbits s p (q - p)
+  ensures h ==> ts.[j] = b
+= if h then (let b' : int{0..319} = b in R.at_same s p l n ts.[j] b') else ()
+
+(* decode fails only where no code is, and the trace has one at p. *)
+let lemma miss_when (h : bool) (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (ts : [int{0..319}]) (j : usize) : unit
+  requires h ==> j < len ts && R.code_at s p l n ts.[j]
+  requires h ==> H.none_at s p l n
+  ensures h ==> false
+= if h then R.at_none s p l n ts.[j] else ()
+
+let lemma copy_when (h : bool) (x : [u8]) (o : usize) (n : usize) (dist : usize) (d : usize) : unit
+  requires h ==> R.copy_ok x o n dist && d < n
+  ensures h ==> dist <= o && o + n <= len x && x.[o + d] = x.[o - dist + d]
+= if h then R.copy_byte x o n dist d else ()
+
+(** codes, with the block's theorem (ADR 0058): whenever h holds, the
+    tables are the canonical codes of ll and dl, and x from o0 is what
+    the block at p0 writes (R.blk_ok, by the trace tp, ts, td, to of its
+    k symbols), with what is before o0 already in dst, codes returns Ok
+    at the end of the block with x up to there in dst. The trace, ll, dl
+    and x are spec state, which codegen erases. *)
+let codes_ref (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usize) (ltab : [u8]) (nl : int{1..288}) (dtab : [u8]) (nd : int{1..30}) (spec ll : [u8]) (spec dl : [u8]) (spec x : [u8]) (spec k : usize) (spec tp : [usize]) (spec ts : [int{0..319}]) (spec td : [int{0..319}]) (spec to : [usize]) (spec h : bool) : result at inflate_error
   requires len ltab = 704 && len dtab = 704 && p0 <= B.nbits s && o0 <= len dst
+  requires h ==> nl <= len ll && H.room ll nl 1 && H.tab_from ltab ll nl 1
+  requires h ==> nd <= len dl && H.room dl nd 1 && H.tab_from dtab dl nd 1
+  requires h ==> R.blk_ok s ll nl dl nd x p0 o0 k tp ts td to && len x <= len dst
+  requires h ==> (forall (i in 0 .. o0). dst.[i] = x.[i])
   ensures (match result with
     | Ok r -> p0 < r.p && r.p <= B.nbits s && o0 <= r.o && r.o <= len dst
     | Err _ -> true)
+  ensures h ==> (match result with
+    | Ok r -> (if k < 1 || k > len tp || k > len to || len ll <= 256 then false
+               else r.p = tp.[k - 1] + ll.[256] && r.o = to.[k - 1] && (forall (i in 0 .. r.o). dst.[i] = x.[i]))
+    | Err _ -> false)
 = let nb = B.bit_len s in
   let p : mutable usize = p0 in
   let o : mutable usize = o0 in
   let st : mutable int{0..7} = 0 in
   let at' : mutable usize = p0 in
+  let j : mutable usize = 0 in
+  start_when h s ll nl dl nd x p0 o0 k tp ts td to;
   while st = 0
     invariant p0 <= p && p <= nb && o0 <= o && o <= len dst
     invariant st = 1 ==> p0 < p
+    invariant h ==> nl <= len ll && nd <= len dl && len x <= len dst
+    invariant h ==> k <= len tp && k <= len ts && k <= len td && k <= len to
+    invariant h ==> (st = 0 || st = 1)
+    invariant h ==> (forall (i in 0 .. o). dst.[i] = x.[i])
+    invariant h && st = 0 ==> j < k && R.blk_from s ll nl dl nd x k tp ts td to j
+    invariant h && st = 0 ==> p = tp.[j] && o = to.[j]
+    invariant h && st = 1 ==> j + 1 = k && 256 < len ll && p = tp.[j] + ll.[256] && o = to.[j]
     decreases nb - p + (if st = 0 then 1 else 0)
   do
-    match H.decode s p ltab nl ltab false with
-    | Err e -> (at' <- p; if e >= nb then st <- 2 else st <- 3)
+    step_when h s ll nl dl nd x k tp ts td to j;
+    match H.decode s p ltab nl ll h with
+    | Err e -> (miss_when h s p ll nl ts j; at' <- p; if e >= nb then st <- 2 else st <- 3)
     | Ok d -> (
         let here = p in
+        sym_when h s p d.pos ll nl ts j d.sym;
         p <- d.pos;
         let sym = d.sym in
         if sym < 256 then (
+          lit_when h s ll nl dl nd x k tp ts td to j p;
           if o >= len dst then (at' <- here; st <- 6)
-          else (let v : u8 = sym in dst.[o] <- v; o <- o + 1))
+          else (let v : u8 = sym in dst.[o] <- v; o <- o + 1; j <- j +| 1))
         else if sym = 256 then st <- 1
         else if sym > 285 then (at' <- here; st <- 3)
         else (
           let c : int{0..28} = sym - 257 in
+          len_when h s ll nl dl nd x k tp ts td to j p c;
           let e = len_extra_of c in
           if e > nb - p then (at' <- here; st <- 2)
           else (
+            let q = p in
             let ln : usize = len_base_of c + field s p e in
             p <- p + e;
-            match H.decode s p dtab nd dtab false with
-            | Err e2 -> (at' <- p; if e2 >= nb then st <- 2 else st <- 3)
+            match H.decode s p dtab nd dl h with
+            | Err e2 -> (miss_when h s p dl nd td j; at' <- p; if e2 >= nb then st <- 2 else st <- 3)
             | Ok dd -> (
+                sym_when h s p dd.pos dl nd td j dd.sym;
                 p <- dd.pos;
                 if dd.sym > 29 then (at' <- here; st <- 3)
                 else (
                   let dc : int{0..29} = dd.sym in
+                  dist_when h s ll nl dl nd x k tp ts td to j q c p dc;
                   let de = dist_extra_of dc in
                   if de > nb - p then (at' <- here; st <- 2)
                   else (
                     let dist : usize = dist_base_of dc + field s p de in
+                    copy_at h s ll nl dl nd x k tp ts td to j q c p dc ln dist;
                     p <- p + de;
+                    copy_when h x o ln dist 0;
                     if dist > o then (at' <- here; st <- 5)
                     else if len dst - o < ln then (at' <- here; st <- 6)
                     else (
-                      for j in 0 .. ln do dst.[o + j] <- dst.[o + j - dist] done;
-                      o <- o + ln)))))))
+                      for jj in 0 .. ln
+                        invariant h ==> (forall (i in 0 .. o + jj). dst.[i] = x.[i])
+                      do
+                        copy_when h x o ln dist jj;
+                        dst.[o + jj] <- dst.[o + jj - dist]
+                      done;
+                      o <- o + ln;
+                      j <- j +| 1)))))))
   done;
   if st = 1 then Ok { p = p; o = o }
   else if st = 2 then Err (Ends at')
   else if st = 3 then Err (BadCode at')
   else if st = 5 then Err (TooFar at')
   else Err (Full at')
+
+(* The literals and back-references of a Huffman block, from bit p, up to
+   its end code: codes_ref with no stream to compare against. *)
+let codes (s : [u8]) (p0 : usize) (dst : borrowed inout mutable [u8]) (o0 : usize) (ltab : [u8]) (nl : int{1..288}) (dtab : [u8]) (nd : int{1..30}) : result at inflate_error
+  requires len ltab = 704 && len dtab = 704 && p0 <= B.nbits s && o0 <= len dst
+  ensures (match result with
+    | Ok r -> p0 < r.p && r.p <= B.nbits s && o0 <= r.o && r.o <= len dst
+    | Err _ -> true)
+= let spec zu : [usize; 1] = zeros in
+  let spec zs : [int{0..319}; 1] = zeros in
+  codes_ref s p0 dst o0 ltab nl dtab nd s s s 0 zu zs zs zu false
 
 (* The fixed code's tables. *)
 let fixed_tables (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : unit
