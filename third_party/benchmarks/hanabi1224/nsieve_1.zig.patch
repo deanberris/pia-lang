@@ -1,0 +1,24 @@
+--- nsieve_1.zig
++++ nsieve_1.zig
+@@ -4,7 +4,7 @@
+ 
+ fn nsieve(n: usize) !void {
+     var count: usize = 0;
+-    var flags = try global_allocator.alloc(bool, n);
++    const flags = try global_allocator.alloc(bool, n);
+     @memset(flags, false);
+     defer global_allocator.free(flags);
+     var i: usize = 2;
+@@ -17,8 +17,10 @@
+             }
+         }
+     }
+-    const stdout = std.io.getStdOut().writer();
+-    try stdout.print("Primes up to {d:8} {d:8}\n", .{ n, count });
++    var buf: [64]u8 = undefined;
++    var stdout = std.fs.File.stdout().writer(&buf);
++    try stdout.interface.print("Primes up to {d:8} {d:8}\n", .{ n, count });
++    try stdout.interface.flush();
+ }
+ 
+ pub fn main() !void {
