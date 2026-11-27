@@ -48,6 +48,8 @@ let pct (x : i32) : i32
 
 An `extern` with no contract can only be called as `unsafe f x`, and nothing is known about its result.
 
+Two attributes after the return type change how the call is made. `@variadic(n)` is a C variadic function with `n` named parameters, such as `open`. `@deref` is a C function that returns a pointer to the integer result, which the call reads, such as `__errno_location`. POSIX is already declared, per target, in `Pia.Sys.Posix` (`lib/Pia/Sys/Posix.pia`): import its interface rather than writing externs.
+
 ## Modules
 
 One file is one module, with a `module M : I` header; only what an interface lists is visible outside. Build the dependency's interfaces first, then the importer against them:
@@ -71,7 +73,16 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 
 `load("//tools/lean:lean.bzl", "pia_lean_proof")`: `pia_lean_proof(name, src, proofs)` checks the Lean proofs in `proofs` of the lemmas of `src` proved in Lean and writes `<name>.receipt`, for `piac --lean-receipt=` (ADR 0061, the `pia-lean` skill).
 
-All three take `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
+All three take `embeds = [...]` (binary assets available to `@embed(file = "...")`, ADR 0070), `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
+
+## Raw binary embedding
+
+A top-level fixed `let` binding embeds raw binary files directly as read-only `[u8]` slices with exact length and zero per-byte SMT overhead (ADR 0070): `let blob : [u8] @embed(file = "asset.bin", symbol = "my_blob", section = "...", align = 16)`. Relative paths only; resolve hermetically with `--embed-path=<dir>` or `--embed=<logical>=<path>` (repeatable on `piac` and `pia`).
+
+```sh
+piac --verify --embed-path=assets app.pia
+piac --emit=obj --embed=add.metallib=bazel-bin/add.metallib -o app.o app.pia
+```
 
 ## What a build trusts
 
@@ -86,9 +97,10 @@ Read the trust report before shipping: everything in it is something a person ha
 
 ## Proof certificates
 
-Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024).
+Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024). Format 3 also records who proved it (ADR 0073): the Pia ABI version and target (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, or `dev` for a build that is not stamped) and Z3's (`solver z3 5.4.1`). `pia-cert check` refuses objects for different ABI versions or targets, and objects from a piac too old to record an ABI version: compile them again with one piac.
 
 ```sh
+piac --version                             # piac's version, the Pia ABI version and Z3's
 pia-cert dump f.o                          # print the certificate
 pia-cert check a.o b.o main.o              # every required interface is provided, with the same hash
 pia-cert check --stamp=ok.txt a.o b.o      # also write the result, for a build step to depend on

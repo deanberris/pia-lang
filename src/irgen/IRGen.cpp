@@ -292,6 +292,7 @@ class Gen {
     if (diags_.hasErrors()) return nullptr;
     collectLinear(program);
     collectConstants();
+    collectEmbeds(program);
     if (diags_.hasErrors()) return nullptr;
     // Higher-order functions are called only through specialisations.
     for (auto it = sigs_.begin(); it != sigs_.end();) {
@@ -654,6 +655,8 @@ class Gen {
     if (lookup(name)) what = "a local of the same name";
     else if (overloads_.count(name)) what = "the function '" + name + "'";
     else if (consts_.count(name)) what = "the constant '" + name + "'";
+    else if (embeds_.count(name))
+      what = "the embedded blob '" + name + "'";
     else if (types_.isCtorName(name)) what = "the constructor '" + name + "'";
     else if (types_.named(name) || types_.builtin(name))
       what = "the type '" + name + "'";
@@ -669,7 +672,7 @@ class Gen {
   std::string primed(const std::string &name) {
     std::string p = name + "'";
     while (lookup(p) || overloads_.count(p) || consts_.count(p) ||
-           types_.named(p))
+           embeds_.count(p) || types_.named(p))
       p += "'";
     return p;
   }
@@ -786,6 +789,102 @@ class Gen {
       }
       if (auto values = constValues(body, arr))
         consts_[sig.name] = {arr, *values};
+      it = sigs_.erase(it);
+    }
+  }
+
+  // `let blob : [u8] @embed(file = "...")` (ADR 0070): resolved hermetically
+  // from --embed / --embed-path and lowered to `pia.embed` + direct LLVM
+  // ConstantDataArray emission.
+  void collectEmbeds(const Node &program) {
+    const Node *header = nullptr;
+    for (const syntax::NodePtr &item : program.kids)
+      if (item->kind == NodeKind::ModuleHeader)
+        header = item.get();
+    std::string modulePrefix;
+    std::set<std::string> exportedEmbeds;
+    if (header) {
+      modulePrefix = header->text;
+      std::replace(modulePrefix.begin(), modulePrefix.end(), '.', '$');
+      modulePrefix += "$";
+      std::set<std::string> claimed;
+      for (const syntax::NodePtr &path : header->kids[1]->kids)
+        claimed.insert(path->text);
+      for (const syntax::NodePtr &item : program.kids)
+        if (item->kind == NodeKind::Interface && claimed.count(item->text))
+          for (const syntax::NodePtr &k : item->kids)
+            if (k->kind == NodeKind::SigVal && syntax::findSigEmbedAttr(*k))
+              exportedEmbeds.insert(k->text);
+    }
+    std::map<std::string, std::string> usedSymbols;
+    for (auto it = sigs_.begin(); it != sigs_.end();) {
+      const sema::FuncSig &sig = it->second;
+      const Node *attr = syntax::findEmbedAttr(*sig.item);
+      if (!attr) {
+        ++it;
+        continue;
+      }
+      auto slice = mlir::dyn_cast_or_null<SliceType>(sig.result);
+      if (!slice) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      // An imported `@embed` from another module's `.piai` (ADR 0070 step 3):
+      // its bytes live in the exporting module's object file, so we only record
+      // its exact length and link symbol here.
+      if (sig.item->flags.rfind("import", 0) == 0) {
+        auto meta = syntax::parseInterfaceEmbedAttr(*attr, diags_);
+        if (meta) {
+          std::string sym = meta->symbol;
+          if (sym.empty()) {
+            std::string mangled = sig.name;
+            std::replace(mangled.begin(), mangled.end(), '.', '$');
+            sym = "pia$" + mangled;
+          }
+          embeds_[sig.name] = {slice, std::move(sym),
+                               static_cast<int64_t>(meta->length)};
+        }
+        it = sigs_.erase(it);
+        continue;
+      }
+      auto spec = syntax::parseEmbedAttr(*attr, diags_);
+      if (!spec) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      auto bytes = syntax::resolveEmbedFile(spec->file, options_.embeds,
+                                            attr->loc, diags_);
+      if (!bytes) {
+        it = sigs_.erase(it);
+        continue;
+      }
+      bool isExported = exportedEmbeds.count(sig.name) != 0;
+      std::string sym = spec->hasExplicitSymbol ? spec->symbol
+                        : isExported
+                            ? ("pia$" + modulePrefix + sig.name)
+                            : ("__pia_embed_" + modulePrefix + sig.name);
+      auto [seenIt, fresh] = usedSymbols.emplace(sym, sig.name);
+      if (!fresh) {
+        diags_.error(attr->loc, "duplicate embedded symbol '" + sym +
+                                    "' (already used by '" + seenIt->second +
+                                    "')");
+        it = sigs_.erase(it);
+        continue;
+      }
+      int64_t len = static_cast<int64_t>(bytes->size());
+      embeds_[sig.name] = {slice, sym, len};
+      if (options_.resolvedEmbeds) {
+        syntax::EmbeddedBlob blob;
+        blob.name = sig.name;
+        blob.file = std::move(spec->file);
+        blob.symbol = std::move(sym);
+        blob.section = std::move(spec->section);
+        blob.align = spec->align;
+        blob.isExternal = spec->hasExplicitSymbol || isExported;
+        blob.emitLenSymbol = spec->hasExplicitSymbol;
+        blob.bytes = std::move(*bytes);
+        options_.resolvedEmbeds->push_back(std::move(blob));
+      }
       it = sigs_.erase(it);
     }
   }
@@ -918,6 +1017,12 @@ class Gen {
     mlir::ArrayAttr values;
   };
 
+  struct EmbedEntry {
+    SliceType type;
+    std::string symbol;
+    int64_t length = 0;
+  };
+
   void genFunction(const std::string &name) {
     auto it = sigs_.find(name);
     if (it == sigs_.end() || it->second.isGeneric()) return;
@@ -994,6 +1099,10 @@ class Gen {
       fn->setAttr("pia.assert_claim", b_.getStringAttr(a->second));
     if (auto c = certified_.find(sig.name); c != certified_.end())
       fn->setAttr("pia.certified", b_.getStringAttr(c->second));
+    // A function reference's wrapper: callers see only the arrow's
+    // contract, not the body (ADR 0071, section 3).
+    if (references_.count(sig.name))
+      fn->setAttr("pia.reference", b_.getUnitAttr());
     if (auto e = exports_.find(sig.name); e != exports_.end()) {
       fn->setAttr(PiaDialect::getExportAttrName(),
                   b_.getStringAttr(e->second));
@@ -1361,8 +1470,10 @@ class Gen {
     // `= extern "symbol"`: a C function (#55).
     std::string foreign;
     bool isExtern = externSymbol(bodyNode, foreign);
+    // It keeps the visibility of any function: a module's foreign rows,
+    // such as Pia.Sys.Posix's, are called through its interface, so
+    // importers must link to them (ADR 0057).
     if (isExtern) {
-      fn.setPrivate();
       fn->setAttr("pia.extern", b_.getStringAttr(foreign));
     }
     // The buffer it lends is `out`, unwritten: a caller finds every
@@ -1545,6 +1656,14 @@ class Gen {
     if (hasResult) bind("result", rets[0], result, false);
     // So does a result: the function proves its fields' refinements.
     if (hasResult && !refine(rets[0], result, true)) return;
+    // And so does each out or inout parameter it hands back, or a body
+    // could break a record's invariant through one (ADR 0074, step 1).
+    {
+      size_t k = hasResult ? 1 : 0;
+      for (size_t i : threaded(sig))
+        if (!refine(rets[k++], sig.params[i].type, true))
+          return;
+    }
     for (const syntax::NodePtr &c : contracts.kids) {
       if (c->kind != NodeKind::Ensures) continue;
       R p = genPredicate(*c->kids[0]);
@@ -1954,16 +2073,29 @@ class Gen {
     const auto *refs = types_.refinements(rec.getName().str());
     if (!refs) return true;
     for (const auto &[field, pred] : *refs) {
-      auto index = rec.fieldIndex(field);
-      if (!index) continue;
-      Type ft = rec.getFieldTypes()[*index];
       Location l = loc(*pred);
-      Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(field));
       scopes_.emplace_back();
-      scopes_.back()[field] = std::make_shared<Binding>();
-      scopes_.back()[field]->name = field;
-      scopes_.back()[field]->value = f;
-      scopes_.back()[field]->type = ft;
+      // A field's refinement sees that field; the record's invariant (an
+      // empty name, ADR 0074) sees them all.
+      auto bindField = [&](llvm::StringRef name, Type ft) {
+        Value f = create<FieldOp>(l, ft, v, b_.getStringAttr(name));
+        auto binding = std::make_shared<Binding>();
+        binding->name = name.str();
+        binding->value = f;
+        binding->type = ft;
+        scopes_.back()[name.str()] = std::move(binding);
+      };
+      if (field.empty()) {
+        for (auto [n, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
+          bindField(n.getValue(), ft);
+      } else {
+        auto index = rec.fieldIndex(field);
+        if (!index) {
+          scopes_.pop_back();
+          continue;
+        }
+        bindField(field, rec.getFieldTypes()[*index]);
+      }
       R p = genPredicate(*pred);
       scopes_.pop_back();
       if (!p) return false;
@@ -2641,6 +2773,12 @@ class Gen {
       auto op = create<ConstArrayOp>(loc(n), c->second.type, c->second.values,
                                      b_.getStringAttr(n.text));
       return TV{op.getResult(), c->second.type};
+    }
+    if (auto e = embeds_.find(n.text); e != embeds_.end()) {
+      auto op = create<EmbedOp>(loc(n), e->second.type,
+                                b_.getStringAttr(e->second.symbol),
+                                b_.getI64IntegerAttr(e->second.length));
+      return TV{op.getResult(), e->second.type};
     }
     auto set = overloadSet(n.text);
     if (set.size() > 1)
@@ -5514,7 +5652,8 @@ class Gen {
   // the function's contract is checked against the arrow's.
   std::optional<std::string> functionArgument(const Node &name,
                                               const Arrow &arrow,
-                                              const std::string &what) {
+                                              const std::string &what,
+                                              bool reference = false) {
     std::vector<sema::FuncSig *> set = overloadSet(name.text);
     if (set.size() != 1) {
       fail(name, "'" + name.text + "' is overloaded, and passing an overload "
@@ -5534,13 +5673,17 @@ class Gen {
                      " takes " + plural(arrow.domains.size(), "argument"));
       return std::nullopt;
     }
-    if (!arrow.contracts || arrow.contracts->kids.empty()) return f.name;
+    if (!reference && (!arrow.contracts || arrow.contracts->kids.empty()))
+      return f.name;
     std::string symbol = f.name + "@" + placeOf(name);
     if (sigs_.count(symbol)) return symbol;
+    if (reference)
+      references_.insert(symbol);
     const Node *fRet = retAnnotOf(f);
     if (!fRet) {
-      fail(name, "'" + name.text + "' needs its return type written to be "
-                 "passed as a function with a contract");
+      fail(name, "'" + name.text + "' needs its return type written to be " +
+                     (reference ? "referred to"
+                                : "passed as a function with a contract"));
       return std::nullopt;
     }
     syntax::SourceLoc at = name.loc;
@@ -7980,6 +8123,33 @@ class Gen {
                                   typeName(c->second.type));
         continue;
       }
+      if (auto e = embeds_.find(r.text); e != embeds_.end()) {
+        if (!syntax::findSigEmbedAttr(r)) {
+          diags_.error(r.loc,
+                       unmet + "'" + r.text +
+                           "' is an @embed binding; mark it '@embed' in the "
+                           "interface as 'let " +
+                           r.text + " : [u8] @embed'");
+          continue;
+        }
+        if (types_.resolve(type) != Type(e->second.type))
+          diags_.error(r.loc, unmet + "'" + r.text + "' has type " +
+                                  typeName(e->second.type));
+        const std::string &mods = r.kids[0]->kids[0]->text;
+        if (sema::hasModifier(mods, "mutable"))
+          diags_.error(r.loc, unmet +
+                                  "an @embed binding is always 'fixed'; remove "
+                                  "'mutable'");
+        if (!r.kids[2]->kids.empty())
+          diags_.error(r.loc,
+                       unmet + "an @embed binding cannot have contracts");
+        continue;
+      }
+      if (syntax::findSigEmbedAttr(r)) {
+        diags_.error(r.loc,
+                     unmet + "'" + r.text + "' is not an @embed binding");
+        continue;
+      }
       if (std::optional<std::string> name = privateType(type, shown))
         diags_.error(r.loc, "'" + r.text + "' is exported, but its type "
                                 "names '" + *name + "', which no interface "
@@ -9130,7 +9300,8 @@ class Gen {
   // Whether a buffer is, or views, read-only constant data.
   static bool isConstantData(Value v) {
     while (auto s = v.getDefiningOp<SliceOp>()) v = s.getBuffer();
-    return v.getDefiningOp<ConstArrayOp>() != nullptr;
+    return v.getDefiningOp<ConstArrayOp>() != nullptr ||
+           v.getDefiningOp<EmbedOp>() != nullptr;
   }
 
   R emitCall(const Node &n, const sema::FuncSig &sig,
@@ -9820,7 +9991,12 @@ class Gen {
       if (obj.kind != NodeKind::Name)
         return fail(obj, "only a named array or slice can be written");
       BindingPtr b = lookup(obj.text);
-      if (!b) return fail(obj, "unknown name '" + obj.text + "'");
+      if (!b) {
+        if (consts_.count(obj.text) || embeds_.count(obj.text))
+          return fail(obj, "cannot write to '" + obj.text +
+                               "': it is fixed read-only data");
+        return fail(obj, "unknown name '" + obj.text + "'");
+      }
       Type elem = elementType(b->type);
       if (!elem)
         return fail(obj, "only arrays and slices can be indexed, found " +
@@ -12118,6 +12294,47 @@ class Gen {
     return r;
   }
 
+  // A `let` of a function type: the reference is a proxy for the function
+  // (ADR 0071, section 1), so the body calls the function itself, through
+  // the arrow's contract when it has one.
+  R genReferenceLet(const Node &n, Type expected) {
+    const Node &annot = *n.kids[1]->kids[0];
+    const Node &value = *n.kids[3];
+    const std::string &mods = annot.kids[0]->text;
+    if (sema::hasModifier(mods, "mutable"))
+      return fail(annot, "a mutable function reference, which can be "
+                         "rebound, comes with ADR 0071's step 2");
+    if (!mods.empty())
+      return fail(annot, "a function reference takes no modifiers");
+    if (contract_ || ghost_)
+      return fail(n, "a function reference is code, not part of a contract");
+    if (!checkFresh(n.text, n.loc))
+      return std::nullopt;
+    Arrow arrow = arrowOf(*annot.kids[1]);
+    std::optional<std::string> symbol;
+    if (value.kind == NodeKind::Name && !lookup(value.text) &&
+        !overloadSet(value.text).empty()) {
+      symbol = functionArgument(value, arrow, "'" + n.text + "'",
+                                /*reference=*/true);
+    } else if (value.kind == NodeKind::Name && lookup(value.text)) {
+      return fail(value, "'" + value.text +
+                             "' is a local; a function "
+                             "reference names a top-level function (ADR 0071)");
+    } else {
+      return fail(value, "a function reference is made from a top-level "
+                         "function's name, as in 'let " +
+                             n.text + " : u8 -> u8 = succ' (ADR 0071)");
+    }
+    if (!symbol)
+      return std::nullopt;
+    NodePtr body = syntax::clone(*n.kids[4]);
+    std::map<std::string, std::string> rename{{n.text, *symbol}};
+    if (body->kind == NodeKind::Name && body->text == n.text)
+      body->text = *symbol;
+    renameNames(*body, rename, nullptr);
+    return genExpr(*keep(std::move(body)), expected);
+  }
+
   R genLetIn(const Node &n, Type expected) {
     const Node &params = *n.kids[0];
     const Node &ret = *n.kids[1];
@@ -12148,6 +12365,15 @@ class Gen {
       renameNames(*body, rename, nullptr);
       return genExpr(*keep(std::move(body)), expected);
     }
+    // `let h : (x : u8) -> u8 requires x < 100 = succ in h y`: a local
+    // reference to a function (ADR 0071). It is fixed, so every call
+    // through it reaches the function it was bound to, and is a direct
+    // call of that function, or of a wrapper with the arrow's contract,
+    // which checks the function against the arrow once, here.
+    if (ret.kind == NodeKind::RetAnnot && !ret.kids.empty() &&
+        ret.kids[0]->kind == NodeKind::Annot &&
+        ret.kids[0]->kids[1]->kind == NodeKind::ArrowType)
+      return genReferenceLet(n, expected);
     // `let spec ref : mutable [u8; 4096] = zeros`: spec state (ADR 0058).
     bool isSpecLet = hasFlag(n, "spec");
     Type declared;
@@ -12351,6 +12577,7 @@ class Gen {
   mlir::ModuleOp module_;
   std::map<std::string, sema::FuncSig> sigs_;
   std::map<std::string, Constant> consts_;
+  std::map<std::string, EmbedEntry> embeds_;
   // Exported function symbols (ADR 0039), each with its module's path, or
   // empty for a plain C name.
   std::map<std::string, std::string> exports_;
@@ -12421,6 +12648,8 @@ class Gen {
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
   std::deque<std::string> pendingInstances_;  // generic instances to generate
+  // Wrappers that function references call (ADR 0071): opaque to callers.
+  std::set<std::string> references_;
   // Lemmas queued and functions matched to requirements, in order, so a
   // concept check can tell which are its own (certify).
   std::vector<std::string> queuedLog_, matchedLog_;

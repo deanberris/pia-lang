@@ -8,7 +8,10 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 
 package(default_visibility = ["//visibility:public"])
 
-exports_files(["Posix.pia"])
+exports_files([
+    "Fs.pia",
+    "Posix.pia",
+])
 
 pia_library(
     name = "posix",
@@ -17,4 +20,14 @@ pia_library(
         "//conditions:default": "//lib/Pia/Sys/Gen:arm64_macos.pia",
     }),
     target_compatible_with = PIA_TARGETS,
+)
+
+# Files over Pia.Sys.Posix, written once for both targets:
+# tests/std/fs.pia checks its goals, and tests/std/fs_edges.pia and
+# :fs_run test it through its interface.
+pia_library(
+    name = "fs",
+    src = "Fs.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":posix"],
 )

@@ -273,6 +273,20 @@ let same (p : pixel) (q : pixel) : bool
 = p = q
 ```
 
+A record can carry an invariant over its fields, written `where` after its closing brace. Every value of the type keeps it: a function may assume it of each parameter, and must prove it of its result and of each `out` or `inout` parameter it hands back, so no function restates it and none can break it. Here `width` cannot underflow, and `widen` keeps `lo <= hi`:
+
+```ocaml
+let span = type { lo : u32; hi : u32 } where lo <= hi
+
+let width (s : span) : u32 = s.hi - s.lo
+
+let widen (s : inout mutable span) : unit
+  requires s.hi < max u32
+= s.hi <- s.hi + 1
+```
+
+A field can also carry a refinement of its own, `v : u8 where v <= 100`, which the record's invariant may rely on. [The verifier](verifier.md#theories) has the details.
+
 Arrays and slices can hold records. The compiler stores them as one buffer per field, so a loop over one field reads contiguous memory and vectorises:
 
 ```ocaml
@@ -708,7 +722,23 @@ let five (x : u8) : u8
 let small (x : u8) : bool = let is_small = below 9 in is_small x
 ```
 
-Generic lambdas that capture, and functions stored in data, come later.
+A top-level function is a value too, and a `let` of a function type holds a **reference** to it ([ADR 0071](adr/0071-function-references.md)). There is no address operator: the name is the value, and a reference can be copied but never makes a copy of the function. When the arrow has a contract, the function is proved against it once, where the reference is made, and every call through the reference sees only the arrow's contract, so `grow` below knows `result > x` but not that `h y` is `y + 1`:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let half (x : u8) : u8 = x / 2
+
+let grow (y : u8) : u8 requires y < 10 ensures result > y =
+  let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in
+  h y
+
+let quarter (x : u8) : u8 =
+  let g : u8 -> u8 = half in
+  g (g x)
+```
+
+A reference is fixed, like every binding. Rebinding one, `let h : mutable (u8 -> u8) = succ`, references stored in records and buffers, and calls that are indirect in the compiled code come later.
 
 ## Parallel loops
 

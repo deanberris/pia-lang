@@ -1,0 +1,124 @@
+(* Pia.Sys.Fs: files, over the trusted rows of Pia.Sys.Posix (ADR 0023,
+   ADR 0057). Written once for both targets: the errno values and open
+   flags are Posix's opaque constants, so nothing here depends on Linux's
+   or Darwin's numbers, and every goal is proved from the rows' contracts.
+
+   A failed call is an `Err` of a decoded errno, never -1. A `file` is
+   @linear, so a program that forgets to close one does not compile, and
+   one that closes it twice is a use after a move.
+
+   Not here yet: hiding `raw` from importers (an interface cannot make a
+   record's fields private yet), `fstat`, and seeking. *)
+module Pia.Sys.Fs : Fs
+
+import Pia.Sys.Posix.Posix
+
+interface Fs = sig
+  (** What a failed call's errno means. `Other` keeps a value with no
+      case of its own. *)
+  let errno = type
+    | Again | BadFd | Interrupted | Invalid | IoError | NoSpace | NoEntry
+    | Denied | Exists | IsDir | NotDir | TooMany | Broken | Other of i32
+  (** An open file descriptor, which must be closed exactly once. *)
+  let file = type { raw : i32 } @linear
+  (** Opens a file to read. The path ends in a NUL. *)
+  let open_read : (path : [u8]) -> result file errno
+    requires len path >= 1 && path.[len path - 1] = 0
+  (** Creates a file to write, or empties one that exists, with the
+      permission bits mode (before the umask). *)
+  let create : (path : [u8]) -> (mode : int{0..4095}) -> result file errno
+    requires len path >= 1 && path.[len path - 1] = 0
+  (** One read(2) into buf: at most len buf bytes, and 0 at the end of
+      the file. *)
+  let read_some : (f : file) -> (buf : out mutable [u8]) -> result usize errno
+    ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
+  (** Writes all of buf, retrying a short write or an interrupted one.
+      Sixteen tries in a row that write nothing are an `Interrupted`. *)
+  let write_all : (f : file) -> (buf : [u8]) -> result unit errno
+  (** Closes f. It is closed even when this fails, as close(2) says, so
+      it must not be closed again. *)
+  let close : (f : moved file) -> result unit errno
+end
+
+let errno = type
+  | Again | BadFd | Interrupted | Invalid | IoError | NoSpace | NoEntry
+  | Denied | Exists | IsDir | NotDir | TooMany | Broken | Other of i32
+
+let file = type { raw : i32 } @linear
+
+(* The variant for an errno value, compared with the target's constants
+   at run time, since their values are hidden. *)
+let decode (e : i32) : errno =
+  if e = Pia.Sys.Posix.eagain then Again
+  else if e = Pia.Sys.Posix.ebadf then BadFd
+  else if e = Pia.Sys.Posix.eintr then Interrupted
+  else if e = Pia.Sys.Posix.einval then Invalid
+  else if e = Pia.Sys.Posix.eio then IoError
+  else if e = Pia.Sys.Posix.enospc then NoSpace
+  else if e = Pia.Sys.Posix.enoent then NoEntry
+  else if e = Pia.Sys.Posix.eacces || e = Pia.Sys.Posix.eperm then Denied
+  else if e = Pia.Sys.Posix.eexist then Exists
+  else if e = Pia.Sys.Posix.eisdir then IsDir
+  else if e = Pia.Sys.Posix.enotdir then NotDir
+  else if e = Pia.Sys.Posix.emfile then TooMany
+  else if e = Pia.Sys.Posix.epipe then Broken
+  else Other e
+
+let open_read (path : [u8]) : result file errno
+  requires len path >= 1 && path.[len path - 1] = 0
+= let flags : i32 = (Pia.Sys.Posix.o_rdonly | Pia.Sys.Posix.o_cloexec) in
+  let r = Pia.Sys.Posix.open path flags in
+  if r < 0 then Err (decode Pia.Sys.Posix.errno) else Ok { raw = r }
+
+let create (path : [u8]) (mode : int{0..4095}) : result file errno
+  requires len path >= 1 && path.[len path - 1] = 0
+= let flags : i32 =
+    (Pia.Sys.Posix.o_wronly | Pia.Sys.Posix.o_creat | Pia.Sys.Posix.o_trunc | Pia.Sys.Posix.o_cloexec) in
+  let r = Pia.Sys.Posix.open_mode path flags mode in
+  if r < 0 then Err (decode Pia.Sys.Posix.errno) else Ok { raw = r }
+
+let read_some (f : file) (buf : out mutable [u8]) : result usize errno
+  ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
+= let r = Pia.Sys.Posix.read f.raw buf (len buf) in
+  if r < 0 then Err (decode Pia.Sys.Posix.errno)
+  else (let n : usize = r in Ok n)
+
+let write_all (f : file) (buf : [u8]) : result unit errno =
+  let d : mutable usize = 0 in
+  let failed : mutable bool = false in
+  let stuck : mutable bool = false in
+  let code : mutable i32 = 0 in
+  (* Each pass of the outer loop either moves d on or ends the loop; the
+     inner one retries a write that wrote nothing, at most 16 times. *)
+  while d < len buf && failed = false && stuck = false
+    invariant d <= len buf
+    decreases len buf - d + (if d < len buf && failed = false && stuck = false then 1 else 0)
+  do
+    let d0 = d in
+    let stalls : mutable u8 = 0 in
+    let went : mutable bool = false in
+    while went = false && failed = false && stalls < 16
+      invariant d <= len buf && stalls <= 16
+      invariant (if went then d > d0 else d = d0)
+      decreases 16 - stalls + (if went = false && failed = false && stalls < 16 then 1 else 0)
+    do
+      let rest = buf.[d .. len buf] in
+      let w = Pia.Sys.Posix.write f.raw rest (len rest) in
+      if w > 0 then (let k : usize = w in d <- d + k; went <- true)
+      else if w = 0 then stalls <- stalls + 1
+      else (
+        let e = Pia.Sys.Posix.errno in
+        if e = Pia.Sys.Posix.eintr then stalls <- stalls + 1
+        else (failed <- true; code <- e))
+    done;
+    if went = false && failed = false then stuck <- true
+  done;
+  if failed then Err (decode code)
+  else if d < len buf then Err Interrupted
+  else Ok ()
+
+let close (f : moved file) : result unit errno =
+  match f with
+  | { raw } ->
+    if Pia.Sys.Posix.close raw = 0 then Ok ()
+    else Err (decode Pia.Sys.Posix.errno)

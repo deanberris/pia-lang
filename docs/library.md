@@ -96,6 +96,7 @@ The codecs are proved total and safe on every input, and allocate nothing: the c
 | Module | What it gives |
 | --- | --- |
 | [`Pia.Sys.Posix`](../lib/Pia/Sys/Posix.pia) | The contracts of the POSIX functions Pia calls, as one interface that every target meets ([ADR 0057](adr/0057-posix-module-per-target-behind-one-interface.md)) |
+| [`Pia.Sys.Fs`](../lib/Pia/Sys/Fs.pia) | Files over `Pia.Sys.Posix`, written once for both targets: a `@linear` `file` that must be closed exactly once, `open_read`, `create`, `read_some`, `write_all` and `close`, each failing with a decoded `errno` |
 | [`Pia.Sys.Gen.arm64_macos`](../lib/Pia/Sys/Gen/arm64_macos.pia) | The bindings for arm64 macOS, generated from the system headers by `tools/bindings/gen.py`, which CI checks are current |
 | [`Pia.Sys.Gen.x86_64_linux`](../lib/Pia/Sys/Gen/x86_64_linux.pia) | The same for x86_64 Linux |
 | [`Pia.Gpu`](../lib/Pia/Gpu.pia) | Devices, buffers and kernels on the GPU through a Metal host shim, which `--trust-report` lists as trusted ([ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md)) |

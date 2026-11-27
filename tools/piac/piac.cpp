@@ -65,6 +65,8 @@
 //                                   count is N or more (default 10% of the
 //                                   rlimit); 0 turns the warning off
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
+//   piac --version                  print piac's version, the Pia ABI
+//                                   version and the solver's (ADR 0073)
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
 //   piac --meta-cycles=N ...        cap metaprogram expansion at N passes
@@ -97,12 +99,14 @@
 #include <vector>
 
 #include "meta/Expand.h"
+#include "syntax/Embeds.h"
 #include "syntax/Interfaces.h"
 #include "syntax/Lean.h"
 #include "syntax/Lexer.h"
 #include "syntax/Lint.h"
 #include "syntax/Parser.h"
 #include "syntax/Syntax.h"
+#include "version/Version.h"
 
 #ifndef PIA_NO_MLIR
 #include "cert/Certificate.h"
@@ -146,6 +150,7 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "[--lean-receipt=<file>]...\n"
          "             <file.pia>\n"
+         "       piac --version\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
          "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
@@ -154,7 +159,8 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       Every mode but --emit=interface takes "
-         "[--iface-path=<dir>]...\n";
+         "[--iface-path=<dir>]... [--embed-path=<dir>]... "
+         "[--embed=<logical>=<path>]...\n";
   return 2;
 }
 
@@ -793,10 +799,26 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
 }  // namespace
 
+// `piac --version`: what a certificate records about the compiler.
+int printVersion() {
+  std::cout << "piac " << pia::version::prover() << "\n";
+#ifndef PIA_NO_MLIR
+  std::cout << "Pia ABI " << pia::cert::kAbiVersion << "\n";
+  std::cout << "z3 " << pia::verify::solverVersion() << "\n";
+#endif
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  // Anywhere on the line, since wrappers (tests/lit/run_lit.sh) add
+  // --target and --cpu to every call.
+  for (int i = 1; i < argc; ++i)
+    if (std::string_view(argv[i]) == "--version")
+      return printVersion();
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
   std::vector<std::string> ifacePaths;
+  pia::syntax::EmbedOptions embedOptions;
   bool contracts = false, verify = false, dumpSmt = false;
   bool literate = false, showComments = false;
   pia::meta::Options meta;
@@ -842,6 +864,11 @@ int main(int argc, char **argv) {
     } else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
       ifacePaths.push_back(arg.substr(13));
+    } else if (bool badEmbed = false;
+               pia::syntax::parseEmbedFlag(arg, embedOptions, badEmbed) ||
+               badEmbed) {
+      if (badEmbed)
+        return usage();
     } else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
@@ -1031,6 +1058,7 @@ int main(int argc, char **argv) {
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();
 #ifdef PIA_NO_MLIR
+  (void)embedOptions;
   (void)solverTimeoutMs;
   (void)solverRlimit;
   (void)solverCost;
@@ -1079,7 +1107,8 @@ int main(int argc, char **argv) {
     // needs neither metaprograms nor the verifier.
     if (!diags.hasErrors() && emitInterface) {
       for (const pia::syntax::InterfaceArtifact &a :
-           pia::syntax::interfaceArtifacts(*tree, source, literate, diags)) {
+           pia::syntax::interfaceArtifacts(*tree, source, literate, diags,
+                                           &embedOptions)) {
         std::string path = output + "/" + a.fileName();
         std::ofstream out(path, std::ios::binary);
         out << a.text;
@@ -1106,8 +1135,8 @@ int main(int argc, char **argv) {
     std::vector<pia::syntax::InterfaceArtifact> provided, imported;
     if (!diags.hasErrors() && codegen) {
       pia::syntax::Diagnostics ignored; // the module check reports them
-      provided =
-          pia::syntax::interfaceArtifacts(*tree, source, literate, ignored);
+      provided = pia::syntax::interfaceArtifacts(*tree, source, literate,
+                                                 ignored, &embedOptions);
     }
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)
@@ -1124,6 +1153,10 @@ int main(int argc, char **argv) {
       if (!tree->kids.empty() &&
           tree->kids[0]->kind == pia::syntax::NodeKind::ModuleHeader)
         cert.module = tree->kids[0]->text;
+      cert.abi = pia::cert::kAbiVersion;
+      cert.target = cg.triple;
+      cert.prover = std::string(pia::version::prover());
+      cert.solvers.push_back({"z3", pia::verify::solverVersion()});
       for (const pia::syntax::InterfaceArtifact &a : provided)
         cert.provides.push_back(
             {a.module + "." + a.name, pia::cert::interfaceHash(a.text)});
@@ -1134,8 +1167,10 @@ int main(int argc, char **argv) {
     }
 #endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
-        mode != "--check" && !emitInterface)
+        mode != "--check" && !emitInterface) {
+      meta.embeds = embedOptions;
       pia::meta::expand(*tree, diags, meta);
+    }
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR
@@ -1171,6 +1206,8 @@ int main(int argc, char **argv) {
       pia::irgen::Options irgenOptions;
       irgenOptions.source = source;
       irgenOptions.triple = cg.triple;
+      irgenOptions.embeds = embedOptions;
+      irgenOptions.resolvedEmbeds = &cg.embeds;
       std::vector<pia::syntax::Diagnostic> explanations;
       auto sameFile = [&](const std::string &a, const std::string &b) {
         auto base = [](const std::string &p) {

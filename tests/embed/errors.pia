@@ -1,0 +1,35 @@
+(* Raw binary embedding diagnostics (ADR 0070): syntax, type, mutability,
+   path traversal, alignment, hermetic lookup, and read-only mutation checks.
+// RUN: printf 'let f () : i32 = let x : [u8] @embed(file = "magic.bin") in 0\n' > %t/local.pia
+// RUN: not piac --check %t/local.pia 2>&1 | FileCheck %s --check-prefix=LOCAL
+// RUN: printf 'let x : [u8] @embed(file = "magic.bin") = [1]\n' > %t/body.pia
+// RUN: not piac --check %t/body.pia 2>&1 | FileCheck %s --check-prefix=BODY
+// RUN: printf 'let x : mutable [u8] @embed(file = "magic.bin")\n' > %t/mut.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/mut.pia 2>&1 | FileCheck %s --check-prefix=MUT
+// RUN: printf 'let x : [u16] @embed(file = "magic.bin")\n' > %t/type.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/type.pia 2>&1 | FileCheck %s --check-prefix=TYPE
+// RUN: printf 'let x : [u8] @embed(file = "/etc/passwd")\n' > %t/abs.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/abs.pia 2>&1 | FileCheck %s --check-prefix=ABS
+// RUN: printf 'let x : [u8] @embed(file = "../magic.bin")\n' > %t/dotdot.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/dotdot.pia 2>&1 | FileCheck %s --check-prefix=DOTDOT
+// RUN: printf 'let x : [u8] @embed(file = "magic.bin", align = 3)\n' > %t/align.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/align.pia 2>&1 | FileCheck %s --check-prefix=ALIGN
+// RUN: printf 'let x : [u8] @embed(file = "magic.bin")\n' > %t/missing.pia
+// RUN: not piac --emit=mlir %t/missing.pia 2>&1 | FileCheck %s --check-prefix=MISSING
+// RUN: printf 'let m : [u8] @embed(file = "magic.bin")\nlet f () : unit = m.[0] <- 0\n' > %t/write.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/write.pia 2>&1 | FileCheck %s --check-prefix=WRITE
+// RUN: printf 'let m : [u8] @embed(file = "magic.bin")\nlet touch (xs : inout [u8]) : unit = ()\nlet f () : unit = touch m\n' > %t/inout.pia
+// RUN: not piac --emit=mlir --embed-path=%S/Inputs %t/inout.pia 2>&1 | FileCheck %s --check-prefix=INOUT
+
+// LOCAL: @embed is only allowed on top-level 'let' bindings
+// BODY: an @embed binding cannot have a '= ...' body
+// MUT: an @embed binding is always 'fixed'; remove 'mutable'
+// TYPE: an @embed binding must have type '[u8]'
+// ABS: absolute paths are not allowed
+// DOTDOT: parent directory traversal
+// ALIGN: positive power of two
+// MISSING: embedded file 'magic.bin' was not found; pass --embed-path=<dir> or --embed=magic.bin=<path>
+// WRITE: cannot write to 'm': it is fixed read-only data
+// INOUT: constant data cannot be passed to 'xs', which is 'out' or 'inout'
+*)
+let ok () : i32 = 0

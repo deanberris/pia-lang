@@ -9,6 +9,7 @@
 // RUN: pia-cert dump %t/pixels.o | FileCheck --check-prefix=LIB %s
 // RUN: pia-cert check %t/pixels.o %t/blend.o | FileCheck --check-prefix=OK %s
 // RUN: not pia-cert check %t/blend.o 2>&1 | FileCheck --check-prefix=MISSING %s
+// RUN: piac --version | FileCheck --check-prefix=VERSION %s
 
    Image.Pixels again, with a stronger precondition on luma: Blend was
    proved against the old interface, so it must be proved again.
@@ -18,6 +19,9 @@
 // RUN: not pia-cert check %t/v2/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=STALE %s
 
 // DUMP: module Blend
+// DUMP-NEXT: abi 1 {{[a-z0-9_]+-[a-z0-9_.-]+}}
+// DUMP-NEXT: prover piac dev
+// DUMP-NEXT: solver z3 {{[0-9]+\.[0-9]+\.[0-9]+}}
 // DUMP-NEXT: provides Blend.C [[C:[0-9a-f]{64}]]
 // DUMP-NEXT: requires Image.Pixels.Ops [[OPS:[0-9a-f]{64}]]
 
@@ -26,6 +30,10 @@
 // LIB-DAG: provides Image.Pixels.C {{[0-9a-f]+}}
 
 // OK: pia-cert: 2 objects link
+
+// VERSION: piac dev
+// VERSION-NEXT: Pia ABI 1
+// VERSION-NEXT: z3 {{[0-9]+\.[0-9]+\.[0-9]+}}
 
 // MISSING: '{{.*}}blend.o' imports 'Image.Pixels.Ops', which no object provides
 

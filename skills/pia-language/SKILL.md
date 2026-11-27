@@ -57,6 +57,7 @@ let count_bright (ys : [u16]) : usize
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
+| `type { v : u8 where v <= 100 }`, `type { lo : u32; hi : u32 } where lo <= hi` | a field's refinement, and a record's invariant over all its fields (ADR 0074): assumed of every parameter, proved of every result and every handed-back `out`/`inout` parameter, so no function restates it. See `tests/verify/record_invariants.pia` |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
 | `costs iterations <= len xs`, `costs calls <= 0`; `spent iterations` in an invariant | a cost bound (ADR 0062): every clause names its counter, `iterations` (loop iterations) or `calls` (non-spec calls), and is proved at return. A loop needs an invariant on `spent c`. Callees need their own bound, unless they have no loop or recursion. Function counters such as `less` come later. See `tests/verify/costs.pia` |
@@ -132,7 +133,7 @@ let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
 = find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 ```
 
-The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`).
+The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value.
 
 **Modules.** One file is one module. Everything in it is private unless an interface the module claims lists it, and an import names an interface, never a wildcard:
 
@@ -152,7 +153,7 @@ end
 
 `import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/library.md` and `docs/cpp-std.md`, and three tests in `tests/std`. A new language feature gets a line in `docs/features.md` for its `tests/verify` example and is taught in `docs/tour.md`; `python3 tools/docs/check.py` fails until both are there.
 
-**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`.
+**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`. `@variadic(n)` after the return type declares a C variadic function with `n` named parameters, and `@deref` one that returns a pointer to its integer result, which the call reads (`Pia.Sys.Posix.errno`). For POSIX, import `Pia.Sys.Posix.Posix` rather than declaring externs.
 
 ## Pitfalls
 
