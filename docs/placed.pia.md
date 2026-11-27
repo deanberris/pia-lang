@@ -43,7 +43,12 @@ cells, both stages match the CPU on every cell, and over three runs:
 The first run of directions also opened the device and loaded the kernel.
 The shim now pre-warms them instead: when the program loads, a background
 queue opens the device and builds every placed kernel's pipeline, so a first
-run finds them ready (ADR 0068, step 4b). `PIA_GPU_WARM=0` turns this off.
+run finds them ready (ADR 0068, step 4b). On the tile that takes the first
+run of directions from 42 to 57 ms down to 13 to 19 ms, over three runs
+each way (2026-11-28). The first run of the picture, 18 to 40 ms, is the
+same with or without it, so its extra cost lies elsewhere, probably in the
+GPU's first touch of the newly wrapped buffers. `PIA_GPU_WARM=0` turns
+pre-warming off.
 Before the buffers were wrapped, the copies in and back made both stages
 slower on the GPU than on the CPU (ADR 0068, step 3).
 
