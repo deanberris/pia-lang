@@ -1,0 +1,15 @@
+load("//bench/codegen:defs.bzl", "codegen_benchmark")
+
+# plb2's nqueen (ADR 0075, wave 1). The benchmark input is n = 15
+# (2,279,184 solutions); the test runs n = 10.
+codegen_benchmark(
+    name = "nqueen",
+    c = "//third_party/benchmarks/plb2:nqueen.c",
+    check_args = ["10"],
+    control = "control.c",
+    driver = "main.c",
+    expected = "724",
+    pia = "nqueen.pia",
+    rust = "//third_party/benchmarks/plb2:nqueen.rs",
+    zig = "//third_party/benchmarks/plb2:nqueen_zig",
+)

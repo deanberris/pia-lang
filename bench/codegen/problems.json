@@ -1,0 +1,10 @@
+{
+  "nqueen": {
+    "source": "plb2",
+    "args": ["15"],
+    "count_args": ["12"],
+    "count_expected": "14200",
+    "reference": "c",
+    "programs": ["pia", "control", "c", "rust", "zig"]
+  }
+}
