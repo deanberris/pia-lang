@@ -2,9 +2,11 @@
    of [name; value] pairs into a record literal's fields, and a name as a
    constructor's (ADR 0045, step 4): what a derive needs to write a key's
    bytes, build a value of the type it was given, and name its errors.
+   A list spliced as a variant's constructors, names and [name; type]
+   pairs, gives a derive one constructor per field it found.
 // RUN: piac --verify %s | FileCheck %s
 // CHECK-NOT: failed
-// CHECK: 4 proved, 0 failed, 0 skipped
+// CHECK: 5 proved, 0 failed, 0 skipped
 *)
 
 let meta derive_parts (t : item) : list =
@@ -13,10 +15,19 @@ let meta derive_parts (t : item) : list =
   let fs = map (let (f) => [ f; 7 ]) (fields t) in
   let c = concat "Bad_" (name t) in
   let e = concat (name t) "_error" in
+  let w = concat (name t) "_field_error" in
+  let cs = map (let (f) => [ concat "Bad_" f; "usize" ]) (fields t) in
+  let cs2 = concat cs [ "Empty_pair" ] in
   [ `( let first_byte () : u8 ensures $!result = 0x42 =
          let $!k : [u8; $n] = [ $bs ] in $!k.[1] );
     `( let sevens () : $t ensures $!result.lo = 7 && $!result.hi = 7 = { $fs } );
     `( let $e = type | $c of usize );
-    `( let code ($!x : $e) : usize ensures $!result = 3 = 3 ) ]
+    `( let code ($!x : $e) : usize ensures $!result = 3 = 3 );
+    `( let $w = type | $cs2 );
+    `( let field_code ($!x : $w) : usize ensures $!result <= 2 =
+         match $!x with
+         | Bad_lo $!p -> 0
+         | Bad_hi $!p -> 1
+         | _ -> 2 ) ]
 
 let pair = type { lo : u8; hi : u8 } @derive(parts)
