@@ -16,6 +16,7 @@ They live in [`skills/`](https://github.com/deanberris/pia-lang/tree/main/skills
 | [`pia-mcp`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-mcp/SKILL.md) | a `pia mcp` server is connected: how `execute` and `poll` behave, reading results, the working loop, long-running cells |
 | [`pia-repl`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-repl/SKILL.md) | no MCP connection: `pia repl` on a pipe or with JSON lines, `:redef`, state with invariants and `old`, tasks, saving a session as a test |
 | [`pia-proof-debugging`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-proof-debugging/SKILL.md) | "is this C, C++ or Rust correct?": port it into cells, classify each counterexample, check assumptions against callers, report a verdict |
+| [`pia-lean`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-lean/SKILL.md) | proving a lemma in Lean 4 when Z3 cannot: `= by lean T`, `piac --emit=lean`, the proof file, `pia_lean_proof` receipts, stale receipts |
 
 
 ## Installing them

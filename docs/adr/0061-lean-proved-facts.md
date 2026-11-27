@@ -171,6 +171,13 @@ Each step is a PR with tests.
 
 Cost in contracts ([ADR 0062](0062-cost-bounds-in-contracts.md)) needs no Lean and goes first. Step 1 includes a `pia-lean` skill: how to read the generated statements, and which tactics to try first.
 
+**Step 1 as built (2026-11-27).** Four choices differ from or add to the text above:
+
+- The flag is `piac --emit=lean`, like the other emit modes, and receipts come in with `--lean-receipt=<file>`.
+- A receipt has one hash, the SHA-256 of the Lean text of the statement and of every definition it uses. It covers the Pia statement too, since the translation is a function of it. The separate Pia statement hash comes with certificates in step 2.
+- A spec function with a `requires` is, outside it, an opaque Lean constant `f'outside` applied to the arguments. Pia says nothing about the function there, and Lean can prove nothing about an opaque constant, so no Lean fact depends on how the translation made the function total.
+- Lean is an `http_archive` of the release for each host, v4.36.0, about 600 MB compressed per platform, and runs only in `pia_lean_proof` actions, locally rather than on the remote executors. The cold and warm build times are in the PR that built it.
+
 ## Answers to the open questions
 
 Dean answered when he accepted it (2026-11-24):

@@ -1,0 +1,77 @@
+(* Lemmas proved in Lean (ADR 0061), from end to end. `piac --emit=lean`
+   translates the statements and the spec functions and records they use;
+   Proofs.lean proves them, and the sums_proof target checks the proofs
+   and writes their receipts, which make the lemmas proved here. Callers
+   use them like any lemma.
+// RUN: piac --emit=lean %s | FileCheck %s --check-prefix=LEAN
+// RUN: piac --verify --lean-receipt=%S/sums_proof.receipt %s | FileCheck %s
+*)
+
+let point = type { x : int; y : int }
+
+let spec within (p : point) (n : int) : bool = 0 <= p.x && p.x < n
+
+let spec dist (p : point) : int = p.x + p.y
+
+let rec spec sum (n : int) : int
+  requires n >= 0
+  decreases n
+= if n = 0 then 0 else n + sum (n - 1)
+
+let lemma sum_nonneg (n : int) : unit
+  requires n >= 0
+  ensures sum n >= 0
+= by lean Proofs.sum_nonneg
+
+let lemma dist_of (a : int) (b : int) : unit
+  ensures dist { x = a; y = b } = a + b
+= by lean Proofs.dist_of
+
+let lemma origin_within (n : int) : unit
+  requires n >= 1
+  ensures within { x = 0; y = 5 } n
+= by lean Proofs.origin_within
+
+(* Proved by Z3, from the Lean lemma. *)
+let lemma sum_plus_one (m : int) : unit
+  requires m >= 0
+  ensures sum m + 1 > 0
+= sum_nonneg m
+
+(* The statements, each with its hash, then the definitions they use.
+// LEAN: -- pia-lean-statement sum_nonneg Proofs.sum_nonneg {{[0-9a-f]+}}
+// LEAN: -- pia-lean-statement dist_of Proofs.dist_of {{[0-9a-f]+}}
+// LEAN: -- pia-lean-statement origin_within Proofs.origin_within {{[0-9a-f]+}}
+// LEAN: namespace sums
+// LEAN: opaque sum'outside : Int → Int
+// LEAN: def sum (n : Int) : Int :=
+// LEAN-NEXT:   if h_req : (n ≥ 0) then
+// LEAN-NEXT:     (if h_1 : (n = 0) then 0 else (n + (sum (n - 1))))
+// LEAN-NEXT:   else sum'outside n
+// LEAN-NEXT: termination_by (n).toNat
+// LEAN: @[reducible] def sum_nonneg : Prop :=
+// LEAN-NEXT:   ∀ (n : Int),
+// LEAN-NEXT:     (n ≥ 0) → ((sum n) ≥ 0)
+// LEAN: structure point where
+// LEAN-NEXT:   x : Int
+// LEAN-NEXT:   y : Int
+// LEAN: def dist (p : point) : Int :=
+// LEAN-NEXT:   ((p).x + (p).y)
+// LEAN: @[reducible] def dist_of : Prop :=
+// LEAN-NEXT:   ∀ (a : Int) (b : Int),
+// LEAN-NEXT:     ((dist { x := a, y := b }) = (a + b))
+// LEAN: def within (p : point) (n : Int) : Bool :=
+// LEAN-NEXT:   ((decide (0 ≤ (p).x)) && (decide ((p).x < n)))
+// LEAN: @[reducible] def origin_within : Prop :=
+// LEAN-NEXT:   ∀ (n : Int),
+// LEAN-NEXT:     (n ≥ 1) → ((within { x := 0, y := 5 } n) = true)
+// LEAN: end sums
+*)
+
+(* Expected report.
+// CHECK-DAG: proved: the Lean theorem 'Proofs.sum_nonneg' proves 'sum_nonneg' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Proofs.dist_of' proves 'dist_of' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Proofs.origin_within' proves 'origin_within' [lean]
+// CHECK-DAG: sums.pia:38:3: proved: the postcondition holds [{{smt|intervals}}]
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
