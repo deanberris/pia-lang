@@ -53,7 +53,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds that count calls to a function such as `less` (ADR 0062 step 2), and `spread` on the GPU.
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, cost bounds that count calls to a function such as `less` (ADR 0062 step 2), functions stored in data and generic lambdas that capture, collectives, and `@place(auto)`. Recursive types now compile, and a `spread` runs on the GPU under `@place(gpu)`; [docs/features.md](../../docs/features.md) lists everything built.
 
 ## From C and C++
 
