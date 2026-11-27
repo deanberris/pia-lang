@@ -53,7 +53,7 @@ let sqrt (x : f64) : f64
 - **Substitute:** apply the function's rule when `--lower=on` (the default) and the target supports the rule's dialects.
 - **Expand:** otherwise call or inline the body. A tensor operand goes back through `bufferization.to_memref` into the body's buffer field.
 
-Substitution runs before bufferisation, so bufferisation only sees upstream ops, and ADR 0074's no-allocation check is unchanged. `--lower=off` means "always expand", which keeps ADR 0065's differential tests.
+Substitution runs before bufferisation, so bufferisation only sees upstream ops. "After the vectoriser" is for scalar rules. A tensor rule substitutes `linalg.matmul`, `linalg.generic` and the like, which still need linalg's own tiling and vectorisation. So the linalg pipeline, with ADR 0065's `@schedule`, runs after `pia-lib-lower` and before one-shot bufferisation, and a substituted op is never left unvectorised. ADR 0074's no-allocation check runs on both paths. On the expand path, the operands go through `to_memref` into a body that writes to the destination's buffer, so an expansion cannot quietly copy either. `--lower=off` means "always expand", which keeps ADR 0065's differential tests.
 
 ### 4. Each rule's correctness is proved once, whether or not it is applied
 
