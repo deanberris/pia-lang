@@ -1,0 +1,28 @@
+(* Errors in value parameters on types (ADR 0074, step 2).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let block = let (t : type) (n : usize) => type { cells : [t; n] }
+
+let small = let (n : u8) => type { cells : [u8; n] }
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 256 does not fit in u8
+*)
+let wide (b : small 256) : u8 = 0
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a value argument must be an integer literal, or a value parameter of the type being defined, for now
+*)
+let typed (b : block u8 u8) : u8 = 0
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'block' takes 2 arguments, given 1
+*)
+let short (b : block u8) : u8 = 0
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the value parameter 'k' must have an integer type, such as usize, for now
+*)
+let real_param = let (k : bool) => type { v : u8 }
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'n' is a value parameter, not a type
+*)
+let misuse = let (n : usize) => type { v : n }
+let uses (m : misuse 3) : u8 = 0

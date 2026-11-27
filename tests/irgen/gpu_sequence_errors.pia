@@ -1,0 +1,28 @@
+(* What a for loop placed on the GPU refuses (ADR 0068, section 9): a
+   device other than the GPU, another attribute, a step, and assigning a
+   variable declared outside it, since its body runs on the host before the
+   GPU does.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let on_cpu (v : borrowed inout mutable [u32]) : unit
+= for k in 0 .. 4 @place(cpu) do v.[0] <- 0 done
+
+let owned (v : borrowed inout mutable [u32]) : unit
+= for k in 0 .. 4 @owns(v, v) do v.[0] <- 0 done
+
+let stepped (v : borrowed inout mutable [u32]) : unit
+= for k in 0 .. 4 step 2 @place(gpu) do v.[0] <- 0 done
+
+let counted (v : borrowed inout mutable [u32]) : u32
+=
+  let s : mutable u32 = 0 in
+  for k in 0 .. 4 @place(gpu) do s <- s + 1 done;
+  s
+
+(*
+// CHECK: gpu_sequence_errors.pia:9:{{[0-9]+}}: error: @place takes one device, and only @place(gpu) is supported yet
+// CHECK: gpu_sequence_errors.pia:12:{{[0-9]+}}: error: the attribute @owns is not supported on a for loop
+// CHECK: gpu_sequence_errors.pia:15:{{[0-9]+}}: error: a for loop placed on the GPU steps by one
+// CHECK: gpu_sequence_errors.pia:20:{{[0-9]+}}: error: a for loop placed on the GPU cannot assign 's', which is declared outside it: its body runs on the host before the GPU runs (ADR 0068, section 9)
+*)

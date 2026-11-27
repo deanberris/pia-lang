@@ -119,6 +119,9 @@ interface PullWaves = sig
   let spec linked : (down : [usize]) -> (flux : [u32]) -> (seen : [u64]) -> (w : usize) -> bool
   let spec oterm : (order : [usize]) -> (down : [usize]) -> (flux : [u32]) -> (q : usize) -> u32
   let spec osum : (order : [usize]) -> (down : [usize]) -> (flux : [u32]) -> (p : usize) -> u64
+  let lemma osum_next : (order : [usize]) -> (down : [usize]) -> (flux : [u32]) -> (p : usize) -> unit
+    requires p < max u32 + 1
+    ensures osum order down flux (p + 1) = osum order down flux p + oterm order down flux p
   let lemma ready_init : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (w : usize)
       -> (bed0 : [u32]) -> (flux : [u32]) -> (gathered : [u64]) -> (newbed : [u32]) -> (newout : [u32])
       -> (lo : usize) -> (hi : usize) -> unit

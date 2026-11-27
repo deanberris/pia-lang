@@ -46,20 +46,21 @@ The file is in the namespace of the module, or of the file name (`sums` here). E
 opaque sum'outside : Int → Int
 
 def sum (n : Int) : Int :=
-  if h_req : (n ≥ 0) then
-    (if h_1 : (n = 0) then 0 else (n + (sum (n - 1))))
+  if h_req : (n ≥ (0 : Int)) then
+    (if h_1 : (n = (0 : Int)) then (0 : Int) else (n + (sum (n - (1 : Int)))))
   else sum'outside n
 termination_by (n).toNat
 decreasing_by all_goals first | omega | (simp_wf; omega)
 
 @[reducible] def sum_nonneg : Prop :=
   ∀ (n : Int),
-    (n ≥ 0) → ((sum n) ≥ 0)
+    (n ≥ (0 : Int)) → ((sum n) ≥ (0 : Int))
 ```
 
 - Lean functions are total, so outside its `requires` a spec function is an opaque constant, `sum'outside n`. Pia says nothing about it there, and so Lean can prove nothing about it either: give the lemma the `requires` its spec calls need. In a proof, the branch outside the precondition is closed by its contradictory hypothesis, as `omega` does below.
 - A `bool` spec function is a `Bool`: in a statement, `f x` reads `f x = true`, and `&&` inside a body is Lean's `&&` over `decide`.
 - `let` values are put in place of their names, so `omega` sees them when it proves that a recursion ends.
+- Every literal is an `Int`, `(0 : Int)`, since a term of literals alone would otherwise be a `Nat`, where `0 - 1 = 0`.
 
 ## 3. Write the proof
 
@@ -122,8 +123,19 @@ Each `by lean` lemma is one goal, `the Lean theorem 'T' proves 'l'`:
 | `failed ... [stale receipt]` | the lemma, or a spec function or record it uses, changed since the proof was checked | build the target again; fix the proof if Lean now rejects it |
 | `failed ... [receipt for another theorem]` | the receipt proves the lemma with another theorem than `by lean` names | rename one of them |
 | `failed ... [axiom X]` | the proof depends on an axiom other than Lean's own, `sorryAx` included | prove it without the axiom |
+| `failed ... [native_decide]` | the proof uses `native_decide` in a file not marked `@trusted` | prove it with `decide`, or mark the file `@trusted` |
 
-A proof may use Lean's axioms (`propext`, `Classical.choice`, `Quot.sound`) and `native_decide`, whose `Lean.ofReduceBool` trusts Lean's compiler. Anything else fails, both in the receipt writer and in `piac`.
+A proof may use Lean's axioms (`propext`, `Classical.choice`, `Quot.sound`). `native_decide`, which trusts Lean's compiler (its axioms are `Lean.ofReduceBool`, or, from Lean 4.36, `T._native.native_decide.ax_1_1` per use), is allowed only in a file marked `@trusted`, and is then a trusted item. Anything else fails, both in the receipt writer and in `piac`.
+
+## What the build records
+
+A proved `by lean` lemma is not trusted, but it rests on Lean's kernel and on piac's translation of its statement, so `--trust-report` lists it in a section of its own, and `--why` names the goals that use it:
+
+```sh
+piac --verify --trust-report --why --lean-receipt=bazel-bin/tests/lean/sums_proof.receipt sums.pia
+```
+
+Each object's certificate lists it too, as `proved lean <lemma> <statement hash> <theorem> <toolchain> <axioms>`, which `pia-cert dump` prints. Importers need no `trusting` for it. tests/lean/native_trusted.pia and native_untrusted.pia show `native_decide` with and without `@trusted`.
 
 Callers assume a `by lean` lemma's `ensures` whether or not its goal is proved, as for any lemma: the build still fails until it is. In the REPL and the language server there are no receipts, so these goals show as failed there.
 
