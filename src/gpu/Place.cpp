@@ -18,6 +18,7 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "mlir/Transforms/RegionUtils.h"
 #include "llvm/ADT/SetVector.h"
+#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -36,6 +37,15 @@ using mlir::Value;
 namespace arith = mlir::arith;
 namespace memref = mlir::memref;
 namespace scf = mlir::scf;
+
+template <typename OpTy, typename... Args>
+OpTy make(OpBuilder &b, Location loc, Args &&...args) {
+#if LLVM_VERSION_MAJOR >= 21
+  return OpTy::create(b, loc, std::forward<Args>(args)...);
+#else
+  return b.create<OpTy>(loc, std::forward<Args>(args)...);
+#endif
+}
 
 const char *const kRule =
     " (a spread placed on the GPU runs integer arithmetic, loads and stores "
@@ -99,7 +109,7 @@ mlir::LogicalResult simplifyBuffers(scf::ForOp f) {
     if (!index)
       return d.emitError("a buffer must be one-dimensional") << kRule;
     OpBuilder b(f);
-    Value len = b.create<memref::DimOp>(d.getLoc(), d.getSource(), *index);
+    Value len = make<memref::DimOp>(b, d.getLoc(), d.getSource(), *index);
     d.getResult().replaceAllUsesWith(len);
     d.erase();
   }
@@ -205,13 +215,13 @@ Value constantBytes(OpBuilder &b, mlir::ModuleOp module, Location loc,
   auto tensor =
       mlir::RankedTensorType::get({static_cast<int64_t>(bytes.size())}, i8);
   OpBuilder mb = OpBuilder::atBlockBegin(module.getBody());
-  mb.create<memref::GlobalOp>(
-      loc, name, mb.getStringAttr("private"), type,
+  make<memref::GlobalOp>(
+      mb, loc, name, mb.getStringAttr("private"), type,
       mlir::DenseElementsAttr::getFromRawBuffer(tensor, bytes),
       /*constant=*/true, /*alignment=*/mb.getI64IntegerAttr(16));
-  Value g = b.create<memref::GetGlobalOp>(loc, type, name);
-  Value p = b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, g);
-  return b.create<arith::IndexCastOp>(loc, b.getI64Type(), p);
+  Value g = make<memref::GetGlobalOp>(b, loc, type, name);
+  Value p = make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, g);
+  return make<arith::IndexCastOp>(b, loc, b.getI64Type(), p);
 }
 
 class Placer {
@@ -273,7 +283,7 @@ private:
     (*tmp)->setAttr(mlir::gpu::GPUDialect::getContainerModuleAttrName(),
                     mlir::UnitAttr::get(ctx));
     OpBuilder b = OpBuilder::atBlockBegin(tmp->getBody());
-    auto gm = b.create<mlir::gpu::GPUModuleOp>(loc, "pia_kernels");
+    auto gm = make<mlir::gpu::GPUModuleOp>(b, loc, "pia_kernels");
     gm->setAttr(mlir::spirv::getTargetEnvAttrName(), targetEnv(ctx));
 
     auto i64 = b.getI64Type();
@@ -292,21 +302,21 @@ private:
 
     b.setInsertionPointToStart(gm.getBody());
     auto kernel =
-        b.create<mlir::gpu::GPUFuncOp>(loc, name, b.getFunctionType(args, {}));
+        make<mlir::gpu::GPUFuncOp>(b, loc, name, b.getFunctionType(args, {}));
     kernel->setAttr(mlir::gpu::GPUDialect::getKernelFuncAttrName(),
                     b.getUnitAttr());
     kernel->setAttr(mlir::spirv::getEntryPointABIAttrName(),
                     mlir::spirv::getEntryPointABIAttr(ctx, {64, 1, 1}));
     mlir::Block &entry = kernel.getBody().front();
     OpBuilder kb = OpBuilder::atBlockEnd(&entry);
-    Value zero = kb.create<arith::ConstantIndexOp>(loc, 0);
+    Value zero = make<arith::ConstantIndexOp>(kb, loc, 0);
     auto scalar = [&](unsigned arg, Type want) -> Value {
-      Value v = kb.create<memref::LoadOp>(loc, entry.getArgument(arg),
-                                          mlir::ValueRange{zero});
+      Value v = make<memref::LoadOp>(kb, loc, entry.getArgument(arg),
+                                     mlir::ValueRange{zero});
       if (mlir::isa<mlir::IndexType>(want))
-        return kb.create<arith::IndexCastOp>(loc, want, v);
+        return make<arith::IndexCastOp>(kb, loc, want, v);
       if (want.isInteger(1))
-        return kb.create<arith::TruncIOp>(loc, want, v);
+        return make<arith::TruncIOp>(kb, loc, want, v);
       return v;
     };
     mlir::IRMapping map;
@@ -316,15 +326,15 @@ private:
                                     : scalar(i, captures[i].host.getType()));
     Value lo = scalar(captures.size(), kb.getIndexType());
     Value hi = scalar(captures.size() + 1, kb.getIndexType());
-    Value g = kb.create<mlir::gpu::GlobalIdOp>(loc, mlir::gpu::Dimension::x);
-    Value iv = kb.create<arith::AddIOp>(loc, g, lo);
-    Value in = kb.create<arith::CmpIOp>(loc, arith::CmpIPredicate::ult, iv, hi);
-    auto guard = kb.create<scf::IfOp>(loc, in, /*withElseRegion=*/false);
+    Value g = make<mlir::gpu::GlobalIdOp>(kb, loc, mlir::gpu::Dimension::x);
+    Value iv = make<arith::AddIOp>(kb, loc, g, lo);
+    Value in = make<arith::CmpIOp>(kb, loc, arith::CmpIPredicate::ult, iv, hi);
+    auto guard = make<scf::IfOp>(kb, loc, in, /*withElseRegion=*/false);
     map.map(f.getInductionVar(), iv);
     OpBuilder ib = guard.getThenBodyBuilder();
     for (Operation &op : f.getBody()->without_terminator())
       ib.clone(op, map);
-    kb.create<mlir::gpu::ReturnOp>(loc);
+    make<mlir::gpu::ReturnOp>(kb, loc);
 
     if (mlir::failed(lowerToSpirv(*tmp)))
       return f.emitError("the spread could not be lowered to SPIR-V for the "
@@ -364,36 +374,35 @@ private:
     OpBuilder b(f);
     auto i64 = b.getI64Type();
     auto i32 = b.getI32Type();
-    auto scope = b.create<memref::AllocaScopeOp>(loc, mlir::TypeRange{i32});
+    auto scope = make<memref::AllocaScopeOp>(b, loc, mlir::TypeRange{i32});
     b.setInsertionPointToStart(&scope.getBodyRegion().emplaceBlock());
     auto index = [&](int64_t v) -> Value {
-      return b.create<arith::ConstantIndexOp>(loc, v);
+      return make<arith::ConstantIndexOp>(b, loc, v);
     };
     auto word = [&](int64_t v) -> Value {
-      return b.create<arith::ConstantIntOp>(loc, i64, v);
+      return make<arith::ConstantIntOp>(b, loc, i64, v);
     };
     auto toI64 = [&](Value v) -> Value {
-      return b.create<arith::IndexCastOp>(loc, i64, v);
+      return make<arith::IndexCastOp>(b, loc, i64, v);
     };
 
     size_t n = captures.size() + 2;
     auto argsType = mlir::MemRefType::get({static_cast<int64_t>(3 * n)}, i64);
-    Value argv = b.create<memref::AllocaOp>(loc, argsType);
+    Value argv = make<memref::AllocaOp>(b, loc, argsType);
     unsigned slot = 0;
     auto put = [&](Value addr, Value bytes, bool written) {
       for (Value v : {addr, bytes, word(written ? 1 : 0)})
-        b.create<memref::StoreOp>(loc, v, argv,
-                                  mlir::ValueRange{index(slot++)});
+        make<memref::StoreOp>(b, loc, v, argv, mlir::ValueRange{index(slot++)});
     };
     auto scalar = [&](Value v, Type held) {
       if (mlir::isa<mlir::IndexType>(v.getType()))
-        v = b.create<arith::IndexCastOp>(loc, held, v);
+        v = make<arith::IndexCastOp>(b, loc, held, v);
       else if (v.getType() != held)
-        v = b.create<arith::ExtUIOp>(loc, held, v);
+        v = make<arith::ExtUIOp>(b, loc, held, v);
       auto type = mlir::MemRefType::get({1}, held);
-      Value cell = b.create<memref::AllocaOp>(loc, type);
-      b.create<memref::StoreOp>(loc, v, cell, mlir::ValueRange{index(0)});
-      Value p = b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, cell);
+      Value cell = make<memref::AllocaOp>(b, loc, type);
+      make<memref::StoreOp>(b, loc, v, cell, mlir::ValueRange{index(0)});
+      Value p = make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, cell);
       put(toI64(p), word(held.getIntOrFloatBitWidth() / 8), false);
     };
     for (const Capture &c : captures) {
@@ -403,20 +412,19 @@ private:
       }
       auto m = mlir::cast<mlir::MemRefType>(c.host.getType());
       int64_t width = m.getElementType().getIntOrFloatBitWidth() / 8;
-      auto meta = b.create<memref::ExtractStridedMetadataOp>(loc, c.host);
-      Value base =
-          b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, c.host);
-      Value off = b.create<arith::MulIOp>(loc, meta.getOffset(), index(width));
-      Value addr = b.create<arith::AddIOp>(loc, base, off);
+      auto meta = make<memref::ExtractStridedMetadataOp>(b, loc, c.host);
+      Value base = make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, c.host);
+      Value off = make<arith::MulIOp>(b, loc, meta.getOffset(), index(width));
+      Value addr = make<arith::AddIOp>(b, loc, base, off);
       Value bytes =
-          b.create<arith::MulIOp>(loc, meta.getSizes()[0], index(width));
+          make<arith::MulIOp>(b, loc, meta.getSizes()[0], index(width));
       put(toI64(addr), toI64(bytes), c.written);
     }
     scalar(f.getLowerBound(), i64);
     scalar(f.getUpperBound(), i64);
     Value count =
-        b.create<arith::SubIOp>(loc, f.getUpperBound(), f.getLowerBound());
-    Value threads = toI64(b.create<arith::MaxSIOp>(loc, count, index(0)));
+        make<arith::SubIOp>(b, loc, f.getUpperBound(), f.getLowerBound());
+    Value threads = toI64(make<arith::MaxSIOp>(b, loc, count, index(0)));
 
     std::string sym = "__pia_gpu_" + std::to_string(count_ - 1);
     Value lib = constantBytes(
@@ -426,20 +434,20 @@ private:
     Value kname = constantBytes(b, module_, loc, sym + "_name",
                                 llvm::ArrayRef<char>(name.data(), name.size()));
     Value argp =
-        toI64(b.create<memref::ExtractAlignedPointerAsIndexOp>(loc, argv));
+        toI64(make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, argv));
 
     auto runType =
         b.getFunctionType({i64, i64, i64, i64, i64, i64, i64}, {i32});
     if (!module_.lookupSymbol("pia_gpu_run")) {
       OpBuilder mb = OpBuilder::atBlockEnd(module_.getBody());
-      auto decl = mb.create<mlir::func::FuncOp>(loc, "pia_gpu_run", runType);
+      auto decl = make<mlir::func::FuncOp>(mb, loc, "pia_gpu_run", runType);
       decl.setPrivate();
     }
-    auto run = b.create<mlir::func::CallOp>(
-        loc, "pia_gpu_run", mlir::TypeRange{i32},
+    auto run = make<mlir::func::CallOp>(
+        b, loc, "pia_gpu_run", mlir::TypeRange{i32},
         mlir::ValueRange{lib, word(metallib.size()), kname, word(name.size()),
                          argp, word(n), threads});
-    b.create<memref::AllocaScopeReturnOp>(loc, run.getResults());
+    make<memref::AllocaScopeReturnOp>(b, loc, run.getResults());
 
     status->getResult(0).replaceAllUsesWith(scope.getResult(0));
     status->erase();

@@ -1,6 +1,7 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_python//python:defs.bzl", "py_test")
 load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools:copts.bzl", "PIA_COPTS")
 
 # `pia repl` end to end, through the JSON protocol and a pipe.
 # It verifies and JITs dozens of cells, so it runs in shards (each shard
@@ -30,6 +31,7 @@ py_test(
 cc_test(
     name = "kernel_test",
     srcs = ["kernel_test.cpp"],
+    copts = PIA_COPTS,
     deps = [
         "//src/repl",
         "@googletest//:gtest_main",

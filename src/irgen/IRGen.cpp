@@ -1393,44 +1393,54 @@ class Gen {
                       : genExpr(*bodyPtr, sig.result);
     spread_.reset();
     if (!body) return;
-    if (!isSpec && !ghost_)
-      for (size_t i : threaded(sig))
-        if (BindingPtr b = lookup(sig.params[i].name))
-          for (const BindingPtr &l : b->lenders)
-            if (l->region && !l->regionOf.empty() &&
-                l->regionOf != sig.params[i].name) {
-              fail(bodyNode, "'" + name + "' stores in '" + b->name +
-                                 "' a value borrowed from what '" +
-                                 l->regionOf + "' borrows from; give both "
-                                 "one region, as in '(r : region)', with " +
-                                 "the region in both their types");
-              return;
-            } else if (l->region && l->regionOf.empty() &&
-                       !llvm::is_contained(sig.params[i].regions, l->name)) {
-              fail(bodyNode, "'" + name + "' stores in '" + b->name +
-                                 "' a value borrowed from the region '" +
-                                 l->name + "', which its type does not "
-                                 "mention");
-              return;
-            } else if (!l->region && sig.params[i].lender.empty() &&
-                       !sig.params[i].regions.empty()) {
-              fail(bodyNode, "'" + name + "' stores in '" + b->name +
-                                 "' a value borrowed from '" + l->name +
-                                 "', which ends with '" + name + "'; '" +
-                                 b->name + "' may hold only loans from its "
-                                 "region '" + sig.params[i].regions[0] + "'");
-              return;
-            } else if (!l->region && l->name != sig.params[i].lender) {
-              fail(bodyNode, "'" + name + "' stores a value borrowed from '" +
-                                 l->name + "' in '" + b->name + "'; say so "
-                                 "in its parameter, as in '(" + b->name +
-                                 " : borrowed(" + l->name + ")" +
-                                 withoutBorrowed(sig.params[i].modifiers) +
-                                 " " + typeName(b->type) + ")'");
-              return;
-            }
-    if (!isSpec && !ghost_)
-      for (const BindingPtr &l : lendersOf(*bodyPtr))
+    if (!isSpec && !ghost_) {
+      for (size_t i : threaded(sig)) {
+        BindingPtr b = lookup(sig.params[i].name);
+        if (!b)
+          continue;
+        for (const BindingPtr &l : b->lenders) {
+          if (l->region && !l->regionOf.empty() &&
+              l->regionOf != sig.params[i].name) {
+            fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                               "' a value borrowed from what '" + l->regionOf +
+                               "' borrows from; give both "
+                               "one region, as in '(r : region)', with " +
+                               "the region in both their types");
+            return;
+          }
+          if (l->region && l->regionOf.empty() &&
+              !llvm::is_contained(sig.params[i].regions, l->name)) {
+            fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                               "' a value borrowed from the region '" +
+                               l->name +
+                               "', which its type does not "
+                               "mention");
+            return;
+          }
+          if (!l->region && sig.params[i].lender.empty() &&
+              !sig.params[i].regions.empty()) {
+            fail(bodyNode, "'" + name + "' stores in '" + b->name +
+                               "' a value borrowed from '" + l->name +
+                               "', which ends with '" + name + "'; '" +
+                               b->name +
+                               "' may hold only loans from its "
+                               "region '" +
+                               sig.params[i].regions[0] + "'");
+            return;
+          }
+          if (!l->region && l->name != sig.params[i].lender) {
+            fail(bodyNode, "'" + name + "' stores a value borrowed from '" +
+                               l->name + "' in '" + b->name +
+                               "'; say so "
+                               "in its parameter, as in '(" +
+                               b->name + " : borrowed(" + l->name + ")" +
+                               withoutBorrowed(sig.params[i].modifiers) + " " +
+                               typeName(b->type) + ")'");
+            return;
+          }
+        }
+      }
+      for (const BindingPtr &l : lendersOf(*bodyPtr)) {
         if (l->region && !l->regionOf.empty()) {
           fail(bodyNode, "'" + name + "' returns a value borrowed from what '" +
                              l->regionOf + "' borrows from; give '" +
@@ -1439,19 +1449,23 @@ class Gen {
                              "result type, as in ': borrowed(r) " +
                              typeName(body->type) + "'");
           return;
-        } else if (l->region && !llvm::is_contained(sig.resultRegions, l->name)) {
+        }
+        if (l->region && !llvm::is_contained(sig.resultRegions, l->name)) {
           fail(bodyNode, "'" + name + "' returns a value borrowed from the "
                              "region '" + l->name + "'; say so in its result "
                              "type, as in ': borrowed(" + l->name + ") " +
                              typeName(body->type) + "'");
           return;
-        } else if (!l->region && l->name != sig.resultLender) {
+        }
+        if (!l->region && l->name != sig.resultLender) {
           fail(bodyNode, "'" + name + "' returns a value borrowed from '" +
                              l->name + "'; say so in its result type, as in "
                              "': borrowed(" + l->name + ") " +
                              typeName(body->type) + "'");
           return;
         }
+      }
+    }
     if (!isSpec && !ghost_) {
       bool owned = true;
       for (const sema::Param &p : sig.params) {
@@ -2124,7 +2138,9 @@ class Gen {
   // A model defines each abstract function with the theory's type, its
   // sorts replaced by the model's (ADR 0036).
   void checkModels() {
-    for (const auto &[item, model] : theoryInfo_.modelOf) {
+    for (const auto &entry : theoryInfo_.modelOf) {
+      const std::string &item = entry.first;
+      const std::string &model = entry.second;
       if (theoryInfo_.obligations.count(item) ||
           theoryInfo_.witnesses.count(item))
         continue;
@@ -8138,8 +8154,8 @@ class Gen {
     for (const sema::FuncSig &r : promisedSigs_) {
       // A requirement's precondition is a goal at each call in the body
       // (genCall), and its axiom holds where the precondition does.
-      if (!r.result || mlir::isa<RecordType>(r.result) &&
-                           !standIns_.contains(r.result)) {
+      if (!r.result ||
+          (mlir::isa<RecordType>(r.result) && !standIns_.contains(r.result))) {
         notParametric(generic, "the requirement '" + r.name +
                                    "' returns a record");
         return;

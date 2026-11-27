@@ -1598,16 +1598,17 @@ void eraseSpecState(mlir::ModuleOp module) {
       if (!r->second.test(i))
         kept.push_back(call.getResult(i).getType());
     OpBuilder b(call);
-    auto fresh = b.create<mlir::func::CallOp>(call.getLoc(), call.getCallee(),
-                                              kept, call.getOperands());
+    auto fresh = make<mlir::func::CallOp>(b, call.getLoc(), call.getCallee(),
+                                          kept, call.getOperands());
     unsigned k = 0;
     for (unsigned i = 0; i < call.getNumResults(); ++i)
       if (!r->second.test(i))
         call.getResult(i).replaceAllUsesWith(fresh.getResult(k++));
     call.erase();
   }
-  for (auto &[op, r] : specResults) {
-    auto f = mlir::cast<mlir::func::FuncOp>(op);
+  for (auto &entry : specResults) {
+    auto f = mlir::cast<mlir::func::FuncOp>(entry.first);
+    const llvm::BitVector &r = entry.second;
     f.walk([&](mlir::func::ReturnOp ret) { ret->eraseOperands(r); });
     (void)f.eraseResults(r);
   }
@@ -1919,8 +1920,8 @@ static void lowerSpreads(mlir::ModuleOp module) {
   });
   for (mlir::scf::ForOp f : spreads) {
     mlir::OpBuilder b(f);
-    auto par = b.create<mlir::scf::ParallelOp>(
-        f.getLoc(), mlir::ValueRange{f.getLowerBound()},
+    auto par = make<mlir::scf::ParallelOp>(
+        b, f.getLoc(), mlir::ValueRange{f.getLowerBound()},
         mlir::ValueRange{f.getUpperBound()}, mlir::ValueRange{f.getStep()});
     mlir::Block *src = f.getBody();
     mlir::Block *dst = par.getBody();
