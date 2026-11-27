@@ -175,4 +175,12 @@ let get (s : [u8]) (v : Pia.Text.Json.Dom.json) : result point Pia.Text.Json.Sha
   if check_json_point s v then Ok (from_dom_json_point s v) else Err Nonconforming
 ```
 
+Every goal of the derived checks and conversions is proved where they are derived:
+
+```console
+$ piac --verify --iface-path=. shape.pia
+...
+102 proved, 0 failed, 0 skipped
+```
+
 `to_dom` writes its value with `@derive(json)`'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its `Unparsed` and `Unconforming` errors never happen, is not proved yet. Option, array and nested record fields, variants and recursive user types come next ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 5, 7 and 8).
