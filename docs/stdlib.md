@@ -554,7 +554,7 @@ The GIF and inflate codecs ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md
 - **`Pia.Image.Gif.Lzw`:** each code writes exactly the string that the dictionary in `Pia.Image.Gif.Spec` gives it. `decode_ref` also proves the whole-stream theorem. `Pia.Image.Gif.Ref` writes GIF89a's LZW reading of a code stream as a spec, and whenever x is what that reading gives for a stream and x fits in the output, decoding returns `Ok (len x)` with x in the output. The trace and x are spec parameters ([ADR 0058](adr/0058-spec-buffers.md)), so codegen erases them. `decode` is the same code with the check turned off.
 - **`Pia.Image.Gif.Decode`:** `info` accepts exactly the files that the block grammar accepts.
 - **`Pia.Image.Gif.Encode`:** the stream `encode_animation` writes parses with `info` and fits its proved size bound.
-- **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read. `kraft_room` shows that an over-subscribed set of code lengths can't build.
+- **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read, and fails only when no symbol's code is there. `prefix_free` proves that the canonical code is prefix-free, so the symbol `decode` returns is the only one it could be. `kraft_room` shows that an over-subscribed set of code lengths can't build.
 - **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written.
 
 These large specs are `@opaque` ([ADR 0063](adr/0063-opaque-spec-functions.md)), and only small step lemmas reveal them. That keeps the loops' goals small enough to prove.
