@@ -18,7 +18,7 @@ let typed (b : block u8 u8) : u8 = 0
 *)
 let short (b : block u8) : u8 = 0
 
-(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the value parameter 'k' must have an integer type, such as usize, for now
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: the value parameter 'k' must have an integer type, such as usize, or be a shape, for now
 *)
 let real_param = let (k : bool) => type { v : u8 }
 
@@ -26,3 +26,9 @@ let real_param = let (k : bool) => type { v : u8 }
 *)
 let misuse = let (n : usize) => type { v : n }
 let uses (m : misuse 3) : u8 = 0
+
+let grid = let (s : shape) => type { v : u8 }
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a shape is a list of extents, as in '[4; 4]'
+*)
+let flat (g : grid 4) : u8 = 0
