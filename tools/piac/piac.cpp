@@ -810,11 +810,17 @@ proofEngines(const std::vector<pia::verify::Outcome> &outcomes,
     smt |= o.method == "smt";
     generic |= o.method == "generic";
     lean |= o.method == "lean";
-    // An axiom is named `Theory.axiom`, so its theory is what precedes
-    // the last dot.
+    // A theory's axiom is named `Theory.axiom`, so its theory is what
+    // precedes the last dot. The list also holds other facts, such as an
+    // `assume` named by its location, which are not engines.
     for (const std::string &axiom : o.axiomsUsed) {
+      bool name = !axiom.empty() &&
+                  std::all_of(axiom.begin(), axiom.end(), [](char c) {
+                    return std::isalnum(static_cast<unsigned char>(c)) ||
+                           c == '_' || c == '.' || c == '\'';
+                  });
       size_t dot = axiom.rfind('.');
-      if (dot != std::string::npos && dot > 0)
+      if (name && dot != std::string::npos && dot > 0)
         theories.insert(axiom.substr(0, dot));
     }
   }

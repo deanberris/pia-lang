@@ -114,8 +114,11 @@ std::string encode(const Certificate &c) {
     body += "solver " + s.name + " " + s.version + "\n";
   if (c.engines) {
     std::string list;
+    // An engine name is one word without commas, or the line would not
+    // read back, so a name that is not one is left out.
     for (const std::string &e : *c.engines)
-      list += (list.empty() ? "" : ",") + e;
+      if (!e.empty() && e.find_first_of(", \t\n") == std::string::npos)
+        list += (list.empty() ? "" : ",") + e;
     body += "engines " + (list.empty() ? "-" : list) + "\n";
   }
   for (const Interface &i : c.provides)
