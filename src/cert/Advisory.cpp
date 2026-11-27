@@ -440,4 +440,13 @@ std::optional<std::string> matches(const Certificate &c, const Advisory &a) {
   return why + ", and its proofs used " + join(used);
 }
 
+std::vector<const Advisory *> revoking(const Certificate &self,
+                                       const std::vector<Advisory> &all) {
+  std::vector<const Advisory *> out;
+  for (const Advisory &a : all)
+    if (matches(self, a))
+      out.push_back(&a);
+  return out;
+}
+
 } // namespace pia::cert

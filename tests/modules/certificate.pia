@@ -22,6 +22,14 @@
 // RUN: pia-cert check --advisories=%S/Inputs/advisories --accept-advisory=PIA-2099-0001:Image.Pixels --accept-advisory=PIA-2099-0001:Blend %t/pixels.o %t/blend.o | FileCheck --check-prefix=ACCEPTED %s
 // RUN: not pia-cert check --require-released %t/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=RELEASED %s
 
+   piac checks itself against the advisories too: --version lists those
+   that revoke it or its z3, and a run warns. A cache entry is keyed by
+   z3's version, so with z3 revoked every entry it could read came from
+   it, and the proof cache is neither read nor written.
+// RUN: piac --version --advisories=%S/Inputs/advisories | FileCheck --check-prefix=SELF %s
+// RUN: piac --verify --advisories=%S/Inputs/advisories --proof-cache=%t/cache %S/Inputs/pixels.pia 2>&1 | FileCheck --check-prefix=NOCACHE %s
+// RUN: test ! -e %t/cache
+
    Image.Pixels again, with a stronger precondition on luma: Blend was
    proved against the old interface, so it must be proved again.
 // RUN: mkdir %t/v2
@@ -60,6 +68,13 @@
 // ACCEPTED-NEXT: pia-cert: 2 objects link
 
 // RELEASED: '{{.*}}pixels.o' was built by an unstamped piac (dev), and --require-released refuses those
+
+// SELF: z3 {{[0-9]+\.[0-9]+\.[0-9]+}}
+// SELF-NEXT: revoked by PIA-2099-0001: Every z3 proves anything
+// SELF-NEXT: revoked by PIA-2099-0002: The fake engine proves anything
+
+// NOCACHE: piac: warning: PIA-2099-0001 revokes this piac (dev) or its z3 ({{[0-9.]+}}): Every z3 proves anything; pia-cert will refuse what it proves
+// NOCACHE: piac: warning: the proof cache is not used, since an advisory revokes z3
 
 // MISSING: '{{.*}}blend.o' imports 'Image.Pixels.Ops', which no object provides
 

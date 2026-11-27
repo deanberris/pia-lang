@@ -107,7 +107,7 @@ piac --verify-only=edges.pia:41 edges.pia         # the goals on one line
 
 Earlier goals are still assumed, as in a full run. Unselected goals are left out of the report, and a selective run never generates code.
 
-**Proof cache.** `--proof-cache=<dir>` keeps a file per proved goal, named by the SHA-256 of the Z3 version, the rlimit and the query. A goal whose query is unchanged is not solved again, and calls are encoded from contracts, so editing a callee's body does not invalidate its callers. Failures are never cached.
+**Proof cache.** `--proof-cache=<dir>` keeps a file per proved goal, named by the SHA-256 of the Z3 version, the rlimit and the query. A goal whose query is unchanged is not solved again, and calls are encoded from contracts, so editing a callee's body does not invalidate its callers. Failures are never cached. If an [advisory](advisories.md) revokes piac's Z3, every entry piac could read was made by that Z3, so it warns and neither reads nor writes the cache.
 
 **Statistics.** `--verify-stats` prints one line to stderr, here for `docs/streams.pia.md` on one thread:
 
