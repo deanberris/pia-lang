@@ -1140,6 +1140,12 @@ class Gen {
     }
     // An imported function's body is in another module (ADR 0039).
     if (hasFlag(item, "import")) {
+      // An imported spec function or lemma has no code in its module, so
+      // codegen erases calls to it too. The verifier sees an import.
+      if (isSpec || isLemma || isAxiom)
+        fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
+                                                         : isLemma ? "lemma"
+                                                                   : "axiom"));
       genImport(item, sig, fn);
       return;
     }

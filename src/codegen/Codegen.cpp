@@ -1757,6 +1757,16 @@ void eraseContracts(mlir::ModuleOp module) {
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     auto from = f->getAttrOfType<mlir::StringAttr>(PiaDialect::getImportAttrName());
     if (!from) continue;
+    // An imported lemma or spec function has no code in its module: it is
+    // erased here with the local ones, calls and all.
+    if (auto ghost = f->getAttrOfType<mlir::StringAttr>("pia.import_ghost")) {
+      f->setAttr(ghost.getValue() == "spec"    ? PiaDialect::getSpecAttrName()
+                 : ghost.getValue() == "lemma" ? PiaDialect::getLemmaAttrName()
+                                               : PiaDialect::getAxiomAttrName(),
+                 mlir::UnitAttr::get(module.getContext()));
+      f->removeAttr(PiaDialect::getImportAttrName());
+      continue;
+    }
     llvm::StringRef local = f.getSymName();
     local.consume_front(from.getValue());
     local.consume_front(".");
