@@ -136,6 +136,8 @@ class TypeResolver {
 
   // A record's field refinements, `{ p : real where 0 <= p }` (ADR 0036):
   // each field's name and its predicate, in which the name is the field.
+  // An empty name is the record's invariant, `type { ... } where p` (ADR
+  // 0074), in which every field's name is that field.
   using Refinements = std::vector<std::pair<std::string, const syntax::Node *>>;
   void refine(const std::string &record, Refinements r) {
     refinements_[record] = std::move(r);

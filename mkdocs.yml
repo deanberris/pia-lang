@@ -187,3 +187,4 @@ nav:
       - adr/0073-prover-identity-abi-version-and-advisories.md
       - adr/0074-library-types-tensors.md
       - adr/0075-codegen-benchmarks-against-c-cpp-rust-zig.md
+      - adr/0076-transparent-exports.md
