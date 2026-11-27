@@ -491,6 +491,16 @@ class Parser {
       return n;
     }
     if (accept(K::Eq)) {
+      // `= by lean Name`: a lemma proved in Lean (ADR 0061). `by` and `lean`
+      // are names elsewhere, so they are a body form only here.
+      if (flags.find("lemma") != std::string::npos && at(K::Ident) &&
+          text() == "by" && kind(1) == K::Ident && tok(1).text == "lean") {
+        SourceLoc at = loc();
+        take(); // by
+        take(); // lean
+        n->add(makeNode(N::ByLean, at, path()));
+        return n;
+      }
       body = seq();
     } else {
       body = splitBodyFromContract(*contracts);

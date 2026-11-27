@@ -105,6 +105,29 @@ let brighten (p : u8) : u8 = p +| 40
 
 Wrapping and saturating arithmetic are modelled exactly, so the postconditions above are proved too. In loops, LLVM vectorises saturating arithmetic into NEON's saturating instructions, such as `uqadd`.
 
+## Floats
+
+`f32` and `f64` are IEEE 754 floats, and strict: each operation is rounded once, to nearest, `a * b + c` is two roundings rather than a fused multiply-add, and subnormals are kept, so a result is the same bit for bit as C's built with `-ffp-contract=off`. A float literal has a decimal point or an exponent, and takes the float type its context expects, or a suffix such as `0.5f32`. An integer literal is never a float: write `2.0`, not `2`.
+
+Floats never mix with integers implicitly. A type applied to a value converts it: `f32 n` rounds an integer to the nearest float, `f64 x` widens an `f32`, and `i32 x` truncates a float toward zero. Truncating is a goal, since C leaves it undefined for a NaN or a value out of range, so the range is stated where the float comes from. `to_bits x` and `from_bits u` are the IEEE encoding as a `u32` or `u64`.
+
+```ocaml
+let mean (xs : [f32]) : f32
+  requires len xs > 0
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] done;
+  s / f32 (len xs)
+
+let to_byte (x : f64) : u8
+  requires -1.0 < x && x < 256.0
+= u8 x
+
+let abs32 (x : f32) : f32 = from_bits (to_bits x & 2147483647)
+```
+
+The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`. What `+` and `*` compute is not modelled yet, so a goal that depends on a sum's value fails rather than being proved wrongly; proving float kernels against real-valued specifications, with their rounding error, is [ADR 0038](adr/0038-float-kernels-against-real-theories.md), still to come.
+
 ## Arrays and slices
 
 `[T; n]` is an array of a fixed length `n`, and `[T]` is a slice whose length is known at run time as `len xs`. Both are indexed with `xs.[i]`, and every index is a goal: `0 <= i < len xs`.
@@ -139,6 +162,25 @@ let square (i : int{0..3}) : u16
 ```
 
 Constant data cannot be passed to an `out` or `inout` parameter. For now the elements must be integer literals.
+
+Arrays are values, so a function can return one. The caller makes room for it, and the result is a copy, never storage the callee owned:
+
+<!-- example: reversed.pia -->
+```ocaml
+let reversed (xs : [u8; 4]) : [u8; 4]
+  ensures forall (i in 0 .. 4). result.[i] = xs.[3 - i]
+= let r : mutable [u8; 4] = [0; 0; 0; 0] in
+  for i in 0 .. 4
+    invariant forall (j in 0 .. i). r.[j] = xs.[3 - j]
+  do r.[i] <- xs.[3 - i] done;
+  r
+
+let first_of_reversed (xs : [u8; 4]) : u8
+  ensures result = xs.[3]
+= let r = reversed xs in r.[0]
+```
+
+The caller sees only `reversed`'s contract, and that is enough for `first_of_reversed`.
 
 `abort ()` stops the program. Its precondition is `false`, so every `abort` is a goal that it is never reached: it marks a case the contracts rule out.
 
@@ -207,6 +249,8 @@ let wider (a : span) (b : span) : span
 
 `a * a` is still an error, since a length times a length is an area: a program writes that function itself.
 
+Two derives come from library modules, for programs that import them: `@derive(hash)` from Pia.Core.Hash, so `hash_all<span>` works and a span hashes as the u32 it holds, and `@derive(json)` from Pia.Text.Json.Derive, which writes and reads a span as the bare JSON number, `5`, not an object.
+
 A field of a mutable record can be assigned:
 
 ```ocaml
@@ -260,6 +304,62 @@ let roundtrip (x : u32) : u32
 ```
 
 A payload's type can be an integer, `bool`, a record, another variant or `unit`. Arrays and slices inside a variant are not supported yet. Patterns are a constructor with a name or `_` for its payload, `()` for a unit payload, a name that matches anything, or `_`.
+
+### Recursive types
+
+A type that refers to itself is declared `let rec`, and every type in a cycle of types that refer to each other must be. Each recursive occurrence sits inside an indirection, a `box` or a `vec`, so every type has a size, and at least one constructor must build a value without already having one ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)). Here a box is a record holding a slot, a slice of one element, as `Pia.Mem.Box`'s does:
+
+<!-- example: tree.pia -->
+```ocaml
+let box = let (t : type) => type { slot : [t] }
+
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(* The keys in a tree, capped at a million. *)
+let rec total (t : tree) : int{0..1000000} =
+  match t with
+  | Leaf -> 0
+  | Node n ->
+    let l = if len n.left.slot = 1 then total n.left.slot.[0] else 0 in
+    let r = if len n.right.slot = 1 then total n.right.slot.[0] else 0 in
+    let lr : int{0..2000000} = l + r in
+    if n.key <= 1000000 && lr <= 1000000 - n.key then lr + n.key else 1000000
+```
+
+`total` has no `decreases`: each call is on a value its argument holds, so the recursion is structural, and the verifier proves it ends:
+
+```console
+$ piac --verify tree.pia
+tree.pia:12:47: proved: the index is within bounds [smt]
+tree.pia:12:41: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+tree.pia:13:48: proved: the index is within bounds [smt]
+tree.pia:13:42: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+tree.pia:14:34: proved: '+' does not overflow int{0..2000000} [intervals]
+tree.pia:15:42: proved: '-' does not overflow u32 [smt]
+tree.pia:15:58: proved: '+' does not overflow u32 [smt]
+tree.pia:9:3: proved: the value fits in int{0..1000000} [smt]
+8 proved, 0 failed, 0 skipped
+```
+
+Other recursion takes a measure, which may be `depth t` or `size t`, spec-only `int`s that are smaller for a value's parts than for the value. The verifier treats a recursive value as an SMT datatype, so a goal knows which constructor built a value and what it holds. Forgetting `rec` is an error that says so:
+
+<!-- example: chain.pia -->
+<!-- expect: fail -->
+```ocaml
+let box = let (t : type) => type { slot : [t] }
+let chain = type | End | Link of box chain
+```
+
+```console
+$ piac --verify chain.pia
+chain.pia:2:1: error: 'chain' refers to itself; declare it 'let rec chain = ...' (ADR 0047)
+  let chain = type | End | Link of box chain
+  ^
+```
+
+A recursive value compiles to a struct of its tag and its constructors' payloads, with a box's slot as a pointer and a length into the memory its allocator lent. Building a node allocates its boxes explicitly, through its allocator, so every allocation is visible and can fail where it is made. Equality on recursive values, `@derive(eq)` for them, and dropping one that an allocator frees block by block come later.
 
 ## Generics
 
@@ -700,4 +800,4 @@ let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) :
   record_outflow grid (all_reduce add (map outflow_of grid))
 ```
 
-**Floats and SIMD vectors.** `f16`, `f32` and `f64` with strict IEEE semantics by default, `@finite` to prove no NaN or infinity appears, and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on records.
+**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, real-valued error bounds for float kernels (ADR 0038), and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on records.

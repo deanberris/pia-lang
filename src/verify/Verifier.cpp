@@ -171,6 +171,12 @@ std::string shiftClaim(Operation *op) {
   return "the shift amount is less than " + std::to_string(shiftWidth(op));
 }
 
+// `i32 x` of a float: the claim of its goal (Encoder::floatFits).
+std::string floatFitsClaim(FloatToIntOp op) {
+  return "the float is a number that fits in " + sema::typeName(op.getType()) +
+         " when truncated";
+}
+
 bool isContractSink(Operation *op) {
   return mlir::isa<contract::RequiresOp, contract::EnsuresOp,
                    contract::InvariantOp, contract::DecreasesOp,
@@ -1432,6 +1438,8 @@ class Encoder {
       if (c.getOverflow() == OverflowMode::proof && !c.isWidening())
         out.push_back({ObligationKind::nooverflow,
                        "the value fits in " + sema::typeName(c.getType())});
+    if (auto c = mlir::dyn_cast<FloatToIntOp>(op))
+      out.push_back({ObligationKind::nooverflow, floatFitsClaim(c)});
     if (auto t = mlir::dyn_cast<ToIndexOp>(op))
       if (t.getInput().getType().isSigned())
         out.push_back({ObligationKind::nooverflow, "the index is not negative"});
@@ -1920,6 +1928,11 @@ class Encoder {
                  "the value fits in " + sema::typeName(cv.getType()),
                  inRange(x, cv.getType()), false, {{"value", x}});
       }
+      if (auto fi = mlir::dyn_cast<FloatToIntOp>(op)) {
+        if (Value x = term(fi.getInput()))
+          goal(ObligationKind::nooverflow, op, floatFitsClaim(fi),
+               floatFits(x, fi.getInput().getType(), fi.getType()), false, {});
+      }
       if (auto ti = mlir::dyn_cast<ToIndexOp>(op)) {
         if (ti.getInput().getType().isSigned())
           if (Value x = term(ti.getInput()))
@@ -2263,8 +2276,21 @@ class Encoder {
 
   // A fresh array that holds a slice's elements, read from `root` at
   // `off`: what a callee sees as its parameter.
+  // Whether a term is the bit-vector constant 0.
+  static bool isZeroBV(Value v) {
+    auto c = v ? v.getDefiningOp<mlir::smt::BVConstantOp>() : nullptr;
+    return c && c.getValue().getValue().isZero();
+  }
+
   Value viewArray(Value root, Value off, Value len) {
     using P = mlir::smt::BVCmpPredicate;
+    // A view from 0 reads what its root does at each index below its
+    // length, and nothing else is read through it: it is the root. So
+    // `xs.[0 .. n]`, as an array is passed where a slice is wanted, is
+    // the same term in code and in a contract, and needs no fact, which a
+    // quantifier could not hold.
+    if (isZeroBV(off))
+      return root;
     Value v = declare(root.getType(), "", false);
     Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
     assertTerm(forallIndex([&](Value i) {
@@ -2297,12 +2323,12 @@ class Encoder {
   // Returns false for ops it does not model.
   // f32 and f64 (M11) before ADR 0038's encoding: a float is its bit
   // pattern, so a literal is exact and negation, which flips the sign bit,
-  // is too. The other operations are uninterpreted functions of the bits:
-  // the same operands give the same result, as IEEE 754 promises, and
-  // nothing else is known, so a goal that needs their values fails
-  // rather than being proved wrongly. `=` is IEEE equality, not equality of
-  // bits (NaN <> NaN, -0.0 = 0.0), so it is uninterpreted too, and `<>` is
-  // its negation; `>` and `>=` are `<` and `<=` swapped, as in IEEE 754.
+  // is too. IEEE equality and order are exact on the bits (floatOrder).
+  // Arithmetic and the conversion from an integer are uninterpreted
+  // functions of the bits: the same operands give the same result, as IEEE
+  // 754 promises, and nothing else is known, so a goal that needs their
+  // values fails rather than being proved wrongly. `to_bits` and
+  // `from_bits` are the bits themselves.
   Value floatSemantics(Operation *op, llvm::ArrayRef<Value> in) {
     auto name = [](Type t, llvm::StringRef what) {
       return ((t.isF32() ? "f32." : "f64.") + what).str();
@@ -2329,26 +2355,119 @@ class Encoder {
       return apply(name(t, what), {in[0], in[1]}, sortOf(t));
     }
     if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {
-      Type t = c.getLhs().getType();
       using P = mlir::arith::CmpFPredicate;
+      using B = mlir::smt::BVCmpPredicate;
       switch (c.getPredicate()) {
       case P::OEQ:
-        return apply(name(t, "eq"), {in[0], in[1]}, boolType());
+        return floatOrder(std::nullopt, in[0], in[1]);
       case P::UNE:
-        return notOf(apply(name(t, "eq"), {in[0], in[1]}, boolType()));
+        return notOf(floatOrder(std::nullopt, in[0], in[1]));
       case P::OLT:
-        return apply(name(t, "lt"), {in[0], in[1]}, boolType());
+        return floatOrder(B::slt, in[0], in[1]);
       case P::OLE:
-        return apply(name(t, "le"), {in[0], in[1]}, boolType());
+        return floatOrder(B::sle, in[0], in[1]);
       case P::OGT:
-        return apply(name(t, "lt"), {in[1], in[0]}, boolType());
+        return floatOrder(B::slt, in[1], in[0]);
       case P::OGE:
-        return apply(name(t, "le"), {in[1], in[0]}, boolType());
+        return floatOrder(B::sle, in[1], in[0]);
       default:
         return Value();
       }
     }
+    // Widening is exact and narrowing rounds, but neither is modelled yet.
+    if (mlir::isa<mlir::arith::ExtFOp, mlir::arith::TruncFOp>(op)) {
+      Type t = op->getResult(0).getType();
+      return apply(name(t, t.isF32() ? "of_f64" : "of_f32"), {in[0]},
+                   sortOf(t));
+    }
+    if (mlir::isa<IntToFloatOp>(op)) {
+      Type t = op->getResult(0).getType();
+      return apply(name(t, "of_int"), {in[0]}, sortOf(t));
+    }
+    // The truncation is one function of the float, whatever the target;
+    // its goal proved it lies in the target's range, which is assumed here
+    // by reading any other value as the range's low end.
+    if (auto c = mlir::dyn_cast<FloatToIntOp>(op)) {
+      Type ft = c.getInput().getType();
+      Value r = apply(name(ft, "trunc"), {in[0]}, bvType());
+      return ite(inRange(r, c.getType()), r, bv(c.getType().getLo()));
+    }
+    // An unsigned integer of the float's width, held at the encoding's.
+    if (mlir::isa<ToBitsOp>(op)) {
+      unsigned w = op->getOperand(0).getType().getIntOrFloatBitWidth();
+      Value zeros = create<mlir::smt::BVConstantOp>(APInt(width_ - w, 0));
+      return create<mlir::smt::ConcatOp>(zeros, in[0]);
+    }
+    if (mlir::isa<FromBitsOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      return create<mlir::smt::ExtractOp>(
+          mlir::smt::BitVectorType::get(ctx_, w), 0u, in[0]);
+    }
     return Value();
+  }
+
+  // IEEE 754 order on bits. A NaN, whose exponent is all ones and whose
+  // fraction is not zero, is unordered. Every other float has a key, its
+  // magnitude with the sign of the float, and the floats are ordered as
+  // their keys are as signed integers: -0.0 and 0.0 both have key 0, and
+  // the infinities are the keys past the largest finite magnitude. With
+  // `p` empty, IEEE equality.
+  Value floatOrder(std::optional<mlir::smt::BVCmpPredicate> p, Value a,
+                   Value c) {
+    unsigned w = mlir::cast<mlir::smt::BitVectorType>(a.getType()).getWidth();
+    Value ordered = andOf(notOf(floatNaN(a, w)), notOf(floatNaN(c, w)));
+    Value ka = floatKey(a, w), kc = floatKey(c, w);
+    return andOf(ordered, p ? cmp(*p, ka, kc) : eq(ka, kc));
+  }
+
+  Value floatMagnitude(Value x, unsigned w) {
+    Type t = mlir::smt::BitVectorType::get(ctx_, w);
+    Value mask = create<mlir::smt::BVConstantOp>(APInt::getSignedMaxValue(w));
+    return create<mlir::smt::BVAndOp>(t, x, mask);
+  }
+
+  Value floatNaN(Value x, unsigned w) {
+    APInt inf =
+        w == 32 ? APInt(32, 0x7f800000u) : APInt(64, 0x7ff0000000000000ull);
+    return cmp(mlir::smt::BVCmpPredicate::ugt, floatMagnitude(x, w),
+               create<mlir::smt::BVConstantOp>(inf));
+  }
+
+  Value floatKey(Value x, unsigned w) {
+    Type t = mlir::smt::BitVectorType::get(ctx_, w);
+    Value mag = floatMagnitude(x, w);
+    Value sign = create<mlir::smt::BVConstantOp>(APInt::getSignMask(w));
+    return ite(cmp(mlir::smt::BVCmpPredicate::uge, x, sign),
+               create<mlir::smt::BVNegOp>(t, mag), mag);
+  }
+
+  // The goal of `i32 x` for a float x: not NaN, and lo - 1 < x < hi + 1 for
+  // the target's range [lo, hi], so that truncation lands in it. Each bound
+  // is a float: the nearest one inside the open interval when lo - 1 or
+  // hi + 1 is not a float itself, compared inclusively, and the bound
+  // itself, compared strictly, when it is.
+  Value floatFits(Value x, Type ft, IntType rt) {
+    const llvm::fltSemantics &sem =
+        mlir::cast<mlir::FloatType>(ft).getFloatSemantics();
+    unsigned w = ft.getIntOrFloatBitWidth();
+    APInt lo = bound(rt.getLo(), 192) - 1;
+    APInt hi = bound(rt.getHi(), 192) + 1;
+    llvm::APFloat flo(sem), fhi(sem);
+    bool loExact = flo.convertFromAPInt(lo, /*IsSigned=*/true,
+                                        llvm::APFloat::rmTowardPositive) ==
+                   llvm::APFloat::opOK;
+    bool hiExact = fhi.convertFromAPInt(hi, /*IsSigned=*/true,
+                                        llvm::APFloat::rmTowardNegative) ==
+                   llvm::APFloat::opOK;
+    using B = mlir::smt::BVCmpPredicate;
+    Value kx = floatKey(x, w);
+    Value kl =
+        floatKey(create<mlir::smt::BVConstantOp>(flo.bitcastToAPInt()), w);
+    Value kh =
+        floatKey(create<mlir::smt::BVConstantOp>(fhi.bitcastToAPInt()), w);
+    Value above = loExact ? cmp(B::sgt, kx, kl) : cmp(B::sge, kx, kl);
+    Value below = hiExact ? cmp(B::slt, kx, kh) : cmp(B::sle, kx, kh);
+    return andOf(notOf(floatNaN(x, w)), andOf(above, below));
   }
 
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
@@ -4140,8 +4259,9 @@ class Encoder {
           Value off = d.views.lookup(actual);
           if (!off) off = views_.lookup(actual);
           // A view needs a fact about a fresh array, which a quantifier
-          // cannot hold.
-          if (!off || quantifierDepth_ > 0) return Value();
+          // cannot hold, unless it starts at 0 and is its root.
+          if (!off || (quantifierDepth_ > 0 && !isZeroBV(off)))
+            return Value();
           arr = viewArray(arr, off, len);
         }
         args.arrays[formal] = arr;
@@ -6239,6 +6359,43 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     // A law or requirement contract of an imported concept, at a type of
     // its module, was proved by that module (ADR 0039, step 6).
     if (fn->hasAttr("pia.certified")) continue;
+    // A lemma proved in Lean is proved by its receipt, which `piac`
+    // checked against the statement it has now (ADR 0061).
+    if (auto theorem = fn->getAttrOfType<mlir::StringAttr>("pia.lean")) {
+      std::string lemma =
+          fn->getAttrOfType<mlir::StringAttr>("pia.lean_lemma").str();
+      Outcome out;
+      out.kind = contract::ObligationKind::ensures;
+      out.where = formatLoc(fn.getLoc());
+      out.function = fn.getSymName().str();
+      out.claim =
+          "the Lean theorem '" + theorem.str() + "' proves '" + lemma + "'";
+      auto proof = options.leanProofs.find(lemma);
+      if (proof != options.leanProofs.end() && proof->second.proved) {
+        out.status = Status::Proved;
+        out.method = "lean";
+      } else {
+        out.status = Status::Failed;
+        out.method = proof == options.leanProofs.end() ? "no receipt"
+                                                       : proof->second.why;
+        out.hint = proof == options.leanProofs.end()
+                       ? "build its pia_lean_proof target and pass the "
+                         "receipt with --lean-receipt=<file>"
+                       : proof->second.hint;
+      }
+      if (!options.only.empty() &&
+          std::none_of(options.only.begin(), options.only.end(),
+                       [&](const std::string &spec) {
+                         return selects(spec, out.where, out.function);
+                       })) {
+        ++st.unselected;
+        continue;
+      }
+      ++st.goals;
+      opOf.push_back(fn.getOperation());
+      outcomes.push_back(std::move(out));
+      continue;
+    }
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;

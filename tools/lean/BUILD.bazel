@@ -1,0 +1,11 @@
+load("@rules_python//python:defs.bzl", "py_binary")
+
+# Lemmas proved in Lean (ADR 0061): the action that checks their proofs and
+# writes receipts, used by pia_lean_proof in lean.bzl.
+exports_files(["lean.bzl"])
+
+py_binary(
+    name = "lean_proof",
+    srcs = ["lean_proof.py"],
+    visibility = ["//visibility:public"],
+)

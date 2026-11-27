@@ -1,11 +1,13 @@
 (* f32 and f64 in proofs (M11), before ADR 0038's real-valued encoding. A
-   float is its IEEE bit pattern, so literals are exact and negation, which
-   flips the sign bit, is too. The other operations, and IEEE equality and
-   order, are uninterpreted: what follows from the same operands giving the
-   same result is proved, and anything that needs their values fails
+   float is its IEEE bit pattern, so literals are exact, negation flips the
+   sign bit, `to_bits` and `from_bits` are the bits themselves, and IEEE
+   equality and order are exact. Arithmetic and the conversion from an
+   integer are uninterpreted: what follows from the same operands giving
+   the same result is proved, and anything that needs their values fails
    rather than being proved wrongly. No float operation raises a goal of
    its own, since IEEE 754 defines every result, infinities and NaN
-   included.
+   included; only truncating to an integer does, for C leaves a NaN or an
+   out-of-range float undefined.
 // RUN: not piac --verify %s 2>&1 | FileCheck %s
 *)
 
@@ -26,6 +28,18 @@ let lemma neg_neg (x : f64) (y : f64) : unit
   ensures (-(-x) < y) = (x < y)
 = ()
 
+(* The order is IEEE's: negation reverses it, -0.0 = 0.0, and a float is
+   equal to itself exactly when it is not NaN.
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma order (x : f32) (y : f32) : unit
+  ensures (x < y) = (-y < -x)
+  ensures -0.0f32 = 0.0f32 && (-0.0f32 < 0.0f32) = false
+  ensures (x < x) = false && (x = x) = (x <= x)
+= ()
+
 (* The same operation on the same operands has the same result.
 // CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
 *)
@@ -40,6 +54,17 @@ let lemma literal_bits (x : f32) : unit
   ensures (x < 0.5) = (x < 5.0e-1f32)
 = ()
 
+(* The bits round-trip, and the sign is the top one.
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: floats.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma bits (x : f64) (u : u32) : unit
+  ensures to_bits (from_bits u) = u
+  ensures to_bits (from_bits (to_bits x)) = to_bits x
+  ensures (to_bits x >= 9223372036854775808) <> (to_bits (-x) >= 9223372036854775808)
+= ()
+
 (* Nothing is known yet about what `+` computes, so commutativity, true of
    IEEE addition, is not proved until ADR 0038's encoding lands.
 // CHECK: floats.pia:[[@LINE+3]]:{{[0-9]+}}: failed: the postcondition holds
@@ -48,14 +73,41 @@ let lemma commutes (x : f32) (y : f32) : unit
   ensures (x + y < 1.0) = (y + x < 1.0)
 = ()
 
-(* A NaN is neither below nor at least zero, and the counterexample shows
-   a float.
+(* A NaN is neither below nor at least zero, and the counterexample is one.
 // CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
-// CHECK-NEXT: counterexample: x = {{.+}}
+// CHECK-NEXT: counterexample: x = nan
 *)
 let lemma ordered (x : f32) : unit
   ensures x < 0.0 || 0.0 <= x
 = ()
+
+(* Truncating to an integer is a goal: not NaN, and in range once
+   truncated. -1.0 < x is enough for a u8, since -0.9 truncates to 0.
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the float is a number that fits in u8 when truncated
+*)
+let byte (x : f64) : u8
+  requires -1.0 < x && x < 256.0
+= u8 x
+
+(* -2^31 is an f32, and the first f32 past i32's greatest value is 2^31.
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the float is a number that fits in i32 when truncated
+*)
+let word (x : f32) : i32
+  requires -2147483648.0 <= x && x < 2147483648.0
+= i32 x
+
+(* x <= 2^31 lets in 2^31 itself, which does not fit.
+// CHECK: floats.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the float is a number that fits in i32 when truncated
+*)
+let past (x : f32) : i32
+  requires -2147483648.0 <= x && x <= 2147483648.0
+= i32 x
+
+(* `<>` holds of a NaN, so testing it rules nothing out: NaN, and every
+   float past 255, still reach the conversion.
+// CHECK: floats.pia:[[@LINE+2]]:{{[0-9]+}}: failed: the float is a number that fits in u8 when truncated
+*)
+let unchecked (x : f32) : u8 = if x <> 300.0 then u8 x else 0
 
 (* Index goals in a float loop are proved as in any other.
 // CHECK: floats.pia:[[@LINE+7]]:{{[0-9]+}}: proved: the index is within bounds
@@ -78,5 +130,5 @@ let halves (x : f64) : bool
 = half x <= half x
 
 (*
-// CHECK: {{[0-9]+}} proved, 2 failed, 0 skipped
+// CHECK: {{[0-9]+}} proved, 4 failed, 0 skipped
 *)

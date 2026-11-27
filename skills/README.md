@@ -10,6 +10,7 @@ These are [Agent Skills](https://agentskills.io): folders with a `SKILL.md` that
 | [pia-contracts](pia-contracts/SKILL.md) | writing `requires`, `ensures`, loop invariants and `decreases`, and fixing each kind of failed goal |
 | [piac-verify](piac-verify/SKILL.md) | `piac --verify`: the goal report, counterexamples, `--allow-unproved`, solver limits, other modes |
 | [piac-build](piac-build/SKILL.md) | compiling and linking: emit modes, targets, modules and interfaces, C interop, the Bazel rules, trust reports and proof certificates |
+| [pia-lean](pia-lean/SKILL.md) | proving a lemma in Lean 4 when Z3 cannot: `= by lean T`, `--emit=lean`, the proof file, `pia_lean_proof` receipts and stale receipts |
 | [pia-fast-proofs](pia-fast-proofs/SKILL.md) | proving only what changed: `--verify-only`, `--proof-cache`, `--jobs`, `--verify-stats`, slicing |
 | [pia-mcp](pia-mcp/SKILL.md) | driving a verified session through the `pia mcp` server's `execute` and `poll` tools |
 | [pia-repl](pia-repl/SKILL.md) | `pia repl` from a shell: piped cells, JSON lines, `:redef`, state with invariants and `old`, tasks |
@@ -32,7 +33,8 @@ Keep each skill short and about one job. A Pia example in a ` ```ocaml ` block m
 
 ```sh
 python3 tools/skills/check.py          # the pack is complete: wiring, manifests, keywords, piac flags
+python3 tools/docs/check.py            # the public docs keep up: keywords, flags, attributes, feature tests, modules
 bazel test //tests/docs:skills_test    # every example proves and every command prints what it shows
 ```
 
-**Feature changes update the pack.** A pull request that adds or changes a language feature, a keyword, a `piac` flag or a lint updates the skill that teaches it in the same pull request: the syntax table in `pia-language`, the feature map in `pia-porting` (moving the feature out of "Designed, not built yet" when it lands), `pia-idioms` for a lint, `piac-build` or `piac-verify` for a flag. `tools/skills/check.py` fails when a keyword or flag is in no skill. A new skill also needs a line in `tests/docs/BUILD.bazel`, the tables here and in `docs/agents.md`, a `.claude/skills` link and a `CODEMAP.md` line, which the check lists. A new `##` section in `pia-language`, `pia-contracts` or `pia-mcp` is also a `pia mcp` help topic: map it in `src/repl/embed_guide.py`.
+**Feature changes update the pack.** A pull request that adds or changes a language feature, a keyword, a `piac` flag or a lint updates the skill that teaches it in the same pull request: the syntax table in `pia-language`, the feature map in `pia-porting` (moving the feature out of "Designed, not built yet" when it lands), `pia-idioms` for a lint, `piac-build` or `piac-verify` for a flag. `tools/skills/check.py` fails when a keyword or flag is in no skill. A new skill also needs a line in `tests/docs/BUILD.bazel`, the tables here and in `docs/agents.md`, a `.claude/skills` link and a `CODEMAP.md` line, which the check lists. The same pull request updates the public docs too (`docs/features.md`, `docs/library.md`, the page that teaches the feature, and `docs/status.md`); `tools/docs/check.py` fails until it does. A new `##` section in `pia-language`, `pia-contracts` or `pia-mcp` is also a `pia mcp` help topic: map it in `src/repl/embed_guide.py`.

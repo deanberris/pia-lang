@@ -1,0 +1,13 @@
+(* A lemma proved in Lean (ADR 0061): `= by lean Name` names the Lean
+   theorem. `by` and `lean` are ordinary names everywhere else. *)
+let rec spec sum (n : int) : int
+  requires n >= 0
+  decreases n
+= if n = 0 then 0 else n + sum (n - 1)
+
+let lemma sum_nonneg (n : int) : unit
+  requires n >= 0
+  ensures sum n >= 0
+= by lean Proofs.sum_nonneg
+
+let by (lean : u8) : u8 = lean

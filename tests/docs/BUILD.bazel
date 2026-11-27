@@ -81,6 +81,7 @@ SKILLS = [
     "//skills:pia-fast-proofs/SKILL.md",
     "//skills:pia-idioms/SKILL.md",
     "//skills:pia-language/SKILL.md",
+    "//skills:pia-lean/SKILL.md",
     "//skills:pia-mcp/SKILL.md",
     "//skills:pia-porting/SKILL.md",
     "//skills:pia-proof-debugging/SKILL.md",

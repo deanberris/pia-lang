@@ -555,9 +555,10 @@ interfaceArtifacts(const Node &program, std::string_view source, bool literate,
     }
     // Each exported definition must read back as it was written: importers
     // instantiate and run what they parse, and a body read into a contract
-    // is a different function from the one proved (#259).
+    // is a different function from the one proved (#259). The artifact is
+    // plain Pia even when the module is literate, so it is parsed as such.
     Diagnostics reread;
-    NodePtr back = parseProgram(a.text, reread, literate);
+    NodePtr back = parseProgram(a.text, reread);
     if (reread.hasErrors() || !back) {
       diags.error(item->loc, "the interface '" + item->text + "' does not "
                              "parse back from its text" +

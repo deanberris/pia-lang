@@ -16,6 +16,7 @@ They live in [`skills/`](https://github.com/deanberris/pia-lang/tree/main/skills
 | [`pia-mcp`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-mcp/SKILL.md) | a `pia mcp` server is connected: how `execute` and `poll` behave, reading results, the working loop, long-running cells |
 | [`pia-repl`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-repl/SKILL.md) | no MCP connection: `pia repl` on a pipe or with JSON lines, `:redef`, state with invariants and `old`, tasks, saving a session as a test |
 | [`pia-proof-debugging`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-proof-debugging/SKILL.md) | "is this C, C++ or Rust correct?": port it into cells, classify each counterexample, check assumptions against callers, report a verdict |
+| [`pia-lean`](https://github.com/deanberris/pia-lang/blob/main/skills/pia-lean/SKILL.md) | proving a lemma in Lean 4 when Z3 cannot: `= by lean T`, `piac --emit=lean`, the proof file, `pia_lean_proof` receipts, stale receipts |
 
 
 ## Installing them
@@ -54,7 +55,7 @@ An agent without skill support can be given a `SKILL.md` as plain instructions. 
 
 ### Keeping them current
 
-The skills are tested like the documentation. `//tests/docs:skills_test` proves every Pia example in them and runs every `piac` and `pia` command they show against the current compiler, and `tools/skills/check.py`, which CI runs on every pull request, fails when a keyword the lexer knows or a flag `piac` accepts is in no skill, or when a skill is missing from the plugin, the tests or these tables. A pull request that adds a feature updates the skill that teaches it ([CONTRIBUTORS.md](https://github.com/deanberris/pia-lang/blob/main/CONTRIBUTORS.md)).
+The skills are tested like the documentation. `//tests/docs:skills_test` proves every Pia example in them and runs every `piac` and `pia` command they show against the current compiler, and `tools/skills/check.py`, which CI runs on every pull request, fails when a keyword the lexer knows or a flag `piac` accepts is in no skill, or when a skill is missing from the plugin, the tests or these tables. `tools/docs/check.py` does the same for these pages: a feature, flag or library module that no public page mentions fails it. A pull request that adds a feature updates the skill that teaches it, and the documentation ([CONTRIBUTORS.md](https://github.com/deanberris/pia-lang/blob/main/CONTRIBUTORS.md)).
 
 ## What a session looks like
 
