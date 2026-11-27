@@ -74,6 +74,7 @@ nav:
   - "Demo: sediment by basin, in parallel": basins.pia.md
   - "Demo: sediment in pull form": pull.pia.md
   - "Demo: D8 directions and the picture on the GPU": placed.pia.md
+  - "Demo: the sediment pull step on the GPU": pull_gpu.pia.md
   - A tour of Pia: tour.md
   - Feature index: features.md
   - The standard library today: library.md

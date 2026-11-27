@@ -55,16 +55,17 @@ pia_object(
 )
 
 # Sediment in pull form, waves of a spread, proved equal to the sequential
-# step (docs/pull.pia.md).
-pia_object(
-    name = "pull_obj",
+# step (docs/pull.pia.md). A module library, since the GPU step imports its
+# PullWaves interface.
+pia_library(
+    name = "pull",
     src = "//docs:pull.pia.md",
     target_compatible_with = PIA_TARGETS,
 )
 
 cc_library(
     name = "streams_pia",
-    srcs = [":basins_obj", ":gif", ":pull_obj", ":sediment_obj", ":streams_obj"],
+    srcs = [":basins_obj", ":gif", ":pull", ":sediment_obj", ":streams_obj"],
     hdrs = ["pia_streams.h"],
     target_compatible_with = PIA_TARGETS,
 )
@@ -160,17 +161,35 @@ pia_object(
     target_compatible_with = APPLE_SILICON,
 )
 
+# The sediment pull step with each wave on the GPU (docs/pull_gpu.pia.md),
+# which imports the commit pass and its proof from :pull.
+pia_library(
+    name = "pull_gpu",
+    src = "//docs:pull_gpu.pia.md",
+    tags = [
+        "no-sandbox",
+        "requires-metal",
+    ],
+    target_compatible_with = APPLE_SILICON,
+    deps = [":pull"],
+)
+
+# It links the stages it runs rather than :streams_pia, which also holds
+# :pull's object, which :pull_gpu brings.
 cc_binary(
     name = "srtm_gpu",
     srcs = [
+        "pia_streams.h",
         "srtm_gpu.c",
         ":placed_obj",
+        ":pull_gpu",
+        ":sediment_obj",
+        ":streams_obj",
     ],
     tags = ["requires-metal"],
     target_compatible_with = APPLE_SILICON,
     deps = [
         ":demo_io",
-        ":streams_pia",
         "//src/runtime/metal",
         "@llvm-project//mlir:mlir_async_runtime",
     ],

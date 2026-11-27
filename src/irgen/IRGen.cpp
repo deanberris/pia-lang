@@ -1140,6 +1140,12 @@ class Gen {
     }
     // An imported function's body is in another module (ADR 0039).
     if (hasFlag(item, "import")) {
+      // An imported spec function or lemma has no code in its module, so
+      // codegen erases calls to it too. The verifier sees an import.
+      if (isSpec || isLemma || isAxiom)
+        fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
+                                                         : isLemma ? "lemma"
+                                                                   : "axiom"));
       genImport(item, sig, fn);
       return;
     }
@@ -1196,6 +1202,16 @@ class Gen {
     if (isAxiom) {
       fn->setAttr(PiaDialect::getAxiomAttrName(), b_.getUnitAttr());
       genAxiom(item, sig);
+      return;
+    }
+
+    // `= by lean T`: a lemma proved in Lean (ADR 0061). Here it is only its
+    // contracts, which callers assume; the verifier checks its receipt
+    // where it would prove a body.
+    if (isLemma && item.kids[3]->kind == NodeKind::ByLean) {
+      fn->setAttr("pia.lean", b_.getStringAttr(item.kids[3]->text));
+      fn->setAttr("pia.lean_lemma", b_.getStringAttr(item.text));
+      genLeanLemma(item, sig);
       return;
     }
 
@@ -1983,6 +1999,31 @@ class Gen {
         terms.push_back(v->value);
       }
       create<contract::TriggerOp>(loc(*t), terms);
+    }
+    create<mlir::func::ReturnOp>(loc(item), mlir::ValueRange{});
+  }
+
+  // A lemma proved in Lean (ADR 0061): its preconditions and
+  // postconditions, with no body, like an axiom's. Its proof is the Lean
+  // theorem its receipt names, for the statement `piac --emit-lean` wrote.
+  void genLeanLemma(const Node &item, const sema::FuncSig &sig) {
+    if (sig.result && !isUnit(sig.result)) {
+      fail(item, "a lemma returns unit: what it proves goes in 'ensures'");
+      return;
+    }
+    for (const syntax::NodePtr &c : item.kids[2]->kids) {
+      if (c->kind != NodeKind::Requires && c->kind != NodeKind::Ensures) {
+        fail(*c, "a lemma proved in Lean states only 'requires' and "
+                 "'ensures'");
+        return;
+      }
+      R p = genPredicate(*c->kids[0]);
+      if (!p)
+        return;
+      if (c->kind == NodeKind::Requires)
+        create<contract::RequiresOp>(loc(*c), p->value);
+      else
+        create<contract::EnsuresOp>(loc(*c), p->value);
     }
     create<mlir::func::ReturnOp>(loc(item), mlir::ValueRange{});
   }

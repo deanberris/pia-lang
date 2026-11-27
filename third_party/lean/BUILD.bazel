@@ -1,0 +1,12 @@
+# The Lean 4 toolchain for the machine that runs an action (ADR 0061). The
+# releases are pinned in MODULE.bazel.
+exports_files(["BUILD.overlay"])
+
+alias(
+    name = "lean",
+    actual = select({
+        "//tools/piac:linux_x86_64": "@lean_toolchain_linux_x86_64//:files",
+        "//tools/piac:macos_arm64": "@lean_toolchain_macos_arm64//:files",
+    }),
+    visibility = ["//visibility:public"],
+)

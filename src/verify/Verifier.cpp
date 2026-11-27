@@ -6374,6 +6374,43 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
     // A law or requirement contract of an imported concept, at a type of
     // its module, was proved by that module (ADR 0039, step 6).
     if (fn->hasAttr("pia.certified")) continue;
+    // A lemma proved in Lean is proved by its receipt, which `piac`
+    // checked against the statement it has now (ADR 0061).
+    if (auto theorem = fn->getAttrOfType<mlir::StringAttr>("pia.lean")) {
+      std::string lemma =
+          fn->getAttrOfType<mlir::StringAttr>("pia.lean_lemma").str();
+      Outcome out;
+      out.kind = contract::ObligationKind::ensures;
+      out.where = formatLoc(fn.getLoc());
+      out.function = fn.getSymName().str();
+      out.claim =
+          "the Lean theorem '" + theorem.str() + "' proves '" + lemma + "'";
+      auto proof = options.leanProofs.find(lemma);
+      if (proof != options.leanProofs.end() && proof->second.proved) {
+        out.status = Status::Proved;
+        out.method = "lean";
+      } else {
+        out.status = Status::Failed;
+        out.method = proof == options.leanProofs.end() ? "no receipt"
+                                                       : proof->second.why;
+        out.hint = proof == options.leanProofs.end()
+                       ? "build its pia_lean_proof target and pass the "
+                         "receipt with --lean-receipt=<file>"
+                       : proof->second.hint;
+      }
+      if (!options.only.empty() &&
+          std::none_of(options.only.begin(), options.only.end(),
+                       [&](const std::string &spec) {
+                         return selects(spec, out.where, out.function);
+                       })) {
+        ++st.unselected;
+        continue;
+      }
+      ++st.goals;
+      opOf.push_back(fn.getOperation());
+      outcomes.push_back(std::move(out));
+      continue;
+    }
     // An axiom is not proved: without a model it is trusted (ADR 0036).
     if (fn->hasAttr(PiaDialect::getAxiomAttrName())) {
       std::vector<std::string> texts;
