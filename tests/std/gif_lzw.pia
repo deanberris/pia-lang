@@ -1,15 +1,18 @@
-(* Pia.Image.Gif.Spec and Pia.Image.Gif.Lzw (ADR 0054, step 2): every goal
-   of the LZW dictionary's spec and of the decoder is proved, with nothing
-   accepted unproved: the decoder's reads and writes are in bounds, its
-   loops end, each code's string is the spec's, and the table stays well
-   formed.
+(* Pia.Image.Gif.Spec, Pia.Image.Gif.Ref and Pia.Image.Gif.Lzw (ADR 0054,
+   step 2; #339): every goal of the LZW dictionary's spec, of the
+   whole-stream spec and of the decoder is proved, with nothing accepted
+   unproved: the decoder's reads and writes are in bounds, its loops end,
+   each code's string is the spec's, the table stays well formed, and
+   decode_ref writes exactly what Ref's reading of the stream gives.
 // RUN: piac --verify %S/../../lib/Pia/Image/Gif/Spec.pia | FileCheck --check-prefix=SPEC %s
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Ref.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Ref.pia | FileCheck --check-prefix=REF %s
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
 // RUN: FileCheck --check-prefix=DICT %s < %t/Pia.Image.Gif.Spec.Lzw.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
+// RUN: piac --verify --no-lint=costly_goal --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
 // RUN: FileCheck --check-prefix=LZW %s < %t/Pia.Image.Gif.Lzw.Lzw.piai
 *)
 
@@ -19,10 +22,16 @@
 // SPEC: 128 proved, 0 failed, 0 skipped
 *)
 
-(* The decoder.
+(* The whole-stream spec's own goals.
+// REF-NOT: failed
+// REF: 201 proved, 0 failed, 0 skipped
+*)
+
+(* The decoder. decode_ref's loop invariant at Lzw.pia:456 costs 16% of
+   the solver's limit, so costly_goal is off here.
 // CHECK-NOT: warning
 // CHECK-NOT: failed
-// CHECK: 175 proved, 0 failed, 0 skipped
+// CHECK: 636 proved, 0 failed, 0 skipped
 *)
 
 (*
@@ -45,5 +54,6 @@
 // LZW-NEXT: {{^}}  let entry_len : (t : [u8]) -> (clear : usize) -> (k : int{0..4095}) -> usize requires len t = 12288 ensures result = S.elen t clear k{{$}}
 // LZW-NEXT: {{^}}  let put_entry : (t : [u8]) -> (clear : int{4..256}) -> (nx : int{0..4096}) -> (k : usize) -> (dst : borrowed inout mutable [u8]) -> (o : usize) -> (n : usize) -> unit requires len t = 12288 && S.table_ok t clear nx && S.valid clear nx k requires n = S.elen t clear k && o + n <= len dst requires forall (j in 0 .. o). dst.[j] < clear ensures forall (d in 0 .. n). dst.[o + d] = S.sym t clear k d ensures forall (j in 0 .. o + n). dst.[j] < clear ensures forall (j in 0 .. len dst). (j < o || o + n <= j) ==> dst.[j] = old (dst.[j]){{$}}
 // LZW-NEXT: {{^}}  let decode : (s : [u8]) -> (m : int{2..8}) -> (t : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> result usize lzw_error requires len t = 12288 ensures (match result with | Ok n -> n <= len dst | Err _ -> true) ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true) ensures (match result with | Ok n -> true | Err e -> (match e with | Truncated p -> p <= B.nbits s | BadCode p -> p < B.nbits s | OutputFull p -> p < B.nbits s)){{$}}
+// LZW-NEXT: {{^}}  let decode_ref : (s : [u8]) -> (m : int{2..8}) -> (t : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> (spec x : [u8]) -> (spec k : usize) -> (spec tp : [usize]) -> (spec tw : [int{3..12}]) -> (spec tc : [int{0..4095}]) -> (spec to : [usize]) -> (spec te : [usize]) -> (spec h : bool) -> result usize lzw_error requires len t = 12288 requires h ==> R.lzw_ok s m x k tp tw tc to te && len x <= len dst ensures (match result with | Ok n -> n <= len dst | Err _ -> true) ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true) ensures (match result with | Ok n -> true | Err e -> (match e with | Truncated p -> p <= B.nbits s | BadCode p -> p < B.nbits s | OutputFull p -> p < B.nbits s)) ensures h ==> (match result with | Ok n -> n = len x && (forall (i in 0 .. n). dst.[i] = x.[i]) | Err _ -> false){{$}}
 // LZW-NEXT: {{^}}end{{$}}
 *)
