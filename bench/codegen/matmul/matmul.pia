@@ -1,0 +1,22 @@
+module Matmul : Api
+
+interface Api @abi(c) = sig
+  let mm_mul : (n : usize) -> (a : [f64]) -> (b : [f64]) -> (c : borrowed inout mutable [f64]) -> unit
+    requires n <= 46'340
+    requires len a = n * n && len b = n * n && len c = n * n
+end
+
+(* plb2's mat_mul with p = m = n over row-major n * n matrices: the same
+   i, k, j loop order. c arrives zeroed, as calloc leaves it. n stays a
+   usize, as the C caller passes it, so the bound is a requires. *)
+let mm_mul (n : usize) (a : [f64]) (b : [f64]) (c : borrowed inout mutable [f64]) : unit @allow(range_requires)
+  requires n <= 46'340
+  requires len a = n * n && len b = n * n && len c = n * n
+= for i in 0 .. n do
+    for k in 0 .. n do
+      let aik : f64 = a.[i * n + k] in
+      for j in 0 .. n do
+        c.[i * n + j] <- c.[i * n + j] + aik * b.[k * n + j]
+      done
+    done
+  done

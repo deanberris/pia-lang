@@ -1,0 +1,14 @@
+--- matmul.rs
++++ matmul.rs
+@@ -24,9 +24,9 @@
+ }
+ 
+ fn main() {
+-	let n = 1500;
++	let n = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(1500);
+ 	let a = matgen(n);
+ 	let b = matgen(n);
+ 	let c = matmul(n, a, b);
+-	println!("{}", c[n>>1][n>>1]);
++	println!("{:.6}", c[n>>1][n>>1]);
+ }
