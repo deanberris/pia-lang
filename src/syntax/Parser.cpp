@@ -1,5 +1,6 @@
 #include "syntax/Parser.h"
 
+#include <algorithm>
 #include <cctype>
 #include <string>
 #include <utility>
@@ -499,6 +500,7 @@ class Parser {
 
     if (allowIn && accept(K::In)) {
       n->kind = N::LetIn;
+      arrowLetContracts(*n);
       n->add(seq());
     } else if (!allowItem) {
       fail("expected 'in'");
@@ -585,6 +587,32 @@ class Parser {
     Node *cs = arrow->add(makeNode(N::Contracts, loc()));
     while (atContract())
       cs->add(contract());
+  }
+
+  // `let h : (x : u8) -> u8 requires x < 100 = succ in ...`: a local of a
+  // function type holds a function reference (ADR 0071), and a value has no
+  // contracts of its own, so the clauses after the arrow are the arrow's.
+  void arrowLetContracts(Node &let) {
+    Node &params = *let.kids[0];
+    Node &ret = *let.kids[1];
+    Node &contracts = *let.kids[2];
+    if (!params.kids.empty() || contracts.kids.empty() ||
+        ret.kind != N::RetAnnot || ret.kids[0]->kind != N::Annot ||
+        ret.kids[0]->kids[1]->kind != N::ArrowType)
+      return;
+    Node *arrow = ret.kids[0]->kids[1].get();
+    while (arrow->kids[1]->kind == N::ArrowType)
+      arrow = arrow->kids[1].get();
+    if (arrow->kids.size() > 2)
+      return;
+    Node *cs = arrow->add(makeNode(N::Contracts, contracts.loc));
+    for (NodePtr &c : contracts.kids)
+      if (c->kind != N::Reveal)
+        cs->add(std::move(c));
+    contracts.kids.erase(std::remove_if(contracts.kids.begin(),
+                                        contracts.kids.end(),
+                                        [](const NodePtr &c) { return !c; }),
+                         contracts.kids.end());
   }
 
   // `(spec name :`, which opens a spec parameter (ADR 0058). `spec` is not
@@ -911,8 +939,12 @@ class Parser {
   NodePtr annot() {
     auto a = makeNode(N::Annot, loc());
     NodePtr mods = modifiers();
+    parenArrow_ = nullptr;
     NodePtr t = type();
-    if (t->kind == N::ArrowType && !mods->text.empty()) {
+    // `mutable (u8 -> u8)` is a mutable place holding a function reference
+    // (ADR 0071); without the parentheses the modifier is the parameter's.
+    if (t->kind == N::ArrowType && !mods->text.empty() &&
+        t.get() != parenArrow_) {
       Node &dom = *t->kids[0];
       if (!dom.kids[0]->text.empty())
         fail("a function type's first parameter has modifiers twice");
@@ -972,6 +1004,8 @@ class Parser {
       return a;
     }
     if (!mods->text.empty()) fail("expected '->': modifiers only apply to a parameter");
+    if (t->kind == N::ArrowType)
+      parenArrow_ = t.get();
     return t;
   }
 
@@ -1975,6 +2009,9 @@ class Parser {
   // header may stand.
   bool firstItem_ = false;
   bool expressionItems_ = false; // a top-level expression may be any (REPL)
+  // The last function type that type() read in parentheses, as in
+  // `mutable (u8 -> u8)`, so annot() keeps its modifiers off the parameter.
+  const Node *parenArrow_ = nullptr;
   bool contractMode_ = false;  // parsing a requires/ensures predicate
   bool clauseEnded_ = false;   // the predicate has ended at a body `=`
   bool bitOr_ = false;         // `|` is bitwise or here (binaryInfo)

@@ -708,7 +708,23 @@ let five (x : u8) : u8
 let small (x : u8) : bool = let is_small = below 9 in is_small x
 ```
 
-Generic lambdas that capture, and functions stored in data, come later.
+A top-level function is a value too, and a `let` of a function type holds a **reference** to it ([ADR 0071](adr/0071-function-references.md)). There is no address operator: the name is the value, and a reference can be copied but never makes a copy of the function. When the arrow has a contract, the function is proved against it once, where the reference is made, and every call through the reference sees only the arrow's contract, so `grow` below knows `result > x` but not that `h y` is `y + 1`:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let half (x : u8) : u8 = x / 2
+
+let grow (y : u8) : u8 requires y < 10 ensures result > y =
+  let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in
+  h y
+
+let quarter (x : u8) : u8 =
+  let g : u8 -> u8 = half in
+  g (g x)
+```
+
+A reference is fixed, like every binding. Rebinding one, `let h : mutable (u8 -> u8) = succ`, references stored in records and buffers, and calls that are indirect in the compiled code come later.
 
 ## Parallel loops
 

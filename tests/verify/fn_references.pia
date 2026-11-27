@@ -1,0 +1,64 @@
+(* A local of a function type holds a reference to a top-level function
+   (ADR 0071). The function is checked once against the arrow's contract,
+   and a call through the reference sees only the arrow's contract.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let twice (x : u8) : u8 requires x < 100 ensures result = x + x = (x + x)
+let half (x : u8) : u8 = x / 2
+
+(* The arrow promises less than 'succ' gives, and asks more than it needs. *)
+let grow (y : u8) : u8 requires y < 10 ensures result > y =
+  let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in
+  h y
+
+(* An arrow with no contract refers to a function with none. *)
+let quarter (x : u8) : u8 =
+  let g : u8 -> u8 = half in
+  g (g x)
+
+(* 'twice' needs x < 100, so it does not meet an arrow that allows x < 200. *)
+let wide (y : u8) : u8 requires y < 200 =
+  let h : (x : u8) -> u8 requires x < 200 = twice in
+  h y
+
+(* A call through 'h' knows only 'result > x', not that it is 'x + 1'. *)
+let exact (y : u8) : u8 requires y < 10 ensures result = y + 1 =
+  let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in
+  h y
+
+
+(* A reference can be copied, and the copy refers to the same function. *)
+let copied (y : u8) : u8 requires y < 10 ensures result > y =
+  let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in
+  let k : (x : u8) -> u8 requires x < 50 ensures result > x = h in
+  k y
+
+(*
+// CHECK: fn_references.pia:7:69: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_references.pia:7:41: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:8:70: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_references.pia:8:42: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:9:28: proved: the divisor is not zero [intervals]
+// CHECK: fn_references.pia:9:28: proved: '/' does not overflow u8 [intervals]
+// CHECK: fn_references.pia:14:3: proved: the precondition of 'succ@fn_references.pia:13:64' holds [smt]
+// CHECK: fn_references.pia:12:40: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:24:3: proved: the precondition of 'twice@fn_references.pia:23:45' holds [smt]
+// CHECK: fn_references.pia:29:3: proved: the precondition of 'succ@fn_references.pia:28:64' holds [smt]
+// CHECK: fn_references.pia:27:41: failed: the postcondition holds
+// CHECK-NEXT: counterexample: y = {{-?[0-9]+}}
+// CHECK: fn_references.pia:36:3: proved: the precondition of 'succ@fn_references.pia:34:64@fn_references.pia:35:63' holds [smt]
+// CHECK: fn_references.pia:33:42: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:13:64: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references.pia:13:64: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:23:45: failed: the precondition of 'twice' holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: fn_references.pia:28:64: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references.pia:28:64: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:34:64: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_references.pia:34:64: proved: the postcondition holds [smt]
+// CHECK: fn_references.pia:35:63: proved: the precondition of 'succ@fn_references.pia:34:64' holds [smt]
+// CHECK: fn_references.pia:35:63: proved: the postcondition holds [smt]
+// CHECK: 20 proved, 2 failed, 0 skipped
+*)
