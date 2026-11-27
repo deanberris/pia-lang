@@ -1,4 +1,4 @@
-# 77. A module format Pia controls: canonical expanded Pia, not MLIR bytecode
+# 79. A module format Pia controls: canonical expanded Pia, not MLIR bytecode
 
 Date: 2026-11-28
 
