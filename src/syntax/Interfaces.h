@@ -14,6 +14,7 @@
 #ifndef PIA_SYNTAX_INTERFACES_H
 #define PIA_SYNTAX_INTERFACES_H
 
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -50,6 +51,22 @@ interfaceArtifacts(const Node &program, std::string_view source, bool literate,
 void resolveImports(Node &program, const std::vector<std::string> &paths,
                     Diagnostics &diags,
                     std::vector<InterfaceArtifact> *loaded = nullptr);
+
+// A definition that takes its contract from an interface (ADR 0077):
+// `program.kids[item]`, which `entry`, an item of `iface`, lists. The
+// entry's clauses name the parameters as `rename` maps them, from the
+// interface's names to the definition's; a name it leaves out is the same.
+struct InheritedContract {
+  size_t item = 0;
+  const Node *iface = nullptr;
+  const Node *entry = nullptr;
+  std::map<std::string, std::string> rename;
+};
+
+// The definitions of `program` that state no contract and take one from an
+// interface of the file, reporting the ones that cannot take one.
+std::vector<InheritedContract> inheritedContracts(const Node &program,
+                                                  Diagnostics &diags);
 
 // Gives each function that an interface of this file lists, and whose
 // definition states no contract, that interface's contract, with its

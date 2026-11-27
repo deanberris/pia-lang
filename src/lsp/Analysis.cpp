@@ -1,9 +1,12 @@
 #include "lsp/Analysis.h"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
+#include <map>
 
 #include "syntax/Comments.h"
+#include "syntax/Interfaces.h"
 #include "syntax/Lexer.h"
 #include "syntax/Lint.h"
 #include "syntax/Parser.h"
@@ -260,12 +263,72 @@ std::string fence(std::string_view code) {
 
 // ------------------------------------------------------------ resolution
 
+// `clause` with each identifier `rename` maps replaced, except a field
+// name after a `.`, so an interface's contract reads in the definition's
+// parameter names.
+std::string renamedText(std::string_view clause,
+                        const std::map<std::string, std::string> &rename) {
+  auto ident = [](char c) {
+    return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'';
+  };
+  std::string out;
+  for (size_t i = 0; i < clause.size();) {
+    if (!ident(clause[i]) || (i > 0 && ident(clause[i - 1]))) {
+      out += clause[i++];
+      continue;
+    }
+    size_t j = i;
+    while (j < clause.size() && ident(clause[j]))
+      ++j;
+    std::string word(clause.substr(i, j - i));
+    auto it = rename.find(word);
+    bool field = i > 0 && clause[i - 1] == '.';
+    out += it != rename.end() && !field ? it->second : word;
+    i = j;
+  }
+  return out;
+}
+
+// The contract each definition takes from its interface (ADR 0077), as
+// the clauses would read on the definition, for its hover.
+std::map<const Node *, std::string> inheritedText(std::string_view text,
+                                                  const Node &program) {
+  std::map<const Node *, std::string> out;
+  syntax::Diagnostics ignored;
+  for (const syntax::InheritedContract &h :
+       syntax::inheritedContracts(program, ignored)) {
+    std::vector<const Node *> clauses;
+    for (const auto &c : h.entry->kids[2]->kids)
+      if (c->kind == N::Requires || c->kind == N::Ensures ||
+          c->kind == N::Costs || c->kind == N::Reads)
+        clauses.push_back(c.get());
+    if (clauses.empty())
+      continue;
+    std::string s = "  (* from interface " + h.iface->text + " *)";
+    for (const Node *c : clauses) {
+      // A clause runs to the end of its line, or to the next clause on it.
+      uint32_t begin = c->loc.offset;
+      size_t end = text.find('\n', begin);
+      if (end == std::string_view::npos)
+        end = text.size();
+      for (const Node *d : clauses)
+        if (d->loc.offset > begin && d->loc.offset < end)
+          end = d->loc.offset;
+      s += "\n  " +
+           renamedText(rtrim(text.substr(begin, end - begin)), h.rename);
+    }
+    out[program.kids[h.item].get()] = s;
+  }
+  return out;
+}
+
 class Resolver {
 public:
   Resolver(std::string_view text, uint32_t target)
       : text_(text), target_(target) {}
 
   std::optional<Binding> run(const Node &program) {
+    inherited_ = inheritedText(text_, program);
     scopes_.emplace_back();
     for (const auto &item : program.kids)
       if (item && item->kind == N::LetItem)
@@ -291,6 +354,7 @@ public:
   static void visible(std::string_view text, const Node &program,
                       uint32_t target, std::vector<Binding> &out) {
     Resolver r(text, target);
+    r.inherited_ = inheritedText(text, program);
     const Node *around = nullptr;
     for (const auto &item : program.kids) {
       if (!item || item->kind != N::LetItem)
@@ -309,6 +373,9 @@ public:
 
 private:
   using Scope = std::vector<Binding>;
+
+  // The contracts definitions take from their interfaces, by definition.
+  std::map<const Node *, std::string> inherited_;
 
   Binding letBinding(const Node &let) {
     Binding b;
@@ -330,6 +397,8 @@ private:
       if (next != std::string_view::npos)
         end = static_cast<uint32_t>(next);
       b.snippet = fence(capLines(rtrim(text_.substr(begin, end - begin)), 15));
+    } else if (auto it = inherited_.find(&let); it != inherited_.end()) {
+      b.snippet = fence(letHeader(text_, let) + "\n" + it->second);
     } else {
       b.snippet = fence(letHeader(text_, let));
     }

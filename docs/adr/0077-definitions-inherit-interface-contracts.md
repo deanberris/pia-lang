@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: Proposed
+Status: Accepted (Dean, 2026-11-27)
 
 ## Context
 
@@ -95,9 +95,9 @@ The interface artifact (`.piai`) is the interface as written, so it and the inte
 
 ### 6. Steps
 
-1. The rule, `tests/verify/inherited_contracts.pia`, and the docs and skills that teach modules. This PR.
-2. A lint, `repeated_contract`, for a definition whose contract is exactly its interface's, with the fix of deleting it, and the standard library's modules moved to the shorter form as they are next touched.
-3. `pia-lsp` hover shows an inherited contract on the definition, with a link to the interface entry it came from.
+1. The rule, `tests/verify/inherited_contracts.pia`, and the docs and skills that teach modules. Done (PR #500).
+2. A lint, `repeated_contract`, for a definition whose contract is exactly its interface's, parameter names aside, with the fix of deleting it (`tests/lint/repeated_contract.pia`). Done. The standard library's modules move to the shorter form as they are next touched; none repeats a contract today.
+3. `pia-lsp` hover shows an inherited contract on the definition, renamed to its parameters and marked with the interface it came from (`tests/lsp`). Done.
 
 ## Consequences
 
