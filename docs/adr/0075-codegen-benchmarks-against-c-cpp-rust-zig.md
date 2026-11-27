@@ -29,7 +29,7 @@ The suites answer different questions. plb2 is the closest to Dean's: every lang
 Checked against `docs/status.md` on main (2026-11-27) and the `latest` prerelease of `piac`:
 
 - **Built:** bounded integers with proved overflow, bit operators, fixed arrays and slices, records, variants, loops with invariants, recursion with `decreases`, saturating and wrapping arithmetic, `f32`/`f64` with `+ - * /` and strict IEEE codegen (no FMA contraction), C calls both ways, `spread` on the CPU (ADR 0060), `@lower` to `linalg` (ADR 0065).
-- **Not built yet:** conversions between floats and integers (PR #452, open), a square root (there is no `sqrt` intrinsic, and libm is never trusted without a contract), `vec<T, k>` (M10), recursive types in codegen, a hash map, `Pia.Sys.Fs` (PR #444, open).
+- **Not built yet:** conversions between floats and integers (PR #452, open), a square root (no `sqrt` yet; it will be a proved Pia.Math function with `@lower`, #487, and libm is never trusted), `vec<T, k>` (M10), recursive types in codegen, a hash map, `Pia.Sys.Fs` (PR #444, open).
 
 `piac` compiles at `CodeGenOptLevel::Default` and runs MLIR's optimising transformer at `-O<n>`; for x86_64 it requires x86-64-v3 (ADR 0049), so references must be built for the same CPU to be comparable.
 
@@ -100,7 +100,7 @@ matmul's input is filled by the C driver until float conversions land, so the ke
 | Problem | Waits on |
 | --- | --- |
 | mandelbrot, spectral-norm | float to integer conversions (PR #452) |
-| n-body | a proved `sqrt` (an intrinsic with ADR 0038's rounding contract) |
+| n-body | a proved `sqrt` in Pia.Math, lowered to `math.sqrt` with `@lower` (#487) |
 | bedcov | allocation and sort from the standard library on a 1 M-element array (`Pia.Mem`, `sort`) |
 | fasta, reverse-complement | `Pia.Sys.Fs` (PR #444) for output, or a C driver that writes the buffer |
 | mandelbrot, spectral-norm, fannkuch-redux with `spread` | wave 1, then the best-known lane |
@@ -164,7 +164,7 @@ Dean, 2026-11-27:
 Dean asked (2026-11-27) for issues covering what Pia needs to match the fastest published programs. They are tracked in [#485](https://github.com/deanberris/pia-lang/issues/485):
 
 - [#486](https://github.com/deanberris/pia-lang/issues/486): lexicographic and well-founded `decreases` (nqueen's explicit stack; 1.51 times plb2 C's instructions today).
-- [#487](https://github.com/deanberris/pia-lang/issues/487): `sqrt` as a correctly rounded primitive (n-body).
+- [#487](https://github.com/deanberris/pia-lang/issues/487): `sqrt` as a proved Pia.Math function with `@lower` to `math.sqrt`, not a builtin (n-body).
 - [#488](https://github.com/deanberris/pia-lang/issues/488): ADR 0012's reassociation and FMA licences (vectorised float reductions).
 - [#489](https://github.com/deanberris/pia-lang/issues/489): compiled recursive types with arenas (binary-trees, merkletrees).
 - [#490](https://github.com/deanberris/pia-lang/issues/490): `-O3` as LLVM's Aggressive level, and LTO with C callers.
