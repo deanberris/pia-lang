@@ -33,6 +33,8 @@ Write the body with no contracts, run it (`piac --verify`, or a REPL cell), and 
 | `the postcondition holds` | the claim is wrong | weaken the `ensures` |
 | | the claim is right but not derivable | the body lost information: add a loop invariant, or an `ensures` on a callee |
 | `the loop terminates` / `the recursion terminates` (skipped) | | add `decreases` |
+| `case k: some result can meet the ensures of 'f'`, with `hint: specification failure` | a case that `Pia.Test.Gen`'s `cases f` wrote (ADR 0056) | the contract is wrong, not the code: no value of the result type satisfies it at the counterexample's inputs (`ensures result = a + b` on a `u8` result at 255, 255). Correct the `ensures`, widen the result type, or add a `requires` that rules the inputs out |
+| `case k: 'f' meets its ensures` | | the call breaks `f`'s contract at the counterexample's inputs: fix `f` |
 
 A `requires` that only restates the failure (`requires x < 255` for `x + 1`) is right when the caller really owns that fact. If no caller can meet it, it has only moved the bug. Check callers by proving them too.
 

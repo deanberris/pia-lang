@@ -807,6 +807,8 @@ let wide = type { v : byte; w : u8 } @derive(eq)
 
 Quotes are hygienic: names a quote binds are renamed so they cannot capture yours, and free names in a quote refer to where the metaprogram is defined. [Metaprograms](meta.md) describes the interpreter, its builtins and the expansion loop.
 
+Metaprograms also write tests. `G.cases f`, from `Pia.Test.Gen`, reads `f`'s parameter types and contract and writes, for each combination of boundary values its `requires` allows, a lemma that some result can meet `f`'s `ensures` there and a lemma that `f` does. A contract that no result can meet, such as `ensures result = a + b` on a `u8` result, fails as a *specification failure* at the inputs that break it ([tests from contracts](meta.md#tests-from-contracts)).
+
 ## Comments and literate programs
 
 Comments are part of the program. The compiler attaches each one to the code it describes, and a doc comment, `(** ... *)`, is the documentation that hovering over a name shows in your editor:

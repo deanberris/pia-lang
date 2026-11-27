@@ -1,0 +1,69 @@
+(* Pia.Test.Gen (ADR 0056, step 2): `cases f` writes a specification check
+   and an oracle per combination of f's boundary values that its
+   `requires` allows, and the verifier decides them all here. The oracle
+   is read as a contract, over unbounded integers, so dec's
+   `result + 1 = d` at d = 2 is 1 + 1 = 2 and does not overflow
+   int{-3..1}. An extern gets only the specification check, which here
+   holds at every case. Inputs/test_gen_spec.pia is the specification
+   failure: an extern's contract that no u8 can meet.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Test/Gen.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// RUN: piac --dump-expanded --iface-path=%t %s | FileCheck --check-prefix=AST %s
+// RUN: not piac --verify --iface-path=%t %S/Inputs/test_gen_spec.pia | FileCheck --check-prefix=SPEC %s
+*)
+import Pia.Test.Gen.Gen as G
+
+let clamp (v : u8) (lo : u8) (hi : int{0..9}) : u8
+  requires lo <= hi
+  ensures lo <= result && result <= hi
+= if v < lo then lo else if v > hi then hi else v
+
+let dec (d : int{-2..2}) : int{-3..1}
+  ensures result + 1 = d
+= d - 1
+
+(* A constant in the requires adds its neighbours to the domain: 9, 10
+   and 11 for `n < 10`. *)
+let below (n : u8) (up : bool) : u8
+  requires n < 10
+  ensures result <= 10
+= if up then n + 1 else n
+
+let max_c (a : u8) (b : u8) : u8
+  ensures result >= a && result >= b
+= extern "max_c"
+
+(* Five parameters with four boundary values each is 1024 rows, over the
+   budget of 64, so `combine` writes a pairwise covering array. *)
+let mix (a : u8) (b : u8) (c : u8) (d : u8) (e : u8) : u8
+  ensures result <= a
+= a / 2
+
+G.cases clamp
+G.cases dec
+G.cases below
+G.cases max_c
+G.cases mix
+
+(* CHECK-NOT: failed
+   CHECK: proved: case 1: some result can meet the ensures of 'clamp'
+   CHECK: proved: case 1: 'clamp' meets its ensures
+   CHECK: proved: case 5: 'dec' meets its ensures
+   CHECK: proved: case 16: some result can meet the ensures of 'max_c'
+   CHECK-NOT: 'max_c' meets its ensures
+   CHECK-NOT: failed
+
+   28 of clamp's 64 rows meet lo <= hi. below's n is 0, 1, 254 or 255
+   from u8, and 9, 10 and 11 from its requires; only 0, 1 and 9 meet it,
+   so it has 6 cases. mix has 16 rows, which cover every pair.
+   AST: (LetItem "clamp_spec_1" [lemma]
+   AST: (Attribute "case"
+   AST-NEXT: (Name "spec"
+   AST-NEXT: (Name "clamp")
+   AST-NEXT: (IntLit "1")
+   AST: (LetItem "clamp_case_1" [lemma]
+   AST: (Quantifier "exists"
+   AST-NOT: (LetItem "max_c_case_
+   AST: (LetItem "mix_spec_16" [lemma]
+   AST-NOT: (LetItem "mix_spec_17" [lemma]
+*)
