@@ -1,0 +1,26 @@
+(* Importers of Pia.Sys.Fs prove their own code from its interface: a
+   read's count fits its buffer, and a file is closed on every path.
+// RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Sys/Gen/arm64_macos.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Sys/Fs.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK: 0 failed, 0 skipped
+*)
+import Pia.Sys.Fs.Fs as F
+
+(* The bytes at the start of a file, and how many there were. *)
+let head (path : [u8]) (buf : out mutable [u8]) : result usize F.errno
+  requires len path >= 1 && path.[len path - 1] = 0
+  ensures (match result with | Ok n -> n <= len buf | Err _ -> true)
+= let f = F.open_read path? in
+  let got = F.read_some f buf in
+  let shut = F.close f in
+  let n = got? in
+  shut?;
+  Ok n
+
+(* A missing file is a NoEntry, which a caller can match on. *)
+let present (path : [u8]) : bool
+  requires len path >= 1 && path.[len path - 1] = 0
+= match F.open_read path with
+  | Ok f -> (match F.close f with | Ok -> true | Err e -> true)
+  | Err e -> (match e with | NoEntry -> false | _ -> true)

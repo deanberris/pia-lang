@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "syntax/Embeds.h"
 #include "syntax/Syntax.h"
 
 namespace pia::meta {
@@ -31,12 +32,24 @@ using MetaInt = __int128;
 std::string decimal(MetaInt v);
 
 struct Value {
-  enum class Kind { Unit, Int, Bool, Str, Syntax, List, Closure, Builtin, Type };
+  enum class Kind {
+    Unit,
+    Int,
+    Bool,
+    Str,
+    Bytes,
+    Syntax,
+    List,
+    Closure,
+    Builtin,
+    Type
+  };
   Kind kind = Kind::Unit;
   MetaInt i = 0;
   bool b = false;
   std::string s;                          // Str; Builtin: its name; Type: its
                                           // spelling, `u8` or `option<u8>`
+  std::shared_ptr<const std::vector<uint8_t>> bytes; // Bytes (`@embed`)
   std::shared_ptr<syntax::Node> syntax;   // Syntax
   std::vector<ValuePtr> list;             // List; Closure, Builtin: bound args
   // Closure: a lambda or a `let` with parameters. An empty parameter name
@@ -153,6 +166,12 @@ class Interpreter {
   // Makes the REPL-only builtins of Pia.Live available (ADR 0031).
   void setLive(bool live) { live_ = live; }
 
+  // Hermetic lookup options for reading `@embed` blobs in `let meta` (ADR
+  // 0070).
+  void setEmbedOptions(const syntax::EmbedOptions *options) {
+    embedOptions_ = options;
+  }
+
   // Names a quote leaves free resolve to these builtins wherever the code
   // lands (docs/meta.md, "Hygiene").
   static bool isCoreBuiltin(const std::string &name);
@@ -191,6 +210,9 @@ class Interpreter {
   std::vector<const syntax::Node *> listing_;
   const syntax::Node *program_ = nullptr;
   bool live_ = false;
+  const syntax::EmbedOptions *embedOptions_ = nullptr;
+  std::map<std::string, std::shared_ptr<const std::vector<uint8_t>>>
+      embedCache_;
   TypeHost host_;
   uint64_t fuel_ = 0;
   unsigned fresh_ = 0;

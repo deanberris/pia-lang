@@ -146,6 +146,7 @@ class Expander {
                  t.find('.') != std::string::npos;
         }) {
     interp_.setLive(options.live);
+    interp_.setEmbedOptions(&options_.embeds);
   }
 
   void run() {

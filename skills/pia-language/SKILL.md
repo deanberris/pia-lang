@@ -57,11 +57,12 @@ let count_bright (ys : [u16]) : usize
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
+| `type { v : u8 where v <= 100 }`, `type { lo : u32; hi : u32 } where lo <= hi` | a field's refinement, and a record's invariant over all its fields (ADR 0074): assumed of every parameter, proved of every result and every handed-back `out`/`inout` parameter, so no function restates it. See `tests/verify/record_invariants.pia` |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
 | `costs iterations <= len xs`, `costs calls <= 0`; `spent iterations` in an invariant | a cost bound (ADR 0062): every clause names its counter, `iterations` (loop iterations) or `calls` (non-spec calls), and is proved at return. A loop needs an invariant on `spent c`. Callees need their own bound, unless they have no loop or recursion. Function counters such as `less` come later. See `tests/verify/costs.pia` |
 | `let lemma l (n : int) : unit requires ... ensures ... = by lean Proofs.l` | a lemma proved in Lean 4 when Z3 cannot (ADR 0061): `piac --emit=lean` writes its statement, a Lean file proves it, and the `pia_lean_proof` receipt makes the goal proved. See the `pia-lean` skill |
-| `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). See `tests/verify/spread.pia` |
+| `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). After it, its `ensures` holds for every iteration, and cells no iteration owns keep their values. `@place(gpu)` runs it on the GPU, as a `result unit gpu_error`. See `tests/verify/spread.pia`, `spread_frame.pia` |
 | `let rec tree = type \| Leaf \| Node of { l : box tree; k : u32 }` | a recursive type (ADR 0047): proved, with structural recursion needing no `decreases`, but not compiled yet. See `tests/verify/rec_types.pia` |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
 | `@overflow(proof\|wrap\|saturate\|trap)`, `+\|`, `-\|` | after the return type. `proof` is the default. The `+\|` operators always saturate |
@@ -152,7 +153,7 @@ end
 
 `import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/library.md` and `docs/cpp-std.md`, and three tests in `tests/std`. A new language feature gets a line in `docs/features.md` for its `tests/verify` example and is taught in `docs/tour.md`; `python3 tools/docs/check.py` fails until both are there.
 
-**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`.
+**C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`. `@variadic(n)` after the return type declares a C variadic function with `n` named parameters, and `@deref` one that returns a pointer to its integer result, which the call reads (`Pia.Sys.Posix.errno`). For POSIX, import `Pia.Sys.Posix.Posix` rather than declaring externs.
 
 ## Pitfalls
 
