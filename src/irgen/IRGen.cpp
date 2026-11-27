@@ -3069,14 +3069,12 @@ class Gen {
       return TV{create<IntToFloatOp>(l, target, v->value), target};
     if (isFloat(v->type)) {
       unsigned from = v->type.getIntOrFloatBitWidth();
-      if (from < target.getIntOrFloatBitWidth()) {
-        // The explicit (empty) fastmath picks ExtFOp's typed builder; the
-        // generic one it would otherwise match is deprecated, and -Werror
-        // (#479) rejects it.
+      if (from < target.getIntOrFloatBitWidth())
+        // Without the flags, the only builder that takes (type, value) is
+        // the deprecated attribute-list one, which -Werror refuses.
         return TV{create<mlir::arith::ExtFOp>(l, target, v->value,
-                                              mlir::arith::FastMathFlagsAttr{}),
+                                              mlir::arith::FastMathFlagsAttr()),
                   target};
-      }
       return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
     }
     return fail(arg, "'" + to + "' converts an integer or a float, not " +
