@@ -79,7 +79,7 @@ let lemma sum_plus_one (m : int) : unit
 // CHECK-DAG: proved: the Lean theorem 'Proofs.sum_nonneg' proves 'sum_nonneg' [lean]
 // CHECK-DAG: proved: the Lean theorem 'Proofs.dist_of' proves 'dist_of' [lean]
 // CHECK-DAG: proved: the Lean theorem 'Proofs.origin_within' proves 'origin_within' [lean]
-// CHECK-DAG: sums.pia:38:3: proved: the postcondition holds [{{smt|intervals}}]
+// CHECK-DAG: sums.pia:{{[0-9]+}}:3: proved: the postcondition holds [{{smt|intervals}}]
 // CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
 *)
 
