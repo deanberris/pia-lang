@@ -223,7 +223,8 @@ Value constantBytes(OpBuilder &b, mlir::ModuleOp module, Location loc,
   auto tensor =
       mlir::RankedTensorType::get({static_cast<int64_t>(bytes.size())}, i8);
   OpBuilder mb = OpBuilder::atBlockBegin(module.getBody());
-  make<memref::GlobalOp>(mb, loc, name, mb.getStringAttr("private"), type,
+  make<memref::GlobalOp>(
+      mb, loc, name, mb.getStringAttr("private"), type,
       mlir::DenseElementsAttr::getFromRawBuffer(tensor, bytes),
       /*constant=*/true, /*alignment=*/mb.getI64IntegerAttr(16));
   Value g = make<memref::GetGlobalOp>(b, loc, type, name);
@@ -325,7 +326,7 @@ private:
     Value zero = make<arith::ConstantIndexOp>(kb, loc, 0);
     auto scalar = [&](unsigned arg, Type want) -> Value {
       Value v = make<memref::LoadOp>(kb, loc, entry.getArgument(arg),
-                                          mlir::ValueRange{zero});
+                                     mlir::ValueRange{zero});
       if (mlir::isa<mlir::IndexType>(want))
         return make<arith::IndexCastOp>(kb, loc, want, v);
       if (want.isInteger(1))
@@ -394,8 +395,7 @@ private:
     unsigned slot = 0;
     auto put = [&](Value addr, Value bytes, int64_t how) {
       for (Value v : {addr, bytes, word(how)})
-        make<memref::StoreOp>(b, loc, v, argv,
-                                  mlir::ValueRange{index(slot++)});
+        make<memref::StoreOp>(b, loc, v, argv, mlir::ValueRange{index(slot++)});
     };
     auto scalar = [&](Value v, Type held) {
       if (mlir::isa<mlir::IndexType>(v.getType()))
@@ -417,8 +417,7 @@ private:
       auto m = mlir::cast<mlir::MemRefType>(c.host.getType());
       int64_t width = m.getElementType().getIntOrFloatBitWidth() / 8;
       auto meta = make<memref::ExtractStridedMetadataOp>(b, loc, c.host);
-      Value base =
-          make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, c.host);
+      Value base = make<memref::ExtractAlignedPointerAsIndexOp>(b, loc, c.host);
       Value off = make<arith::MulIOp>(b, loc, meta.getOffset(), index(width));
       Value addr = make<arith::AddIOp>(b, loc, base, off);
       Value bytes =
@@ -492,7 +491,8 @@ private:
         b.getFunctionType({i64, i64, i64, i64, i64, i64, i64}, {i32});
     declare(loc, "pia_gpu_run", runType);
     Value words = make<arith::ConstantIntOp>(b, loc, i64, t.count);
-    auto run = make<mlir::func::CallOp>(b, loc, "pia_gpu_run", mlir::TypeRange{i32},
+    auto run = make<mlir::func::CallOp>(
+        b, loc, "pia_gpu_run", mlir::TypeRange{i32},
         mlir::ValueRange{k[0], k[1], k[2], k[3], t.args, words, t.threads});
     make<memref::AllocaScopeReturnOp>(b, loc, run.getResults());
 
@@ -543,7 +543,7 @@ public:
     declare(loc, "pia_gpu_seq_end", b.getFunctionType({i64}, {i32}));
     Value handle =
         make<mlir::func::CallOp>(b, loc, "pia_gpu_seq_begin",
-                                     mlir::TypeRange{i64}, mlir::ValueRange{})
+                                 mlir::TypeRange{i64}, mlir::ValueRange{})
             .getResult(0);
 
     for (scf::ForOp f : spreads) {
@@ -568,15 +568,18 @@ public:
                          true);
       auto k = kernelConstants(fb, fl, id, name, metallib);
       Value words = make<arith::ConstantIntOp>(fb, fl, i64, t.count);
-      make<mlir::func::CallOp>(fb, fl, "pia_gpu_seq_dispatch", mlir::TypeRange{},
-          mlir::ValueRange{handle, k[0], k[1], k[2], k[3], t.args, words,
-                           t.threads});
+      make<mlir::func::CallOp>(fb, fl, "pia_gpu_seq_dispatch",
+                               mlir::TypeRange{},
+                               mlir::ValueRange{handle, k[0], k[1], k[2], k[3],
+                                                t.args, words, t.threads});
       make<memref::AllocaScopeReturnOp>(fb, fl, mlir::ValueRange{});
       f.erase();
     }
 
     b.setInsertionPointAfter(seq);
-    auto end = make<mlir::func::CallOp>(b, loc, "pia_gpu_seq_end", mlir::TypeRange{i32}, mlir::ValueRange{handle});
+    auto end = make<mlir::func::CallOp>(b, loc, "pia_gpu_seq_end",
+                                        mlir::TypeRange{i32},
+                                        mlir::ValueRange{handle});
     status->getResult(0).replaceAllUsesWith(end.getResult(0));
     status->erase();
     seq->removeAttr("pia.place");
