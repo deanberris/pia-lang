@@ -718,8 +718,8 @@ let meta json_record (t : type_decl) : list =
       if is_bool f then true
       else if eq (kind ft) "RangeType" then true
       else if is_rec f then
-        (if or (is_opt f) (is_arr f) then
-           fail (concat "@derive(json): the field '" (concat f "' is an option or an array of a record, which @derive(json) cannot read or write yet"))
+        (if is_arr f then
+           fail (concat "@derive(json): the field '" (concat f "' is an array of records, which @derive(json) cannot read or write yet"))
          else true)
       else if eq (kind ft) "TypeName" then
         (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
@@ -754,8 +754,14 @@ let meta json_record (t : type_decl) : list =
      attributes, which say its member names, are settled once its own
      derive is done, so they cannot be read here. *)
   let with_rooms = let (n) (rs) => fold (let (acc) (rn) => `( $acc + $rn )) n rs in
-  let rec_room = let (f) => concat "json_room_" (name (base f)) in
-  let room = with_rooms fixed_room (map rec_room (filter (let (f) => is_rec f) fs)) in
+  (* A record's room once for a record or an option of one, n times for
+     an array of n; None's `null` is in the fixed room. *)
+  let rec_rooms = let (f) =>
+    if is_rec f then
+      (let rn = concat "json_room_" (name (base f)) in
+       if is_arr f then map (let (k) => rn) (range (arr_len f)) else [ rn ])
+    else [] in
+  let room = with_rooms fixed_room (fold (let (acc) (f) => concat acc (rec_rooms f)) [] fs) in
   let wname = concat "write_json_" tn in
   let wfield = let (i) => concat (concat (concat "write_json_" tn) "_") (nth fs i) in
   (* One function per member: its key, a colon and its value. *)
@@ -765,7 +771,7 @@ let meta json_record (t : type_decl) : list =
     let ft = field_type t f in
     let kb = bytes (nth checked i) in
     let kn = length kb in
-    let r = with_rooms (member_room i) (if is_rec f then [ rec_room f ] else []) in
+    let r = with_rooms (member_room i) (rec_rooms f) in
     let w = if is_rec f then nth (writer f) 0 else concat "Pia.Text.Json.Write." (nth (writer f) 0) in
     `( let $fn ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $ft) : usize
          requires $!pos <= len $!dst && len $!dst - $!pos >= $r
@@ -875,7 +881,8 @@ let meta json_record (t : type_decl) : list =
          let full = field_type t f in
          let n = arr_len f in
          let et = base f in
-         let einit = if is_bool f then `( false ) else nth (bounds f) 0 in
+         let einit = if is_rec f then (let dn = concat "json_default_" (name et) in `( $dn ))
+           else if is_bool f then `( false ) else nth (bounds f) 0 in
          let inits = map (let (k) => einit) (range n) in
          [ `( let $ort = type { value : $full; stop : usize } );
            `( let $ofn ($!s : [u8]) ($!pos : usize) : result $ort $ename
@@ -1036,9 +1043,9 @@ let meta json_record (t : type_decl) : list =
   let dname = concat "json_default_" tn in
   let dflt = let (f) =>
     if is_opt f then `( None )
-    else if is_rec f then (let dn = concat "json_default_" (name (base f)) in `( $dn ))
     else (
-      let one = if is_bool f then `( false ) else nth (bounds f) 0 in
+      let one = if is_rec f then (let dn = concat "json_default_" (name (base f)) in `( $dn ))
+        else if is_bool f then `( false ) else nth (bounds f) 0 in
       if is_arr f then (let inits = map (let (k) => one) (range (arr_len f)) in `( [ $inits ] )) else one) in
   let dlit = map (let (f) => [ f; dflt f ]) fs in
   let default_fn = `( let $dname : $t = { $dlit } ) in

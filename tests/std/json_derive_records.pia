@@ -1,0 +1,38 @@
+(* @derive(json) on options of records (ADR 0045): a value is read and
+   written by the record's own codec, `null` or a missing member is None,
+   and the writer's room counts json_room_<t> for it. Every goal is
+   proved.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+
+let pt = type { x : i8 @json(name = "px"); y : u16 } @derive(json)
+let path = type { start : pt; end_ : O.option pt; k : u8 } @derive(json)
+
+(* The start's y, or 1 when start is wrong, 2 when end_ is, and 0 for
+   any other error. *)
+let first_y (s : [u8]) : u16 =
+  match Json.read<path> s with
+  | Ok p -> p.start.y
+  | Err e -> (match e with | Field_path_start _ -> 1 | Field_path_end_ _ -> 2 | _ -> 0)
+
+(* A path written into a buffer with its room. *)
+let write (p : path) (dst : borrowed inout mutable [u8]) : usize
+  requires len dst >= json_room_path
+  ensures result <= json_room_path
+= write_json_path dst 0 p

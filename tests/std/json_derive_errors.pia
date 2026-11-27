@@ -42,3 +42,9 @@ let tagged = type
   | Count of u8
   | Nothing
   @derive(json) @json(tag = "kind")
+
+(* An array of records is not supported yet.
+// CHECK: json_derive_errors.pia:[[@LINE+3]]:43: error: @derive(json) on 'polyline' failed: @derive(json): the field 'pts' is an array of records, which @derive(json) cannot read or write yet
+*)
+let vertex = type { x : u8 } @derive(json)
+let polyline = type { pts : [vertex; 2] } @derive(json)
