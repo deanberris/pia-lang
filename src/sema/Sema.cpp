@@ -1237,7 +1237,7 @@ void defineTypeItems(const Node &program, TypeResolver &types,
 // The names in a value parameter's place in `t`, `n` in `vec u8 n`, that
 // are no parameter of `sig`'s function: its implicit value parameters
 // (ADR 0074), added to its type parameters.
-static void valueParamsIn(const Node &t, const TypeResolver &types,
+static void valueParamsIn(const Node &t, TypeResolver &types,
                           const std::set<std::string> &declared, FuncSig &sig) {
   if (t.kind == NodeKind::TypeApp && !t.kids.empty() &&
       t.kids[0]->kind == NodeKind::TypeName)
@@ -1248,6 +1248,9 @@ static void valueParamsIn(const Node &t, const TypeResolver &types,
         if (!g->valueTypes[i - 1] ||
             (a.kind != NodeKind::TypeName && a.kind != NodeKind::Name) ||
             declared.count(a.text) ||
+            // A type's name stays a type, and is an error here.
+            types.builtin(a.text) || types.named(a.text) ||
+            types.generic(a.text) ||
             std::find(sig.typeParams.begin(), sig.typeParams.end(), a.text) !=
                 sig.typeParams.end())
           continue;
@@ -1258,7 +1261,7 @@ static void valueParamsIn(const Node &t, const TypeResolver &types,
     valueParamsIn(*k, types, declared, sig);
 }
 
-static void implicitValueParams(const Node &item, const TypeResolver &types,
+static void implicitValueParams(const Node &item, TypeResolver &types,
                                 FuncSig &sig) {
   std::set<std::string> declared;
   for (const syntax::NodePtr &p : item.kids[0]->kids)
