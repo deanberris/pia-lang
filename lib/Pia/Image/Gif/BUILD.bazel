@@ -15,6 +15,7 @@ exports_files([
     "Lzw.pia",
     "LzwEncode.pia",
     "Quantise.pia",
+    "Ref.pia",
     "Spec.pia",
 ])
 
@@ -26,7 +27,17 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
 )
 
-# The LZW decoder: tests/std/gif_lzw.pia checks its goals;
+# GIF89a's LZW reading of a whole code stream, as a trace spec (#339, ADR
+# 0058): tests/std/gif_lzw.pia checks its goals.
+pia_library(
+    name = "ref",
+    src = "Ref.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = ["//lib/Pia/Image:bits"],
+)
+
+# The LZW decoder, proved against :spec's dictionary and, in decode_ref,
+# against :ref's whole stream: tests/std/gif_lzw.pia checks its goals;
 # tests/std/gif_lzw_edges.pia and :gif_lzw_run test it through its
 # interface.
 pia_library(
@@ -34,6 +45,7 @@ pia_library(
     src = "Lzw.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        ":ref",
         ":spec",
         "//lib/Pia/Image:bits",
     ],
