@@ -165,3 +165,20 @@ Implementation, replacing step 5's representation:
 4. **Inline `box c` slots** (ADR 0048, section 5) with the size and drop kept per element.
 
 Step 6's cross-module ABI is then the box's layout above: an importer calls a requirement or the drop through the box's table, whose layout is published with the concept ([ADR 0030](0030-published-object-layouts.md)).
+
+## Note, 2026-11-27: a box over a concept as an error payload
+
+Dean (2026-11-27), on the roadmap's C++ interop: "There should be a way to box an error (or have the error constructor host a concept box that then subsumes the C++ exception interface)", needed before 0.1.0.
+
+Nothing new is decided here: this records that the rules above already give it. A constructor's payload may be any sized type, and `box c` is sized (it is the box, not what it holds), so an error set may have a case that carries one:
+
+```ocaml
+let io_error = type | Closed | Cxx of box Exception
+```
+
+- **The set stays closed** ([ADR 0028](0028-error-propagation-and-cleanup.md)). Its cases are a fixed list, so a handler still covers exactly the errors that can reach it. Only the payload of `Cxx` is open: any type that meets `Exception` can be boxed into it, from any module once boxes go through tables.
+- **Raising** is `Err (Cxx (widen b))` from a full `box t`, and `widen` runs the use check for `t` (section 3), so each type's requirement contracts and one-value laws are proved once, where it is boxed.
+- **Handling** binds the box, `| Cxx e -> code e`, and calls through it are proved as in section 5: from `Exception`'s contracts and laws, never from which type was boxed.
+- **C++ exceptions** (0.5, with the C++ FFI) are then a library concept `exception` with `what` and the nested exception as single-receiver requirements, and a generated shim at each bound C++ call that catches, boxes what it caught into the error set's `Cxx` case, and returns it as an `Err`. It is `std::exception_ptr` with the interface checked. There is no downcast (section 6): a handler that must tell C++ types apart asks through a requirement of the concept.
+
+As built: tests/verify/box_error_payload.pia proves an error set whose `Cxx` case holds a boxed `not_found` or `overflow`, passed on by `?` and handled through the box, and tests/codegen/box_error_payload.pia runs it from C. Within a module this uses step 5's tagged union. A payload boxed in one module and handled in another needs the amendment's tables, ADR 0071's section 6, which come next. A payload whose type has a drop is not dropped through the box until the amendment's step 3.

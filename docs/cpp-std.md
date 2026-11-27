@@ -30,7 +30,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<initializer_list>` | array literals | Core | n/a |
 | `<version>` | none | Out | n/a |
 | `<stacktrace>` | `Pia.Rt` | Direct (#58) | phase 3 |
-| `<exception>`, `<stdexcept>` | closed error variants in `result` (ADR 0028) | Out: no exceptions | n/a |
+| `<exception>`, `<stdexcept>` | closed error variants in `result` (ADR 0028); an exception of any dynamic type is one case carrying a box over a concept, `Cxx of box exception` (ADR 0046, 2026-11-27 note) | Out: no exceptions; `std::exception_ptr` becomes a boxed error payload | a boxed error payload within a module done (tests/verify/box_error_payload.pia); across modules with ADR 0071's tables; the `exception` concept and catching at bound C++ calls with the C++ FFI (0.5) |
 | `<system_error>`, `<cerrno>` | each module's error variants; `Pia.Sys` decodes `errno` | Idiom | `Pia.Sys.Fs.errno` done: `Pia.Sys.Posix.errno` reads the thread's errno through `@deref`, and Fs decodes it into a variant; the other `Pia.Sys` modules phase 3 |
 | `<cassert>` | `assert` (proved, never checked at run time) | Core | n/a |
 | `<limits>`, `<climits>`, `<cstdint>`, `<cstddef>`, `<cinttypes>` | the integer and range types, which state their bounds: `u8` is `int{0..255}`, and a range type is its own `numeric_limits`. Functions returning them per type wait for a type's bounds to be values in generic code | Core | core types done; generic limits wait |
