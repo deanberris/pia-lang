@@ -221,7 +221,14 @@ use_repo(pip, "pia_pip")
 bazel_dep(name = "rules_rust", version = "0.69.0", dev_dependency = True)
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust", dev_dependency = True)
-rust.toolchain(edition = "2021")
+# Rust 1.90 and later link x86_64 Linux programs with the rust-lld in
+# rustc's sysroot, which BuildBuddy's executors do not get ("the
+# self-contained linker was requested, but it wasn't found"); 1.89 links with
+# the C toolchain, as clang and Zig's references do.
+rust.toolchain(
+    edition = "2021",
+    versions = ["1.89.0"],
+)
 use_repo(rust, "rust_toolchains")
 
 register_toolchains("@rust_toolchains//:all", dev_dependency = True)
