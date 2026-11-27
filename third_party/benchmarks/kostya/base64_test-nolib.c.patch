@@ -1,0 +1,56 @@
+--- base64_test-nolib.c
++++ base64_test-nolib.c
+@@ -1,4 +1,3 @@
+-#include <libnotify.h>
+ #include <assert.h>
+ #include <stdarg.h>
+ #include <stdbool.h>
+@@ -188,7 +187,7 @@
+   return decoded_size;
+ }
+ 
+-int main() {
++int main(int argc, char *argv[]) {
+   init_decode_table();
+ 
+   const char *fixtures[][2] = {{"hello", "aGVsbG8="}, {"world", "d29ybGQ="}};
+@@ -220,7 +219,7 @@
+   }
+ 
+   const int STR_SIZE = 131072;
+-  const int TRIES = 8192;
++  const int TRIES = argc > 1 ? atoi(argv[1]) : 8192;
+ 
+   char str[STR_SIZE];
+   memset(str, 'a', STR_SIZE);
+@@ -229,28 +228,18 @@
+   char str3[decode_size(str2_size)];
+   b64_decode(str3, str2, str2_size);
+ 
+-  notify_with_pid("C/" COMPILER);
+-
+   int s_encoded = 0;
+-  clock_t t = clock();
+   for (int i = 0; i < TRIES; i++) {
+     char str2[encode_size(STR_SIZE)];
+     s_encoded += b64_encode(str2, str, STR_SIZE);
+   }
+-  float t_encoded = (float)(clock() - t) / CLOCKS_PER_SEC;
+ 
+   int s_decoded = 0;
+-  clock_t t1 = clock();
+   for (int i = 0; i < TRIES; i++) {
+     char str3[decode_size(str2_size)];
+     s_decoded += b64_decode(str3, str2, str2_size);
+   }
+-  float t_decoded = (float)(clock() - t1) / CLOCKS_PER_SEC;
+-
+-  notify("stop");
+ 
+-  printf("encode %.4s... to %.4s...: %d, %.2f\n", str, str2, s_encoded,
+-         t_encoded);
+-  printf("decode %.4s... to %.4s...: %d, %.2f\n", str2, str3, s_decoded,
+-         t_decoded);
++  printf("encode %.4s... to %.4s...: %d\n", str, str2, s_encoded);
++  printf("decode %.4s... to %.4s...: %d\n", str2, str3, s_decoded);
+ }

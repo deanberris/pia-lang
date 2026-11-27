@@ -22,5 +22,13 @@
     "count_expected": "-28.500833",
     "reference": "c",
     "programs": ["pia", "c", "rust", "zig"]
+  },
+  "base64": {
+    "source": "kostya",
+    "args": ["8192"],
+    "count_args": ["64"],
+    "count_expected": "encode aaaa... to YWFh...: 11184896\ndecode YWFh... to aaaa...: 8388608",
+    "reference": "c",
+    "programs": ["pia", "control", "c"]
   }
 }

@@ -1,0 +1,14 @@
+load("//bench/codegen:defs.bzl", "codegen_benchmark")
+
+# kostya's base64 (ADR 0075, wave 1): encode 131,072 bytes and decode the
+# result, each `tries` times. The benchmark input is 8192 tries; the test
+# runs 2.
+codegen_benchmark(
+    name = "base64",
+    c = "//third_party/benchmarks/kostya:base64_c",
+    check_args = ["2"],
+    control = "control.c",
+    driver = "main.c",
+    expected = "encode aaaa... to YWFh...: 349528\\ndecode YWFh... to aaaa...: 262144",
+    pia = "base64.pia",
+)
