@@ -31,7 +31,7 @@ Pia gives what the C++ library lets a program do, in Pia's idioms: slices instea
 | `<version>` | none | Out | n/a |
 | `<stacktrace>` | `Pia.Rt` | Direct (#58) | phase 3 |
 | `<exception>`, `<stdexcept>` | closed error variants in `result` (ADR 0028) | Out: no exceptions | n/a |
-| `<system_error>`, `<cerrno>` | each module's error variants; `Pia.Sys` decodes `errno` | Idiom | phase 3 |
+| `<system_error>`, `<cerrno>` | each module's error variants; `Pia.Sys` decodes `errno` | Idiom | `Pia.Sys.Fs.errno` done: `Pia.Sys.Posix.errno` reads the thread's errno through `@deref`, and Fs decodes it into a variant; the other `Pia.Sys` modules phase 3 |
 | `<cassert>` | `assert` (proved, never checked at run time) | Core | n/a |
 | `<limits>`, `<climits>`, `<cstdint>`, `<cstddef>`, `<cinttypes>` | the integer and range types, which state their bounds: `u8` is `int{0..255}`, and a range type is its own `numeric_limits`. Functions returning them per type wait for a type's bounds to be values in generic code | Core | core types done; generic limits wait |
 | `<cfloat>`, `<stdfloat>` | `Pia.Math` | Deferred: floats (M11) | phase 4 |
@@ -120,7 +120,7 @@ All containers are in `Pia.Mem` (#72) and take an allocator. Element access is `
 | `<sstream>`, `<spanstream>` | writers into a `Pia.Text.String` or an `out` slice | Direct | phase 3 |
 | `<iosfwd>`, `<streambuf>`, `<syncstream>` | none | Out: no stream class hierarchy | n/a |
 | `<cstdio>` | `Pia.Io` | Idiom | phase 3 |
-| `<filesystem>` | `Pia.Sys.Fs` | Direct (#57) | phase 3 |
+| `<filesystem>` | `Pia.Sys.Fs` | Direct (#57) | files done, for both targets: a `@linear` `file` with `open_read`, `create`, `read_some`, `write_all` and `close`, each failure an `Err` of a decoded errno (27 goals); directories, `fstat` and seeking phase 3 |
 
 ## Concurrency
 
