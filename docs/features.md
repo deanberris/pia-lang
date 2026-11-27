@@ -12,7 +12,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Digit separators, `min t` and `max t` | [tour](tour.md#integers), [grammar](grammar.md#literals) | [digit_separators](../tests/verify/digit_separators.pia), [type_bounds](../tests/verify/type_bounds.pia) |
 | Bit operators and the builtins `clz`, `ctz`, `popcount`, `bswap`, `rotl`, `rotr` | [verifier](verifier.md#intervals-first), [Pia.Core.Bit](library.md#core) | [bits](../tests/verify/bits.pia), [bit_counts](../tests/verify/bit_counts.pia) |
 | No shadowing, and primed names such as `x'` | [tour](tour.md#no-shadowing) | [primes](../tests/verify/primes.pia) |
-| Arrays and slices, constant tables | [tour](tour.md#arrays-and-slices) | [slices](../tests/verify/slices.pia), [local_arrays](../tests/verify/local_arrays.pia), [array_results](../tests/verify/array_results.pia), [consts](../tests/verify/consts.pia) |
+| Arrays and slices, constant tables | [tour](tour.md#arrays-and-slices) | [slices](../tests/verify/slices.pia), [local_arrays](../tests/verify/local_arrays.pia), [array_results](../tests/verify/array_results.pia), [consts](../tests/verify/consts.pia), [const_array_views](../tests/verify/const_array_views.pia) |
 | Records, and buffers of records | [tour](tour.md#records) | [records](../tests/verify/records.pia), [record_buffers](../tests/verify/record_buffers.pia), [slice_aggregates](../tests/verify/slice_aggregates.pia) |
 | Variants and `match`, record payloads | [tour](tour.md#variants-and-match) | [variants](../tests/verify/variants.pia), [record_payloads](../tests/verify/record_payloads.pia) |
 | Type aliases, `let byte = u8` | [tour](tour.md#records) | [type_aliases](../tests/verify/type_aliases.pia) |
@@ -65,6 +65,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Lambdas and function values | [tour](tour.md#function-values), [ADR 0044](adr/0044-function-values-and-lambdas.md) | [lambda_find](../tests/verify/lambda_find.pia), [lambda_generic](../tests/verify/lambda_generic.pia), [lambda_generic_forms](../tests/verify/lambda_generic_forms.pia), [lambda_named](../tests/verify/lambda_named.pia), [lambda_overloads](../tests/verify/lambda_overloads.pia) |
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
+| Function references: `let h : (x : u8) -> u8 requires ... = succ` | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory

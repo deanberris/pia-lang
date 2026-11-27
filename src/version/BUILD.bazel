@@ -1,0 +1,47 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# piac's version (Version.h, ADR 0073): `dev`, or stamped by
+# `--config=release` from workspace_status.sh.
+cc_library(
+    name = "version",
+    srcs = [
+        "Version.cpp",
+        ":stamp_inc",
+    ],
+    hdrs = ["Version.h"],
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+)
+
+config_setting(
+    name = "stamped",
+    values = {"stamp": "1"},
+)
+
+genrule(
+    name = "stamp_inc",
+    srcs = select({
+        ":stamped": [":stamp_release"],
+        "//conditions:default": [":stamp_dev"],
+    }),
+    outs = ["Stamp.inc"],
+    cmd = "cp $< $@",
+)
+
+genrule(
+    name = "stamp_dev",
+    srcs = ["stamp.sh"],
+    outs = ["stamp_dev.inc"],
+    cmd = "sh $(location stamp.sh) /dev/null $@",
+)
+
+# Built only under --stamp, through :stamp_inc; `manual` keeps `//...` from
+# building it, since it reads the status file, which changes per machine.
+genrule(
+    name = "stamp_release",
+    srcs = ["stamp.sh"],
+    outs = ["stamp_release.inc"],
+    cmd = "sh $(location stamp.sh) bazel-out/stable-status.txt $@",
+    stamp = 1,
+    tags = ["manual"],
+)

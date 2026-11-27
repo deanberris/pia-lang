@@ -18,6 +18,7 @@ def pia_object(
         src,
         embeds = [],
         allow_unproved = [],
+        opt_level = None,
         solver_rlimit = 1200000000,
         solver_timeout_ms = 600000,
         **kwargs):
@@ -34,6 +35,8 @@ def pia_object(
     is. The default is about 20 times the costliest goal in the repository,
     as measured by `piac --solver-cost` (docs/verifier.md, "Timeouts").
 
+    `opt_level`, when set, is piac's `-O<n>`; piac's own default is `-O2`.
+
     `solver_timeout_ms` is only a last-resort safety net against a query
     that runs for a long time without spending its rlimit; it should never
     be what decides a goal.
@@ -44,7 +47,8 @@ def pia_object(
     flags = " ".join(["--allow-unproved=" + spec for spec in allow_unproved] +
                      ["--solver-rlimit=%d" % solver_rlimit,
                       "--solver-timeout=%d" % solver_timeout_ms,
-                      "--jobs=%d" % PIAC_JOBS])
+                      "--jobs=%d" % PIAC_JOBS] +
+                     (["-O%d" % opt_level] if opt_level != None else []))
     if embeds:
         embed_locs = " ".join(["$(locations %s)" % e for e in embeds])
         cmd = (

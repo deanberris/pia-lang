@@ -1,0 +1,11 @@
+--- a/nqueen.zig
++++ b/nqueen.zig
+@@ -44,5 +44,8 @@
+ 
+ pub fn main() !void {
+ 	var n: u5 = 15;
++	var args = std.process.args();
++	_ = args.skip();
++	if (args.next()) |s| n = try std.fmt.parseInt(u5, s, 10);
+ 	std.debug.print("{d}\n", .{nq_solve(n)});
+ }

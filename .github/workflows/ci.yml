@@ -103,6 +103,9 @@ jobs:
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
+        # The whole history: piac's version counts the commits (ADR 0073).
+        with:
+          fetch-depth: 0
 
       # One cache entry per set of dependencies. Pia's own code is cheap to
       # rebuild; LLVM, MLIR and Z3 are what the cache is for.
@@ -162,9 +165,14 @@ jobs:
         timeout-minutes: 300
         run: bazel build --config=ci --keep_going //...
 
+      # The macOS runner has 3 cores to Linux's 4, and runs every test
+      # locally, so the suite takes about twice as long: 30 minutes cut it
+      # off at 457 of 494 tests on 2026-11-27. One longer job keeps the
+      # free plan's 5 macOS runners for other PRs, where shards would take
+      # several of them.
       - name: Test
         id: test
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: bazel test --config=ci --keep_going //...
 
       # Build time is a benchmark (ADR 0032). Linux gates every change (the
@@ -201,6 +209,12 @@ jobs:
       # and Z3 from source. Packaged as a tarball so execute bits survive
       # GitHub's artifact zip; re-signed after stripping because Apple silicon
       # rejects unsigned Mach-O binaries.
+      # The published piac knows its version (src/version, ADR 0073). Only
+      # piac is built again: everything it links is cached.
+      - name: Stamp piac
+        if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        run: bazel build --config=ci --config=release //tools/piac
+
       - name: Package binaries
         if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
@@ -212,6 +226,8 @@ jobs:
           strip -x "$stage/pia" "$stage/piac"
           codesign --force --sign - "$stage/pia" "$stage/piac"
           printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
+          "$stage/piac" --version
+          "$stage/piac" --version | grep -q '^piac [0-9]'
           "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
           printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
           COPYFILE_DISABLE=1 tar -czf "${{ runner.temp }}/pia-macos-arm64.tar.gz" -C "$stage" pia piac
@@ -270,6 +286,9 @@ jobs:
       CXX: clang++
     steps:
       - uses: actions/checkout@v4
+        # The whole history: piac's version counts the commits (ADR 0073).
+        with:
+          fetch-depth: 0
 
       # A hosted runner starts with about 14 GB free, and LLVM's build
       # needs more. These preinstalled SDKs are never used here. With the
@@ -323,6 +342,28 @@ jobs:
         timeout-minutes: 30
         run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
 
+      # The codegen benchmark (ADR 0075): Pia against C, C++, Rust and Zig on
+      # the binaries the build above made, with cachegrind's instruction
+      # counts and wall times in the job summary. Report only: nothing gates
+      # until wave 1 is complete, so a failure here never fails the job (a
+      # wrong answer already fails //bench/codegen's tests above).
+      - name: Codegen benchmark
+        if: steps.test.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          sudo apt-get install -y -qq valgrind > /dev/null
+          python3 tools/bench/codegen_bench.py --bazel-bin bazel-bin --runs 5 \
+            --out codegen-bench.json --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the codegen benchmark
+        if: steps.test.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codegen-bench-linux
+          path: codegen-bench.json
+          if-no-files-found: ignore
+
       # The bench job's shards prove the corpus with this piac, on runners
       # of their own, so this job is not held for the benchmark.
       - name: Keep piac for the benchmark
@@ -350,6 +391,20 @@ jobs:
       # info already lives in .dwo files that are not shipped; stripping drops
       # the remaining symbol tables. Packaged as a tarball so execute bits
       # survive GitHub's artifact zip.
+      # The published piac knows its version (src/version, ADR 0073), and
+      # on pull requests the stamp is checked, so the step that publishes
+      # it on main cannot be the first to find it broken.
+      - name: Stamp piac
+        if: steps.test.outcome == 'success'
+        run: |
+          if [ "${{ github.event_name }}" = push ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --config=release //tools/piac
+          else
+            env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --config=release //src/version:stamp_inc
+          fi
+          cat bazel-bin/src/version/Stamp.inc
+          grep -q '^#define PIA_PROVER_VERSION "[0-9][0-9.]*+[0-9]*\.[0-9a-f]*"$' bazel-bin/src/version/Stamp.inc
+
       - name: Package binaries
         if: steps.test.outcome == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: |
@@ -360,6 +415,8 @@ jobs:
           chmod 755 "$stage/pia" "$stage/piac"
           strip "$stage/pia" "$stage/piac"
           printf 'let f (x : i32) : i32\n  ensures result = x\n= x\n' > "${{ runner.temp }}/smoke.pia"
+          "$stage/piac" --version
+          "$stage/piac" --version | grep -q '^piac [0-9]'
           "$stage/piac" --verify "${{ runner.temp }}/smoke.pia"
           printf 'let sum (a : u8) (b : u8) : u16 = a + b\nsum 1 2\n' | "$stage/pia" repl
           tar -czf "${{ runner.temp }}/pia-linux-x86_64.tar.gz" -C "$stage" pia piac

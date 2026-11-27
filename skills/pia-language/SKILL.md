@@ -133,7 +133,7 @@ let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
 = find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 ```
 
-The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`).
+The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value.
 
 **Modules.** One file is one module. Everything in it is private unless an interface the module claims lists it, and an import names an interface, never a wildcard:
 
