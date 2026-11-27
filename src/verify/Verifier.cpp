@@ -2990,6 +2990,43 @@ class Encoder {
     return declare(boolType(), "", false);
   }
 
+  // After a spread over lo .. hi: an iteration writes only the cells it
+  // owns, so every cell of a written buffer that no iteration of the range
+  // owns holds what it held before the loop. Without this, a spread over
+  // part of a buffer would lose the rest of it (ADR 0068, section 9). The
+  // spread's own HavocOthersOps at the start of the body name each written
+  // buffer and its owner array.
+  void keepUnowned(mlir::Block &body, Value lb, Value ub,
+                   const llvm::DenseMap<Value, Value> &before) {
+    using P = mlir::smt::BVCmpPredicate;
+    for (Operation &op : body) {
+      auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+      if (!h || !h->hasAttr("pia.from_start"))
+        continue;
+      Value root = rootBuffer(h.getBuffer());
+      Value cur = arrays_.lookup(root), old = before.lookup(root);
+      Value len = lengths_.lookup(root);
+      Value owner =
+          h.getOwner() ? arrays_.lookup(rootBuffer(h.getOwner())) : Value();
+      if (!cur || !old || !len || (h.getOwner() && !owner))
+        continue;
+      auto at = mlir::cast<mlir::smt::ArrayType>(cur.getType());
+      assume(forallIndex([&](Value c) {
+        Value in = andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len));
+        Value who = c;
+        if (owner) {
+          auto ot = mlir::cast<mlir::smt::ArrayType>(owner.getType());
+          who = create<mlir::smt::ArraySelectOp>(ot.getRangeType(), owner, c);
+        }
+        Value owned = andOf(cmp(P::sle, lb, who), cmp(P::slt, who, ub));
+        return implies(
+            andOf(in, notOf(owned)),
+            eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), cur, c),
+               create<mlir::smt::ArraySelectOp>(at.getRangeType(), old, c)));
+      }));
+    }
+  }
+
   bool stepFor(mlir::scf::ForOp forOp) {
     using P = mlir::smt::BVCmpPredicate;
     Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
@@ -3118,6 +3155,8 @@ class Encoder {
     // loop never ran.
     arrays_ = beforeArrays;
     havocBuffers(written);
+    if (forOp->hasAttr("pia.spread"))
+      keepUnowned(body, lb, ub, beforeArrays);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
       if (isBuffer(r))
