@@ -103,7 +103,28 @@ Transparent bodies reach importers only for loop-free functions of scalars. A li
 
 LTO changes no proof. Each module is still proved against its imports' contracts and its certificate still names the interface hashes it used, so `modular` covers whatever LLVM links. LLVM only uses what the IR says, and since contracts are erased first, it cannot assume anything a proof did not establish. What LTO gives up is the separate shipping of objects: a module whose code was inlined into another under LTO is part of that binary, so a shared library is never built this way, and the witness symbols are still emitted so the certificate check runs at link time as it does now.
 
-### 6. Steps
+### 6. A whole-program mode, for builds that do not mind its cost (Dean, 2026-11-27)
+
+Dean's worry is that LTO may not be enough: it optimises after proving, from IR with the contracts erased. So the question is what a single compilation unit, the whole program compiled and proved together, would add beyond sections 1 to 5.
+
+- **For proofs, nothing.** Within one module, the verifier already takes every call to a function with a loop, buffer or recursion on its contract, and unfolds only what section 1 exports. A loop's strongest postcondition is not computable in general, so the verifier would use its invariant even if it had the body. So putting every module into one unit proves exactly what transparent exports prove. `strongest_complete` is the limit: a proof can use a body only where the body is a definition. The check of this is step 1's test, which proves `three` and `dead` across modules as they prove in one.
+- **For optimisation, two things LTO cannot do.** LLVM sees the whole program under full LTO, but only as LLVM IR. A single unit also lets MLIR's passes work across modules (linalg fusion across a library boundary, Pia-level folding before lowering), and it lets codegen use what was proved. A proved `ensures` at a call can become an `llvm.assume`, so a branch a callee's contract decides is folded even where the body is not available. That fact comes from a proof, so it holds, and only this mode carries the proofs and the code to one place.
+
+So the mode is opt-in, `piac --whole-program` with `pia_binary(whole_program = True)`. Each module is still proved on its own against its imports, with its proof cache and certificate unchanged. Then their verified MLIR is linked into one module, the proved postconditions at calls are emitted as assumptions, and the result is optimised and lowered once.
+
+| | Separate (default) | + LTO (section 5) | Whole program (section 6) |
+| --- | --- | --- | --- |
+| What proves | contracts, plus transparent bodies | the same | the same |
+| Cross-module inlining | transparent bodies only | everything LLVM chooses | everything, and at MLIR level |
+| Branches folded from proved facts | no | no | yes, through `llvm.assume` |
+| Proof time | per module, cached | the same | the same (proofs are per module) |
+| Build time | per module, parallel | plus one link-time optimisation (ThinLTO stays parallel) | plus one optimisation of the whole program, serial, which grows with the program |
+| What a change rebuilds | the module, and importers of a changed interface | plus the link | the whole program's optimisation and codegen |
+| Distribution | objects and shared libraries, certificates per object | static binaries only | static binaries only, one object and certificate set |
+
+An assumption that is too strong is undefined behaviour in LLVM, so the mode emits only `ensures` that were proved (not trusted ones, `@assume`, or `--allow-unproved` goals), and a test checks each emitted assumption against the report.
+
+### 7. Steps
 
 1. Export transparent definitions in `.piai` and unfold them at importers. Prove `tests/modules/transparent.pia` (the `Clamp` example), and record the change in the Linux proof-cost shards.
 2. `@opaque` on ordinary functions, `with f` across them, and the docs (verifier.md "Calls", tour, features).
@@ -111,6 +132,7 @@ LTO changes no proof. Each module is still proved against its imports' contracts
 4. A lint, `opaque_export`, for an exported function that is not transparent and whose `ensures` does not determine its result, pointing at the precision it gives up.
 5. The inline surface hash split from the interface hash (docs/abi.md), recorded per importer in its certificate.
 6. `piac --lto` (bitcode objects) and `pia_binary(lto = True)` through LLVM ThinLTO, with C objects built `-flto`, measured on the codegen benchmark (#485, #490).
+7. `piac --whole-program`: link verified MLIR modules, emit proved `ensures` as `llvm.assume` at calls, and compare with ThinLTO on the codegen benchmark.
 
 ## Consequences
 
