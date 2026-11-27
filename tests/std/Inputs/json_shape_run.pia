@@ -1,7 +1,8 @@
 (* Runs @derive(json_dom) from C (json_shape_run_test.c): a point read
    from a parsed document, and one written as a document and read back,
    the same for a reading, whose option fields may be null or missing,
-   and for a sample, whose fields are fixed arrays. *)
+   for a sample, whose fields are fixed arrays, and for a segment, whose
+   fields are points. *)
 module JsonShapeRun : Run
 
 import Pia.Core.Order.Ops
@@ -22,6 +23,8 @@ interface Run @abi(c) = sig
   let round_trip_reading : (id : u16) -> (has_temp : bool) -> (temp : i8) -> (ok : int{0..2}) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
   let read_sample : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
   let round_trip_sample : (id : u8) -> (x0 : i8) -> (x1 : i8) -> (x2 : i8) -> (f0 : bool) -> (f1 : bool) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let read_segment : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_segment : (x : i32) -> (y : u8) -> (n : u8) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
 end
 
 let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
@@ -107,3 +110,28 @@ let round_trip_sample (id : u8) (x0 : i8) (x1 : i8) (x2 : i8) (f0 : bool) (f1 : 
   match to_dom_json_sample { id = id; xs = [ x0; x1; x2 ]; flags = [ f0; f1 ] } text vs ms with
   | Err _ -> -1
   | Ok v -> sample_code (from_dom_json_sample text v)
+
+let segment = type { a : point; b : point; n : u8 } @derive(json, json_dom)
+
+(* A segment's code: its points' codes, the first twice and the second
+   three times, and n. *)
+let segment_code (g : segment) : i64 = code g.a * 2 + code g.b * 3 + g.n
+
+(* The segment s denotes, as its code, or -1 if s is no document and -2
+   if it is one that is not a segment. *)
+let read_segment (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_segment s v then segment_code (from_dom_json_segment s v) else -2
+
+(* The segment from (x, y, true) to (-x, y, false), with n, as a document
+   over text, read back, as its code; -1 if to_dom made none. *)
+let round_trip_segment (x : i32) (y : u8) (n : u8) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  let nx : i32 = if x = -2147483648 then 0 else 0 - x in
+  match to_dom_json_segment { a = { x = x; y = y; ok = true }; b = { x = nx; y = y; ok = false }; n = n } text vs ms with
+  | Err _ -> -1
+  | Ok v -> segment_code (from_dom_json_segment text v)

@@ -1,4 +1,4 @@
-(* @derive(json_dom) on records, with option and fixed array fields (ADR 0045, step 7): its conforms, check,
+(* @derive(json_dom) on records, with option, fixed array and nested record fields (ADR 0045, step 7): its conforms, check,
    from_dom and to_dom are proved where it is derived, with nothing
    accepted unproved. check decides conforms; from_dom, given that a
    document conforms, is the record with no failure path, each field its
@@ -43,6 +43,12 @@ let sample = type { id : u8; xs : [i8; 3]; flags : [bool; 2] } @derive(json, jso
 
 let get_sample (s : [u8]) (v : Pia.Text.Json.Dom.json) : result sample Pia.Text.Json.Shape.nonconforming =
   if check_json_sample s v then Ok (from_dom_json_sample s v) else Err Nonconforming
+
+(* Nested record fields: an object that conforms to the field's type. *)
+let segment = type { a : point; b : point; n : u8 } @derive(json, json_dom)
+
+let get_segment (s : [u8]) (v : Pia.Text.Json.Dom.json) : result segment Pia.Text.Json.Shape.nonconforming =
+  if check_json_segment s v then Ok (from_dom_json_segment s v) else Err Nonconforming
 
 (*
 // CHECK: 0 failed, 0 skipped

@@ -29,6 +29,14 @@ int64_t round_trip_sample(uint8_t id, int8_t x0, int8_t x1, int8_t x2, bool f0,
                           size_t ncells, uint64_t *key_start, size_t nmems,
                           uint64_t *key_stop, void *member_values);
 
+int64_t read_segment(const uint8_t *s, size_t n, void *cells, size_t ncells,
+                     uint64_t *key_start, size_t nmems, uint64_t *key_stop,
+                     void *member_values);
+int64_t round_trip_segment(int32_t x, uint8_t y, uint8_t n, uint8_t *text,
+                           size_t ntext, void *cells, size_t ncells,
+                           uint64_t *key_start, size_t nmems,
+                           uint64_t *key_stop, void *member_values);
+
 static _Alignas(16) unsigned char cells[16 * 512];
 static uint64_t key_start[16], key_stop[16];
 static _Alignas(16) unsigned char member_values[16 * 512];
@@ -82,6 +90,18 @@ static int check_sample(const char *s, int64_t want) {
   return 0;
 }
 
+// A segment's code: its first point's code twice, its second's three
+// times, and n; a point's code is x * 1000 + y * 10 + ok.
+static int check_segment(const char *s, int64_t want) {
+  int64_t got = read_segment((const uint8_t *)s, strlen(s), cells, 16,
+                             key_start, 16, key_stop, member_values);
+  if (got != want) {
+    printf("%s: %lld, expected %lld\n", s, (long long)got, (long long)want);
+    return 1;
+  }
+  return 0;
+}
+
 int main(void) {
   int bad = 0;
   bad |= check("{\"xx\": -7, \"y\": 200, \"ok\": true}", -7000 + 2001);
@@ -127,6 +147,23 @@ int main(void) {
                                      member_values);
   if (sample != 51271281291) {
     printf("round_trip_sample: %lld\n", (long long)sample);
+    bad = 1;
+  }
+  bad |=
+      check_segment("{\"a\": {\"xx\": 1, \"y\": 2, \"ok\": true}, "
+                    "\"b\": {\"ok\": false, \"xx\": -3, \"y\": 4}, \"n\": 5}",
+                    2 * 1021 + 3 * -2960 + 5);
+  bad |= check_segment("{\"a\": {\"xx\": 1, \"y\": 2, \"ok\": true}, \"n\": 5}",
+                       -2); // b missing
+  bad |=
+      check_segment("{\"a\": {\"xx\": 1, \"y\": 2, \"ok\": true}, "
+                    "\"b\": {\"xx\": 1, \"y\": 256, \"ok\": true}, \"n\": 5}",
+                    -2); // b's y out of range
+  bad |= check_segment("{\"a\": 1, \"b\": 2, \"n\": 5}", -2);
+  int64_t seg = round_trip_segment(-7, 9, 3, text, sizeof text, cells, 16,
+                                   key_start, 16, key_stop, member_values);
+  if (seg != 2 * (-7000 + 91) + 3 * 7090 + 3) {
+    printf("round_trip_segment: %lld\n", (long long)seg);
     bad = 1;
   }
   return bad;
