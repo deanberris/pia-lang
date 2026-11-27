@@ -45,7 +45,6 @@ let half (x : i32) : i32 = x / 2
 (* Buffers: a slice is a pointer and a length in C, and `+|` saturates.
 *)
 let add_rows (a : [u8]) (b : [u8]) (dst : out mutable [u8]) : unit
-  requires len a = len dst && len b = len dst
 =
   for i in 0..len dst do dst.[i] <- a.[i] +| b.[i] done
 

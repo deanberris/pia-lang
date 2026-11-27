@@ -13,7 +13,6 @@ interface Ops = sig
 end
 
 let half (x : u8) : u8
-  ensures 2 * result <= x
 = x / 2
 
 let half (x : u16) : u16

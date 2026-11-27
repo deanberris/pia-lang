@@ -89,7 +89,6 @@ let doubled (xs : [box Shape]) : u32
 
 (* What box_concept_test.c calls: 3 * 3 + 2 * 5, through the boxes. *)
 let run (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : u32
-  requires len sq = 1 && len rc = 1 && len xs = 2
 = match two sq rc xs with
   | Ok v -> v
   | Err _ -> 0

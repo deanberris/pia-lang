@@ -27,19 +27,14 @@ let maybe = let (t : type) => type | Nothing | Just of t
 let pair = let (t : type) => type { first : t; second : t }
 
 let side_of (p : point) : side
-  ensures p.x < 0 ==> result = Left
-  ensures p.x > 0 ==> result = Right
-  ensures p.x = 0 ==> result = On
 = if p.x < 0 then Left else if p.x > 0 then Right else On
 
 let first_or (m : maybe u8) (d : u8) : u8
-  ensures (match m with | Just v -> result = v | Nothing -> result = d)
 = match m with
   | Just v -> v
   | Nothing -> d
 
 let swap (p : pair u8) : pair u8
-  ensures result.first = p.second && result.second = p.first
 = { first = p.second; second = p.first }
 
 let limit : i32 = 100

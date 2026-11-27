@@ -15,7 +15,6 @@ let os_unmap (addr : usize) (n : usize) : unit = extern "pages_unmap"
 (* Maps n bytes, fills them with v and sums them: n * v, or 0 if the
    mapping fails. *)
 let fill_sum (n : usize) (v : u8) : u64
-  requires n <= 65536
 = let addr = unsafe os_map n in
   if addr = 0 then 0
   else

@@ -227,7 +227,6 @@ Its C entry point.
 
 ```pia
 let directions_gpu (fill : [u16]) (w : usize) (down : out mutable [usize]) : i32
-  requires len down = len fill && w >= 3 && w + w + w <= len fill
 =
   match directions_on_gpu fill w down with
   | Ok -> 0
@@ -320,8 +319,6 @@ Its C entry point.
 ```pia
 let render_gpu (dem : [u16]) (fill : [u16]) (acc : [u32]) (basin : [usize])
     (threshold : u32) (rgba : out mutable [u32]) : i32
-  requires len fill = len dem && len acc = len dem && len basin = len dem
-  requires len rgba = len dem
 =
   match render_on_gpu dem fill acc basin threshold rgba with
   | Ok -> 0

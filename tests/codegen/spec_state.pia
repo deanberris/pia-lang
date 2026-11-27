@@ -67,7 +67,6 @@ let take_block (t : inout mutable tracker) (b : blk) : unit
 
 \ Two blocks taken in turn are both live, from the axioms alone.
 let take_two (a : u8) (b : u8) : u64
-  requires a < 64 && b < 64 && a <> b
 = let t : mutable tracker = { bits = 0; heap = Alloc.none } in
   take_block t a;
   take_block t b;

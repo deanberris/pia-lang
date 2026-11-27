@@ -45,11 +45,9 @@ let pop32 (x : u32) : u8 = popcount x
 let swap32 (x : u32) : u32 = bswap x
 
 let rotl32 (x : u32) (n : u8) : u32
-  requires n < 32
 = rotl x n
 
 let rotr32 (x : u32) (n : u8) : u32
-  requires n < 32
 = rotr x n
 
 let clz64 (x : u64) : u8 = clz x
@@ -58,9 +56,7 @@ let pop64 (x : u64) : u8 = popcount x
 let swap64 (x : u64) : u64 = bswap x
 
 let rotl64 (x : u64) (n : u8) : u64
-  requires n < 64
 = rotl x n
 
 let rotr8 (x : u8) (n : u8) : u8
-  requires n < 8
 = rotr x n

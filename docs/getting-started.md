@@ -147,7 +147,7 @@ let five (k : u32) : u32
 = count_to 5
 ```
 
-It is all or nothing: a definition that states any of those clauses states its whole contract, which may be stronger than the interface's, as `clamp`'s is above. A `decreases` measure alone does not count. A goal an inherited clause raises points at the interface's line, where the clause is written. `pia-lsp` shows an inherited contract when you hover over the function.
+It is all or nothing: a definition that states any of those clauses states its whole contract, which may be stronger than the interface's, as `clamp`'s is above. A `decreases` measure alone does not count. A goal an inherited clause raises points at the interface's line, where the clause is written. The `repeated_contract` lint flags a definition that states exactly its interface's contract, with a fix that deletes it, and `pia-lsp` shows an inherited contract when you hover over the function.
 
 ## Use another module
 

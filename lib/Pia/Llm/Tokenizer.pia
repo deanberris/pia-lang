@@ -163,10 +163,6 @@ let byte_piece (s : [u8]) (a : usize) (b : usize) (v : int{0..255}) : bool
   && s.[a + 3] = hex (v >> 4) && s.[a + 4] = hex (v & 15) && s.[a + 5] = 62
 
 let load (s : [u8]) (ps : borrowed inout mutable [piece]) (count : usize) : result vocab tok_error
-  ensures (match result with
-    | Ok v -> v.count = count && usable s ps v
-              && (forall (j in 0 .. count). wf (len s) ps.[j])
-    | Err _ -> true)
 = if len ps < count || count > max i32 then Err { problem = TooMany; at = 0 }
   else if count < 259 then Err { problem = TooFew; at = 0 }
   else if len s < 4 then Err { problem = Short; at = 0 }
@@ -536,16 +532,6 @@ let merge_at (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
     front (vt), and at.[i + 1] where it stops. *)
 let encode (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (bos : bool) (eos : bool)
     (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) : usize
-  requires usable s ps v
-  requires len toks >= len text + 3 && len at >= len text + 4
-  ensures result <= len toks && result < len at
-  ensures at.[0] = 0 && at.[result] = (if len text = 0 then 0 else len text + 1)
-  ensures forall (i in 0 .. result). toks.[i] < v.count && covers s ps v text toks.[i] at.[i] at.[i + 1]
-  ensures forall (i in (if bos then 1 else 0) .. (if eos then result - 1 else result)). 3 <= toks.[i]
-  ensures bos ==> 0 < result && toks.[0] = 1
-  ensures bos && 0 < len text ==> 1 < result && 259 <= toks.[1] && at.[1] = 0 && 0 < at.[2]
-  ensures eos ==> 0 < result && toks.[result - 1] = 2
-  ensures forall (i in 0 .. result + 1). at.[i] <= len text + 1
 = let f : int{0..1} = if bos then 1 else 0 in
   at.[0] <- 0;
   if bos then (covers_special s ps v text 1 0; toks.[0] <- 1; at.[1] <- 0) else ();
@@ -603,7 +589,6 @@ let spec dfrom (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize =
 
 (** How many bytes decode writes for tok after prev. *)
 let decoded_len (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize
-  ensures result = dlen s ps prev tok
 = if 3 <= tok && tok < 259 then 1
   else if tok < len ps then (
     let p = ps.[tok] in
@@ -615,11 +600,6 @@ let decoded_len (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) : usize
 (** run.c's decode: the bytes of tok after prev, into dst at pos, and the
     position after them. *)
 let decode (s : [u8]) (ps : [piece]) (prev : u32) (tok : u32) (dst : borrowed inout mutable [u8]) (pos : usize) : usize
-  requires pos <= len dst && dlen s ps prev tok <= len dst - pos
-  ensures result = pos + dlen s ps prev tok
-  ensures 3 <= tok && tok < 259 ==> dst.[pos] = tok - 3
-  ensures (tok < 3 || 259 <= tok) ==> (forall (j in 0 .. dlen s ps prev tok). dst.[pos + j] = s.[dfrom s ps prev tok + j])
-  ensures forall (k in 0 .. pos). dst.[k] = old (dst.[k])
 = if 3 <= tok && tok < 259 then (
     let b : u8 = tok - 3 in
     dst.[pos] <- b;
@@ -720,10 +700,6 @@ let decode_step (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8]) (prev : u32)
     token after the first: text comes back, byte for byte, into dst. *)
 let round_trip (s : [u8]) (ps : [piece]) (v : vocab) (text : [u8])
     (toks : borrowed inout mutable [u32]) (at : borrowed inout mutable [usize]) (dst : borrowed inout mutable [u8]) : usize
-  requires usable s ps v
-  requires len toks >= len text + 3 && len at >= len text + 4 && len dst >= len text
-  ensures result = len text
-  ensures forall (k in 0 .. len text). dst.[k] = text.[k]
 = let n = encode s ps v text true false toks at in
   if len text = 0 then 0
   else (

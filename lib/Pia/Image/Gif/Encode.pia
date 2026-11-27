@@ -121,7 +121,6 @@ let frames_bound (fb : int{0..13000000000}) (nf : u16) : usize @solver(tactic = 
 
 (** The most bytes encode_animation writes for nf frames of w by h. *)
 let size_bound (w : int{1..65535}) (h : int{1..65535}) (nf : u16) : usize
-  ensures result = 800 + anim_bound (frame_bound (R.size w h 1)) nf
 = let fs : int{0..4294836225} = w * h * 1 in
   800 + frames_bound (frame_size fs) nf
 
@@ -349,19 +348,6 @@ let put_frames (d : R.dims) (frames : [u8]) (nf : u16) (b' : int{1..8}) (m : int
     frame shows for delay hundredths of a second, and the animation plays
     loops times more (0 for forever). rect, lz and hash are scratch. *)
 let encode_animation (w : int{1..65535}) (h : int{1..65535}) (pal : [u8]) (frames : [u8]) (nf : u16) (delay : u16) (loops : u16) (dst : borrowed inout mutable [u8]) (rect : borrowed inout mutable [u8]) (lz : borrowed inout mutable [u8]) (hash : borrowed inout mutable [u8]) : result usize encode_error
-  requires len rect = R.size w h 1 && len lz = 3 * len rect + 5 && len hash = 40960
-  ensures (match result with
-    | Ok n -> n <= len dst && n <= 800 + anim_bound (frame_bound (R.size w h 1)) nf
-              && (if G.header_ok dst then
-                    G.blocks_ok dst (G.first_block dst) && G.frames_from dst (G.first_block dst) = nf
-                    && G.u16le dst 6 = w && G.u16le dst 8 = h
-                  else false)
-    | Err _ -> true)
-  ensures (match result with
-    | Ok n -> true
-    | Err e -> (match e with
-      | DstFull p -> len dst < 800 + anim_bound (frame_bound (R.size w h 1)) nf
-      | _ -> true))
 = let d : R.dims = { w = w; h = h; c = 1 } in
   let fs : int{0..4294836225} = w * h * 1 in
   let fb = frame_size fs in

@@ -23,11 +23,9 @@ let opaque_all (xs : out mutable [pixel]) (v : u8) : unit =
   for i in 0..len xs do xs.[i] <- { r = v; g = v; b = v; a = 255 } done
 
 let set_alpha (xs : inout mutable [pixel; 4]) (i : usize) (v : u8) : unit
-  requires i < 4
 = xs.[i].a <- v
 
 let luma (xs : [pixel]) (i : usize) : u16
-  requires i < len xs
 = xs.[i].r + xs.[i].g + xs.[i].b
 
 let middle (xs : out mutable [pixel; 8]) (v : u8) : unit = opaque_all (xs.[2 .. 6]) v

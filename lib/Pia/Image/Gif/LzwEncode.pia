@@ -65,9 +65,6 @@ let probe_slot (h : [u8]) (key : int{1..1048576}) : int{0..8192}
     dst.[0 ..]: a clear code, the codes, and the end code. Returns the
     number of bytes written. h is the dictionary's table. *)
 let encode (px : [u8]) (m : int{2..8}) (h : borrowed inout mutable [u8]) (dst : borrowed inout mutable [u8]) : result usize enc_error
-  requires len h = 40960
-  requires len px <= 4294836225 && len dst >= 3 * len px + 5
-  ensures (match result with | Ok n -> n <= 3 * len px + 5 && n <= len dst | Err _ -> true)
 = let one : u32 = 1 in
   let clear : u32 = one << m in
   let m1 : u8 = m in
@@ -167,9 +164,6 @@ let copy_bytes (src : [u8]) (a : usize) (dst : borrowed inout mutable [u8]) (b :
    on the equalities with 255 * chunks, so this function uses the
    int-blasting bit-vector solver. *)
 let put_blocks (lz : [u8]) (n : int{0..13000000000}) (cmax : int{0..60000000}) (dst : borrowed inout mutable [u8]) (p : usize) : usize @solver(tactic = "(then simplify elim-term-ite solve-eqs (using-params smt :bv.solver 2))")
-  requires n <= len lz && p <= len dst && n + cmax + 1 <= len dst - p
-  requires 255 * cmax >= n
-  ensures p < result && result <= p + n + cmax + 1
 = let q : mutable usize = p in
   let dn : mutable int{0..13000000000} = 0 in
   let chunks : mutable int{0..60000000} = 0 in

@@ -19,9 +19,6 @@ end
 (* The definitions promise more than the interface states, which is
    allowed: the interface's contract is proved from a call. *)
 let swap (xs : borrowed inout mutable [u8]) (i : usize) (j : usize) : unit
-  requires i < len xs && j < len xs
-  ensures xs.[i] = old (xs.[j]) && xs.[j] = old (xs.[i])
-  ensures forall (k in 0..len xs). k <> i && k <> j ==> xs.[k] = old (xs.[k])
 = let a = xs.[i] in
   let b = xs.[j] in
   xs.[i] <- b;
@@ -36,6 +33,4 @@ let exchange (xs : borrowed inout mutable [u8]) (i : usize) (v : u8) : u8
   a
 
 let bump (n : inout mutable u8) : unit @allow(range_requires)
-  requires n < 255
-  ensures n = old n + 1
 = n <- n + 1

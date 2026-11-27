@@ -17,5 +17,4 @@ let numeral = type { base : D.base; value : u8 }
 let spec ok (n : numeral) : bool = Calc.Digits.digit n.base n.value
 
 let make (b : D.base) (x : u8) : numeral
-  ensures ok result
 = if x < 2 then { base = b; value = x } else { base = b; value = 0 }

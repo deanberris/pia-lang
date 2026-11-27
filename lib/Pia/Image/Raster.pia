@@ -86,9 +86,6 @@ let lemma scale_le (a : u64) (n : u64) (c : int{1..4}) : unit
 
 (** The index of sample k of pixel (x, y). *)
 let index (d : dims) (x : u16) (y : u16) (k : int{0..3}) : usize
-  requires x < d.w && y < d.h && k < d.c
-  ensures result < size d.w d.h d.c
-  ensures result = (y * d.w + x) * d.c + k
 = let row : usize = y * d.w + x in
   let wh : usize = d.h * d.w in
   row_lt d.w d.h x y;
@@ -97,7 +94,6 @@ let index (d : dims) (x : u16) (y : u16) (k : int{0..3}) : usize
 
 (** r lies inside an image of dimensions d. *)
 let contains (d : dims) (r : rect) : bool
-  ensures result <==> inside d r
 = let xe : u32 = r.x0 + r.rw in
   let ye : u32 = r.y0 + r.rh in
   xe <= d.w && ye <= d.h
@@ -105,9 +101,6 @@ let contains (d : dims) (r : rect) : bool
 (** The index of the first sample of row j of r: the row's samples are
     the r.rw * d.c from there. *)
 let row_start (d : dims) (r : rect) (j : u16) : usize
-  requires inside d r && j < r.rh
-  ensures result = ((r.y0 + j) * d.w + r.x0) * d.c
-  ensures result + r.rw * d.c <= size d.w d.h d.c
 = let y : u16 = r.y0 + j in
   let row : usize = y * d.w + r.x0 in
   let wh : usize = d.h * d.w in

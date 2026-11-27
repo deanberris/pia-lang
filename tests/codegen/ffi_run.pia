@@ -32,7 +32,6 @@ let total (xs : [u8]) : u32 = sum_bytes xs (len xs)
 
 (* A view starts part way in: C gets a pointer to its first element. *)
 let tail_total (xs : [u8]) : u32
-  requires len xs >= 1
 = let t = xs.[1 .. len xs] in sum_bytes t (len t)
 
 let pct (x : i32) : i32 = clamp x
@@ -66,7 +65,6 @@ let answer () : i32
 = extern "answer"
 
 let plus_answer (x : i32) : i32
-  requires x <= 1000
 = x + answer
 
 (* `@deref` (ADR 0057, section 5): C returns a pointer to the result, as

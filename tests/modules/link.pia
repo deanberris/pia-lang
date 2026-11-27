@@ -23,7 +23,6 @@ interface C @abi(c) = sig
 end
 
 let grey (v : u8) : u8
-  requires v <= 200
 = Image.Pixels.luma v v v
 
 (*

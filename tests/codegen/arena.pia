@@ -32,7 +32,6 @@ let fresh (x : u8) : u8
 
 (* 0 when the arena is too small, which it is not. *)
 let sum_two (x : u8) (y : u8) : u8
-  requires x <= 100 && y <= 100
 = with_arena 16 (let (a) =>
     match alloc a 4 with
     | Err _ -> 0

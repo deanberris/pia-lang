@@ -172,13 +172,10 @@ end
 let errc = type | Ok | Invalid | OutOfRange
 
 let is_ok (e : errc) : bool
-  ensures result <==> (match e with | Ok -> true | Invalid -> false | OutOfRange -> false)
 = match e with | Ok -> true | Invalid -> false | OutOfRange -> false
 let is_invalid (e : errc) : bool
-  ensures result <==> (match e with | Ok -> false | Invalid -> true | OutOfRange -> false)
 = match e with | Ok -> false | Invalid -> true | OutOfRange -> false
 let is_out_of_range (e : errc) : bool
-  ensures result <==> (match e with | Ok -> false | Invalid -> false | OutOfRange -> true)
 = match e with | Ok -> false | Invalid -> false | OutOfRange -> true
 
 (** The value of b as a digit in base `base`, or base when it is none:
@@ -299,18 +296,12 @@ let lemma digits_value_snoc (acc : u64) (s : [u8]) (i : usize) (j : usize) (base
 
 (** Two slices that agree on [i .. j) have the same digits_value. *)
 let lemma digits_frame (s : [u8]) (t : [u8]) (acc : u64) (i : usize) (j : usize) (base : int{2..36}) : unit
-  requires i <= j && j <= len s && j <= len t
-  requires forall (k in i .. j). s.[k] = t.[k]
-  ensures digits_value acc s i j base = digits_value acc t i j base
   decreases j - i
   with digits_value
 = if i < j then digits_frame s t (digit_step acc s.[i] base) (i + 1) j base
 
 (** When digits_value fits within cap, num gives the exact same value. *)
 let lemma digits_value_eq_num (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) (cap : u64) : unit
-  requires i <= j && j <= len s && cap <= max u32 + 1
-  requires digits_value 0 s i j base <= cap
-  ensures num s i j base cap = digits_value 0 s i j base
   decreases j - i
 = if i = j then digits_value_empty 0 s i base
   else (
@@ -322,15 +313,10 @@ let lemma digits_value_eq_num (s : [u8]) (i : usize) (j : usize) (base : int{2..
 (** A run of valid digits in [i .. j) ending at len s or a non-digit has
     length j - i. *)
 let lemma run_digits (s : [u8]) (i : usize) (j : usize) (base : int{2..36}) : unit
-  requires i <= j && j <= len s
-  requires forall (k in i .. j). digit_of s.[k] base < base
-  requires j = len s || digit_of s.[j] base >= base
-  ensures run s i base = j - i
   decreases j - i
 = if i < j then run_digits s (i + 1) j base
 
 let digit_value (b : u8) (base : int{2..36}) : u32
-  ensures result = digit_of b base
 = let v : u32 =
     if 48 <= b && b <= 57 then b - 48
     else if 97 <= b && b <= 122 then b - 87
@@ -346,13 +332,6 @@ let digits = type { mag : u64; used : usize; ec : errc }
 (** Scans the digits of base `base` at s.[start ..]: how many there are,
     their value when it is at most limit, and the error otherwise. *)
 let parse_digits (s : [u8]) (start : usize) (base : int{2..36}) (limit : u64) : digits
-  requires start <= len s && limit <= max u32
-  ensures result.used = run s start base
-  ensures result.used = 0 ==> is_invalid (result.ec)
-  ensures result.used > 0 && num s start (start + result.used) base (limit + 1) <= limit ==>
-    is_ok (result.ec) && result.mag = num s start (start + result.used) base (limit + 1)
-  ensures result.used > 0 && num s start (start + result.used) base (limit + 1) > limit ==> is_out_of_range (result.ec)
-  ensures is_ok (result.ec) ==> result.mag <= limit
 = let acc : mutable u64 = 0 in
   let over : mutable bool = false in
   let i : mutable usize = start in
@@ -527,8 +506,6 @@ let lemma dig_count_step (q : u64) (base : int{2..36}) : unit
 
 (** The lower-case digit for d. *)
 let digit_char (d : u64) (base : int{2..36}) : u8
-  requires d < base
-  ensures digit_of result base = d
 = let c : u8 = if d < 10 then 48 + d else 87 + d in c
 
 (** What to_chars wrote: `used` bytes from the start, when ok. *)
@@ -601,13 +578,6 @@ let put_minus (dst : borrowed inout mutable [u8]) (used : usize) (base : int{2..
     first, and says how many: ok when they fit. Every byte it writes is a
     digit of the base, their value is v, and the rest of dst is as it was. *)
 let write_digits (dst : borrowed inout mutable [u8]) (start : usize) (v : u64) (base : int{2..36}) : chars
-  requires start <= len dst
-  ensures result.ok <==> ndig v base 1 <= len dst - start
-  ensures result.ok ==> result.used = ndig v base 1
-  ensures result.ok = false ==> result.used = 0
-  ensures result.ok ==> digits_value 0 dst start (start + result.used) base = v
-  ensures forall (k in 0 .. len dst). start <= k && k < start + result.used ==> digit_of dst.[k] base < base
-  ensures forall (k in 0 .. len dst). k < start || start + result.used <= k ==> dst.[k] = old (dst.[k])
 = let n = count_digits v base in
   if n > len dst - start then { used = 0; ok = false }
   else (
