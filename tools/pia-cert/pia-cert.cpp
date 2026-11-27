@@ -160,13 +160,15 @@ int main(int argc, char **argv) {
     return usage();
   // An acceptance must name a known advisory, so a typo does not let a
   // module through silently later, when an advisory with that id appears.
-  for (const auto &[pair, used] : accepted)
+  for (const auto &entry : accepted) {
+    const std::string &id = entry.first.first;
     if (std::none_of(advisories.begin(), advisories.end(),
-                     [&](const Advisory &a) { return a.id == pair.first; })) {
-      std::cerr << "pia-cert: --accept-advisory names " << pair.first
+                     [&](const Advisory &a) { return a.id == id; })) {
+      std::cerr << "pia-cert: --accept-advisory names " << id
                 << ", which is not a known advisory\n";
       return 2;
     }
+  }
 
   std::vector<std::pair<std::string, Certificate>> objects;
   for (const std::string &path : paths) {

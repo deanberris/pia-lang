@@ -6,6 +6,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace pia::cert {
@@ -344,8 +345,8 @@ std::vector<Advisory> builtinAdvisories() {
     std::optional<Advisory> a = parseAdvisory(text, error);
     // The files are checked by tests/cert, so a bad one is a build bug.
     if (!a)
-      llvm::report_fatal_error(llvm::Twine("malformed advisory compiled in: ") +
-                               error);
+      llvm::report_fatal_error(
+          llvm::Twine("malformed advisory compiled in: " + error));
     out.push_back(std::move(*a));
   }
   return out;
