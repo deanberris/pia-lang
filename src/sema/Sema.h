@@ -84,7 +84,7 @@ struct Generic {
   bool rec = false;  // `let rec`: its variant instances are leaves (ADR 0047)
   // Per parameter: null for a type, else the type of a value parameter,
   // `(n : usize)` (ADR 0074, section 2).
-  std::vector<const syntax::Node *> valueTypes;
+  std::vector<const syntax::Node *> valueTypes = {};
 };
 
 // What an instance was made from: `option<u8>` is `option` applied to u8.
