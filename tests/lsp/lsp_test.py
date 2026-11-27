@@ -261,6 +261,28 @@ class LspTest(unittest.TestCase):
             "position": pos(GOOD, "ensures")})["result"]
         self.assertIsNone(hover)
 
+    def test_hover_shows_inherited_contract(self):
+        # A definition with no contract takes its interface's (ADR 0077),
+        # and its hover shows it in the definition's parameter names.
+        src = ("module Counting : Counter\n"
+               "interface Counter = sig\n"
+               "  let count_to : (n : u32) -> u32\n"
+               "    requires n < 1000\n"
+               "    ensures result = n\n"
+               "end\n"
+               "let count_to (m : u32) : u32 = m\n"
+               "let five (k : u32) : u32 = count_to 5\n")
+        uri = "file:///tmp/inherited.pia"
+        self.client.open(uri, src)
+        self.client.diagnostics(uri)
+        hover = self.client.request("textDocument/hover", {
+            "textDocument": {"uri": uri},
+            "position": pos(src, "count_to 5")})["result"]
+        text = hover["contents"]["value"]
+        self.assertIn("(* from interface Counter *)", text)
+        self.assertIn("requires m < 1000", text)
+        self.assertIn("ensures result = m", text)
+
     def test_doc_comment_hover(self):
         # A `(** ... *)` doc comment shows under the signature (ADR 0029).
         uri = "file:///tmp/documented.pia"

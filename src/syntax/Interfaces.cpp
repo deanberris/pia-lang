@@ -856,7 +856,9 @@ struct Entry {
 
 } // namespace
 
-void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
+std::vector<InheritedContract> inheritedContracts(const Node &program,
+                                                  Diagnostics &diags) {
+  std::vector<InheritedContract> out;
   const Node *header = nullptr;
   std::map<std::string, const Node *> interfaces;
   for (const NodePtr &item : program.kids) {
@@ -866,7 +868,7 @@ void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
       interfaces.emplace(item->text, item.get());
   }
   if (!header || header->kids.size() < 2)
-    return;
+    return out;
   // The ordinary functions and lemmas the claimed interfaces list with a
   // contract. Spec functions and generics are exported with their
   // definitions, whose contract is the real one, so they inherit nothing.
@@ -889,12 +891,13 @@ void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
     }
   }
   if (entries.empty())
-    return;
+    return out;
   std::map<std::string, unsigned> defined;
   for (const NodePtr &item : program.kids)
     if (item->kind == N::LetItem)
       ++defined[item->text];
-  for (NodePtr &item : program.kids) {
+  for (size_t index = 0; index < program.kids.size(); ++index) {
+    const NodePtr &item = program.kids[index];
     if (item->kind != N::LetItem || item->kids.size() < 4 || specItem(*item) ||
         metaprogramItem(*item) || genericItem(*item) || statesContract(*item))
       continue;
@@ -966,12 +969,19 @@ void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
                       "parameter or the binder");
       continue;
     }
-    Node &contracts = *item->kids[2];
-    for (const NodePtr &c : mine[0].val->kids[2]->kids) {
+    out.push_back({index, mine[0].iface, mine[0].val, std::move(rename)});
+  }
+  return out;
+}
+
+void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
+  for (InheritedContract &h : inheritedContracts(program, diags)) {
+    Node &contracts = *program.kids[h.item]->kids[2];
+    for (const NodePtr &c : h.entry->kids[2]->kids) {
       if (!callerClause(*c))
         continue;
       NodePtr copy = clone(*c);
-      renameParams(*copy, rename);
+      renameParams(*copy, h.rename);
       contracts.add(std::move(copy));
     }
   }
