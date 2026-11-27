@@ -717,7 +717,10 @@ let meta json_record (t : type_decl) : list =
       let ft = base f in
       if is_bool f then true
       else if eq (kind ft) "RangeType" then true
-      else if is_rec f then true
+      else if is_rec f then
+        (if is_arr f then
+           fail (concat "@derive(json): the field '" (concat f "' is an array of records, which @derive(json) cannot read or write yet"))
+         else true)
       else if eq (kind ft) "TypeName" then
         (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
          else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, records, and an option or a fixed array of one")))

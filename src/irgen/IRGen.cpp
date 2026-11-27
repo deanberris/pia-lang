@@ -3522,21 +3522,7 @@ class Gen {
         // Constant data holds integers; zeroed storage is every `false`.
         return create<RegionOp>(l, at).getResult();
       } else {
-        // Any other element, such as a record (an array of records in a
-        // derived reader's result): storage with each element's default,
-        // which a constant cannot hold. Contracts have no storage.
-        if (contract_ || ghost_)
-          return Value();
-        Value one = defaultValue(l, et);
-        if (!one)
-          return Value();
-        Value storage = create<RegionOp>(l, at);
-        for (uint64_t i = 0; i < at.getLength(); ++i) {
-          Value k =
-              create<mlir::arith::ConstantIndexOp>(l, static_cast<int64_t>(i));
-          create<StoreOp>(l, one, storage, k);
-        }
-        return storage;
+        return Value();
       }
       for (uint64_t i = 0; i < at.getLength(); ++i)
         values.push_back(b_.getIntegerAttr(b_.getIntegerType(kWidth), v));

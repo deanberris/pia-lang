@@ -178,28 +178,28 @@ int main(void) {
     printf("round_trip_segment: %lld\n", (long long)seg);
     bad = 1;
   }
-  // A route: an array of two points and an option of one, by
-  // @derive(json) alone. Its code is its stops' codes, once and twice,
+  // A route: two points and an option of one, by
+  // @derive(json) alone. Its code is its points' codes, once and twice,
   // and its last point's three times.
   const char *P1 = "{\"xx\": 1, \"y\": 2, \"ok\": true}";
   const char *P2 = "{\"xx\": -3, \"y\": 4, \"ok\": false}";
   char buf[256];
   snprintf(
       buf, sizeof buf,
-      "{\"stops\": [%s, %s], \"last\": {\"xx\": 5, \"y\": 6, \"ok\": true}}",
+      "{\"a\": %s, \"b\": %s, \"last\": {\"xx\": 5, \"y\": 6, \"ok\": true}}",
       P1, P2);
   bad |= check_route(buf, 1021 + 2 * -2960 + 3 * 5061);
-  snprintf(buf, sizeof buf, "{\"stops\": [%s, %s], \"last\": null}", P1, P2);
+  snprintf(buf, sizeof buf, "{\"a\": %s, \"b\": %s, \"last\": null}", P1, P2);
   bad |= check_route(buf, 1021 + 2 * -2960);
-  snprintf(buf, sizeof buf, "{\"stops\": [%s, %s]}", P1, P2);
+  snprintf(buf, sizeof buf, "{\"a\": %s, \"b\": %s}", P1, P2);
   bad |= check_route(buf, 1021 + 2 * -2960);
   snprintf(buf, sizeof buf,
-           "{\"stops\": [{\"xx\": 1, \"y\": 256, \"ok\": true}, %s]}", P2);
-  bad |= check_route(buf, -3); // a stop's y out of range
-  snprintf(buf, sizeof buf, "{\"stops\": [%s, %s], \"last\": 5}", P1, P2);
+           "{\"a\": {\"xx\": 1, \"y\": 256, \"ok\": true}, \"b\": %s}", P2);
+  bad |= check_route(buf, -3); // a's y out of range
+  snprintf(buf, sizeof buf, "{\"a\": %s, \"b\": %s, \"last\": 5}", P1, P2);
   bad |= check_route(buf, -4); // the last is not a point
-  snprintf(buf, sizeof buf, "{\"stops\": [%s]}", P1);
-  bad |= check_route(buf, -1); // too few stops
+  snprintf(buf, sizeof buf, "{\"a\": %s}", P1);
+  bad |= check_route(buf, -1); // b missing
   int64_t r1 = round_trip_route(-7, true, text, sizeof text);
   if (r1 != -6989 + 2 * 7020 + 3 * 31) {
     printf("round_trip_route: %lld\n", (long long)r1);

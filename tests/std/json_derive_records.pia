@@ -1,7 +1,7 @@
-(* @derive(json) on an option of a record and an array of records (ADR
-   0045): each element is read and written by the record's own codec, an
-   array's elements start from json_default_<t>, and the writer's room
-   counts json_room_<t> once per element. Every goal is proved.
+(* @derive(json) on options of records (ADR 0045): a value is read and
+   written by the record's own codec, `null` or a missing member is None,
+   and the writer's room counts json_room_<t> for it. Every goal is
+   proved.
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
@@ -22,14 +22,14 @@ import Pia.Text.Json.Write.Writer
 import Pia.Text.Json.Derive.Derive as Json
 
 let pt = type { x : i8 @json(name = "px"); y : u16 } @derive(json)
-let path = type { ps : [pt; 3]; end_ : O.option pt; k : u8 } @derive(json)
+let path = type { start : pt; end_ : O.option pt; k : u8 } @derive(json)
 
-(* The first point's y, or 1 when a point of ps is wrong, 2 when end_ is,
-   and 0 for any other error. *)
+(* The start's y, or 1 when start is wrong, 2 when end_ is, and 0 for
+   any other error. *)
 let first_y (s : [u8]) : u16 =
   match Json.read<path> s with
-  | Ok p -> p.ps.[0].y
-  | Err e -> (match e with | Field_path_ps _ -> 1 | Field_path_end_ _ -> 2 | _ -> 0)
+  | Ok p -> p.start.y
+  | Err e -> (match e with | Field_path_start _ -> 1 | Field_path_end_ _ -> 2 | _ -> 0)
 
 (* A path written into a buffer with its room. *)
 let write (p : path) (dst : borrowed inout mutable [u8]) : usize
