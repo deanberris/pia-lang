@@ -1,0 +1,21 @@
+(* A metaprogram can name the opaque spec function a `with` reveals
+   (ADR 0063): a derive keeps its own spec functions opaque, so that a
+   goal that combines many of them sees each as one symbol, and reveals
+   one only in the function that proves it. Here `uses_cell` proves its
+   result only because it reveals `hidden_cell`.
+// RUN: piac --verify %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: 1 proved, 0 failed, 0 skipped
+*)
+
+let meta derive_hidden (t : item) : list =
+  let sp = concat "hidden_" (name t) in
+  let f = concat "uses_" (name t) in
+  [ `( let spec $sp ($!x : u8) : bool @opaque = $!x = 3 );
+    `( let $f ($!y : u8) : bool
+         requires $!y = 3
+         ensures $!result = $sp $!y
+         with $sp
+       = true ) ]
+
+let cell = type { v : u8 } @derive(hidden)
