@@ -557,7 +557,7 @@ The GIF and inflate codecs ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md
 - **`Pia.Image.Gif.Decode`:** `info` accepts exactly the files that the block grammar accepts.
 - **`Pia.Image.Gif.Encode`:** the stream `encode_animation` writes parses with `info` and fits its proved size bound.
 - **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read, and fails only when no symbol's code is there. `prefix_free` proves that the canonical code is prefix-free, so the symbol `decode` returns is the only one it could be. `kraft_room` shows that an over-subscribed set of code lengths can't build.
-- **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written.
+- **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written. `codes_ref` proves a Huffman block's theorem. `Pia.Compress.Inflate.Ref` writes RFC 1951's reading of a block as a trace of its symbols: each literal, or each length and distance with its copy, one byte at a time. Whenever the tables are the canonical codes of the block's code lengths and x is what that trace writes, decoding the block returns `Ok` at its end code with x in the output. Because the code is prefix-free, the symbol decoded is the trace's. The theorem for a whole stream, through the fixed and dynamic tables, is next.
 
 These large specs are `@opaque` ([ADR 0063](adr/0063-opaque-spec-functions.md)), and only small step lemmas reveal them. That keeps the loops' goals small enough to prove.
 
