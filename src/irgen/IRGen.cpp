@@ -24,6 +24,17 @@
 
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
+#include "meta/Interpreter.h"
+#include "meta/Totality.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Verifier.h"
+#include "sema/Sema.h"
+#include "syntax/Interfaces.h"
+#include "syntax/Parser.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -31,16 +42,6 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Verifier.h"
-#include "meta/Interpreter.h"
-#include "meta/Totality.h"
-#include "sema/Sema.h"
-#include "syntax/Parser.h"
 
 namespace pia::irgen {
 
@@ -12801,6 +12802,21 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
                                                mlir::MLIRContext &ctx,
                                                syntax::Diagnostics &diags,
                                                const Options &options);
+mlir::OwningOpRef<mlir::ModuleOp>
+generateInherited(const syntax::Node &programIn, std::string_view filename,
+                  mlir::MLIRContext &ctx, syntax::Diagnostics &diags,
+                  const Options &options);
+
+// Whether the file claims an interface it declares, so that a definition
+// may take its contract from one (ADR 0077).
+bool claimsOwnInterface(const syntax::Node &program) {
+  bool header = false, iface = false;
+  for (const syntax::NodePtr &item : program.kids) {
+    header = header || item->kind == NodeKind::ModuleHeader;
+    iface = iface || item->kind == NodeKind::Interface;
+  }
+  return header && iface;
+}
 }  // namespace
 
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
@@ -12809,6 +12825,22 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
+  // A definition that states no contract takes its interface's (ADR 0077),
+  // before anything reads the definition's contract.
+  if (!claimsOwnInterface(programIn))
+    return generateInherited(programIn, filename, ctx, diags, options);
+  syntax::NodePtr inherited = syntax::clone(programIn);
+  syntax::inheritInterfaceContracts(*inherited, diags);
+  if (diags.hasErrors())
+    return nullptr;
+  return generateInherited(*inherited, filename, ctx, diags, options);
+}
+
+namespace {
+mlir::OwningOpRef<mlir::ModuleOp>
+generateInherited(const syntax::Node &programIn, std::string_view filename,
+                  mlir::MLIRContext &ctx, syntax::Diagnostics &diags,
+                  const Options &options) {
   if (!hasErasedBoxes(programIn))
     return generateOnce(programIn, filename, ctx, diags, options);
   // A box over a concept (ADR 0046) becomes its own record and theory. A
@@ -12861,7 +12893,6 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
   return generateOnce(*second, filename, ctx, diags, options);
 }
 
-namespace {
 mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
                                                std::string_view filename,
                                                mlir::MLIRContext &ctx,
@@ -12921,6 +12952,6 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
   gen.setTrusted(isTrustedFile(program));
   return gen.run(source);
 }
-}  // namespace
+} // namespace
 
 }  // namespace pia::irgen
