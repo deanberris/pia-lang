@@ -1598,6 +1598,13 @@ void eraseSpecState(mlir::ModuleOp module) {
     return f && static_cast<bool>(
                     f.getResultAttr(i, PiaDialect::getSpecStateAttrName()));
   };
+  // A call to a spec function, lemma or axiom only computes spec state.
+  auto specOnlyCallee = [&](mlir::func::CallOp call) {
+    auto f = module.lookupSymbol<mlir::func::FuncOp>(call.getCallee());
+    return f && (f->hasAttr(PiaDialect::getLemmaAttrName()) ||
+                 f->hasAttr(PiaDialect::getSpecAttrName()) ||
+                 f->hasAttr(PiaDialect::getAxiomAttrName()));
+  };
   llvm::SetVector<mlir::Operation *> doomed;
   llvm::SmallVector<Value> work;
   llvm::DenseSet<Value> seen;
@@ -1635,10 +1642,18 @@ void eraseSpecState(mlir::ModuleOp module) {
     for (mlir::OpOperand &use : v.getUses()) {
       mlir::Operation *user = use.getOwner();
       unsigned at = use.getOperandNumber();
-      if (mlir::isa<mlir::func::CallOp>(user))
-        continue; // dropped below
       if (doomed.contains(user))
         continue;
+      // A spec argument that a spec function computes, as in
+      // `f (pick bj i)`: the call goes with the argument it feeds.
+      if (auto call = mlir::dyn_cast<mlir::func::CallOp>(user)) {
+        if (specOnlyCallee(call)) {
+          doomed.insert(user);
+          for (Value r : user->getResults())
+            push(r);
+        }
+        continue; // otherwise dropped below
+      }
       if (mlir::isa<mlir::func::ReturnOp>(user))
         continue; // dropped below, with the result
 
@@ -1679,6 +1694,16 @@ void eraseSpecState(mlir::ModuleOp module) {
         push(loop.getBeforeArguments()[at]);
         continue;
       }
+      // A branch on spec state, as in `f (if h then bj.[0] else 0)`: code
+      // reads spec state only to compute spec state, so the whole branch
+      // goes, and what it yields is spec state.
+      if (mlir::isa<mlir::scf::IfOp, mlir::scf::IndexSwitchOp>(user) &&
+          at == 0) {
+        doomed.insert(user);
+        for (Value r : user->getResults())
+          push(r);
+        continue;
+      }
       if (user->getNumRegions() > 0)
         continue;
       doomed.insert(user);
@@ -1686,6 +1711,16 @@ void eraseSpecState(mlir::ModuleOp module) {
         push(r);
     }
   }
+  // An op inside a doomed branch goes with the branch, not on its own.
+  llvm::SmallVector<mlir::Operation *> nested;
+  for (mlir::Operation *op : doomed)
+    for (mlir::Operation *p = op->getParentOp(); p; p = p->getParentOp())
+      if (doomed.contains(p)) {
+        nested.push_back(op);
+        break;
+      }
+  for (mlir::Operation *op : nested)
+    doomed.remove(op);
   for (auto [op, at] : erasedOperands) {
     if (doomed.contains(op))
       continue;

@@ -154,3 +154,19 @@ let count_from (z : int{0..15}) : counted
   c.seen.[z] <- 1;
   c.n <- c.n + 1;
   c
+
+(* A spec argument that a spec if or a spec function computes: the if and
+   the call compute only spec state, so codegen erases them with the
+   argument. *)
+let spec pick (xs : [u16; 64]) (i : int{0..63}) : u16 = xs.[i]
+
+let note (spec k : u16) (spec h : bool) (a : u16) : u16
+  ensures result = a
+= a
+
+let noted (a : u16) (spec h : bool) : u16
+  ensures result = a
+= let spec log : mutable [u16; 64] = zeros in
+  log.[1] <- a;
+  let b = note (if h then log.[0] else 0) h a in
+  note (pick log 1) h b
