@@ -10,7 +10,7 @@ Pia looks like OCaml, and every program is proved before it compiles. Most of th
 ## Before writing anything
 
 1. **Copy from a proved example.** `tests/verify/<feature>.pia` has a proved file for nearly every feature, such as `handlers.pia`, `defer.pia`, `concepts.pia`, `lambda_captures.pia`, `models.pia`, `vec_generic.pia` and `ffi.pia`. The `lib/Pia` modules show what a finished library module looks like. `CODEMAP.md` lists them all.
-2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved but not compiled yet, and `spread @place(gpu)` runs only on a Mac's GPU (ADR 0068). Porting from another language: `pia-porting` has the feature map.
+2. **Check that the feature exists.** [docs/status.md](../../docs/status.md) lists what compiles. `dyn`, `vec<T, k>` and refinement types are designed but not built yet, and piac says "not supported yet". Recursive `let rec` types are proved and compiled, and a `spread` runs on the GPU under `@place(gpu)`. [docs/features.md](../../docs/features.md) lists every built feature with its proved example. Porting from another language: `pia-porting` has the feature map.
 3. **Prove one function at a time.** Write it without contracts, run `piac --verify`, and let the failed goals tell you what is missing.
 
 ## Syntax at a glance
@@ -52,7 +52,7 @@ let count_bright (ys : [u16]) : usize
 | `let x : t = e`, `let f (a : t) : r = e`, `let rec` | the only binding form. Types are values too: `let byte = u8` names one, and `let length = type u32` makes a distinct one, converted by `length 5` and `u32 l`, with operators only from `@derive(eq, ord, add, scale, bounds)`; importing Pia.Core.Hash gives `@derive(hash)`, and Pia.Text.Json.Derive gives `@derive(json)`, which writes the bare value |
 | `let ... in e`, `e1; e2`, `x <- e` | local binding, sequencing, assignment to a `mutable` |
 | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, `bool`, `int{lo..hi}` | integers are bounded. Widening is implicit and narrowing is a goal. Comparing two different integer types is exact |
-| `f32`, `f64`; `0.5f32`, `1f64`, `1.0e-3` | strict IEEE 754 floats: one rounding per operation, no FMA unless licensed, subnormals kept. `+ - * /`, negation and IEEE comparisons (`=` is false on NaN). A literal takes the float type its context expects, else needs the suffix; an integer literal is never a float (`2.0`, not `2`), and nothing mixes floats with integers or `real` implicitly. Proofs see floats as their bits for now: the order and arithmetic facts of ADR 0038 come later, so a goal about float values fails rather than proves |
+| `f32`, `f64`; `0.5f32`, `1f64`, `1.0e-3` | strict IEEE 754 floats: one rounding per operation, no FMA unless licensed, subnormals kept. `+ - * /`, negation and IEEE comparisons (`=` is false on NaN). A literal takes the float type its context expects, else needs the suffix; an integer literal is never a float (`2.0`, not `2`), and nothing mixes floats with integers or `real` implicitly. Convert by applying a type: `f32 n` of an integer rounds to nearest, `f64 x`/`f32 x` change width, and `i32 x` of a float truncates toward zero with a goal that `x` is not NaN and fits (`requires -1.0 < x && x < 256.0` for `u8 x`). `to_bits x` and `from_bits u` are the IEEE encoding as `u32`/`u64`. Proofs see floats as their bits for now: IEEE order is exact, but arithmetic is uninterpreted until ADR 0038, so a goal about what `+` computes fails rather than proves |
 | `100'000`, `0xFFFF'FFFF`, `1_000_000`, `42u8` | digits group with `'` (between two digits) or `_`; `,` never groups. A suffix gives a literal its type |
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
@@ -149,7 +149,7 @@ interface Clamp = sig
 end
 ```
 
-`import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/cpp-std.md` and three tests in `tests/std`.
+`import M.I as X { a, b }` renames the module and brings `a` and `b` in unqualified. Build an importer with `piac --emit=interface -o DIR dep.pia`, then `piac --verify --iface-path=DIR f.pia`. In Bazel, use `pia_library` from `tools/piac/pia.bzl`. A standard library module also gets a row in `docs/library.md` and `docs/cpp-std.md`, and three tests in `tests/std`. A new language feature gets a line in `docs/features.md` for its `tests/verify` example and is taught in `docs/tour.md`; `python3 tools/docs/check.py` fails until both are there.
 
 **C functions.** `let f (x : i32) : i32 ensures ... = extern "sym"` has its contract trusted and listed by `--trust-report`. An extern without a contract can only be called as `unsafe f x`.
 
