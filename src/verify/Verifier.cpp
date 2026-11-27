@@ -118,7 +118,7 @@ struct Goal {
   Operation *op;
   std::string claim;
   bool skipped = false;
-  std::string reason;          // why it was skipped
+  std::string reason = {};     // why it was skipped
   bool byIntervals = false;    // the operand types already prove it
 };
 
@@ -5057,16 +5057,17 @@ struct Job {
   bool autoSlice = false;  // in a function with a buffer of records
   // With theories: the query with every axiom of the theories it uses,
   // solved when the relevance closure's query is not proved (ADR 0036).
-  std::optional<Query> fallback;
-  std::string fallbackScript;
+  std::optional<Query> fallback = std::nullopt;
+  std::string fallbackScript = {};
   // The goal in the model's witness copy of its function: a counterexample
   // there is a real one, since the model meets the axioms.
-  std::optional<Query> witness;
-  std::string witnessScript, witnessModel;
+  std::optional<Query> witness = std::nullopt;
+  std::string witnessScript = {};
+  std::string witnessModel = {};
   unsigned witnessWidth = 0;
   // `@solver(...)`: the Z3 strategy every query of the goal is solved
   // with, or empty for Z3's default (ADR 0036).
-  std::string strategy;
+  std::string strategy = {};
 };
 
 // What one job did, summed into Stats once every thread has finished.

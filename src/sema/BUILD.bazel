@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Minimal Sema for the scalar subset (milestone M4): type resolution,
 # function signatures and parameter modifiers.
@@ -6,6 +7,7 @@ cc_library(
     name = "sema",
     srcs = ["Sema.cpp"],
     hdrs = ["Sema.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

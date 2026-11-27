@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # The built-in theory `Target` (ADR 0049), compiled into piac as a string.
 genrule(
@@ -45,6 +46,7 @@ cc_library(
         "MemorySource.inc",
         "TargetSource.inc",
     ],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

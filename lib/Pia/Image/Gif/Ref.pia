@@ -1,0 +1,162 @@
+module Pia.Image.Gif.Ref : Ref
+
+import Pia.Image.Bits.Bits as B
+
+interface Ref = sig
+  let spec nx_at : (clear : int{4..256}) -> (e : usize) -> (j : usize) -> usize
+  let spec read_ok : (s : [u8]) -> (m : int{2..8}) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (j : usize) -> bool
+  let spec emit_ok : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
+  let lemma emit_entry : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (q : usize) -> (a : usize) -> unit
+    requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+    requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+    requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m
+    requires a = te.[q] + (tc.[q] - B.pow2 m - 2)
+    ensures te.[q] < q && a < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= nx_at (B.pow2 m) te.[q] q
+    ensures to.[a] <= to.[a + 1] && to.[a + 1] <= to.[q] && to.[q + 1] - to.[q] = to.[a + 1] - to.[a] + 1
+    ensures forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[a] + d]
+  let lemma emit_root : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (q : usize) -> unit
+    requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+    requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+    requires emit_ok m x tc to te q && tc.[q] < B.pow2 m
+    ensures to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
+  let lemma emit_overrun : (m : int{2..8}) -> (x : [u8]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (q : usize) -> unit
+    requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+    requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+    requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m + 2u16
+    requires tc.[q] - B.pow2 m - 2 > q - te.[q]
+    ensures false
+  let spec lzw_step : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
+  let spec lzw_from : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> bool
+  let spec lzw_ok : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> bool
+  let lemma from_step : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> (j : usize) -> unit
+    requires k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && j < k
+    requires lzw_from s m x k tp tw tc to te j
+    ensures j + 1 < k ==> lzw_step s m x tp tw tc to te j && lzw_from s m x k tp tw tc to te (j + 1)
+    ensures j + 1 = k ==> read_ok s m tp tw tc j && tc.[j] = B.pow2 m + 1u16 && to.[j] = len x
+  let lemma ok_start : (s : [u8]) -> (m : int{2..8}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (tw : [int{3..12}]) -> (tc : [int{0..4095}]) -> (to : [usize]) -> (te : [usize]) -> unit
+    requires lzw_ok s m x k tp tw tc to te
+    ensures 1 <= k && k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te
+    ensures tp.[0] = 0 && tw.[0] = m + 1u8 && to.[0] = 0 && te.[0] = 0
+    ensures lzw_from s m x k tp tw tc to te 0
+end
+
+(** The next free entry before code j of an epoch that began at code e:
+    the first code adds no entry, and each later one adds one, up to
+    4096. *)
+let spec nx_at (clear : int{4..256}) (e : usize) (j : usize) : usize
+  requires e <= j
+= let c : usize = clear in
+  if j - e <= 1 then c + 2
+  else if j - e - 1 >= 4094 - c then 4096
+  else c + 2 + (j - e - 1)
+
+(** Code j is the tw.[j] bits at bit tp.[j] of s, and the next code
+    follows it. *)
+let spec read_ok (s : [u8]) (m : int{2..8}) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (j : usize) : bool
+  requires j < len tp && j < len tw && j < len tc
+= if tw.[j] < m + 1u8 || tp.[j] > B.nbits s then false
+  else if tw.[j] > B.nbits s - tp.[j] then false
+  else tc.[j] = B.bits_at s tp.[j] tw.[j]
+
+(** What code j, neither a clear nor the end, writes at to.[j]: a root
+    is its own value, and an entry the string it names, which is the
+    string of the code before the code that added it and the first byte
+    after that (GIF89a, appendix F). Entry clear + 2 + r of the epoch
+    that began at code e was added by code e + r + 1. *)
+let spec emit_ok (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : bool @opaque
+  requires j + 1 < len tc && j + 1 < len to && j + 1 < len te
+  requires te.[j] <= j
+  requires to.[j] <= to.[j + 1] && to.[j + 1] <= len x
+= let clear : usize = B.pow2 m in
+  if tc.[j] < clear then (if to.[j + 1] - to.[j] <> 1 then false else x.[to.[j]] = tc.[j])
+  else if te.[j] = j || tc.[j] < clear + 2 || tc.[j] > nx_at (B.pow2 m) te.[j] j then false
+  else (
+    let a : usize = te.[j] + (tc.[j] - clear - 2) in
+    if a >= j then false
+    else if to.[a] > to.[a + 1] || to.[a + 1] > to.[j] then false
+    else if to.[j + 1] = to.[j] then false
+    else if to.[j + 1] - to.[j] - 1 <> to.[a + 1] - to.[a] then false
+    else (forall (d in 0 .. to.[j + 1] - to.[j]). x.[to.[j] + d] = x.[to.[a] + d]))
+
+(** emit_ok's facts for code q naming an entry, with its index a
+    explicit: what a proof about a copy needs, with no if to unfold. *)
+let lemma emit_entry (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) (a : usize) : unit
+  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+  requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m
+  requires a = te.[q] + (tc.[q] - B.pow2 m - 2)
+  ensures te.[q] < q && a < q && B.pow2 m + 2u16 <= tc.[q] && tc.[q] <= nx_at (B.pow2 m) te.[q] q
+  ensures to.[a] <= to.[a + 1] && to.[a + 1] <= to.[q] && to.[q + 1] - to.[q] = to.[a + 1] - to.[a] + 1
+  ensures forall (d in 0 .. to.[q + 1] - to.[q]). x.[to.[q] + d] = x.[to.[a] + d]
+  with emit_ok
+= ()
+
+(** emit_ok's facts for code q naming a root. *)
+let lemma emit_root (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
+  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+  requires emit_ok m x tc to te q && tc.[q] < B.pow2 m
+  ensures to.[q + 1] - to.[q] = 1 && to.[q] < len x && x.[to.[q]] = tc.[q]
+  with emit_ok
+= ()
+
+(** An entry code whose index would pass code q is no code at all. *)
+let lemma emit_overrun (m : int{2..8}) (x : [u8]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (q : usize) : unit
+  requires q + 1 < len tc && q + 1 < len to && q + 1 < len te
+  requires te.[q] <= q && to.[q] <= to.[q + 1] && to.[q + 1] <= len x
+  requires emit_ok m x tc to te q && tc.[q] >= B.pow2 m + 2u16
+  requires tc.[q] - B.pow2 m - 2 > q - te.[q]
+  ensures false
+  with emit_ok
+= ()
+
+(** Code j of the trace, which is not the last, read as GIF89a's LZW
+    reads it: a clear starts a new epoch at code j + 1, and any other
+    code writes its string, as emit_ok says, and moves the width up when
+    the next free entry reaches 2^width. *)
+let spec lzw_step (s : [u8]) (m : int{2..8}) (x : [u8]) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : bool
+  requires j + 1 < len tp && j + 1 < len tw && j + 1 < len tc && j + 1 < len to && j + 1 < len te
+= let clear : usize = B.pow2 m in
+  if read_ok s m tp tw tc j = false then false
+  else if tp.[j + 1] <> tp.[j] + tw.[j] || tc.[j] = clear + 1 then false
+  else if te.[j] > j || to.[j] > to.[j + 1] || to.[j + 1] > len x then false
+  else if tc.[j] = clear then te.[j + 1] = j + 1 && tw.[j + 1] = m + 1u8 && to.[j + 1] = to.[j]
+  else te.[j + 1] = te.[j]
+    && tw.[j + 1] = (if nx_at (B.pow2 m) te.[j] (j + 1) = B.pow2 tw.[j] && tw.[j] < 12 then tw.[j] + 1u8 else tw.[j])
+    && emit_ok m x tc to te j
+
+(** From code j on, the trace reads s as GIF89a's LZW does, up to its
+    last code k - 1, the end code, after which x ends. One code at a time,
+    so a decoder's loop can take its facts code by code. *)
+let spec lzw_from (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : bool @opaque
+  requires k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && j < k
+  decreases k - j
+= if j + 1 = k then (if read_ok s m tp tw tc j = false then false else tc.[j] = B.pow2 m + 1u16 && to.[j] = len x)
+  else if lzw_step s m x tp tw tc to te j = false then false
+  else lzw_from s m x k tp tw tc to te (j + 1)
+
+(** x is what GIF89a's LZW reading of s gives, by the trace of its k
+    codes: the first at bit 0, m + 1 bits wide, an epoch starting there,
+    and the last the end code, after which x ends. *)
+let spec lzw_ok (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) : bool @opaque
+= if k < 1 || k > len tp || k > len tw || k > len tc || k > len to || k > len te then false
+  else if tp.[0] <> 0 || tw.[0] <> m + 1u8 || to.[0] <> 0 || te.[0] <> 0 then false
+  else lzw_from s m x k tp tw tc to te 0
+
+(** What lzw_from says of code j, for a proof that keeps it opaque. *)
+let lemma from_step (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) (j : usize) : unit
+  requires k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te && j < k
+  requires lzw_from s m x k tp tw tc to te j
+  ensures j + 1 < k ==> lzw_step s m x tp tw tc to te j && lzw_from s m x k tp tw tc to te (j + 1)
+  ensures j + 1 = k ==> read_ok s m tp tw tc j && tc.[j] = B.pow2 m + 1u16 && to.[j] = len x
+  with lzw_from
+= ()
+
+(** What lzw_ok says, for a proof that keeps it opaque. *)
+let lemma ok_start (s : [u8]) (m : int{2..8}) (x : [u8]) (k : usize) (tp : [usize]) (tw : [int{3..12}]) (tc : [int{0..4095}]) (to : [usize]) (te : [usize]) : unit
+  requires lzw_ok s m x k tp tw tc to te
+  ensures 1 <= k && k <= len tp && k <= len tw && k <= len tc && k <= len to && k <= len te
+  ensures tp.[0] = 0 && tw.[0] = m + 1u8 && to.[0] = 0 && te.[0] = 0
+  ensures lzw_from s m x k tp tw tc to te 0
+  with lzw_ok
+= ()
