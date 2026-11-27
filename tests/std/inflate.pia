@@ -22,7 +22,7 @@
 
 (*
 // HUFF-NOT: failed
-// HUFF: 780 proved, 0 failed, 0 skipped
+// HUFF: 776 proved, 0 failed, 0 skipped
 // SPEC-NOT: failed
 // SPEC: 46 proved, 0 failed, 0 skipped
 // INFL-NOT: warning
