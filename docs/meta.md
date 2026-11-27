@@ -139,7 +139,7 @@ Running out of steps in such a metaprogram is an internal compiler error.
 
 - `$x` splices the value of `x`. Syntax is copied in. A string becomes a name, or a type name in a type position such as `(a : $t)`. A type item in a type position becomes its name. An integer becomes a literal, and a bool becomes `true` or `false`.
 - `$(e)` splices the value of the expression `e`.
-- `$x` in a binder or field position (`let $n`, `a.$f`) splices a string, or the name of an item, as that name.
+- `$x` in a binder or field position (`let $n`, `a.$f`, a quantifier's `exists ($n : t)`) splices a string, or the name of an item, as that name.
 - `$ps` alone in a parameter list, as in `let lemma $n $ps : unit = ()`, splices a list of parameters made by `param`, so a metaprogram can make a function with as many parameters as it needs. The prelude's `litmus` uses it for a test's registers.
 - `[ $xs ]` splices a list's elements into a list literal, `{ $fs }` a list of `[name; value]` pairs into a record literal's fields, `type { $fs }` a list of `[name; type]` pairs into a record type's, `| $c of t` a string as a constructor's name, and `| $c x -> ...` one as the constructor a pattern matches, so a derive can write bytes it computed, build a value of the type it was given, declare the records it needs, and name and match its own constructors (`tests/meta/list_splices.pia`). A nullary constructor in a quoted pattern is written `$!None`, since a bare name there is a variable that hygiene renames.
 
@@ -361,6 +361,36 @@ let meta cases (f : syntax) : list =
 cases clamp
 ```
 
+### Tests from contracts
+
+`Pia.Test.Gen` ([ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md), step 2) packages a generator like the one above. `G.cases f`, after `import Pia.Test.Gen.Gen as G`, writes cases for `f` from its signature and contract, and the verifier decides each one where it lands:
+
+- **Domains.** `edges f` gives each parameter's boundary values: `lo`, `lo + 1`, `0`, `hi - 1` and `hi` of its integer type, `c - 1`, `c` and `c + 1` for each constant `c` its `requires` compares it with, and `false` and `true` for a `bool`.
+- **Rows.** `combine doms budget` is their product, or, when the product has more than `budget` rows, a pairwise covering array: every pair of values of every two parameters appears in some row. `cases` uses a budget of 64. A row whose constants make `f`'s `requires` false is dropped. One the constants do not decide keeps the `requires` as a hypothesis.
+- **Two lemmas per row.** `f_spec_k`, the **specification check**, says that some value of `f`'s result type meets its `ensures` at the row's inputs. `f_case_k`, the **oracle**, is the `ensures` with the call in place of `result`. Each takes `f`'s parameters with their own types, and its `requires` pins them to the row, so a failed case prints its inputs as the counterexample.
+
+Both lemmas are contracts, so they are read over unbounded integers, as every contract is. `result + 1 = d` on a result of type `int{-3..1}` at `d = 2` is `1 + 1 = 2`, true, where the same expression run as code would overflow. What `cases dec` writes for that row is, by hand:
+
+```ocaml
+let dec (d : int{-2..2}) : int{-3..1}
+  ensures result + 1 = d
+= d - 1
+
+let lemma dec_spec_5 (d : int{-2..2}) : unit @case(spec, dec, 5)
+  requires d = 2
+  ensures (exists (dec_result : int{-3..1}). dec_result + 1 = d)
+= ()
+
+let lemma dec_case_5 (d : int{-2..2}) : unit @case(oracle, dec, 5)
+  requires d = 2
+  ensures dec d + 1 = d
+= ()
+```
+
+`@case(spec, f, k)` and `@case(oracle, f, k)` name what a lemma checks, so the report says `case 5: some result can meet the ensures of 'dec'` and `case 5: 'dec' meets its ensures` rather than "the postcondition holds".
+
+**A specification failure** is a contract that no result can meet. `ensures result = a + b` on a `u8` result cannot hold at `a = b = 255`, whatever the body does. For a function with a body, the body's own goals fail too, but for an `extern` nothing else would notice: every proof that assumes its `ensures` there follows from a contradiction, and so does its oracle. So the specification check comes first, and when it fails its goal carries the hint `specification failure: no value of 'f''s result type satisfies its ensures at these inputs`, with the inputs as the counterexample (`tests/std/Inputs/test_gen_spec.pia`). The fix is in the contract: correct the `ensures`, widen the result type, or add a `requires`. An `extern` gets only the specification check, since its oracle can be decided only by running it, which test mode adds (step 3). `tests/std/test_gen.pia` proves the cases of a function with a precondition, a range-typed result, a `bool` parameter, an `extern` and a pairwise array.
+
 ## Top-level calls
 
 An item that is a call of a metaprogram, such as `make_byte ()` in column 1, runs it. The items it returns replace the call. A metaprogram may return a list of items, which all replace the call. A metaprogram may also return a call of another metaprogram, which runs in the next pass.
@@ -401,7 +431,7 @@ The loop stops when a pass changes nothing. A metaprogram still waiting then is 
 | `shadowing.pia`, `builtin_name.pia` | the no-shadowing rule, and that quote binders never trip it |
 | `comments.pia` | where comments attach, and that quotes, splices, derives and operators keep them |
 | `doc_lint.pia` | a metaprogram that walks `listing ()` and insists on doc comments |
-| `generators.pia`, `generator_errors.pia` | the list and signature builtins, a generator that writes one proved case per combination of bounds, and their errors |
+| `generators.pia`, `generator_errors.pia` | the list and signature builtins, a generator that writes one proved case per combination of bounds, and their errors; `tests/std/test_gen.pia` proves what `Pia.Test.Gen` writes |
 | `tactic_errors.pia` | `@by` on something other than a lemma, tactics that are not total or pure, and tactics that return something other than proof steps; `tests/verify/tactics.pia` proves what tactics write |
 | `literate.pia.md`, `literate_errors.pia.md`, `literate_unclosed.pia.md` | a literate program, proved, and its errors |
 

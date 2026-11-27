@@ -1,11 +1,11 @@
 (* Pia.Time's civil calendar, part 2 of 3 (see time.pia): civil_days,
-   days_from_civil, civil_from_days, which gives a valid date that maps
-   back to its day number, and in_range.
+   days_from_civil, doy_of_doe, civil_from_days, which gives a valid date
+   that maps back to its day number, and in_range.
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Ratio.pia
-// RUN: piac --verify --iface-path=%t --verify-only=civil_days --verify-only=days_from_civil --verify-only=valid --verify-only=maps_to --verify-only=civil_from_days --verify-only=in_range %S/../../lib/Pia/Time.pia | FileCheck %s
+// RUN: piac --verify --iface-path=%t --verify-only=civil_days --verify-only=days_from_civil --verify-only=valid --verify-only=maps_to --verify-only=doy_of_doe --verify-only=civil_from_days --verify-only=in_range %S/../../lib/Pia/Time.pia | FileCheck %s
 *)
 
 (*
 // CHECK-NOT: failed
-// CHECK: 80 proved, 0 failed, 0 skipped
+// CHECK: 82 proved, 0 failed, 0 skipped
 *)

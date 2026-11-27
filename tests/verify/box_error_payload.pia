@@ -1,0 +1,104 @@
+(* A box over a concept as an error payload (ADR 0046, 2026-11-27 note):
+   `io_error`'s constructors are a closed list, as every error set's are
+   (ADR 0028), but `Cxx` carries a `box Exception`, so it can hold an error
+   of any type that meets Exception. `fail` boxes a not_found or an
+   overflow, `?` passes either on through `io_error | oom`, and `status`'s
+   handler calls `code` and `clamp` through the box, proved from
+   Exception's contracts alone: the use check at `widen` proved them for
+   each type boxed. This is how a C++ exception, of whatever dynamic type,
+   becomes one case of a closed Pia error set.
+// RUN: piac --verify --no-lint %s | FileCheck %s
+*)
+let oom = type | OutOfMemory
+let bump = let (t : type) (r : region) => type { mem : borrowed(r) mutable [t]; used : usize }
+
+let alloc (t : type) (r : region) (m : inout mutable bump t r) (n : usize) : result (borrowed(r) out mutable [t]) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b = n
+           | Err _ -> true)
+= if n <= len m.mem - m.used then
+    (let start = m.used in
+     m.used <- start + n;
+     Ok m.mem.[start .. start + n])
+  else Err OutOfMemory
+
+let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
+
+let make (t : type) (r : region) (m : inout mutable bump t r) (v : t) : result (box t r) oom
+  requires m.used <= len m.mem
+  ensures m.used <= len m.mem && len m.mem = old (len m.mem)
+  ensures (match result with
+           | Ok b -> len b.slot = 1 && b.state = 1
+           | Err _ -> true)
+= let s = alloc m 1? in
+  s.[0] <- v;
+  Ok { slot = s; state = 1 }
+
+(* What every error in the open case offers: a code that is never 0, and
+   a severity clamped to a limit the caller picks. *)
+let meta Exception (t : type) : concept = sig
+  let code : (e : t) -> u32 ensures result > 0
+  let clamp : (e : t) -> (limit : u8) -> u8 requires limit > 0 ensures result <= limit
+end
+
+let not_found = type { id : u16 }
+let code (e : not_found) : u32 ensures result > 0 = 400 + e.id
+let clamp (e : not_found) (limit : u8) : u8 requires limit > 0 ensures result <= limit = 1
+
+let overflow = type { limit : u32 }
+let code (e : overflow) : u32 ensures result > 0 = if e.limit = 0 then 1 else e.limit
+let clamp (e : overflow) (limit : u8) : u8 requires limit > 0 ensures result <= limit = limit
+
+(* A closed set with one open case. *)
+let io_error = type | Closed | Cxx of box Exception
+
+let fail (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : result u8 (io_error | oom)
+  requires len nf = 1 && len ov = 1
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let mn : mutable bump not_found = { mem = nf; used = 0 } in
+  let mo : mutable bump overflow = { mem = ov; used = 0 } in
+  if x = 0 then Err Closed
+  else if x = 1 then (let b = make mn { id = 4 }? in Err (Cxx (widen b)))
+  else if x = 2 then (let b = make mo { limit = 77 }? in Err (Cxx (widen b)))
+  else Ok x
+
+(* `?` passes the open case on like any other error. *)
+let twice (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : result u8 (io_error | oom)
+  requires len nf = 1 && len ov = 1
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let v = fail nf ov x? in
+  Ok v
+
+(* The handler covers the closed list, and calls through the box in the
+   open case, proved from Exception's contracts. *)
+let status (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : u32
+  requires len nf = 1 && len ov = 1
+  ensures result > 0
+= (let v = twice nf ov x? in 1
+   handle
+   | Closed -> 2
+   | OutOfMemory -> 3
+   | Cxx e -> code e)
+
+let severity (nf : borrowed mutable [not_found]) (ov : borrowed mutable [overflow]) (x : u8) : u8
+  requires len nf = 1 && len ov = 1
+  ensures result <= 9
+= (let v = twice nf ov x? in 0
+   handle
+   | Closed -> 0
+   | OutOfMemory -> 9
+   | Cxx e -> clamp e 9)
+
+(* Each widen runs the use check for its type, the error passes through
+   `?` in twice, and the handlers' results are bounded through the box:
+   `code e > 0` and `clamp e 9 <= 9` come from Exception alone.
+// CHECK: box_error_payload.pia:63:64: proved: the precondition of 'widen(box<not_found>)' holds [smt]
+// CHECK: box_error_payload.pia:64:68: proved: the precondition of 'widen(box<overflow>)' holds [smt]
+// CHECK: box_error_payload.pia:70:3: proved: the postcondition holds [smt]
+// CHECK: box_error_payload.pia:78:3: proved: the postcondition holds [smt]
+// CHECK: box_error_payload.pia:92:15: proved: the precondition of 'clamp(box_Exception, u8)' holds [smt]
+// CHECK: box_error_payload.pia:87:3: proved: the postcondition holds [smt]
+// CHECK: 56 proved, 0 failed, 0 skipped
+*)

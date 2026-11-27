@@ -63,6 +63,7 @@ let count_bright (ys : [u16]) : usize
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
 | `costs iterations <= len xs`, `costs calls <= 0`; `spent iterations` in an invariant | a cost bound (ADR 0062): every clause names its counter, `iterations` (loop iterations) or `calls` (non-spec calls), and is proved at return. A loop needs an invariant on `spent c`. Callees need their own bound, unless they have no loop or recursion. Function counters such as `less` come later. See `tests/verify/costs.pia` |
 | `let lemma l (n : int) : unit requires ... ensures ... = by lean Proofs.l` | a lemma proved in Lean 4 when Z3 cannot (ADR 0061): `piac --emit=lean` writes its statement, a Lean file proves it, and the `pia_lean_proof` receipt makes the goal proved. See the `pia-lean` skill |
+| `import Pia.Test.Gen.Gen as G` then `G.cases f` | tests generated from `f`'s contract (ADR 0056): each combination of boundary values of its parameters that its `requires` allows gets a specification check (`f_spec_k`: some result can meet the `ensures`, else a "specification failure") and an oracle (`f_case_k`: the `ensures`, read over unbounded integers), as lemmas tagged `@case(spec, f, k)`. An `extern` gets only the check. See `tests/std/test_gen.pia` |
 | `spread i in 0 .. n do ... done` | a parallel loop (ADR 0060), proved race-free: each iteration writes only the cells it owns (`c = i`, or `@owns(buf, label)` for `label.[c] = i`). After it, its `ensures` holds for every iteration, and cells no iteration owns keep their values. `@place(gpu)` runs it on the GPU, as a `result unit gpu_error`. See `tests/verify/spread.pia`, `spread_frame.pia` |
 | `let rec tree = type \| Leaf \| Node of { l : box tree; k : u32 }` | a recursive type (ADR 0047): proved, with structural recursion needing no `decreases`, but not compiled yet. See `tests/verify/rec_types.pia` |
 | `(x : borrowed inout mutable [u8])` | ownership (`borrowed`/`moved`), access (`in`/`out`/`inout`), modifiability (`fixed`/`mutable`). The default is a read-only borrow |
@@ -116,6 +117,8 @@ handle
 
 Each value bound by a `?` keeps its callee's postcondition (`x < 10` above), which is what proves `x * 10 + y`. To see `defer` and error sets in use, read `tests/verify/defer.pia` and `tests/verify/error_sets.pia`.
 
+When one case must hold errors of types you don't know yet (a C++ exception, a plugin's error), give that constructor a box over a concept: `let io_error = type | Closed | Cxx of box Exception`. Build it with `Err (Cxx (widen b))` from a full `box t`, and in the handler call the concept's requirements through it, `| Cxx e -> code e`, proved from the concept's contracts alone. It works within one module for now; `tests/verify/box_error_payload.pia` is the full example.
+
 **Generics, concepts and lambdas.** A type parameter comes first, `(t : type where C t)`, and the type arguments are deduced from the arguments. A generic function must write its return type. A concept is a `let meta C (t : type) : concept = sig ... end` with requirements and laws. A lambda is a nameless `let`, and it lists its captures in brackets:
 
 <!-- example: lambda.pia -->
@@ -135,7 +138,7 @@ let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
 = find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 ```
 
-The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value.
+The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value. `let h : mutable ((x : u8) -> u8) requires x < 100 = succ` can be rebound with `h <- twice` (each function is checked against the arrow there) and is called indirectly; the parentheses keep `mutable` off the parameter, and its types are scalars for now.
 
 **Modules.** One file is one module. Everything in it is private unless an interface the module claims lists it, and an import names an interface, never a wildcard:
 

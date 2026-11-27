@@ -1,0 +1,213 @@
+(* Pia.Test.Gen: tests generated from a function's contract and types
+   (ADR 0056, step 2).
+
+   `cases f` writes, for each combination of boundary values of f's
+   parameters that f's `requires` allows, two lemmas, proved where they
+   land, in the importer:
+
+   - f_spec_k, the specification check: some value of f's result type
+     meets f's `ensures` at the case's inputs. When none does, the
+     contract is wrong whatever the code does (`ensures result = a + b`
+     on u8 at a = b = 255), and the failed goal says "specification
+     failure". The check is what keeps such a case from passing: every
+     proof that assumes the contract would otherwise follow from a
+     contradiction.
+   - f_case_k, the oracle: f's `ensures`, with the call in place of
+     `result`. It is read as every contract is, over unbounded integers,
+     so `result + 1 = d` on an `int{-3..1}` result does not overflow.
+     An `extern` has only the specification check, since its oracle can
+     only be decided by running it (ADR 0056, step 3).
+
+   Each lemma takes f's parameters with their own types, and its
+   `requires` pins them to the case's values, so a failed case prints
+   them as its counterexample.
+
+   - edges f: each parameter's boundary values: lo, lo + 1, 0, hi - 1 and
+     hi of its integer type, those of the constants its `requires`
+     compares it with (c - 1, c and c + 1), and false and true for bool.
+   - combine doms budget: the product of the domains, or a pairwise
+     covering array (IPO: every pair of values of every two parameters in
+     some row) when the product holds more than `budget` rows.
+   - cases f: edges, then combine within 64 rows, then the lemmas. A row
+     that f's `requires` rules out is dropped when its constants decide
+     it, and otherwise kept with the `requires` as a hypothesis. *)
+module Pia.Test.Gen : Gen
+
+interface Gen = sig
+  let meta edges : list
+  let meta combine : list
+  let meta cases : list
+  (* The helpers they call, which an exported definition must list. *)
+  let meta has : bool
+  let meta dedupe : list
+  let meta conj : syntax
+  let meta place : list
+  let meta lookup : list
+  let meta apply2 : list
+  let meta eval : list
+  let meta decide : list
+  let meta compared : list
+  let meta edges_of : list
+  let meta key : string
+  let meta triples : list
+  let meta gain : int
+  let meta grow : list
+  let meta fits : bool
+  let meta vertical : list
+  let meta pairwise : list
+  let meta is_extern : bool
+  let meta one_case : list
+end
+
+(* Lists. *)
+let meta has (xs : list) (x : syntax) : bool = length (filter (let (y) => y = x) xs) > 0
+let meta dedupe (xs : list) : list =
+  fold (let (acc) (x) => if has acc x then acc else concat acc [x]) [] xs
+let meta conj (xs : list) : syntax = fold (let (a) (h) => `( $a && $h )) `( true ) xs
+let meta place (row : list) (i : int) (a : int) : list =
+  map (let (x) => if x = i then a else nth row x) (range (length row))
+
+(* A partial evaluator for a `requires` after expansion, where operators
+   are calls of their builtins (`le lo hi`): [v] when the constants decide
+   it, [] when they do not. *)
+let meta lookup (env : list) (n : string) : list =
+  fold (let (acc) (kv) => if nth kv 0 = n then [nth kv 1] else acc) [] env
+let meta apply2 (o : string) (a : syntax) (b : syntax) : list =
+  if o = "eq" then [a = b] else if o = "ne" then [a <> b]
+  else if o = "lt" then [a < b] else if o = "le" then [a <= b]
+  else if o = "gt" then [a > b] else if o = "ge" then [a >= b]
+  else if o = "add" then [a + b] else if o = "sub" then [a - b]
+  else if o = "mul" then [a * b]
+  else if o = "and" then [a && b] else if o = "or" then [a || b]
+  else if o = "implies" then [(a = false) || b]
+  else []
+let meta eval (env : list) (e : syntax) : list =
+  let k = kind e in
+  if k = "IntLit" || k = "BoolLit" then [value e]
+  else if k = "Neg" then
+    (let v = eval env (nth (children e) 0) in if length v = 1 then [0 - nth v 0] else [])
+  else if k = "Name" then lookup env (op e)
+  else if k = "Apply" && length (children e) = 3 then
+    (let a = eval env (nth (children e) 1) in
+     let b = eval env (nth (children e) 2) in
+     if length a = 1 && length b = 1 then apply2 (op e) (nth a 0) (nth b 0) else [])
+  else []
+(* All the clauses: [false] when one is false, [true] when all are true. *)
+let meta decide (env : list) (hyps : list) : list =
+  fold (let (acc) (h) =>
+         let v = eval env h in
+         if length acc = 1 && nth acc 0 = false then acc
+         else if length v = 1 && nth v 0 = false then v
+         else if length acc = 1 && length v = 1 then acc
+         else []) [true] hyps
+
+(* edges: the constants a `requires` compares the parameter p with. *)
+let meta compared (p : string) (e : syntax) : list =
+  if kind e = "Apply" && length (children e) = 3 then
+    (let o = op e in
+     let x = nth (children e) 1 in
+     let y = nth (children e) 2 in
+     let cmp = o = "lt" || o = "le" || o = "gt" || o = "ge" || o = "eq" || o = "ne" in
+     let lit = (let (z) => kind z = "IntLit" || kind z = "Neg") in
+     let here = if cmp && kind x = "Name" && op x = p && lit y then eval [] y
+                else if cmp && kind y = "Name" && op y = p && lit x then eval [] x
+                else [] in
+     concat here (concat (compared p x) (compared p y)))
+  else []
+let meta edges_of (t : syntax) (p : string) (hyps : list) : list =
+  if kind t = "TypeName" && name t = "bool" then [false; true]
+  else
+    (let b = range_of t in
+     let lo = nth b 0 in
+     let hi = nth b 1 in
+     let cs = fold (let (acc) (h) => concat acc (compared p h)) [] hyps in
+     let near = fold (let (acc) (c) => concat acc [c - 1; c; c + 1]) [] cs in
+     filter (let (v) => lo <= v && v <= hi)
+            (dedupe (concat [lo; lo + 1; 0; hi - 1; hi] near)))
+let meta edges (f : syntax) : list =
+  map (let (pt) => edges_of (nth pt 1) (nth pt 0) (hypotheses f))
+      (zip (params f) (param_types f))
+
+(* combine: rows of indices into the domains. A pair still to cover is
+   the string "i:a:b": parameter i at its value a, with the parameter
+   being added at its value b. *)
+let meta key (i : int) (a : int) (b : int) : string =
+  concat (concat (concat (concat i ":") a) ":") b
+let meta triples (j : int) (sizes : list) : list =
+  fold (let (acc) (i) =>
+         concat acc (fold (let (acc2) (a) =>
+                            concat acc2 (map (let (b) => [i; a; b]) (range (nth sizes j))))
+                          [] (range (nth sizes i))))
+       [] (range j)
+let meta gain (row : list) (b : int) (todo : list) : int =
+  length (filter (let (i) => has todo (key i (nth row i) b)) (range (length row)))
+(* Horizontal growth: each row takes the value of the new parameter that
+   covers the most pairs still to cover. *)
+let meta grow (rows : list) (n : int) (todo0 : list) : list =
+  fold (let (st) (row) =>
+         let todo = nth st 1 in
+         let best = fold (let (bb) (b) => if gain row b todo > gain row bb todo then b else bb)
+                         0 (range n) in
+         let covered = map (let (i) => key i (nth row i) best) (range (length row)) in
+         [ concat (nth st 0) [concat row [best]];
+           filter (let (k) => has covered k = false) todo ])
+       [ []; todo0 ] rows
+(* Vertical growth: a pair no row covers gets a new row, or joins a new
+   row that agrees with it; -1 is a value not chosen yet. *)
+let meta fits (row : list) (i : int) (a : int) (j : int) (b : int) : bool =
+  nth row j = b && (nth row i = 0 - 1 || nth row i = a)
+let meta vertical (i : int) (a : int) (j : int) (b : int) (extra : list) : list =
+  let at = fold (let (acc) (k) => if acc < 0 && fits (nth extra k) i a j b then k else acc)
+                (0 - 1) (range (length extra)) in
+  if at < 0 then concat extra [place (concat (map (let (x) => 0 - 1) (range j)) [b]) i a]
+  else map (let (k) => if k = at then place (nth extra k) i a else nth extra k)
+           (range (length extra))
+let meta pairwise (sizes : list) : list =
+  let first = product [range (nth sizes 0); range (nth sizes 1)] in
+  fold (let (rows) (j) =>
+         let todo = map (let (k) => key (nth k 0) (nth k 1) (nth k 2)) (triples j sizes) in
+         let st = grow rows (nth sizes j) todo in
+         let left = nth st 1 in
+         let missing = filter (let (k) => has left (key (nth k 0) (nth k 1) (nth k 2)))
+                              (triples j sizes) in
+         let extra = fold (let (acc) (k) => vertical (nth k 0) (nth k 1) j (nth k 2) acc)
+                          [] missing in
+         concat (nth st 0) (map (let (r) => map (let (x) => if x < 0 then 0 else x) r) extra))
+       first (map (let (x) => x + 2) (range (length sizes - 2)))
+let meta combine (doms : list) (budget : int) : list =
+  let full = fold (let (acc) (d) => acc * length d) 1 doms in
+  if full <= budget || length doms < 3 then product doms
+  else map (let (row) => map (let (i) => nth (nth doms i) (nth row i)) (range (length row)))
+           (pairwise (map length doms))
+
+(* cases: the lemmas of one row. *)
+let meta is_extern (f : syntax) : bool =
+  let body = nth (children f) (length (children f) - 1) in
+  kind body = "Apply" && op body = "extern"
+let meta one_case (f : syntax) (k : int) (row : list) : list =
+  let fname = name f in
+  let env = zip (params f) row in
+  let hyps = hypotheses f in
+  let known = decide env hyps in
+  if length known = 1 && nth known 0 = false then []
+  else
+    (let pins = conj (map (let (kv) => let p = nth kv 0 in let v = nth kv 1 in `( $p = $v )) env) in
+     let pre = if length known = 1 then pins else `( $pins && $(conj hyps) ) in
+     let ps = map (let (pt) => param (nth pt 0) (nth pt 1)) (zip (params f) (param_types f)) in
+     let res = concat fname "_result" in
+     let ret = return_type f in
+     let sn = concat (concat fname "_spec_") k in
+     let cn = concat (concat fname "_case_") k in
+     let spec = `( let lemma $sn $ps : unit @case(spec, $fname, $k)
+                     requires $pre
+                     ensures (exists ($res : $ret). $(subst (conclusion f) "result" res))
+                   = () ) in
+     let call = make_call fname (params f) in
+     let oracle = `( let lemma $cn $ps : unit @case(oracle, $fname, $k)
+                       requires $pre
+                       ensures $(subst (conclusion f) "result" call)
+                     = () ) in
+     if is_extern f then [spec] else [spec; oracle])
+let meta cases (f : syntax) : list =
+  let rows = combine (edges f) 64 in
+  fold (let (acc) (k) => concat acc (one_case f (k + 1) (nth rows k))) [] (range (length rows))

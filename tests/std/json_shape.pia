@@ -14,7 +14,10 @@
 (*
 // IFACE: let spec key_is : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool @opaque
 // IFACE: let spec int_in : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> bool @opaque
+// IFACE: let spec is_null : (v : Pia.Text.Json.Dom.json) -> bool @opaque
 // IFACE: let read_int : (s : [u8]) -> (v : Pia.Text.Json.Dom.json) -> (lo : i64) -> (hi : i64) -> result i64 nonconforming requires lo <= hi ensures (match result with | Ok x -> lo <= x && x <= hi && int_in s v lo hi && x = int_value s v lo hi | Err _ -> int_in s v lo hi = false)
+// IFACE: let check_null : (v : Pia.Text.Json.Dom.json) -> bool ensures result = is_null v
+// IFACE: let key_matches : (s : [u8]) -> (sp : Pia.Text.Json.Dom.span) -> (name : [u8]) -> bool ensures result = key_is s sp name
 // IFACE: let meta derive_json_dom : list
 // CHECK: 0 failed, 0 skipped
 *)

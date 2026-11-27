@@ -43,7 +43,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | interfaces | concepts with laws, proved per type | C++20 concepts (no laws) | traits | module signatures | duck-typed `comptime` |
 | metaprograms | `let meta`, quotes and splices, `@derive(eq)` | macros, templates, `constexpr` | `macro_rules!`, proc macros | ppx | `comptime` |
 | closures | `let [x] (a : t) => e`, captures listed | `[x](T a) { }` | `move \|a\| e` | `fun a -> e` | none |
-| function pointers | `let h : u8 -> u8 = succ`, a reference with the arrow's contract (no `&`) | `T (*h)(U) = succ` | `let h: fn(u8) -> u8 = succ` | `let h = succ` | `const h: *const fn (u8) u8 = succ` |
+| function pointers | `let h : u8 -> u8 = succ`, a reference with the arrow's contract (no `&`); `let h : mutable (u8 -> u8) = succ` and `h <- twice` to rebind | `T (*h)(U) = succ` | `let h: fn(u8) -> u8 = succ` | `let h = succ` | `const h: *const fn (u8) u8 = succ` |
 | modules | one per file; `interface I = sig ... end`; `import M.I` | headers, C++20 modules | `mod`, `pub`, `use` | `.mli` | `@import`, `pub` |
 | memory | explicit allocators, every allocation fallible, `box t` | `malloc`, `new` | `Box`, infallible by default | GC | explicit allocators |
 | floats | `f32`, `f64`, strict IEEE 754; `0.5f32`, or `0.5` where a float is expected; `f32 n`, `i32 x` (a goal: not NaN, in range), `to_bits x`, `from_bits u` | `float`, `double`, with `-ffp-contract=off` | `f32`, `f64` | `float` (64-bit) | `f32`, `f64` |
@@ -64,7 +64,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 - **Integer promotion is gone.** C widens `uint8_t` to `int` before `<<`, `+` and `*`. Pia computes at the operand's type, so `p.[0] << 24` on a `u8` fails `the shift amount is less than 8`. Bind to a wider `let` first.
 - **`size_t` subtraction** (`n - k`) is a goal: it is the most common real bug a port finds. Compare against what is left (`k <= n`) before subtracting.
 - **Pointer and length become a slice**, and a write-only buffer an `out mutable` slice. `len` replaces the length parameter, so the port cannot pass the wrong one.
-- **Exceptions and `errno` become `result`** with a closed error variant. RAII and `goto cleanup` become `defer`.
+- **Exceptions and `errno` become `result`** with a closed error variant. RAII and `goto cleanup` become `defer`. A `catch (const std::exception& e)` that must keep any dynamic type becomes one case carrying a box over a concept, `Cxx of box Exception`, whose requirements (`what`, a code) the handler calls through the box; see `tests/verify/box_error_payload.pia`.
 - **A float cast is a goal.** C's `(int)x` is undefined for a NaN or an out-of-range `x`; Pia's `i32 x` is the same truncation with a goal that neither happens, so state the range (`requires -1.0 < x && x < 256.0` before `u8 x`). `(float)n` is `f32 n`, and type punning through a union or `memcpy` is `to_bits`/`from_bits`.
 - **Templates become generics with concepts.** A concept's laws are proved for each type that meets it, so a `std::sort` comparator that is not a strict weak order is a compile error, not undefined behaviour.
 
