@@ -76,6 +76,38 @@ int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
                     uint64_t name_len, uint64_t args, uint64_t nargs,
                     uint64_t threads);
 
+// A placed sequence (ADR 0068, section 9): a `for` placed on the GPU, whose
+// spreads become dispatches of one command buffer. piac generates
+//
+//   seq = pia_gpu_seq_begin();
+//   for ... { pia_gpu_seq_dispatch(seq, ...) for each spread }
+//   status = pia_gpu_seq_end(seq);
+//
+// pia_gpu_seq_begin returns 0 if there is no GPU. pia_gpu_seq_dispatch
+// encodes one kernel run, with the arguments of pia_gpu_run, except that
+// the third word of each triple is one of the PIA_GPU_ARG kinds: a scalar is
+// copied into the command buffer when it is encoded, and a buffer is bound
+// once per sequence, the pages it lies in wrapped where they are, or else
+// copied in once and copied back at the end if a kernel writes it. Nothing
+// runs until pia_gpu_seq_end, which commits the command buffer, waits for
+// it, and returns PIA_GPU_OK or the first error, in Gpu.error's order. The
+// encoder is serial, so the dispatches run in order, each seeing the writes
+// of those before it. The host must not write a bound buffer between begin
+// and end, which piac checks.
+enum {
+  PIA_GPU_ARG_READ = 0,
+  PIA_GPU_ARG_WRITTEN = 1,
+  PIA_GPU_ARG_SCALAR = 2,
+};
+uint64_t pia_gpu_seq_begin(void);
+void pia_gpu_seq_dispatch(uint64_t seq, uint64_t lib, uint64_t lib_len,
+                          uint64_t name, uint64_t name_len, uint64_t args,
+                          uint64_t nargs, uint64_t threads);
+int32_t pia_gpu_seq_end(uint64_t seq);
+
+// How many dispatches the sequences have encoded since the program started.
+void pia_gpu_sequence_stats(uint64_t *dispatches);
+
 // How pia_gpu_run has bound buffers since the program started: wrapped in
 // place, or copied, and the bytes copied in.
 void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,

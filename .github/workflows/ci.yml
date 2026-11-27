@@ -165,9 +165,14 @@ jobs:
         timeout-minutes: 300
         run: bazel build --config=ci --keep_going //...
 
+      # The macOS runner has 3 cores to Linux's 4, and runs every test
+      # locally, so the suite takes about twice as long: 30 minutes cut it
+      # off at 457 of 494 tests on 2026-11-27. One longer job keeps the
+      # free plan's 5 macOS runners for other PRs, where shards would take
+      # several of them.
       - name: Test
         id: test
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: bazel test --config=ci --keep_going //...
 
       # Build time is a benchmark (ADR 0032). Linux gates every change (the
@@ -392,8 +397,10 @@ jobs:
       - name: Stamp piac
         if: steps.test.outcome == 'success'
         run: |
+          # Stamp.inc is named as a target too: under BuildBuddy's
+          # --remote_download_toplevel only top-level outputs reach bazel-bin.
           if [ "${{ github.event_name }}" = push ] || [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --config=release //tools/piac
+            env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --config=release //tools/piac //src/version:stamp_inc
           else
             env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel build --config=ci --config=release //src/version:stamp_inc
           fi

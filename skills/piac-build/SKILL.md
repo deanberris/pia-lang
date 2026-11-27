@@ -86,7 +86,7 @@ piac --emit=obj --embed=add.metallib=bazel-bin/add.metallib -o app.o app.pia
 
 ## What a build trusts
 
-`--trust-report` lists the trusted items the proofs rest on: axioms of theories with no model, `assume`s (only allowed in a `@trusted` file), contracts of `extern` functions and `unsafe` calls. `--why` adds, for each trusted item, the goals whose proofs used it, and the report ends with how many proved goals rest on one. `--check-vacuity` re-solves each goal proved from a trusted axiom or an `assume` without its negation, and fails it if its hypotheses contradict each other.
+`--trust-report` lists the trusted items the proofs rest on: axioms of theories with no model, `assume`s (only allowed in a `@trusted` file), contracts of `extern` functions and `unsafe` calls. `--why` adds, for each trusted item, the goals whose proofs used it, and the report ends with how many proved goals rest on one. Lemmas proved in Lean (`= by lean T`, the `pia-lean` skill) are not trusted, but have a section of their own after the count: each with its theorem, Lean toolchain, axioms and statement hash, and with `--why` the goals that use it, since they rest on Lean's kernel and on piac's translation of the statement. A Lean proof by `native_decide` trusts Lean's compiler, so it is allowed only in a `@trusted` file and listed as a trusted item. `--check-vacuity` re-solves each goal proved from a trusted axiom or an `assume` without its negation, and fails it if its hypotheses contradict each other.
 
 ```sh
 piac --verify --trust-report --why f.pia
@@ -97,7 +97,7 @@ Read the trust report before shipping: everything in it is something a person ha
 
 ## Proof certificates
 
-Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024). Format 3 also records who proved it (ADR 0073): the Pia ABI version and target (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, or `dev` for a build that is not stamped) and Z3's (`solver z3 5.4.1`). `pia-cert check` refuses objects for different ABI versions or targets, and objects from a piac too old to record an ABI version: compile them again with one piac.
+Every object `piac` writes carries a certificate in the `__TEXT,__pia_cert` section: the module, the interfaces it provides and the interfaces it requires, each with the hash it was proved against, its trusted items (`trusted lowering ...`, `trusted native_decide ...`) and its lemmas proved in Lean (`proved lean <lemma> <statement hash> by <theorem> (<toolchain>; axioms ...)`), plus a witness symbol per interface, so a stale library fails to link instead of running against contracts it was never proved with ([docs/abi.md](../../docs/abi.md), ADR 0024). Format 3 also records who proved it (ADR 0073): the Pia ABI version and target (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, or `dev` for a build that is not stamped) and Z3's (`solver z3 5.4.1`). `pia-cert check` refuses objects for different ABI versions or targets, and objects from a piac too old to record an ABI version: compile them again with one piac.
 
 ```sh
 piac --version                             # piac's version, the Pia ABI version and Z3's

@@ -1,0 +1,33 @@
+(* A for loop placed on the GPU (ADR 0068, section 9) is proved as
+   written, and evaluates to `result unit gpu_error`. Its invariants hold
+   after it only when it returns Ok: on an error every buffer it writes may
+   be part written, so a claim about one without the match fails.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+let fill_row (v : borrowed inout mutable [u32]) (k : u32) : unit
+  ensures forall (c in 0 .. len v). v.[c] = k
+= spread i in 0 .. len v ensures v.[i] = k do v.[i] <- k done
+
+let rows (v : borrowed inout mutable [u32]) (n : u32) : result unit gpu_error
+  requires len v > 0 && n > 0
+  ensures (match result with
+           | Ok -> v.[0] = n - 1
+           | Err _ -> true)
+= for k in 0 .. n @place(gpu)
+    invariant k = 0 || v.[0] = k - 1
+  do fill_row v k done
+
+(* Wrong: the run may fail, and then v holds anything. *)
+let rows_always (v : borrowed inout mutable [u32]) (n : u32) : result unit gpu_error
+  requires len v > 0 && n > 0
+  ensures v.[0] = n - 1
+= for k in 0 .. n @place(gpu)
+    invariant k = 0 || v.[0] = k - 1
+  do fill_row v k done
+
+(*
+// CHECK: gpu_sequence.pia:14:3: proved: the postcondition holds
+// CHECK: gpu_sequence.pia:24:3: failed: the postcondition holds
+// CHECK: 1 failed
+*)
