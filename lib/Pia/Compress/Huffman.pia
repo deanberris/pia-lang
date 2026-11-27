@@ -57,6 +57,14 @@ interface Huffman = sig
   let lemma kraft_room : (l : [u8]) -> (n : int{0..320}) -> (b : int{1..16}) -> unit
     requires n <= len l && kraft l n <= 32768
     ensures room l n b
+  let lemma kraft_run : (l : [u8]) -> (a : int{0..320}) -> (b : int{0..320}) -> (c : u8) -> unit
+    requires a <= b && b <= len l
+    requires forall (i in a .. b). l.[i] = c
+    ensures kraft l b = kraft l a + (b - a) * weight c
+  let lemma code_same : (l : [u8]) -> (m : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> unit
+    requires n <= len l && n <= len m && sym < n && 1 <= l.[sym] && l.[sym] <= 15
+    requires forall (i in 0 .. n). l.[i] = m.[i]
+    ensures m.[sym] = l.[sym] && code_of m n sym = code_of l n sym
   let lemma prefix_free : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> (b : int{0..319}) -> unit
     requires a < n && b < n && n <= len l
     requires 1 <= l.[a] && l.[a] <= 15 && 1 <= l.[b] && l.[b] <= 15
@@ -635,3 +643,39 @@ let lemma no_code (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) (sym : i
 = let b : int{1..15} = l.[sym] in
   none_miss s pos l n b;
   lc_lt l sym n b
+
+(* The Kraft sum over a run of equal lengths, for a code given as runs,
+   as the fixed code is. *)
+let lemma kraft_run (l : [u8]) (a : int{0..320}) (b : int{0..320}) (c : u8) : unit
+  requires a <= b && b <= len l
+  requires forall (i in a .. b). l.[i] = c
+  ensures kraft l b = kraft l a + (b - a) * weight c
+  decreases b - a
+  with kraft
+= if b > a then (let b' : int{0..319} = b - 1 in kraft_run l a b' c) else ()
+
+(* The canonical code depends only on the lengths, not on which buffer
+   holds them: len_count, first_code and code_of agree on two buffers
+   whose first n lengths are the same. *)
+let lemma lc_same (l : [u8]) (m : [u8]) (k : int{0..320}) (b : int{1..15}) : unit
+  requires k <= len l && k <= len m
+  requires forall (i in 0 .. k). l.[i] = m.[i]
+  ensures len_count m k b = len_count l k b
+  decreases k
+  with len_count
+= if k > 0 then (let k' : int{0..319} = k - 1 in lc_same l m k' b) else ()
+
+let lemma fc_same (l : [u8]) (m : [u8]) (n : int{0..320}) (b : int{1..15}) : unit
+  requires n <= len l && n <= len m
+  requires forall (i in 0 .. n). l.[i] = m.[i]
+  ensures first_code m n b = first_code l n b
+  decreases b
+= if b > 1 then (let b' : int{1..14} = b - 1 in fc_same l m n b'; lc_same l m n b') else ()
+
+let lemma code_same (l : [u8]) (m : [u8]) (n : int{0..320}) (sym : int{0..319}) : unit
+  requires n <= len l && n <= len m && sym < n && 1 <= l.[sym] && l.[sym] <= 15
+  requires forall (i in 0 .. n). l.[i] = m.[i]
+  ensures m.[sym] = l.[sym] && code_of m n sym = code_of l n sym
+= let b : int{1..15} = l.[sym] in
+  fc_same l m n b;
+  lc_same l m sym b

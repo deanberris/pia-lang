@@ -1,5 +1,6 @@
-(* Pia.Compress.Inflate.Ref: what a Huffman block of a deflate stream
-   says, as a trace of its symbols (RFC 1951, section 3.2.5; ADR 0054,
+(* Pia.Compress.Inflate.Ref: what a deflate stream says, as a trace of
+   its blocks (stream_ok: stored, or in the fixed code, so far) and of a
+   Huffman block's symbols (RFC 1951, section 3.2.5; ADR 0054,
    step 5), for a decoder to be proved against.
 
    Symbol j of the trace is the literal/length code ts.[j] at bit tp.[j],
@@ -16,7 +17,14 @@
    The trace is a recursion over the symbols (blk_from), not a
    quantified step, and it and copy_ok are opaque, so that a decoder's
    loop takes its facts one symbol at a time (skills/pia-contracts,
-   "A whole-stream theorem"). *)
+   "A whole-stream theorem").
+
+   Block bi of a stream starts at bit bp.[bi] and writes x from bo.[bi]
+   to bo.[bi + 1]; a block in the fixed code is the trace's symbols
+   bj.[bi] to bj.[bi + 1] - 1, read with the lengths fl and fd, which
+   fixed_ok says are the fixed code's. A decoder whose tables hold the
+   same lengths in other buffers reads the same codes (same_lens,
+   at_moved). *)
 module Pia.Compress.Inflate.Ref : Ref
 
 import Pia.Image.Bits.Bits as B
@@ -26,9 +34,10 @@ import Pia.Compress.Inflate.Spec.Deflate as F
 interface Ref = sig
   let spec code_at : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> bool
   let spec copy_ok : (x : [u8]) -> (o : usize) -> (n : usize) -> (dist : usize) -> bool
+  let spec dist_tail : (s : [u8]) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> (qd : usize) -> (n : usize) -> bool
   let spec blk_step : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> bool
   let spec blk_from : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> bool
-  let spec blk_ok : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> bool
+  let spec blk_ok : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (j0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> bool
   let lemma at_same : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> (b : int{0..319}) -> unit
     requires code_at s p l n a
     requires b < n && n <= len l && 1 <= l.[b] && l.[b] <= 15 && p <= B.nbits s && l.[b] <= B.nbits s - p
@@ -73,11 +82,58 @@ interface Ref = sig
     requires blk_from s ll nl dl nd x k tp ts td to j
     ensures j + 1 < k ==> blk_step s ll nl dl nd x tp ts td to j && blk_from s ll nl dl nd x k tp ts td to (j + 1)
     ensures j + 1 = k ==> code_at s tp.[j] ll nl ts.[j] && ts.[j] = 256 && to.[j] <= len x
-  let lemma ok_start : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> unit
-    requires blk_ok s ll nl dl nd x p0 o0 k tp ts td to
-    ensures 1 <= k && k <= len tp && k <= len ts && k <= len td && k <= len to
-    ensures tp.[0] = p0 && to.[0] = o0
-    ensures blk_from s ll nl dl nd x k tp ts td to 0
+  let lemma ok_start : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (j0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> unit
+    requires blk_ok s ll nl dl nd x p0 o0 j0 k tp ts td to
+    ensures j0 < k && k <= len tp && k <= len ts && k <= len td && k <= len to
+    ensures tp.[j0] = p0 && to.[j0] = o0
+    ensures blk_from s ll nl dl nd x k tp ts td to j0
+  let spec same_lens : (l : [u8]) -> (m : [u8]) -> (n : int{0..320}) -> bool
+  let lemma at_moved : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (m : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> unit
+    requires code_at s p l n a && same_lens l m n
+    ensures code_at s p m n a && m.[a] = l.[a]
+  let spec fixed_ok : (fl : [u8]) -> (fd : [u8]) -> bool
+  let lemma fixed_same : (fl : [u8]) -> (fd : [u8]) -> (lb : [u8]) -> (db : [u8]) -> unit
+    requires fixed_ok fl fd && 288 <= len lb && 30 <= len db
+    requires forall (i in 0 .. 288). lb.[i] = F.fixed_length i
+    requires forall (i in 0 .. 30). db.[i] = 5
+    ensures same_lens fl lb 288 && same_lens fd db 30 && 288 <= len fl && 30 <= len fd
+  let spec stored_copy : (s : [u8]) -> (q : usize) -> (x : [u8]) -> (o : usize) -> (n : usize) -> bool
+  let lemma stored_byte : (s : [u8]) -> (q : usize) -> (x : [u8]) -> (o : usize) -> (n : usize) -> (d : usize) -> unit
+    requires stored_copy s q x o n && d < n
+    ensures q + 4 + n <= len s && o + n <= len x && x.[o + d] = s.[q + 4 + d]
+  let spec block_ok : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> bool
+  let lemma block_head : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> unit
+    requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+    requires block_ok s x fl fd nbk bp bo bj tp ts td to bi
+    ensures bp.[bi] <= B.nbits s && 3 <= B.nbits s - bp.[bi]
+    ensures (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else (B.bits_at s bp.[bi] 1 = 1) = (bi + 1 = nbk))
+    ensures bo.[bi] <= bo.[bi + 1] && bo.[bi + 1] <= len x
+    ensures (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 <= 1)
+  let lemma block_stored : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> (q : usize) -> unit
+    requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+    requires block_ok s x fl fd nbk bp bo bj tp ts td to bi && (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 0)
+    requires q = (bp.[bi] + 3 + 7) / 8
+    ensures q < len s && 4 <= len s - q && F.stored_ok s q
+    ensures F.stored_len s q <= len s - q - 4 && bo.[bi + 1] - bo.[bi] = F.stored_len s q
+    ensures bp.[bi + 1] = 8 * (q + 4 + F.stored_len s q) && bj.[bi + 1] = bj.[bi] && stored_copy s q x bo.[bi] (F.stored_len s q)
+  let lemma block_fixed : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> unit
+    requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+    requires block_ok s x fl fd nbk bp bo bj tp ts td to bi && (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 1)
+    ensures bj.[bi] < bj.[bi + 1] && bj.[bi + 1] <= len tp && bj.[bi + 1] <= len to && 256 < len fl
+    ensures blk_ok s fl 288 fd 30 x (bp.[bi] + 3) bo.[bi] bj.[bi] bj.[bi + 1] tp ts td to
+    ensures bp.[bi + 1] = tp.[bj.[bi + 1] - 1] + fl.[256] && bo.[bi + 1] = to.[bj.[bi + 1] - 1]
+  let spec blocks_from : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> bool
+  let spec stream_ok : (s : [u8]) -> (pos : usize) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> bool
+  let lemma blocks_step : (s : [u8]) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (bi : usize) -> unit
+    requires bi <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
+    requires blocks_from s x fl fd nbk bp bo bj tp ts td to bi
+    ensures bi < nbk ==> block_ok s x fl fd nbk bp bo bj tp ts td to bi && blocks_from s x fl fd nbk bp bo bj tp ts td to (bi + 1)
+    ensures bi = nbk ==> bo.[nbk] = len x
+  let lemma stream_start : (s : [u8]) -> (pos : usize) -> (x : [u8]) -> (fl : [u8]) -> (fd : [u8]) -> (nbk : usize) -> (bp : [usize]) -> (bo : [usize]) -> (bj : [usize]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> unit
+    requires stream_ok s pos x fl fd nbk bp bo bj tp ts td to
+    ensures 1 <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
+    ensures bp.[0] = pos && bo.[0] = 0 && bj.[0] = 0 && fixed_ok fl fd
+    ensures blocks_from s x fl fd nbk bp bo bj tp ts td to 0
 end
 
 (** sym's code, in the code whose lengths are l (n symbols), is the bits
@@ -93,6 +149,21 @@ let spec copy_ok (x : [u8]) (o : usize) (n : usize) (dist : usize) : bool @opaqu
   if dist < 1 || o > len x then false
   else if dist > o || n > len x - o then false
   else (forall (d in 0 .. n). x.[o + d] = x.[o - dist + d])
+
+(** The rest of a length code's symbol j, from its distance code at bit
+    qd: the distance code, its extra bits, and the copy of n bytes. *)
+let spec dist_tail (s : [u8]) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (td : [int{0..319}]) (to : [usize]) (j : usize) (qd : usize) (n : usize) : bool
+  requires j + 1 < len tp && j + 1 < len td && j + 1 < len to && to.[j] <= to.[j + 1]
+= if td.[j] > 29 || code_at s qd dl nd td.[j] = false then false
+  else (
+    let dc : int{0..29} = td.[j] in
+    let qx : usize = qd + dl.[td.[j]] in
+    let de = F.dist_extra dc in
+    if qx > B.nbits s then false
+    else if de > B.nbits s - qx then false
+    else (
+      let dist : usize = F.dist_base dc + B.bits_at s qx de in
+      tp.[j + 1] = qx + de && to.[j + 1] - to.[j] = n && copy_ok x to.[j] n dist))
 
 (** Symbol j of the trace, which is not the last, read as RFC 1951 3.2.5
     reads it: a literal writes itself, and a length code, with its extra
@@ -112,16 +183,7 @@ let spec blk_step (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : in
       if e > B.nbits s - q then false
       else (
         let n : usize = F.len_base c + B.bits_at s q e in
-        let qd : usize = q + e in
-        if code_at s qd dl nd td.[j] = false then false
-        else (
-          let dc : int{0..29} = td.[j] in
-          let qx : usize = qd + dl.[td.[j]] in
-          let de = F.dist_extra dc in
-          if de > B.nbits s - qx then false
-          else (
-            let dist : usize = F.dist_base dc + B.bits_at s qx de in
-            tp.[j + 1] = qx + de && to.[j + 1] - to.[j] = n && copy_ok x to.[j] n dist)))))
+        dist_tail s dl nd x tp td to j (q + e) n)))
 
 (** From symbol j on, the trace reads s as RFC 1951 does, up to its last
     symbol k - 1, the end code. *)
@@ -133,12 +195,12 @@ let spec blk_from (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : in
   else blk_from s ll nl dl nd x k tp ts td to (j + 1)
 
 (** x from o0 is what the Huffman block at bit p0 of s writes, with the
-    literal/length code ll and the distance code dl, by the trace of its
-    k symbols. *)
-let spec blk_ok (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : bool @opaque =
-  if k < 1 || k > len tp || k > len ts || k > len td || k > len to then false
-  else if tp.[0] <> p0 || to.[0] <> o0 then false
-  else blk_from s ll nl dl nd x k tp ts td to 0
+    literal/length code ll and the distance code dl, by the trace's
+    symbols j0 to k - 1. *)
+let spec blk_ok (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (j0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : bool @opaque =
+  if k <= j0 || k > len tp || k > len ts || k > len td || k > len to then false
+  else if tp.[j0] <> p0 || to.[j0] <> o0 then false
+  else blk_from s ll nl dl nd x k tp ts td to j0
 
 (** Two symbols whose codes are both at p are the same symbol. *)
 let lemma at_same (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (a : int{0..319}) (b : int{0..319}) : unit
@@ -223,10 +285,150 @@ let lemma from_step (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : 
 = ()
 
 (** What blk_ok says, for a proof that keeps it opaque. *)
-let lemma ok_start (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
-  requires blk_ok s ll nl dl nd x p0 o0 k tp ts td to
-  ensures 1 <= k && k <= len tp && k <= len ts && k <= len td && k <= len to
-  ensures tp.[0] = p0 && to.[0] = o0
-  ensures blk_from s ll nl dl nd x k tp ts td to 0
+let lemma ok_start (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (j0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
+  requires blk_ok s ll nl dl nd x p0 o0 j0 k tp ts td to
+  ensures j0 < k && k <= len tp && k <= len ts && k <= len td && k <= len to
+  ensures tp.[j0] = p0 && to.[j0] = o0
+  ensures blk_from s ll nl dl nd x k tp ts td to j0
   with blk_ok
+= ()
+
+(** The first n lengths of l and m are the same. *)
+let spec same_lens (l : [u8]) (m : [u8]) (n : int{0..320}) : bool @opaque =
+  if n > len l || n > len m then false else (forall (i in 0 .. n). l.[i] = m.[i])
+
+(** A code is where it is whichever buffer holds its lengths. *)
+let lemma at_moved (s : [u8]) (p : usize) (l : [u8]) (m : [u8]) (n : int{0..320}) (a : int{0..319}) : unit
+  requires code_at s p l n a && same_lens l m n
+  ensures code_at s p m n a && m.[a] = l.[a]
+  with same_lens
+= H.code_same l m n a
+
+(** fl and fd are the fixed code's lengths (RFC 1951 3.2.6). *)
+let spec fixed_ok (fl : [u8]) (fd : [u8]) : bool @opaque =
+  if len fl < 288 || len fd < 30 then false
+  else (forall (i in 0 .. 288). fl.[i] = F.fixed_length i) && (forall (i in 0 .. 30). fd.[i] = 5)
+
+(** Buffers that hold the fixed code's lengths hold fl's and fd's. *)
+let lemma fixed_same (fl : [u8]) (fd : [u8]) (lb : [u8]) (db : [u8]) : unit
+  requires fixed_ok fl fd && 288 <= len lb && 30 <= len db
+  requires forall (i in 0 .. 288). lb.[i] = F.fixed_length i
+  requires forall (i in 0 .. 30). db.[i] = 5
+  ensures same_lens fl lb 288 && same_lens fd db 30 && 288 <= len fl && 30 <= len fd
+  with fixed_ok, same_lens
+= ()
+
+(** The n bytes of x from o are the n bytes of s after a stored block's
+    header at byte q (RFC 1951 3.2.4). *)
+let spec stored_copy (s : [u8]) (q : usize) (x : [u8]) (o : usize) (n : usize) : bool @opaque =
+  if q > len s then false
+  else if 4 > len s - q then false
+  else if n > len s - q - 4 || o > len x then false
+  else if n > len x - o then false
+  else (forall (d in 0 .. n). x.[o + d] = s.[q + 4 + d])
+
+(** stored_copy's fact for byte d. *)
+let lemma stored_byte (s : [u8]) (q : usize) (x : [u8]) (o : usize) (n : usize) (d : usize) : unit
+  requires stored_copy s q x o n && d < n
+  ensures q + 4 + n <= len s && o + n <= len x && x.[o + d] = s.[q + 4 + d]
+  with stored_copy
+= ()
+
+(** Block bi of the stream, at bit bp.[bi], writing x from bo.[bi] to
+    bo.[bi + 1]: its header, whose final bit is set on the last block
+    only, then a stored block, or a block in the fixed code whose symbols
+    are the trace's bj.[bi] to bj.[bi + 1] - 1 (a stored block has
+    none). Dynamic blocks are not in the trace yet. *)
+let spec block_ok (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : bool @opaque
+  requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+= let p : usize = bp.[bi] in
+  let o : usize = bo.[bi] in
+  if p > B.nbits s then false
+  else if 3 > B.nbits s - p then false
+  else if (B.bits_at s p 1 = 1) <> (bi + 1 = nbk) then false
+  else if o > bo.[bi + 1] || bo.[bi + 1] > len x then false
+  else (
+    let ty = B.bits_at s (p + 1) 2 in
+    if ty = 0 then (
+      let pb : usize = p + 3 in
+      let q : usize = pb / 8 + (if pb % 8 = 0 then 0 else 1) in
+      if q >= len s || len s - q < 4 then false
+      else if F.stored_ok s q = false then false
+      else (
+        let n : usize = F.stored_len s q in
+        if n > len s - q - 4 then false
+        else bo.[bi + 1] - o = n && bp.[bi + 1] % 8 = 0 && bp.[bi + 1] / 8 = q + 4 + n && bj.[bi + 1] = bj.[bi] && stored_copy s q x o n))
+    else if ty = 1 then (
+      let j0 : usize = bj.[bi] in
+      let k : usize = bj.[bi + 1] in
+      if k <= j0 || k > len tp || k > len to || len fl <= 256 then false
+      else if bp.[bi + 1] < tp.[k - 1] then false
+      else blk_ok s fl 288 fd 30 x (p + 3) o j0 k tp ts td to && bp.[bi + 1] - tp.[k - 1] = fl.[256] && bo.[bi + 1] = to.[k - 1])
+    else false)
+
+(** block_ok's header facts. *)
+let lemma block_head (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+  requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  requires block_ok s x fl fd nbk bp bo bj tp ts td to bi
+  ensures bp.[bi] <= B.nbits s && 3 <= B.nbits s - bp.[bi]
+  ensures (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else (B.bits_at s bp.[bi] 1 = 1) = (bi + 1 = nbk))
+  ensures bo.[bi] <= bo.[bi + 1] && bo.[bi + 1] <= len x
+  ensures (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 <= 1)
+  with block_ok
+= ()
+
+(** block_ok's facts for a stored block, its header's byte q explicit. *)
+let lemma block_stored (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) (q : usize) : unit
+  requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  requires block_ok s x fl fd nbk bp bo bj tp ts td to bi && (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 0)
+  requires q = (bp.[bi] + 3 + 7) / 8
+  ensures q < len s && 4 <= len s - q && F.stored_ok s q
+  ensures F.stored_len s q <= len s - q - 4 && bo.[bi + 1] - bo.[bi] = F.stored_len s q
+  ensures bp.[bi + 1] = 8 * (q + 4 + F.stored_len s q) && bj.[bi + 1] = bj.[bi] && stored_copy s q x bo.[bi] (F.stored_len s q)
+  with block_ok
+= ()
+
+(** block_ok's facts for a block in the fixed code. *)
+let lemma block_fixed (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+  requires bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  requires block_ok s x fl fd nbk bp bo bj tp ts td to bi && (if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 1)
+  ensures bj.[bi] < bj.[bi + 1] && bj.[bi + 1] <= len tp && bj.[bi + 1] <= len to && 256 < len fl
+  ensures blk_ok s fl 288 fd 30 x (bp.[bi] + 3) bo.[bi] bj.[bi] bj.[bi + 1] tp ts td to
+  ensures bp.[bi + 1] = tp.[bj.[bi + 1] - 1] + fl.[256] && bo.[bi + 1] = to.[bj.[bi + 1] - 1]
+  with block_ok
+= ()
+
+(** From block bi on, the stream's blocks are as block_ok says, up to
+    its last block nbk - 1, after which x ends. *)
+let spec blocks_from (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : bool @opaque
+  requires bi <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  decreases nbk - bi
+= if bi = nbk then bo.[nbk] = len x
+  else if block_ok s x fl fd nbk bp bo bj tp ts td to bi = false then false
+  else blocks_from s x fl fd nbk bp bo bj tp ts td to (bi + 1)
+
+(** x is what RFC 1951 reads the deflate stream at bit pos of s as, by
+    the trace of its nbk blocks and their symbols: the first block at
+    pos, writing x from 0, with fl and fd the fixed code's lengths. *)
+let spec stream_ok (s : [u8]) (pos : usize) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : bool @opaque =
+  if nbk < 1 || nbk >= len bp || nbk >= len bo || nbk >= len bj then false
+  else if bp.[0] <> pos || bo.[0] <> 0 || bj.[0] <> 0 || fixed_ok fl fd = false then false
+  else blocks_from s x fl fd nbk bp bo bj tp ts td to 0
+
+(** What blocks_from says of block bi. *)
+let lemma blocks_step (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+  requires bi <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  requires blocks_from s x fl fd nbk bp bo bj tp ts td to bi
+  ensures bi < nbk ==> block_ok s x fl fd nbk bp bo bj tp ts td to bi && blocks_from s x fl fd nbk bp bo bj tp ts td to (bi + 1)
+  ensures bi = nbk ==> bo.[nbk] = len x
+  with blocks_from
+= ()
+
+(** What stream_ok says. *)
+let lemma stream_start (s : [u8]) (pos : usize) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
+  requires stream_ok s pos x fl fd nbk bp bo bj tp ts td to
+  ensures 1 <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  ensures bp.[0] = pos && bo.[0] = 0 && bj.[0] = 0 && fixed_ok fl fd
+  ensures blocks_from s x fl fd nbk bp bo bj tp ts td to 0
+  with stream_ok
 = ()
