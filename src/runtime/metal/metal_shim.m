@@ -169,27 +169,49 @@ void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
   *copied_bytes = run_copied_bytes;
 }
 
+// The device pia_gpu_run and the sequences use, opened on first use.
+// PIA_GPU_OK, or PIA_GPU_UNAVAILABLE if there is no GPU.
+static int32_t run_open(void) {
+  @synchronized([PiaGpuDevice class]) {
+    if (!run_device)
+      run_device = pia_gpu_device_open();
+    return run_device ? PIA_GPU_OK : PIA_GPU_UNAVAILABLE;
+  }
+}
+
+// The pipeline of kernel `name` in the embedded library at `lib`, loaded
+// once per library and cached by name, in *kernel.
+static int32_t run_kernel(uint64_t lib, uint64_t lib_len, uint64_t name,
+                          uint64_t name_len, uint64_t *kernel) {
+  *kernel = 0;
+  if (run_open() != PIA_GPU_OK)
+    return PIA_GPU_UNAVAILABLE;
+  @synchronized([PiaGpuDevice class]) {
+    if (!run_libraries)
+      run_libraries = [NSMutableDictionary new];
+    NSNumber *key = @(lib);
+    uint64_t library = run_libraries[key].unsignedLongLongValue;
+    if (!library) {
+      library = pia_gpu_library_load(run_device,
+                                     (const uint8_t *)(uintptr_t)lib, lib_len);
+      if (!library)
+        return PIA_GPU_FAULT;
+      run_libraries[key] = @(library);
+    }
+    *kernel =
+        pia_gpu_kernel_get(library, (const uint8_t *)(uintptr_t)name, name_len);
+  }
+  return *kernel ? PIA_GPU_OK : PIA_GPU_FAULT;
+}
+
 int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
                     uint64_t name_len, uint64_t args, uint64_t nargs,
                     uint64_t threads) {
   @autoreleasepool {
     uint64_t kernel = 0;
-    @synchronized([PiaGpuDevice class]) {
-      if (!run_device) run_device = pia_gpu_device_open();
-      if (!run_device) return PIA_GPU_UNAVAILABLE;
-      if (!run_libraries) run_libraries = [NSMutableDictionary new];
-      NSNumber *key = @(lib);
-      uint64_t library = run_libraries[key].unsignedLongLongValue;
-      if (!library) {
-        library = pia_gpu_library_load(run_device,
-                                       (const uint8_t *)(uintptr_t)lib, lib_len);
-        if (!library) return PIA_GPU_FAULT;
-        run_libraries[key] = @(library);
-      }
-      kernel = pia_gpu_kernel_get(library, (const uint8_t *)(uintptr_t)name,
-                                  name_len);
-    }
-    if (!kernel) return PIA_GPU_FAULT;
+    int32_t found = run_kernel(lib, lib_len, name, name_len, &kernel);
+    if (found != PIA_GPU_OK)
+      return found;
     if (threads == 0) return PIA_GPU_OK;
     PiaGpuDevice *d = borrow(run_device);
     const uint64_t *a = (const uint64_t *)(uintptr_t)args;
@@ -235,6 +257,166 @@ int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
     for (uint64_t i = 0; i < nargs; ++i)
       if (copied[i] && a[3 * i + 2])
         memcpy((void *)(uintptr_t)a[3 * i], buffers[i].contents, a[3 * i + 1]);
+    return PIA_GPU_OK;
+  }
+}
+
+// A placed sequence being encoded (ADR 0068, section 9): one command
+// buffer and one compute encoder, the buffers bound so far by host range,
+// and the first error. The encoder is serial, so each dispatch runs after
+// the one before it has finished and sees its writes.
+@interface PiaGpuSequence : NSObject
+@property(nonatomic, strong) id<MTLCommandBuffer> commands;
+@property(nonatomic, strong) id<MTLComputeCommandEncoder> encoder;
+@property(nonatomic, strong)
+    NSMutableDictionary<NSString *, id<MTLBuffer>> *bound;
+@property(nonatomic, strong)
+    NSMutableDictionary<NSString *, NSNumber *> *offsets;
+// The copied buffers: their host ranges and whether a kernel writes them.
+@property(nonatomic, strong) NSMutableArray<NSString *> *copies;
+@property(nonatomic, strong) NSMutableSet<NSString *> *written;
+@property(nonatomic) int32_t status;
+@end
+@implementation PiaGpuSequence
+@end
+
+static _Atomic uint64_t seq_dispatches;
+
+void pia_gpu_sequence_stats(uint64_t *dispatches) {
+  *dispatches = seq_dispatches;
+}
+
+uint64_t pia_gpu_seq_begin(void) {
+  @autoreleasepool {
+    if (run_open() != PIA_GPU_OK)
+      return 0;
+    PiaGpuDevice *d = borrow(run_device);
+    PiaGpuSequence *q = [PiaGpuSequence new];
+    q.commands = [d.queue commandBuffer];
+    q.encoder = [q.commands computeCommandEncoder];
+    if (!q.commands || !q.encoder)
+      return 0;
+    q.bound = [NSMutableDictionary new];
+    q.offsets = [NSMutableDictionary new];
+    q.copies = [NSMutableArray new];
+    q.written = [NSMutableSet new];
+    q.status = PIA_GPU_OK;
+    return retain_handle(q);
+  }
+}
+
+// The Metal buffer for host range [addr, addr + bytes) in sequence q, made
+// once: the pages it lies in, wrapped where they are, or else a copy. Its
+// offset into that buffer is in *offset.
+static id<MTLBuffer> seq_buffer(PiaGpuSequence *q, uint64_t addr,
+                                uint64_t bytes, bool written,
+                                uint64_t *offset) {
+  NSString *key = [NSString stringWithFormat:@"%llx:%llx", addr, bytes];
+  if (written)
+    [q.written addObject:key];
+  id<MTLBuffer> b = q.bound[key];
+  if (b) {
+    *offset = q.offsets[key].unsignedLongLongValue;
+    return b;
+  }
+  PiaGpuDevice *d = borrow(run_device);
+  const uint64_t page = (uint64_t)getpagesize();
+  *offset = 0;
+  if (bytes) {
+    // Shared memory: every page the range touches is mapped where it is,
+    // so the kernels and the host see the same cells.
+    uint64_t base = addr / page * page;
+    uint64_t len = (addr + bytes - base + page - 1) / page * page;
+    b = [d.device newBufferWithBytesNoCopy:(void *)(uintptr_t)base
+                                    length:len
+                                   options:MTLResourceStorageModeShared
+                               deallocator:nil];
+    if (b) {
+      *offset = addr - base;
+      ++run_wrapped;
+    }
+  }
+  if (!b) {
+    b = bytes ? [d.device newBufferWithBytes:(const void *)(uintptr_t)addr
+                                      length:bytes
+                                     options:MTLResourceStorageModeShared]
+              : [d.device newBufferWithLength:16
+                                      options:MTLResourceStorageModeShared];
+    if (!b)
+      return nil;
+    if (bytes) {
+      [q.copies addObject:key];
+      ++run_copied;
+      run_copied_bytes += bytes;
+    }
+  }
+  q.bound[key] = b;
+  q.offsets[key] = @(*offset);
+  return b;
+}
+
+void pia_gpu_seq_dispatch(uint64_t seq, uint64_t lib, uint64_t lib_len,
+                          uint64_t name, uint64_t name_len, uint64_t args,
+                          uint64_t nargs, uint64_t threads) {
+  @autoreleasepool {
+    PiaGpuSequence *q = borrow(seq);
+    if (!q || q.status != PIA_GPU_OK || threads == 0)
+      return;
+    uint64_t kernel = 0;
+    int32_t found = run_kernel(lib, lib_len, name, name_len, &kernel);
+    if (found != PIA_GPU_OK) {
+      q.status = found;
+      return;
+    }
+    id<MTLComputePipelineState> pipeline = borrow(kernel);
+    [q.encoder setComputePipelineState:pipeline];
+    const uint64_t *a = (const uint64_t *)(uintptr_t)args;
+    for (uint64_t i = 0; i < nargs; ++i) {
+      uint64_t addr = a[3 * i], bytes = a[3 * i + 1], how = a[3 * i + 2];
+      if (how == PIA_GPU_ARG_SCALAR) {
+        // A scalar is copied into the command buffer now: the host may
+        // reuse its cell before the GPU runs.
+        [q.encoder setBytes:(const void *)(uintptr_t)addr
+                     length:bytes
+                    atIndex:i];
+        continue;
+      }
+      uint64_t offset = 0;
+      id<MTLBuffer> b =
+          seq_buffer(q, addr, bytes, how == PIA_GPU_ARG_WRITTEN, &offset);
+      if (!b) {
+        q.status = PIA_GPU_OUT_OF_MEMORY;
+        return;
+      }
+      [q.encoder setBuffer:b offset:offset atIndex:i];
+    }
+    uint64_t group = pipeline.threadExecutionWidth;
+    [q.encoder dispatchThreads:MTLSizeMake(threads, 1, 1)
+         threadsPerThreadgroup:MTLSizeMake(group ? group : 64, 1, 1)];
+    ++seq_dispatches;
+  }
+}
+
+int32_t pia_gpu_seq_end(uint64_t seq) {
+  if (!seq)
+    return PIA_GPU_UNAVAILABLE;
+  @autoreleasepool {
+    PiaGpuSequence *q = CFBridgingRelease((void *)(uintptr_t)seq);
+    [q.encoder endEncoding];
+    if (q.status != PIA_GPU_OK)
+      return q.status;
+    [q.commands commit];
+    [q.commands waitUntilCompleted];
+    if (q.commands.status != MTLCommandBufferStatusCompleted)
+      return PIA_GPU_FAULT;
+    // Copy back each copied buffer a kernel writes.
+    for (NSString *key in q.copies) {
+      if (![q.written containsObject:key])
+        continue;
+      unsigned long long addr = 0, bytes = 0;
+      sscanf(key.UTF8String, "%llx:%llx", &addr, &bytes);
+      memcpy((void *)(uintptr_t)addr, q.bound[key].contents, bytes);
+    }
     return PIA_GPU_OK;
   }
 }

@@ -34,11 +34,13 @@ int32_t pull_step_gpu(const uint16_t *fill, uint64_t nfill,
                       uint64_t nbed, uint32_t *flux, uint64_t nflux,
                       uint64_t *seen, uint64_t nseen, uint64_t *gathered,
                       uint64_t ngathered, uint32_t *newbed, uint64_t nnewbed,
-                      uint32_t *newout, uint64_t nnewout, uint64_t gone,
-                      uint64_t *sent, uint64_t nsent);
+                      uint32_t *newout, uint64_t nnewout, uint64_t *starts,
+                      uint64_t nstarts, uint64_t gone, uint64_t *sent,
+                      uint64_t nsent);
 
 void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
                        uint64_t *copied_bytes);
+void pia_gpu_sequence_stats(uint64_t *dispatches);
 
 // A buffer on a page boundary, which the Metal shim wraps without a copy.
 static void *page_alloc(size_t bytes) {
@@ -157,8 +159,8 @@ int main(int argc, char **argv) {
 
   // Sediment in pull form, the same steps from the same bed on the CPU and
   // on the GPU, over the height order drainage gives, with one unit of rain
-  // on every cell. A GPU step is one dispatch for each wave, one wave for
-  // each height, with the commit on the CPU between them.
+  // on every cell. A GPU step is one command buffer: two dispatches for
+  // each wave, one wave for each height, the wave and its commit.
   const uint32_t seed = 100, steps = 4;
   uint32_t *rain = malloc(n * 4), *pend = malloc(n * 4);
   uint64_t *order = page_alloc(n * 8), *pos = page_alloc(n * 8);
@@ -180,6 +182,7 @@ int main(int argc, char **argv) {
            *fg = page_alloc(n * 4), *nb = page_alloc(n * 4),
            *no = page_alloc(n * 4);
   uint64_t *seen = page_alloc(n * 8), *gath = page_alloc(n * 8);
+  uint64_t *starts = page_alloc((n + 1) * 8);
   uint64_t sent[1] = {0};
   for (uint64_t i = 0; i < n; ++i)
     bc[i] = bg[i] = seed;
@@ -197,7 +200,7 @@ int main(int argc, char **argv) {
     double g0 = seconds();
     int32_t r = pull_step_gpu(fill, n, down, n, acc, n, order, n, pos, n, w, b0,
                               n, bg, n, fg, n, seen, n, gath, n, nb, n, no, n,
-                              gone_g, sent, 1);
+                              starts, n + 1, gone_g, sent, 1);
     if (s == 0)
       first_step = ms(g0, seconds());
     if (r != 0) {
@@ -221,8 +224,11 @@ int main(int argc, char **argv) {
 
   uint64_t wrapped, copied, copied_bytes;
   pia_gpu_run_stats(&wrapped, &copied, &copied_bytes);
-  printf("buffers: %llu wrapped in place, %llu copied (%llu bytes)\n",
+  uint64_t dispatches;
+  pia_gpu_sequence_stats(&dispatches);
+  printf("buffers: %llu wrapped in place, %llu copied (%llu bytes); %llu "
+         "dispatches in sequences\n",
          (unsigned long long)wrapped, (unsigned long long)copied,
-         (unsigned long long)copied_bytes);
+         (unsigned long long)copied_bytes, (unsigned long long)dispatches);
   return bad;
 }

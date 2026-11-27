@@ -325,6 +325,41 @@ let render_gpu (dem : [u16]) (fill : [u16]) (acc : [u32]) (basin : [usize])
      | Gpu_timeout -> 4)
 ```
 
+## Many spreads, one command buffer
+
+Each placed spread on this page is a single GPU run: the shim wraps the
+buffers, commits one command buffer and waits for it. That is fine for a
+stage that runs once. A step made of thousands of small spreads in a row,
+such as the waves of the sediment pull step, would spend all its time
+waiting. For that, put `@place(gpu)` on the `for` that runs them instead
+([ADR 0068, section 9](adr/0068-gpu-compute-through-spirv-and-metal.md)):
+
+```text
+let run = for k in 0 .. waves @place(gpu)
+    invariant ...
+  do
+    let lo = starts.[k] in
+    let hi = starts.[k + 1] in
+    wave ... lo hi;        (* a spread, through a call *)
+    commit ... lo hi       (* another *)
+  done
+in
+match run with
+| Ok -> ...
+| Err e -> ...
+```
+
+Every spread the body reaches, through calls too, becomes one dispatch of
+a single command buffer, in order, and the host commits and waits once.
+The loop is proved as an ordinary `for`, and evaluates to
+`result unit gpu_error`: its invariants hold after it only on `Ok`. Its
+spreads need no `@place` of their own, and may own cells through an owner
+array (`@owns`). The rest of the body runs on the host while the dispatches
+are encoded, before any of them runs, so piac checks that it only computes
+scalars, such as the bounds above, from buffers no spread in the loop
+writes, and that it assigns no variable from outside. The
+[pull step on the GPU](pull_gpu.pia.md) is built this way.
+
 ## What is proved, and what is checked
 
 | Claim | Where |
