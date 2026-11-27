@@ -1140,6 +1140,12 @@ class Gen {
     }
     // An imported function's body is in another module (ADR 0039).
     if (hasFlag(item, "import")) {
+      // An imported spec function or lemma has no code in its module, so
+      // codegen erases calls to it too. The verifier sees an import.
+      if (isSpec || isLemma || isAxiom)
+        fn->setAttr("pia.import_ghost", b_.getStringAttr(isSpec    ? "spec"
+                                                         : isLemma ? "lemma"
+                                                                   : "axiom"));
       genImport(item, sig, fn);
       return;
     }
@@ -1196,6 +1202,16 @@ class Gen {
     if (isAxiom) {
       fn->setAttr(PiaDialect::getAxiomAttrName(), b_.getUnitAttr());
       genAxiom(item, sig);
+      return;
+    }
+
+    // `= by lean T`: a lemma proved in Lean (ADR 0061). Here it is only its
+    // contracts, which callers assume; the verifier checks its receipt
+    // where it would prove a body.
+    if (isLemma && item.kids[3]->kind == NodeKind::ByLean) {
+      fn->setAttr("pia.lean", b_.getStringAttr(item.kids[3]->text));
+      fn->setAttr("pia.lean_lemma", b_.getStringAttr(item.text));
+      genLeanLemma(item, sig);
       return;
     }
 
@@ -1983,6 +1999,31 @@ class Gen {
         terms.push_back(v->value);
       }
       create<contract::TriggerOp>(loc(*t), terms);
+    }
+    create<mlir::func::ReturnOp>(loc(item), mlir::ValueRange{});
+  }
+
+  // A lemma proved in Lean (ADR 0061): its preconditions and
+  // postconditions, with no body, like an axiom's. Its proof is the Lean
+  // theorem its receipt names, for the statement `piac --emit-lean` wrote.
+  void genLeanLemma(const Node &item, const sema::FuncSig &sig) {
+    if (sig.result && !isUnit(sig.result)) {
+      fail(item, "a lemma returns unit: what it proves goes in 'ensures'");
+      return;
+    }
+    for (const syntax::NodePtr &c : item.kids[2]->kids) {
+      if (c->kind != NodeKind::Requires && c->kind != NodeKind::Ensures) {
+        fail(*c, "a lemma proved in Lean states only 'requires' and "
+                 "'ensures'");
+        return;
+      }
+      R p = genPredicate(*c->kids[0]);
+      if (!p)
+        return;
+      if (c->kind == NodeKind::Requires)
+        create<contract::RequiresOp>(loc(*c), p->value);
+      else
+        create<contract::EnsuresOp>(loc(*c), p->value);
     }
     create<mlir::func::ReturnOp>(loc(item), mlir::ValueRange{});
   }
@@ -2960,7 +3001,7 @@ class Gen {
     Type other = isFloat(a) ? c : a;
     if (mlir::isa<IntType>(other))
       return "; a float literal has a decimal point, such as 2.0, and an "
-             "integer is not converted to a float implicitly";
+             "integer converts to a float only explicitly, as in 'f32 n'";
     if (mlir::isa<RealType>(other))
       return "; a real is spec-only, and a float literal in code has the "
              "suffix f32 or f64, such as 0.5f32";
@@ -2990,6 +3031,101 @@ class Gen {
       return fail(n, "'/' is not defined on int; convert to real with "
                      "'real x' to divide");
     return TV{v, t};
+  }
+
+  // `f32 x` and `f64 x`: an integer as the nearest float (ties to even),
+  // or a float of the other width, widened exactly or narrowed to nearest.
+  // A float literal is read as the target type directly, so `f32 0.1` is
+  // the f32 nearest 0.1, not the f64 nearest it rounded again.
+  R genToFloat(const Node &n, const std::string &to, const Node &arg) {
+    Type target = types_.builtin(to);
+    if (arg.kind == NodeKind::FloatLit ||
+        (isLiteral(arg) && arg.kind == NodeKind::Neg &&
+         arg.kids[0]->kind == NodeKind::FloatLit))
+      return genExpr(arg, target);
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (v->type == target)
+      return v;
+    Location l = loc(n);
+    if (mlir::isa<IntType>(v->type))
+      return TV{create<IntToFloatOp>(l, target, v->value), target};
+    if (isFloat(v->type)) {
+      unsigned from = v->type.getIntOrFloatBitWidth();
+      if (from < target.getIntOrFloatBitWidth())
+        return TV{create<mlir::arith::ExtFOp>(l, target, v->value), target};
+      return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
+    }
+    return fail(arg, "'" + to + "' converts an integer or a float, not " +
+                         typeName(v->type));
+  }
+
+  // `i32 x` of a float: truncated toward zero, as C's cast does. A goal
+  // that `x` is not NaN and that its truncation fits, so the conversion
+  // never has C's undefined behaviour. Applied to an integer, a type name
+  // is not a conversion: an integer widens implicitly, and narrows where a
+  // narrower type is expected, with its goal.
+  R genFromFloat(const Node &n, const std::string &to, const Node &arg) {
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (!isFloat(v->type))
+      return fail(n, "'" + to +
+                         " x' converts a float to an integer, but "
+                         "this is " +
+                         typeName(v->type) +
+                         "; an integer "
+                         "converts where a " +
+                         to +
+                         " is expected, as in 'let y "
+                         ": " +
+                         to + " = x'");
+    Type target = types_.builtin(to);
+    return TV{create<FloatToIntOp>(loc(n), target, v->value), target};
+  }
+
+  // The unsigned integer of a float's width: u32 for f32, u64 for f64.
+  Type bitsOf(Type f) {
+    return types_.builtin(f.getIntOrFloatBitWidth() == 32 ? "u32" : "u64");
+  }
+
+  // `to_bits x`: a float's IEEE 754 encoding, as an unsigned integer of its
+  // width. `from_bits u`: the float a u32 or u64 encodes; which one comes
+  // from a float expected type, or else from the argument's type.
+  R genFloatBits(const Node &n, const std::string &fn, const Node &arg,
+                 Type expected) {
+    Location l = loc(n);
+    if (fn == "to_bits") {
+      R v = genExpr(arg, Type());
+      if (!v)
+        return v;
+      if (!isFloat(v->type))
+        return fail(arg, "'to_bits' takes an f32 or f64, found " +
+                             typeName(v->type));
+      Type t = bitsOf(v->type);
+      return TV{create<ToBitsOp>(l, t, v->value), t};
+    }
+    Type ft = isFloat(expected) ? expected : Type();
+    R v = genExpr(arg, ft ? bitsOf(ft) : Type());
+    if (!v)
+      return v;
+    if (!ft) {
+      if (v->type == types_.builtin("u32"))
+        ft = mlir::Float32Type::get(&ctx_);
+      else if (v->type == types_.builtin("u64"))
+        ft = mlir::Float64Type::get(&ctx_);
+      else
+        return fail(arg, "'from_bits' takes a u32, for an f32, or a u64, "
+                         "for an f64, found " +
+                             typeName(v->type) +
+                             "; give the result a float type, as in 'let x : "
+                             "f32 = from_bits u'");
+    }
+    R u = coerce(*v, bitsOf(ft), arg);
+    if (!u)
+      return u;
+    return TV{create<FromBitsOp>(l, ft, u->value), ft};
   }
 
   // `int x` and `real x`: an integer as an exact int or real.
@@ -4326,6 +4462,23 @@ class Gen {
       if (fn.text == "int" || fn.text == "real") {
         if (argc != 1) return fail(n, "'" + fn.text + "' takes one argument");
         return genExactConversion(n, fn.text, *n.kids[1]);
+      }
+      // Conversions to and from floats (M11), a type applied to a value
+      // as ADR 0064 writes conversions.
+      if (fn.text == "f32" || fn.text == "f64") {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        return genToFloat(n, fn.text, *n.kids[1]);
+      }
+      if (mlir::isa_and_nonnull<IntType>(types_.builtin(fn.text))) {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        return genFromFloat(n, fn.text, *n.kids[1]);
+      }
+      if (fn.text == "to_bits" || fn.text == "from_bits") {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        return genFloatBits(n, fn.text, *n.kids[1], expected);
       }
       if (fn.text == "len") {
         if (argc != 1) return fail(n, "'len' takes one argument");

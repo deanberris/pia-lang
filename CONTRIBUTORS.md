@@ -10,6 +10,7 @@ Every change reaches `main` through a pull request. A pull request is ready to m
 - Every example in the documentation still verifies and shows the real output of `piac` and `pia` (`bazel test //tests/docs:doc_examples_test` and `//tests/docs:skills_test`).
 - A change to the documentation site still builds with `mkdocs build --strict`.
 - A change to the language or the tools updates the [agent skills](skills/README.md) that teach it, which users install as a Claude Code plugin: `python3 tools/skills/check.py` fails when a new keyword or `piac` flag is in no skill.
+- A change to the language, the tools or the library updates the [public documentation](https://pia-lang.dev) in the same pull request: the page that teaches the feature, a line in the [feature index](docs/features.md) for its test in `tests/verify`, a row in [the standard library](docs/library.md) for a new module, and [Status](docs/status.md) when what works changes. `python3 tools/docs/check.py` fails when a new keyword, flag, attribute, lint, feature test or module is on no public page.
 - Changed C++ lines are formatted with `clang-format` (CI checks them), and the code follows the [style guide](docs/style.md): early returns rather than nested `if`s, comments that say why, and the LLVM Coding Standards.
 
 A change to how the language works starts as a design note or an [Architecture Decision Record](docs/adr/README.md), so the reasoning is written down before the code.

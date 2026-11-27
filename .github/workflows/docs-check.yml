@@ -1,0 +1,33 @@
+# Checks that the public documentation (docs/, https://pia-lang.dev) keeps
+# up with what is built: every keyword, piac and pia flag, attribute in use
+# and lint is on some public page, every feature test in tests/verify is
+# named by one (docs/features.md), every lib/Pia module is in
+# docs/library.md, and pages with examples are tested (tools/docs/check.py).
+# It runs on every pull request, since a feature PR that leaves docs/ alone
+# is what it exists to catch. The examples themselves are proved by
+# //tests/docs:doc_examples_test in the Bazel suite. Plain Python: seconds.
+name: docs coverage
+
+on:
+  pull_request:
+  merge_group:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-check-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 tools/docs/check.py

@@ -1,0 +1,21 @@
+(* A lemma proved in Lean (ADR 0061) with no receipt: its goal fails, and
+   the hint says how to get one. Callers still assume what it states, as
+   they do for any lemma whose proof failed, so `twice_nonneg` is proved.
+   tests/lean has the receipts and the Lean proofs.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let lemma square_nonneg (n : int) : unit
+  ensures n * n >= 0
+= by lean Proofs.square_nonneg
+
+let lemma twice_nonneg (n : int) : unit
+  ensures 2 * (n * n) >= 0
+= square_nonneg n
+
+(* Expected report.
+// CHECK: by_lean.pia:8:{{[0-9]+}}: failed: the Lean theorem 'Proofs.square_nonneg' proves 'square_nonneg' [no receipt]
+// CHECK-NEXT: hint: build its pia_lean_proof target and pass the receipt with --lean-receipt=<file>
+// CHECK: by_lean.pia:13:3: proved: the postcondition holds [{{smt|intervals}}]
+// CHECK: 1 proved, 1 failed, 0 skipped
+*)

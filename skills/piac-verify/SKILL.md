@@ -81,6 +81,7 @@ The flag repeats. Accepted goals still print as warnings, and a flag that accept
 | `piac --dump-smt f.pia` | prove, printing each SMT query sent to Z3 |
 | `piac --dump-ast f.pia`, `--dump-expanded` | the syntax tree, before or after metaprograms run |
 | `piac --check f.pia` | parse only |
+| `piac --emit=lean f.pia -o Statements.lean` | the statements of the lemmas proved in Lean (`= by lean T`), as Lean 4; `--verify --lean-receipt=<file>` reads the receipts that prove them (the `pia-lean` skill) |
 
 A `.pia.md` file is literate: only its ` ```pia ` blocks are code, and the file name alone switches that on.
 

@@ -64,7 +64,7 @@ The page is its own module. `examples/streams/srtm.c` runs it on a real
 tile and checks it against the sequential `sediment` cell for cell.
 
 ```pia
-module Pull : PullTransport
+module Pull : PullTransport, PullWaves
 
 interface PullTransport @abi(c) = sig
   let pull_step : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize])
@@ -82,6 +82,99 @@ interface PullTransport @abi(c) = sig
     requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
     requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
     requires forall (k in 0 .. len down). down.[k] < len fill
+end
+```
+
+The page also provides a second interface, `PullWaves`, for the GPU form of
+the step in [pull_gpu.pia.md](pull_gpu.pia.md). It is what a step needs to
+run its own waves and still be proved: the specification functions its
+promise is written in, the commit pass and the lemmas around it. A spec
+function is exported with its definition, so every one that a definition
+uses is listed too.
+
+```pia
+interface PullWaves = sig
+  let spec nbr : (n : usize) -> (w : usize) -> (c : usize) -> (d : int{0..7}) -> usize
+  let spec from : (down : [usize]) -> (flux : [u32]) -> (w : usize) -> (c : usize) -> (d : int{0..7}) -> u64
+  let spec pair : (down : [usize]) -> (flux : [u32]) -> (w : usize) -> (c : usize) -> (h : int{0..3}) -> u64
+  let spec half : (down : [usize]) -> (flux : [u32]) -> (w : usize) -> (c : usize) -> (g : int{0..1}) -> u64
+  let spec inflow_of : (down : [usize]) -> (flux : [u32]) -> (w : usize) -> (c : usize) -> u64
+  let spec el : (i : u64) -> (cap : u32) -> (bed : u32) -> u64
+  let spec eb : (i : u64) -> (cap : u32) -> (bed : u32) -> u64
+  let spec cap_rule : (a : u32) -> (drop : u16) -> u32
+  let spec cap_of : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (c : usize) -> u32
+  let spec at : (xs : [usize]) -> (k : usize) -> usize
+  let spec holds_if : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> (c : usize) -> bool
+  let spec done_if_upto : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> (pos : [usize]) -> (p : usize) -> bool
+  let spec linked_upto : (down : [usize]) -> (flux : [u32]) -> (seen : [u64]) -> (pos : [usize]) -> (p : usize)
+      -> (w : usize) -> bool
+  let spec ready_in : (down : [usize]) -> (order : [usize]) -> (w : usize) -> (flux : [u32]) -> (gathered : [u64])
+      -> (q : usize) -> (hi : usize) -> bool
+  let spec ready_vals : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (bed0 : [u32])
+      -> (gathered : [u64]) -> (newbed : [u32]) -> (newout : [u32]) -> (q : usize) -> (hi : usize) -> bool
+  let spec settled_if : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> bool
+  let spec linked : (down : [usize]) -> (flux : [u32]) -> (seen : [u64]) -> (w : usize) -> bool
+  let spec oterm : (order : [usize]) -> (down : [usize]) -> (flux : [u32]) -> (q : usize) -> u32
+  let spec osum : (order : [usize]) -> (down : [usize]) -> (flux : [u32]) -> (p : usize) -> u64
+  let lemma ready_init : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (w : usize)
+      -> (bed0 : [u32]) -> (flux : [u32]) -> (gathered : [u64]) -> (newbed : [u32]) -> (newout : [u32])
+      -> (lo : usize) -> (hi : usize) -> unit
+    requires len down = len fill && len acc = len fill && len order = len fill && len bed0 = len fill && len flux = len fill
+    requires len gathered = len fill && len newbed = len fill && len newout = len fill && hi <= len fill
+    requires forall (r in 0 .. len order). order.[r] < len fill
+    requires w >= 3 && w < max usize
+    requires forall (q in lo .. hi). gathered.[q] = inflow_of down flux w (order.[q])
+    requires forall (q in lo .. hi). gathered.[q] + bed0.[order.[q]] <= max u32 ==>
+      newbed.[q] = eb (gathered.[q]) (cap_of fill down acc (order.[q])) (bed0.[order.[q]])
+      && newout.[q] = el (gathered.[q]) (cap_of fill down acc (order.[q])) (bed0.[order.[q]])
+    ensures ready_in down order w flux gathered lo hi
+    ensures ready_vals fill down acc order bed0 gathered newbed newout lo hi
+  let lemma start_pull : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> (pos : [usize]) -> (w : usize) -> unit
+    requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
+    requires len seen = len fill && len pos = len fill && w >= 3 && w < max usize
+    ensures done_if_upto fill down acc bed0 bed flux seen pos 0
+    ensures linked_upto down flux seen pos 0 w
+  let lemma finish_pull : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (bed0 : [u32]) -> (bed : [u32])
+      -> (flux : [u32]) -> (seen : [u64]) -> (pos : [usize]) -> (w : usize) -> unit
+    requires len down = len fill && len acc = len fill && len bed0 = len fill && len bed = len fill && len flux = len fill
+    requires len seen = len fill && len pos = len fill && w >= 3 && w < max usize
+    requires forall (k in 0 .. len pos). pos.[k] < len fill
+    requires done_if_upto fill down acc bed0 bed flux seen pos (len fill)
+    requires linked_upto down flux seen pos (len fill) w
+    ensures settled_if fill down acc bed0 bed flux seen
+    ensures linked down flux seen w
+  let copy_back : (fill : [u16]) -> (down : [usize]) -> (acc : [u32]) -> (order : [usize]) -> (pos : [usize])
+      -> (w : usize) -> (bed0 : [u32]) -> (gathered : [u64]) -> (newbed : [u32]) -> (newout : [u32])
+      -> (bed : borrowed inout mutable [u32]) -> (flux : borrowed inout mutable [u32])
+      -> (seen : borrowed inout mutable [u64]) -> (lo : usize) -> (hi : usize) -> (v : u16) -> (g : u64)
+      -> (g0 : u64) -> u64
+    requires len down = len fill && len acc = len fill && len order = len fill && len pos = len fill && len bed0 = len fill
+    requires len gathered = len fill && len newbed = len fill && len newout = len fill
+    requires len bed = len fill && len flux = len fill && len seen = len fill
+    requires w >= 3 && w < max usize && lo <= hi && hi <= len fill
+    requires forall (r in 0 .. len order). order.[r] < len pos && pos.[order.[r]] = r
+    requires forall (k in 0 .. len pos). pos.[k] < len order && order.[pos.[k]] = k
+    requires forall (a in 0 .. len order) (b in 0 .. len order). a < b ==> fill.[order.[b]] <= fill.[order.[a]]
+    requires forall (k in 0 .. len down). down.[k] = k || (down.[k] < len fill && fill.[down.[k]] < fill.[k])
+    requires forall (k in 0 .. len down). down.[k] < len fill
+    requires forall (r in lo .. hi). fill.[at order r] = v
+    requires done_if_upto fill down acc bed0 bed flux seen pos lo
+    requires linked_upto down flux seen pos lo w
+    requires ready_in down order w flux gathered lo hi
+    requires ready_vals fill down acc order bed0 gathered newbed newout lo hi
+    requires len fill < max u32 && g0 <= max u32 && g = g0 + osum order down flux lo
+    ensures result = g0 + osum order down flux hi
+    ensures done_if_upto fill down acc bed0 bed flux seen pos hi
+    ensures linked_upto down flux seen pos hi w
+  let wave_end : (fill : [u16]) -> (order : [usize]) -> (lo : usize) -> usize
+    requires len order = len fill && lo < len fill
+    requires forall (r in 0 .. len order). order.[r] < len fill
+    ensures lo < result && result <= len fill
+    ensures forall (r in lo .. result). fill.[at order r] = fill.[order.[lo]]
 end
 ```
 

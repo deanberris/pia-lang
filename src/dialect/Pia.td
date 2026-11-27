@@ -503,6 +503,41 @@ def Pia_ConvertOp : Pia_Op<"convert", [Pure]> {
   }];
 }
 
+// Floats and integers (M11). A float is a builtin `f32` or `f64`, and its
+// arithmetic is the `arith` dialect's; these ops cross to and from range
+// integers, which only codegen knows the storage of.
+def Pia_IntToFloatOp : Pia_Op<"int_to_float", [Pure]> {
+  let summary = "an integer as the nearest float, ties to even";
+  let arguments = (ins Pia_AnyInt:$input);
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+}
+
+def Pia_FloatToIntOp : Pia_Op<"float_to_int", [Pure]> {
+  let summary = "a float truncated toward zero";
+  let description = [{
+    A proof obligation: the float is not NaN, and truncated toward zero it
+    lies in the result's range.
+  }];
+  let arguments = (ins AnyFloat:$input);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+}
+
+def Pia_ToBitsOp : Pia_Op<"to_bits", [Pure]> {
+  let summary = "a float's IEEE 754 encoding, as an unsigned integer";
+  let arguments = (ins AnyFloat:$input);
+  let results = (outs Pia_AnyInt:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+}
+
+def Pia_FromBitsOp : Pia_Op<"from_bits", [Pure]> {
+  let summary = "the float an unsigned integer encodes";
+  let arguments = (ins Pia_AnyInt:$input);
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
+}
+
 def Pia_LenOp : Pia_Op<"len", [Pure]> {
   let summary = "the length of an array or slice";
   let arguments = (ins Pia_Buffer:$buffer);
