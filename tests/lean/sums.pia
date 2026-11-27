@@ -86,7 +86,7 @@ let lemma sum_plus_one (m : int) : unit
 (* Expected trust report, then certificate.
 // TRUST: 0 trusted items
 // TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'sum_nonneg', proved by the Lean theorem 'Proofs.sum_nonneg' (leanprover/lean4:v4.36.0; axioms {{.*}}; statement sha256 [[SUM:[0-9a-f]{64}]])
-// TRUST-NEXT: used by: sums.pia:{{.*}}
+// TRUST-NEXT: used by: {{.*}}sums.pia:{{.*}}
 // TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'dist_of', proved by the Lean theorem 'Proofs.dist_of'
 // TRUST-NEXT: used by no proved goal
 // TRUST-NEXT: sums.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'origin_within', proved by the Lean theorem 'Proofs.origin_within'
