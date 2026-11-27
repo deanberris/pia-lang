@@ -1,0 +1,39 @@
+(* @derive(json) on nested record fields (ADR 0045): a field of another
+   derived record is a nested object, read and written by that record's
+   own codec. Its errors are wrapped in one constructor per such field,
+   Field_<t>_<f>, so the error set stays exact, and the writer's room is
+   the nested record's, json_room_<t>, which counts its renamed members.
+   Every goal is proved.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+
+let point = type { x : i8 @json(name = "px"); y : u16 } @derive(json)
+let line = type { a : point; b : point; w : u8 } @derive(json)
+
+(* A line's width, 1 when its first point's x is out of range, 2 for
+   another error in that point, and 0 for any other error. *)
+let width (s : [u8]) : u8 =
+  match Json.read<line> s with
+  | Ok l -> l.w
+  | Err e ->
+    (match e with
+     | Field_line_a i -> (match i with | Range_point _ -> 1 | _ -> 2)
+     | _ -> 0)
+
+(* A line written into a buffer with its room. *)
+let write (l : line) (dst : borrowed inout mutable [u8]) : usize
+  requires len dst >= json_room_line
+  ensures result <= json_room_line
+= write_json_line dst 0 l

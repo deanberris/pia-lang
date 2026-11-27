@@ -706,19 +706,31 @@ let meta json_record (t : type_decl) : list =
   (* Integer and range types have bounds; any other type is not supported
      yet, which is an error that names the field. *)
   let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
+  (* A field of another record type is a nested object, read and written
+     by that type's own @derive(json). *)
+  let is_rec = let (f) =>
+    let ft = base f in
+    if eq (kind ft) "TypeName" then
+      (if eq (name ft) "bool" then false else eq (fold (let (h) (n) => or h (eq n (name ft))) false ints) false)
+    else false in
   let supported = map (let (f) =>
       let ft = base f in
       if is_bool f then true
       else if eq (kind ft) "RangeType" then true
+      else if is_rec f then
+        (if or (is_opt f) (is_arr f) then
+           fail (concat "@derive(json): the field '" (concat f "' is an option or an array of a record, which @derive(json) cannot read or write yet"))
+         else true)
       else if eq (kind ft) "TypeName" then
         (if fold (let (h) (n) => or h (eq n (name ft))) false ints then true
-         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, and an option or a fixed array of one")))
-      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, and an option or a fixed array of one")))
+         else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, records, and an option or a fixed array of one")))
+      else fail (concat "@derive(json): the field '" (concat f "' has a type that @derive(json) cannot read or write yet; it takes integers, range types, bool, records, and an option or a fixed array of one")))
     fs in
   let bounds = let (f) => range_of (base f) in
   (* The writer of a field's value, and the room it needs. *)
   let writer = let (f) =>
-    if is_bool f then [ "write_bool"; 5 ]
+    if is_rec f then [ concat "write_json_" (name (base f)); 0 ]
+    else if is_bool f then [ "write_bool"; 5 ]
     else (
       let b = bounds f in
       let lo = nth b 0 in
@@ -737,7 +749,13 @@ let meta json_record (t : type_decl) : list =
       (let n = arr_len f in add 2 (add (mul n r) (if gt n 0 then sub n 1 else 0)))
     else if and (is_opt f) (lt r 4) then 4 else r in
   let member_room = let (i) => add (add (length (bytes (nth checked i))) 3) (value_room (nth fs i)) in
-  let room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
+  let fixed_room = fold (let (acc) (i) => add (add acc (member_room i)) (if lt (add i 1) nf then 1 else 0)) 2 idx in
+  (* A nested record's room is its own json_room_<r>, by name: its
+     attributes, which say its member names, are settled once its own
+     derive is done, so they cannot be read here. *)
+  let with_rooms = let (n) (rs) => fold (let (acc) (rn) => `( $acc + $rn )) n rs in
+  let rec_room = let (f) => concat "json_room_" (name (base f)) in
+  let room = with_rooms fixed_room (map rec_room (filter (let (f) => is_rec f) fs)) in
   let wname = concat "write_json_" tn in
   let wfield = let (i) => concat (concat (concat "write_json_" tn) "_") (nth fs i) in
   (* One function per member: its key, a colon and its value. *)
@@ -747,8 +765,8 @@ let meta json_record (t : type_decl) : list =
     let ft = field_type t f in
     let kb = bytes (nth checked i) in
     let kn = length kb in
-    let r = member_room i in
-    let w = concat "Pia.Text.Json.Write." (nth (writer f) 0) in
+    let r = with_rooms (member_room i) (if is_rec f then [ rec_room f ] else []) in
+    let w = if is_rec f then nth (writer f) 0 else concat "Pia.Text.Json.Write." (nth (writer f) 0) in
     `( let $fn ($!dst : borrowed inout mutable [u8]) ($!pos : usize) ($!v : $ft) : usize
          requires $!pos <= len $!dst && len $!dst - $!pos >= $r
          ensures $!pos < $!result && $!result - $!pos <= $r
@@ -779,7 +797,7 @@ let meta json_record (t : type_decl) : list =
          ensures $!pos < $!result && $!result <= $!pos + $room
        = $(json_write "write_rbrace") $!dst ($body) ) in
   (* ---- The reader ---- *)
-  let has_int = fold (let (acc) (f) => or acc (eq (is_bool f) false)) false fs in
+  let has_int = fold (let (acc) (f) => or acc (and (eq (is_bool f) false) (eq (is_rec f) false))) false fs in
   let ctor = let (c) => concat (concat c "_") tn in
   let esyn = ctor "Syntax" in
   let eunk = ctor "Unknown" in
@@ -791,16 +809,14 @@ let meta json_record (t : type_decl) : list =
   (* Length only when there is an array field. *)
   let has_arr = fold (let (acc) (f) => or acc (is_arr f)) false fs in
   let elen = ctor "Length" in
-  let error_type =
-    if has_arr then
-      (if has_int then
-         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize | $elen of usize )
-       else
-         `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $elen of usize ))
-    else if has_int then
-      `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize | $erng of usize )
-    else
-      `( let $ename = type | $esyn of usize | $eunk of usize | $edup of usize | $emis of usize ) in
+  (* A nested record's errors are its own type's, wrapped in one
+     constructor per such field, so the set stays exact. *)
+  let efield = let (f) => concat (concat (concat "Field_" tn) "_") f in
+  let ecs = concat
+    (concat [ [ esyn; "usize" ]; [ eunk; "usize" ]; [ edup; "usize" ]; [ emis; "usize" ] ]
+            (concat (if has_int then [ [ erng; "usize" ] ] else []) (if has_arr then [ [ elen; "usize" ] ] else [])))
+    (map (let (f) => [ efield f; concat (name (base f)) "_json_error" ]) (filter is_rec fs)) in
+  let error_type = `( let $ename = type | $ecs ) in
   let rname = concat tn "_json_read" in
   let read_type = `( let $rname = type { value : $t; stop : usize } ) in
   let fread = let (i) => concat (concat (concat "read_json_" tn) "_") (nth fs i) in
@@ -814,7 +830,13 @@ let meta json_record (t : type_decl) : list =
     let ft = base f in
     let rtype = `( let $rt = type { value : $ft; stop : usize } ) in
     let body =
-      if is_bool f then
+      if is_rec f then
+        (let inner = concat "read_json_" (name ft) in
+         let ef = efield f in
+         `( match $inner $!s $!pos with
+            | Ok $!r -> Ok { value = $!r.value; stop = $!r.stop }
+            | Err $!e -> Err ($ef $!e) ))
+      else if is_bool f then
         `( match $(json_read "read_bool") $!s $!pos with
            | Ok $!r -> Ok { value = $!r.value; stop = $!r.stop }
            | Err $!p -> Err ($esyn $!p) )
@@ -987,7 +1009,9 @@ let meta json_record (t : type_decl) : list =
       let sn = seen i in
       let vn = val i in
       let ft = field_type t (nth fs i) in
-      let one = if is_bool (nth fs i) then `( false ) else nth (bounds (nth fs i)) 0 in
+      let one = if is_bool (nth fs i) then `( false )
+                else if is_rec (nth fs i) then (let dn = concat "json_default_" (name (base (nth fs i))) in `( $dn ))
+                else nth (bounds (nth fs i)) 0 in
       let init = if is_opt (nth fs i) then `( None )
                  else if is_arr (nth fs i) then
                    (let inits = map (let (k) => one) (range (arr_len (nth fs i))) in `( [ $inits ] ))
@@ -1004,7 +1028,21 @@ let meta json_record (t : type_decl) : list =
        = match $(json_read "open_object") $!s $!pos with
          | Err $!p -> Err ($esyn $!p)
          | Ok $!o -> $wrapped ) in
-  concat (concat (map member_writer idx) [ writer_fn ])
+  (* The room the writer needs, for a type that nests this one and for
+     @derive(json_dom)'s to_dom; and a value of the type, which a reader
+     of a type that nests it starts from. *)
+  let room_name = concat "json_room_" tn in
+  let room_const = `( let $room_name : usize = $room ) in
+  let dname = concat "json_default_" tn in
+  let dflt = let (f) =>
+    if is_opt f then `( None )
+    else if is_rec f then (let dn = concat "json_default_" (name (base f)) in `( $dn ))
+    else (
+      let one = if is_bool f then `( false ) else nth (bounds f) 0 in
+      if is_arr f then (let inits = map (let (k) => one) (range (arr_len f)) in `( [ $inits ] )) else one) in
+  let dlit = map (let (f) => [ f; dflt f ]) fs in
+  let default_fn = `( let $dname : $t = { $dlit } ) in
+  concat (concat (map member_writer idx) [ writer_fn; room_const; default_fn ])
     (concat [ error_type; read_type; key_fn ] (concat (fold (let (acc) (i) => concat acc (field_reader i)) [] idx) [ reader_fn ]))
 
 (* @derive(json): json_record for a record, json_distinct for a distinct
