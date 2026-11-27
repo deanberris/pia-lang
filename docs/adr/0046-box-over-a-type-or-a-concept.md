@@ -182,3 +182,24 @@ let io_error = type | Closed | Cxx of box Exception
 - **C++ exceptions** (0.5, with the C++ FFI) are then a library concept `exception` with `what` and the nested exception as single-receiver requirements, and a generated shim at each bound C++ call that catches, boxes what it caught into the error set's `Cxx` case, and returns it as an `Err`. It is `std::exception_ptr` with the interface checked. There is no downcast (section 6): a handler that must tell C++ types apart asks through a requirement of the concept.
 
 As built: tests/verify/box_error_payload.pia proves an error set whose `Cxx` case holds a boxed `not_found` or `overflow`, passed on by `?` and handled through the box, and tests/codegen/box_error_payload.pia runs it from C. Within a module this uses step 5's tagged union. A payload boxed in one module and handled in another needs the amendment's tables, ADR 0071's section 6, which come next. A payload whose type has a drop is not dropped through the box until the amendment's step 3.
+
+## Amendment, 2026-11-27: a box's object is one object, behind one pointer
+
+Dean chose this (2026-11-27) so that a `box c` can be made in one module and used in another, which the boxed error payloads of the note above need before 0.1.0.
+
+**The problem.** A buffer of records compiles to one buffer per field ([codegen](../codegen.md)), and a box's slot is a buffer of one record, so a boxed `rect` is two pointers, one for `w` and one for `h`. A table's function has no single address to take for the object, and the size and alignment that the amendment above puts in the table describe no object in memory. Step 5's tagged union got around this by copying the fields into the box, which works only while one module knows every type it holds.
+
+**The decision.** A box's object is one object, in its type's record layout ([ADR 0030](0030-published-object-layouts.md)'s `c` layout: fields in declaration order, each at its natural alignment, padded to the largest), behind one pointer. Section 7 already says this: `box t` is one pointer, and `box c` is two words, the object's address and its table's.
+
+- **Layout belongs to the type**, so the rule is modular. A record declared `@layout(c)` has buffers of structs: one pointer, its elements contiguous, as recursive types' buffers already are ([ADR 0047](0047-recursive-sum-types-and-shared-references.md)). Without it, a record's buffers stay one buffer per field, which is what vectorises.
+- **What `widen` takes.** A type can be widened into a `box c` when its object is one object: a scalar, a recursive type, or a `@layout(c)` record. Widening any other record is an error that suggests `@layout(c)`. A `box t` over any type still works, since nothing erases it.
+- **Proofs do not change.** Layout never changes a proof (ADR 0030): the slot is still `[t]` of length 1, and `b.slot.[0]` means what it did.
+- **The table** (ADR 0071, section 6) is a link-once constant `pia$t$<type>$<concept>`: the type's size and alignment, a thunk that drops the object at an address, and one thunk per requirement callable through a box, taking the object's address in the receiver's place and the requirement's other arguments. Each thunk calls the type's own function, which the use check at `widen` proved to meet the requirement.
+- **A call through a box** loads the requirement's thunk from the table and calls it indirectly. To the verifier it is a proxy carrying the requirement's contract (the `pia.proxy` pattern of ADR 0071, which mutable references use), so a proof through a box is unchanged. Where the compiler can see which table a box holds, such as right after `widen`, the call is direct.
+- **Across modules.** The table's layout is the concept's: its requirements in declaration order, after size, alignment and drop. So an interface may show a `box c`, a module may box values of a concept it imports, and the refusals of step 5 go. To C, a `box c` is `struct { void *object; const void *table; }`, and only Pia code reads the table.
+
+This replaces step 5's tagged union. Implementation:
+
+1. **`@layout(c)` records**: buffers of structs in codegen, one pointer per buffer, with a C harness that reads them as C structs.
+2. **`box c` as object and table, within a module**: `widen` stores the table's address, calls and drops go through it, direct calls where the table is known. tests/codegen/box_concept.pia and box_error_payload.pia move to `@layout(c)` records and the two-word box.
+3. **Across modules**: an interface shows a `box c`, and a test boxes an error payload in one module and handles it in another.
