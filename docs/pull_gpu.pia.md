@@ -548,14 +548,29 @@ let pull_step_gpu (fill : [u16]) (down : [usize]) (acc : [u32]) (order : [usize]
      | Gpu_timeout -> 4)
 ```
 
-## How fast it is, so far
+## How fast it is
 
-With a dispatch per wave and a command buffer each, the step was correct
-but slow: on the whole tile N46E008 (3601 × 3601 cells, 3,924 waves a step)
-it took 33 to 57 s a step against 0.5 s on the CPU, nearly all of it
-wrapping buffers and waiting for each command buffer. The placed sequence
-on this page pays those costs once a step. Its timings come with the
-compiler support for `@place(gpu)` on a `for`.
+With a dispatch per wave and a command buffer for each, the step was correct
+but slow. On the whole tile N46E008 (3601 × 3601 cells, 3,924 waves a step),
+each step took 33 to 57 s against 0.5 s on the CPU. Nearly all of that time
+went to wrapping buffers and waiting for each command buffer. The placed
+sequence on this page pays those costs once a step: it binds each buffer
+once, and it encodes two dispatches per wave in one command buffer.
+
+Here are three runs of `srtm_gpu` on N46E008, on an Apple M3 iMac, taken
+2026-11-27. Times are warm, and the first run is in brackets:
+
+| Run | D8, CPU / GPU | Render, CPU / GPU | Pull per step, CPU / GPU | Wall |
+| --- | --- | --- | --- | --- |
+| 1 | 41.8 / 16.4 ms (54.0) | 26.2 / 14.1 ms (19.4) | 530.5 / 237.2 ms (271.8) | 55.4 s |
+| 2 | 41.6 / 5.2 ms (37.4) | 35.4 / 8.8 ms (41.3) | 525.7 / 238.0 ms (261.6) | 55.0 s |
+| 3 | 41.2 / 5.2 ms (50.1) | 28.0 / 8.3 ms (22.2) | 545.8 / 235.1 ms (255.7) | 54.9 s |
+
+The pull step now runs on the GPU in about 236 ms, 2.2 times faster than
+on the CPU. Each run makes 4 steps of 3,924 waves, which is 31,392
+dispatches in sequences. It wraps 58 buffers in place, and copies 16 of
+them (120 bytes in all). In every run, D8, render and pull match the CPU
+on every cell, and both send 2,861,964 out of the map.
 
 ## What is proved, and what is checked
 
