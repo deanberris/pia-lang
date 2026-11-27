@@ -165,9 +165,14 @@ jobs:
         timeout-minutes: 300
         run: bazel build --config=ci --keep_going //...
 
+      # The macOS runner has 3 cores to Linux's 4, and runs every test
+      # locally, so the suite takes about twice as long: 30 minutes cut it
+      # off at 457 of 494 tests on 2026-11-27. One longer job keeps the
+      # free plan's 5 macOS runners for other PRs, where shards would take
+      # several of them.
       - name: Test
         id: test
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: bazel test --config=ci --keep_going //...
 
       # Build time is a benchmark (ADR 0032). Linux gates every change (the
@@ -336,6 +341,28 @@ jobs:
         id: test
         timeout-minutes: 30
         run: env -u ANDROID_HOME -u ANDROID_SDK_ROOT -u ANDROID_NDK_HOME bazel test --config=ci --keep_going //...
+
+      # The codegen benchmark (ADR 0075): Pia against C, C++, Rust and Zig on
+      # the binaries the build above made, with cachegrind's instruction
+      # counts and wall times in the job summary. Report only: nothing gates
+      # until wave 1 is complete, so a failure here never fails the job (a
+      # wrong answer already fails //bench/codegen's tests above).
+      - name: Codegen benchmark
+        if: steps.test.outcome == 'success'
+        continue-on-error: true
+        timeout-minutes: 15
+        run: |
+          sudo apt-get install -y -qq valgrind > /dev/null
+          python3 tools/bench/codegen_bench.py --bazel-bin bazel-bin --runs 5 \
+            --out codegen-bench.json --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the codegen benchmark
+        if: steps.test.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: codegen-bench-linux
+          path: codegen-bench.json
+          if-no-files-found: ignore
 
       # The bench job's shards prove the corpus with this piac, on runners
       # of their own, so this job is not held for the benchmark.

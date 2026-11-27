@@ -38,6 +38,8 @@ interface Huffman = sig
   let spec u16at : (t : [u8]) -> (i : usize) -> u16
   let spec sym_ok : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> (i : int{0..319}) -> (r : int{0..320}) -> bool
   let spec tab_from : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..16}) -> bool
+  let spec miss : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> (b : int{1..15}) -> bool
+  let spec none_at : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> bool
   let build : (l : [u8]) -> (n : int{0..320}) -> (t : borrowed inout mutable [u8]) -> fill
     requires len t = 704 && n <= len l
     ensures result = Complete <==> kraft l n = 32768
@@ -51,10 +53,20 @@ interface Huffman = sig
       | Err p -> p <= B.nbits s)
     ensures h ==> (match result with
       | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false)
-      | Err _ -> true)
+      | Err _ -> none_at s pos l n)
   let lemma kraft_room : (l : [u8]) -> (n : int{0..320}) -> (b : int{1..16}) -> unit
     requires n <= len l && kraft l n <= 32768
     ensures room l n b
+  let lemma prefix_free : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> (b : int{0..319}) -> unit
+    requires a < n && b < n && n <= len l
+    requires 1 <= l.[a] && l.[a] <= 15 && 1 <= l.[b] && l.[b] <= 15
+    requires p <= B.nbits s && l.[a] <= B.nbits s - p && l.[b] <= B.nbits s - p
+    requires code_of l n a = hbits s p l.[a] && code_of l n b = hbits s p l.[b]
+    ensures a = b
+  let lemma no_code : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> unit
+    requires pos <= B.nbits s && n <= len l && sym < n && 1 <= l.[sym] && l.[sym] <= 15
+    requires none_at s pos l n
+    ensures l.[sym] > B.nbits s - pos || code_of l n sym <> hbits s pos l.[sym]
 end
 
 (** How complete a code is. *)
@@ -476,6 +488,28 @@ let lemma tab_step (h : bool) (t : [u8]) (l : [u8]) (n : int{0..320}) (b : u8) :
   with tab_from, room
 = ()
 
+(* No code of length b is the b bits at pos: they run past the input, or
+   fall outside length b's codes. *)
+let spec miss (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) (b : int{1..15}) : bool
+  requires pos <= B.nbits s && n <= len l
+= if b > B.nbits s - pos then true
+  else (let v : u32 = hbits s pos b in v < first_code l n b || v >= first_code l n b + len_count l n b)
+
+(* No code at all is at pos. Opaque, so a caller that passes h = false
+   carries one atom, not the quantifier. *)
+let spec none_at (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) : bool @opaque
+= if pos > B.nbits s || n > len l then false
+  else (forall (b in 1 .. 16). miss s pos l n b)
+
+(* none_at from its definition, where h holds: the one place decode
+   needs it revealed. *)
+let lemma none_when (h : bool) (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) : unit
+  requires pos <= B.nbits s
+  requires h ==> n <= len l && (forall (b in 1 .. 16). miss s pos l n b)
+  ensures h ==> n <= len l && none_at s pos l n
+  with none_at
+= ()
+
 (** The symbol whose code starts at bit pos of s, read a bit at a time, or
     where the input ends or names no code. *)
 let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8]) (spec h : bool) : result decoded usize
@@ -486,7 +520,7 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8])
     | Err p -> p <= B.nbits s)
   ensures h ==> (match result with
     | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false)
-    | Err _ -> true)
+    | Err _ -> none_at s pos l n)
 = let nb = B.bit_len s in
   let p : mutable usize = pos in
   let code : mutable u32 = 0 in
@@ -505,6 +539,9 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8])
     invariant h && st = 0 && len' <= 15 ==> code = 2 * hbits s pos (len' - 1)
     invariant h && st = 0 && len' <= 15 ==> first = first_code l n len' && index = offs l n len'
     invariant h && st = 1 ==> l.[sym] = p - pos && code_of l n sym = hbits s pos (p - pos)
+    invariant h && st <> 1 ==> (forall (b in 1 .. len'). miss s pos l n b)
+    invariant h && st = 2 ==> p = nb && p - pos + 1 = len'
+    invariant h && st = 3 ==> len' = 16
     decreases 17 - len' + (if st = 0 then 1 else 0)
   do
     tab_step h t l n len';
@@ -517,6 +554,7 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8])
       let count : u32 = get16 t (2 * len') in
       if code >= first && code - first < count then (
         let i : u32 = index + (code - first) in
+        assert h ==> i < 320;
         if i < 320 then (
           let v = get16 t (32 + 2 * i) in
           assert h ==> sym_ok t l n len' (offs l n len' + (code - first)) (code - first);
@@ -530,4 +568,70 @@ let decode (s : [u8]) (pos : usize) (t : [u8]) (n : int{0..320}) (spec l : [u8])
         code <- (if code > 32767 then 65535 else code << 1);
         len' <- len' + 1))
   done;
-  if st = 1 then Ok { sym = sym; pos = p } else Err p
+  if st = 1 then Ok { sym = sym; pos = p } else (none_when h s pos l n; Err p)
+
+(* The canonical code is prefix-free. hbits splits at any length a: the
+   first a bits, shifted up, then the rest. *)
+let lemma hbits_split (s : [u8]) (p : usize) (a : int{0..15}) (b : int{0..15}) : unit
+  requires a <= b && p <= B.nbits s && b <= B.nbits s - p
+  ensures hbits s p b = hbits s p a * B.pow2 (b - a) + hbits s (p + a) (b - a)
+  decreases b - a
+= if b > a then (let b' : int{0..14} = b - 1 in hbits_split s p a b') else ()
+
+(* Longer codes start past every prefix of the shorter ones. *)
+let lemma fc_grow (l : [u8]) (n : int{0..320}) (a : int{1..15}) (b : int{1..15}) : unit
+  requires a < b && n <= len l
+  ensures first_code l n b >= (first_code l n a + len_count l n a) * B.pow2 (b - a)
+  decreases b - a
+= if b > a + 1 then (let b' : int{1..14} = b - 1 in fc_grow l n a b') else ()
+
+(* A later symbol of the same length has a larger count before it. *)
+let lemma lc_lt (l : [u8]) (a : int{0..319}) (c : int{0..320}) (x : int{1..15}) : unit
+  requires a < c && c <= len l && l.[a] = x
+  ensures len_count l a x < len_count l c x
+= lc_succ l a x;
+  let a1 : int{1..320} = a + 1 in
+  lc_le l a1 c x
+
+(* Two symbols whose codes are read at the same position are one symbol. *)
+let lemma code_unique (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (a : int{0..319}) (b : int{0..319}) : unit
+  requires a < n && b < n && n <= len l
+  requires 1 <= l.[a] && l.[a] <= l.[b] && l.[b] <= 15
+  requires p <= B.nbits s && l.[b] <= B.nbits s - p
+  requires code_of l n a = hbits s p l.[a] && code_of l n b = hbits s p l.[b]
+  ensures a = b
+= let la : int{1..15} = l.[a] in
+  let lb : int{1..15} = l.[b] in
+  lc_lt l a n la;
+  if la < lb then (
+    hbits_split s p la lb;
+    fc_grow l n la lb;
+    assert false)
+  else if a < b then (lc_lt l a b la; assert false)
+  else if b < a then (lc_lt l b a la; assert false)
+  else ()
+
+(* Either way round. *)
+let lemma prefix_free (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (a : int{0..319}) (b : int{0..319}) : unit
+  requires a < n && b < n && n <= len l
+  requires 1 <= l.[a] && l.[a] <= 15 && 1 <= l.[b] && l.[b] <= 15
+  requires p <= B.nbits s && l.[a] <= B.nbits s - p && l.[b] <= B.nbits s - p
+  requires code_of l n a = hbits s p l.[a] && code_of l n b = hbits s p l.[b]
+  ensures a = b
+= if l.[a] <= l.[b] then code_unique s p l n a b else code_unique s p l n b a
+
+(* none_at at one length. *)
+let lemma none_miss (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) (b : int{1..15}) : unit
+  requires pos <= B.nbits s && n <= len l && none_at s pos l n
+  ensures miss s pos l n b
+  with none_at
+= ()
+
+(* When decode misses at every length, no symbol's code is at pos. *)
+let lemma no_code (s : [u8]) (pos : usize) (l : [u8]) (n : int{0..320}) (sym : int{0..319}) : unit
+  requires pos <= B.nbits s && n <= len l && sym < n && 1 <= l.[sym] && l.[sym] <= 15
+  requires none_at s pos l n
+  ensures l.[sym] > B.nbits s - pos || code_of l n sym <> hbits s pos l.[sym]
+= let b : int{1..15} = l.[sym] in
+  none_miss s pos l n b;
+  lc_lt l sym n b

@@ -1,0 +1,27 @@
+# plb2 (https://github.com/attractivechaos/plb2, CC0 1.0, see LICENSE) at
+# commit 1181b3b83fea52ee85a66548845f8bf92e33fb67: the reference programs
+# bench/codegen runs against Pia (ADR 0075). The sources are upstream's,
+# unmodified; a change lives in a .patch beside its file.
+
+package(default_visibility = ["//bench/codegen:__subpackages__"])
+
+licenses(["unencumbered"])
+
+exports_files([
+    "LICENSE",
+    "nqueen.c",
+    "nqueen.rs",
+])
+
+# Zig 0.15 rejects a `var` that is never changed, and upstream's nqueen.zig
+# fixes n at 15, which lets the compiler specialise on it. The patch reads n
+# from the command line, as the C and Rust versions do.
+genrule(
+    name = "nqueen_zig",
+    srcs = [
+        "nqueen.zig",
+        "nqueen.zig.patch",
+    ],
+    outs = ["patched/nqueen.zig"],
+    cmd = "cp $(location nqueen.zig) $@ && patch --quiet $@ $(location nqueen.zig.patch)",
+)

@@ -157,6 +157,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/pia-lsp/pia-lsp.cpp` is the language server binary. `tools/pia-opt/pia-opt.cpp` is the MLIR opt driver for the dialects.
 - `tools/copts.bzl` holds the compiler warning flags (`-Wall`, `-Wextra`, `-Werror`) for Pia's C, C++ and Objective-C targets. `tools/link.bzl` holds the link options for the tool binaries, which link LLVM, MLIR and Z3 statically.
 - `tools/bench/proof_bench.py`, `tools/bench/corpus.txt` and `tools/bench/baseline.json` (every corpus file) make up the proof-cost benchmark (ADR 0032); `tools/bench/needs_bench.py` decides from the changed paths whether CI runs it. CI runs it in three Linux shards (`--shard`, `--passes`); `--write-baseline --merge` folds their `--out` files into the baseline.
+- `tools/bench/codegen_bench.py` runs the codegen benchmarks' binaries (ADR 0075) and reports cachegrind instruction counts and wall times against each problem's reference and C control; the Linux CI job puts the report in its summary. Report only.
 - `tools/bench/solver_compare.py` splits a `--dump-smt` into queries and compares solvers on them: Z3 bit-blasting, Z3 int-blasting, cvc5, Bitwuzla (ADR 0066).
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/docs/check.py` checks the public docs keep up: every lexer keyword, piac and pia flag, attribute in use and lint on some page, every `tests/verify` feature test named (`docs/features.md`), every `lib/Pia` module in `docs/library.md`, pages with examples tested, links out of `docs/` live. `.github/workflows/docs-check.yml` runs it.
@@ -201,6 +202,7 @@ Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests i
 - `tools/skills/check.py` checks the pack is complete: each skill wired into tests, tables and links, the manifests, and every lexer keyword and piac flag taught by some skill. `.github/workflows/skills.yml` runs it.
 - `CLAUDE.md` holds the instructions every agent session loads: this map, the skills and the house rules.
 - `third_party/rules_foreign_cc` holds the patches for the Z3 build.
+- `bench/codegen` holds the codegen benchmarks (ADR 0075): one package per problem (`bench/codegen/nqueen`: the Pia port, its C driver `main.c`, the C control `control.c` and a README of what the proof changed), `defs.bzl`'s `codegen_benchmark` macro, which builds the Pia, C, C++, Rust and Zig programs and a `<problem>_test` that they print the same answer, `flags.bzl` (every program's flags), `same_output_test.sh` and `problems.json` (each problem's inputs and programs). `third_party/benchmarks` holds the reference programs, one directory per suite with its licence (`plb2`, CC0), patched by genrules where they must change.
 
 ## 5. Tests
 
