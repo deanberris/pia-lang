@@ -1466,8 +1466,10 @@ class Gen {
     // `= extern "symbol"`: a C function (#55).
     std::string foreign;
     bool isExtern = externSymbol(bodyNode, foreign);
+    // It keeps the visibility of any function: a module's foreign rows,
+    // such as Pia.Sys.Posix's, are called through its interface, so
+    // importers must link to them (ADR 0057).
     if (isExtern) {
-      fn.setPrivate();
       fn->setAttr("pia.extern", b_.getStringAttr(foreign));
     }
     // The buffer it lends is `out`, unwritten: a caller finds every
