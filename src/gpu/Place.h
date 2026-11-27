@@ -20,6 +20,10 @@ namespace pia::gpu {
 // lowering replaces with the run's status.
 inline constexpr const char *kStatusSymbol = "pia$gpu$status";
 
+// The function that pre-warms the module's kernels: it calls the shim's
+// `pia_gpu_warm` for each one. Codegen makes it a load-time constructor.
+inline constexpr const char *kWarmSymbol = "pia$gpu$warm";
+
 // Replaces each placed spread in `module`, which is in core MLIR (arith,
 // memref, scf and func), with a call of `pia_gpu_run` from the Metal shim:
 //
@@ -30,7 +34,9 @@ inline constexpr const char *kStatusSymbol = "pia$gpu$status";
 //   SPIR-V, translated to the Metal Shading Language by SPIRV-Cross and
 //   compiled by Xcode's Metal toolchain (`xcrun metal`, fast math off);
 // - the .metallib and the kernel's name become constants of the module,
-//   and the run's status replaces the status IRGen left after the loop.
+//   and the run's status replaces the status IRGen left after the loop;
+// - `kWarmSymbol` asks the shim to build every kernel's pipeline in the
+//   background when the program loads.
 mlir::LogicalResult lowerPlacedSpreads(mlir::ModuleOp module);
 
 // Compiles MSL to a .metallib with xcrun. False with `error` set if the

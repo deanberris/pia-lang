@@ -40,7 +40,10 @@ cells, both stages match the CPU on every cell, and over three runs:
 | D8 directions | 41 ms | 6 to 16 ms | 50 to 60 ms |
 | The picture | 25 to 30 ms | 9 to 12 ms | 26 to 29 ms |
 
-The first run of directions also opens the device and loads the kernel.
+The first run of directions also opened the device and loaded the kernel.
+The shim now pre-warms them instead: when the program loads, a background
+queue opens the device and builds every placed kernel's pipeline, so a first
+run finds them ready (ADR 0068, step 4b). `PIA_GPU_WARM=0` turns this off.
 Before the buffers were wrapped, the copies in and back made both stages
 slower on the GPU than on the CPU (ADR 0068, step 3).
 

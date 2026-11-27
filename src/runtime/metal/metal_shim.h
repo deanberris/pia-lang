@@ -108,6 +108,20 @@ int32_t pia_gpu_seq_end(uint64_t seq);
 // How many dispatches the sequences have encoded since the program started.
 void pia_gpu_sequence_stats(uint64_t *dispatches);
 
+// Pre-warming (ADR 0068, section 9): every object with kernels placed on
+// the GPU calls this from a load-time constructor, once for each kernel,
+// with the arguments pia_gpu_run would take. It returns at once. A
+// background queue then opens the device, loads the library and builds
+// the kernel's pipeline, the work a first run would otherwise pay for,
+// while the program starts. A run that comes first waits for that kernel
+// instead of building it again. If PIA_GPU_WARM is set to 0, it does
+// nothing, so a first run can be timed cold.
+void pia_gpu_warm(uint64_t lib, uint64_t lib_len, uint64_t name,
+                  uint64_t name_len);
+
+// How many kernels pre-warming has built since the program started.
+void pia_gpu_warm_stats(uint64_t *warmed);
+
 // How pia_gpu_run has bound buffers since the program started: wrapped in
 // place, or copied, and the bytes copied in.
 void pia_gpu_run_stats(uint64_t *wrapped, uint64_t *copied,
