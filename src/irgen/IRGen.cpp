@@ -1176,6 +1176,7 @@ class Gen {
     owns_.clear();
     variadic_.reset();
     lower_ = nullptr;
+    case_ = nullptr;
     deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
@@ -1233,6 +1234,8 @@ class Gen {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
     }
+    if (case_ && !genCase(*case_, isLemma, fn))
+      return;
     // A theory's abstract spec function has no body: to the verifier it is
     // an uninterpreted function (ADR 0036).
     if (hasFlag(item, "abstract")) {
@@ -2387,6 +2390,46 @@ class Gen {
   }
 
   // `@overflow(wrap)` on the return annotation sets the function's mode.
+  // A generated case says what it checks, so that its goal reads as the
+  // case and not as a lemma's postcondition (ADR 0056). A specification
+  // check that fails means no result could meet the contract at the case's
+  // inputs: the contract is wrong, whatever the code does, and the hint
+  // says so rather than letting the case pass from a contradiction.
+  bool genCase(const Node &a, bool isLemma, mlir::func::FuncOp fn) {
+    const char *usage = "@case takes spec or oracle, the function and the "
+                        "case's number, as in @case(spec, clamp, 3)";
+    if (!isLemma) {
+      fail(a, "@case applies only to a lemma");
+      return false;
+    }
+    if (a.kids.size() != 3 || a.kids[0]->kind != NodeKind::Name ||
+        a.kids[1]->kind != NodeKind::Name ||
+        a.kids[2]->kind != NodeKind::IntLit) {
+      fail(a, usage);
+      return false;
+    }
+    const std::string &what = a.kids[0]->text;
+    std::string f = "'" + a.kids[1]->text + "'";
+    std::string k = "case " + a.kids[2]->text + ": ";
+    std::string claim, hint;
+    if (what == "spec") {
+      claim = k + "some result can meet the ensures of " + f;
+      hint = "specification failure: no value of " + f +
+             "'s result type satisfies its ensures at these inputs, so the "
+             "contract is wrong, whatever the code does; correct the ensures, "
+             "or add a requires that rules these inputs out";
+    } else if (what == "oracle") {
+      claim = k + f + " meets its ensures";
+      hint = f + " breaks its contract at these inputs";
+    } else {
+      fail(a, usage);
+      return false;
+    }
+    fn->setAttr("pia.obligation", b_.getStringAttr(claim));
+    fn->setAttr("pia.case_failure", b_.getStringAttr(hint));
+    return true;
+  }
+
   bool genAttributes(const Node &attrs) {
     for (const syntax::NodePtr &a : attrs.kids) {
       if (a->text == "overflow" && a->kids.size() == 1 &&
@@ -2499,6 +2542,12 @@ class Gen {
             return k->kind == NodeKind::Name;
           })) {
         owns_.push_back(a.get());
+        continue;
+      }
+      // `@case(spec, f, k)` or `@case(oracle, f, k)` on a lemma that a
+      // test generator wrote (ADR 0056); checked once the lemma is known.
+      if (a->text == "case") {
+        case_ = a.get();
         continue;
       }
       if (a->text == "allow" && !a->kids.empty()) {
@@ -12706,6 +12755,7 @@ class Gen {
   bool specPlace_ = false;
   bool specFieldSeen_ = false;
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
+  const Node *case_ = nullptr; // a generated test case's @case (ADR 0056)
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)

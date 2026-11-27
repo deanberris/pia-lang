@@ -1604,7 +1604,15 @@ class Parser {
     take();
     while (!at(K::QDot)) {
       bool paren = accept(K::LParen);
-      std::string name(expect(K::Ident, "a bound variable").text);
+      // In a quote, `$x` binds the name a metaprogram computed, as a
+      // `let` does (docs/meta.md).
+      std::string name;
+      if (at(K::SpliceIdent)) {
+        name = text();
+        take();
+      } else {
+        name = std::string(expect(K::Ident, "a bound variable").text);
+      }
       if (accept(K::In)) {
         auto b = makeNode(N::RangeBinder, loc(), name);
         b->add(binary(50));
@@ -1620,7 +1628,8 @@ class Parser {
         n->add(std::move(b));
       }
       if (paren) expect(K::RParen, "')'");
-      if (!at(K::QDot) && !at(K::Ident) && !at(K::LParen))
+      if (!at(K::QDot) && !at(K::Ident) && !at(K::SpliceIdent) &&
+          !at(K::LParen))
         fail("expected '.' and a space after the bound variables");
     }
     if (n->kids.empty()) fail("expected a bound variable");

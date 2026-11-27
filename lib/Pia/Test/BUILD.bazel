@@ -1,0 +1,16 @@
+load("//tools/piac:pia.bzl", "pia_library")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Pia.Test: tests generated from contracts (ADR 0056). Gen.pia is only
+# metaprograms, which importers run: tests/std/test_gen.pia proves the
+# cases they write, and its Inputs show a specification failure.
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Gen.pia"])
+
+pia_library(
+    name = "gen",
+    src = "Gen.pia",
+    target_compatible_with = PIA_TARGETS,
+)

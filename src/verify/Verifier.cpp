@@ -6709,6 +6709,19 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.typeCost += o.cost;
     }
   }
+  // A generated test case that fails says what its failure means
+  // (ADR 0056): for a specification check, that the contract cannot be met.
+  for (size_t i = 0; i < outcomes.size(); ++i) {
+    if (outcomes[i].status != Status::Failed)
+      continue;
+    auto fn = opOf[i]->getParentOfType<mlir::func::FuncOp>();
+    if (!fn)
+      fn = mlir::dyn_cast<mlir::func::FuncOp>(opOf[i]);
+    if (!fn)
+      continue;
+    if (auto h = fn->getAttrOfType<mlir::StringAttr>("pia.case_failure"))
+      outcomes[i].hint = h.getValue().str();
+  }
   if (options.checkVacuity) checkVacuity(module, proofs, outcomes, opOf, options, st);
   // Per op: whether every goal it raises holds, and how.
   llvm::DenseMap<Operation *, std::pair<bool, bool>> proved;  // all, smt
