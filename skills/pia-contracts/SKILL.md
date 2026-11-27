@@ -115,6 +115,8 @@ let find (xs : [i32]) (x : i32) : usize
 
 The measure is checked at the end of each iteration: never negative, and smaller than before. A recursive function takes `decreases` on its header, checked at each recursive call.
 
+Functions that call each other (a cycle, such as `is_even` and `is_odd`) each need `decreases`, and every call within the cycle must land on a smaller measure: "the measure of 'g' at the call is below the measure of 'f'". Without one, each call in the cycle is skipped as "'f' and 'g' call each other". This matters most for lemmas: two lemmas that call each other would otherwise prove anything.
+
 ## `old`, quantifiers and spec functions
 
 `old e` names a value on entry, for functions that change a buffer:

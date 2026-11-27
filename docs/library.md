@@ -80,6 +80,7 @@ The codecs are proved total and safe on every input, and allocate nothing: the c
 | [`Pia.Image.Raster`](../lib/Pia/Image/Raster.pia) | An image's dimensions and the indices of its samples |
 | [`Pia.Image.Gif.Spec`](../lib/Pia/Image/Gif/Spec.pia) | What a GIF means, as spec functions: the LZW dictionary of GIF89a |
 | [`Pia.Image.Gif.Lzw`](../lib/Pia/Image/Gif/Lzw.pia) | GIF's LZW decoder, proved against the spec's dictionary |
+| [`Pia.Image.Gif.Ref`](../lib/Pia/Image/Gif/Ref.pia) | The reference reading of a GIF LZW stream, as trace specs and the step lemmas the decoder is proved against |
 | [`Pia.Image.Gif.LzwEncode`](../lib/Pia/Image/Gif/LzwEncode.pia) | GIF's LZW encoder |
 | [`Pia.Image.Gif.Decode`](../lib/Pia/Image/Gif/Decode.pia) | The GIF container, proved to accept exactly what the spec's block grammar accepts |
 | [`Pia.Image.Gif.Encode`](../lib/Pia/Image/Gif/Encode.pia) | Animated GIF encoding |

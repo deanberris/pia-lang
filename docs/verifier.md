@@ -140,6 +140,8 @@ A `for` loop always ends. A `while` loop ends when it has a measure, `decreases 
 
 A recursive call on a value of a recursive type needs no measure when it is structural: its first argument of a recursive type is a component of the parameter, as a name a `match` binds below the top is, or an element of a box or vec such a name holds ([recursive types](#recursive-types)). Its goal, "the recursion terminates: 't' is smaller in each recursive call", is that the argument's `depth` is smaller than the parameter's.
 
+**Mutual recursion.** Functions that call each other, directly or through others, form a cycle, and each call within the cycle is a termination goal too. A call is taken on its callee's contract, so without one, two lemmas that each call the other would "prove" `ensures false`, and since codegen erases lemmas and calls in contracts, nothing would ever run them to find out. When every function in the cycle has a measure, the goal at a call from `f` to `g` is "the measure of 'g' at the call is below the measure of 'f'": `g`'s measure at the arguments is smaller than `f`'s on entry, and `f`'s is not negative. `is_even` and `is_odd`, each with `decreases n` and calling the other at `n - 1`, are proved. A cycle with a function that has no measure gets a `skipped` goal at each call within it, "'f' and 'g' call each other, and 'f' has no 'decreases' measure" (tests/verify/mutual_recursion.pia). A cycle never crosses modules, since an imported function is only its contract and imports form no cycles.
+
 Any other `while` loop or recursive call with no measure gets a `skipped` goal ("the loop terminates", "the recursion terminates"). So `piac --verify` fails, and piac generates no code, unless `--allow-unproved` accepts it ([codegen.md](codegen.md)).
 
 ## Recursive types
@@ -545,7 +547,7 @@ Overloads with the same parameter types are told apart by their preconditions (A
 ## Limits of v0
 
 - **Loops whose bounds or loop-carried values cannot be encoded** have every goal inside reported as `skipped`, and what they compute or write is unknown afterwards.
-- **Termination is checked for direct recursion only.** Mutual recursion is not checked, since each call is taken on its callee's contract.
+- **Calls through a function reference** (ADR 0071, not built yet) are outside the call graph that finds cycles, so recursion through one will need its own termination rule when they land.
 - **Affine goals in loops**, such as subscripts like `xs.[2*i + 1]`, aliasing and loop-carried dependence, still go to Z3. A Presburger stage will decide them first ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
 - **A call to an ordinary function inside a contract** stands for a value that meets the callee's postconditions, and inside a quantifier for an unknown value. To say what a function means in a contract, use a [spec function](#spec-functions-and-lemmas).
 - **Ops the verifier does not model** produce unknown values of their types, which is sound but may cause failures.
