@@ -1,0 +1,33 @@
+(* @derive(json_dom) on a record (ADR 0045, step 7): its conforms, check,
+   from_dom and to_dom are proved where it is derived, with nothing
+   accepted unproved. check decides conforms; from_dom, given that a
+   document conforms, is the record with no failure path, each field its
+   member's value; to_dom's document is valid and conforms.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Write.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Derive.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Mem/Alloc.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Dom.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+*)
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document
+import Pia.Text.Json.Shape.Shapes
+
+let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
+
+(* A point from a document, or that it is not one. *)
+let get (s : [u8]) (v : Pia.Text.Json.Dom.json) : result point Pia.Text.Json.Shape.nonconforming =
+  if check_json_point s v then Ok (from_dom_json_point s v) else Err Nonconforming
+
+(*
+// CHECK: 0 failed, 0 skipped
+*)

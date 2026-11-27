@@ -6,8 +6,10 @@
 //                                  check that the objects link: every
 //                                  interface one imports is provided by
 //                                  another, with the hash it was proved
-//                                  against. --stamp writes the result to
-//                                  <file> too, for a build to depend on.
+//                                  against, and all for one Pia ABI
+//                                  version and target. --stamp writes
+//                                  the result to <file> too, for a
+//                                  build to depend on.
 //
 // Exit status: 0 when the check passes, 1 when it fails, 2 on bad usage
 // or an object that cannot be read.
@@ -68,6 +70,13 @@ int main(int argc, char **argv) {
     const pia::cert::Certificate &c = objects.front().second;
     std::cout << "module " << (c.module.empty() ? "(program)" : c.module)
               << "\n";
+    // Formats 1 and 2 record no ABI version or prover (ADR 0073).
+    if (c.abi != 0)
+      std::cout << "abi " << c.abi << " " << c.target << "\n";
+    if (!c.prover.empty())
+      std::cout << "prover piac " << c.prover << "\n";
+    for (const pia::cert::Solver &v : c.solvers)
+      std::cout << "solver " << v.name << " " << v.version << "\n";
     for (const pia::cert::Interface &i : c.provides)
       std::cout << "provides " << i.name << " " << i.hash << "\n";
     for (const pia::cert::Interface &i : c.requires_)

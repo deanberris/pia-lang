@@ -79,6 +79,7 @@ nav:
   - Feature index: features.md
   - The standard library today: library.md
   - Idiomatic Pia: idioms.md
+  - JSON: json.md
   - How verification works: verification.md
   - "Theories: teaching the verifier a domain": theories.md
   - Debugging C++ with the REPL: repl-debugging.md

@@ -1,0 +1,27 @@
+(* Function references outside what ADR 0071 has built so far are reported.
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let succ (x : u8) : u8 = x
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:11: error: a mutable function reference, which can be rebound, comes with ADR 0071's step 2
+*)
+let rebind (y : u8) : u8 =
+  let h : mutable (u8 -> u8) = succ in
+  h y
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:22: error: 'y' is a local; a function reference names a top-level function (ADR 0071)
+*)
+let from_value (y : u8) : u8 =
+  let h : u8 -> u8 = y in
+  h y
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:22: error: a function reference is made from a top-level function's name, as in 'let h : u8 -> u8 = succ' (ADR 0071)
+*)
+let from_literal (y : u8) : u8 =
+  let h : u8 -> u8 = 3 in
+  h y
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+2]]:40: error: a function reference is code, not part of a contract
+*)
+let in_contract (y : u8) : u8 ensures (let h : u8 -> u8 = succ in h y) = y = y

@@ -20,7 +20,8 @@ proved. Comments just before a block change that:
                                  such as where its imports are
 
 A ```console block whose first line is `$ piac ...` runs that command in the
-directory holding the examples written so far, and its output (stdout and
+directory holding the examples written so far, where `lib` is the
+standard library when the test's data has it, and its output (stdout and
 stderr) must match the rest of the block. A line `...` in the expected
 output matches any number of lines. A ```console block whose first line is
 `$ pia ...` runs `pia` the same way, and `< file` on that line feeds the
@@ -110,6 +111,11 @@ def main():
     for doc in docs:
         with tempfile.TemporaryDirectory() as tmp:
             shutil.copy(doc, os.path.join(tmp, os.path.basename(doc)))
+            # The standard library, as `lib/...`, for a page that builds
+            # its modules' interfaces, as a reader at the repository's
+            # root would (the test's data puts it in the runfiles).
+            if os.path.isdir("lib"):
+                os.symlink(os.path.abspath("lib"), os.path.join(tmp, "lib"))
             count = 0
             for line, info, directives, body in blocks(doc):
                 where = f"{doc}:{line}"

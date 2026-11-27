@@ -49,6 +49,19 @@ bool readTrusted(std::istringstream &words, const std::string &kind,
   return true;
 }
 
+// The rest of an `abi <version> <triple>` line. Version 0 means "none", so
+// it is not a version a certificate can state.
+bool readAbi(const std::string &version, const std::string &triple,
+             Certificate &c) {
+  if (version.empty() || triple.empty() ||
+      version.find_first_not_of("0123456789") != std::string::npos ||
+      version.size() > 9)
+    return false;
+  c.abi = unsigned(std::stoul(version));
+  c.target = triple;
+  return c.abi != 0;
+}
+
 // The rest of a `proved lean <name> <hash> <theorem> <toolchain> <axioms>`
 // line, whose first three words are already read.
 bool readLean(std::istringstream &words, const std::string &name,
@@ -93,6 +106,12 @@ std::string encode(const Certificate &c) {
   if (!c.module.empty())
     body += " " + c.module;
   body += "\n";
+  if (c.abi != 0)
+    body += "abi " + std::to_string(c.abi) + " " + c.target + "\n";
+  if (!c.prover.empty())
+    body += "prover piac " + c.prover + "\n";
+  for (const Solver &s : c.solvers)
+    body += "solver " + s.name + " " + s.version + "\n";
   for (const Interface &i : c.provides)
     body += "provides " + i.name + " " + i.hash + "\n";
   for (const Interface &i : c.requires_)
@@ -104,7 +123,7 @@ std::string encode(const Certificate &c) {
     body += "proved lean " + f.name + " " + f.statement + " " + f.theorem +
             " " + f.toolchain + " " + joined(f.axioms) + "\n";
   std::string out(kMagic, 4);
-  putU32(out, !c.lean.empty() ? 3 : !c.trusted.empty() ? 2 : 1);
+  putU32(out, kFormat);
   putU32(out, uint32_t(body.size()));
   return out + body;
 }
@@ -137,6 +156,15 @@ std::optional<Certificate> decode(std::string_view bytes, std::string &error) {
     if (kind == "module" && !sawModule) {
       c.module = name;
       sawModule = true;
+    } else if (kind == "abi" && format >= 3 && c.abi == 0 &&
+               readAbi(name, hash, c)) {
+      continue;
+    } else if (kind == "prover" && format >= 3 && name == "piac" &&
+               !hash.empty() && c.prover.empty()) {
+      c.prover = hash;
+    } else if (kind == "solver" && format >= 3 && !name.empty() &&
+               !hash.empty()) {
+      c.solvers.push_back({name, hash});
     } else if ((kind == "provides" || kind == "requires") &&
                hash.size() == 64) {
       (kind == "provides" ? c.provides : c.requires_).push_back({name, hash});
@@ -188,6 +216,33 @@ Read readObject(const std::string &path) {
 std::vector<std::string>
 checkLink(const std::vector<std::pair<std::string, Certificate>> &objects) {
   std::vector<std::string> problems;
+  // Every object must be for the same ABI and target. The first object
+  // with an ABI version is the one the others are compared with, so the
+  // message names a pair of objects that disagree.
+  const std::pair<std::string, Certificate> *first = nullptr;
+  for (const auto &object : objects) {
+    const auto &[path, cert] = object;
+    if (cert.abi == 0) {
+      problems.push_back("'" + path +
+                         "' records no Pia ABI version, so it was built by a "
+                         "piac older than certificate format 3: compile it "
+                         "again");
+      continue;
+    }
+    if (!first) {
+      first = &object;
+      continue;
+    }
+    if (cert.abi != first->second.abi)
+      problems.push_back("'" + path + "' was built for Pia ABI " +
+                         std::to_string(cert.abi) + ", but '" + first->first +
+                         "' for Pia ABI " + std::to_string(first->second.abi) +
+                         ": compile them with the same piac");
+    else if (cert.target != first->second.target)
+      problems.push_back("'" + path + "' was built for " + cert.target +
+                         ", but '" + first->first + "' for " +
+                         first->second.target);
+  }
   // Each interface, by name, the hash provided and the object providing it.
   std::map<std::string, std::pair<std::string, std::string>> provided;
   for (const auto &[path, cert] : objects)

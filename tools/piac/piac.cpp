@@ -65,6 +65,8 @@
 //                                   count is N or more (default 10% of the
 //                                   rlimit); 0 turns the warning off
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
+//   piac --version                  print piac's version, the Pia ABI
+//                                   version and the solver's (ADR 0073)
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
 //   piac --meta-cycles=N ...        cap metaprogram expansion at N passes
@@ -104,6 +106,7 @@
 #include "syntax/Lint.h"
 #include "syntax/Parser.h"
 #include "syntax/Syntax.h"
+#include "version/Version.h"
 
 #ifndef PIA_NO_MLIR
 #include "cert/Certificate.h"
@@ -148,6 +151,7 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "[--lean-receipt=<file>]...\n"
          "             <file.pia>\n"
+         "       piac --version\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
          "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
@@ -914,7 +918,22 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
 }  // namespace
 
+// `piac --version`: what a certificate records about the compiler.
+int printVersion() {
+  std::cout << "piac " << pia::version::prover() << "\n";
+#ifndef PIA_NO_MLIR
+  std::cout << "Pia ABI " << pia::cert::kAbiVersion << "\n";
+  std::cout << "z3 " << pia::verify::solverVersion() << "\n";
+#endif
+  return 0;
+}
+
 int main(int argc, char **argv) {
+  // Anywhere on the line, since wrappers (tests/lit/run_lit.sh) add
+  // --target and --cpu to every call.
+  for (int i = 1; i < argc; ++i)
+    if (std::string_view(argv[i]) == "--version")
+      return printVersion();
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
   std::vector<std::string> ifacePaths;
@@ -1253,6 +1272,10 @@ int main(int argc, char **argv) {
       if (!tree->kids.empty() &&
           tree->kids[0]->kind == pia::syntax::NodeKind::ModuleHeader)
         cert.module = tree->kids[0]->text;
+      cert.abi = pia::cert::kAbiVersion;
+      cert.target = cg.triple;
+      cert.prover = std::string(pia::version::prover());
+      cert.solvers.push_back({"z3", pia::verify::solverVersion()});
       for (const pia::syntax::InterfaceArtifact &a : provided)
         cert.provides.push_back(
             {a.module + "." + a.name, pia::cert::interfaceHash(a.text)});

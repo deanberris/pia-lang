@@ -27,6 +27,6 @@ let lemma product : unit
 // TRUST-NEXT: 1 lemma proved in Lean, which rests on Lean's kernel and on piac's translation of the statement into Lean
 
 // CERT: module (program)
-// CERT-NEXT: trusted native_decide product {{[0-9a-f]+}} ({{.*}}native_decide{{.*}})
+// CERT: trusted native_decide product {{[0-9a-f]+}} ({{.*}}native_decide{{.*}})
 // CERT-NEXT: proved lean product {{[0-9a-f]+}} by Native.product (leanprover/lean4:v4.36.0; axioms {{.*}}native_decide{{.*}})
 *)

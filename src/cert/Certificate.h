@@ -26,22 +26,33 @@
 //
 //   trusted lowering matmul <hash> linalg.matmul,memref.expand_shape
 //
+// Format 3 adds who proved the module and for which ABI (ADR 0073), after
+// the `module` line:
+//
+//   abi 1 arm64-apple-macos
+//   prover piac 0.0.0+512.9f3c2e1a7b04
+//   solver z3 5.4.1
+//
+// `abi` is the Pia ABI version and the target triple, which the link check
+// requires to be the same in every object. `prover` is piac's version, or
+// `dev` in a build without stamping. `solver` names each SMT solver that
+// may have decided a goal, with its version. piac writes format 3; formats
+// 1 and 2 are still read, as objects with no ABI version, which the link
+// check refuses.
+//
 // A second kind, `native_decide`, is a lemma whose Lean proof trusts Lean's
 // compiler, with its statement hash and the compiler's axioms (ADR 0061):
 //
 //   trusted native_decide six <hash> six._native.native_decide.ax_1_1
 //
-// Format 3 (ADR 0073) holds the lemmas proved in Lean (ADR 0061, section 4),
-// as `proved lean` lines, the spelling ADR 0073 gives them. They are
+// Format 3 also holds the lemmas proved in Lean (ADR 0061, section 4), as
+// `proved lean` lines, the spelling ADR 0073 gives them. They are
 // not trusted, since Lean's kernel checked them, but a third status: the
 // lemma, the SHA-256 of its Lean statement and the definitions it uses, the
 // theorem that proves it, the Lean toolchain and the axioms the proof uses,
 // or `-` for none:
 //
 //   proved lean sum_nonneg <hash> Proofs.sum_nonneg <toolchain> propext
-//
-// piac writes the oldest format that holds what the certificate lists, so
-// objects without Lean facts or trusted items read the same in older tools.
 
 #ifndef PIA_CERT_CERTIFICATE_H
 #define PIA_CERT_CERTIFICATE_H
@@ -55,6 +66,11 @@ namespace pia::cert {
 
 // The newest format this code reads and writes.
 inline constexpr unsigned kFormat = 3;
+
+// The Pia ABI version (docs/abi.md, ADR 0073): the calling convention, the
+// canonical interface serialisation and what a certificate means. Bump it
+// rarely and on purpose: the link check refuses objects built for another.
+inline constexpr unsigned kAbiVersion = 1;
 
 // The section a certificate is in, for the target `triple`.
 std::string sectionFor(std::string_view triple);
@@ -72,6 +88,12 @@ struct Trusted {
   std::vector<std::string> detail; // for a lowering, the ops it uses
 };
 
+// A solver that may have decided one of the module's goals.
+struct Solver {
+  std::string name;    // `z3`
+  std::string version; // `5.4.1`
+};
+
 // A lemma proved in Lean (ADR 0061, section 4).
 struct LeanFact {
   std::string name;                // the lemma
@@ -83,6 +105,10 @@ struct LeanFact {
 
 struct Certificate {
   std::string module; // empty for a program without a header
+  unsigned abi = 0;   // the Pia ABI version; 0 in formats 1 and 2
+  std::string target; // the target triple, with `abi`
+  std::string prover; // piac's version, `dev` unstamped; empty before 3
+  std::vector<Solver> solvers;
   std::vector<Interface> provides, requires_;
   std::vector<Trusted> trusted;
   std::vector<LeanFact> lean;
@@ -107,8 +133,9 @@ Read readObject(const std::string &path);
 
 // What is wrong with linking `objects` (path and certificate) together:
 // an interface required but not provided, or provided with another hash
-// than the one required, or provided twice with different hashes. Empty
-// when nothing is.
+// than the one required, or provided twice with different hashes, or an
+// object with no ABI version, or objects for different ABI versions or
+// targets. Empty when nothing is.
 std::vector<std::string>
 checkLink(const std::vector<std::pair<std::string, Certificate>> &objects);
 
