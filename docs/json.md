@@ -112,7 +112,7 @@ let write (l : line) (dst : borrowed inout mutable [u8]) : usize
 ```console
 $ piac --verify --iface-path=. line.pia
 ...
-97 proved, 0 failed, 0 skipped
+99 proved, 0 failed, 0 skipped
 ```
 
 An option of a record works the same way: `null` or a missing member is None, and `json_room_<t>` counts the record's room for it. `@derive(json_dom)` takes one too. An array of records is not supported yet ([#528](https://github.com/deanberris/pia-lang/issues/528)).
