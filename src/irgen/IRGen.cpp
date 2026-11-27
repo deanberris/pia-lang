@@ -3074,8 +3074,10 @@ class Gen {
       // The fastmath attribute is passed, empty, because the builder
       // without it is the generic one, deprecated in this MLIR.
       if (from < target.getIntOrFloatBitWidth())
+        // Without the flags, the only builder that takes (type, value) is
+        // the deprecated attribute-list one, which -Werror refuses.
         return TV{create<mlir::arith::ExtFOp>(l, target, v->value,
-                                              mlir::arith::FastMathFlagsAttr{}),
+                                              mlir::arith::FastMathFlagsAttr()),
                   target};
       return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
     }

@@ -28,7 +28,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | prebuilt `pia` and `piac` | `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'` (or `pia-macos-arm64.tar.gz`) | moving `latest` prerelease on [GitHub Releases](https://github.com/deanberris/pia-lang/releases/tag/latest) (plus `SHA256SUMS.txt`), updated on green `main` runs (`.github/workflows/ci.yml`) |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
-| build queue (iMac, GPU demos only) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
+| build queue (iMac, GPU demos only) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 6 jobs per build |
 | prove a file | `bazel-bin/tools/piac/piac --verify f.pia` | see the `piac-verify` and `pia-fast-proofs` skills |
 | doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test` | every `ocaml` block in the listed pages is proved |
 | proof cost gate | `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac` | fails on a Z3 cost regression of more than 10% against `tools/bench/baseline.json` |
