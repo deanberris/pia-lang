@@ -16,9 +16,12 @@ build:linux --force_pic
 # Z3 5.4.1 uses C++20 std::format, which Apple libc++ gates on macOS 13.3.
 build:macos --macos_minimum_os=13.3 --host_macos_minimum_os=13.3
 
-# Keep LLVM's warnings quiet; Pia's own targets turn warnings back on.
+# Keep LLVM's warnings quiet; Pia's own targets turn warnings back on, and
+# every Pia C/C++ source treats warnings as errors.
 build --per_file_copt=external/.*@-w
 build --host_per_file_copt=external/.*@-w
+build --per_file_copt=^(src|tools|tests|examples)/.*@-Werror
+build --host_per_file_copt=^(src|tools|tests|examples)/.*@-Werror
 
 # Building LLVM/MLIR is slow the first time. A disk cache makes clean builds
 # and branch switches cheap.

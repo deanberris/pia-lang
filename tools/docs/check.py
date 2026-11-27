@@ -78,6 +78,9 @@ VERIFY_EXEMPT = {
     "spec_arg_range.pia",
     # A completeness regression: slice elements keep their range in specs.
     "spec_slice_ranges.pia",
+    # A completeness regression: a constant array passed as a slice is the
+    # same term in a spec and in code, also under a quantifier.
+    "const_array_views.pia",
 }
 
 # Public pages with Pia examples that tests/docs does not run, and why.

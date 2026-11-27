@@ -60,7 +60,8 @@ static int read_bmp(const char *path, image *img) {
     return 0;
   }
   long stride = ((long)w * (bpp / 8) + 3) / 4 * 4;
-  if (offset + stride * h > (unsigned long)size) {
+  if ((unsigned long)offset + (unsigned long)stride * (unsigned long)h >
+      (unsigned long)size) {
     fprintf(stderr, "%s: truncated\n", path);
     free(data);
     return 0;

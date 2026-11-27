@@ -1,1 +1,1 @@
-# Shared Starlark for the tools: link.bzl.
+# Shared Starlark for the toolchain: copts.bzl and link.bzl.

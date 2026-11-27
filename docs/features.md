@@ -19,7 +19,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Distinct types, `type u32`, and their derives | [tour](tour.md#records), [ADR 0064](adr/0064-distinct-types.md) | [distinct_types](../tests/verify/distinct_types.pia), [distinct_derives](../tests/verify/distinct_derives.pia) |
 | Parameter modifiers, `inout` and `old` | [tour](tour.md#parameter-modifiers) | [inout_values](../tests/verify/inout_values.pia), [old_calls](../tests/verify/old_calls.pia) |
 | Recursive types, `let rec` variants | [verifier](verifier.md#recursive-types) | [rec_types](../tests/verify/rec_types.pia), [rec_aliasing](../tests/verify/rec_aliasing.pia), [rec_fill](../tests/verify/rec_fill.pia) |
-| Floats, `f32` and `f64` | [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
+| Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 
 ## Contracts and proofs
 
@@ -35,7 +35,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
-| Cost bounds, `costs iterations` and `costs calls` | [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |
+| Cost bounds, `costs iterations` and `costs calls` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |
 | `assume`, `@trusted` and `--trust-report --why` | [how verification works](verification.md), [ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md) | [assumes](../tests/verify/assumes.pia) |
 | `--check-vacuity` | [verifier](verifier.md#theories) | [vacuity](../tests/verify/vacuity.pia) |
 | Parallel, sliced and cached proving | [verifier](verifier.md#parallel-sliced-and-cached-proving) | [parallel](../tests/verify/parallel.pia) |
@@ -84,7 +84,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Modules and interfaces, met by proof | [getting started](getting-started.md), [ADR 0039](adr/0039-module-and-interface-syntax.md) | [modules](../tests/verify/modules.pia) |
-| `spread`, a parallel loop whose iterations own their cells, and `@owns` | [verifier](verifier.md#spread), [ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md) | [spread](../tests/verify/spread.pia), [spread_ensures](../tests/verify/spread_ensures.pia), [spread_frame](../tests/verify/spread_frame.pia) |
+| `spread`, a parallel loop whose iterations own their cells, and `@owns` | [tour](tour.md#parallel-loops), [verifier](verifier.md#spread), [ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md) | [spread](../tests/verify/spread.pia), [spread_ensures](../tests/verify/spread_ensures.pia), [spread_frame](../tests/verify/spread_frame.pia) |
 | `@place(gpu)` on a `spread`, a Metal kernel, and on a `for`, a sequence of kernels in one command buffer | [D8 on the GPU](placed.pia.md), [the pull step on the GPU](pull_gpu.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md) | [gpu_sequence](../tests/verify/gpu_sequence.pia) |
 
 ## Demos

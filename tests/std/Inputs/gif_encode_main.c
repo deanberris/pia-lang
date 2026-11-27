@@ -10,6 +10,7 @@ uint64_t gif_encode(uint16_t w, uint16_t h, const uint8_t *pal, uint64_t npal,
                     uint8_t *hash, uint64_t nhash);
 /* main W H NF DELAY LOOPS pal.bin frames.bin out.gif */
 int main(int argc, char **argv) {
+  (void)argc;
   int w = atoi(argv[1]), h = atoi(argv[2]), nf = atoi(argv[3]);
   int delay = atoi(argv[4]), loops = atoi(argv[5]);
   static uint8_t pal[768], frames[1 << 22], dst[1 << 23], rect[1 << 20], lz[3 << 20 | 5], hash[40960];

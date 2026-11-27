@@ -1403,7 +1403,8 @@ struct Session::Impl {
     for (const auto &[n, why] : refinesWhy)
       quiet.insert(n);
     for (const std::string &m : live)
-      for (const auto &[n, why] : refinesWhy) {
+      for (const auto &entry : refinesWhy) {
+        const std::string &n = entry.first;
         if (m == n)
           continue;
         auto calls =
