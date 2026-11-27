@@ -1,0 +1,17 @@
+load("//bench/codegen:defs.bzl", "codegen_benchmark")
+
+# hanabi1224's nsieve (ADR 0075, wave 1): three sieves of Eratosthenes over
+# 10000 << (n - i) bytes. The benchmark input is n = 12 (40,960,000 flags);
+# the test runs n = 2.
+codegen_benchmark(
+    name = "nsieve",
+    c = "//third_party/benchmarks/hanabi1224:nsieve_1.c",
+    check_args = ["2"],
+    cpp = "//third_party/benchmarks/hanabi1224:nsieve_1.cpp",
+    driver = "main.c",
+    expected = "Primes up to    40000     4203\\nPrimes up to    20000     2262\\nPrimes up to    10000     1229",
+    pia = "nsieve.pia",
+    rust = "//third_party/benchmarks/hanabi1224:nsieve_1.rs",
+    zig = "//third_party/benchmarks/hanabi1224:nsieve_zig",
+    zig_libc = True,
+)

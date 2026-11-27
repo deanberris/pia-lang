@@ -1,0 +1,30 @@
+# hanabi1224's Programming-Language-Benchmarks
+# (https://github.com/hanabi1224/Programming-Language-Benchmarks, MIT, see
+# LICENSE) at commit ad18b203dd1769724f4eea94fc3ac1e99f6593e0: reference
+# programs bench/codegen runs against Pia (ADR 0075). Each file is upstream's
+# bench/algorithm/<problem>/<n>.<ext>, renamed <problem>_<n>.<ext> and
+# otherwise unmodified; a change lives in a .patch beside its file.
+
+package(default_visibility = ["//bench/codegen:__subpackages__"])
+
+licenses(["notice"])
+
+exports_files([
+    "LICENSE",
+    "nsieve_1.c",
+    "nsieve_1.cpp",
+    "nsieve_1.rs",
+])
+
+# Zig 0.15 rejects a `var` that is never changed and removed
+# std.io.getStdOut; the patch keeps the program and prints through
+# std.fs.File.stdout().
+genrule(
+    name = "nsieve_zig",
+    srcs = [
+        "nsieve_1.zig",
+        "nsieve_1.zig.patch",
+    ],
+    outs = ["patched/nsieve_1.zig"],
+    cmd = "cp $(location nsieve_1.zig) $@ && patch --quiet $@ $(location nsieve_1.zig.patch)",
+)

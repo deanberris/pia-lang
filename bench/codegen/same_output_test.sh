@@ -4,7 +4,8 @@
 # plb2's Zig programs print there.
 #
 # usage: same_output_test.sh <expected> "<args>" <program>...
-expected=$1
+# In <expected>, \n stands for a line break.
+expected=$(printf '%b' "$1")
 args=$2
 shift 2
 status=0

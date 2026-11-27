@@ -1,0 +1,29 @@
+module Nsieve : Api
+
+interface Api @abi(c) = sig
+  let ns_count : (flags : borrowed inout mutable [u8]) -> u32
+    requires len flags <= 1'000'000'000
+end
+
+(* hanabi1224's nsieve 1.c: flags[0 .. m) set to 1, then every multiple of
+   each prime from 2i up crossed out; the result is the number of primes
+   below m. The C driver owns the buffer, as C's malloc does. *)
+let ns_count (flags : borrowed inout mutable [u8]) : u32
+  requires len flags <= 1'000'000'000
+= let m : usize = len flags in
+  for k in 0 .. m do flags.[k] <- 1 done;
+  let count : mutable u32 = 0 in
+  for i in 2 .. m do
+    if flags.[i] <> 0 then (
+      count <- count +| 1;
+      let j : mutable usize = i + i in
+      while j < m
+        invariant j <= m + i
+        decreases m + i - j
+      do
+        flags.[j] <- 0;
+        j <- j + i
+      done)
+    else ()
+  done;
+  count

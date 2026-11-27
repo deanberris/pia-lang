@@ -18,7 +18,8 @@ def codegen_benchmark(
         c = None,
         cpp = None,
         rust = None,
-        zig = None):
+        zig = None,
+        zig_libc = False):
     """Builds every program of one problem and tests that they agree.
 
     Makes `<name>_pia` (the Pia port, linked with its C `driver`),
@@ -26,8 +27,10 @@ def codegen_benchmark(
     the port differ from the reference), and one binary for each reference
     given: `<name>_c`, `<name>_cpp`, `<name>_rust` and `<name>_zig`.
     `<name>_test` runs each with `check_args` and checks that it prints
-    `expected`. tools/bench/codegen_bench.py runs the same binaries on the
-    benchmark input.
+    `expected`, in which `\\n` stands for a line break.
+    tools/bench/codegen_bench.py runs the same binaries on the benchmark
+    input. `zig_libc` links the Zig program with libc, for one that uses
+    `std.heap.c_allocator` as C would use malloc.
     """
     pia_object(
         name = name + "_pia_obj",
@@ -64,7 +67,7 @@ def codegen_benchmark(
         zig_binary(
             name = name + "_zig_debug",
             main = zig,
-            zigopts = ZIG_OPTS,
+            zigopts = ZIG_OPTS + (["-lc"] if zig_libc else []),
             tags = ["manual"],
         )
         zig_configure_binary(
@@ -76,7 +79,9 @@ def codegen_benchmark(
     sh_test(
         name = name + "_test",
         srcs = ["//bench/codegen:same_output_test.sh"],
-        args = [expected, " ".join(check_args)] + ["$(rootpath %s)" % p for p in programs],
+        # Bazel splits args into words as a shell would, so the expected
+        # output and the arguments are quoted whole.
+        args = ["'%s'" % expected, "'%s'" % " ".join(check_args)] + ["$(rootpath %s)" % p for p in programs],
         data = programs,
         target_compatible_with = PIA_TARGETS,
     )
