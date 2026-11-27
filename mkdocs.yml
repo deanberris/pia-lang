@@ -186,3 +186,4 @@ nav:
       - adr/0072-drops-run-in-constant-stack.md
       - adr/0073-prover-identity-abi-version-and-advisories.md
       - adr/0074-library-types-tensors.md
+      - adr/0075-codegen-benchmarks-against-c-cpp-rust-zig.md
