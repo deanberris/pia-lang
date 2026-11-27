@@ -163,6 +163,25 @@ let square (i : int{0..3}) : u16
 
 Constant data cannot be passed to an `out` or `inout` parameter. For now the elements must be integer literals.
 
+Arrays are values, so a function can return one. The caller makes room for it, and the result is a copy, never storage the callee owned:
+
+<!-- example: reversed.pia -->
+```ocaml
+let reversed (xs : [u8; 4]) : [u8; 4]
+  ensures forall (i in 0 .. 4). result.[i] = xs.[3 - i]
+= let r : mutable [u8; 4] = [0; 0; 0; 0] in
+  for i in 0 .. 4
+    invariant forall (j in 0 .. i). r.[j] = xs.[3 - j]
+  do r.[i] <- xs.[3 - i] done;
+  r
+
+let first_of_reversed (xs : [u8; 4]) : u8
+  ensures result = xs.[3]
+= let r = reversed xs in r.[0]
+```
+
+The caller sees only `reversed`'s contract, and that is enough for `first_of_reversed`.
+
 `abort ()` stops the program. Its precondition is `false`, so every `abort` is a goal that it is never reached: it marks a case the contracts rule out.
 
 ### Parameter modifiers
@@ -299,6 +318,62 @@ let roundtrip (x : u32) : u32
 ```
 
 A payload's type can be an integer, `bool`, a record, another variant or `unit`. Arrays and slices inside a variant are not supported yet. Patterns are a constructor with a name or `_` for its payload, `()` for a unit payload, a name that matches anything, or `_`.
+
+### Recursive types
+
+A type that refers to itself is declared `let rec`, and every type in a cycle of types that refer to each other must be. Each recursive occurrence sits inside an indirection, a `box` or a `vec`, so every type has a size, and at least one constructor must build a value without already having one ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)). Here a box is a record holding a slot, a slice of one element, as `Pia.Mem.Box`'s does:
+
+<!-- example: tree.pia -->
+```ocaml
+let box = let (t : type) => type { slot : [t] }
+
+let rec tree = type
+  | Leaf
+  | Node of { left : box tree; key : u32; right : box tree }
+
+(* The keys in a tree, capped at a million. *)
+let rec total (t : tree) : int{0..1000000} =
+  match t with
+  | Leaf -> 0
+  | Node n ->
+    let l = if len n.left.slot = 1 then total n.left.slot.[0] else 0 in
+    let r = if len n.right.slot = 1 then total n.right.slot.[0] else 0 in
+    let lr : int{0..2000000} = l + r in
+    if n.key <= 1000000 && lr <= 1000000 - n.key then lr + n.key else 1000000
+```
+
+`total` has no `decreases`: each call is on a value its argument holds, so the recursion is structural, and the verifier proves it ends:
+
+```console
+$ piac --verify tree.pia
+tree.pia:12:47: proved: the index is within bounds [smt]
+tree.pia:12:41: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+tree.pia:13:48: proved: the index is within bounds [smt]
+tree.pia:13:42: proved: the recursion terminates: 't' is smaller in each recursive call [smt]
+tree.pia:14:34: proved: '+' does not overflow int{0..2000000} [intervals]
+tree.pia:15:42: proved: '-' does not overflow u32 [smt]
+tree.pia:15:58: proved: '+' does not overflow u32 [smt]
+tree.pia:9:3: proved: the value fits in int{0..1000000} [smt]
+8 proved, 0 failed, 0 skipped
+```
+
+Other recursion takes a measure, which may be `depth t` or `size t`, spec-only `int`s that are smaller for a value's parts than for the value. The verifier treats a recursive value as an SMT datatype, so a goal knows which constructor built a value and what it holds. Forgetting `rec` is an error that says so:
+
+<!-- example: chain.pia -->
+<!-- expect: fail -->
+```ocaml
+let box = let (t : type) => type { slot : [t] }
+let chain = type | End | Link of box chain
+```
+
+```console
+$ piac --verify chain.pia
+chain.pia:2:1: error: 'chain' refers to itself; declare it 'let rec chain = ...' (ADR 0047)
+  let chain = type | End | Link of box chain
+  ^
+```
+
+A recursive value compiles to a struct of its tag and its constructors' payloads, with a box's slot as a pointer and a length into the memory its allocator lent. Building a node allocates its boxes explicitly, through its allocator, so every allocation is visible and can fail where it is made. Equality on recursive values, `@derive(eq)` for them, and dropping one that an allocator frees block by block come later.
 
 ## Generics
 
@@ -474,6 +549,33 @@ let below (xs : [u8]) (lim : u8) : bool
 = true
 ```
 
+### Cost bounds
+
+`costs` bounds what a function spends, and the bound is proved like any other contract ([ADR 0062](adr/0062-cost-bounds-in-contracts.md)). Each bound names its counter: `iterations` counts the iterations of the function's loops, and `calls` its calls, each of which also adds the callee's own bound at its arguments. In an invariant, `spent c` is what the function has spent on `c` so far:
+
+```ocaml
+let find (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs iterations <= len xs
+  costs calls <= 0
+=
+  let i : mutable usize = 0 in
+  while i < len xs && xs.[i] <> v
+    invariant i <= len xs && spent iterations <= i && spent calls = 0
+    decreases len xs - i
+  do
+    i <- i + 1
+  done;
+  i
+
+let has (xs : [u32]) (v : u32) : bool
+  costs iterations <= len xs
+  costs calls <= 1
+= find xs v < len xs
+```
+
+`has` proves its bounds from `find`'s, without looking at its loop. A function that calls one with a loop and no bound cannot bound its own cost, and that is an error that names the callee.
+
 ## Function values
 
 A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
@@ -622,6 +724,47 @@ let small (x : u8) : bool = let is_small = below 9 in is_small x
 
 Generic lambdas that capture, and functions stored in data, come later.
 
+## Parallel loops
+
+`spread` is a `for` loop whose iterations run at the same time, on every core ([ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md)). It is proved one iteration at a time, with one more goal at every access to a buffer the body writes: the iteration owns that cell. By default iteration `i` owns cell `i`; `@owns(buf, owner)` says iteration `b` owns the cells `c` with `owner.[c] = b` instead. No two iterations own a cell, so a proved `spread` has no data race:
+
+<!-- example: spread.pia -->
+```ocaml
+let brighten (px : borrowed inout mutable [u8]) : unit =
+  spread i in 0 .. len px do
+    if px.[i] < 200 then px.[i] <- px.[i] + 50 else px.[i] <- 255
+  done
+
+let clear_basins (label : [usize]) (v : borrowed inout mutable [u32]) (nb : usize) : unit
+  requires len label = len v
+= spread b in 0 .. nb @owns(v, label) do
+    for c in 0 .. len v do
+      if label.[c] = b then v.[c] <- 0 else ()
+    done
+  done
+```
+
+A body that reads a cell another iteration writes is a race, and a failed goal:
+
+<!-- example: blur.pia -->
+<!-- expect: fail -->
+```ocaml
+let blur (v : borrowed inout mutable [u32]) : unit
+  requires len v >= 2
+= spread i in 1 .. len v do v.[i] <- v.[i - 1] done
+```
+
+```console
+$ piac --verify blur.pia
+blur.pia:3:29: proved: the iteration owns the cell it writes in 'v' (c = i) [smt]
+blur.pia:3:43: proved: '-' does not overflow usize [smt]
+blur.pia:3:38: failed: the iteration owns the cell it reads in 'v' (c = i)
+...
+4 proved, 1 failed, 0 skipped
+```
+
+A spread whose iteration `i` writes only cell `i` can run on the GPU instead: `@place(gpu)` after its range moves the body into a GPU kernel, and the proof stays the same. A placed spread can fail at run time, if there is no GPU or it runs out of memory, so it is a `result` the caller handles ([D8 directions and the picture on the GPU](placed.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md)).
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.
@@ -683,11 +826,11 @@ A file named `*.pia.md` is a literate program: Markdown whose fenced `pia` block
 
 ## Designed but not built yet
 
-These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, and [Status](status.md) the order they arrive in.
+These parts of Pia are designed, and the parser reads most of them, but `piac` does not compile them yet. [Language design](design.md) has the full picture, [Status](status.md) the order they arrive in, and [the feature index](features.md) what is built.
 
-**`dyn`**, a tagged value whose tags the prover can enumerate, and variants with record or float payloads:
+**`dyn`**, a tagged value whose tags the prover can enumerate:
 
-<!-- untested: dyn and float payloads are not implemented yet -->
+<!-- untested: dyn is not implemented yet -->
 ```ocaml
 let shape = type
   | Circle of f32
@@ -700,34 +843,9 @@ let describe (v : dyn) : str =
   | _         -> "other"
 ```
 
-**Generic types and concepts.** A generic type is a compile-time function that returns a type. Constraints are concepts, which are metaprograms and can state laws that every instance must prove:
+**Collectives and tiles.** `spread` and `@place(gpu)` are built; collectives such as `halo_exchange` and `all_reduce`, which the compiler will prove every worker reaches in the same order, tiled grids, and `@place(auto)`, which lets the compiler choose the device, are not:
 
-<!-- untested: concepts are not implemented yet -->
-```ocaml
-let pair = let (a : type) (b : type) => type { fst : a; snd : b }
-
-let meta Eq (t : type) : concept =
-  has_fn t `( eq : $t -> $t -> bool )
-  && law `( forall (a : $t). eq a a )
-
-let sum (t : type where Numeric t) (xs : borrowed in [t]) : t = fold add zero xs
-```
-
-**Modules and interfaces.** A module exports interfaces, which are symbols with types and contracts. Importers name the interfaces they use and verify against their contracts only, so modules build and prove in parallel. A module's state is one more exported symbol:
-
-<!-- untested: modules and interfaces are not implemented yet -->
-```ocaml
-interface Stream = sig
-  let status = type | Closed | Open | Drained
-  let state : status
-  let pull : unit -> [u8]
-    requires state = Open  ensures state = Open || state = Drained
-end
-```
-
-**Concurrency and placement.** `spread` is a parallel loop. Collectives such as `halo_exchange` and `all_reduce` are library metaprograms, and the compiler proves that every worker reaches them in the same order. `@place` chooses the CPU or the GPU:
-
-<!-- untested: spread and @place are not implemented yet -->
+<!-- untested: collectives, tiled grids and @place(auto) are not implemented yet -->
 ```ocaml
 let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) : unit
   ensures total_mass grid = old (total_mass grid) - outflow grid
@@ -739,4 +857,4 @@ let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) :
   record_outflow grid (all_reduce add (map outflow_of grid))
 ```
 
-**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, real-valued error bounds for float kernels (ADR 0038), and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }`.
+**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, three explicit ways to allow reassociation, and float kernels proved against real arithmetic ([ADR 0038](adr/0038-float-kernels-against-real-theories.md)). `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on values.

@@ -259,16 +259,6 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
   return std::nullopt;
 }
 
-// A buffer's elements are stored struct of arrays, one buffer per field,
-// so an element cannot hold a buffer itself yet.
-static bool holdsBuffer(mlir::Type t) {
-  if (mlir::isa<ArrayType, SliceType>(t)) return true;
-  if (auto r = mlir::dyn_cast<RecordType>(t))
-    for (mlir::Type f : r.getFieldTypes())
-      if (holdsBuffer(f)) return true;
-  return false;
-}
-
 bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
   // A buffer whose elements hold slices is a buffer of slices (ADR 0048),
   // one per slice field; a slice in a variant's payload is not yet.

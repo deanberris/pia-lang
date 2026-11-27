@@ -78,6 +78,9 @@ VERIFY_EXEMPT = {
     "spec_arg_range.pia",
     # A completeness regression: slice elements keep their range in specs.
     "spec_slice_ranges.pia",
+    # A completeness regression: a constant array passed as a slice is the
+    # same term in a spec and in code, also under a quantifier.
+    "const_array_views.pia",
 }
 
 # Public pages with Pia examples that tests/docs does not run, and why.
@@ -85,6 +88,8 @@ UNTESTED_PAGES = {
     # Built and run on the GPU by //examples/streams:placed, which only the
     # macOS CI job can run.
     "docs/placed.pia.md":
+        "built by examples/streams/BUILD.bazel",
+    "docs/pull_gpu.pia.md":
         "built by examples/streams/BUILD.bazel",
     # Design documents: their examples show syntax that is designed, much
     # of it not built yet. What is built is taught, and tested, on the tour.

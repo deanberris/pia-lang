@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS")
 
 # The Metal host shim (ADR 0068, section 3): Objective-C with ARC, over
 # Metal, behind a C header. lib/Pia/Gpu.pia declares its calls as trusted
@@ -19,7 +20,7 @@ cc_library(
     name = "metal",
     srcs = [":metal_shim_src"],
     hdrs = ["metal_shim.h"],
-    copts = [
+    copts = PIA_COPTS + [
         "-x",
         "objective-c",
         "-fobjc-arc",

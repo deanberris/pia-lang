@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Verifier v0 (milestone M5): obligations, interval checks, an encoding in
 # the upstream smt dialect, and Z3 (docs/verifier.md).
@@ -6,6 +7,7 @@ cc_library(
     name = "verify",
     srcs = ["Verifier.cpp"],
     hdrs = ["Verifier.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
@@ -31,6 +33,7 @@ cc_library(
     name = "triggers",
     srcs = ["Triggers.cpp"],
     hdrs = ["Triggers.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
@@ -48,6 +51,7 @@ cc_library(
     name = "strategy",
     srcs = ["Strategy.cpp"],
     hdrs = ["Strategy.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
