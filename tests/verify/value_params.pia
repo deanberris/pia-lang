@@ -1,0 +1,38 @@
+(* Value parameters on types (ADR 0074, step 2): `(n : usize)` beside
+   `(t : type)`, so a length is part of the type. `block u8 4` and
+   `block u8 5` are different types, the argument fixes an array's
+   length, and an invariant can name it, so no function restates it.
+// RUN: not piac --verify --no-lint %s | FileCheck %s
+*)
+
+(* The argument is the array's length. *)
+let block = let (t : type) (n : usize) => type { cells : [t; n] }
+
+let first (b : block u8 4) : u8 = b.cells.[3]
+
+(* An index the type does not bound fails. *)
+let at (b : block u8 4) (i : usize) : u8 = b.cells.[i]
+
+(* An invariant names the parameter: here a slice's length, which every
+   function that takes a `row 8 r` may assume. *)
+let row = let (n : usize) (r : region) => type {
+  data : borrowed(r) [u8]
+} where len data = n
+
+let last (r : region) (v : row 8 r) : u8 = v.data.[7]
+
+let past (r : region) (v : row 8 r) : u8 = v.data.[8]
+
+(* A value parameter passes on to the types in the body. *)
+let twin = let (n : usize) => type { a : block u8 n; b : block u8 n }
+
+let same (p : twin 2) : bool = p.a.cells.[1] = p.b.cells.[1]
+
+(* The same arguments make the same type. *)
+let keep (b : block u8 4) : block u8 4 = b
+
+(*
+// CHECK: value_params.pia:14:{{[0-9]+}}: failed: the index is within bounds
+// CHECK: value_params.pia:24:{{[0-9]+}}: failed: the index is within bounds
+// CHECK: proved, 2 failed, 0 skipped
+*)

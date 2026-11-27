@@ -51,6 +51,13 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
                     Diagnostics &diags,
                     std::vector<InterfaceArtifact> *loaded = nullptr);
 
+// Gives each function that an interface of this file lists, and whose
+// definition states no contract, that interface's contract, with its
+// parameters renamed to the definition's (ADR 0077). The definition is then
+// proved against it, and callers in the module use it, as if it had been
+// written there. A `decreases` measure alone is not a contract.
+void inheritInterfaceContracts(Node &program, Diagnostics &diags);
+
 }  // namespace pia::syntax
 
 #endif  // PIA_SYNTAX_INTERFACES_H

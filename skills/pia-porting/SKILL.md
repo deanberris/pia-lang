@@ -39,6 +39,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | cleanup | `defer e`, at every exit, before an error leaves | destructors, `goto out` | `Drop` | `Fun.protect` | `defer`, `errdefer` |
 | ownership | `borrowed` / `moved`, `in` / `out` / `inout`, `fixed` / `mutable` | `const T&`, `T&`, `T&&` | `&T`, `&mut T`, moves | none | pointers |
 | generics | `(t : type where Ord t)`, deduced at calls | templates | generics | polymorphism, functors | `comptime T: type` |
+| value parameters | `let block = let (t : type) (n : usize) => type ...`, `block u8 4` (types only for now) | `template <size_t N>` | const generics `<const N: usize>` | none | `comptime n: usize` |
 | interfaces | concepts with laws, proved per type | C++20 concepts (no laws) | traits | module signatures | duck-typed `comptime` |
 | metaprograms | `let meta`, quotes and splices, `@derive(eq)` | macros, templates, `constexpr` | `macro_rules!`, proc macros | ppx | `comptime` |
 | closures | `let [x] (a : t) => e`, captures listed | `[x](T a) { }` | `move \|a\| e` | `fun a -> e` | none |
@@ -52,6 +53,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | complexity | `costs iterations <= len xs`, proved (ADR 0062) | a comment | a comment | a comment | a comment |
 | theorems Z3 cannot prove | `let lemma l ... = by lean T`, proved in Lean 4 (ADR 0061, `pia-lean`) | none | none (Verus, Kani outside the language) | none (Coq outside the language) | none |
 | parallel loops | `spread i in 0 .. n do ... done`, proved race-free; `@place(gpu)` on a Mac's GPU | OpenMP | rayon | domains | threads |
+| a sequence of GPU kernels | `for k in 0 .. n @place(gpu) do ... done`, its spreads one command buffer | CUDA streams, Metal command buffers | wgpu command encoders | — | — |
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 

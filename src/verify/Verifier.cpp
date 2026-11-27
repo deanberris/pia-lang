@@ -1731,6 +1731,22 @@ class Encoder {
       derived_[cur] = {before, Value(), owner, iv};
       return true;
     }
+    if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+        h && h->hasAttr("pia.unless_ok")) {
+      // After a for loop placed on the GPU: every cell of a buffer it
+      // writes is unknown unless the run succeeded, `iv` (ADR 0068,
+      // section 5).
+      Value root = rootBuffer(h.getBuffer());
+      Value old = arrays_.lookup(root);
+      Value ok = term(h.getIv());
+      if (!old || !ok) {
+        havocArray(root);
+        return true;
+      }
+      Value fresh = declare(old.getType(), "", false);
+      setArray(root, ite(ok, old, fresh));
+      return true;
+    }
     if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op)) {
       // The cells of a spread's buffer that other iterations own take
       // unknown values (ADR 0060): forall c, if the iteration owns c,
@@ -6692,6 +6708,19 @@ std::vector<Outcome> verifyModule(mlir::ModuleOp module,
       st.typeSmt += smt;
       st.typeCost += o.cost;
     }
+  }
+  // A generated test case that fails says what its failure means
+  // (ADR 0056): for a specification check, that the contract cannot be met.
+  for (size_t i = 0; i < outcomes.size(); ++i) {
+    if (outcomes[i].status != Status::Failed)
+      continue;
+    auto fn = opOf[i]->getParentOfType<mlir::func::FuncOp>();
+    if (!fn)
+      fn = mlir::dyn_cast<mlir::func::FuncOp>(opOf[i]);
+    if (!fn)
+      continue;
+    if (auto h = fn->getAttrOfType<mlir::StringAttr>("pia.case_failure"))
+      outcomes[i].hint = h.getValue().str();
   }
   if (options.checkVacuity) checkVacuity(module, proofs, outcomes, opOf, options, st);
   // Per op: whether every goal it raises holds, and how.

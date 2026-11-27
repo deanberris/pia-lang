@@ -118,6 +118,37 @@ cc main.c clamp.o -o main
 
 The [C ABI](codegen.md#c-abi) section of the codegen notes says how slices, arrays and records are passed. Other outputs stop earlier in the pipeline: `--emit=mlir` prints the Pia dialects, `--emit=core` the core MLIR dialects, `--emit=llvm` the LLVM IR and `--emit=asm` the assembly.
 
+## Contracts written once
+
+When a definition's contract is the same as its interface's, leave it off the definition. A function an interface lists, defined with no `requires`, `ensures`, `costs` or `reads`, takes the interface's contract, with the parameters renamed to the definition's ([ADR 0077](adr/0077-definitions-inherit-interface-contracts.md)). The body is proved against it, and callers in the module use it, so here `five` proves from what `count_to` inherited, even though `count_to`'s loop hides its result from the verifier:
+
+```ocaml
+module Counting : Counter
+
+interface Counter = sig
+  let count_to : (n : u32) -> u32
+    requires n < 1000
+    ensures result = n
+end
+
+let count_to (m : u32) : u32
+=
+  let i : mutable u32 = 0 in
+  while i < m
+    invariant i <= m
+    decreases m - i
+  do
+    i <- i + 1
+  done;
+  i
+
+let five (k : u32) : u32
+  ensures result = 5
+= count_to 5
+```
+
+It is all or nothing: a definition that states any of those clauses states its whole contract, which may be stronger than the interface's, as `clamp`'s is above. A `decreases` measure alone does not count. A goal an inherited clause raises points at the interface's line, where the clause is written.
+
 ## Use another module
 
 Another file reaches `clamp` by importing the interface that lists it. The importer is built against the interface alone, as an *interface artifact*, which `piac --emit=interface` writes, one file per interface (here `Clamp.Clamping.piai`):

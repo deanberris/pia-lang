@@ -161,7 +161,7 @@ pia_object(
     target_compatible_with = APPLE_SILICON,
 )
 
-# The sediment pull step with each wave on the GPU (docs/pull_gpu.pia.md),
+# The sediment pull step on the GPU, one command buffer a step (docs/pull_gpu.pia.md),
 # which imports the commit pass and its proof from :pull.
 pia_library(
     name = "pull_gpu",

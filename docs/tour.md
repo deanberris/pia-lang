@@ -405,6 +405,20 @@ let reserve (n : usize) : result unit oom =
 
 The type arguments are deduced. A constructor takes its instance from the type it is expected to have, as `Err OutOfMemory` does from `reserve`'s result, or else from its payload, as `Some v` does. A call takes them from its arguments, then from the type it is expected to have. To force a choice, give them: `unwrap_or<u16> (Some v) 0`, or by name, `unwrap_or<t = u16>`. A generic function needs its return type written, and recursive generic types, such as a list, are not supported yet.
 
+A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. Functions that are generic over a value parameter, such as one `last` for every `n`, are not supported yet.
+
+```ocaml
+let block = let (t : type) (n : usize) => type { cells : [t; n] }
+
+let top (b : block u8 4) : u8 = b.cells.[3]
+
+let row = let (n : usize) (r : region) => type {
+  data : borrowed(r) [u8]
+} where len data = n
+
+let last (r : region) (v : row 8 r) : u8 = v.data.[7]
+```
+
 ### Concepts
 
 A concept says what a type must provide. It is a metaprogram that returns a signature: each requirement is a function a type must have, a law is a lemma every type must prove, and `include` brings in another concept. A constraint on a type parameter, `(t : type where Ord t)`, names one:
@@ -806,6 +820,8 @@ let wide = type { v : byte; w : u8 } @derive(eq)
 ```
 
 Quotes are hygienic: names a quote binds are renamed so they cannot capture yours, and free names in a quote refer to where the metaprogram is defined. [Metaprograms](meta.md) describes the interpreter, its builtins and the expansion loop.
+
+Metaprograms also write tests. `G.cases f`, from `Pia.Test.Gen`, reads `f`'s parameter types and contract and writes, for each combination of boundary values its `requires` allows, a lemma that some result can meet `f`'s `ensures` there and a lemma that `f` does. A contract that no result can meet, such as `ensures result = a + b` on a `u8` result, fails as a *specification failure* at the inputs that break it ([tests from contracts](meta.md#tests-from-contracts)).
 
 ## Comments and literate programs
 

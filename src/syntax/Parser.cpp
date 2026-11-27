@@ -1512,6 +1512,11 @@ class Parser {
         n->add(pattern());
         expect(K::In, "'in'");
         n->add(binary(20));
+        // A `for` takes its attributes after its step, such as the
+        // `@place(gpu)` of a placed sequence (ADR 0068, section 9), and
+        // keeps them last, only when there are some, so its other children
+        // stay where they were.
+        NodePtr forAttrs;
         if (spread) {
           n->add(attrs());
         } else if (accept(K::Step)) {
@@ -1519,10 +1524,14 @@ class Parser {
         } else {
           n->add(makeNode(N::None, loc()));
         }
+        if (!spread)
+          forAttrs = attrs();
         n->add(loopAnnots(spread));
         expect(K::Do, "'do'");
         n->add(withHandle(seq()));
         expect(K::Done, "'done'");
+        if (forAttrs && !forAttrs->kids.empty())
+          n->add(std::move(forAttrs));
         return n;
       }
       case K::While: {
@@ -1595,7 +1604,15 @@ class Parser {
     take();
     while (!at(K::QDot)) {
       bool paren = accept(K::LParen);
-      std::string name(expect(K::Ident, "a bound variable").text);
+      // In a quote, `$x` binds the name a metaprogram computed, as a
+      // `let` does (docs/meta.md).
+      std::string name;
+      if (at(K::SpliceIdent)) {
+        name = text();
+        take();
+      } else {
+        name = std::string(expect(K::Ident, "a bound variable").text);
+      }
       if (accept(K::In)) {
         auto b = makeNode(N::RangeBinder, loc(), name);
         b->add(binary(50));
@@ -1611,7 +1628,8 @@ class Parser {
         n->add(std::move(b));
       }
       if (paren) expect(K::RParen, "')'");
-      if (!at(K::QDot) && !at(K::Ident) && !at(K::LParen))
+      if (!at(K::QDot) && !at(K::Ident) && !at(K::SpliceIdent) &&
+          !at(K::LParen))
         fail("expected '.' and a space after the bound variables");
     }
     if (n->kids.empty()) fail("expected a bound variable");

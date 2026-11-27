@@ -24,6 +24,17 @@
 
 #include "dialect/ContractDialect.h"
 #include "dialect/PiaDialect.h"
+#include "meta/Interpreter.h"
+#include "meta/Totality.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Verifier.h"
+#include "sema/Sema.h"
+#include "syntax/Interfaces.h"
+#include "syntax/Parser.h"
 #include "llvm/ADT/APInt.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
@@ -31,16 +42,6 @@
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/Verifier.h"
-#include "meta/Interpreter.h"
-#include "meta/Totality.h"
-#include "sema/Sema.h"
-#include "syntax/Parser.h"
 
 namespace pia::irgen {
 
@@ -1175,6 +1176,7 @@ class Gen {
     owns_.clear();
     variadic_.reset();
     lower_ = nullptr;
+    case_ = nullptr;
     deref_ = nullptr;
     solver_.clear();
     ghost_ = false;
@@ -1232,6 +1234,8 @@ class Gen {
       fail(*triggers_.front(), "@trigger applies only to an axiom");
       return;
     }
+    if (case_ && !genCase(*case_, isLemma, fn))
+      return;
     // A theory's abstract spec function has no body: to the verifier it is
     // an uninterpreted function (ADR 0036).
     if (hasFlag(item, "abstract")) {
@@ -2085,6 +2089,18 @@ class Gen {
         binding->type = ft;
         scopes_.back()[name.str()] = std::move(binding);
       };
+      // An instance's value parameters are its constants: `n` in
+      // `vec<u8, 4>`'s invariant is 4 (ADR 0074).
+      if (const auto *values = types_.valueArgs(rec.getName().str()))
+        for (const auto &[name, arg] : *values) {
+          auto binding = std::make_shared<Binding>();
+          binding->name = name;
+          binding->value = create<ConstantOp>(
+              l, arg.type,
+              b_.getIntegerAttr(b_.getIntegerType(kWidth), arg.value));
+          binding->type = arg.type;
+          scopes_.back()[name] = std::move(binding);
+        }
       if (field.empty()) {
         for (auto [n, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
           bindField(n.getValue(), ft);
@@ -2374,6 +2390,46 @@ class Gen {
   }
 
   // `@overflow(wrap)` on the return annotation sets the function's mode.
+  // A generated case says what it checks, so that its goal reads as the
+  // case and not as a lemma's postcondition (ADR 0056). A specification
+  // check that fails means no result could meet the contract at the case's
+  // inputs: the contract is wrong, whatever the code does, and the hint
+  // says so rather than letting the case pass from a contradiction.
+  bool genCase(const Node &a, bool isLemma, mlir::func::FuncOp fn) {
+    const char *usage = "@case takes spec or oracle, the function and the "
+                        "case's number, as in @case(spec, clamp, 3)";
+    if (!isLemma) {
+      fail(a, "@case applies only to a lemma");
+      return false;
+    }
+    if (a.kids.size() != 3 || a.kids[0]->kind != NodeKind::Name ||
+        a.kids[1]->kind != NodeKind::Name ||
+        a.kids[2]->kind != NodeKind::IntLit) {
+      fail(a, usage);
+      return false;
+    }
+    const std::string &what = a.kids[0]->text;
+    std::string f = "'" + a.kids[1]->text + "'";
+    std::string k = "case " + a.kids[2]->text + ": ";
+    std::string claim, hint;
+    if (what == "spec") {
+      claim = k + "some result can meet the ensures of " + f;
+      hint = "specification failure: no value of " + f +
+             "'s result type satisfies its ensures at these inputs, so the "
+             "contract is wrong, whatever the code does; correct the ensures, "
+             "or add a requires that rules these inputs out";
+    } else if (what == "oracle") {
+      claim = k + f + " meets its ensures";
+      hint = f + " breaks its contract at these inputs";
+    } else {
+      fail(a, usage);
+      return false;
+    }
+    fn->setAttr("pia.obligation", b_.getStringAttr(claim));
+    fn->setAttr("pia.case_failure", b_.getStringAttr(hint));
+    return true;
+  }
+
   bool genAttributes(const Node &attrs) {
     for (const syntax::NodePtr &a : attrs.kids) {
       if (a->text == "overflow" && a->kids.size() == 1 &&
@@ -2486,6 +2542,12 @@ class Gen {
             return k->kind == NodeKind::Name;
           })) {
         owns_.push_back(a.get());
+        continue;
+      }
+      // `@case(spec, f, k)` or `@case(oracle, f, k)` on a lemma that a
+      // test generator wrote (ADR 0056); checked once the lemma is known.
+      if (a->text == "case") {
+        case_ = a.get();
         continue;
       }
       if (a->text == "allow" && !a->kids.empty()) {
@@ -11158,6 +11220,21 @@ class Gen {
     const Node &body = *n.kids[4];
     if (pattern.kind != NodeKind::PVar)
       return fail(pattern, "a for loop binds a single name for now");
+    // `@place(gpu)` makes the loop a placed sequence (ADR 0068, section 9):
+    // its spreads become dispatches of one command buffer, and the loop
+    // evaluates to `result unit gpu_error`.
+    bool onGpu = false;
+    if (n.kids.size() > 5)
+      for (const syntax::NodePtr &a : n.kids[5]->kids) {
+        if (a->text != "place")
+          return fail(*a, "the attribute @" + a->text +
+                              " is not supported on a for loop");
+        if (a->kids.size() != 1 || a->kids[0]->kind != NodeKind::Name ||
+            a->kids[0]->text != "gpu")
+          return fail(*a, "@place takes one device, and only @place(gpu) is "
+                          "supported yet");
+        onGpu = true;
+      }
     if (iterable.kind != NodeKind::Range)
       return fail(iterable, "a for loop iterates over a range 'lo..hi' for now");
     auto bounds = genRange(iterable);
@@ -11178,7 +11255,21 @@ class Gen {
     }
 
     std::vector<BindingPtr> vars = carried({&annots, &body});
+    // The host runs a placed sequence's body while it encodes the
+    // dispatches, before any of them runs, so nothing it computes can be
+    // carried from one iteration to the next.
+    if (onGpu && !vars.empty())
+      return fail(n, "a for loop placed on the GPU cannot assign '" +
+                         vars[0]->name +
+                         "', which is declared outside it: its body runs on "
+                         "the host before the GPU runs (ADR 0068, section 9)");
+    if (onGpu && stepNode.kind != NodeKind::None)
+      return fail(stepNode, "a for loop placed on the GPU steps by one");
     auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, values(vars));
+    if (onGpu) {
+      forOp->setAttr("pia.place", b_.getStringAttr("gpu"));
+      forOp->setAttr("pia.sequence", b_.getUnitAttr());
+    }
     Block *block = forOp.getBody();
     {
       OpBuilder::InsertionGuard guard(b_);
@@ -11208,7 +11299,30 @@ class Gen {
       if (!r) return r;
     }
     setValues(vars, forOp.getResults());
-    return unit();
+    if (!onGpu)
+      return unit();
+    // The loop is proved as written, so its invariants hold after it on the
+    // CPU. On the GPU they hold only if the run succeeded: a failed run may
+    // leave every buffer the loop writes part written (ADR 0068, section 5),
+    // so each of those is forgotten unless the status is 0.
+    pushScope();
+    Value gpuOk = gpuStatus(n);
+    if (!gpuOk) {
+      popScope();
+      return std::nullopt;
+    }
+    std::set<std::string> written;
+    collectWrittenBuffers(body, written);
+    for (const std::string &name : written) {
+      BindingPtr wb = lookup(name);
+      if (!wb || !elementType(wb->type))
+        continue;
+      auto h = create<contract::HavocOthersOp>(l, wb->value, gpuOk, Value());
+      h->setAttr("pia.unless_ok", b_.getUnitAttr());
+    }
+    R r = gpuItem(n, "__pia_gpu_result", true);
+    popScope();
+    return r;
   }
 
   // --- spread (ADR 0060) --------------------------------------------------
@@ -11526,11 +11640,8 @@ class Gen {
                                      "' must not be written in the spread");
       sc.owners[a->kids[0]->text] = owner;
     }
-    // A GPU thread writes only its own cell of each buffer (ADR 0068,
-    // section 1): identity ownership, for now.
-    if (onGpu && !sc.owners.empty())
-      return fail(n, "a spread placed on the GPU writes each buffer at its "
-                     "own index only, so it takes no @owns yet (ADR 0068)");
+    // On the GPU an owner array is only a proof fact: the kernel writes
+    // where the body says (ADR 0068, section 9).
     auto bounds = genRange(iterable);
     if (!bounds)
       return std::nullopt;
@@ -12644,6 +12755,7 @@ class Gen {
   bool specPlace_ = false;
   bool specFieldSeen_ = false;
   std::vector<const Node *> triggers_;  // an axiom's @trigger attributes
+  const Node *case_ = nullptr; // a generated test case's @case (ADR 0056)
   TheoryInfo theoryInfo_;  // models and their obligations (ADR 0036)
   RegionInfo regionInfo_;  // fields that borrow from a region (ADR 0042)
   bool trusted_ = false;   // the file is marked @trusted (ADR 0023)
@@ -12740,6 +12852,21 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
                                                mlir::MLIRContext &ctx,
                                                syntax::Diagnostics &diags,
                                                const Options &options);
+mlir::OwningOpRef<mlir::ModuleOp>
+generateInherited(const syntax::Node &programIn, std::string_view filename,
+                  mlir::MLIRContext &ctx, syntax::Diagnostics &diags,
+                  const Options &options);
+
+// Whether the file claims an interface it declares, so that a definition
+// may take its contract from one (ADR 0077).
+bool claimsOwnInterface(const syntax::Node &program) {
+  bool header = false, iface = false;
+  for (const syntax::NodePtr &item : program.kids) {
+    header = header || item->kind == NodeKind::ModuleHeader;
+    iface = iface || item->kind == NodeKind::Interface;
+  }
+  return header && iface;
+}
 }  // namespace
 
 mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
@@ -12748,6 +12875,22 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
                                            syntax::Diagnostics &diags,
                                            const Options &options) {
   loadDialects(ctx);
+  // A definition that states no contract takes its interface's (ADR 0077),
+  // before anything reads the definition's contract.
+  if (!claimsOwnInterface(programIn))
+    return generateInherited(programIn, filename, ctx, diags, options);
+  syntax::NodePtr inherited = syntax::clone(programIn);
+  syntax::inheritInterfaceContracts(*inherited, diags);
+  if (diags.hasErrors())
+    return nullptr;
+  return generateInherited(*inherited, filename, ctx, diags, options);
+}
+
+namespace {
+mlir::OwningOpRef<mlir::ModuleOp>
+generateInherited(const syntax::Node &programIn, std::string_view filename,
+                  mlir::MLIRContext &ctx, syntax::Diagnostics &diags,
+                  const Options &options) {
   if (!hasErasedBoxes(programIn))
     return generateOnce(programIn, filename, ctx, diags, options);
   // A box over a concept (ADR 0046) becomes its own record and theory. A
@@ -12800,7 +12943,6 @@ mlir::OwningOpRef<mlir::ModuleOp> generate(const syntax::Node &programIn,
   return generateOnce(*second, filename, ctx, diags, options);
 }
 
-namespace {
 mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
                                                std::string_view filename,
                                                mlir::MLIRContext &ctx,
@@ -12860,6 +13002,6 @@ mlir::OwningOpRef<mlir::ModuleOp> generateOnce(const syntax::Node &program,
   gen.setTrusted(isTrustedFile(program));
   return gen.run(source);
 }
-}  // namespace
+} // namespace
 
 }  // namespace pia::irgen

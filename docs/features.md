@@ -34,6 +34,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
+| Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
 | Cost bounds, `costs iterations` and `costs calls` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |
@@ -58,10 +59,12 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
+| Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |
 | Type-level metaprograms, `match` on types, substitution failure | [meta](meta.md#type-level-metaprograms), [ADR 0035](adr/0035-substitution-failure-and-total-constraints.md) | [type_functions](../tests/verify/type_functions.pia), [type_match](../tests/verify/type_match.pia), [total_metaprograms](../tests/verify/total_metaprograms.pia), [soft_failure](../tests/verify/soft_failure.pia) |
+| Tests generated from contracts: `Pia.Test.Gen`'s `cases`, `@case`, and specification failures | [meta](meta.md#tests-from-contracts), [ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md) | [test_gen](../tests/std/test_gen.pia), [test_gen_spec](../tests/std/Inputs/test_gen_spec.pia) |
 | Lambdas and function values | [tour](tour.md#function-values), [ADR 0044](adr/0044-function-values-and-lambdas.md) | [lambda_find](../tests/verify/lambda_find.pia), [lambda_generic](../tests/verify/lambda_generic.pia), [lambda_generic_forms](../tests/verify/lambda_generic_forms.pia), [lambda_named](../tests/verify/lambda_named.pia), [lambda_overloads](../tests/verify/lambda_overloads.pia) |
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
@@ -86,7 +89,9 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Modules and interfaces, met by proof | [getting started](getting-started.md), [ADR 0039](adr/0039-module-and-interface-syntax.md) | [modules](../tests/verify/modules.pia) |
+| A definition with no contract takes its interface's, so a contract is written once | [getting started](getting-started.md#contracts-written-once), [ADR 0077](adr/0077-definitions-inherit-interface-contracts.md) | [inherited_contracts](../tests/verify/inherited_contracts.pia) |
 | `spread`, a parallel loop whose iterations own their cells, and `@owns` | [tour](tour.md#parallel-loops), [verifier](verifier.md#spread), [ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md) | [spread](../tests/verify/spread.pia), [spread_ensures](../tests/verify/spread_ensures.pia), [spread_frame](../tests/verify/spread_frame.pia) |
+| `@place(gpu)` on a `spread`, a Metal kernel, and on a `for`, a sequence of kernels in one command buffer | [D8 on the GPU](placed.pia.md), [the pull step on the GPU](pull_gpu.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md) | [gpu_sequence](../tests/verify/gpu_sequence.pia) |
 
 ## Demos
 
