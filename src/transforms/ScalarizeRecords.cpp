@@ -282,6 +282,23 @@ struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
   }
 };
 
+// Copying an array of records copies each field's array into its own.
+struct CopyLowering : mlir::OpConversionPattern<CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(CopyOp op, OneToNOpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getSrc().getType()))
+      return mlir::failure();
+    if (adaptor.getSrc().size() != adaptor.getDst().size())
+      return mlir::failure();
+    for (auto [src, dst] : llvm::zip(adaptor.getSrc(), adaptor.getDst()))
+      make<CopyOp>(rw, op.getLoc(), src, dst);
+    rw.eraseOp(op);
+    return mlir::success();
+  }
+};
+
 // `old p` on a record is `old` of each field.
 struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   using OpConversionPattern::OpConversionPattern;
