@@ -1471,6 +1471,13 @@ class Parser {
     auto n = makeNode(N::Reveal, loc());
     expect(K::With, "'with'");
     do {
+      // In a quote, `with $f` reveals the function a metaprogram names,
+      // as a derive's own spec functions are (ADR 0063).
+      if (at(K::SpliceIdent)) {
+        n->add(makeNode(N::Splice, loc(), text()));
+        take();
+        continue;
+      }
       if (!at(K::Ident))
         fail("expected the name of a spec function after 'with'");
       NodePtr f = makeNode(N::Name, loc(), text());

@@ -39,6 +39,13 @@ int64_t round_trip_segment(int32_t x, uint8_t y, uint8_t n, uint8_t *text,
 
 int64_t read_route(const uint8_t *s, size_t n);
 int64_t round_trip_route(int32_t x, bool has_last, uint8_t *text, size_t ntext);
+int64_t read_route_dom(const uint8_t *s, size_t n, void *cells, size_t ncells,
+                       uint64_t *key_start, size_t nmems, uint64_t *key_stop,
+                       void *member_values);
+int64_t round_trip_route_dom(int32_t x, bool has_last, uint8_t *text,
+                             size_t ntext, void *cells, size_t ncells,
+                             uint64_t *key_start, size_t nmems,
+                             uint64_t *key_stop, void *member_values);
 
 static _Alignas(16) unsigned char cells[16 * 512];
 static uint64_t key_start[16], key_stop[16];
@@ -203,6 +210,18 @@ int main(void) {
   int64_t r1 = round_trip_route(-7, true, text, sizeof text);
   if (r1 != -6989 + 2 * 7020 + 3 * 31) {
     printf("round_trip_route: %lld\n", (long long)r1);
+    bad = 1;
+  }
+  int64_t d1 = round_trip_route_dom(-7, true, text, sizeof text, cells, 16,
+                                    key_start, 16, key_stop, member_values);
+  if (d1 != -6989 + 2 * 7020 + 3 * 31) {
+    printf("round_trip_route_dom: %lld\n", (long long)d1);
+    bad = 1;
+  }
+  int64_t d0 = round_trip_route_dom(-7, false, text, sizeof text, cells, 16,
+                                    key_start, 16, key_stop, member_values);
+  if (d0 != -6989 + 2 * 7020) {
+    printf("round_trip_route_dom (no last): %lld\n", (long long)d0);
     bad = 1;
   }
   int64_t r0 = round_trip_route(-7, false, text, sizeof text);
