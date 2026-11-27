@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS", "PIA_MLIR_COPTS")
 
 # The language server's protocol and front-end features (ADR 0021). No LLVM
 # dependency, like //src/syntax, so it builds and tests in seconds.
@@ -15,7 +16,7 @@ cc_library(
         "Proofs.h",
         "Server.h",
     ],
-    copts = ["-Wall", "-Wextra", "-Werror"],
+    copts = PIA_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = ["//src/syntax"],
@@ -25,12 +26,7 @@ cc_library(
 cc_library(
     name = "proofs",
     srcs = ["Proofs.cpp"],
-    # MLIR's generated headers trip -Wunused-parameter.
-    copts = [
-        "-Wall",
-        "-Wextra",
-        "-Wno-unused-parameter",
-    ],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

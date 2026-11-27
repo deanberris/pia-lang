@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS")
 
 # The metaprogram engine (milestone M7): the interpreter and the expansion
 # loop. Like the front end, it has no LLVM dependency.
@@ -14,7 +15,7 @@ cc_library(
         "Interpreter.h",
         "Totality.h",
     ],
-    copts = ["-Wall", "-Wextra", "-Werror"],
+    copts = PIA_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = ["//src/syntax"],

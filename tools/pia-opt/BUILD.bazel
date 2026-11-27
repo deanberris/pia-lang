@@ -1,12 +1,14 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 load("//tools:link.bzl", "TOOL_LINKOPTS")
 
 # mlir-opt for Pia. M0 registers the upstream dialects Pia lowers through;
 # Pia's own dialects: pia, pia_contract and pia_par (M3).
 cc_binary(
     name = "pia-opt",
-    linkopts = TOOL_LINKOPTS,
     srcs = ["pia-opt.cpp"],
+    copts = PIA_MLIR_COPTS,
+    linkopts = TOOL_LINKOPTS,
     visibility = ["//visibility:public"],
     deps = [
         "//src/dialect",

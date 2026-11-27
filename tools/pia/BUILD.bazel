@@ -1,16 +1,13 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools:copts.bzl", "PIA_COPTS")
 load("//tools:link.bzl", "TOOL_LINKOPTS")
 
 # `pia repl`: the interactive, verified REPL (docs/repl.md).
 cc_binary(
     name = "pia",
-    linkopts = TOOL_LINKOPTS,
     srcs = ["pia.cpp"],
-    copts = [
-        "-Wall",
-        "-Wextra",
-        "-Wno-unused-parameter",
-    ],
+    copts = PIA_COPTS,
+    linkopts = TOOL_LINKOPTS,
     visibility = ["//visibility:public"],
     deps = [
         "//src/lsp",

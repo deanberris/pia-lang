@@ -1,10 +1,12 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # IR transformations shared by the verifier and code generation.
 cc_library(
     name = "transforms",
     srcs = ["ScalarizeRecords.cpp"],
     hdrs = ["ScalarizeRecords.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
