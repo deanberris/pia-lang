@@ -189,3 +189,4 @@ nav:
       - adr/0074-library-types-tensors.md
       - adr/0075-codegen-benchmarks-against-c-cpp-rust-zig.md
       - adr/0076-transparent-exports.md
+      - adr/0078-pia-lib-ops-with-proved-substitutions.md
