@@ -4,9 +4,11 @@
 
 let block = let (t : type) (n : usize) => type { cells : [t; n] }
 
-(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 18446744073709551616 does not fit in usize
+let small = let (n : u8) => type { cells : [u8; n] }
+
+(* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 256 does not fit in u8
 *)
-let negative (b : block u8 18446744073709551616) : u8 = 0
+let wide (b : small 256) : u8 = 0
 
 (* CHECK-DAG: value_param_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: a value argument must be an integer literal, or a value parameter of the type being defined, for now
 *)
