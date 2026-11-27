@@ -243,11 +243,10 @@ bool pureScalar(mlir::func::FuncOp f, llvm::DenseMap<Operation *, bool> &memo) {
   // arbitrary value with the interface's contract, which is not a
   // definition (ADR 0039).
   if (!f || f.isExternal() || f->hasAttr(PiaDialect::getSpecAttrName()) ||
-      f->hasAttr(PiaDialect::getImportAttrName()) ||
-      f->hasAttr("pia.extern") ||
+      f->hasAttr(PiaDialect::getImportAttrName()) || f->hasAttr("pia.extern") ||
       f->hasAttr(PiaDialect::getAbstractAttrName()) ||
       f->hasAttr("pia.lemma") || f->hasAttr("pia.generic_eq") ||
-      f.getNumResults() != 1)
+      f->hasAttr("pia.reference") || f.getNumResults() != 1)
     return false;
   auto scalar = [](Type t) { return mlir::isa<IntType>(t) || t.isInteger(1); };
   if (!scalar(f.getFunctionType().getResult(0))) return false;
