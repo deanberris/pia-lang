@@ -3071,8 +3071,12 @@ class Gen {
       return TV{create<IntToFloatOp>(l, target, v->value), target};
     if (isFloat(v->type)) {
       unsigned from = v->type.getIntOrFloatBitWidth();
+      // The fastmath attribute is passed, empty, because the builder
+      // without it is the generic one, deprecated in this MLIR.
       if (from < target.getIntOrFloatBitWidth())
-        return TV{create<mlir::arith::ExtFOp>(l, target, v->value), target};
+        return TV{create<mlir::arith::ExtFOp>(l, target, v->value,
+                                              mlir::arith::FastMathFlagsAttr{}),
+                  target};
       return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
     }
     return fail(arg, "'" + to + "' converts an integer or a float, not " +
