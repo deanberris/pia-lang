@@ -114,7 +114,7 @@ $ piac --verify --iface-path=. line.pia
 97 proved, 0 failed, 0 skipped
 ```
 
-An option or an array of a record is not supported yet.
+An option of a record and an array of records work the same way: each element is read and written by the record's own codec, and `json_room_<t>` counts the record's room once for each element. `@derive(json_dom)` does not take them yet.
 
 ## The document: `Pia.Text.Json.Dom`
 
