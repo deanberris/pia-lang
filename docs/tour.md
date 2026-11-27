@@ -105,6 +105,29 @@ let brighten (p : u8) : u8 = p +| 40
 
 Wrapping and saturating arithmetic are modelled exactly, so the postconditions above are proved too. In loops, LLVM vectorises saturating arithmetic into NEON's saturating instructions, such as `uqadd`.
 
+## Floats
+
+`f32` and `f64` are IEEE 754 floats, and strict: each operation is rounded once, to nearest, `a * b + c` is two roundings rather than a fused multiply-add, and subnormals are kept, so a result is the same bit for bit as C's built with `-ffp-contract=off`. A float literal has a decimal point or an exponent, and takes the float type its context expects, or a suffix such as `0.5f32`. An integer literal is never a float: write `2.0`, not `2`.
+
+Floats never mix with integers implicitly. A type applied to a value converts it: `f32 n` rounds an integer to the nearest float, `f64 x` widens an `f32`, and `i32 x` truncates a float toward zero. Truncating is a goal, since C leaves it undefined for a NaN or a value out of range, so the range is stated where the float comes from. `to_bits x` and `from_bits u` are the IEEE encoding as a `u32` or `u64`.
+
+```ocaml
+let mean (xs : [f32]) : f32
+  requires len xs > 0
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] done;
+  s / f32 (len xs)
+
+let to_byte (x : f64) : u8
+  requires -1.0 < x && x < 256.0
+= u8 x
+
+let abs32 (x : f32) : f32 = from_bits (to_bits x & 2147483647)
+```
+
+The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`. What `+` and `*` compute is not modelled yet, so a goal that depends on a sum's value fails rather than being proved wrongly; proving float kernels against real-valued specifications, with their rounding error, is [ADR 0038](adr/0038-float-kernels-against-real-theories.md), still to come.
+
 ## Arrays and slices
 
 `[T; n]` is an array of a fixed length `n`, and `[T]` is a slice whose length is known at run time as `len xs`. Both are indexed with `xs.[i]`, and every index is a goal: `0 <= i < len xs`.
@@ -206,6 +229,8 @@ let wider (a : span) (b : span) : span
 ```
 
 `a * a` is still an error, since a length times a length is an area: a program writes that function itself.
+
+Two derives come from library modules, for programs that import them: `@derive(hash)` from Pia.Core.Hash, so `hash_all<span>` works and a span hashes as the u32 it holds, and `@derive(json)` from Pia.Text.Json.Derive, which writes and reads a span as the bare JSON number, `5`, not an object.
 
 A field of a mutable record can be assigned:
 
@@ -714,4 +739,4 @@ let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) :
   record_outflow grid (all_reduce add (map outflow_of grid))
 ```
 
-**Floats and SIMD vectors.** `f16`, `f32` and `f64` with strict IEEE semantics by default, `@finite` to prove no NaN or infinity appears, and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }`.
+**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, real-valued error bounds for float kernels (ADR 0038), and three explicit ways to allow reassociation. `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }`.

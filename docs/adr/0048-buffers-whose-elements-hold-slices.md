@@ -2,7 +2,7 @@
 
 Date: 2026-11-22
 
-Status: Proposed.
+Status: Accepted (2026-11-27).
 
 ## Context
 
@@ -68,6 +68,6 @@ Storing a whole owning element, `xs.[i] <- b`, needs the element written over to
 ## Questions for Dean
 
 
-1. **Writes only through owned slices?** The alternative, a region heap with explicit `apart` invariants, would allow writes through shared slices but needs quantified invariants that make proofs slower.
-2. **Is `Drop` enough to count as owning**, or must the type be `@linear`? `box` has a `Drop`; a `@linear` record cannot be dropped implicitly. Both stop copies, which is what the proof needs.
+1. **Writes only through owned slices?** The alternative, a region heap with explicit `apart` invariants, would allow writes through shared slices but needs quantified invariants that make proofs slower. Answered 2026-11-27 by Dean: yes, writes only through owned slices.
+2. **Is `Drop` enough to count as owning**, or must the type be `@linear`? `box` has a `Drop`; a `@linear` record cannot be dropped implicitly. Both stop copies, which is what the proof needs. Answered 2026-11-27 by Dean: `Drop` is enough.
 3. **Inline `box c` slots**: should a buffer of boxes over a concept carry a slot size, `vec (box c) n`, or should such boxes always stay out of line? Answered (Dean, 2026-11-23): neither. The slot fits the set of types the program statically widens into it, found from its specialisations (section 5).

@@ -2,7 +2,7 @@
 
 Date: 2026-11-25
 
-Status: Accepted (2026-11-25, with Dean's answers below)
+Status: Accepted (2026-11-25, with Dean's answers below). Section 9 and step 4b, a placed sequence, are an amendment Accepted on 2026-11-27, with Dean's answer below.
 
 ## Context
 
@@ -98,6 +98,39 @@ A `spread` v0 iteration shares nothing with other iterations, so it cannot use t
 
 Apple's SIMD-group matrix operations (`simdgroup_matrix`) are vendor ops with no SPIR-V equivalent that SPIRV-Cross maps. If used, they are a trusted `@lower` to MSL (ADR 0065, state 3) behind a Pia contract. They are optional.
 
+### 9. A sequence of placed spreads is one command buffer (amendment, Accepted 2026-11-27)
+
+Step 4 put each wave of the sediment pull step on the GPU, one wave per placed `spread`, with the commit pass on the CPU between waves. It is correct, but slow. On the tile N46E008, 3,924 waves a step take 33 to 57 s, against 0.5 s on the CPU. Each wave is one `pia_gpu_run`: it wraps about nine tile-sized buffers, which maps their pages into the GPU's address space, then commits one command buffer and waits. That costs 8 to 15 ms a wave, while the kernel takes only microseconds. A step that waits for the GPU between waves cannot beat the CPU, whatever the shim caches. Dean chose (2026-11-27) to remove the waits: a whole step becomes one command buffer.
+
+**`@place(gpu)` on a sequential `for` makes a placed sequence.** Its body may hold spreads, ghost code (lemma calls and assertions), and scalar `let`s. The spreads need no `@place` of their own: each becomes a kernel, and each iteration of the `for` encodes their dispatches, in order, into one command buffer. The host wraps every buffer once, commits once and waits once. For the pull step:
+
+```text
+let ok = for k in 0 .. waves @place(gpu)
+  invariant ...
+do
+  let lo = starts.[k] in
+  let hi = starts.[k + 1] in
+  spread q in lo .. hi do ... done;                  (* the wave *)
+  spread q in lo .. hi @owns(bed, pos) @owns(flux, pos) @owns(seen, pos)
+  do ... done                                       (* its commit *)
+done
+```
+
+The rules, each checked by piac:
+
+- **The host runs the scalar code while it encodes.** A scalar `let` in the body may read only buffers that no kernel of the sequence writes, such as `starts` above. So each dispatch's bounds are known when it is encoded, and no value has to come back from the GPU. Reading back a value the GPU computes, such as indirect dispatch, is left for later.
+- **Dispatches run in order, each after the one before has finished.** Metal's default serial compute encoder gives this, so the sequence means what the `for` means on the CPU: every spread sees all writes of the spreads before it. A sequence that needs no ordering between two dispatches can say so later, with a concurrent encoder.
+- **The proof does not change.** The `for` is proved as written, with its invariants, and its spreads are proved as in section 1. Placement adds no goal.
+- **Errors are as in section 5.** The sequence evaluates to `result unit gpu_error`. On `Ok`, the `for`'s postcondition holds. On `Err`, every buffer the sequence writes may be partly written, and nothing about it is promised.
+- **After a spread, the cells no iteration of its range owns keep their values.** An iteration writes only cells it owns, so this holds on the CPU and on the GPU, whatever the run's status. Today the verifier forgets every cell of a written buffer after a spread, so a wave's commit could not say that the cells of other waves are unchanged. The verifier gains this frame fact for every spread, placed or not.
+- **A spread in a sequence may own cells through an owner array** (`@owns(buf, owner)`, ADR 0060), not only by identity. On the device an owner is only a proof fact: the kernel writes where the body says. This lifts step 3's rule against `@owns` on the GPU, for spreads in a sequence and on their own. The pull step needs it: the commit writes cell `order.[q]` from slot `q`, and `pos` is its owner array, since `pos.[order.[q]] = q`.
+
+The shim gets three new entries: `pia_gpu_seq_begin` makes the command buffer and its encoder, `pia_gpu_seq_dispatch` encodes one dispatch (a kernel, its buffers, its bounds and its scalars), and `pia_gpu_seq_end` commits the command buffer and waits for it once. Codegen calls `pia_gpu_seq_begin` before the `for` and `pia_gpu_seq_end` after it, and each spread in the body becomes a `pia_gpu_seq_dispatch`, so the dispatches are encoded as the `for` runs and nothing runs on the GPU until the end. The shim wraps the pages of each buffer once a sequence, and sets each dispatch's scalars with `setBytes`, which copies them into the command buffer as they are encoded. A table of every dispatch, made first and passed in one call, would hold about 8,000 entries a step on the host stack; encoding as the `for` runs needs none.
+
+**The pull step's other work moves out of the loop.** The wave boundaries, which `wave_end` finds one at a time, are found before the step by a proved scan into `starts`. The mass sent off the map, which `copy_back` added up wave by wave, is `osum order down flux n` of the final loads, summed on the CPU after the step. Both are linear and cheap next to the step. The commit of a wave, a spread with owner array `pos`, needs a lemma that commits a whole wave at once, `commit_wave`. It is proved from the same facts `copy_cell` uses: the cells of a wave have the same height, so none drains into another, and committing one cell leaves the others' inflows as they were.
+
+The expected cost of a step is the kernels plus the encoding, about 8,000 dispatches. At a few microseconds each that is tens of milliseconds, against 0.5 s on the CPU. The measurement on the tile decides it.
+
 ## Implementation order
 
 Each step is one PR and useful on its own. Steps 1 to 4 are integer-only.
@@ -106,7 +139,10 @@ Each step is one PR and useful on its own. Steps 1 to 4 are integer-only.
 2. **The shim and `Pia.Gpu.buffer`.** `src/runtime/metal/`, the `extern` contracts, the trust items, and `buffer` with `view` and `drop`. Test: a C harness dispatches step 1's kernel on the iMac.
 3. **`@place(gpu)` on a `spread` with identity ownership**, with the device rules of section 1 and the error set of section 5. First kernels: D8 directions and render from the streams demo, with differential tests against the CPU on the SRTM fixture and the full tile.
    *Done (2026-11-27).* `src/gpu/Place.cpp` outlines, lowers and embeds each placed spread at compile time (taking in issue #435), and the shim's `pia_gpu_run` runs it. [placed.pia.md](../placed.pia.md) has both kernels. On the 3601 × 3601 tile N46E008, both match the CPU on every cell. With a warm device on the iMac, directions take 35 to 52 ms on the GPU against 41 ms on the CPU, and render 66 to 83 ms against 37 to 50 ms. The first run adds about 70 ms to open the device and load the library. Each run copies every buffer into a new `MTLBuffer` and back, and the copies dominate, so the next step is to wrap page-aligned host memory without a copy (`newBufferWithBytesNoCopy`) or to keep `Pia.Gpu.buffer`s resident.
+   *Copies removed (2026-11-27).* On Apple silicon `pia_gpu_run` wraps each buffer that starts on a page boundary with `newBufferWithBytesNoCopy`, and copies only the scalars and any other buffer, counting both. That is safe because the run is synchronous (section 3). macOS's `malloc` already puts tile-sized buffers on a page. Pia allocates no heap buffers of its own: they come from the caller, or are local arrays on the stack. On the full tile, directions now take 6 to 16 ms on the GPU against 41 ms on the CPU, and render 9 to 12 ms against 25 to 30 ms, warm; the first run of directions takes 50 to 60 ms.
 4. **The sediment pull step on the GPU**, once its equality proof against the sequential step is merged ([ADR 0055](0055-sediment-transport-in-fixed-point.md) section 6). The demo page then shows CPU and GPU timings on real tiles.
+   *Built (#463, 2026-11-27).* The page `docs/pull_gpu.pia.md` places each wave and imports the commit pass and its proof through pull.pia.md's `PullWaves` interface. It matches the CPU on every cell of the tile, at 33 to 57 s a step against 0.5 s on the CPU, one GPU run per wave (section 9).
+4b. **A placed sequence** (section 9): `@place(gpu)` on a `for`, `@owns` on the device, the shim's sequence entries, and the pull step as one command buffer a step, with its CPU and GPU timings on the tile.
 5. **ADR 0065 schedules on the GPU**: `tile_using_forall` mapped to blocks and threads, workgroup promotion, an integer matmul.
 6. **Floats**, after M11: the Apple GPU float model and its litmus battery, `NoContraction`, and an `f32` matrix-vector product with a tolerance contract (`γₙ`, `n` up to 768) for the 0.1.0 LLM.
 7. **`Pia.Exec.Metal`**: asynchronous launches as senders (ADR 0050 step 9), and placement of `@place(auto)` stages by the cost model.
@@ -126,3 +162,9 @@ Dean answered on 2026-11-25. Each answer is the proposed option:
 1. ~~Explicit placement and failure?~~ **`@place(gpu)` adds `Gpu.error` to the function's error set.** An explicit placement never runs silently on the CPU. Only `@place(auto, prefer = gpu)` may fall back.
 2. ~~Where is MSL compiled?~~ **At build time**, by `xcrun metal` and `metallib`, into a `.metallib` embedded in the object file. No compiler runs or is trusted at run time, and GPU builds need Xcode's Metal toolchain.
 3. ~~The shim's language?~~ **Objective-C with ARC.** It is one small file compiled by clang, with no extra dependency.
+
+## Answer to the review question for section 9
+
+Dean answered on 2026-11-27:
+
+1. ~~How is a placed sequence written?~~ **`@place(gpu)` on a sequential `for`**, so its spreads need no `@place` of their own, and no new keyword is added. The alternative was a new block form, such as `gpu do ... done`, around spreads that each keep `@place(gpu)`.

@@ -2,7 +2,7 @@
 
 Date: 2026-11-23
 
-Status: Proposed
+Status: Accepted (2026-11-27)
 
 ## Context
 
@@ -69,8 +69,8 @@ A liveness goal that neither discharges is unproved. ADR 0027's channel deadlock
 
 ## Questions for Dean
 
-1. **Should the explicit DPOR checker be built at all?** The recommendation is yes, but last, and only for code directly over atomics. The alternative is to encode RC11 executions as CHC too, which avoids a second engine at the cost of queries that may not scale.
-2. **What is Spacer's budget per goal?** The recommendation is the verifier's usual per-goal rlimit ([ADR 0032](0032-parallel-sliced-cached-proving.md)), scaled by a per-goal `@solver` setting for large protocols. The alternative is a separate, larger default for CHC goals.
+1. **Should the explicit DPOR checker be built at all?** The recommendation is yes, but last, and only for code directly over atomics. The alternative is to encode RC11 executions as CHC too, which avoids a second engine at the cost of queries that may not scale. Answered 2026-11-27 by Dean: yes, built last, only for code directly over atomics.
+2. **What is Spacer's budget per goal?** The recommendation is the verifier's usual per-goal rlimit ([ADR 0032](0032-parallel-sliced-cached-proving.md)), scaled by a per-goal `@solver` setting for large protocols. The alternative is a separate, larger default for CHC goals. Answered 2026-11-27 by Dean: the usual per-goal rlimit, scaled by `@solver`.
 
 ## Prior art
 

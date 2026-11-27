@@ -32,5 +32,6 @@
 // IFACE-NEXT: {{^}}  let hash : (a : i64) -> u64 ensures result = mix (encode a){{$}}
 // IFACE-NEXT: {{^}}  let spec hash_fold : (t : type where Hash t) -> (xs : [t]) -> (n : usize) -> u64{{$}}
 // IFACE-NEXT: {{^}}  let hash_all : (t : type where Hash t) -> (xs : [t]) -> u64{{$}}
+// IFACE-NEXT: {{^}}  let meta derive_hash : list{{$}}
 // IFACE-NEXT: {{^}}end{{$}}
 *)

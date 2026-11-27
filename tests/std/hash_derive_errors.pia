@@ -1,0 +1,17 @@
+(* @derive(hash) says why it cannot hash a type.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Hash.pia
+// RUN: not piac --dump-expanded --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Hash.Hash
+
+(* A record of two fields is not a distinct type.
+// CHECK: hash_derive_errors.pia:[[@LINE+2]]:36: error: @derive(hash) on 'pair' failed: @derive(hash) needs a type of one integer field, such as 'let length = type u32'; 'pair' is not one
+*)
+let pair = type { a : u8; b : u8 } @derive(hash)
+
+(* usize has no hash in Pia.Core.Hash.
+// CHECK: hash_derive_errors.pia:[[@LINE+2]]:24: error: @derive(hash) on 'index' failed: @derive(hash): 'index' wraps a type with no hash in Pia.Core.Hash; it hashes u8, u16, u32, u64, i8, i16, i32 and i64
+*)
+let index = type usize @derive(hash)
