@@ -1,0 +1,8 @@
+# Mutually recursive functions and lemmas were not checked for termination,
+# so two lemmas that call each other could prove `ensures false`. Every
+# piac before #496 is affected, whatever engine proved the goals.
+id = "PIA-2026-0001"
+summary = "Termination was checked only for direct recursion, so mutually recursive lemmas could prove false goals"
+piac = { introduced = "0.0.0+0", fixed = "0.0.0+720" }
+severity = "unsound"
+fixed_by = "https://github.com/deanberris/pia-lang/pull/496"

@@ -92,3 +92,7 @@ Codegen options: `--target=<triple>`, `--cpu=<name>` (default arm64 macOS, `appl
 Whether a goal is proved must not depend on how busy the machine is, so the deterministic resource limit decides: `--solver-rlimit=N` (default 1200000000). `--solver-timeout=ms` (default 600000) is only a safety net. Raise the rlimit for a goal that runs out; never lower the timeout to make a run faster, since that turns proofs into failures that depend on load. Bazel's `pia_object` rule uses the same defaults.
 
 For large files, see the `pia-fast-proofs` skill: `--jobs`, `--verify-only`, `--proof-cache`, `--verify-stats` and slicing.
+
+## When a proved object is refused later
+
+A proof is only as sound as the piac and Z3 that found it. When one of them turns out to have a soundness bug, an advisory (`security/advisories/`, [docs/advisories.md](../../docs/advisories.md)) names the affected versions, and `pia-cert check` refuses every object they proved, even though `piac --verify` passed at the time. The fix is to prove and compile the module again with the fixed piac: the refusal names the version. `piac --version` says which piac and Z3 you have. Do not reach for `--accept-advisory` to get a build through; it is for a module whose proofs someone has checked another way, and it shows up as a trusted item.
