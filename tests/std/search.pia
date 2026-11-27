@@ -6,7 +6,7 @@
    (tests/std/search_pred_edges.pia).
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Fn.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Search.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/search.goals
 // RUN: mkdir -p %t/search && piac --emit=interface -o %t/search %S/../../lib/Pia/Core/Algo/Search.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/search/Pia.Core.Algo.Search.Search.piai
 *)

@@ -2,7 +2,7 @@
    including each instance's interface contract, and its interface is what
    importers see.
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Result.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/result.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Result.pia
 // RUN: FileCheck --check-prefix=EXP %s < %t/Pia.Core.Result.Expected.piai
 *)

@@ -1,7 +1,7 @@
 (* Pia.Core.Bit (ADR 0040): every goal of the module is proved, including
    each overload's interface contract against its own definition, and its
    interfaces are what importers see.
-// RUN: piac --verify %S/../../lib/Pia/Core/Bit.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/bit.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Bit.pia
 // RUN: FileCheck --check-prefix=BITS %s < %t/Pia.Core.Bit.Bits.piai
 // RUN: FileCheck --check-prefix=ENDIAN %s < %t/Pia.Core.Bit.Endian.piai

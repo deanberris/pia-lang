@@ -2,7 +2,7 @@
    i8, i16 and i32 in any base from 2 to 36, each value exact, and
    to_chars for those and u64 and i64, with valid digits, their count,
    and their exact value (`digits_value`) so from_chars reads v back (#306).
-// RUN: piac --verify %S/../../lib/Pia/Core/Charconv.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/charconv.goals
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Core/Charconv.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Core.Charconv.Charconv.piai
 *)

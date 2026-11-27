@@ -4,15 +4,15 @@
    unproved: the decoder's reads and writes are in bounds, its loops end,
    each code's string is the spec's, the table stays well formed, and
    decode_ref writes exactly what Ref's reading of the stream gives.
-// RUN: piac --verify %S/../../lib/Pia/Image/Gif/Spec.pia | FileCheck --check-prefix=SPEC %s
+// RUN: FileCheck --check-prefix=SPEC %s < %S/../../lib/Pia/Image/Gif/spec.goals
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Ref.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Ref.pia | FileCheck --check-prefix=REF %s
+// RUN: FileCheck --check-prefix=REF %s < %S/../../lib/Pia/Image/Gif/ref.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
 // RUN: FileCheck --check-prefix=DICT %s < %t/Pia.Image.Gif.Spec.Lzw.piai
-// RUN: piac --verify --no-lint=costly_goal --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Image/Gif/lzw.goals
 // RUN: FileCheck --check-prefix=LZW %s < %t/Pia.Image.Gif.Lzw.Lzw.piai
 *)
 

@@ -2,7 +2,7 @@
    contracts alone. It imports Posix's interface, which is the same on
    both targets, so this test proves the one module for both.
 // RUN: mkdir -p %t && piac --emit=interface -o %t %S/../../lib/Pia/Sys/Gen/arm64_macos.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Sys/Fs.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Sys/fs.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Sys/Fs.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Sys.Fs.Fs.piai
 *)

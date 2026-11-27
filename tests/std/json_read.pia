@@ -7,7 +7,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
 // RUN: FileCheck --check-prefix=READER %s < %t/Pia.Text.Json.Read.Reader.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Read.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Text/Json/read.goals
 *)
 
 (*

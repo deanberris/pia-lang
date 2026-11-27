@@ -7,7 +7,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Permutation.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Algo/Sort.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Core/Algo/Heap.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Core/Algo/heap.goals
 // RUN: mkdir -p %t/h && piac --emit=interface -o %t/h %S/../../lib/Pia/Core/Algo/Heap.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/h/Pia.Core.Algo.Heap.Heap.piai
 *)

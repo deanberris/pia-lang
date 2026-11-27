@@ -2,11 +2,11 @@
    of the grammar and of the tokenizer is proved, with nothing accepted
    unproved: the lexer's reads are in bounds, its loops end, and each
    token it returns is one of its kind by the grammar.
-// RUN: piac --verify %S/../../lib/Pia/Text/Json/Spec.pia | FileCheck --check-prefix=SPEC %s
+// RUN: FileCheck --check-prefix=SPEC %s < %S/../../lib/Pia/Text/Json/spec.goals
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: FileCheck --check-prefix=GRAMMAR %s < %t/Pia.Text.Json.Spec.Grammar.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Text/Json/Lex.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Text/Json/lex.goals
 // RUN: FileCheck --check-prefix=LEXER %s < %t/Pia.Text.Json.Lex.Lexer.piai
 *)
 

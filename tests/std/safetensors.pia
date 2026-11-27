@@ -10,7 +10,7 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Format/Safetensors.pia
 // RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Format.Safetensors.Safetensors.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Format/Safetensors.pia | FileCheck %s
+// RUN: FileCheck %s < %S/../../lib/Pia/Format/safetensors.goals
 *)
 
 (*

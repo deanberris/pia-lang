@@ -13,11 +13,11 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate/Ref.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Zlib.pia
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Compress/Huffman.pia | FileCheck --check-prefix=HUFF %s
-// RUN: piac --verify %S/../../lib/Pia/Compress/Inflate/Spec.pia | FileCheck --check-prefix=SPEC %s
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Compress/Inflate/Ref.pia | FileCheck --check-prefix=REF %s
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Compress/Inflate.pia | FileCheck --check-prefix=INFL %s
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Compress/Zlib.pia | FileCheck --check-prefix=ZLIB %s
+// RUN: FileCheck --check-prefix=HUFF %s < %S/../../lib/Pia/Compress/huffman.goals
+// RUN: FileCheck --check-prefix=SPEC %s < %S/../../lib/Pia/Compress/Inflate/spec.goals
+// RUN: FileCheck --check-prefix=REF %s < %S/../../lib/Pia/Compress/Inflate/ref.goals
+// RUN: FileCheck --check-prefix=INFL %s < %S/../../lib/Pia/Compress/inflate.goals
+// RUN: FileCheck --check-prefix=ZLIB %s < %S/../../lib/Pia/Compress/zlib.goals
 // RUN: FileCheck --check-prefix=HI %s < %t/Pia.Compress.Huffman.Huffman.piai
 // RUN: FileCheck --check-prefix=II %s < %t/Pia.Compress.Inflate.Inflate.piai
 // RUN: FileCheck --check-prefix=ZI %s < %t/Pia.Compress.Zlib.Zlib.piai

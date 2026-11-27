@@ -168,7 +168,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 
 ### lib: the standard library, written in Pia (ADR 0023, ADR 0040)
 
-Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests in `tests/std/<module>.pia` and `tests/std/Inputs/<module>_run.pia`. Its mapping from C++ and its status are in `docs/cpp-std.md`.
+Each module is a `pia_library` in the `BUILD.bazel` next to it, with its tests in `tests/std/<module>.pia` and `tests/std/Inputs/<module>_run.pia`. The goal-count test does not prove the module again: it FileChecks `<name>.goals`, the report `pia_library` writes with `piac --report` (the `//tests/std:library_goals` filegroup), so a new module goes in that filegroup too. Its mapping from C++ and its status are in `docs/cpp-std.md`.
 
 - `lib/Pia/Fn.pia` holds the laws of function arguments as spec functions, such as `strict_weak_order` (ADR 0044).
 - `lib/Pia/Test/Gen.pia` is `Pia.Test.Gen` (ADR 0056): the metaprograms `edges`, `combine` and `cases`, which write a specification check and an oracle lemma per case, tagged `@case` (`genCase` in `src/irgen/IRGen.cpp` names their goals; tests in `tests/std/test_gen.pia`).
