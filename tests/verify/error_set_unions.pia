@@ -1,0 +1,49 @@
+(* Named error sets (#84, ADR 0028): `let e = (a | b)` names the union,
+   a union may hold another, and `?` passes a smaller set's errors on to
+   a larger one, which keeps each error's constructor and payload.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+let lex_error = type | BadByte of usize | Eof
+let parse_error = type | Unexpected of usize
+let name_error = type | Unbound of u8 | Twice of u8
+
+(* A named union, and a larger one that holds it. *)
+let front_error = (lex_error | parse_error)
+let compile_error = (name_error | front_error)
+
+let lex (x : u8) : result u8 lex_error
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= if x = 0 then Err Eof else if x = 255 then Err (BadByte 7) else Ok x
+
+let parse (x : u8) : result u8 front_error
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let v = lex x? in
+  if v = 1 then Err (Unexpected 3) else Ok v
+
+(* The members are kept in order of name, so name_error's constructors
+   fall between lex_error's and parse_error's: the front end's errors are
+   two blocks of the compiler's, each moved up by its own amount. *)
+let compile (x : u8) : result u8 compile_error
+  ensures (match result with | Ok v -> v = x | Err _ -> true)
+= let v = parse x? in
+  let w = lex v? in
+  if w = 2 then Err (Twice w) else Ok w
+
+(* Each error keeps its constructor and payload on the way out. *)
+let code (x : u8) : usize
+  ensures x = 0 ==> result = 1
+  ensures x = 255 ==> result = 7
+  ensures x = 1 ==> result = 3
+  ensures x = 2 ==> result = 2
+= (let w = compile x? in 0
+   handle
+   | Eof -> 1
+   | BadByte p -> p
+   | Unexpected p -> p
+   | Twice _ -> 2
+   | Unbound _ -> 4)
+
+(*
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)

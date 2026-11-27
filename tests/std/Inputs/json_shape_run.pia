@@ -149,15 +149,16 @@ let route_code (r : route) : i64 =
   let l : i64 = match r.last with | Some p -> code p * 3 | None -> 0 in
   code r.a + code r.b * 2 + l
 
-(* The route s is, as its code; -3 when a is not a point, -4 when
-   the last is not, and -1 for any other error. *)
+(* The route s is, as its code; -3 when a point's number is out of
+   range, -4 when a point is not an object, and -1 for any other error.
+   A route's errors are its own and its points'. *)
 let read_route (s : [u8]) : i64 =
   match Json.read<route> s with
   | Ok r -> route_code r
   | Err e ->
     (match e with
-     | Field_route_a _ -> -3
-     | Field_route_last _ -> -4
+     | Range_point _ -> -3
+     | Syntax_point _ -> -4
      | _ -> -1)
 
 (* The route through (x, 1, true) and (-x, 2, false), last at (0, 3,

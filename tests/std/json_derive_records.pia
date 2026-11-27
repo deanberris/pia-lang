@@ -24,12 +24,13 @@ import Pia.Text.Json.Derive.Derive as Json
 let pt = type { x : i8 @json(name = "px"); y : u16 } @derive(json)
 let path = type { start : pt; end_ : O.option pt; k : u8 } @derive(json)
 
-(* The start's y, or 1 when start is wrong, 2 when end_ is, and 0 for
-   any other error. *)
+(* The start's y, or 1 when a point's number is out of range, 2 when a
+   point has a member twice, and 0 for any other error: a path's errors
+   are its own and pt's. *)
 let first_y (s : [u8]) : u16 =
   match Json.read<path> s with
   | Ok p -> p.start.y
-  | Err e -> (match e with | Field_path_start _ -> 1 | Field_path_end_ _ -> 2 | _ -> 0)
+  | Err e -> (match e with | Range_pt _ -> 1 | Duplicate_pt _ -> 2 | _ -> 0)
 
 (* A path written into a buffer with its room. *)
 let write (p : path) (dst : borrowed inout mutable [u8]) : usize

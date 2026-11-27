@@ -81,7 +81,7 @@ $ piac --verify --iface-path=. point.pia
 65 proved, 0 failed, 0 skipped
 ```
 
-A field of another record with `@derive(json)` is a nested object, which that record's own reader and writer read and write. Its errors stay exact: each such field adds one constructor, `Field_<t>_<f>`, holding the nested record's own error, so a caller can say which member went wrong, and where. Each derive also writes `json_room_<t>`, the room its writer needs, which counts a nested record's:
+A field of another record with `@derive(json)` is a nested object, which that record's own reader and writer read and write. Its errors stay exact: the record's error set is the union of its own errors and the nested record's, `(line_json_own_error | point_json_error)`, each once however many fields share the type, and each error says where in the text it is ([error sets](stdlib.md#errors-and-scope-cleanup)). Each derive also writes `json_room_<t>`, the room its writer needs, which counts a nested record's:
 
 <!-- example: line.pia -->
 <!-- flags: --iface-path=. -->
@@ -95,12 +95,13 @@ import Pia.Text.Json.Derive.Derive as Json
 let point = type { x : i32; y : u8 } @derive(json)
 let line = type { a : point; b : point } @derive(json)
 
-(* Why a text is not a line: 1 when a's y is out of range. *)
+(* Why a text is not a line: 1 when a point's number is out of range,
+   2 when a point is not an object. *)
 let why (e : Json.json_errors line) : u8 =
   match e with
-  | Field_line_a p -> (match p with | Range_point _ -> 1 | _ -> 2)
-  | Field_line_b _ -> 3
-  | _ -> 4
+  | Range_point _ -> 1
+  | Syntax_point _ -> 2
+  | _ -> 3
 
 (* A line's text, in a buffer with its room. *)
 let write (l : line) (dst : borrowed inout mutable [u8]) : usize

@@ -87,6 +87,26 @@ NodePtr asType(const Node &e, const std::set<std::string> &types,
       return nullptr;
     return makeNode(NodeKind::TypeName, e.loc, name);
   }
+  // `(a | b)`, which an expression reads as `bor a b`: the error set of
+  // both (ADR 0028), so `let e = (a | b)` names a union.
+  if (e.kind == NodeKind::Apply && e.kids.size() == 3 &&
+      e.kids[0]->kind == NodeKind::Name && e.kids[0]->text == "bor" &&
+      e.kids[0]->flags == "prelude") {
+    auto u = makeNode(NodeKind::UnionType, e.loc);
+    for (size_t i = 1; i < 3; ++i) {
+      NodePtr t = asType(*e.kids[i], types, generics);
+      if (!t)
+        return nullptr;
+      // `a | b | c` is `bor (bor a b) c`: one union of all three.
+      if (t->kind == NodeKind::UnionType) {
+        for (NodePtr &k : t->kids)
+          u->add(std::move(k));
+        continue;
+      }
+      u->add(std::move(t));
+    }
+    return u;
+  }
   if (e.kind == NodeKind::Apply && e.kids.size() > 1) {
     std::string head = dottedName(*e.kids[0]);
     if (head.empty() || !generics.count(head))

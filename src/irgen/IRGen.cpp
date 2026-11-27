@@ -556,34 +556,78 @@ class Gen {
                         typeName(v.type));
   }
 
-  // Whether `member` is one of the variants of the error set `set`.
+  // Whether `member` is one of the variants of the error set `set`, or a
+  // smaller error set all of whose variants are.
   bool inErrorSet(Type member, Type set) const {
+    if (member == set)
+      return false;
     const std::vector<Type> *ms = types_.unionMembers(set);
-    return ms && std::find(ms->begin(), ms->end(), member) != ms->end();
+    if (!ms)
+      return false;
+    auto in = [&](Type m) {
+      return std::find(ms->begin(), ms->end(), m) != ms->end();
+    };
+    if (const std::vector<Type> *mine = types_.unionMembers(member))
+      return std::all_of(mine->begin(), mine->end(), in);
+    return in(member);
   }
 
   // A value of a member variant as a value of the error set: its
   // constructors are a block of the set's, so its tag moves up by where the
-  // block starts, and its payload fields carry over.
+  // block starts, and its payload fields carry over. A smaller error set
+  // is several such blocks, each moving up by its own amount, so its tag
+  // is chosen by which block it falls in.
   R widenError(const TV &v, Type set, const Node &at) {
     Location l = loc(at);
     auto from = mlir::cast<RecordType>(v.type);
     auto to = mlir::cast<RecordType>(set);
-    std::vector<const sema::Ctor *> mine = types_.ctorsOf(v.type);
-    const sema::Ctor *first = types_.ctorIn(mine[0]->name, set);
-    if (!first) return fail(at, "internal error in an error set");
+    // Runs of the source's constructors that move up by the same amount:
+    // (first source tag, amount).
+    std::vector<std::pair<uint64_t, uint64_t>> blocks;
+    for (const sema::Ctor *c : types_.ctorsOf(v.type)) {
+      const sema::Ctor *there = types_.ctorIn(c->name, set);
+      if (!there || there->tag < c->tag)
+        return fail(at, "internal error in an error set");
+      uint64_t by = there->tag - c->tag;
+      if (blocks.empty() || blocks.back().second != by)
+        blocks.emplace_back(c->tag, by);
+    }
+    if (blocks.empty())
+      return fail(at, "internal error in an error set");
     Type ft = from.getFieldTypes()[*from.fieldIndex("tag")];
     Type tt = to.getFieldTypes()[*to.fieldIndex("tag")];
     Value tag = create<FieldOp>(l, ft, v.value, b_.getStringAttr("tag"));
     auto mode = OverflowModeAttr::get(&ctx_, OverflowMode::proof);
     tag = create<ConvertOp>(l, tt, tag, mode);
-    if (first->tag) {
-      Value k = create<ConstantOp>(
+    auto constant = [&](uint64_t k) -> Value {
+      return create<ConstantOp>(
           l, tt,
-          b_.getIntegerAttr(b_.getIntegerType(kWidth),
-                            llvm::APInt(kWidth, first->tag)));
-      tag = create<AddOp>(l, tt, tag, k, mode);
+          b_.getIntegerAttr(b_.getIntegerType(kWidth), llvm::APInt(kWidth, k)));
+    };
+    auto moved = [&](uint64_t by) -> Value {
+      return by ? create<AddOp>(l, tt, tag, constant(by), mode) : tag;
+    };
+    // From the last block back: below the next block's start, this
+    // block's amount; otherwise whatever the later blocks choose.
+    Value widened = moved(blocks.back().second);
+    for (size_t i = blocks.size() - 1; i-- > 0;) {
+      Value below =
+          cmp(l, CmpPredicate::lt, tag, constant(blocks[i + 1].first));
+      auto thenBlock = std::make_unique<Block>();
+      auto elseBlock = std::make_unique<Block>();
+      {
+        OpBuilder::InsertionGuard guard(b_);
+        b_.setInsertionPointToEnd(thenBlock.get());
+        create<mlir::scf::YieldOp>(l,
+                                   mlir::ValueRange{moved(blocks[i].second)});
+        b_.setInsertionPointToEnd(elseBlock.get());
+        create<mlir::scf::YieldOp>(l, mlir::ValueRange{widened});
+      }
+      widened = makeIf(l, mlir::TypeRange{tt}, below, std::move(thenBlock),
+                       std::move(elseBlock))
+                    .getResult(0);
     }
+    tag = widened;
     llvm::SmallVector<Value> fields;
     for (auto [name, t] : llvm::zip(to.getFieldNames(), to.getFieldTypes())) {
       if (name.getValue() == "tag") {

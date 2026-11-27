@@ -92,7 +92,7 @@ The lints say when code skips a rung: `range_requires`, `range_ensures`, `redund
 
 **Loops.** After a loop the verifier knows only its invariant and, for a `for`, that the loop variable reached its bound. Bound accumulators by the loop variable (`s <= 255 * i`). A `while` loop needs `decreases`. The details are in `pia-contracts`.
 
-**Errors.** Errors are closed variants carried in `result t e`. `e?` returns the error to the caller, or to a `handle` block after the body. `a | b` is the union of two error sets. `defer cleanup` runs at every exit, in reverse order, before a `?`'s error leaves:
+**Errors.** Errors are closed variants carried in `result t e`. `e?` returns the error to the caller, or to a `handle` block after the body. `a | b` is the union of two error sets; `let e = (a | b)` names one, and `?` passes a smaller set on to a larger one that holds all its variants. `defer cleanup` runs at every exit, in reverse order, before a `?`'s error leaves:
 
 <!-- example: errors.pia -->
 ```ocaml
