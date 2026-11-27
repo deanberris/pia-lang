@@ -94,7 +94,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `src/syntax/Embeds.{h,cpp}` parses `@embed(...)` attributes and resolves embedded binary assets hermetically from `--embed` and `--embed-path` (ADR 0070).
 - `src/syntax/Lean.{h,cpp}` translates the statements of lemmas proved in Lean (`= by lean T`, ADR 0061), and the spec functions and records they use, into Lean 4 for `piac --emit=lean`. It reads the expanded tree, so operators are the prelude's builtins.
 - `src/syntax/Lint.{h,cpp}` holds the ADR 0037 lints. They run before expansion, and piac and pia-lsp share them.
-- `src/migrate/Migrate.{h,cpp}` runs the migration rules (ADR 0073, section 5), each in `src/migrate/rules/` (`Rules.h` lists them, `TypeMakesDistinct.cpp` is ADR 0064's): a rule reports old forms as lints named after it, with its rewrite as edits, so `piac migrate` applies them, piac and pia-lsp report the deprecated ones in every build, and the LSP offers the rewrite as a quick fix. No LLVM.
+- `src/migrate/Migrate.{h,cpp}` runs the migration rules (ADR 0073, section 5), each in `src/migrate/rules/` (`src/migrate/rules/Rules.h` lists them, `src/migrate/rules/TypeMakesDistinct.cpp` is ADR 0064's): a rule reports old forms as lints named after it, with its rewrite as edits, so `piac migrate` applies them, piac and pia-lsp report the deprecated ones in every build, and the LSP offers the rewrite as a quick fix. No LLVM.
 
 ### src/meta: metaprograms
 
