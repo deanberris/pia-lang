@@ -752,7 +752,20 @@ let quarter (x : u8) : u8 =
   g (g x)
 ```
 
-A reference is fixed, like every binding. Rebinding one, `let h : mutable (u8 -> u8) = succ`, references stored in records and buffers, and calls that are indirect in the compiled code come later.
+A reference is fixed, like every binding, unless it is `mutable`. A mutable reference is rebound with `<-`, each function bound to it is proved against the arrow where it is bound, and a call through it is an indirect call that sees only the arrow's contract, whichever function it holds:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+
+let pick (op : u8) (y : u8) : u8 requires y < 100 ensures result >= y =
+  let h : mutable ((x : u8) -> u8) requires x < 100 ensures result >= x = succ in
+  if op = 2 then h <- twice else ();
+  h y
+```
+
+The parentheses make `mutable` the reference's, not its parameter's. A stored reference takes and returns integers, bools and floats for now; copies of a mutable reference, references in records and buffers, and references passed to C come later.
 
 ## Parallel loops
 
