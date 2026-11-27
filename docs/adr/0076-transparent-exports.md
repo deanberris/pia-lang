@@ -93,7 +93,7 @@ Functions with loops, buffers, `abort`, recursion, atomics or foreign calls stay
 
 The interface hash is the SHA-256 of the `.piai` text (`interfaceHash` in `src/cert/Certificate.cpp`), which already holds the inline surface. So a changed transparent body is a changed interface. Importers re-verify and relink, and the witness symbols make the linker and dyld refuse a mismatch. That is `strongest_not_modular` turned into a rule: a proof made with a body depends on that body. docs/abi.md already describes a separate *inline surface hash*, so that a change to a body breaks only the importers that used it. Building that split is a later step (step 5), and nothing here depends on it.
 
-### 4. Codegen gets the body too
+### 4. Codegen gets the body too (Dean, 2026-11-27)
 
 An importer compiles each transparent function it calls as an LLVM `available_externally` definition. LLVM may inline it and fold the branches it decides, and the symbol still comes from the defining module's object, so no code is duplicated in the link. This is the optimisation half of the claim, and it is sound for the same reason the proof is: the hash ties the importer to the body it inlined.
 
