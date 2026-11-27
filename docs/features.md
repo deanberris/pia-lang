@@ -12,7 +12,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Digit separators, `min t` and `max t` | [tour](tour.md#integers), [grammar](grammar.md#literals) | [digit_separators](../tests/verify/digit_separators.pia), [type_bounds](../tests/verify/type_bounds.pia) |
 | Bit operators and the builtins `clz`, `ctz`, `popcount`, `bswap`, `rotl`, `rotr` | [verifier](verifier.md#intervals-first), [Pia.Core.Bit](library.md#core) | [bits](../tests/verify/bits.pia), [bit_counts](../tests/verify/bit_counts.pia) |
 | No shadowing, and primed names such as `x'` | [tour](tour.md#no-shadowing) | [primes](../tests/verify/primes.pia) |
-| Arrays and slices, constant tables | [tour](tour.md#arrays-and-slices) | [slices](../tests/verify/slices.pia), [local_arrays](../tests/verify/local_arrays.pia), [array_results](../tests/verify/array_results.pia), [consts](../tests/verify/consts.pia) |
+| Arrays and slices, constant tables | [tour](tour.md#arrays-and-slices) | [slices](../tests/verify/slices.pia), [local_arrays](../tests/verify/local_arrays.pia), [array_results](../tests/verify/array_results.pia), [consts](../tests/verify/consts.pia), [const_array_views](../tests/verify/const_array_views.pia) |
 | Records, and buffers of records | [tour](tour.md#records) | [records](../tests/verify/records.pia), [record_buffers](../tests/verify/record_buffers.pia), [slice_aggregates](../tests/verify/slice_aggregates.pia) |
 | Variants and `match`, record payloads | [tour](tour.md#variants-and-match) | [variants](../tests/verify/variants.pia), [record_payloads](../tests/verify/record_payloads.pia) |
 | Type aliases, `let byte = u8` | [tour](tour.md#records) | [type_aliases](../tests/verify/type_aliases.pia) |

@@ -101,8 +101,8 @@ std::string encode(const Certificate &c) {
     body += "trusted " + t.kind + " " + t.name + " " + t.hash + " " +
             joined(t.detail) + "\n";
   for (const LeanFact &f : c.lean)
-    body += "proved lean " + f.name + " " + f.statement + " " + f.theorem + " " +
-            f.toolchain + " " + joined(f.axioms) + "\n";
+    body += "proved lean " + f.name + " " + f.statement + " " + f.theorem +
+            " " + f.toolchain + " " + joined(f.axioms) + "\n";
   std::string out(kMagic, 4);
   putU32(out, !c.lean.empty() ? 3 : !c.trusted.empty() ? 2 : 1);
   putU32(out, uint32_t(body.size()));

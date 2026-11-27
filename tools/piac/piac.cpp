@@ -595,8 +595,8 @@ void printTrustReport(
   // A lemma proved in Lean is behind its callers as `lean <lemma>`, and,
   // if its proof trusts Lean's compiler, as `native_decide <lemma>` too.
   // Its own goal is that its receipt checks, which rests on nothing.
-  std::vector<std::pair<mlir::func::FuncOp,
-                        const pia::verify::Options::LeanProof *>>
+  std::vector<
+      std::pair<mlir::func::FuncOp, const pia::verify::Options::LeanProof *>>
       leanFacts;
   for (auto f : module.getOps<mlir::func::FuncOp>()) {
     auto lemma = f->getAttrOfType<mlir::StringAttr>("pia.lean_lemma");
@@ -711,7 +711,8 @@ void printTrustReport(
            << ": trusted: Lean's compiler, which native_decide runs in the "
               "Lean proof of '"
            << lemma.getValue().str() << "'\n";
-        if (why) usedBy(name);
+        if (why)
+          usedBy(name);
         ++n;
       }
     }
@@ -738,7 +739,8 @@ void printTrustReport(
       os << " " << a;
     os << (p->axioms.empty() ? " none" : "") << "; statement sha256 "
        << p->statement << ")\n";
-    if (why) usedBy("lean " + f.getSymName().str());
+    if (why)
+      usedBy("lean " + f.getSymName().str());
   }
   if (!leanFacts.empty())
     os << leanFacts.size()
@@ -765,7 +767,8 @@ void printTrustReport(
     if (!leanFacts.empty()) {
       unsigned onLean = 0;
       for (const pia::verify::Outcome &o : outcomes) {
-        if (o.status != pia::verify::Status::Proved) continue;
+        if (o.status != pia::verify::Status::Proved)
+          continue;
         for (const std::string &a : restsOn(o))
           if (a.rfind("lean ", 0) == 0) {
             ++onLean;
@@ -1345,8 +1348,7 @@ int main(int argc, char **argv) {
         }
         if (trustReport)
           printTrustReport(*module, stats, outcomes, options.leanProofs,
-                           trustWhy, lower,
-                           std::cout);
+                           trustWhy, lower, std::cout);
         if (checkVacuity && stats.vacuityUnknown)
           std::cerr << "piac: note: --check-vacuity could not decide "
                     << stats.vacuityUnknown << " of " << stats.vacuityChecks

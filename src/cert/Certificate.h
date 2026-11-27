@@ -37,7 +37,7 @@
 // theorem that proves it, the Lean toolchain and the axioms the proof uses,
 // or `-` for none:
 //
-//   proved lean sum_nonneg <hash> Proofs.sum_nonneg leanprover/lean4:v4.36.0 propext
+//   proved lean sum_nonneg <hash> Proofs.sum_nonneg <toolchain> propext
 //
 // (ADR 0073 names these lines `proved lean`, and its prover identity lines
 // come with format 4.)
