@@ -2,11 +2,19 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Proof certificates in Pia objects: the format, reading them from object
-# files, and the link check (docs/abi.md, ADR 0039 step 6).
+# files, the link check (docs/abi.md, ADR 0039 step 6), and the advisories
+# that revoke proofs from faulty piac or solver versions (ADR 0073).
 cc_library(
     name = "cert",
-    srcs = ["Certificate.cpp"],
-    hdrs = ["Certificate.h"],
+    srcs = [
+        "Advisory.cpp",
+        "Certificate.cpp",
+        ":advisories_inc",
+    ],
+    hdrs = [
+        "Advisory.h",
+        "Certificate.h",
+    ],
     copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
@@ -14,4 +22,14 @@ cc_library(
         "@llvm-project//llvm:Object",
         "@llvm-project//llvm:Support",
     ],
+)
+
+# security/advisories/*.toml as C++ strings, so every pia-cert knows every
+# advisory older than itself.
+genrule(
+    name = "advisories_inc",
+    srcs = ["//security/advisories"],
+    outs = ["Advisories.inc"],
+    cmd = "sh $(location embed_advisories.sh) $@ $(SRCS)",
+    tools = ["embed_advisories.sh"],
 )

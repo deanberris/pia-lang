@@ -106,6 +106,15 @@ pia-cert check a.o b.o main.o              # every required interface is provide
 pia-cert check --stamp=ok.txt a.o b.o      # also write the result, for a build step to depend on
 ```
 
+An **advisory** (`security/advisories/PIA-YYYY-NNNN.toml`, compiled into `pia-cert`; [docs/advisories.md](../../docs/advisories.md)) names piac or solver versions that may have proved false goals. `pia-cert check` refuses an object whose `prover` or `solver` line is in an advisory's range, naming the advisory and the piac to rebuild with. Rebuild it; accept it only when you have checked the proofs another way, and then by name, which prints it as a trusted item. A `dev` prover (unstamped piac) is in no range.
+
+```sh
+pia-cert advisories                                       # the advisories this pia-cert applies
+pia-cert check --advisories=new/ a.o b.o                  # add a newer set to the compiled-in ones
+pia-cert check --accept-advisory=PIA-2026-0001:Image.Pixels a.o b.o   # let one module through, as a trusted item
+pia-cert check --require-released a.o b.o                 # refuse objects from an unstamped piac too
+```
+
 `pia_library` runs `pia-cert check` as a validation action. Exit status: 0 when the objects link, 1 when they do not, 2 for bad usage or an unreadable object.
 
 ## Other tools

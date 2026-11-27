@@ -1,0 +1,7 @@
+# Advisories against piac and solver versions whose proofs may be wrong
+# (ADR 0073). They are compiled into pia-cert by //src/cert.
+filegroup(
+    name = "advisories",
+    srcs = glob(["PIA-*.toml"]),
+    visibility = ["//visibility:public"],
+)

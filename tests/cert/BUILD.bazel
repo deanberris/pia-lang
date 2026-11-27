@@ -11,3 +11,15 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+# Advisories (src/cert/Advisory.h, ADR 0073): the file format, version
+# order, and which certificates an advisory revokes, with a test advisory
+# against a fake engine.
+cc_test(
+    name = "advisory_test",
+    srcs = ["advisory_test.cpp"],
+    deps = [
+        "//src/cert",
+        "@googletest//:gtest_main",
+    ],
+)

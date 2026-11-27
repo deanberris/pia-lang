@@ -132,3 +132,18 @@ Each step is one PR and useful on its own.
 - **Shapes in the type (question 1), Dean, 2026-11-27:** `tensor t s` takes its shape as a value parameter, as section 2 says, so value parameters on types (step 2) come before `Pia.Tensor`.
 
 - **Destination-passing (question 2), Dean, 2026-11-27:** every op takes a `moved` destination and returns it, as section 4 says. Only `Pia.Tensor.empty` allocates.
+
+- **How a function names a value parameter, Dean, 2026-11-27:** implicitly. A name in a value parameter's place that no parameter declares, `n` in `(b : block t n)`, is deduced from the argument like a type parameter, and in the body and contracts it is the argument's value. This replaces step 2's `(m : usize)` and needs no new syntax. The `matmul` signature in section 4 is already written this way.
+
+## Amendment, 2026-11-27: ops lower through `pia_lib.call` (ADR 0078)
+
+[ADR 0078](0078-pia-lib-ops-with-proved-substitutions.md) changes how section 4's ops reach MLIR. A `Pia.Tensor` op no longer puts `linalg.matmul` in place of the call at IRGen. It lowers to `pia_lib.call @Pia.Tensor.matmul`, whose meaning is the Pia body, and the `@lower` form becomes a substitution rule. A late pass, `pia-lib-lower`, either substitutes the rule's `linalg` op or expands the body. Section 4 reads with these changes:
+
+- **The destination is an operand** of `pia_lib.call`, the way it is of `linalg`'s `outs`. Substitution runs before one-shot bufferisation, so bufferisation still sees only upstream ops, and the no-allocation check is unchanged. ADR 0065's `linalg` pipeline, and `@schedule`, run after the substitution, so a substituted op is still tiled and vectorised.
+- **Expansion** sends a tensor operand back through `bufferization.to_memref` into the body's buffer field, writing the destination's buffer. The no-allocation check covers that path too, so expanding an op cannot copy behind the program's back.
+- **`$result`** is ADR 0078's value-returning rule. ADR 0078 builds the scalar case first, for `Pia.Math.sqrt` (#487), and step 3 here extends it to tensors.
+- **Each rule's obligation** is ADR 0065's refinement goal, which section 5 extends to tensors. It is proved once, when the op is verified, whether or not a build applies the rule. A rule nobody has proved yet is trusted and listed in the trust report, the same as step 4's lowerings.
+
+Steps 3 to 5 build on this: step 3 adds `@lower` on types and the tensor case of `$result`, step 4's trusted lowerings are ADR 0078 rules, and step 5 proves them.
+
+Steps 1 and 2 are built: record invariants (PR #472), and value parameters on types and on functions (PRs #499 and #515). Integer arguments only so far. Shape lists, `tensor t [m; k]`, are still to come in step 2.
