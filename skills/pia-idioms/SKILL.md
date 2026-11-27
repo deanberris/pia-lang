@@ -25,7 +25,6 @@ Lints are opinions, never errors. They print to stderr as `file:line:col: warnin
 | `assume` | `assume p` | `requires p` if callers can promise it, `assert p` or a lemma if it follows | a `@trusted` file stating a platform fact |
 | `costly_goal` | a goal costing 10% or more of the solver limit | split it (below) | never; raise `--costly-goal` only to silence a known one in CI |
 | `needless_rec` | `let rec` on a type that is not recursive | `let` | never |
-| `repeated_contract` | a definition repeats its interface's contract exactly (parameter names aside) | delete the definition's `requires`/`ensures`/`costs`/`reads`; it takes the interface's (ADR 0077) | never; a stronger contract is not flagged |
 
 To keep a form deliberately, put `@allow(name)` on the function's return annotation, with a comment saying why:
 

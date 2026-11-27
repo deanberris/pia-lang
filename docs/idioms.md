@@ -193,7 +193,6 @@ A program that moves facts into types shows more type goals proved by intervals 
 | `assume` | `assume` | `requires`, `assert` or a lemma | no |
 | `costly_goal` | a goal that costs 10% or more of the solver's limit | a smaller query: range types, a lemma, a helper function | no |
 | `needless_rec` | a `let rec` type that refers to no type of its cycle | `let` without `rec` ([ADR 0047](adr/0047-recursive-sum-types-and-shared-references.md)) | no |
-| `repeated_contract` | a definition whose contract is exactly the one its interface states | no contract on the definition, which then takes the interface's ([ADR 0077](adr/0077-definitions-inherit-interface-contracts.md)) | yes |
 
 Lints run on the program as written, before metaprograms expand it, in `piac --check`, `--verify` and every `--emit` mode. They are warnings and never stop a build. `@allow(range_requires)` on a function's return annotation turns one off for that function, `piac --no-lint=<name>` turns one off for a run, and `piac --no-lint` turns them all off. In VS Code they appear as warnings from `pia-lint`, with the fixes above as quick fixes.
 
