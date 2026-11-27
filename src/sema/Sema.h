@@ -164,6 +164,35 @@ class TypeResolver {
     auto it = valueArgs_.find(record);
     return it == valueArgs_.end() ? nullptr : &it->second;
   }
+  // The value parameter `name` of the body being built, or null.
+  const ValueArg *valueParam(const std::string &name) const {
+    auto it = values_.find(name);
+    return it == values_.end() ? nullptr : &it->second;
+  }
+  // The type parameter `name` of the body being built, or null.
+  mlir::Type typeParam(const std::string &name) const;
+
+  // `@lower("memref<4x4xi8>", data)` on a record (ADR 0074, section 3):
+  // the MLIR type a value of it has, a view of the buffer in one field.
+  // Version 1 is a ranked memref with static extents and the identity
+  // (row-major) layout.
+  struct TypeLowering {
+    std::vector<int64_t> extents;
+    // The element type as written, such as `i8`, or empty when it is the
+    // buffer's element type parameter, `$t`, which codegen spells.
+    std::string element;
+    std::string field;
+    unsigned fieldIndex = 0;
+    std::string text; // as written, for messages
+    syntax::SourceLoc at;
+  };
+  void lowerType(const std::string &record, TypeLowering l) {
+    lowerings_[record] = std::move(l);
+  }
+  const TypeLowering *lowering(const std::string &record) const {
+    auto it = lowerings_.find(record);
+    return it == lowerings_.end() ? nullptr : &it->second;
+  }
   mlir::Type named(const std::string &name) const {
     auto it = named_.find(name);
     return it == named_.end() ? mlir::Type() : it->second;
@@ -287,6 +316,7 @@ class TypeResolver {
   std::vector<mlir::Type> datatypes_;
   std::map<std::string, Refinements> refinements_;
   std::map<std::string, ValueArgs> valueArgs_; // by instance, `vec<u8, 4>`
+  std::map<std::string, TypeLowering> lowerings_; // by record name
   ValueArgs values_; // the value parameters of the body being built
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;

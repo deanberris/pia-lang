@@ -1,0 +1,58 @@
+(* What `@lower` on a type refuses (ADR 0074, step 3a): no field, a field
+   that is not a buffer of scalars, a tensor (step 3b), a '?' extent, a
+   shape that does not match the array, a type that is not a ranked
+   memref, a layout, extent fields, and a splice that is not a value
+   parameter or the elements' type.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on a type takes its MLIR type and the field that holds its elements, as in '@lower("memref<4x4xi8>", data)'
+*)
+let a1 = type { data : [u8; 4] } @lower("memref<4xi8>")
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:59: error: 'a2' has no field 'bytes' to lower
+*)
+let a2 = type { data : [u8; 4] } @lower("memref<2x2xi8>", bytes)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:49: error: the field 'n' of 'a3' is u8; a lowered type's elements are an array or a slice of integers or bools
+*)
+let a3 = type { n : u8 } @lower("memref<1xi8>", n)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: a type lowers to a memref for now; tensors come with value-returning lowerings and bufferisation (ADR 0074, step 3b)
+*)
+let a4 = type { data : [u8; 4] } @lower("tensor<2x2xi8>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a5' names 'memref<?x2xi8>'; a '?' extent, fixed at run time, is not built yet
+*)
+let a5 = type { data : [u8; 4] } @lower("memref<?x2xi8>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a6' names 'memref<3x2xi8>', of 6 elements, but 'data' holds 4
+*)
+let a6 = type { data : [u8; 4] } @lower("memref<3x2xi8>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a7' names 'vector<4xi8>'; a type lowers to a ranked memref, as in 'memref<4x4xi8>'
+*)
+let a7 = type { data : [u8; 4] } @lower("vector<4xi8>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a8' names 'memref<4xi8,strided<[1]>>'; a type lowers to a ranked memref of static extents with the identity layout, as in 'memref<4x4xi8>'
+*)
+let a8 = type { data : [u8; 4] } @lower("memref<4xi8, strided<[1]>>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:63: error: @lower on a type takes no extent fields yet: every extent is a literal or a value parameter, which the type gives
+*)
+let a9 = type { data : [u8; 4] } @lower("memref<4xi8>", data, data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+4]]:3: error: @lower on 'g1<u8, u16>' splices '$u', which is u16, not the element type of 'data'; a type's lowering splices only its elements' type, for now
+*)
+let g1 = let (t : type) (u : type) => type {
+  data : [t; 4]; extra : u
+} @lower("memref<4x$u>", data)
+
+let use1 (x : g1 u8 u16) : u8 = x.data.[0]
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:51: error: @lower on 'g2<u8>' splices '$k', which is not a value or type parameter of 'g2<u8>'
+*)
+let g2 = let (t : type) => type { data : [t; 4] } @lower("memref<4x$k>", data)
+
+let use2 (x : g2 u8) : u8 = x.data.[0]

@@ -1,5 +1,6 @@
 #include "transforms/ScalarizeRecords.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -603,6 +604,22 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
                    static_cast<bool>(elementRecord(ps[i].type));
       llvm::SmallVector<bool> spec;
       leafSpec(ps[i].type, false, spec);
+      // A value of a lowered type (ADR 0074, section 3) is spliced as a
+      // view of its buffer, so only the buffer's leaf keeps the splice's
+      // name and the view.
+      std::optional<unsigned> viewLeaf;
+      if (auto view =
+              argAttrs[k][i]
+                  ? argAttrs[k][i].getAs<mlir::DictionaryAttr>("pia.lower_view")
+                  : mlir::DictionaryAttr())
+        if (auto rt = mlir::dyn_cast<RecordType>(ps[i].type)) {
+          unsigned field =
+              mlir::cast<mlir::IntegerAttr>(view.get("field")).getInt();
+          llvm::SmallVector<Type> before;
+          for (unsigned j = 0; j < field; ++j)
+            recordLeaves(rt.getFieldTypes()[j], before);
+          viewLeaf = before.size();
+        }
       for (const std::string &name : names) {
         mlir::BlockArgument a = f.getArgument(next);
         a.setLoc(name.empty() ? ps[i].loc
@@ -614,6 +631,12 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
           mlir::NamedAttrList list(d);
           list.set(PiaDialect::getLengthOfAttrName(),
                    mlir::IntegerAttr::get(mlir::IntegerType::get(ctx, 64), first));
+          d = list.getDictionary(ctx);
+        }
+        if (viewLeaf && next - base != *viewLeaf) {
+          mlir::NamedAttrList list(d);
+          list.erase("pia.lower_view");
+          list.erase("pia.lower_name");
           d = list.getDictionary(ctx);
         }
         // A spec field's leaf is a spec parameter, which codegen erases.

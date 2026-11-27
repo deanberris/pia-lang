@@ -244,6 +244,13 @@ mlir::Type TypeResolver::builtin(std::string_view name) {
 }
 
 mlir::Type TypeResolver::boolType() { return mlir::IntegerType::get(&ctx_, 1); }
+
+mlir::Type TypeResolver::typeParam(const std::string &name) const {
+  for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
+    if (auto p = it->find(name); p != it->end())
+      return p->second;
+  return {};
+}
 mlir::Type TypeResolver::unitType() { return mlir::NoneType::get(&ctx_); }
 bool TypeResolver::isUnit(mlir::Type t) const {
   return t && mlir::isa<mlir::NoneType>(t);
@@ -794,6 +801,170 @@ mlir::Type buildVariant(const std::string &name, const Node &body,
   return variant;
 }
 
+// `@lower(mlir_type, field)` on the record `name` (ADR 0074, section 3):
+// checks it and records the view. `$n` splices a value parameter, `$s` a
+// shape as `4x4`, and `$t` the buffer's element type parameter. False
+// after an error.
+bool lowerRecord(const std::string &name, const Node &attr,
+                 llvm::ArrayRef<mlir::StringAttr> names,
+                 llvm::ArrayRef<mlir::Type> fieldTypes, TypeResolver &types,
+                 syntax::Diagnostics &diags) {
+  auto usage = [&] {
+    diags.error(attr.loc,
+                "@lower on a type takes its MLIR type and the field that "
+                "holds its elements, as in '@lower(\"memref<4x4xi8>\", "
+                "data)'");
+    return false;
+  };
+  if (attr.kids.size() < 2 || attr.kids[0]->kind != NodeKind::StringLit ||
+      attr.kids[1]->kind != NodeKind::Name)
+    return usage();
+  if (attr.kids.size() > 2) {
+    diags.error(attr.kids[2]->loc,
+                "@lower on a type takes no extent fields yet: every extent "
+                "is a literal or a value parameter, which the type gives");
+    return false;
+  }
+  const std::string &field = attr.kids[1]->text;
+  auto at = llvm::find_if(
+      names, [&](mlir::StringAttr n) { return n.getValue() == field; });
+  if (at == names.end()) {
+    diags.error(attr.kids[1]->loc,
+                "'" + name + "' has no field '" + field + "' to lower");
+    return false;
+  }
+  unsigned index = at - names.begin();
+  mlir::Type buffer = fieldTypes[index], element;
+  if (auto a = mlir::dyn_cast<ArrayType>(buffer))
+    element = a.getElementType();
+  else if (auto sl = mlir::dyn_cast<SliceType>(buffer))
+    element = sl.getElementType();
+  if (!element ||
+      !(mlir::isa<IntType>(element) || element == types.boolType())) {
+    diags.error(attr.kids[1]->loc,
+                "the field '" + field + "' of '" + name + "' is " +
+                    typeName(buffer) +
+                    "; a lowered type's elements are an array or a slice "
+                    "of integers or bools");
+    return false;
+  }
+
+  // Splices first, then the type: `memref<` extents `x` element `>`.
+  const std::string &spelling = attr.kids[0]->text;
+  std::string text = spelling.substr(1, spelling.size() - 2);
+  // `shown` is the text for messages, with `$t` where the element is.
+  std::string spliced, shown;
+  constexpr llvm::StringLiteral kElement = "$";
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != '$') {
+      if (!std::isspace(static_cast<unsigned char>(text[i]))) {
+        spliced += text[i];
+        shown += text[i];
+      }
+      continue;
+    }
+    size_t end = i + 1;
+    while (end < text.size() &&
+           (std::isalnum(static_cast<unsigned char>(text[end])) ||
+            text[end] == '_' || text[end] == '\''))
+      ++end;
+    std::string splice = text.substr(i + 1, end - i - 1);
+    i = end - 1;
+    if (const TypeResolver::ValueArg *v = types.valueParam(splice)) {
+      std::string value;
+      if (!v->isShape)
+        value = llvm::toString(v->value, 10, /*Signed=*/true);
+      for (size_t k = 0; v->isShape && k < v->shape.size(); ++k)
+        value += (k ? "x" : "") + llvm::toString(v->shape[k], 10, true);
+      spliced += value;
+      shown += value;
+      continue;
+    }
+    if (mlir::Type t = types.typeParam(splice)) {
+      if (t != element) {
+        diags.error(attr.loc, "@lower on '" + name + "' splices '$" + splice +
+                                  "', which is " + typeName(t) +
+                                  ", not the element type of '" + field +
+                                  "'; a type's lowering splices only its "
+                                  "elements' type, for now");
+        return false;
+      }
+      spliced += kElement;
+      shown += "$" + splice;
+      continue;
+    }
+    diags.error(attr.loc, "@lower on '" + name + "' splices '$" + splice +
+                              "', which is not a value or type parameter "
+                              "of '" +
+                              name + "'");
+    return false;
+  }
+
+  llvm::StringRef rest(spliced);
+  if (rest.starts_with("tensor<")) {
+    diags.error(attr.loc,
+                "a type lowers to a memref for now; tensors come with "
+                "value-returning lowerings and bufferisation (ADR 0074, "
+                "step 3b)");
+    return false;
+  }
+  if (!rest.consume_front("memref<") || !rest.consume_back(">")) {
+    diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
+                              "'; a type lowers to a ranked memref, as "
+                              "in 'memref<4x4xi8>'");
+    return false;
+  }
+  TypeResolver::TypeLowering l;
+  l.field = field;
+  l.fieldIndex = index;
+  l.text = shown;
+  l.at = attr.loc;
+  uint64_t count = 1;
+  for (;;) {
+    size_t digits = 0;
+    while (digits < rest.size() &&
+           std::isdigit(static_cast<unsigned char>(rest[digits])))
+      ++digits;
+    if (digits == 0 || digits >= rest.size() || rest[digits] != 'x')
+      break;
+    uint64_t extent = 0;
+    if (rest.substr(0, digits).getAsInteger(10, extent) || extent == 0 ||
+        count > (uint64_t(1) << 48) / extent) {
+      diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
+                                "', whose extents are not each between 1 "
+                                "and 2^48 in all");
+      return false;
+    }
+    count *= extent;
+    l.extents.push_back(static_cast<int64_t>(extent));
+    rest = rest.drop_front(digits + 1);
+  }
+  if (rest.starts_with("?")) {
+    diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
+                              "'; a '?' extent, fixed at run time, is not "
+                              "built yet");
+    return false;
+  }
+  if (l.extents.empty() || rest.empty() || rest.contains(',')) {
+    diags.error(attr.loc,
+                "@lower on '" + name + "' names '" + shown +
+                    "'; a type lowers to a ranked memref of static extents "
+                    "with the identity layout, as in 'memref<4x4xi8>'");
+    return false;
+  }
+  if (rest != kElement)
+    l.element = rest.str();
+  if (auto a = mlir::dyn_cast<ArrayType>(buffer); a && a.getLength() != count) {
+    diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
+                              "', of " + std::to_string(count) +
+                              " elements, but '" + field + "' holds " +
+                              std::to_string(a.getLength()));
+    return false;
+  }
+  types.lowerType(name, std::move(l));
+  return true;
+}
+
 }  // namespace
 
 // The type a `type <body>` value denotes, named `name`: a record, a
@@ -803,10 +974,21 @@ static mlir::Type buildType(const std::string &name, const Node &value,
                      bool instance, mlir::Type rec = {}) {
   const Node &body = *value.kids[0];
   // `@linear` (#56) is read by IRGen; `@derive` is expanded before this.
-  for (const syntax::NodePtr &attr : value.kids[1]->kids)
-    if (attr->text != "linear")
+  // `@lower` is read once the record is built.
+  const Node *lower = nullptr;
+  for (const syntax::NodePtr &attr : value.kids[1]->kids) {
+    if (attr->text == "lower" && body.kind == NodeKind::RecordType) {
+      lower = attr.get();
+      continue;
+    }
+    if (attr->text == "lower")
+      diags.error(attr->loc, "@lower on a type is for a record whose field "
+                             "holds its elements, as in 'type { data : "
+                             "[i8; 16] } @lower(\"memref<4x4xi8>\", data)'");
+    else if (attr->text != "linear")
       diags.error(attr->loc, "the attribute @" + attr->text +
                                  " on a type is not supported yet");
+  }
   // `type { ... } where p` on a record is its invariant over all its
   // fields (ADR 0074, step 1); on any other type it is not built yet.
   const Node *invariant = nullptr;
@@ -869,6 +1051,8 @@ static mlir::Type buildType(const std::string &name, const Node &value,
   if (invariant)
     refined.emplace_back("", invariant);
   if (!refined.empty()) types.refine(name, std::move(refined));
+  if (lower && !lowerRecord(name, *lower, names, fieldTypes, types, diags))
+    return {};
   return RecordType::get(ctx, name, names, fieldTypes, spec);
 }
 

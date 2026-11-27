@@ -1,0 +1,32 @@
+(* What a lowered function refuses of its `out` and `inout` parameters
+   (ADR 0074, step 3a): it would return their new values, which MLIR text
+   cannot give, unless the value is of a lowered type whose elements are a
+   slice, written through its loan, and then the function returns unit.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+@trusted
+
+let mat = type { data : [u8; 4] } @lower("memref<2x2xi8>", data)
+
+let grid = let (r : region) => type {
+  data : borrowed(r) mutable [u8]
+} where len data = 4
+  @lower("memref<2x2xi8>", data)
+
+(* CHECK-DAG: lower_type_inout_errors.pia:[[@LINE+3]]:3: error: 'n' is 'inout', so 'count' returns its new value, which a lowering cannot give; an 'out' or 'inout' parameter of a lowered function is a buffer, or a value of a type with @lower whose elements are a slice
+*)
+let count (n : inout u8) : unit
+  @lower("")
+= n <- 0
+
+(* CHECK-DAG: lower_type_inout_errors.pia:[[@LINE+3]]:3: error: 'm' is 'inout', but the elements of mat are an array, which is part of the value and is copied back; give it a slice field, as in 'data : borrowed(r) mutable [t]', for the lowering to write through
+*)
+let clear (m : inout mat) : unit
+  @lower("%z = arith.constant 0 : i8\nlinalg.fill ins(%z : i8) outs($m : $m.type)")
+= for i in 0 .. 4 do m.data.[i] <- 0 done
+
+(* CHECK-DAG: lower_type_inout_errors.pia:[[@LINE+3]]:3: error: a lowered function with an 'out' or 'inout' value of a lowered type returns unit, for now; 'first' returns u8
+*)
+let first (r : region) (g : inout grid r) : u8
+  @lower("%z = arith.constant 0 : index\n%v = memref.load $g[%z, %z] : $g.type\nreturn %v : i8")
+= g.data.[0]

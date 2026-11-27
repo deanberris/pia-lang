@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 
+#include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -38,6 +39,8 @@ namespace {
 constexpr llvm::StringLiteral kText = "pia.lower";
 constexpr llvm::StringLiteral kAt = "pia.lower_at";
 constexpr llvm::StringLiteral kName = "pia.lower_name";
+constexpr llvm::StringLiteral kView = "pia.lower_view";
+constexpr llvm::StringLiteral kThreaded = "pia.lower_threaded";
 constexpr llvm::StringLiteral kLowered = "pia.lowered";
 constexpr llvm::StringLiteral kTmp = "pia_lowering";
 
@@ -65,20 +68,130 @@ bool isNameChar(char c) {
   return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '\'';
 }
 
+// `file:line:col`, as IRGen writes a location in an attribute, or `def`.
+mlir::Location locationOf(mlir::MLIRContext *ctx, llvm::StringRef text,
+                          mlir::Location def) {
+  auto [rest, column] = text.rsplit(':');
+  auto [file, line] = rest.rsplit(':');
+  unsigned l = 0, c = 0;
+  if (line.getAsInteger(10, l) || column.getAsInteger(10, c))
+    return def;
+  return mlir::FileLineColLoc::get(ctx, file, l, c);
+}
+
+// What `$a` is for a value of a lowered type (ADR 0074, section 3): a view
+// of its buffer, argument `i`, made by ops that go before the lowering.
+struct View {
+  std::string ops;   // on one line, each followed by a space
+  std::string value; // the view's SSA name
+  mlir::Type type;
+};
+
+// The view of argument `i` with the shape of its type's `@lower`. An array
+// is a static memref with the identity layout, which `expand_shape` gives
+// the shape; a slice may start part way into its storage, so it is cast to
+// its length, which the body proved, and its view keeps a dynamic offset.
+mlir::FailureOr<View> viewOf(mlir::func::FuncOp f, unsigned i,
+                             mlir::DictionaryAttr d) {
+  mlir::MLIRContext *ctx = f.getContext();
+  mlir::Location at =
+      locationOf(ctx, d.getAs<mlir::StringAttr>("at").getValue(), f.getLoc());
+  llvm::StringRef type = d.getAs<mlir::StringAttr>("type").getValue();
+  llvm::StringRef text = d.getAs<mlir::StringAttr>("text").getValue();
+  llvm::ArrayRef<int64_t> shape =
+      d.getAs<mlir::DenseI64ArrayAttr>("shape").asArrayRef();
+  auto src = mlir::dyn_cast<mlir::MemRefType>(f.getArgument(i).getType());
+  if (!src || src.getRank() != 1)
+    return mlir::emitError(at) << "the @lower of '" << type
+                               << "' views a buffer that codegen does not "
+                                  "hold as one memref";
+  mlir::Type elem = src.getElementType();
+  if (auto e = d.getAs<mlir::StringAttr>("element")) {
+    mlir::Type written;
+    {
+      // A misspelt element is reported below, as not the buffer's.
+      mlir::ScopedDiagnosticHandler quiet(
+          ctx, [](mlir::Diagnostic &) { return mlir::success(); });
+      written = mlir::parseType(e.getValue(), ctx);
+    }
+    if (written != elem)
+      return mlir::emitError(at)
+             << "the @lower of '" << type << "' names '" << text
+             << "', but its elements are " << printed(elem) << " in MLIR, not '"
+             << e.getValue() << "'";
+  }
+  int64_t count = 1;
+  for (int64_t e : shape)
+    count *= e;
+  std::string arg = "%pia_arg" + std::to_string(i);
+  std::string name = std::to_string(i);
+  View v;
+  mlir::MemRefType from = src;
+  if (src.hasStaticShape() && src.getLayout().isIdentity()) {
+    if (src.getNumElements() != count)
+      return mlir::emitError(at)
+             << "the @lower of '" << type << "' names '" << text << "', of "
+             << count << " elements, but its buffer holds "
+             << src.getNumElements();
+    v.value = arg;
+    v.type = mlir::MemRefType::get(shape, elem);
+  } else {
+    auto strided = mlir::dyn_cast<mlir::StridedLayoutAttr>(src.getLayout());
+    if (!strided || strided.getStrides() != llvm::ArrayRef<int64_t>{1})
+      return mlir::emitError(at) << "the @lower of '" << type
+                                 << "' views a buffer that is not contiguous";
+    from = mlir::MemRefType::get({count}, elem, strided);
+    v.value = "%pia_cast" + name;
+    v.ops = v.value + " = memref.cast " + arg + " : " + printed(src) + " to " +
+            printed(from) + " ";
+    llvm::SmallVector<int64_t> strides(shape.size(), 1);
+    for (size_t k = shape.size() - 1; k > 0; --k)
+      strides[k - 1] = strides[k] * shape[k];
+    v.type = mlir::MemRefType::get(
+        shape, elem,
+        mlir::StridedLayoutAttr::get(ctx, mlir::ShapedType::kDynamic, strides));
+  }
+  if (shape.size() == 1) {
+    if (v.value != arg)
+      v.type = from;
+    return v;
+  }
+  std::string group, extents;
+  for (size_t k = 0; k < shape.size(); ++k) {
+    group += (k ? ", " : "") + std::to_string(k);
+    extents += (k ? ", " : "") + std::to_string(shape[k]);
+  }
+  std::string source = v.value;
+  v.value = "%pia_view" + name;
+  v.ops += v.value + " = memref.expand_shape " + source + " [[" + group +
+           "]] output_shape [" + extents + "] : " + printed(from) + " into " +
+           printed(v.type) + " ";
+  return v;
+}
+
+// A lowering after splicing: the text, and the views it uses, which go
+// before it.
+struct Spliced {
+  std::string views;
+  std::string text;
+};
+
 // The text with each `$name` replaced by the argument's SSA name in the
-// wrapper and each `$name.type` by its core type. IRGen has already checked
-// that every splice names a parameter, so a name with no argument here is
-// one the signature rewrites took away.
-mlir::FailureOr<std::string> splice(mlir::func::FuncOp f, llvm::StringRef text,
-                                    mlir::Location at) {
+// wrapper and each `$name.type` by its core type, or by a view of its
+// buffer and the view's type for a value of a lowered type. IRGen has
+// already checked that every splice names a parameter, so a name with no
+// argument here is one the signature rewrites took away.
+mlir::FailureOr<Spliced> splice(mlir::func::FuncOp f, llvm::StringRef text,
+                                mlir::Location at) {
   std::map<std::string, unsigned> argOf;
   for (unsigned i = 0; i < f.getNumArguments(); ++i)
     if (auto n = f.getArgAttrOfType<mlir::StringAttr>(i, kName))
       argOf.emplace(n.getValue().str(), i);
-  std::string out;
+  Spliced out;
+  std::map<unsigned, View> views;
   for (size_t i = 0; i < text.size(); ++i) {
     if (text[i] != '$') {
-      out += text[i];
+      out.text += text[i];
       continue;
     }
     size_t end = i + 1;
@@ -92,17 +205,33 @@ mlir::FailureOr<std::string> splice(mlir::func::FuncOp f, llvm::StringRef text,
       return mlir::emitError(at)
              << "@lower splices '$" << name
              << "', which has no value in the compiled function";
-    out += type ? printed(f.getArgument(arg->second).getType())
-                : "%pia_arg" + std::to_string(arg->second);
+    unsigned a = arg->second;
     i = (type ? end + 5 : end) - 1;
+    if (auto d = f.getArgAttrOfType<mlir::DictionaryAttr>(a, kView)) {
+      auto v = views.find(a);
+      if (v == views.end()) {
+        mlir::FailureOr<View> made = viewOf(f, a, d);
+        if (mlir::failed(made))
+          return mlir::failure();
+        out.views += made->ops;
+        v = views.emplace(a, std::move(*made)).first;
+      }
+      out.text += type ? printed(v->second.type) : v->second.value;
+      continue;
+    }
+    out.text += type ? printed(f.getArgument(a).getType())
+                     : "%pia_arg" + std::to_string(a);
   }
   return out;
 }
 
-// `func.func @pia_lowering(<the arguments>) -> <the results> { <text>
-// return }`, with the text on lines of its own, so that line n + 1 of the
-// wrapper is line n of the text.
-std::string wrap(mlir::func::FuncOp f, const std::string &text) {
+// `func.func @pia_lowering(<the arguments>) -> <the results> { <views>
+// <text> return }`, with the text on lines of its own, so that line n + 1
+// of the wrapper is line n of the text. A function whose results are the
+// `out` and `inout` values of lowered types returns them as they came in:
+// the lowering wrote through their buffers.
+mlir::FailureOr<std::string> wrap(mlir::func::FuncOp f, const Spliced &s,
+                                  mlir::Location at) {
   std::string out = "func.func @" + kTmp.str() + "(";
   mlir::FunctionType ft = f.getFunctionType();
   for (unsigned i = 0; i < ft.getNumInputs(); ++i)
@@ -115,10 +244,30 @@ std::string wrap(mlir::func::FuncOp f, const std::string &text) {
       out += (i ? ", " : "") + printed(ft.getResult(i));
     out += ")";
   }
-  out += " {\n" + text + "\n";
-  // A function that returns a value says what with its own `return`.
-  if (!ft.getNumResults())
+  out += " { " + s.views + "\n" + s.text + "\n";
+  llvm::SmallVector<unsigned> threaded;
+  for (unsigned i = 0; i < ft.getNumInputs(); ++i)
+    if (f.getArgAttr(i, kThreaded))
+      threaded.push_back(i);
+  if (!threaded.empty()) {
+    bool same = threaded.size() == ft.getNumResults();
+    for (unsigned k = 0; same && k < threaded.size(); ++k)
+      same = ft.getInput(threaded[k]) == ft.getResult(k);
+    if (!same)
+      return mlir::emitError(at)
+             << "the @lower of '" << f.getSymName()
+             << "' has 'out' or 'inout' values that codegen cannot return "
+                "as they came in";
+    std::string values, types;
+    for (unsigned k = 0; k < threaded.size(); ++k) {
+      values += (k ? ", %pia_arg" : "%pia_arg") + std::to_string(threaded[k]);
+      types += (k ? ", " : "") + printed(ft.getResult(k));
+    }
+    out += "return " + values + " : " + types + "\n";
+  } else if (!ft.getNumResults()) {
+    // A function that returns a value says what with its own `return`.
     out += "return\n";
+  }
   return out + "}\n";
 }
 
@@ -260,17 +409,15 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
   mlir::MLIRContext *ctx = f.getContext();
   llvm::StringRef text = f->getAttrOfType<mlir::StringAttr>(kText).getValue();
   mlir::Location at = f.getLoc();
-  if (auto a = f->getAttrOfType<mlir::StringAttr>(kAt)) {
-    auto [rest, column] = a.getValue().rsplit(':');
-    auto [file, line] = rest.rsplit(':');
-    unsigned l = 0, c = 0;
-    if (!line.getAsInteger(10, l) && !column.getAsInteger(10, c))
-      at = mlir::FileLineColLoc::get(ctx, file, l, c);
-  }
-  mlir::FailureOr<std::string> spliced = splice(f, text, at);
-  if (mlir::failed(spliced))
+  if (auto a = f->getAttrOfType<mlir::StringAttr>(kAt))
+    at = locationOf(ctx, a.getValue(), at);
+  mlir::FailureOr<Spliced> s = splice(f, text, at);
+  if (mlir::failed(s))
     return mlir::failure();
-  std::string wrapper = wrap(f, *spliced);
+  mlir::FailureOr<std::string> wrapper = wrap(f, *s, at);
+  if (mlir::failed(wrapper))
+    return mlir::failure();
+  const std::string *spliced = &s->text;
 
   // MLIR's first diagnostic, which is the one that names the mistake; the
   // ones after it follow from it.
@@ -294,7 +441,8 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
       return mlir::success();
     });
     mlir::ParserConfig config(ctx);
-    parsed = mlir::parseSourceString<mlir::ModuleOp>(wrapper, config, "@lower");
+    parsed =
+        mlir::parseSourceString<mlir::ModuleOp>(*wrapper, config, "@lower");
   }
   auto tmp = parsed ? parsed->lookupSymbol<mlir::func::FuncOp>(kTmp)
                     : mlir::func::FuncOp();
@@ -322,8 +470,9 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
   if (mlir::failed(checkEffects(f, tmp, at)))
     return mlir::failure();
 
-  Lowering l{f.getSymName().str(), where(at), *spliced, sha256(*spliced),
-             opsOf(tmp)};
+  // The views are part of the code, so the hash covers them.
+  std::string code = s->views.empty() ? *spliced : s->views + "\n" + *spliced;
+  Lowering l{f.getSymName().str(), where(at), code, sha256(code), opsOf(tmp)};
   // Errors in later passes, such as an op the pipeline cannot lower, point
   // at the attribute rather than at the parser's buffer.
   tmp.walk([&](mlir::Operation *op) { op->setLoc(at); });
@@ -337,8 +486,11 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
 void unmark(mlir::func::FuncOp f) {
   f->removeAttr(kText);
   f->removeAttr(kAt);
-  for (unsigned i = 0; i < f.getNumArguments(); ++i)
+  for (unsigned i = 0; i < f.getNumArguments(); ++i) {
     f.removeArgAttr(i, kName);
+    f.removeArgAttr(i, kView);
+    f.removeArgAttr(i, kThreaded);
+  }
 }
 
 } // namespace
