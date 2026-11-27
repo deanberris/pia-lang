@@ -3071,8 +3071,6 @@ class Gen {
       return TV{create<IntToFloatOp>(l, target, v->value), target};
     if (isFloat(v->type)) {
       unsigned from = v->type.getIntOrFloatBitWidth();
-      // The fastmath attribute is passed, empty, because the builder
-      // without it is the generic one, deprecated in this MLIR.
       if (from < target.getIntOrFloatBitWidth())
         // Without the flags, the only builder that takes (type, value) is
         // the deprecated attribute-list one, which -Werror refuses.
