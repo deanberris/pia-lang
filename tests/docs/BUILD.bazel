@@ -104,3 +104,26 @@ py_test(
     ],
     main = "doc_examples_test.py",
 )
+
+# The JSON page (docs/json.md): its examples import the library, so the
+# library's sources are data, which the page builds interfaces from as
+# `lib/...` (ADR 0045).
+py_test(
+    name = "json_docs_test",
+    size = "large",
+    srcs = ["doc_examples_test.py"],
+    args = ["$(rootpath //tools/piac)", "$(rootpath //docs:json.md)"],
+    data = [
+        "//docs:json.md",
+        "//lib/Pia/Mem:Alloc.pia",
+        "//lib/Pia/Text/Json:Derive.pia",
+        "//lib/Pia/Text/Json:Dom.pia",
+        "//lib/Pia/Text/Json:Lex.pia",
+        "//lib/Pia/Text/Json:Read.pia",
+        "//lib/Pia/Text/Json:Shape.pia",
+        "//lib/Pia/Text/Json:Spec.pia",
+        "//lib/Pia/Text/Json:Write.pia",
+        "//tools/piac",
+    ],
+    main = "doc_examples_test.py",
+)

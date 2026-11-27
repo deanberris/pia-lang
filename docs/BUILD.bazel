@@ -14,6 +14,7 @@ exports_files([
     "design.md",
     "getting-started.md",
     "idioms.md",
+    "json.md",
     "index.md",
     "repl.md",
     "repl-debugging.md",

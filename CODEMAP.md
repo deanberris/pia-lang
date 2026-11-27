@@ -30,7 +30,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
 | build queue (iMac, GPU demos only) | `bazelq --status`; `bazelq --exec -- <command>` for heavy non-Bazel runs | `tools/imac/install.sh` makes plain `bazel` queue machine-wide with 4 jobs per build |
 | prove a file | `bazel-bin/tools/piac/piac --verify f.pia` | see the `piac-verify` and `pia-fast-proofs` skills |
-| doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test` | every `ocaml` block in the listed pages is proved |
+| doc examples | `bazel test //tests/docs:doc_examples_test //tests/docs:case_studies_test //tests/docs:skills_test //tests/docs:json_docs_test` | every `ocaml` block in the listed pages is proved |
 | proof cost gate | `python3 tools/bench/proof_bench.py --piac bazel-bin/tools/piac/piac` | fails on a Z3 cost regression of more than 10% against `tools/bench/baseline.json` |
 | quick C++ check without Bazel | `g++ -std=c++17 -Isrc -fsyntax-only src/syntax/Lint.cpp` | works for `src/syntax`, `src/lsp`, `src/meta`, and the parts of `src/repl` that do not use LLVM |
 | format | `git clang-format origin/main` | CI checks only the lines you changed (`.github/workflows/style.yml`, [docs/style.md](docs/style.md)) |
