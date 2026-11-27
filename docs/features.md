@@ -59,6 +59,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
+| Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |
@@ -87,6 +88,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Modules and interfaces, met by proof | [getting started](getting-started.md), [ADR 0039](adr/0039-module-and-interface-syntax.md) | [modules](../tests/verify/modules.pia) |
+| A definition with no contract takes its interface's, so a contract is written once | [getting started](getting-started.md#contracts-written-once), [ADR 0077](adr/0077-definitions-inherit-interface-contracts.md) | [inherited_contracts](../tests/verify/inherited_contracts.pia) |
 | `spread`, a parallel loop whose iterations own their cells, and `@owns` | [tour](tour.md#parallel-loops), [verifier](verifier.md#spread), [ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md) | [spread](../tests/verify/spread.pia), [spread_ensures](../tests/verify/spread_ensures.pia), [spread_frame](../tests/verify/spread_frame.pia) |
 | `@place(gpu)` on a `spread`, a Metal kernel, and on a `for`, a sequence of kernels in one command buffer | [D8 on the GPU](placed.pia.md), [the pull step on the GPU](pull_gpu.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md) | [gpu_sequence](../tests/verify/gpu_sequence.pia) |
 
