@@ -14,5 +14,13 @@
     "count_expected": "Primes up to  2560000   187134\nPrimes up to  1280000    98610\nPrimes up to   640000    52074",
     "reference": "c",
     "programs": ["pia", "c", "cpp", "rust", "zig"]
+  },
+  "matmul": {
+    "source": "plb2",
+    "args": ["1500"],
+    "count_args": ["300"],
+    "count_expected": "-28.500833",
+    "reference": "c",
+    "programs": ["pia", "c", "rust", "zig"]
   }
 }

@@ -95,7 +95,7 @@ Wall times in the cloud vary by 5% between runs; instruction counts do not vary 
 | Brainfuck (bench.b, mandel.b) | kostya | C, C++, Rust, Zig (kostya) | same | an interpreter loop, variants, a jump table |
 | base64 encode and decode | kostya | C, Rust, Zig (kostya) | C with aklomp's SIMD codec (BSD 2-clause), reported only | byte tables, slices |
 
-matmul's input is filled by the C driver until float conversions land, so the kernel needs none.
+matmul's input is filled by the C driver, so only the multiply is Pia (bench/codegen/matmul).
 
 **Wave 2: after a feature lands:**
 

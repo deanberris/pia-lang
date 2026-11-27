@@ -1,0 +1,15 @@
+load("//bench/codegen:defs.bzl", "codegen_benchmark")
+
+# plb2's matmul (ADR 0075, wave 1): the product of two n x n f64 matrices,
+# printing its middle element. The benchmark input is n = 1500; the test runs
+# n = 7.
+codegen_benchmark(
+    name = "matmul",
+    c = "//third_party/benchmarks/plb2:matmul.c",
+    check_args = ["7"],
+    driver = "main.c",
+    expected = "-0.501458",
+    pia = "matmul.pia",
+    rust = "//third_party/benchmarks/plb2:matmul_rs",
+    zig = "//third_party/benchmarks/plb2:matmul_zig",
+)

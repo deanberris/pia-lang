@@ -9,6 +9,7 @@ licenses(["unencumbered"])
 
 exports_files([
     "LICENSE",
+    "matmul.c",
     "nqueen.c",
     "nqueen.rs",
 ])
@@ -24,4 +25,28 @@ genrule(
     ],
     outs = ["patched/nqueen.zig"],
     cmd = "cp $(location nqueen.zig) $@ && patch --quiet $@ $(location nqueen.zig.patch)",
+)
+
+# Upstream's matmul.rs and matmul.zig fix n at 1500 and print the result in
+# their own formats. The patches read n from the command line and print it
+# with six decimals, as matmul.c's "%f" does, so that every program prints
+# the same line; Zig 0.15 also needs `const` for the slices never reassigned.
+genrule(
+    name = "matmul_rs",
+    srcs = [
+        "matmul.rs",
+        "matmul.rs.patch",
+    ],
+    outs = ["patched/matmul.rs"],
+    cmd = "cp $(location matmul.rs) $@ && patch --quiet $@ $(location matmul.rs.patch)",
+)
+
+genrule(
+    name = "matmul_zig",
+    srcs = [
+        "matmul.zig",
+        "matmul.zig.patch",
+    ],
+    outs = ["patched/matmul.zig"],
+    cmd = "cp $(location matmul.zig) $@ && patch --quiet $@ $(location matmul.zig.patch)",
 )

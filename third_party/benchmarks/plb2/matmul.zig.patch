@@ -1,0 +1,54 @@
+--- matmul.zig
++++ matmul.zig
+@@ -1,8 +1,8 @@
+ const std = @import("std");
+ 
+ fn mat_alloc(n: u32) [][]f64 {
+-        var a = std.heap.page_allocator.alloc([]f64, n) catch unreachable;
+-        var storage: []f64 = std.heap.page_allocator.alloc(f64, n * n) catch unreachable;
++        const a = std.heap.page_allocator.alloc([]f64, n) catch unreachable;
++        const storage: []f64 = std.heap.page_allocator.alloc(f64, n * n) catch unreachable;
+ 	for (a, 0..) |*row, i| {
+ 		row.* = storage[i * n..][0..n];
+ 	}
+@@ -10,7 +10,7 @@
+ }
+ 
+ fn matgen(n: u32) [][]f64 {
+-	var a = mat_alloc(n);
++	const a = mat_alloc(n);
+ 	const f: f64 = @floatFromInt(n);
+ 	const tmp  = 1.0 / f / f;
+ 	for (0..n) |i| {
+@@ -24,14 +24,14 @@
+ }
+ 
+ fn matmul(n: u32, a: [][]f64, b: [][]f64) [][]f64 {
+-	var c = mat_alloc(n);
++	const c = mat_alloc(n);
+ 	for (0..n) |i| {
+ 		for (0..n) |j| {
+ 			c[i][j] = 0.0;
+ 		}
+ 	}
+ 	for (0..n) |i| {
+-		var ci = c[i];
++		const ci = c[i];
+ 		for (0..n) |k| {
+ 			const aik = a[i][k];
+ 			const bk = b[k];
+@@ -44,10 +44,12 @@
+ }
+ 
+ pub fn main() !void {
+-	const n = 1500;
++	var args = std.process.args();
++	_ = args.skip();
++	const n: u32 = if (args.next()) |s| try std.fmt.parseInt(u32, s, 10) else 1500;
+ 	const a = matgen(n);
+ 	const b = matgen(n);
+ 	const c = matmul(n, a, b);
+-	std.debug.print("{}\n", .{c[n>>1][n>>1]});
++	std.debug.print("{d:.6}\n", .{c[n>>1][n>>1]});
+ 	// FIXME: deallocate!
+ }
