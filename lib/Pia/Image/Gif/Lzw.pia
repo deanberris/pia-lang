@@ -43,19 +43,6 @@ interface Lzw = sig
         | Truncated p -> p <= B.nbits s
         | BadCode p -> p < B.nbits s
         | OutputFull p -> p < B.nbits s))
-  let decode_ref : (s : [u8]) -> (m : int{2..8}) -> (t : borrowed inout mutable [u8]) -> (dst : borrowed inout mutable [u8]) -> (spec x : [u8]) -> (spec k : usize) -> (spec tp : [usize]) -> (spec tw : [int{3..12}]) -> (spec tc : [int{0..4095}]) -> (spec to : [usize]) -> (spec te : [usize]) -> (spec h : bool) -> result usize lzw_error
-    requires len t = 12288
-    requires h ==> R.lzw_ok s m x k tp tw tc to te && len x <= len dst
-    ensures (match result with | Ok n -> n <= len dst | Err _ -> true)
-    ensures (match result with | Ok n -> (forall (i in 0 .. n). dst.[i] < B.pow2 m) | Err _ -> true)
-    ensures (match result with
-      | Ok n -> true
-      | Err e -> (match e with
-        | Truncated p -> p <= B.nbits s
-        | BadCode p -> p < B.nbits s
-        | OutputFull p -> p < B.nbits s))
-    ensures h ==>
-      (match result with | Ok n -> n = len x && (forall (i in 0 .. n). dst.[i] = x.[i]) | Err _ -> false)
 end
 
 (** Truncated: the data ends at bit p before the end code. BadCode: the

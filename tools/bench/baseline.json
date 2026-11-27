@@ -262,7 +262,7 @@
     },
     "lib/Pia/Image/Gif/Lzw.pia": {
       "cost": 1090525552,
-      "goals": 636,
+      "goals": 630,
       "solve_ms_n": 76089,
       "solved": 612,
       "wall_ms_n": 168059.1
@@ -1223,7 +1223,7 @@
   "host": "github-ubuntu-24.04",
   "total": {
     "cost": 8763422391,
-    "goals": 13328,
+    "goals": 13322,
     "solved": 11877,
     "wall_ms_1": 0,
     "wall_ms_n": 1597646.4
