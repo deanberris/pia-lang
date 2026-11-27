@@ -1,0 +1,41 @@
+(* A constant array passed where a slice is wanted, in a contract and in
+   code: `k` below is `k.[0 .. 1]` at each call, a view from 0, which is
+   its array itself, so the spec's and the code's are the same term. Under
+   a quantifier, a view needs a fact about a fresh array, which the
+   quantifier cannot hold, so the spec's call was unknown and the check
+   below failed (found writing @derive(json_dom), ADR 0045).
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* The bytes of name start s. *)
+let spec starts (s : [u8]) (name : [u8]) : bool =
+  len name <= len s && (forall (q in 0 .. len name). s.[q] = name.[q])
+
+let starts_code (s : [u8]) (name : [u8]) : bool
+  ensures result = starts s name
+= if len name <= len s then
+    (let same : mutable bool = true in
+     for q in 0 .. len name
+       invariant same = (forall (p in 0 .. q). s.[p] = name.[p])
+     do
+       if s.[q] <> name.[q] then same <- false
+     done;
+     same)
+  else false
+
+(* Some row starts with "y". *)
+let spec any_y (rows : [u8]) : bool =
+  let k : [u8; 1] = [ 0x79 ] in
+  exists (j in 0 .. len rows). starts rows k
+
+(*
+// CHECK: const_array_views.pia:[[@LINE+3]]:3: proved: the postcondition holds [smt]
+*)
+let check_y (rows : [u8]) : bool
+  ensures result = any_y rows
+= let k : [u8; 1] = [ 0x79 ] in
+  if len rows > 0 then starts_code rows k else false
+
+(*
+// CHECK: 0 failed, 0 skipped
+*)
