@@ -294,6 +294,15 @@ bool readReceipts(const std::string &path, std::vector<LeanReceipt> &out) {
   return true;
 }
 
+// Whether a Lean axiom is one that `native_decide` adds, trusting Lean's
+// compiler: `Lean.ofReduceBool` and `Lean.trustCompiler`, and, from Lean
+// 4.36, one per use named after the theorem,
+// `T._native.native_decide.ax_1_1`.
+bool trustsCompiler(const std::string &axiom) {
+  return axiom == "Lean.ofReduceBool" || axiom == "Lean.trustCompiler" ||
+         axiom.find("._native.native_decide.") != std::string::npos;
+}
+
 // Whether each lemma's receipt proves the statement it has now. A receipt
 // for an older statement is stale, so its goal fails, as ADR 0061 says.
 // `trusted` is whether the file is `@trusted`, which a proof that trusts
@@ -327,26 +336,23 @@ checkLean(const pia::syntax::LeanFile &lean,
     } else {
       // Lean's own axioms, and those of `native_decide`, which trusts the
       // compiler. Anything else, `sorryAx` above all, proves nothing.
-      static const std::set<std::string> allowed = {
-          "propext", "Classical.choice", "Quot.sound", "Lean.ofReduceBool",
-          "Lean.trustCompiler"};
       // `native_decide` trusts that Lean's compiler evaluates the decision
       // procedure correctly, which is trust like an `assume`'s: only a
       // `@trusted` file may rely on it (ADR 0061, section 4).
-      static const std::set<std::string> compiler = {"Lean.ofReduceBool",
-                                                     "Lean.trustCompiler"};
+      static const std::set<std::string> allowed = {
+          "propext", "Classical.choice", "Quot.sound"};
       for (const std::string &x : best->axioms) {
-        if (!allowed.count(x)) {
+        if (allowed.count(x))
+          continue;
+        if (!trustsCompiler(x)) {
           p.why = "axiom " + x;
           p.hint = "the Lean proof depends on the axiom '" + x +
                    "', so it proves nothing";
           break;
         }
-        if (!compiler.count(x))
-          continue;
         p.trustsCompiler = true;
         if (!trusted) {
-          p.why = "axiom " + x;
+          p.why = "native_decide";
           p.hint = "the Lean proof uses native_decide, which trusts Lean's "
                    "compiler; prove it with decide, or mark the file "
                    "@trusted to list the trust in its certificate";
@@ -860,7 +866,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
         continue;
       std::vector<std::string> compiler;
       for (const std::string &a : p.axioms)
-        if (a.rfind("Lean.", 0) == 0)
+        if (trustsCompiler(a))
           compiler.push_back(a);
       cert->trusted.push_back({"native_decide", lemma, p.statement, compiler});
     }

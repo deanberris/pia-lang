@@ -29,7 +29,7 @@
 // A second kind, `native_decide`, is a lemma whose Lean proof trusts Lean's
 // compiler, with its statement hash and the compiler's axioms (ADR 0061):
 //
-//   trusted native_decide six <hash> Lean.ofReduceBool
+//   trusted native_decide six <hash> six._native.native_decide.ax_1_1
 //
 // Format 3 adds the lemmas proved in Lean (ADR 0061, section 4). They are
 // not trusted, since Lean's kernel checked them, but a third status: the

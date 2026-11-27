@@ -122,9 +122,10 @@ Each `by lean` lemma is one goal, `the Lean theorem 'T' proves 'l'`:
 | `failed ... [no receipt]` | no `--lean-receipt` names the lemma | build its `pia_lean_proof` target and pass the receipt |
 | `failed ... [stale receipt]` | the lemma, or a spec function or record it uses, changed since the proof was checked | build the target again; fix the proof if Lean now rejects it |
 | `failed ... [receipt for another theorem]` | the receipt proves the lemma with another theorem than `by lean` names | rename one of them |
-| `failed ... [axiom X]` | the proof depends on an axiom other than Lean's own, `sorryAx` included, or uses `native_decide` (`Lean.ofReduceBool`) in a file not marked `@trusted` | prove it without the axiom, with `decide` for `native_decide`, or mark the file `@trusted` |
+| `failed ... [axiom X]` | the proof depends on an axiom other than Lean's own, `sorryAx` included | prove it without the axiom |
+| `failed ... [native_decide]` | the proof uses `native_decide` in a file not marked `@trusted` | prove it with `decide`, or mark the file `@trusted` |
 
-A proof may use Lean's axioms (`propext`, `Classical.choice`, `Quot.sound`). `native_decide`, whose `Lean.ofReduceBool` trusts Lean's compiler, is allowed only in a file marked `@trusted`, and is then a trusted item. Anything else fails, both in the receipt writer and in `piac`.
+A proof may use Lean's axioms (`propext`, `Classical.choice`, `Quot.sound`). `native_decide`, which trusts Lean's compiler (its axioms are `Lean.ofReduceBool`, or, from Lean 4.36, `T._native.native_decide.ax_1_1` per use), is allowed only in a file marked `@trusted`, and is then a trusted item. Anything else fails, both in the receipt writer and in `piac`.
 
 ## What the build records
 

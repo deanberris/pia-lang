@@ -39,6 +39,14 @@ ALLOWED_AXIOMS = {
 }
 
 
+def trusts_compiler(axiom):
+    # Lean 4.36's native_decide adds an axiom per use, named after the
+    # theorem, `T._native.native_decide.ax_1_1`, which says what the
+    # compiler computed.
+    return axiom in ("Lean.ofReduceBool", "Lean.trustCompiler") or \
+        "._native.native_decide." in axiom
+
+
 def run(args, cwd, env, what):
     r = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True)
     if r.returncode != 0:
@@ -104,7 +112,7 @@ def main():
                     sys.stderr.write(f"lean_proof: no axioms reported for {theorem}:\n{out}")
                     return 1
                 axioms = [x.strip() for x in m.group(1).split(",") if x.strip()]
-            bad = [x for x in axioms if x not in ALLOWED_AXIOMS]
+            bad = [x for x in axioms if x not in ALLOWED_AXIOMS and not trusts_compiler(x)]
             if bad:
                 sys.stderr.write(f"lean_proof: the proof of {lemma}, {theorem}, "
                                  f"depends on {', '.join(bad)}, so it proves nothing\n")

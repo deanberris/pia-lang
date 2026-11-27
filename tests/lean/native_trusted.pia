@@ -1,6 +1,7 @@
 (* A Lean proof by `native_decide` trusts Lean's compiler to run the
-   decision procedure correctly, so its receipt lists `Lean.ofReduceBool`
-   (ADR 0061, section 4). Only a `@trusted` file may use it, and the trust
+   decision procedure correctly, so its receipt lists the axiom it adds,
+   `Native.product._native.native_decide.ax_1_1` in Lean 4.36 (ADR 0061,
+   section 4). Only a `@trusted` file may use it, and the trust
    report and the certificate list it as a trusted item. native_untrusted.pia
    is the same lemma in a file that is not `@trusted`, and it fails.
 // RUN: piac --verify --lean-receipt=%S/native_proof.receipt %s | FileCheck %s
@@ -21,11 +22,11 @@ let lemma product : unit
 // TRUST: native_trusted.pia:{{[0-9]+}}:{{[0-9]+}}: trusted: Lean's compiler, which native_decide runs in the Lean proof of 'product'
 // TRUST-NEXT: used by no proved goal
 // TRUST-NEXT: 1 trusted item
-// TRUST-NEXT: native_trusted.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'product', proved by the Lean theorem 'Native.product' (leanprover/lean4:v4.36.0; axioms {{.*}}Lean.ofReduceBool{{.*}}; statement sha256 [[HASH:[0-9a-f]{64}]])
+// TRUST-NEXT: native_trusted.pia:{{[0-9]+}}:{{[0-9]+}}: lean: 'product', proved by the Lean theorem 'Native.product' (leanprover/lean4:v4.36.0; axioms {{.*}}native_decide{{.*}}; statement sha256 [[HASH:[0-9a-f]{64}]])
 // TRUST-NEXT: used by no proved goal
 // TRUST-NEXT: 1 lemma proved in Lean, which rests on Lean's kernel and on piac's translation of the statement into Lean
 
 // CERT: module (program)
-// CERT-NEXT: trusted native_decide product {{[0-9a-f]+}} ({{.*}}Lean.ofReduceBool{{.*}})
-// CERT-NEXT: proved lean product {{[0-9a-f]+}} by Native.product (leanprover/lean4:v4.36.0; axioms {{.*}}Lean.ofReduceBool{{.*}})
+// CERT-NEXT: trusted native_decide product {{[0-9a-f]+}} ({{.*}}native_decide{{.*}})
+// CERT-NEXT: proved lean product {{[0-9a-f]+}} by Native.product (leanprover/lean4:v4.36.0; axioms {{.*}}native_decide{{.*}})
 *)
