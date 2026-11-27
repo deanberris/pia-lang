@@ -21,7 +21,9 @@ using N = NodeKind;
 // `tokens[first]`: its tokens up to its `end`, with a space where the
 // source had any whitespace or comment between two tokens, each item of
 // the signature on its own line, and `end` on a line of its own.
-std::string canonical(const std::vector<Token> &tokens, size_t first) {
+std::string
+canonical(const std::vector<Token> &tokens, size_t first,
+          const std::map<uint32_t, std::string> &replacements = {}) {
   std::string out;
   int depth = 0;
   const Token *prev = nullptr;
@@ -39,7 +41,8 @@ std::string canonical(const std::vector<Token> &tokens, size_t first) {
       else if (prev->loc.offset + prev->text.size() != t.loc.offset)
         out += " ";
     }
-    out += t.text;
+    auto rep = replacements.find(t.loc.offset);
+    out += rep != replacements.end() ? rep->second : t.text;
     prev = &t;
     if (t.kind == K::Sig || t.kind == K::Struct) ++depth;
     if (t.kind == K::End && --depth == 0) break;
@@ -210,6 +213,27 @@ NodePtr importedType(const Node &shown, const std::string &module,
 NodePtr importedFunction(const Node &val, const std::string &module,
                          const std::set<std::string> &members, SourceLoc at,
                          const std::string &where, Diagnostics &diags) {
+  if (const Node *embedAttr = findSigEmbedAttr(val)) {
+    if (!val.flags.empty() || !val.kids[2]->kids.empty() ||
+        val.kids.size() > 3) {
+      diags.error(at, "'" + val.text + "' in " + where +
+                          " has an invalid @embed interface entry");
+      return nullptr;
+    }
+    if (!parseInterfaceEmbedAttr(*embedAttr, diags))
+      return nullptr;
+    auto item = makeNode(N::LetItem, at, module + "." + val.text);
+    item->flags = "import from:" + module;
+    item->add(makeNode(N::Params, at));
+    Node *ret = item->add(makeNode(N::RetAnnot, at));
+    ret->add(clone(*val.kids[0]));
+    Node *attrs = ret->add(makeNode(N::Attrs, at));
+    attrs->add(clone(*embedAttr));
+    item->add(makeNode(N::Contracts, at));
+    item->add(makeNode(N::None, at));
+    relocate(*item, at);
+    return item;
+  }
   auto item = makeNode(N::LetItem, at, module + "." + val.text);
   item->flags = "import from:" + module;
   // A lemma stays one: a call to it is a fact, proved in its module (#305).
@@ -418,10 +442,9 @@ std::string canonicalItem(const std::vector<Token> &tokens, uint32_t start,
 
 }  // namespace
 
-std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
-                                                  std::string_view source,
-                                                  bool literate,
-                                                  Diagnostics &diags) {
+std::vector<InterfaceArtifact>
+interfaceArtifacts(const Node &program, std::string_view source, bool literate,
+                   Diagnostics &diags, const EmbedOptions *embeds) {
   std::vector<InterfaceArtifact> out;
   const Node *header = nullptr;
   for (const NodePtr &item : program.kids)
@@ -448,10 +471,59 @@ std::vector<InterfaceArtifact> interfaceArtifacts(const Node &program,
                                  "source to publish");
       continue;
     }
+    // Explicitly exported `@embed` bindings record exact byte length and
+    // SHA-256 content hash in `.piai`; private `@embed` bindings stay out of
+    // `.piai` and are never read here (ADR 0070, section 5).
+    std::map<uint32_t, std::string> embedReplacements;
+    for (const NodePtr &k : item->kids) {
+      if (k->kind != N::SigVal)
+        continue;
+      const Node *sigAttr = findSigEmbedAttr(*k);
+      if (!sigAttr)
+        continue;
+      if (!sigAttr->kids.empty()) {
+        diags.error(sigAttr->loc,
+                    "in an interface, write 'let " + k->text +
+                        " : [u8] @embed' without arguments; "
+                        "piac --emit=interface fills in len and sha256");
+        continue;
+      }
+      const Node *def = nullptr;
+      for (const NodePtr &other : program.kids)
+        if (other->kind == N::LetItem && other->text == k->text &&
+            findEmbedAttr(*other)) {
+          def = other.get();
+          break;
+        }
+      if (!def) {
+        diags.error(k->loc,
+                    "the interface '" + item->text +
+                        "' exports '@embed' binding '" + k->text +
+                        "', which is not defined as an @embed binding in this "
+                        "module");
+        continue;
+      }
+      const Node *defAttr = findEmbedAttr(*def);
+      auto spec = parseEmbedAttr(*defAttr, diags);
+      if (!spec)
+        continue;
+      EmbedOptions emptyOpts;
+      auto bytes = resolveEmbedFile(spec->file, embeds ? *embeds : emptyOpts,
+                                    defAttr->loc, diags);
+      if (!bytes)
+        continue;
+      std::string rep = "@embed(len = " + std::to_string(bytes->size()) +
+                        ", sha256 = \"" + sha256Hex(*bytes) + "\"";
+      if (spec->hasExplicitSymbol)
+        rep += ", symbol = \"" + spec->symbol + "\"";
+      rep += ")";
+      embedReplacements[sigAttr->loc.offset] = std::move(rep);
+    }
     InterfaceArtifact a;
     a.module = header->text;
     a.name = item->text;
-    a.text = "module " + header->text + "\n" + canonical(tokens, first);
+    a.text = "module " + header->text + "\n" +
+             canonical(tokens, first, embedReplacements);
     // Generic functions and concepts are exported with their definitions,
     // which importers instantiate and run (ADR 0039): the inline surface.
     std::set<std::string> listed, inlined;

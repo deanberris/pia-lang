@@ -1,0 +1,84 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+load("//tools/piac:pia.bzl", "pia_binary", "pia_library", "pia_object")
+load("//tools/piac:targets.bzl", "PIA_TARGETS")
+
+# Raw binary embedding (@embed, ADR 0070): verification, diagnostics,
+# interfaces/SHA-256 certificates, and direct LLVM ConstantDataArray emission.
+lit_tests(
+    name = "embed_tests",
+    srcs = glob(["*.pia"]),
+    data = glob([
+        "Inputs/*.bin",
+        "Inputs/*.pia",
+    ]),
+    tools = [
+        "//tools/pia-cert",
+        "//tools/piac",
+    ],
+)
+
+# End-to-end pure Pia binary embedding raw binary files via Bazel `embeds`.
+pia_binary(
+    name = "embed_run",
+    src = "Inputs/embed_run.pia",
+    embeds = [
+        "Inputs/empty.bin",
+        "Inputs/magic.bin",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+sh_test(
+    name = "embed_run_test",
+    srcs = ["embed_run_test.sh"],
+    args = ["$(rootpath :embed_run)"],
+    data = [":embed_run"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# C ABI interop: explicit symbol, <symbol>_len, alignment, and Pia reader.
+pia_object(
+    name = "embed_c_obj",
+    src = "Inputs/embed_c.pia",
+    embeds = ["Inputs/magic.bin"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+cc_test(
+    name = "embed_c_test",
+    srcs = [
+        "embed_c_test.c",
+        ":embed_c_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Separate compilation with an exported @embed binding (ADR 0070, step 3):
+# `kernels` exports `add_metallib` with its length and SHA-256 in `.piai`,
+# and `use_kernels_run` imports, proves and links against it.
+pia_library(
+    name = "kernels",
+    src = "Inputs/kernels.pia",
+    embeds = [
+        "Inputs/empty.bin",
+        "Inputs/magic.bin",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+pia_binary(
+    name = "use_kernels_run",
+    src = "Inputs/use_kernels.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":kernels"],
+)
+
+sh_test(
+    name = "use_kernels_run_test",
+    srcs = ["use_kernels_run_test.sh"],
+    args = ["$(rootpath :use_kernels_run)"],
+    data = [":use_kernels_run"],
+    target_compatible_with = PIA_TARGETS,
+)

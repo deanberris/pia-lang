@@ -14,6 +14,8 @@
 //                          at SPEC = [cell]:line[:col] (also :allow)
 //   --meta-cycles=N        cap metaprogram expansion at N passes
 //   --timeout-ms=N         the solver's time limit per obligation
+//   --embed-path=DIR       search root for @embed(file = ...) (repeatable)
+//   --embed=LOGICAL=PATH   explicit file mapping for @embed (repeatable)
 //
 // Each file is loaded as one cell first. On a terminal, `pia repl` then
 // reads cells with a line editor; otherwise it reads them from standard
@@ -41,11 +43,14 @@ using pia::repl::Session;
 
 int usage() {
   std::cerr << "usage: pia mcp [--no-run] [--allow-unproved=<spec>]... "
+               "[--embed-path=<dir>]... [--embed=<logical>=<path>]... "
                "[--meta-cycles=N] [--timeout-ms=N]\n"
                "       pia repl [--json] [--input=text|json] "
                "[--output=text|json] [--no-run]\n"
                "                [--allow-unproved=<spec>]... "
-               "[--meta-cycles=N] [--timeout-ms=N] [file.pia ...]\n";
+               "[--embed-path=<dir>]... [--embed=<logical>=<path>]...\n"
+               "                [--meta-cycles=N] [--timeout-ms=N] "
+               "[file.pia ...]\n";
   return 2;
 }
 
@@ -193,6 +198,11 @@ int main(int argc, char **argv) {
       options.run = false;
     } else if (arg.rfind("--allow-unproved=", 0) == 0 && arg.size() > 17) {
       options.allowUnproved.push_back(arg.substr(17));
+    } else if (bool badEmbed = false;
+               pia::syntax::parseEmbedFlag(arg, options.embeds, badEmbed) ||
+               badEmbed) {
+      if (badEmbed)
+        return usage();
     } else if (arg.rfind("--meta-cycles=", 0) == 0) {
       if (!number(14, options.meta.maxCycles))
         return usage();
