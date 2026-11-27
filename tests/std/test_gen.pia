@@ -24,9 +24,9 @@ let dec (d : int{-2..2}) : int{-3..1}
 
 (* A constant in the requires adds its neighbours to the domain: 9, 10
    and 11 for `n < 10`. *)
-let below (n : u8) (up : bool) : u8
+let below (n : u8) (up : bool) : u8 @allow(range_requires)
   requires n < 10
-  ensures result <= 10
+  ensures result <= n + 1
 = if up then n + 1 else n
 
 let max_c (a : u8) (b : u8) : u8
@@ -45,13 +45,14 @@ G.cases below
 G.cases max_c
 G.cases mix
 
-(* CHECK-NOT: failed
+(* CHECK-NOT: : failed:
    CHECK: proved: case 1: some result can meet the ensures of 'clamp'
    CHECK: proved: case 1: 'clamp' meets its ensures
    CHECK: proved: case 5: 'dec' meets its ensures
    CHECK: proved: case 16: some result can meet the ensures of 'max_c'
    CHECK-NOT: 'max_c' meets its ensures
-   CHECK-NOT: failed
+   CHECK-NOT: : failed:
+   CHECK: 197 proved, 0 failed, 0 skipped
 
    28 of clamp's 64 rows meet lo <= hi. below's n is 0, 1, 254 or 255
    from u8, and 9, 10 and 11 from its requires; only 0, 1 and 9 meet it,
