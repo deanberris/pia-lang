@@ -20,7 +20,7 @@ Dean then set the direction (2026-11-28): "We can write a versioned schema which
 
 ### 1. The schema: every op piac writes, named and numbered by Pia
 
-**Pia IR** is defined by one checked-in schema, `src/ir/schema.td`. It lists every op that can appear in a verified module, which is the input of codegen and of ADR 0076's whole-program mode:
+**Pia IR** is defined by one checked-in schema, written in Pia: `lib/Pia/Ir/Schema.pia`, a table of records, one per op and one per type (section 7 says why it is Pia and not TableGen). It lists every op that can appear in a verified module, which is the input of codegen and of ADR 0076's whole-program mode:
 
 - Pia's own dialects: `pia`, `pia_contract`, `pia_par`.
 - Every upstream op piac emits or keeps: the `arith`, `scf`, `memref`, `func`, `math`, `linalg`, `tensor` and `async` ops that IRGen, the transforms and the `@lower` checks produce.
@@ -34,7 +34,7 @@ For each op, the schema gives:
 
 Types are in the schema too (`!pia.int<lo, hi>`, slices, records, sorts, and the upstream `i1`, `iN`, `index`, `f32`, `f64`, `memref` and `tensor` shapes), each with its own id.
 
-So Pia IR is a description of the ops Pia uses, at the meaning Pia gives them. The **mapping** from each schema op to the current MLIR op is generated code in piac, `src/ir/Map.cpp`, produced from the schema by TableGen. When an LLVM bump renames a builder, adds a property or splits an op, only the mapping changes. The schema, the encoding and every artifact stay the same.
+So Pia IR is a description of the ops Pia uses, at the meaning Pia gives them. The **mapping** from each schema op to the current MLIR op is generated code in piac, `src/ir/Map.cpp`, produced from the schema by `tools/ir/gen`, which reads it through `piac --emit=interface`'s typed tree, the same way `tools/bindings/gen.py` generates `Pia.Sys.Posix`. When an LLVM bump renames a builder, adds a property or splits an op, only the mapping changes. The schema, the encoding and every artifact stay the same.
 
 ### 2. Lock-step with piac and the language
 
@@ -77,6 +77,18 @@ Each artifact carries a **proof table**: for each obligation, its stable id (the
 - `@lower` bodies stay the MLIR text the program wrote (ADR 0065). They are trusted items whose hash the certificate already records, and their ops need not be in the schema.
 - LTO (ADR 0076, section 5) stays LLVM bitcode, because it is written and read within one build and never shipped.
 
+### 7. Portable, and readable by Pia itself
+
+Dean (2026-11-28): "What I don't want is to be locked to MLIR's format, but I want a portable format as well. One ulterior motivation here might be if we can eventually self-host Pia so that the compiler can handle the bytecode produced to replicate what the MLIR infrastructure gives us but in Pia. That's probably a 1.0 feature."
+
+So Pia IR is defined independently of any one implementation, piac's C++ included:
+
+- **The spec is a document, not code.** `docs/ir.md` defines the encoding byte by byte: the header, LEB128, the tables, op and field order, and how each field type is written. The schema gives the op list. A conforming reader can be written from those two alone, in any language.
+- **The schema is Pia, not TableGen.** TableGen is LLVM's. A schema in `lib/Pia/Ir/Schema.pia` is data a Pia program can read, so a self-hosted compiler loads the same table that generates piac's C++ mapping today. The schema is a module with an interface, so changing it is an interface change, and the hash and the migration check see it.
+- **Portable bytes.** Integers are LEB128, floats are IEEE 754 bit patterns written little-endian, strings are UTF-8 with a length, and nothing depends on the host's word size, endianness or alignment. Target-specific facts, such as the size of `usize` or a `@place(gpu)` op, are fields with the target named, never assumptions of the encoding. A module proved for one target is readable on any host.
+- **No MLIR in the definition.** The mapping to MLIR is one consumer. A self-hosted Pia that implements its own passes over Pia IR is another, and the schema's stated meaning of each op, not MLIR's, is what both must agree with.
+- **Self-hosting path (1.0, not before).** `Pia.Ir`, an encoder and decoder written in Pia, proved to round-trip, as the GIF and inflate codecs are proved against their specs (ADR 0054). Then passes written in Pia over the decoded tree, each proved against the schema's meanings. ADR 0065's `@lower` and ADR 0074's library types are already moving compiler extensions into Pia, and this gives them a stable IR to work on. Nothing before 1.0 depends on it; the C++ mapping remains the implementation until a Pia one proves equal on the round-trip suite.
+
 ## Options considered
 
 | | Pia IR schema (chosen) | Canonical expanded Pia text | MLIR bytecode |
@@ -98,9 +110,10 @@ Canonical text was this ADR's first proposal. It loses to the schema because it 
 
 ## Steps
 
-1. `src/ir/schema.td` for the `pia`, `pia_contract` and `pia_par` dialects and the upstream ops a `tests/verify` module uses, the generated mapping, `--emit=ir`, `--from-ir` and `--dump-ir`. The test round-trips every file in `tests/verify` and checks that the reports are identical.
+1. `lib/Pia/Ir/Schema.pia` and the byte-level spec in `docs/ir.md` for the `pia`, `pia_contract` and `pia_par` dialects and the upstream ops a `tests/verify` module uses, the generated mapping, `--emit=ir`, `--from-ir` and `--dump-ir`. The test round-trips every file in `tests/verify` and checks that the reports are identical.
 2. `tools/ir/check.py` in CI: no emitted op outside the schema, and no schema change without a version bump and a migration.
 3. The proof table, and `--verify --proof-table=<file>`.
 4. Certificate format 4: `ir <version>`, the module hash and the proof table hash, checked by `pia-cert check`.
 5. The migration framework in `src/ir/migrate`, `piac migrate --ir`, and the first migration when the first schema change lands.
 6. ADR 0076's whole-program mode and transparent bodies read Pia IR.
+7. (1.0) `Pia.Ir`: an encoder and decoder in Pia, proved to round-trip against `docs/ir.md`, then passes over it in Pia.
