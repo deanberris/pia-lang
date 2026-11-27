@@ -20,7 +20,7 @@
 // A program without a module header writes `module` with no name.
 //
 // Format 2 adds the module's own trusted items, one line each (ADR 0024,
-// ADR 0065). The only kind written so far is a lowering, a function whose
+// ADR 0065). The first kind is a lowering, a function whose
 // MLIR form replaced its proved body, with the SHA-256 of that MLIR and the
 // ops it uses, or `-` for none:
 //
@@ -43,6 +43,20 @@
 // writes format 3; formats
 // 1 and 2 are still read, as objects with no ABI version, which the link
 // check refuses.
+//
+// A second kind, `native_decide`, is a lemma whose Lean proof trusts Lean's
+// compiler, with its statement hash and the compiler's axioms (ADR 0061):
+//
+//   trusted native_decide six <hash> six._native.native_decide.ax_1_1
+//
+// Format 3 also holds the lemmas proved in Lean (ADR 0061, section 4), as
+// `proved lean` lines, the spelling ADR 0073 gives them. They are
+// not trusted, since Lean's kernel checked them, but a third status: the
+// lemma, the SHA-256 of its Lean statement and the definitions it uses, the
+// theorem that proves it, the Lean toolchain and the axioms the proof uses,
+// or `-` for none:
+//
+//   proved lean sum_nonneg <hash> Proofs.sum_nonneg <toolchain> propext
 
 #ifndef PIA_CERT_CERTIFICATE_H
 #define PIA_CERT_CERTIFICATE_H
@@ -72,7 +86,7 @@ struct Interface {
 
 // A trusted item of the module (docs/abi.md, "Trusted items").
 struct Trusted {
-  std::string kind;                // `lowering`
+  std::string kind;                // `lowering`, `native_decide`
   std::string name;                // the function
   std::string hash;                // SHA-256 of what is trusted, hex
   std::vector<std::string> detail; // for a lowering, the ops it uses
@@ -82,6 +96,15 @@ struct Trusted {
 struct Solver {
   std::string name;    // `z3`
   std::string version; // `5.4.1`
+};
+
+// A lemma proved in Lean (ADR 0061, section 4).
+struct LeanFact {
+  std::string name;                // the lemma
+  std::string statement;           // SHA-256 of its Lean closure, hex
+  std::string theorem;             // the Lean theorem that proves it
+  std::string toolchain;           // `leanprover/lean4:v4.36.0`
+  std::vector<std::string> axioms; // what `#print axioms` reports
 };
 
 struct Certificate {
@@ -94,6 +117,7 @@ struct Certificate {
   std::optional<std::vector<std::string>> engines;
   std::vector<Interface> provides, requires_;
   std::vector<Trusted> trusted;
+  std::vector<LeanFact> lean;
 };
 
 // The SHA-256 of an interface artifact's text, in lowercase hex.

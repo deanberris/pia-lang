@@ -67,6 +67,46 @@ TEST(Certificate, AbiLinesNeedFormat3) {
   EXPECT_FALSE(decode(raw(3, "module M\nprover gcc 1\n"), error));
 }
 
+TEST(Certificate, LeanFactsRoundTrip) {
+  // ADR 0061, section 4: a lemma proved in Lean, and a trusted item for a
+  // proof by native_decide.
+  Certificate c = make("Sums");
+  c.lean.push_back({"sum_nonneg",
+                    kHash,
+                    "Proofs.sum_nonneg",
+                    "leanprover/lean4:v4.36.0",
+                    {"propext", "Quot.sound"}});
+  c.lean.push_back(
+      {"dist_of", kHash, "Proofs.dist_of", "leanprover/lean4:v4.36.0", {}});
+  c.trusted.push_back(
+      {"native_decide", "six", kHash, {"six._native.native_decide.ax_1_1"}});
+  std::string error;
+  std::optional<Certificate> d = decode(encode(c), error);
+  ASSERT_TRUE(d) << error;
+  ASSERT_EQ(d->lean.size(), 2u);
+  EXPECT_EQ(d->lean[0].name, "sum_nonneg");
+  EXPECT_EQ(d->lean[0].statement, kHash);
+  EXPECT_EQ(d->lean[0].theorem, "Proofs.sum_nonneg");
+  EXPECT_EQ(d->lean[0].toolchain, "leanprover/lean4:v4.36.0");
+  EXPECT_EQ(d->lean[0].axioms,
+            (std::vector<std::string>{"propext", "Quot.sound"}));
+  EXPECT_TRUE(d->lean[1].axioms.empty());
+  ASSERT_EQ(d->trusted.size(), 1u);
+  EXPECT_EQ(d->trusted[0].kind, "native_decide");
+  EXPECT_EQ(encode(*d), encode(c));
+}
+
+TEST(Certificate, LeanLinesNeedFormat3) {
+  std::string error;
+  std::string line =
+      "proved lean l " + kHash + " T leanprover/lean4:v4.36.0 -\n";
+  EXPECT_FALSE(decode(raw(2, "module M\n" + line), error));
+  EXPECT_TRUE(decode(raw(3, "module M\n" + line), error)) << error;
+  EXPECT_FALSE(decode(raw(3, "module M\nproved lean l short T v -\n"), error));
+  EXPECT_FALSE(
+      decode(raw(3, "module M\nproved lean l " + kHash + " T\n"), error));
+}
+
 TEST(Certificate, LinkNeedsOneAbiAndTarget) {
   EXPECT_TRUE(checkLink({{"a.o", make("A")}, {"b.o", make("B")}}).empty());
 

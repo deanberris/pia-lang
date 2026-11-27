@@ -115,6 +115,7 @@
 #include "dialect/PiaDialect.h"
 #include "gpu/Spirv.h"
 #include "irgen/IRGen.h"
+#include "irgen/Theories.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/MLIRContext.h"
@@ -299,11 +300,22 @@ bool readReceipts(const std::string &path, std::vector<LeanReceipt> &out) {
   return true;
 }
 
+// Whether a Lean axiom is one that `native_decide` adds, trusting Lean's
+// compiler: `Lean.ofReduceBool` and `Lean.trustCompiler`, and, from Lean
+// 4.36, one per use named after the theorem,
+// `T._native.native_decide.ax_1_1`.
+bool trustsCompiler(const std::string &axiom) {
+  return axiom == "Lean.ofReduceBool" || axiom == "Lean.trustCompiler" ||
+         axiom.find("._native.native_decide.") != std::string::npos;
+}
+
 // Whether each lemma's receipt proves the statement it has now. A receipt
 // for an older statement is stale, so its goal fails, as ADR 0061 says.
+// `trusted` is whether the file is `@trusted`, which a proof that trusts
+// Lean's compiler needs.
 std::map<std::string, pia::verify::Options::LeanProof>
 checkLean(const pia::syntax::LeanFile &lean,
-          const std::vector<LeanReceipt> &receipts) {
+          const std::vector<LeanReceipt> &receipts, bool trusted) {
   std::map<std::string, pia::verify::Options::LeanProof> out;
   for (const pia::syntax::LeanStatement &s : lean.statements) {
     std::string hash = statementHash(s.closure);
@@ -315,6 +327,10 @@ checkLean(const pia::syntax::LeanFile &lean,
     if (!best)
       continue;
     pia::verify::Options::LeanProof &p = out[s.lemma];
+    p.theorem = best->theorem;
+    p.statement = best->statement;
+    p.toolchain = best->toolchain;
+    p.axioms = best->axioms;
     if (best->theorem != s.theorem) {
       p.why = "receipt for another theorem";
       p.hint = "the receipt is for the Lean theorem '" + best->theorem +
@@ -326,16 +342,29 @@ checkLean(const pia::syntax::LeanFile &lean,
     } else {
       // Lean's own axioms, and those of `native_decide`, which trusts the
       // compiler. Anything else, `sorryAx` above all, proves nothing.
+      // `native_decide` trusts that Lean's compiler evaluates the decision
+      // procedure correctly, which is trust like an `assume`'s: only a
+      // `@trusted` file may rely on it (ADR 0061, section 4).
       static const std::set<std::string> allowed = {
-          "propext", "Classical.choice", "Quot.sound", "Lean.ofReduceBool",
-          "Lean.trustCompiler"};
-      for (const std::string &x : best->axioms)
-        if (!allowed.count(x)) {
+          "propext", "Classical.choice", "Quot.sound"};
+      for (const std::string &x : best->axioms) {
+        if (allowed.count(x))
+          continue;
+        if (!trustsCompiler(x)) {
           p.why = "axiom " + x;
           p.hint = "the Lean proof depends on the axiom '" + x +
                    "', so it proves nothing";
           break;
         }
+        p.trustsCompiler = true;
+        if (!trusted) {
+          p.why = "native_decide";
+          p.hint = "the Lean proof uses native_decide, which trusts Lean's "
+                   "compiler; prove it with decide, or mark the file "
+                   "@trusted to list the trust in its certificate";
+          break;
+        }
+      }
       p.proved = p.why.empty();
     }
   }
@@ -538,10 +567,14 @@ void printGoalAxioms(const std::vector<pia::verify::Outcome> &outcomes) {
 // `--trust-report`: what the program's proofs rest on without proof: the
 // axioms of theories with no model (ADR 0036), with each such theory's
 // consistency check, foreign functions' contracts, `unsafe` calls (#55)
-// and `assume`s (ADR 0023).
-void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
-                      const std::vector<pia::verify::Outcome> &outcomes,
-                      bool why, bool lower, std::ostream &os) {
+// and `assume`s (ADR 0023). Lemmas proved in Lean are not trusted, but
+// they rest on Lean and on piac's translation, so they have a section of
+// their own (ADR 0061, section 4).
+void printTrustReport(
+    mlir::ModuleOp module, const pia::verify::Stats &stats,
+    const std::vector<pia::verify::Outcome> &outcomes,
+    const std::map<std::string, pia::verify::Options::LeanProof> &leanProofs,
+    bool why, bool lower, std::ostream &os) {
   // Each trusted theory's consistency check.
   std::map<std::string, const pia::verify::TheoryCheck *> checks;
   for (const pia::verify::TheoryCheck &c : stats.theories) {
@@ -571,6 +604,25 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
   for (const pia::verify::Outcome &o : outcomes)
     if (o.status == pia::verify::Status::Proved)
       behind[o.function].insert(o.axiomsUsed.begin(), o.axiomsUsed.end());
+  // A lemma proved in Lean is behind its callers as `lean <lemma>`, and,
+  // if its proof trusts Lean's compiler, as `native_decide <lemma>` too.
+  // Its own goal is that its receipt checks, which rests on nothing.
+  std::vector<
+      std::pair<mlir::func::FuncOp, const pia::verify::Options::LeanProof *>>
+      leanFacts;
+  for (auto f : module.getOps<mlir::func::FuncOp>()) {
+    auto lemma = f->getAttrOfType<mlir::StringAttr>("pia.lean_lemma");
+    if (!lemma)
+      continue;
+    auto it = leanProofs.find(lemma.getValue().str());
+    if (it == leanProofs.end() || !it->second.proved)
+      continue;
+    leanFacts.push_back({f, &it->second});
+    std::string name = f.getSymName().str();
+    behind[name].insert("lean " + name);
+    if (it->second.trustsCompiler)
+      behind[name].insert("native_decide " + name);
+  }
   std::map<std::string, std::set<std::string>> calls;
   for (auto f : module.getOps<mlir::func::FuncOp>())
     f.walk([&](mlir::func::CallOp c) {
@@ -659,6 +711,23 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
       if (why) usedBy(name);
       ++n;
     });
+    // A Lean proof by `native_decide` trusts that Lean's compiler runs
+    // the decision procedure correctly, as an `assume` is trusted.
+    if (auto lemma = f->getAttrOfType<mlir::StringAttr>("pia.lean_lemma")) {
+      auto it = leanProofs.find(lemma.getValue().str());
+      if (it != leanProofs.end() && it->second.proved &&
+          it->second.trustsCompiler) {
+        std::string name = "native_decide " + f.getSymName().str();
+        trustedAxioms.insert(name);
+        os << pia::verify::formatLoc(f.getLoc())
+           << ": trusted: Lean's compiler, which native_decide runs in the "
+              "Lean proof of '"
+           << lemma.getValue().str() << "'\n";
+        if (why)
+          usedBy(name);
+        ++n;
+      }
+    }
     if (!f->hasAttr(pia::PiaDialect::getAxiomAttrName())) continue;
     // A theory with a model is proved consistent by it: nothing trusted.
     if (f->hasAttr("pia.modelled")) continue;
@@ -673,6 +742,24 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
     ++n;
   }
   os << n << (n == 1 ? " trusted item\n" : " trusted items\n");
+  for (auto [f, p] : leanFacts) {
+    os << pia::verify::formatLoc(f.getLoc()) << ": lean: '"
+       << f->getAttrOfType<mlir::StringAttr>("pia.lean_lemma").getValue().str()
+       << "', proved by the Lean theorem '" << p->theorem << "' ("
+       << p->toolchain << "; axioms";
+    for (const std::string &a : p->axioms)
+      os << " " << a;
+    os << (p->axioms.empty() ? " none" : "") << "; statement sha256 "
+       << p->statement << ")\n";
+    if (why)
+      usedBy("lean " + f.getSymName().str());
+  }
+  if (!leanFacts.empty())
+    os << leanFacts.size()
+       << (leanFacts.size() == 1 ? " lemma proved in Lean, which rests"
+                                 : " lemmas proved in Lean, which rest")
+       << " on Lean's kernel and on piac's translation of the statement "
+          "into Lean\n";
   if (why) {
     // A goal that used no trusted axiom is fully proved, whatever its
     // file trusts.
@@ -689,6 +776,20 @@ void printTrustReport(mlir::ModuleOp module, const pia::verify::Stats &stats,
     os << resting << " of " << proved << " proved goals rest on a trusted "
        << (assumes ? "axiom or 'assume'" : "axiom") << "; the other "
        << (proved - resting) << " are fully proved\n";
+    if (!leanFacts.empty()) {
+      unsigned onLean = 0;
+      for (const pia::verify::Outcome &o : outcomes) {
+        if (o.status != pia::verify::Status::Proved)
+          continue;
+        for (const std::string &a : restsOn(o))
+          if (a.rfind("lean ", 0) == 0) {
+            ++onLean;
+            break;
+          }
+      }
+      os << onLean << " of " << proved
+         << " proved goals use a lemma proved in Lean\n";
+    }
   }
 }
 
@@ -747,7 +848,12 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   std::vector<pia::codegen::Lowering> lowerings;
   if (mlir::failed(pia::codegen::applyLowerings(module, lower, &lowerings)))
     return 1;
-  if (!lowerings.empty() && !options.certificate.empty()) {
+  // A lemma proved in Lean is listed with its receipt (ADR 0061, section
+  // 4), and one whose proof trusts Lean's compiler is a trusted item too.
+  bool anyLean = false;
+  for (const auto &[lemma, p] : verifyOptions.leanProofs)
+    anyLean |= p.proved;
+  if ((!lowerings.empty() || anyLean) && !options.certificate.empty()) {
     std::string error;
     std::optional<pia::cert::Certificate> cert =
         pia::cert::decode(options.certificate, error);
@@ -757,6 +863,19 @@ int compile(mlir::ModuleOp module, const std::string &mode,
     }
     for (const pia::codegen::Lowering &l : lowerings)
       cert->trusted.push_back({"lowering", l.function, l.hash, l.ops});
+    for (const auto &[lemma, p] : verifyOptions.leanProofs) {
+      if (!p.proved)
+        continue;
+      cert->lean.push_back(
+          {lemma, p.statement, p.theorem, p.toolchain, p.axioms});
+      if (!p.trustsCompiler)
+        continue;
+      std::vector<std::string> compiler;
+      for (const std::string &a : p.axioms)
+        if (trustsCompiler(a))
+          compiler.push_back(a);
+      cert->trusted.push_back({"native_decide", lemma, p.statement, compiler});
+    }
     options.certificate = pia::cert::encode(*cert);
   }
 
@@ -1244,7 +1363,8 @@ int main(int argc, char **argv) {
       options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;
-      options.leanProofs = checkLean(lean, receipts);
+      options.leanProofs =
+          checkLean(lean, receipts, pia::irgen::isTrustedFile(*tree));
       // Which axioms each proof used is only reported by these, and kept
       // in proof cache entries for later runs to report (ADR 0036).
       options.trackAxioms =
@@ -1270,8 +1390,8 @@ int main(int argc, char **argv) {
           printGoalAxioms(outcomes);
         }
         if (trustReport)
-          printTrustReport(*module, stats, outcomes, trustWhy, lower,
-                           std::cout);
+          printTrustReport(*module, stats, outcomes, options.leanProofs,
+                           trustWhy, lower, std::cout);
         if (checkVacuity && stats.vacuityUnknown)
           std::cerr << "piac: note: --check-vacuity could not decide "
                     << stats.vacuityUnknown << " of " << stats.vacuityChecks
