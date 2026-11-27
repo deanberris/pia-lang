@@ -2,7 +2,10 @@
 // object retained with CFBridgingRetain, and released with
 // CFBridgingRelease when it is closed or freed.
 
+#include <dispatch/dispatch.h>
 #include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #import <Foundation/Foundation.h>
@@ -202,6 +205,36 @@ static int32_t run_kernel(uint64_t lib, uint64_t lib_len, uint64_t name,
         pia_gpu_kernel_get(library, (const uint8_t *)(uintptr_t)name, name_len);
   }
   return *kernel ? PIA_GPU_OK : PIA_GPU_FAULT;
+}
+
+static _Atomic uint64_t warm_count;
+
+void pia_gpu_warm_stats(uint64_t *warmed) { *warmed = warm_count; }
+
+void pia_gpu_warm(uint64_t lib, uint64_t lib_len, uint64_t name,
+                  uint64_t name_len) {
+  const char *off = getenv("PIA_GPU_WARM");
+  if (off && strcmp(off, "0") == 0)
+    return;
+  // One serial queue, so kernels are built one at a time, below the
+  // program's own threads.
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue =
+        dispatch_queue_create("dev.pia-lang.gpu.warm",
+                              dispatch_queue_attr_make_with_qos_class(
+                                  DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+  });
+  // The library and name are constants of the program, so they outlive
+  // the block.
+  dispatch_async(queue, ^{
+    @autoreleasepool {
+      uint64_t kernel;
+      if (run_kernel(lib, lib_len, name, name_len, &kernel) == PIA_GPU_OK)
+        warm_count++;
+    }
+  });
 }
 
 int32_t pia_gpu_run(uint64_t lib, uint64_t lib_len, uint64_t name,
