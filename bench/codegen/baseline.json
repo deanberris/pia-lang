@@ -1,21 +1,63 @@
 {
-  "host": "Intel(R) Xeon(R) 6975P-C",
+  "host": "AMD EPYC 9V45 96-Core Processor",
   "problems": {
-    "nqueen": {
+    "base64": {
       "c": {
-        "instructions": 63805631
+        "instructions": 122731209
       },
       "control": {
-        "instructions": 96230851
+        "instructions": 195432135
       },
       "pia": {
-        "instructions": 95533145
+        "instructions": 212290745
+      }
+    },
+    "matmul": {
+      "c": {
+        "instructions": 34790946
+      },
+      "pia": {
+        "instructions": 31010564
       },
       "rust": {
-        "instructions": 61307314
+        "instructions": 33231979
       },
       "zig": {
-        "instructions": 62638021
+        "instructions": 30524158
+      }
+    },
+    "nqueen": {
+      "c": {
+        "instructions": 63805767
+      },
+      "control": {
+        "instructions": 96230978
+      },
+      "pia": {
+        "instructions": 95533262
+      },
+      "rust": {
+        "instructions": 61308058
+      },
+      "zig": {
+        "instructions": 62638025
+      }
+    },
+    "nsieve": {
+      "c": {
+        "instructions": 87660467
+      },
+      "cpp": {
+        "instructions": 265742967
+      },
+      "pia": {
+        "instructions": 77277953
+      },
+      "rust": {
+        "instructions": 134466610
+      },
+      "zig": {
+        "instructions": 73260660
       }
     }
   }
