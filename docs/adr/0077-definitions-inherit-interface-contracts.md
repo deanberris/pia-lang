@@ -68,7 +68,7 @@ Everything that reads a definition's contract then reads the interface's. The bo
 
 The interface names the parameters its own way. The copy is renamed to the definition's names (the interface's `n` is `count_to`'s `m` above), so the definition is free to name them as it likes. If one of the interface's quantifier binders has the name of one of the definition's parameters, the renaming would capture it, and the compiler asks for one of the two to be renamed. Hygiene (ADR 0022) already forbids that shadowing in written code.
 
-### 2. All or nothing
+### 2. All or nothing (Dean, 2026-11-27)
 
 A definition that states any of those clauses states its whole contract, and inherits nothing. Its contract is checked against the interface's as it is today (ADR 0039), so it may still be stronger than what the interface promises, and `tests/verify/modules.pia` is unchanged in meaning.
 
