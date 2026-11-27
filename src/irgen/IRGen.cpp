@@ -3074,7 +3074,12 @@ class Gen {
     if (isFloat(v->type)) {
       unsigned from = v->type.getIntOrFloatBitWidth();
       if (from < target.getIntOrFloatBitWidth())
-        return TV{create<mlir::arith::ExtFOp>(l, target, v->value), target};
+        // The fastmath flags are spelled out: without them the call picks
+        // the deprecated operands-and-attributes overload, which -Werror
+        // rejects.
+        return TV{create<mlir::arith::ExtFOp>(l, target, v->value,
+                                              mlir::arith::FastMathFlagsAttr{}),
+                  target};
       return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
     }
     return fail(arg, "'" + to + "' converts an integer or a float, not " +
