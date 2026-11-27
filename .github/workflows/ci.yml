@@ -162,9 +162,14 @@ jobs:
         timeout-minutes: 300
         run: bazel build --config=ci --keep_going //...
 
+      # The macOS runner has 3 cores to Linux's 4, and runs every test
+      # locally, so the suite takes about twice as long: 30 minutes cut it
+      # off at 457 of 494 tests on 2026-11-27. One longer job keeps the
+      # free plan's 5 macOS runners for other PRs, where shards would take
+      # several of them.
       - name: Test
         id: test
-        timeout-minutes: 30
+        timeout-minutes: 60
         run: bazel test --config=ci --keep_going //...
 
       # Build time is a benchmark (ADR 0032). Linux gates every change (the
