@@ -13,6 +13,13 @@ int64_t read_point(const uint8_t *s, size_t n, void *cells, size_t ncells,
 int64_t round_trip(int32_t x, uint8_t y, bool ok, uint8_t *text, size_t ntext,
                    void *cells, size_t ncells, uint64_t *key_start,
                    size_t nmems, uint64_t *key_stop, void *member_values);
+int64_t read_reading(const uint8_t *s, size_t n, void *cells, size_t ncells,
+                     uint64_t *key_start, size_t nmems, uint64_t *key_stop,
+                     void *member_values);
+int64_t round_trip_reading(uint16_t id, bool has_temp, int8_t temp, int64_t ok,
+                           uint8_t *text, size_t ntext, void *cells,
+                           size_t ncells, uint64_t *key_start, size_t nmems,
+                           uint64_t *key_stop, void *member_values);
 
 static _Alignas(16) unsigned char cells[16 * 512];
 static uint64_t key_start[16], key_stop[16];
@@ -24,6 +31,32 @@ static int check(const char *s, int64_t want) {
                            16, key_stop, member_values);
   if (got != want) {
     printf("%s: %lld, expected %lld\n", s, (long long)got, (long long)want);
+    return 1;
+  }
+  return 0;
+}
+
+// A reading's code: id * 100000 + temp's * 10 + ok's, where temp's is
+// 500 for None and temp + 128 for a value, and ok's is 0 for None, 1 for
+// false and 2 for true.
+static int check_reading(const char *s, int64_t want) {
+  int64_t got = read_reading((const uint8_t *)s, strlen(s), cells, 16,
+                             key_start, 16, key_stop, member_values);
+  if (got != want) {
+    printf("%s: %lld, expected %lld\n", s, (long long)got, (long long)want);
+    return 1;
+  }
+  return 0;
+}
+
+static int check_round_trip_reading(uint16_t id, bool has_temp, int8_t temp,
+                                    int64_t ok, int64_t want) {
+  int64_t got =
+      round_trip_reading(id, has_temp, temp, ok, text, sizeof text, cells, 16,
+                         key_start, 16, key_stop, member_values);
+  if (got != want) {
+    printf("round_trip_reading: %lld, expected %lld\n", (long long)got,
+           (long long)want);
     return 1;
   }
   return 0;
@@ -47,5 +80,15 @@ int main(void) {
     printf("round_trip: %lld\n", (long long)got);
     bad = 1;
   }
+  bad |= check_reading("{\"id\": 7, \"temp\": -5, \"ok\": true}", 701232);
+  bad |= check_reading("{\"id\": 7}", 705000); // both missing
+  bad |= check_reading("{\"ok\": null, \"id\": 7, \"temp\": null}", 705000);
+  bad |= check_reading("{\"temp\": 1}", -2);         // id missing
+  bad |= check_reading("{\"id\": 7, \"x\": 1}", -2); // another member
+  bad |= check_reading("{\"id\": 7, \"temp\": 1, \"temp\": 2}", -2);
+  bad |= check_reading("{\"id\": 7, \"temp\": 200}", -2); // out of range
+  bad |= check_reading("{\"id\": 7, \"ok\": 1}", -2);     // not a bool
+  bad |= check_round_trip_reading(7, false, 0, 1, 705001);
+  bad |= check_round_trip_reading(7, true, -128, 2, 700002);
   return bad;
 }

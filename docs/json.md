@@ -145,11 +145,11 @@ $ piac --verify --iface-path=. count.pia
 
 ## A document's shape: `@derive(json, json_dom)`
 
-`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types and bools it writes:
+`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types, bools and options of them, it writes:
 
 | Function | What it does |
 | --- | --- |
-| `conforms_json_<t> s v` | a spec function: v is an object with exactly one member for each field, each called its name, each value a number in its field's range or a bool as its field is, and no other member |
+| `conforms_json_<t> s v` | a spec function: v is an object with exactly one member for each field, each called its name, each value a number in its field's range or a bool as its field is, and no other member. An option field's member may be missing or `null`, both None |
 | `check_json_<t> s v` | decides it: `ensures result = conforms_json_<t> s v` |
 | `from_dom_json_<t> s v` | `requires conforms_json_<t> s v`: the record, with no failure path, each field its member's value |
 | `to_dom_json_<t> x text values members` | the document of x, written into text: `Ok v` is valid and conforms |
@@ -183,4 +183,4 @@ $ piac --verify --iface-path=. shape.pia
 102 proved, 0 failed, 0 skipped
 ```
 
-`to_dom` writes its value with `@derive(json)`'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its `Unparsed` and `Unconforming` errors never happen, is not proved yet. Option, array and nested record fields, variants and recursive user types come next ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 5, 7 and 8).
+`to_dom` writes its value with `@derive(json)`'s writer, parses the text back and checks it, so the document it returns is proved valid and conforming. That the writer's text always parses and conforms, so that its `Unparsed` and `Unconforming` errors never happen, is not proved yet. Array and nested record fields, variants and recursive user types come next ([ADR 0045](adr/0045-json-derived-codecs-and-conforming-dom.md), steps 5, 7 and 8).
