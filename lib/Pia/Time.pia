@@ -223,7 +223,8 @@ let lemma split_years (y : i64) : unit
 (** C++: year_month_day, of the proleptic Gregorian calendar. *)
 let ymd = type { year : int{-1000000..1000000}; month : int{1..12}; day : int{1..31} }
 (** Whether y is a leap year of the proleptic Gregorian calendar. *)
-let is_leap (y : int{-1000000..1000000}) : bool = 0 && (y % 100 <> 0 || y % 400 = 0)
+let is_leap (y : int{-1000000..1000000}) : bool
+= y % 4 = 0 && (y % 100 <> 0 || y % 400 = 0)
 (** C++: year_month_day_last's day: the number of days in month m of y. *)
 let last_day (y : int{-1000000..1000000}) (m : int{1..12}) : int{28..31}
 = if m = 2 then (if is_leap y then 29 else 28)

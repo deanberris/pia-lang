@@ -488,7 +488,9 @@ private:
   // body, so a closing parenthesis, which no node covers, goes with it.
   uint32_t clauseEnd(const Node &fn, const Node &clause) const {
     uint32_t begin = clause.loc.offset;
-    uint32_t body = fn.kids[3]->loc.offset;
+    // A node's location is its operator, not its first token, so the body
+    // starts where its leftmost leaf does.
+    uint32_t body = spanOf(*fn.kids[3], src_).b;
     uint32_t stop = body;
     for (const NodePtr &c : fn.kids[2]->kids)
       if (c->loc.offset > begin && c->loc.offset < stop)

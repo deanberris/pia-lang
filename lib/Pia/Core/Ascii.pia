@@ -55,7 +55,8 @@ interface Ascii = sig
 end
 
 (** lo <= c <= hi: the one range test the classifiers share. *)
-let between (c : u8) (lo : u8) (hi : u8) : bool= c && c <= hi
+let between (c : u8) (lo : u8) (hi : u8) : bool
+= lo <= c && c <= hi
 
 (** C++: std::isdigit. *)
 let is_digit (c : u8) : bool
@@ -83,13 +84,16 @@ let is_xdigit (c : u8) : bool
 
 (** C++: std::isspace: space, tab, newline, vertical tab, form feed and
     carriage return. *)
-let is_space (c : u8) : bool = 32 || between c 9 13
+let is_space (c : u8) : bool
+= c = 32 || between c 9 13
 
 (** C++: std::isblank: space and tab. *)
-let is_blank (c : u8) : bool = 32 || c = 9
+let is_blank (c : u8) : bool
+= c = 32 || c = 9
 
 (** C++: std::iscntrl. *)
-let is_cntrl (c : u8) : bool= 31 || c = 127
+let is_cntrl (c : u8) : bool
+= c <= 31 || c = 127
 
 (** C++: std::isprint. *)
 let is_print (c : u8) : bool
