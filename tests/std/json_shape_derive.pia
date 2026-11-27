@@ -1,8 +1,10 @@
-(* @derive(json_dom) on a record (ADR 0045, step 7): its conforms, check,
+(* @derive(json_dom) on records, with option and fixed array fields (ADR 0045, step 7): its conforms, check,
    from_dom and to_dom are proved where it is derived, with nothing
    accepted unproved. check decides conforms; from_dom, given that a
    document conforms, is the record with no failure path, each field its
    member's value; to_dom's document is valid and conforms.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Option.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Spec.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Lex.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Read.pia
@@ -13,6 +15,8 @@
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Text/Json/Shape.pia
 // RUN: piac --verify --iface-path=%t %s | FileCheck %s
 *)
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
 import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
@@ -27,6 +31,18 @@ let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json,
 (* A point from a document, or that it is not one. *)
 let get (s : [u8]) (v : Pia.Text.Json.Dom.json) : result point Pia.Text.Json.Shape.nonconforming =
   if check_json_point s v then Ok (from_dom_json_point s v) else Err Nonconforming
+
+(* Option fields: a member that is missing or null is None. *)
+let reading = type { id : u16; temp : O.option i8; ok : O.option bool } @derive(json, json_dom)
+
+let get_reading (s : [u8]) (v : Pia.Text.Json.Dom.json) : result reading Pia.Text.Json.Shape.nonconforming =
+  if check_json_reading s v then Ok (from_dom_json_reading s v) else Err Nonconforming
+
+(* Fixed array fields: a JSON array of exactly n values. *)
+let sample = type { id : u8; xs : [i8; 3]; flags : [bool; 2] } @derive(json, json_dom)
+
+let get_sample (s : [u8]) (v : Pia.Text.Json.Dom.json) : result sample Pia.Text.Json.Shape.nonconforming =
+  if check_json_sample s v then Ok (from_dom_json_sample s v) else Err Nonconforming
 
 (*
 // CHECK: 0 failed, 0 skipped

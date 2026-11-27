@@ -898,6 +898,8 @@ pia_library(
     src = "Inputs/json_shape_run.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
         "//lib/Pia/Mem:alloc",
         "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:dom",
