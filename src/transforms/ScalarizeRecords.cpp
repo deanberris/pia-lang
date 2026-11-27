@@ -256,6 +256,32 @@ struct EmptyLowering : mlir::OpConversionPattern<EmptyOp> {
   }
 };
 
+// Fresh storage of records is fresh storage of each field, each zeroed,
+// as the one buffer would be: a local array of records, or the default of
+// an unused payload that is one (ADR 0045).
+struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(RegionOp op, OneToNOpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    llvm::SmallVector<Type> types;
+    if (mlir::failed(
+            getTypeConverter()->convertType(op.getResult().getType(), types)))
+      return mlir::failure();
+    llvm::SmallVector<Value> fields;
+    for (Type t : types) {
+      auto a = mlir::dyn_cast<ArrayType>(t);
+      if (!a)
+        return mlir::failure();
+      fields.push_back(make<RegionOp>(rw, op.getLoc(), a).getResult());
+    }
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(fields));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
 // `old p` on a record is `old` of each field.
 struct OldLowering : mlir::OpConversionPattern<contract::OldOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -573,10 +599,9 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
 
   mlir::RewritePatternSet patterns(ctx);
   patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
-               OldLowering,
-               LoadLowering,
-               StoreLowering, SliceLowering, LenLowering, RecMakeLowering,
-               RecPayloadLowering>(types, ctx);
+               RegionLowering, OldLowering, LoadLowering, StoreLowering,
+               SliceLowering, LenLowering, RecMakeLowering, RecPayloadLowering>(
+      types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);
