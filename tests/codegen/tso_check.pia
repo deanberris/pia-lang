@@ -1,0 +1,19 @@
+(* The check after optimisation (ADR 0052, section 6): every atomic access
+   a @target(x86_64_linux) item makes must still be there, at least acquire
+   or release. Here the store can never run, so the optimiser deletes it,
+   and piac refuses to compile what the proof might have relied on. The
+   check is stricter than needed, never weaker.
+// RUN: not piac --emit=obj -o %t/out.o --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s 2>&1 | FileCheck %s
+*)
+module TsoCheck : Ops
+
+interface Ops @abi(c) = sig
+  let never : (c : borrowed atomic u32) -> (x : u8) -> unit
+end
+
+let never (c : borrowed atomic u32) (x : u8) : unit @target(x86_64_linux)
+= if x > 254 && x < 255 then atomic_store relaxed c 1 else ()
+
+(*
+// CHECK: tso_check.pia:15:30: error: the optimiser removed or merged away an atomic access that this @target(x86_64_linux) item's proof relies on (ADR 0052, section 6)
+*)

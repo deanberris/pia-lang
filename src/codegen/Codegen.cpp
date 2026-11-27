@@ -60,6 +60,8 @@
 #include "llvm/ADT/SetVector.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Module.h"
 #include "llvm/MC/MCSubtargetInfo.h"
@@ -1243,6 +1245,44 @@ mlir::LLVM::AtomicOrdering readHalf(MemoryOrder o) {
   }
 }
 
+// Inside a `@target(x86_64_linux)` item, code may rely on TSO (ADR 0052,
+// section 6): a relaxed load is emitted as acquire and a relaxed store as
+// release, which x86_64 compiles to the same `mov`, and a relaxed
+// read-modify-write as acq_rel, which a `lock` prefix already is. So LLVM
+// may no longer reorder them, which is what the proof of such an item may
+// assume. Each access is tagged `pia.tso` with its source location, and
+// translate() checks after LLVM's optimiser that every tagged access is
+// still that strong and still there.
+bool reliesOnTso(mlir::Operation *op) {
+  auto fn = op->getParentOfType<mlir::func::FuncOp>();
+  auto t = fn ? fn->getAttrOfType<mlir::StringAttr>("pia.target") : nullptr;
+  return t && t.getValue() == "x86_64_linux";
+}
+
+// `o`, or `strong` in its place when `o` is relaxed and the op relies on
+// TSO.
+MemoryOrder tsoOrder(bool tso, MemoryOrder o, MemoryOrder strong) {
+  return tso && o == MemoryOrder::relaxed ? strong : o;
+}
+
+constexpr llvm::StringLiteral kTsoAttr = "pia.tso";
+
+// The source location an access is tagged with: file:line:col.
+std::string sourceOf(Location loc) {
+  if (auto f = mlir::dyn_cast<mlir::FileLineColLoc>(loc))
+    return f.getFilename().str() + ":" + std::to_string(f.getLine()) + ":" +
+           std::to_string(f.getColumn());
+  if (auto n = mlir::dyn_cast<mlir::NameLoc>(loc))
+    return sourceOf(n.getChildLoc());
+  return "?";
+}
+
+void tagTso(bool tso, mlir::Operation *access, Location loc) {
+  if (tso)
+    access->setAttr(kTsoAttr,
+                    mlir::StringAttr::get(access->getContext(), sourceOf(loc)));
+}
+
 // A cell's address and how its values are held there. A bool is a byte,
 // since LLVM's atomics take whole bytes.
 struct CellAccess {
@@ -1321,12 +1361,14 @@ struct AtomicLoadLowering : mlir::OpConversionPattern<AtomicLoadOp> {
     Location loc = op.getLoc();
     CellAccess c =
         cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
-    Value v = make<mlir::LLVM::LoadOp>(
+    bool tso = reliesOnTso(op);
+    auto load = make<mlir::LLVM::LoadOp>(
         rw, loc, c.storage, c.ptr, c.align, /*isVolatile=*/false,
         /*isNonTemporal=*/false, /*isInvariant=*/false,
         /*isInvariantGroup=*/false, /*isNoundef=*/false,
-        llvmOrder(op.getOrder()));
-    rw.replaceOp(op, c.fromStorage(rw, loc, v));
+        llvmOrder(tsoOrder(tso, op.getOrder(), MemoryOrder::acquire)));
+    tagTso(tso, load, loc);
+    rw.replaceOp(op, c.fromStorage(rw, loc, load));
     return mlir::success();
   }
 };
@@ -1339,10 +1381,13 @@ struct AtomicStoreLowering : mlir::OpConversionPattern<AtomicStoreOp> {
     Location loc = op.getLoc();
     CellAccess c =
         cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
-    make<mlir::LLVM::StoreOp>(
+    bool tso = reliesOnTso(op);
+    auto store = make<mlir::LLVM::StoreOp>(
         rw, loc, c.toStorage(rw, loc, adaptor.getValue()), c.ptr, c.align,
         /*isVolatile=*/false, /*isNonTemporal=*/false,
-        /*isInvariantGroup=*/false, llvmOrder(op.getOrder()));
+        /*isInvariantGroup=*/false,
+        llvmOrder(tsoOrder(tso, op.getOrder(), MemoryOrder::release)));
+    tagTso(tso, store, loc);
     rw.eraseOp(op);
     return mlir::success();
   }
@@ -1356,10 +1401,14 @@ struct AtomicCasLowering : mlir::OpConversionPattern<AtomicCasOp> {
     Location loc = op.getLoc();
     CellAccess c =
         cellAccess(rw, loc, op.getCell().getType(), adaptor.getCell());
+    bool tso = reliesOnTso(op);
     auto pair = make<mlir::LLVM::AtomicCmpXchgOp>(
         rw, loc, c.ptr, c.toStorage(rw, loc, adaptor.getExpected()),
-        c.toStorage(rw, loc, adaptor.getDesired()), llvmOrder(op.getSuccess()),
-        llvmOrder(op.getFailure()), llvm::StringRef(), c.align);
+        c.toStorage(rw, loc, adaptor.getDesired()),
+        llvmOrder(tsoOrder(tso, op.getSuccess(), MemoryOrder::acq_rel)),
+        llvmOrder(tsoOrder(tso, op.getFailure(), MemoryOrder::acquire)),
+        llvm::StringRef(), c.align);
+    tagTso(tso, pair, loc);
     Value old = make<mlir::LLVM::ExtractValueOp>(rw, loc, pair,
                                                  llvm::ArrayRef<int64_t>{0});
     rw.replaceOp(op, c.fromStorage(rw, loc, old));
@@ -1415,9 +1464,13 @@ struct AtomicRmwLowering : mlir::OpConversionPattern<AtomicRmwOp> {
       bin = c.isSigned ? B::max : B::umax;
       break;
     }
-    Value old = make<mlir::LLVM::AtomicRMWOp>(rw, loc, bin, c.ptr, v,
-                                              llvmOrder(op.getOrder()),
-                                              llvm::StringRef(), c.align);
+    bool tso = reliesOnTso(op);
+    auto rmw = make<mlir::LLVM::AtomicRMWOp>(
+        rw, loc, bin, c.ptr, v,
+        llvmOrder(tsoOrder(tso, op.getOrder(), MemoryOrder::acq_rel)),
+        llvm::StringRef(), c.align);
+    tagTso(tso, rmw, loc);
+    Value old = rmw;
     if (arith && op.getOverflow() == OverflowMode::trap)
       finish(rw, loc, exact(rw, loc, c, old, v, add),
              Repr{2 * c.storage.getWidth(), true},
@@ -1444,19 +1497,24 @@ struct AtomicRmwLowering : mlir::OpConversionPattern<AtomicRmwOp> {
                               bool add) {
     Location loc = op.getLoc();
     auto t = mlir::cast<IntType>(op.getType());
-    Value first = make<mlir::LLVM::LoadOp>(
+    bool tso = reliesOnTso(op);
+    MemoryOrder order = tsoOrder(tso, op.getOrder(), MemoryOrder::acq_rel);
+    auto first = make<mlir::LLVM::LoadOp>(
         rw, loc, c.storage, c.ptr, c.align, false, false, false, false, false,
-        mlir::LLVM::AtomicOrdering::monotonic);
+        llvmOrder(tsoOrder(tso, MemoryOrder::relaxed, MemoryOrder::acquire)));
+    tagTso(tso, first, loc);
     auto loop = make<mlir::scf::WhileOp>(
-        rw, loc, mlir::TypeRange{c.storage}, mlir::ValueRange{first},
+        rw, loc, mlir::TypeRange{c.storage},
+        mlir::ValueRange{first.getResult()},
         [&](OpBuilder &b, Location l, mlir::ValueRange args) {
           Value old = args[0];
           Value next = finish(b, l, exact(b, l, c, old, v, add),
                               Repr{2 * c.storage.getWidth(), true}, t,
                               OverflowMode::saturate);
           auto pair = make<mlir::LLVM::AtomicCmpXchgOp>(
-              b, l, c.ptr, old, next, llvmOrder(op.getOrder()),
-              readHalf(op.getOrder()), llvm::StringRef(), c.align);
+              b, l, c.ptr, old, next, llvmOrder(order), readHalf(order),
+              llvm::StringRef(), c.align);
+          tagTso(tso, pair, l);
           Value seen = make<mlir::LLVM::ExtractValueOp>(
               b, l, pair, llvm::ArrayRef<int64_t>{0});
           Value done = make<mlir::LLVM::ExtractValueOp>(
@@ -2751,17 +2809,139 @@ void addEmbeds(llvm::Module &m, const Options &options) {
 
 } // namespace
 
+namespace {
+
+bool isAtomicOp(mlir::Operation *op) {
+  if (auto l = mlir::dyn_cast<mlir::LLVM::LoadOp>(op))
+    return l.getOrdering() != mlir::LLVM::AtomicOrdering::not_atomic;
+  if (auto s = mlir::dyn_cast<mlir::LLVM::StoreOp>(op))
+    return s.getOrdering() != mlir::LLVM::AtomicOrdering::not_atomic;
+  return mlir::isa<mlir::LLVM::AtomicRMWOp, mlir::LLVM::AtomicCmpXchgOp>(op);
+}
+
+bool isAtomic(const llvm::Instruction &i) {
+  if (auto *l = llvm::dyn_cast<llvm::LoadInst>(&i))
+    return l->isAtomic();
+  if (auto *s = llvm::dyn_cast<llvm::StoreInst>(&i))
+    return s->isAtomic();
+  return llvm::isa<llvm::AtomicRMWInst, llvm::AtomicCmpXchgInst>(&i);
+}
+
+// The `pia.tso` tag of each atomic access in the LLVM dialect, in the
+// order translation emits them: function by function, block by block.
+// An access that does not rely on TSO has an empty tag.
+std::vector<std::string> tsoSources(mlir::ModuleOp module) {
+  std::vector<std::string> out;
+  module.walk([&](mlir::LLVM::LLVMFuncOp f) {
+    for (mlir::Block &b : f.getBody())
+      for (mlir::Operation &op : b) {
+        if (!isAtomicOp(&op))
+          continue;
+        auto tag = op.getAttrOfType<mlir::StringAttr>(kTsoAttr);
+        out.push_back(tag ? tag.getValue().str() : "");
+      }
+  });
+  return out;
+}
+
+// Carries the tags over to the LLVM instructions as `!pia.tso` metadata,
+// which inlining and unrolling copy with them. `tagged` gets every source
+// location tagged.
+bool tagTsoAccesses(llvm::Module &m, const std::vector<std::string> &tso,
+                    std::set<std::string> &tagged, std::string &error) {
+  if (llvm::none_of(tso, [](const std::string &t) { return !t.empty(); }))
+    return true;
+  size_t next = 0;
+  for (llvm::Function &f : m)
+    for (llvm::Instruction &i : llvm::instructions(f)) {
+      if (!isAtomic(i))
+        continue;
+      if (next == tso.size()) {
+        error = "internal error: more atomic instructions than atomic ops";
+        return false;
+      }
+      const std::string &tag = tso[next++];
+      if (tag.empty())
+        continue;
+      i.setMetadata("pia.tso", llvm::MDNode::get(
+                                   m.getContext(),
+                                   llvm::MDString::get(m.getContext(), tag)));
+      tagged.insert(tag);
+    }
+  if (next != tso.size()) {
+    error = "internal error: fewer atomic instructions than atomic ops";
+    return false;
+  }
+  return true;
+}
+
+// After optimisation, every access an item relying on TSO made must still
+// be at least acquire or release, and every source location tagged before
+// must still have one, so an access the optimiser weakened, merged or
+// deleted is noticed. A copy made by inlining is checked like the
+// original. The check may be stricter than the proof needs, never weaker.
+bool checkTso(llvm::Module &m, const std::set<std::string> &tagged,
+              std::string &error) {
+  if (tagged.empty())
+    return true;
+  std::set<std::string> seen;
+  for (llvm::Function &f : m)
+    for (llvm::Instruction &i : llvm::instructions(f)) {
+      llvm::MDNode *md = i.getMetadata("pia.tso");
+      if (!md || md->getNumOperands() != 1)
+        continue;
+      auto *s = llvm::dyn_cast<llvm::MDString>(md->getOperand(0));
+      if (!s)
+        continue;
+      std::string where = s->getString().str();
+      llvm::AtomicOrdering o = llvm::AtomicOrdering::NotAtomic;
+      if (auto *l = llvm::dyn_cast<llvm::LoadInst>(&i))
+        o = l->getOrdering();
+      else if (auto *st = llvm::dyn_cast<llvm::StoreInst>(&i))
+        o = st->getOrdering();
+      else if (auto *r = llvm::dyn_cast<llvm::AtomicRMWInst>(&i))
+        o = r->getOrdering();
+      else if (auto *c = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&i))
+        o = c->getSuccessOrdering();
+      bool strong = o == llvm::AtomicOrdering::Acquire ||
+                    o == llvm::AtomicOrdering::Release ||
+                    o == llvm::AtomicOrdering::AcquireRelease ||
+                    o == llvm::AtomicOrdering::SequentiallyConsistent;
+      if (!strong) {
+        error = where + ": error: the optimiser weakened an atomic access "
+                        "that this @target(x86_64_linux) item's proof relies "
+                        "on (ADR 0052, section 6)";
+        return false;
+      }
+      seen.insert(where);
+    }
+  for (const std::string &where : tagged)
+    if (!seen.count(where)) {
+      error = where + ": error: the optimiser removed or merged away an "
+                      "atomic access that this @target(x86_64_linux) "
+                      "item's proof relies on (ADR 0052, section 6)";
+      return false;
+    }
+  return true;
+}
+
+} // namespace
+
 std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
                                         llvm::LLVMContext &llvmCtx,
                                         const Options &options,
                                         std::string &error) {
   std::unique_ptr<llvm::TargetMachine> tm = targetMachine(options, error);
   if (!tm) return nullptr;
+  std::vector<std::string> tso = tsoSources(module);
   std::unique_ptr<llvm::Module> m = mlir::translateModuleToLLVMIR(module, llvmCtx);
   if (!m) {
     error = "translation to LLVM IR failed";
     return nullptr;
   }
+  std::set<std::string> tagged;
+  if (!tagTsoAccesses(*m, tso, tagged, error))
+    return nullptr;
   m->setTargetTriple(tm->getTargetTriple());
   m->setDataLayout(tm->createDataLayout());
   auto optimise =
@@ -2770,6 +2950,8 @@ std::unique_ptr<llvm::Module> translate(mlir::ModuleOp module,
     error = llvm::toString(std::move(e));
     return nullptr;
   }
+  if (!checkTso(*m, tagged, error))
+    return nullptr;
   addWitnesses(*m, options);
   addEmbeds(*m, options);
   return m;
