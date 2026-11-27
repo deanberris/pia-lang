@@ -210,3 +210,23 @@ pip.parse(
     requirements_lock = "//tests/grammar:requirements.txt",
 )
 use_repo(pip, "pia_pip")
+
+# --------------------------------------------------------------- codegen benchmarks (ADR 0075)
+
+# Rust and Zig toolchains for the reference programs in third_party/benchmarks,
+# which bench/codegen runs against Pia. Only the benchmarks use them: piac and
+# its release never do. rules_rust is the version LLVM's overlay already pulls
+# in; Zig is pinned to 0.15.2, the release whose standard library the patched
+# references are written against.
+bazel_dep(name = "rules_rust", version = "0.69.0", dev_dependency = True)
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust", dev_dependency = True)
+rust.toolchain(edition = "2021")
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all", dev_dependency = True)
+
+bazel_dep(name = "rules_zig", version = "0.17.0", dev_dependency = True)
+
+zig = use_extension("@rules_zig//zig:extensions.bzl", "zig", dev_dependency = True)
+zig.toolchain(zig_version = "0.15.2")

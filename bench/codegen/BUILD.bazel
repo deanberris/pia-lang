@@ -1,0 +1,8 @@
+# The codegen benchmarks (ADR 0075): Pia ports of public benchmark problems,
+# one package each, against C, C++, Rust and Zig reference programs vendored
+# in third_party/benchmarks. defs.bzl builds them; flags.bzl fixes the flags.
+
+exports_files(
+    ["same_output_test.sh"],
+    visibility = ["//bench/codegen:__subpackages__"],
+)

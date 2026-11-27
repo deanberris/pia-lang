@@ -1,0 +1,33 @@
+(* plb2's nqueen (CC0, third_party/benchmarks/plb2): count the solutions of
+   the n-queens problem with bit masks of the attacked columns and
+   diagonals, scanning each row's columns in order, as plb2's C does.
+
+   plb2 backtracks with an explicit stack in a loop whose termination needs
+   a lexicographic measure over the stack, which one `decreases` cannot
+   state, so this port recurses over the row instead; control.c is the same
+   recursion in C. Two more changes come from the proof: bits leaving the
+   board on the left are masked off before the shift, since `<<` must not
+   overflow, and the count saturates, since the verifier has no bound on the
+   number of solutions. See README.md. *)
+module Nqueen : Api
+
+interface Api @abi(c) = sig
+  let nq_solve : (n : int{1..31}) -> u64
+end
+
+let rec place (n : int{1..31}) (k : u32) (l : u32) (c : u32) (r : u32) : u64
+  requires k < n
+  decreases n - k
+= let m : mutable u64 = 0 in
+  let used : u32 = (l | c | r) in
+  let nn : u32 = n in
+  for i in 0 .. nn do
+    let z : u32 = 1u32 << i in
+    if used & z = 0 then
+      (if k + 1 = n then m <- m +| 1
+       else m <- m +| place n (k + 1) (((l | z) & 0x7FFF'FFFF) << 1) (c | z) ((r | z) >> 1))
+    else ()
+  done;
+  m
+
+let nq_solve (n : int{1..31}) : u64 = place n 0 0 0 0

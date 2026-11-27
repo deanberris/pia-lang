@@ -65,7 +65,7 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 
 | Rule | Builds | Notes |
 | --- | --- | --- |
-| `pia_object(name, src)` | `<name>.o` from one file with no imports | put it in a `cc_library`'s `srcs` to call it from C |
+| `pia_object(name, src)` | `<name>.o` from one file with no imports | put it in a `cc_library`'s `srcs` to call it from C; `opt_level = 3` passes `-O3` (piac's default is `-O2`) |
 | `pia_library(name, src, deps)` | a module: its objects and `<name>.piai/` | `deps` are other `pia_library` targets; each `import` must be provided by a direct dep. Also checks the certificates link |
 | `pia_binary(name, src, deps)` | a program whose `main` is in `src` | a `pia_library` plus a `cc_binary` |
 
