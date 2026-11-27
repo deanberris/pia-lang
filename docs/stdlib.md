@@ -71,7 +71,7 @@ New builtins, each one or two MLIR ops, with exact SMT semantics (`bvand`, `bvsh
 | `narrow e` | narrowing conversion, the explicit form of what assignment does now | the value fits |
 | `wrap_to t e`, `sat_to t e` | conversion with a stated overflow mode | none |
 | `mul_wide a b` | the full product in a type twice as wide, `u32 -> u32 -> u64` | none |
-| `bits` `from_bits` | reinterpret, once floats exist | none |
+| `to_bits` `from_bits` | reinterpret a float's IEEE encoding (built, M11) | none |
 
 Their operators use C's symbols (Dean, 2026-11-21) and go in the prelude as metaprograms, like `+` today:
 

@@ -279,13 +279,14 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 
 ## Floats
 
-`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and that is all the solver knows of it:
+`f32` and `f64` are IEEE 754 binary32 and binary64. No float operation raises a goal, since IEEE 754 defines every result: an overflow is an infinity and `0.0 / 0.0` is a NaN. Until the real-valued encoding of [ADR 0038](adr/0038-float-kernels-against-real-theories.md) lands, a float is its bit pattern, a bit-vector of its width, and the solver knows this much of it:
 
-- A literal is its exact bits, and negation flips the sign bit, so both are exact.
-- `+`, `-`, `*` and `/` are uninterpreted functions of the bits (`f32.add` and so on): the same operands give the same result, and nothing else is known.
-- `=` is IEEE equality, not equality of bits, since NaN differs from itself and `-0.0 = 0.0`, so it is uninterpreted too. `<>` is its negation, `<` and `<=` are uninterpreted, and `>` and `>=` are `<` and `<=` with the operands swapped.
+- A literal is its exact bits, and negation flips the sign bit, so both are exact. So are `to_bits x`, the bits as a `u32` or `u64`, and `from_bits u`, the float a `u32` or `u64` encodes.
+- `=`, `<` and `<=` are IEEE's, computed from the bits: a NaN (exponent all ones, fraction not zero) is unordered, so every comparison with it is false, and the other floats are ordered as their magnitudes with their signs are, so `-0.0 = 0.0` and the infinities lie past every finite float. `<>` is not `=`, and `>` and `>=` are `<` and `<=` with the operands swapped.
+- `+`, `-`, `*` and `/`, `f32 n` of an integer, and `f64 x` and `f32 x` between the widths are uninterpreted functions of the bits (`f32.add` and so on): the same operands give the same result, and nothing else is known.
+- `i32 x`, or any integer type applied to a float, truncates toward zero and raises a `nooverflow` goal, "the float is a number that fits in i32 when truncated": `x` is not NaN and lies strictly between `lo - 1` and `hi + 1` for the type's range `[lo, hi]`, so the C conversion it compiles to is defined. Each bound is compared as the float nearest it inside that interval when it is not a float itself, so `-1.0 < x && x < 256.0` is exactly the goal for a `u8`. The result is uninterpreted, within the type's range.
 
-So a goal that follows from those facts is proved, such as `(a > b) = (b < a)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
+So a goal that follows from those facts is proved, such as `(x < y) = (-y < -x)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits, such as `x = nan`. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
 
 ## Spec state
 
