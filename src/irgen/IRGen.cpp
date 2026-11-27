@@ -1174,6 +1174,22 @@ class Gen {
       if (p.regions.empty() && holdsRegionField(p.type))
         b->lenders.push_back(regionBinding("'" + p.name + "'", p.name));
     }
+    // An instance's value parameters are constants: `n` is 8 in the
+    // instance of `last` for a `row 8 r` (ADR 0074).
+    for (const std::string &name : sig.valueParams) {
+      auto a = sig.typeArgs.find(name);
+      if (a == sig.typeArgs.end())
+        continue;
+      auto single = mlir::dyn_cast<IntType>(a->second);
+      if (!single || single.getLo() != single.getHi())
+        continue;
+      llvm::APInt v = single.getLo().sextOrTrunc(kWidth);
+      Type t = v.isNegative() ? types_.builtin("i64") : types_.usize();
+      bind(name,
+           create<ConstantOp>(l, t,
+                              b_.getIntegerAttr(b_.getIntegerType(kWidth), v)),
+           t, false);
+    }
 
     overflow_ = OverflowMode::proof;
     fuel_ = 0;
@@ -8377,6 +8393,10 @@ class Gen {
   // function, and every instance it made, is thrown away.
   void checkDefinition(const std::string &symbol) {
     const sema::FuncSig &generic = sigs_.at(symbol);
+    // A value parameter has no stand-in: `vec u8 n` is a type only for a
+    // known n, so each instance is checked and proved on its own.
+    if (!generic.valueParams.empty())
+      return;
     AdlScope adl(adlModule_, fromModule(*generic.item));
     std::map<std::string, Type> bound;
     for (const std::string &t : generic.typeParams) {
@@ -9252,8 +9272,16 @@ class Gen {
                                  const Choice &choice = {}) {
     const std::vector<std::string> &params = generic.typeParams;
     std::string key = generic.name + "<";
-    for (size_t i = 0; i < params.size(); ++i)
-      key += (i ? ", " : "") + typeName(bound[params[i]]);
+    for (size_t i = 0; i < params.size(); ++i) {
+      // A value parameter's argument, int{8..8}, is spelled 8.
+      auto single = mlir::dyn_cast_or_null<IntType>(bound[params[i]]);
+      bool value = single && single.getLo() == single.getHi() &&
+                   llvm::is_contained(generic.valueParams, params[i]);
+      key +=
+          (i ? ", " : "") +
+          (value ? llvm::toString(single.getLo().sextOrTrunc(kWidth), 10, true)
+                 : typeName(bound[params[i]]));
+    }
     // An instance made through adapters is its own instance.
     for (auto &[concept_key, adapter] : choice.adapterFor)
       key += ", " + concept_key.substr(0, concept_key.find('<')) + " = " +
