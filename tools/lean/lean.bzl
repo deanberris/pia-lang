@@ -51,3 +51,43 @@ goal.
         "_lean": attr.label(default = "//third_party/lean:lean", cfg = "exec"),
     },
 )
+
+def _lean_check_test_impl(ctx):
+    lean_files = ctx.attr._lean[DefaultInfo].files
+    lean = [f for f in lean_files.to_list() if f.path.endswith("/bin/lean")]
+    if len(lean) != 1:
+        fail("the Lean toolchain has no bin/lean")
+    log = ctx.actions.declare_file(ctx.label.name + ".log")
+    # Lean fails on an error; `#print axioms` lines that name sorryAx mean
+    # a proof was left out, which fails too.
+    ctx.actions.run_shell(
+        command = """
+set -e
+"$1" "$2" > "$3" 2>&1 || { cat "$3"; exit 1; }
+if grep -q sorryAx "$3"; then cat "$3"; echo "error: a proof uses sorry"; exit 1; fi
+""",
+        arguments = [lean[0].path, ctx.file.src.path, log.path],
+        inputs = depset([ctx.file.src], transitive = [lean_files]),
+        outputs = [log],
+        mnemonic = "LeanCheck",
+        progress_message = "Checking the Lean proofs in %s" % ctx.file.src.short_path,
+        execution_requirements = {"no-remote-exec": "1"},
+    )
+    script = ctx.actions.declare_file(ctx.label.name + ".sh")
+    ctx.actions.write(script, "#!/bin/sh\ncat '%s'\n" % log.short_path, is_executable = True)
+    return [DefaultInfo(executable = script, runfiles = ctx.runfiles(files = [log]))]
+
+lean_check_test = rule(
+    implementation = _lean_check_test_impl,
+    test = True,
+    doc = """Checks a self-contained Lean 4 file, with no Mathlib.
+
+The check runs when the test is built: Lean must accept `src`, and no
+`#print axioms` line in its output may name `sorryAx`. The test prints
+Lean's output, the axioms each theorem depends on.
+""",
+    attrs = {
+        "src": attr.label(allow_single_file = [".lean"], mandatory = True),
+        "_lean": attr.label(default = "//third_party/lean:lean", cfg = "exec"),
+    },
+)

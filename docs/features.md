@@ -29,7 +29,8 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Contracts are exact mathematics | [verifier](verifier.md#goals) | [spec_exact](../tests/verify/spec_exact.pia), [contract_equality](../tests/verify/contract_equality.pia), [contract_guards](../tests/verify/contract_guards.pia) |
 | Goals proved by intervals, before Z3 | [verifier](verifier.md#intervals-first) | [intervals](../tests/verify/intervals.pia) |
 | How products are encoded, exact division facts, int-blasting | [verifier](verifier.md#encoding), [ADR 0066](adr/0066-int-blasting-for-nonlinear-goals.md) | [widths](../tests/verify/widths.pia), [division_facts](../tests/verify/division_facts.pia), [int_blast](../tests/verify/int_blast.pia) |
-| Loop invariants and `decreases` | [verifier](verifier.md#loops), [verifier](verifier.md#termination) | [loops](../tests/verify/loops.pia), [int_measures](../tests/verify/int_measures.pia) |
+| Loop invariants and `decreases` | [verifier](verifier.md#loops), [verifier](verifier.md#termination) | [loops](../tests/verify/loops.pia), [int_measures](../tests/verify/int_measures.pia) 
+| Mutual recursion: a `decreases` goal at each call within a cycle of functions | [verifier](verifier.md#termination) | [mutual_recursion](../tests/verify/mutual_recursion.pia) |
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
