@@ -1,15 +1,18 @@
-(* Pia.Image.Gif.Spec and Pia.Image.Gif.Lzw (ADR 0054, step 2): every goal
-   of the LZW dictionary's spec and of the decoder is proved, with nothing
-   accepted unproved: the decoder's reads and writes are in bounds, its
-   loops end, each code's string is the spec's, and the table stays well
-   formed.
+(* Pia.Image.Gif.Spec, Pia.Image.Gif.Ref and Pia.Image.Gif.Lzw (ADR 0054,
+   step 2; #339): every goal of the LZW dictionary's spec, of the
+   whole-stream spec and of the decoder is proved, with nothing accepted
+   unproved: the decoder's reads and writes are in bounds, its loops end,
+   each code's string is the spec's, the table stays well formed, and
+   decode_ref writes exactly what Ref's reading of the stream gives.
 // RUN: piac --verify %S/../../lib/Pia/Image/Gif/Spec.pia | FileCheck --check-prefix=SPEC %s
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Ref.pia
+// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Ref.pia | FileCheck --check-prefix=REF %s
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Gif/Lzw.pia
 // RUN: FileCheck --check-prefix=DICT %s < %t/Pia.Image.Gif.Spec.Lzw.piai
-// RUN: piac --verify --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
+// RUN: piac --verify --no-lint=costly_goal --iface-path=%t %S/../../lib/Pia/Image/Gif/Lzw.pia | FileCheck %s
 // RUN: FileCheck --check-prefix=LZW %s < %t/Pia.Image.Gif.Lzw.Lzw.piai
 *)
 
@@ -19,10 +22,16 @@
 // SPEC: 128 proved, 0 failed, 0 skipped
 *)
 
-(* The decoder.
+(* The whole-stream spec's own goals.
+// REF-NOT: failed
+// REF: 201 proved, 0 failed, 0 skipped
+*)
+
+(* The decoder. decode_ref's loop invariant at Lzw.pia:456 costs 16% of
+   the solver's limit, so costly_goal is off here.
 // CHECK-NOT: warning
 // CHECK-NOT: failed
-// CHECK: 175 proved, 0 failed, 0 skipped
+// CHECK: 630 proved, 0 failed, 0 skipped
 *)
 
 (*

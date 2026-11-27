@@ -99,6 +99,7 @@
 #include <vector>
 
 #include "meta/Expand.h"
+#include "syntax/Embeds.h"
 #include "syntax/Interfaces.h"
 #include "syntax/Lean.h"
 #include "syntax/Lexer.h"
@@ -158,7 +159,8 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "<file.pia>\n"
          "       Every mode but --emit=interface takes "
-         "[--iface-path=<dir>]...\n";
+         "[--iface-path=<dir>]... [--embed-path=<dir>]... "
+         "[--embed=<logical>=<path>]...\n";
   return 2;
 }
 
@@ -816,6 +818,7 @@ int main(int argc, char **argv) {
   std::string mode, file, output;
   std::vector<std::string> allowUnproved;
   std::vector<std::string> ifacePaths;
+  pia::syntax::EmbedOptions embedOptions;
   bool contracts = false, verify = false, dumpSmt = false;
   bool literate = false, showComments = false;
   pia::meta::Options meta;
@@ -861,6 +864,11 @@ int main(int argc, char **argv) {
     } else if (arg.rfind("--iface-path=", 0) == 0) {
       if (arg.size() == 13) return usage();
       ifacePaths.push_back(arg.substr(13));
+    } else if (bool badEmbed = false;
+               pia::syntax::parseEmbedFlag(arg, embedOptions, badEmbed) ||
+               badEmbed) {
+      if (badEmbed)
+        return usage();
     } else if (arg == "-o" && i + 1 < argc)
       output = argv[++i];
 #ifndef PIA_NO_MLIR
@@ -1050,6 +1058,7 @@ int main(int argc, char **argv) {
   if ((mode == "--emit=mlir" || mode == "--verify" || codegen) && contracts)
     return usage();
 #ifdef PIA_NO_MLIR
+  (void)embedOptions;
   (void)solverTimeoutMs;
   (void)solverRlimit;
   (void)solverCost;
@@ -1098,7 +1107,8 @@ int main(int argc, char **argv) {
     // needs neither metaprograms nor the verifier.
     if (!diags.hasErrors() && emitInterface) {
       for (const pia::syntax::InterfaceArtifact &a :
-           pia::syntax::interfaceArtifacts(*tree, source, literate, diags)) {
+           pia::syntax::interfaceArtifacts(*tree, source, literate, diags,
+                                           &embedOptions)) {
         std::string path = output + "/" + a.fileName();
         std::ofstream out(path, std::ios::binary);
         out << a.text;
@@ -1125,8 +1135,8 @@ int main(int argc, char **argv) {
     std::vector<pia::syntax::InterfaceArtifact> provided, imported;
     if (!diags.hasErrors() && codegen) {
       pia::syntax::Diagnostics ignored; // the module check reports them
-      provided =
-          pia::syntax::interfaceArtifacts(*tree, source, literate, ignored);
+      provided = pia::syntax::interfaceArtifacts(*tree, source, literate,
+                                                 ignored, &embedOptions);
     }
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
         mode != "--check" && !emitInterface)
@@ -1157,8 +1167,10 @@ int main(int argc, char **argv) {
     }
 #endif
     if (!diags.hasErrors() && !contracts && mode != "--dump-ast" &&
-        mode != "--check" && !emitInterface)
+        mode != "--check" && !emitInterface) {
+      meta.embeds = embedOptions;
       pia::meta::expand(*tree, diags, meta);
+    }
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
 #ifndef PIA_NO_MLIR
@@ -1194,6 +1206,8 @@ int main(int argc, char **argv) {
       pia::irgen::Options irgenOptions;
       irgenOptions.source = source;
       irgenOptions.triple = cg.triple;
+      irgenOptions.embeds = embedOptions;
+      irgenOptions.resolvedEmbeds = &cg.embeds;
       std::vector<pia::syntax::Diagnostic> explanations;
       auto sameFile = [&](const std::string &a, const std::string &b) {
         auto base = [](const std::string &p) {

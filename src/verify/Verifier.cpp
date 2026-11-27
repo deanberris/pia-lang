@@ -2721,6 +2721,29 @@ class Encoder {
       out.push_back(bv(0));  // a placeholder: buffers are not terms
       return true;
     }
+    // Embedded binary blob (ADR 0070): exact constant length, opaque u8
+    // contents. Every use of the same symbol shares one top-level SMT array
+    // so repeated reads at equal indices are equal, with zero per-byte axioms.
+    if (auto emb = mlir::dyn_cast<EmbedOp>(op)) {
+      Type sort = sortOf(emb.getType());
+      if (!sort)
+        return false;
+      llvm::StringRef sym = emb.getSymbol();
+      auto it = embedArrays_.find(sym);
+      Value arr;
+      if (it != embedArrays_.end()) {
+        arr = it->second;
+      } else {
+        OpBuilder::InsertionGuard guard(b_);
+        b_.setInsertionPointToStart(solverBlock_);
+        arr = declare(sort, "", false);
+        embedArrays_[sym] = arr;
+      }
+      arrays[emb.getResult()] = arr;
+      lengths[emb.getResult()] = bv(emb.getLength());
+      out.push_back(bv(0)); // a placeholder: buffers are not terms
+      return true;
+    }
     // A slice is its buffer's storage from an offset: its length and that
     // offset are tracked, and its elements are read and written in the
     // root buffer. The result term is a placeholder; buffers are not terms.
@@ -2983,6 +3006,43 @@ class Encoder {
     return declare(boolType(), "", false);
   }
 
+  // After a spread over lo .. hi: an iteration writes only the cells it
+  // owns, so every cell of a written buffer that no iteration of the range
+  // owns holds what it held before the loop. Without this, a spread over
+  // part of a buffer would lose the rest of it (ADR 0068, section 9). The
+  // spread's own HavocOthersOps at the start of the body name each written
+  // buffer and its owner array.
+  void keepUnowned(mlir::Block &body, Value lb, Value ub,
+                   const llvm::DenseMap<Value, Value> &before) {
+    using P = mlir::smt::BVCmpPredicate;
+    for (Operation &op : body) {
+      auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+      if (!h || !h->hasAttr("pia.from_start"))
+        continue;
+      Value root = rootBuffer(h.getBuffer());
+      Value cur = arrays_.lookup(root), old = before.lookup(root);
+      Value len = lengths_.lookup(root);
+      Value owner =
+          h.getOwner() ? arrays_.lookup(rootBuffer(h.getOwner())) : Value();
+      if (!cur || !old || !len || (h.getOwner() && !owner))
+        continue;
+      auto at = mlir::cast<mlir::smt::ArrayType>(cur.getType());
+      assume(forallIndex([&](Value c) {
+        Value in = andOf(cmp(P::sge, c, bv(0)), cmp(P::slt, c, len));
+        Value who = c;
+        if (owner) {
+          auto ot = mlir::cast<mlir::smt::ArrayType>(owner.getType());
+          who = create<mlir::smt::ArraySelectOp>(ot.getRangeType(), owner, c);
+        }
+        Value owned = andOf(cmp(P::sle, lb, who), cmp(P::slt, who, ub));
+        return implies(
+            andOf(in, notOf(owned)),
+            eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), cur, c),
+               create<mlir::smt::ArraySelectOp>(at.getRangeType(), old, c)));
+      }));
+    }
+  }
+
   bool stepFor(mlir::scf::ForOp forOp) {
     using P = mlir::smt::BVCmpPredicate;
     Value lb = term(forOp.getLowerBound()), ub = term(forOp.getUpperBound());
@@ -3111,6 +3171,8 @@ class Encoder {
     // loop never ran.
     arrays_ = beforeArrays;
     havocBuffers(written);
+    if (forOp->hasAttr("pia.spread"))
+      keepUnowned(body, lb, ub, beforeArrays);
     llvm::SmallVector<Value> results;
     for (Value r : forOp.getResults()) {
       if (isBuffer(r))
@@ -4598,6 +4660,7 @@ class Encoder {
   }
   mlir::Block *solverBlock_;  // where interpreted functions are declared
   llvm::StringMap<Value> interpreted_;
+  llvm::StringMap<Value> embedArrays_;
   // Recursive types (ADR 0047): each datatype's constructors at this
   // query's width, those the query uses, and the measures it uses.
   std::map<std::string, RecInfo> recs_;

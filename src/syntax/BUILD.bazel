@@ -7,6 +7,7 @@ cc_library(
     name = "syntax",
     srcs = [
         "Comments.cpp",
+        "Embeds.cpp",
         "Interfaces.cpp",
         "Lean.cpp",
         "Lexer.cpp",
@@ -19,6 +20,7 @@ cc_library(
     hdrs = [
         "Comments.h",
         "Diagnostics.h",
+        "Embeds.h",
         "Interfaces.h",
         "Lean.h",
         "Lexer.h",

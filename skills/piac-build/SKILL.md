@@ -71,7 +71,16 @@ Importers are checked against the interfaces' contracts, never the bodies, so a 
 
 `load("//tools/lean:lean.bzl", "pia_lean_proof")`: `pia_lean_proof(name, src, proofs)` checks the Lean proofs in `proofs` of the lemmas of `src` proved in Lean and writes `<name>.receipt`, for `piac --lean-receipt=` (ADR 0061, the `pia-lean` skill).
 
-All three take `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
+All three take `embeds = [...]` (binary assets available to `@embed(file = "...")`, ADR 0070), `allow_unproved = [...]` (each becomes `--allow-unproved=`), `solver_rlimit` and `solver_timeout_ms`, with the same deterministic defaults as `piac`, so a proof does not depend on how loaded the build machine is.
+
+## Raw binary embedding
+
+A top-level fixed `let` binding embeds raw binary files directly as read-only `[u8]` slices with exact length and zero per-byte SMT overhead (ADR 0070): `let blob : [u8] @embed(file = "asset.bin", symbol = "my_blob", section = "...", align = 16)`. Relative paths only; resolve hermetically with `--embed-path=<dir>` or `--embed=<logical>=<path>` (repeatable on `piac` and `pia`).
+
+```sh
+piac --verify --embed-path=assets app.pia
+piac --emit=obj --embed=add.metallib=bazel-bin/add.metallib -o app.o app.pia
+```
 
 ## What a build trusts
 
