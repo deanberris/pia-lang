@@ -62,7 +62,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 - **Integer promotion is gone.** C widens `uint8_t` to `int` before `<<`, `+` and `*`. Pia computes at the operand's type, so `p.[0] << 24` on a `u8` fails `the shift amount is less than 8`. Bind to a wider `let` first.
 - **`size_t` subtraction** (`n - k`) is a goal: it is the most common real bug a port finds. Compare against what is left (`k <= n`) before subtracting.
 - **Pointer and length become a slice**, and a write-only buffer an `out mutable` slice. `len` replaces the length parameter, so the port cannot pass the wrong one.
-- **Exceptions and `errno` become `result`** with a closed error variant. RAII and `goto cleanup` become `defer`.
+- **Exceptions and `errno` become `result`** with a closed error variant. RAII and `goto cleanup` become `defer`. A `catch (const std::exception& e)` that must keep any dynamic type becomes one case carrying a box over a concept, `Cxx of box Exception`, whose requirements (`what`, a code) the handler calls through the box; see `tests/verify/box_error_payload.pia`.
 - **A float cast is a goal.** C's `(int)x` is undefined for a NaN or an out-of-range `x`; Pia's `i32 x` is the same truncation with a goal that neither happens, so state the range (`requires -1.0 < x && x < 256.0` before `u8 x`). `(float)n` is `f32 n`, and type punning through a union or `memcpy` is `to_bits`/`from_bits`.
 - **Templates become generics with concepts.** A concept's laws are proved for each type that meets it, so a `std::sort` comparator that is not a strict weak order is a compile error, not undefined behaviour.
 

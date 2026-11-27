@@ -71,7 +71,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 | a standard library module | `lib/Pia/...`, with `docs/cpp-std.md` as the status page | `tests/std` (a goal-count test, an importer and a run test for each module) |
 | an image or compression codec | `lib/Pia/Image`, `lib/Pia/Compress`, ADR 0054 | `tests/std/image_*`, `tests/std/gif_*`, `tests/std/inflate.pia`, `tests/std/zlib_*` |
 | a file format (safetensors) | `lib/Pia/Format`, ADR 0067 | `tests/std/safetensors*`; `tools/llm/export.py` converts a llama2.c checkpoint |
-| memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp` |
+| memory, allocators, `box`, `vec` | `lib/Pia/Mem/{Alloc,Box,Vec}.pia`; pools, pages and `vec (box t)` are still prototypes in `tests/verify/{arena,pool,vec_boxes}.pia` | `tests/std/mem*.pia`, `src/irgen/Boxes.cpp`, `Regions.cpp`; a box over a concept as an error payload in `tests/verify/box_error_payload.pia` and `tests/codegen/box_error_payload.pia` (run by `box_error_payload_test`) |
 | user docs or an example | `docs/*.md`, listed in `mkdocs.yml` | a page under test is listed in `tests/docs/BUILD.bazel`; a feature gets a line in `docs/features.md`, a module in `docs/library.md`; `python3 tools/docs/check.py` lists what is missing |
 | an agent skill | `skills/<name>/SKILL.md`, linked from `.claude/skills` | add it to `SKILLS` in `tests/docs/BUILD.bazel` and the tables in `skills/README.md` and `docs/agents.md`; `python3 tools/skills/check.py` lists what is missing |
 
