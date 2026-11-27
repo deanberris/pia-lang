@@ -114,7 +114,7 @@ $ piac --verify --iface-path=. line.pia
 97 proved, 0 failed, 0 skipped
 ```
 
-An option of a record works the same way: `null` or a missing member is None, and `json_room_<t>` counts the record's room for it. `@derive(json_dom)` does not take one yet, and an array of records is not supported yet.
+An option of a record works the same way: `null` or a missing member is None, and `json_room_<t>` counts the record's room for it. `@derive(json_dom)` takes one too. An array of records is not supported yet ([#528](https://github.com/deanberris/pia-lang/issues/528)).
 
 ## The document: `Pia.Text.Json.Dom`
 
@@ -180,7 +180,7 @@ $ piac --verify --iface-path=. count.pia
 
 ## A document's shape: `@derive(json, json_dom)`
 
-`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types and bools, options and fixed arrays of them, and other records with `@derive(json, json_dom)`, it writes:
+`@derive(json_dom)`, from `Pia.Text.Json.Shape`, says when a document has a record's shape, and converts it. It sits beside `@derive(json)`, whose member names it shares and whose writer `to_dom` uses, so that `@derive(json)` alone needs no document. For a record `t` of integers, range types and bools, options and fixed arrays of them, and other records with `@derive(json, json_dom)` and options of them, it writes:
 
 | Function | What it does |
 | --- | --- |

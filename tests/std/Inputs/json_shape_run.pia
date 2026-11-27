@@ -3,7 +3,7 @@
    the same for a reading, whose option fields may be null or missing,
    for a sample, whose fields are fixed arrays, and for a segment, whose
    fields are points. A route, two points and an option of one,
-   is read and written by @derive(json) alone. *)
+   is read straight from its text and from a document. *)
 module JsonShapeRun : Run
 
 import Pia.Core.Order.Ops
@@ -28,6 +28,8 @@ interface Run @abi(c) = sig
   let round_trip_segment : (x : i32) -> (y : u8) -> (n : u8) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
   let read_route : (s : [u8]) -> i64
   let round_trip_route : (x : i32) -> (has_last : bool) -> (text : borrowed inout mutable [u8]) -> i64
+  let read_route_dom : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_route_dom : (x : i32) -> (has_last : bool) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
 end
 
 let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
@@ -139,7 +141,7 @@ let round_trip_segment (x : i32) (y : u8) (n : u8) (text : borrowed inout mutabl
   | Err _ -> -1
   | Ok v -> segment_code (from_dom_json_segment text v)
 
-let route = type { a : point; b : point; last : O.option point } @derive(json)
+let route = type { a : point; b : point; last : O.option point } @derive(json, json_dom)
 
 (* A route's code: its points' codes, the first once and the second twice,
    and its last point's three times, or nothing when it has none. *)
@@ -171,3 +173,23 @@ let round_trip_route (x : i32) (has_last : bool) (text : borrowed inout mutable 
      match Json.read<route> text.[0 .. n] with
      | Ok b -> route_code b
      | Err _ -> -1)
+
+(* The route s denotes as a document, as its code; -1 if s is no
+   document and -2 if it is one that is not a route. *)
+let read_route_dom (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_route s v then route_code (from_dom_json_route s v) else -2
+
+(* round_trip_route's route as a document over text, read back, as its
+   code; -1 if to_dom made none. *)
+let round_trip_route_dom (x : i32) (has_last : bool) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  let nx : i32 = if x = -2147483648 then 0 else 0 - x in
+  let last : O.option point = if has_last then Some { x = 0; y = 3; ok = true } else None in
+  match to_dom_json_route { a = { x = x; y = 1; ok = true }; b = { x = nx; y = 2; ok = false }; last = last } text vs ms with
+  | Err _ -> -1
+  | Ok v -> route_code (from_dom_json_route text v)

@@ -10305,11 +10305,20 @@ class Gen {
 
   // --- lowerings (ADR 0065) -----------------------------------------
 
+  // The `@lower` of `t`'s record type (ADR 0074, section 3), or null.
+  const sema::TypeResolver::TypeLowering *typeLowering(Type t) const {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(t);
+    return rt ? types_.lowering(rt.getName().str()) : nullptr;
+  }
+
   // Whether codegen can hand `t` to MLIR text as one value: an integer, a
-  // bool, or a buffer of them, which is one memref. A record becomes its
-  // fields and a buffer of records one buffer per field, so neither has a
-  // single value to splice.
+  // bool, or a buffer of them, which is one memref, or a record whose type
+  // has `@lower`, which is a view of its buffer. Any other record becomes
+  // its fields and a buffer of records one buffer per field, so neither
+  // has a single value to splice.
   bool spliceable(Type t) {
+    if (typeLowering(t))
+      return true;
     if (auto a = mlir::dyn_cast<ArrayType>(t))
       t = a.getElementType();
     else if (auto s = mlir::dyn_cast<SliceType>(t))
@@ -10390,11 +10399,49 @@ class Gen {
       if (!spliceable(p->type)) {
         fail(attr, "@lower splices '$" + splice + "', of type " +
                        typeName(p->type) +
-                       "; a splice is an integer, a bool, or a buffer of "
-                       "them, in this step");
+                       "; a splice is an integer, a bool, a buffer of "
+                       "them, or a value of a type with @lower");
         return false;
       }
       i = end - 1;
+    }
+    // An `out` or `inout` record is returned with its new value, which
+    // MLIR text has no way to give. A lowered type whose elements are a
+    // slice is the exception: the lowering writes through the loan, and
+    // the record itself, the slice, comes back as it went in.
+    std::vector<size_t> through = threaded(sig);
+    for (size_t i : through) {
+      const sema::Param &p = sig.params[i];
+      const sema::TypeResolver::TypeLowering *tl = typeLowering(p.type);
+      if (!tl) {
+        fail(attr,
+             "'" + p.name + "' is '" +
+                 (sema::hasModifier(p.modifiers, "out") ? "out" : "inout") +
+                 "', so '" + name +
+                 "' returns its new value, which a lowering cannot "
+                 "give; an 'out' or 'inout' parameter of a lowered "
+                 "function is a buffer, or a value of a type with "
+                 "@lower whose elements are a slice");
+        return false;
+      }
+      auto rt = mlir::cast<RecordType>(p.type);
+      if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl->fieldIndex])) {
+        fail(attr,
+             "'" + p.name + "' is '" +
+                 (sema::hasModifier(p.modifiers, "out") ? "out" : "inout") +
+                 "', but the elements of " + typeName(p.type) +
+                 " are an array, which is part of the value and is "
+                 "copied back; give it a slice field, as in "
+                 "'data : borrowed(r) mutable [t]', for the lowering "
+                 "to write through");
+        return false;
+      }
+    }
+    if (!through.empty() && sig.result && !isUnit(sig.result)) {
+      fail(attr, "a lowered function with an 'out' or 'inout' value of a "
+                 "lowered type returns unit, for now; '" +
+                     name + "' returns " + typeName(sig.result));
+      return false;
     }
     fn->setAttr("pia.lower", b_.getStringAttr(text));
     // As text: the printed IR leaves locations out, so a location attribute
@@ -10403,8 +10450,58 @@ class Gen {
                 b_.getStringAttr(file_.str() + ":" +
                                  std::to_string(attr.loc.line) + ":" +
                                  std::to_string(attr.loc.column)));
-    for (size_t i = 0; i < sig.params.size(); ++i)
+    for (size_t i = 0; i < sig.params.size(); ++i) {
       fn.setArgAttr(i, "pia.lower_name", b_.getStringAttr(sig.params[i].name));
+      if (llvm::is_contained(through, i))
+        fn.setArgAttr(i, "pia.lower_threaded", b_.getUnitAttr());
+      if (const sema::TypeResolver::TypeLowering *tl =
+              typeLowering(sig.params[i].type))
+        if (!markTypeLowering(sig.params[i], *tl, fn, i))
+          return false;
+    }
+    return true;
+  }
+
+  // Marks argument `i`, a value of a lowered type, with the view codegen
+  // makes of its buffer, `pia.lower_view`, which ScalarizeRecords moves to
+  // the buffer's own argument. A slice's length is not in its type, so
+  // the body proves it matches the view, from the type's invariant.
+  bool markTypeLowering(const sema::Param &p,
+                        const sema::TypeResolver::TypeLowering &tl,
+                        mlir::func::FuncOp fn, unsigned i) {
+    auto rt = mlir::cast<RecordType>(p.type);
+    llvm::SmallVector<mlir::NamedAttribute> view{
+        b_.getNamedAttr("field", b_.getI64IntegerAttr(tl.fieldIndex)),
+        b_.getNamedAttr("shape", b_.getDenseI64ArrayAttr(tl.extents)),
+        b_.getNamedAttr("type", b_.getStringAttr(rt.getName())),
+        b_.getNamedAttr("text", b_.getStringAttr(tl.text)),
+        b_.getNamedAttr("at",
+                        b_.getStringAttr(file_.str() + ":" +
+                                         std::to_string(tl.at.line) + ":" +
+                                         std::to_string(tl.at.column)))};
+    if (!tl.element.empty())
+      view.push_back(b_.getNamedAttr("element", b_.getStringAttr(tl.element)));
+    fn.setArgAttr(i, "pia.lower_view", b_.getDictionaryAttr(view));
+    if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl.fieldIndex]))
+      return true;
+    BindingPtr b = lookup(p.name);
+    if (!b)
+      return true;
+    uint64_t count = 1;
+    for (int64_t e : tl.extents)
+      count *= static_cast<uint64_t>(e);
+    Location l = mlir::FileLineColLoc::get(file_, p.loc.line, p.loc.column);
+    Type ft = rt.getFieldTypes()[tl.fieldIndex];
+    Value buf = create<FieldOp>(l, ft, b->value, b_.getStringAttr(tl.field));
+    Value n = create<FromIndexOp>(l, types_.usize(),
+                                  create<LenOp>(l, b_.getIndexType(), buf));
+    auto a = create<contract::AssertOp>(
+        l, cmp(l, CmpPredicate::eq, n, counterConst(l, count)));
+    a->setAttr("pia.claim",
+               b_.getStringAttr("'" + p.name + "." + tl.field + "' holds " +
+                                std::to_string(count) +
+                                " elements, as the @lower of " +
+                                typeName(p.type) + " views it"));
     return true;
   }
 

@@ -11,10 +11,11 @@
    base plus extra bits; a stored block's LEN is the complement of its
    NLEN; the code length code is complete; and a literal/length or
    distance code is complete, or a single code. inflate_ref proves the
-   whole stream's theorem for stored and fixed blocks: whenever x is
-   what the stream's trace (Inflate.Ref) writes, it writes x. codes_ref
-   is a Huffman block's part of it. Dynamic blocks are next; the run
-   tests compare the output with zlib's. *)
+   whole stream's theorem for stored, fixed and dynamic blocks:
+   whenever x is what the stream's trace (Inflate.Ref) writes, it writes
+   x. codes_ref is a Huffman block's part of it, and dynamic_ref (with
+   read_lens) a dynamic block's code lengths'. The run tests compare
+   the output with zlib's. *)
 module Pia.Compress.Inflate : Inflate
 
 import Pia.Image.Bits.Bits as B
@@ -352,28 +353,244 @@ let fixed_tables (lb : borrowed inout mutable [u8]) (db : borrowed inout mutable
   H.kraft_room db 30 1;
   fixed_when h fl fd lb db
 
-(* A literal/length or distance code is usable: complete, or one code. *)
+(* A literal/length or distance code is usable: complete, or one code
+   (R.usable_ok). *)
 let usable (lb : [u8]) (n : int{0..320}) (f : H.fill) : bool
   requires n <= len lb
+  requires (f = H.Complete) = (H.kraft lb n = 32768) && (f = H.Oversubscribed) = (H.kraft lb n > 32768)
+  ensures result = R.usable_ok lb n
 = match f with
   | Complete -> true
   | Oversubscribed -> false
   | Incomplete -> (
       let used : mutable usize = 0 in
       for i in 0 .. n
-        invariant used <= i
+        invariant used <= i && used = R.used lb i
       do
         if lb.[i] <> 0 then used <- used + 1 else ()
       done;
       used = 1)
 
-(* A dynamic block's header and code lengths from bit p, and its tables. *)
-let dynamic (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result dyn inflate_error
-  requires len lb = 320 && len ltab = 704 && len dtab = 704 && p0 <= B.nbits s
+(* dyn_ok's facts, where h holds. *)
+let lemma dyn_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (p : usize) (pe : usize) : unit
+  requires h ==> R.dyn_ok s cl ll dl p pe
+  ensures h ==> p <= B.nbits s && 14 <= B.nbits s - p
+  ensures (if h = false then true else if p > B.nbits s then false else if 14 > B.nbits s - p then false
+    else (
+      let nl : int{257..288} = R.dyn_nl s p in
+      let nd : int{1..30} = R.dyn_nd s p in
+      let hc : usize = R.dyn_hc s p in
+      B.bits_at s p 5 <= 29 && B.bits_at s (p + 5) 5 <= 29 && nl <= 286
+      && 14 + 3 * hc <= B.nbits s - p && 19 <= len cl && nl <= len ll && nd <= len dl
+      && R.cl_head s p hc cl && H.kraft cl 19 = 32768
+      && R.cl_from s cl ll dl nl nd 0 (p + 14 + 3 * hc) 0 pe
+      && ll.[256] <> 0 && R.usable_ok ll nl && R.usable_ok dl nd))
+= if h then R.dyn_facts s cl ll dl p pe else ()
+
+let lemma head_all_when (h : bool) (s : [u8]) (p : usize) (hc : usize) (cl : [u8]) : unit
+  requires h ==> R.cl_head s p hc cl
+  ensures (if h = false then true else if p > B.nbits s || hc > 19 || len cl < 19 then false else if 14 + 3 * hc > B.nbits s - p then false
+    else (forall (j in 0 .. 19). cl.[j] = (if R.clen_pos j < hc then B.bits_at s (p + 14 + 3 * R.clen_pos j) 3 else 0)))
+= if h then R.cl_head_all s p hc cl else ()
+
+let lemma same_when (h : bool) (l : [u8]) (m : [u8]) (n : int{0..320}) : unit
+  requires h ==> n <= len l && n <= len m && (forall (i in 0 .. n). l.[i] = m.[i])
+  ensures h ==> R.same_lens l m n
+= if h then R.same_of l m n else ()
+
+let lemma usable_when (h : bool) (l : [u8]) (m : [u8]) (n : int{0..320}) : unit
+  requires h ==> R.same_lens l m n
+  ensures h ==> n <= len l && n <= len m && H.kraft l n = H.kraft m n && R.usable_ok l n = R.usable_ok m n
+= if h then R.usable_same l m n else ()
+
+let lemma lens_when (h : bool) (ll : [u8]) (dl : [u8]) (nl : int{0..320}) (nd : usize) (lb : [u8]) : unit
+  requires h ==> nl <= len ll && nd <= len dl && nl + nd <= len lb
+  requires h ==> (forall (i : usize). i < nl + nd ==> lb.[i] = R.lens_at ll dl nl i)
+  ensures h ==> R.same_lens ll lb nl && (forall (i in 0 .. nd). lb.[nl + i] = dl.[i])
+= if h then R.lens_split ll dl nl nd lb else ()
+
+let lemma cl_code_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe
+  ensures h ==> 19 + m < len cl && cl.[19 + m] <= 18
+  ensures (if h = false then true else if 19 + m >= len cl then false else if cl.[19 + m] > 18 then false
+    else (let sym : int{0..18} = cl.[19 + m] in R.code_at s p cl 19 sym))
+= if h then R.cl_code s cl ll dl nl nd m p k pe else ()
+
+let lemma cl_end_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k = nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe
+  ensures h ==> p = pe
+= if h then R.cl_end s cl ll dl nl nd m p k pe else ()
+
+let lemma cl_lit_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) (sym : int{0..18}) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe && 19 + m < len cl && sym = cl.[19 + m] && sym < 16
+  ensures h ==> R.lens_at ll dl nl k = sym && R.cl_from s cl ll dl nl nd (m + 1) (p + cl.[sym]) (k + 1) pe
+= if h then R.cl_lit s cl ll dl nl nd m p k pe sym else ()
+
+let lemma cl_rep_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) (sym : int{0..18}) (q : usize) (eb : int{2..7}) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe && 19 + m < len cl && sym = cl.[19 + m] && 16 <= sym
+  requires h ==> q = p + cl.[sym] && eb = (if sym = 16 then 2 else if sym = 17 then 3 else 7)
+  ensures h ==> q <= B.nbits s && eb <= B.nbits s - q
+  ensures (if h = false then true else if q > B.nbits s then false else if eb > B.nbits s - q then false
+    else (
+      let r : usize = (if sym = 18 then 11 else 3) + B.bits_at s q eb in
+      r <= nl + nd - k && (sym = 16 ==> 0 < k)
+      && (forall (i in 0 .. r). R.lens_at ll dl nl (k + i) = (if sym = 16 then R.lens_at ll dl nl (k - 1) else 0))
+      && R.cl_from s cl ll dl nl nd (m + 1) (q + eb) (k + r) pe))
+= if h then R.cl_rep s cl ll dl nl nd m p k pe sym q eb else ()
+
+(* The code length symbol decode read at p is the trace's, cl.[i]. *)
+let lemma clsym_when (h : bool) (s : [u8]) (p : usize) (q : usize) (cl : [u8]) (m : [u8]) (i : usize) (b : u16) : unit
+  requires h ==> i < len cl && cl.[i] <= 18 && R.code_at s p cl 19 cl.[i] && R.same_lens cl m 19
+  requires h ==> b < 19 && 19 <= len m && p < q && q - p <= 15 && q <= B.nbits s
+  requires h ==> m.[b] = q - p && H.code_of m 19 b = H.hbits s p (q - p)
+  ensures h ==> cl.[i] = b && cl.[b] = m.[b]
+= if h then (let b' : int{0..319} = b in let a : int{0..319} = cl.[i] in R.at_moved s p cl m 19 a; R.at_same s p m 19 a b') else ()
+
+(* decode fails only where no code is, and the trace has one at p. *)
+let lemma clmiss_when (h : bool) (s : [u8]) (p : usize) (cl : [u8]) (m : [u8]) (i : usize) : unit
+  requires h ==> i < len cl && cl.[i] <= 18 && R.code_at s p cl 19 cl.[i] && R.same_lens cl m 19
+  requires h ==> H.none_at s p m 19
+  ensures h ==> false
+= if h then (let a : int{0..319} = cl.[i] in R.at_moved s p cl m 19 a; R.at_none s p m 19 a) else ()
+
+(* rep copies of v at lb.[k ..]: where h holds, lb before k holds the
+   trace's lengths, and so do the copies, so lb before k + rep does. *)
+let fill_rep (lb : borrowed inout mutable [u8]) (k : usize) (rep : usize) (v : u8) (spec ll : [u8]) (spec dl : [u8]) (spec nl : int{257..288}) (spec h : bool) : unit
+  requires len lb = 320 && k <= len lb && rep <= len lb - k
+  requires h ==> nl <= len ll && k + rep <= nl + len dl
+  requires h ==> (forall (i in 0 .. k). lb.[i] = R.lens_at ll dl nl i)
+  requires h ==> (forall (i in 0 .. rep). R.lens_at ll dl nl (k + i) = v)
+  ensures h ==> (forall (i in 0 .. k + rep). lb.[i] = R.lens_at ll dl nl i)
+= for r in 0 .. rep
+    invariant h ==> (forall (i in 0 .. k + r). lb.[i] = R.lens_at ll dl nl i)
+  do lb.[k + r] <- v done
+
+(* The trace's facts for a code length symbol that repeats a length,
+   read at p and ending at q, with its eb extra bits x: the r copies of
+   v it writes are the trace's lengths from k. *)
+let lemma rep_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) (sym : int{0..18}) (q : usize) (eb : int{2..7}) (lb : [u8]) (rep : usize) (v : u8) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd && k <= len lb
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe && 19 + m < len cl && sym = cl.[19 + m] && 16 <= sym
+  requires h ==> q = p + cl.[sym] && eb = (if sym = 16 then 2 else if sym = 17 then 3 else 7)
+  requires h ==> q <= B.nbits s && eb <= B.nbits s - q && rep = (if sym = 18 then 11 else 3) + B.bits_at s q eb
+  requires h ==> (forall (i in 0 .. k). lb.[i] = R.lens_at ll dl nl i)
+  requires h ==> v = (if sym = 16 then (if k = 0 then 0 else lb.[k - 1]) else 0)
+  ensures h ==> rep <= nl + nd - k && (sym = 16 ==> 0 < k)
+    && (forall (i in 0 .. rep). R.lens_at ll dl nl (k + i) = v)
+    && R.cl_from s cl ll dl nl nd (m + 1) (q + eb) (k + rep) pe
+= if h then R.cl_rep s cl ll dl nl nd m p k pe sym q eb else ()
+
+(* The bounds a repeat code's trace step gives, before its copies. *)
+let lemma rep_ok_when (h : bool) (s : [u8]) (cl : [u8]) (ll : [u8]) (dl : [u8]) (nl : int{257..288}) (nd : int{1..30}) (m : usize) (p : usize) (k : usize) (pe : usize) (sym : int{0..18}) (q : usize) (eb : int{2..7}) (rep : usize) : unit
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe && 19 + m < len cl && sym = cl.[19 + m] && 16 <= sym
+  requires h ==> q = p + cl.[sym] && eb = (if sym = 16 then 2 else if sym = 17 then 3 else 7)
+  requires h ==> q <= B.nbits s && eb <= B.nbits s - q && rep = (if sym = 18 then 11 else 3) + B.bits_at s q eb
+  ensures h ==> rep <= nl + nd - k && (sym = 16 ==> 0 < k)
+= if h then R.cl_rep s cl ll dl nl nd m p k pe sym q eb else ()
+
+(* A repeat code's rep copies at lb.[k ..], of the length before k for
+   code 16 and of zero otherwise. Where h holds they are the trace's
+   lengths, and the trace goes on after them. *)
+let rep_fill (lb : borrowed inout mutable [u8]) (k : usize) (rep : usize) (sym : int{0..18}) (spec s : [u8]) (spec cl : [u8]) (spec ll : [u8]) (spec dl : [u8]) (spec nl : int{257..288}) (spec nd : int{1..30}) (spec m : usize) (spec p : usize) (spec pe : usize) (spec q : usize) (spec eb : int{2..7}) (spec h : bool) : unit
+  requires len lb = 320 && k <= len lb && rep <= len lb - k && (sym = 16 ==> 0 < k)
+  requires h ==> nl <= len ll && nd <= len dl && m <= k && k < nl + nd
+  requires h ==> R.cl_from s cl ll dl nl nd m p k pe && 19 + m < len cl && sym = cl.[19 + m] && 16 <= sym
+  requires h ==> q = p + cl.[sym] && eb = (if sym = 16 then 2 else if sym = 17 then 3 else 7)
+  requires h ==> q <= B.nbits s && eb <= B.nbits s - q && rep = (if sym = 18 then 11 else 3) + B.bits_at s q eb
+  requires h ==> (forall (i in 0 .. k). lb.[i] = R.lens_at ll dl nl i)
+  ensures h ==> k + rep <= nl + nd && R.cl_from s cl ll dl nl nd (m + 1) (q + eb) (k + rep) pe
+  ensures h ==> (forall (i in 0 .. k + rep). lb.[i] = R.lens_at ll dl nl i)
+= let v : u8 = (if sym = 16 then lb.[k - 1] else 0) in
+  rep_when h s cl ll dl nl nd m p k pe sym q eb lb rep v;
+  fill_rep lb k rep v ll dl nl h
+
+(* A dynamic block's nl + nd code lengths into lb, read from bit p0 with
+   the code length code's table ltab (lengths db). Where h holds and the
+   trace's code length symbols are at p0 (R.cl_from), it returns Ok at
+   pe with the trace's lengths in lb. *)
+let read_lens (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (ltab : [u8]) (db : [u8]) (nl : int{257..286}) (nd : int{1..30}) (spec cl : [u8]) (spec ll : [u8]) (spec dl : [u8]) (spec pe : usize) (spec h : bool) : result usize inflate_error
+  requires len lb = 320 && len ltab = 704 && len db = 30 && p0 <= B.nbits s
+  requires h ==> H.room db 19 1 && H.tab_from ltab db 19 1 && R.same_lens cl db 19
+  requires h ==> nl <= len ll && nd <= len dl && R.cl_from s cl ll dl nl nd 0 p0 0 pe
+  ensures (match result with
+    | Ok q -> p0 <= q && q <= B.nbits s
+    | Err _ -> true)
+  ensures h ==> (match result with
+    | Ok q -> q = pe && (forall (i : usize). i < nl + nd ==> lb.[i] = R.lens_at ll dl nl i)
+    | Err _ -> false)
+= let nb = B.bit_len s in
+  let total : usize = nl + nd in
+  let p : mutable usize = p0 in
+  let k : mutable usize = 0 in
+  let m : mutable usize = 0 in
+  let st : mutable int{0..3} = 0 in
+  let at' : mutable usize = p0 in
+  while st = 0 && k < total
+    invariant k <= total && m <= k && p0 <= p && p <= nb
+    invariant h ==> st = 0 && R.cl_from s cl ll dl nl nd m p k pe
+    invariant h ==> (forall (i in 0 .. k). lb.[i] = R.lens_at ll dl nl i)
+    decreases nb - p + (if st = 0 then 1 else 0)
+  do
+    cl_code_when h s cl ll dl nl nd m p k pe;
+    match H.decode s p ltab 19 db h with
+    | Err e -> (clmiss_when h s p cl db (19 + m); at' <- p; if e >= nb then st <- 1 else st <- 2)
+    | Ok d -> (
+        clsym_when h s p d.pos cl db (19 + m) d.sym;
+        let sym : int{0..18} = d.sym in
+        if sym < 16 then (
+          cl_lit_when h s cl ll dl nl nd m p k pe sym;
+          p <- d.pos;
+          let v : u8 = sym in
+          lb.[k] <- v;
+          k <- k + 1;
+          m <- m +| 1)
+        else (
+          let eb : int{2..7} = (if sym = 16 then 2 else if sym = 17 then 3 else 7) in
+          let pc : usize = p in
+          p <- d.pos;
+          if eb > nb - p then (cl_rep_when h s cl ll dl nl nd m pc k pe sym d.pos eb; at' <- p; st <- 1)
+          else (
+            let x : usize = field s p eb in
+            let rep : usize = (if sym = 18 then 11 else 3) + x in
+            rep_ok_when h s cl ll dl nl nd m pc k pe sym p eb rep;
+            let q : usize = p in
+            p <- p + eb;
+            if sym = 16 && k = 0 then (at' <- p; st <- 2)
+            else if rep > total - k then (at' <- p; st <- 2)
+            else (
+              rep_fill lb k rep sym s cl ll dl nl nd m pc pe q eb h;
+              k <- k + rep;
+              m <- m +| 1))))
+  done;
+  if st = 1 then Err (Ends at')
+  else if st = 2 then Err (BadLengths at')
+  else (cl_end_when h s cl ll dl nl nd m p k pe; Ok p)
+
+(* A dynamic block's header and code lengths from bit p0, and its
+   tables: the literal/length code's lengths in lb, and the distance
+   code's in db, which first holds the code length code's. Where h holds
+   and the block is as dyn_ok says, with cl, ll and dl its lengths and
+   pe where its symbols start, it returns Ok at pe with tables that are
+   ll's and dl's canonical codes. *)
+let dynamic_ref (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (db : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) (spec cl : [u8]) (spec ll : [u8]) (spec dl : [u8]) (spec pe : usize) (spec h : bool) : result dyn inflate_error
+  requires len lb = 320 && len db = 30 && len ltab = 704 && len dtab = 704 && p0 <= B.nbits s
+  requires h ==> R.dyn_ok s cl ll dl p0 pe
   ensures (match result with
     | Ok r -> p0 < r.dp && r.dp <= B.nbits s
     | Err _ -> true)
+  ensures h ==> (match result with
+    | Ok r -> (if p0 > B.nbits s then false else if 14 > B.nbits s - p0 then false
+        else r.dp = pe && r.nl = R.dyn_nl s p0 && r.nd = R.dyn_nd s p0 && r.nl <= len ll && r.nd <= len dl
+          && H.room lb r.nl 1 && H.tab_from ltab lb r.nl 1 && R.same_lens ll lb r.nl
+          && H.room db r.nd 1 && H.tab_from dtab db r.nd 1 && R.same_lens dl db r.nd)
+    | Err _ -> false)
 = let nb = B.bit_len s in
+  dyn_when h s cl ll dl p0 pe;
   if 14 > nb - p0 then Err (Ends p0)
   else (
     let hlit : u32 = field s p0 5 + 257 in
@@ -385,108 +602,119 @@ let dynamic (s : [u8]) (p0 : usize) (lb : borrowed inout mutable [u8]) (ltab : b
     else (
       let nl : int{257..286} = hlit in
       let nd : int{1..30} = hdist in
-      for i in 0 .. 19 do lb.[i] <- 0 done;
+      for i in 0 .. 19
+        invariant forall (j in 0 .. i). db.[j] = 0
+      do db.[i] <- 0 done;
       let hc : usize = hclen in
       for i in 0 .. hc
-        invariant p + 3 * (hc - i) <= nb && p0 < p
+        invariant p + 3 * (hc - i) <= nb && p0 < p && p = p0 + 14 + 3 * i
+        invariant forall (j in 0 .. 19). db.[j] = (if R.clen_pos j < i then B.bits_at s (p0 + 14 + 3 * R.clen_pos j) 3 else 0)
       do
         let ii : int{0..18} = i in
+        R.clen_all ii;
         let v : u8 = field s p 3 in
-        lb.[clen_order_of ii] <- v;
+        db.[clen_order_of ii] <- v;
         p <- p + 3
       done;
-      match H.build lb 19 ltab with
+      head_all_when h s p0 hc cl;
+      same_when h cl db 19;
+      usable_when h cl db 19;
+      match H.build db 19 ltab with
       | Incomplete -> Err (BadLengths p0)
       | Oversubscribed -> Err (BadLengths p0)
       | Complete -> (
-          let total : usize = nl + nd in
-          let k : mutable usize = 0 in
-          let st : mutable int{0..3} = 0 in
-          let at' : mutable usize = p in
-          while st = 0 && k < total
-            invariant k <= total && p0 < p && p <= nb
-            decreases nb - p + (if st = 0 then 1 else 0)
-          do
-            match H.decode s p ltab 19 lb false with
-            | Err e -> (at' <- p; if e >= nb then st <- 1 else st <- 2)
-            | Ok d -> (
-                p <- d.pos;
-                let sym = d.sym in
-                if sym < 16 then (let v : u8 = sym in lb.[k] <- v; k <- k + 1)
-                else (
-                  let eb : int{0..7} = (if sym = 16 then 2 else if sym = 17 then 3 else 7) in
-                  if eb > nb - p then (at' <- p; st <- 1)
-                  else (
-                    let x : usize = field s p eb in
-                    p <- p + eb;
-                    let rep : usize = (if sym = 16 then 3 + x else if sym = 17 then 3 + x else 11 + x) in
-                    if sym = 16 && k = 0 then (at' <- p; st <- 2)
-                    else if rep > total - k then (at' <- p; st <- 2)
-                    else (
-                      let v : u8 = (if sym = 16 then lb.[k - 1] else 0) in
-                      for r in 0 .. rep do lb.[k + r] <- v done;
-                      k <- k + rep))))
-          done;
-          if st = 1 then Err (Ends at')
-          else if st = 2 then Err (BadLengths at')
-          else if lb.[256] = 0 then Err (BadLengths p0)
-          else (
-            let fl = H.build lb nl ltab in
-            let dl = lb.[nl .. nl + nd] in
-            let fd = H.build dl nd dtab in
-            if usable lb nl fl = false || usable dl nd fd = false then Err (BadLengths p0)
-            else Ok { dp = p; nl = nl; nd = nd }))))
+          H.kraft_room db 19 1;
+          match read_lens s p lb ltab db nl nd cl ll dl pe h with
+          | Err e -> Err e
+          | Ok q -> (
+            p <- q;
+            lens_when h ll dl nl nd lb;
+            if lb.[256] = 0 then Err (BadLengths p0)
+            else (
+              let fl = H.build lb nl ltab in
+              let ndu : usize = nd in
+              for i in 0 .. ndu
+                invariant forall (j in 0 .. i). db.[j] = lb.[nl + j]
+              do db.[i] <- lb.[nl + i] done;
+              let fd = H.build db nd dtab in
+              same_when h dl db nd;
+              usable_when h ll lb nl;
+              usable_when h dl db nd;
+              if usable lb nl fl = false || usable db nd fd = false then Err (BadLengths p0)
+              else (
+                H.kraft_room lb nl 1;
+                H.kraft_room db nd 1;
+                Ok { dp = p; nl = nl; nd = nd }))))))
 
 (* What the stream's trace says, where h holds, for inflate_ref's loop. *)
-let lemma stream_when (h : bool) (s : [u8]) (pos : usize) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
-  requires h ==> R.stream_ok s pos x fl fd nbk bp bo bj tp ts td to
+let lemma stream_when (h : bool) (s : [u8]) (pos : usize) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) : unit
+  requires h ==> R.stream_ok s pos x fl fd nbk bp bo bj tp ts td to bcl bll bdl
   ensures h ==> 1 <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
-  ensures h ==> bp.[0] = pos && bo.[0] = 0 && bj.[0] = 0 && R.fixed_ok fl fd && R.blocks_from s x fl fd nbk bp bo bj tp ts td to 0
-= if h then R.stream_start s pos x fl fd nbk bp bo bj tp ts td to else ()
+  ensures h ==> bp.[0] = pos && bo.[0] = 0 && bj.[0] = 0 && R.fixed_ok fl fd && R.blocks_from s x fl fd nbk bp bo bj tp ts td to bcl bll bdl 0
+= if h then R.stream_start s pos x fl fd nbk bp bo bj tp ts td to bcl bll bdl else ()
 
-let lemma blocks_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+let lemma blocks_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) : unit
   requires h ==> bi <= nbk && nbk < len bp && nbk < len bo && nbk < len bj
-  requires h ==> R.blocks_from s x fl fd nbk bp bo bj tp ts td to bi
-  ensures h && bi < nbk ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bi && R.blocks_from s x fl fd nbk bp bo bj tp ts td to (bi + 1)
+  requires h ==> R.blocks_from s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi
+  ensures h && bi < nbk ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi && R.blocks_from s x fl fd nbk bp bo bj tp ts td to bcl bll bdl (bi + 1)
   ensures h && bi = nbk ==> bo.[nbk] = len x
-= if h then R.blocks_step s x fl fd nbk bp bo bj tp ts td to bi else ()
+= if h then R.blocks_step s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi else ()
 
-let lemma head_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+let lemma head_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) : unit
   requires h ==> bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
-  requires h ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bi
+  requires h ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi
   ensures h ==> bp.[bi] <= B.nbits s && 3 <= B.nbits s - bp.[bi]
   ensures (if h = false then true else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else (B.bits_at s bp.[bi] 1 = 1) = (bi + 1 = nbk))
   ensures h ==> bo.[bi] <= bo.[bi + 1] && bo.[bi + 1] <= len x
-  ensures (if h = false then true else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 <= 1)
-= if h then R.block_head s x fl fd nbk bp bo bj tp ts td to bi else ()
+  ensures (if h = false then true else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 <= 2)
+= if h then R.block_head s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi else ()
 
-let lemma stored_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) (q : usize) : unit
+let lemma stored_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) (q : usize) : unit
   requires h ==> bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
-  requires (if h = false then true else if R.block_ok s x fl fd nbk bp bo bj tp ts td to bi = false then false else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 0)
+  requires (if h = false then true else if R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi = false then false else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 0)
   requires h ==> q = (bp.[bi] + 3 + 7) / 8
   ensures h ==> q < len s && 4 <= len s - q && F.stored_ok s q
   ensures h ==> F.stored_len s q <= len s - q - 4 && bo.[bi + 1] - bo.[bi] = F.stored_len s q
   ensures h ==> bp.[bi + 1] = 8 * (q + 4 + F.stored_len s q) && bj.[bi + 1] = bj.[bi] && R.stored_copy s q x bo.[bi] (F.stored_len s q)
-= if h then R.block_stored s x fl fd nbk bp bo bj tp ts td to bi q else ()
+= if h then R.block_stored s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi q else ()
 
-let lemma fixed_blk_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bi : usize) : unit
+let lemma fixed_blk_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) : unit
   requires h ==> bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
-  requires (if h = false then true else if R.block_ok s x fl fd nbk bp bo bj tp ts td to bi = false then false else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 1)
+  requires (if h = false then true else if R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi = false then false else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 1)
   ensures h ==> bj.[bi] < bj.[bi + 1] && bj.[bi + 1] <= len tp && bj.[bi + 1] <= len to && 256 < len fl
   ensures h ==> R.blk_ok s fl 288 fd 30 x (bp.[bi] + 3) bo.[bi] bj.[bi] bj.[bi + 1] tp ts td to
   ensures h ==> bp.[bi + 1] = tp.[bj.[bi + 1] - 1] + fl.[256] && bo.[bi + 1] = to.[bj.[bi + 1] - 1]
-= if h then R.block_fixed s x fl fd nbk bp bo bj tp ts td to bi else ()
+= if h then R.block_fixed s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi else ()
+
+let lemma dyn_blk_when (h : bool) (s : [u8]) (x : [u8]) (fl : [u8]) (fd : [u8]) (nbk : usize) (bp : [usize]) (bo : [usize]) (bj : [usize]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) : unit
+  requires h ==> bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj
+  requires (if h = false then true else if R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi = false then false else if bp.[bi] > B.nbits s then false else if 3 > B.nbits s - bp.[bi] then false else B.bits_at s (bp.[bi] + 1) 2 = 2)
+  ensures h ==> bj.[bi] < bj.[bi + 1] && bj.[bi + 1] <= len tp && bj.[bi + 1] <= len to
+  ensures h ==> bi < len bcl && bi < len bll && bi < len bdl && 256 < len bll.[bi]
+  ensures h ==> bp.[bi] + 3 <= B.nbits s && 14 <= B.nbits s - (bp.[bi] + 3)
+  ensures h ==> R.dyn_ok s bcl.[bi] bll.[bi] bdl.[bi] (bp.[bi] + 3) tp.[bj.[bi]]
+  ensures (if h = false then true else if bp.[bi] + 3 > B.nbits s then false else if 14 > B.nbits s - (bp.[bi] + 3) then false
+    else R.blk_ok s bll.[bi] (R.dyn_nl s (bp.[bi] + 3)) bdl.[bi] (R.dyn_nd s (bp.[bi] + 3)) x tp.[bj.[bi]] bo.[bi] bj.[bi] bj.[bi + 1] tp ts td to)
+  ensures h ==> bp.[bi + 1] = tp.[bj.[bi + 1] - 1] + bll.[bi].[256] && bo.[bi + 1] = to.[bj.[bi + 1] - 1]
+= if h then R.block_dynamic s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi else ()
+
+(* Whether block's trace arguments for a dynamic block are in bounds,
+   so that block can pass them on only then. *)
+let spec dyn_args (h : bool) (nbk : usize) (bj : [usize]) (tp : [usize]) (bcl : [[u8]]) (bll : [[u8]]) (bdl : [[u8]]) (bi : usize) : bool =
+  if h = false then false
+  else if bi >= nbk || nbk >= len bj || bi >= len bcl || bi >= len bll || bi >= len bdl then false
+  else bj.[bi] < len tp
 
 (* One block, of type ty, after its header, which ends at bit p. Where
    h holds, the block is block bi of the stream's trace, starting at bit
    here, and dst holds x before o, it returns Ok at the block's end with x
    up to there in dst. A small contract, so inflate_ref's loop stays
    cheap to prove. *)
-let block (s : [u8]) (p : usize) (ty : u32) (dst : borrowed inout mutable [u8]) (o : usize) (j : usize) (lb : borrowed inout mutable [u8]) (db : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) (spec x : [u8]) (spec fl : [u8]) (spec fd : [u8]) (spec nbk : usize) (spec bp : [usize]) (spec bo : [usize]) (spec bj : [usize]) (spec tp : [usize]) (spec ts : [int{0..319}]) (spec td : [int{0..319}]) (spec to : [usize]) (spec here : usize) (spec bi : usize) (spec h : bool) : result at inflate_error
+let block (s : [u8]) (p : usize) (ty : u32) (dst : borrowed inout mutable [u8]) (o : usize) (j : usize) (lb : borrowed inout mutable [u8]) (db : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) (spec x : [u8]) (spec fl : [u8]) (spec fd : [u8]) (spec nbk : usize) (spec bp : [usize]) (spec bo : [usize]) (spec bj : [usize]) (spec tp : [usize]) (spec ts : [int{0..319}]) (spec td : [int{0..319}]) (spec to : [usize]) (spec bcl : [[u8]]) (spec bll : [[u8]]) (spec bdl : [[u8]]) (spec here : usize) (spec bi : usize) (spec h : bool) : result at inflate_error
   requires len s <= 1152921504606846975 && p <= B.nbits s && o <= len dst
   requires len lb = 320 && len db = 30 && len ltab = 704 && len dtab = 704
   requires h ==> bi < nbk && nbk < len bp && nbk < len bo && nbk < len bj && len x <= len dst && R.fixed_ok fl fd
-  requires h ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bi && here = bp.[bi] && p = here + 3 && p <= B.nbits s
+  requires h ==> R.block_ok s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi && here = bp.[bi] && p = here + 3 && p <= B.nbits s
   requires h ==> ty = B.bits_at s (here + 1) 2
   requires h ==> o = bo.[bi] && j = bj.[bi] && (forall (i in 0 .. o). dst.[i] = x.[i])
   ensures (match result with
@@ -496,15 +724,16 @@ let block (s : [u8]) (p : usize) (ty : u32) (dst : borrowed inout mutable [u8]) 
     | Ok r -> (if bi >= nbk || nbk >= len bp || nbk >= len bo || nbk >= len bj then false
                else r.p = bp.[bi + 1] && r.o = bo.[bi + 1] && r.j = bj.[bi + 1] && (forall (i in 0 .. r.o). dst.[i] = x.[i]))
     | Err _ -> false)
-= head_when h s x fl fd nbk bp bo bj tp ts td to bi;
-  if ty = 0 then (stored_when h s x fl fd nbk bp bo bj tp ts td to bi ((p + 7) / 8); stored s p dst o j x h)
+= head_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
+  if ty = 0 then (stored_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi ((p + 7) / 8); stored s p dst o j x h)
   else if ty = 1 then (
     fixed_tables lb db ltab dtab fl fd h;
-    fixed_blk_when h s x fl fd nbk bp bo bj tp ts td to bi;
+    fixed_blk_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
     codes_ref s p dst o ltab 288 dtab 30 fl lb fd db x j (if h then (if bi < nbk then (if nbk < len bj then bj.[bi + 1] else 0) else 0) else 0) tp ts td to h)
   else if ty = 2 then (
-    match dynamic s p lb ltab dtab with
-    | Ok d -> codes s d.dp dst o ltab d.nl dtab d.nd
+    dyn_blk_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
+    match dynamic_ref s p lb db ltab dtab (if dyn_args h nbk bj tp bcl bll bdl bi then bcl.[bi] else s) (if dyn_args h nbk bj tp bcl bll bdl bi then bll.[bi] else s) (if dyn_args h nbk bj tp bcl bll bdl bi then bdl.[bi] else s) (if dyn_args h nbk bj tp bcl bll bdl bi then tp.[bj.[bi]] else 0) h with
+    | Ok d -> codes_ref s d.dp dst o ltab d.nl dtab d.nd (if dyn_args h nbk bj tp bcl bll bdl bi then bll.[bi] else s) lb (if dyn_args h nbk bj tp bcl bll bdl bi then bdl.[bi] else s) db x j (if dyn_args h nbk bj tp bcl bll bdl bi then bj.[bi + 1] else 0) tp ts td to h
     | Err x' -> Err x')
   else Err (BadBlock p)
 
@@ -512,12 +741,12 @@ let block (s : [u8]) (p : usize) (ty : u32) (dst : borrowed inout mutable [u8]) 
     and x is what RFC 1951 reads the stream at bit pos of s as
     (R.stream_ok, by the trace of its blocks and their symbols), and x
     fits in dst, inflate returns Ok with x in dst. The trace covers
-    stored and fixed blocks so far. The trace and x are spec state, which
-    codegen erases. *)
-let inflate_ref (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) (spec x : [u8]) (spec fl : [u8]) (spec fd : [u8]) (spec nbk : usize) (spec bp : [usize]) (spec bo : [usize]) (spec bj : [usize]) (spec tp : [usize]) (spec ts : [int{0..319}]) (spec td : [int{0..319}]) (spec to : [usize]) (spec h : bool) : result inflated inflate_error
+    stored, fixed and dynamic blocks. The trace and x are spec state,
+    which codegen erases. *)
+let inflate_ref (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) (spec x : [u8]) (spec fl : [u8]) (spec fd : [u8]) (spec nbk : usize) (spec bp : [usize]) (spec bo : [usize]) (spec bj : [usize]) (spec tp : [usize]) (spec ts : [int{0..319}]) (spec td : [int{0..319}]) (spec to : [usize]) (spec bcl : [[u8]]) (spec bll : [[u8]]) (spec bdl : [[u8]]) (spec h : bool) : result inflated inflate_error
   requires len s <= 1152921504606846975 && pos <= B.nbits s
   requires len lb = 320 && len ltab = 704 && len dtab = 704
-  requires h ==> R.stream_ok s pos x fl fd nbk bp bo bj tp ts td to && len x <= len dst
+  requires h ==> R.stream_ok s pos x fl fd nbk bp bo bj tp ts td to bcl bll bdl && len x <= len dst
   ensures (match result with
     | Ok r -> r.written <= len dst && pos < r.pos && r.pos <= B.nbits s
     | Err _ -> true)
@@ -533,30 +762,30 @@ let inflate_ref (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb
   let e' : mutable inflate_error = Ends 0 in
   let bi : mutable usize = 0 in
   let j : mutable usize = 0 in
-  stream_when h s pos x fl fd nbk bp bo bj tp ts td to;
+  stream_when h s pos x fl fd nbk bp bo bj tp ts td to bcl bll bdl;
   while last = false && err = false
     invariant pos <= p && p <= nb && o <= len dst
     invariant last ==> pos < p
     invariant h ==> nbk < len bp && nbk < len bo && nbk < len bj && len x <= len dst && err = false
     invariant h ==> (forall (i in 0 .. o). dst.[i] = x.[i])
-    invariant h ==> bi <= nbk && R.blocks_from s x fl fd nbk bp bo bj tp ts td to bi && p = bp.[bi] && o = bo.[bi]
+    invariant h ==> bi <= nbk && R.blocks_from s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi && p = bp.[bi] && o = bo.[bi]
     invariant h ==> (last = (bi = nbk)) && (bi < nbk ==> j = bj.[bi])
     decreases nb - p + (if last = false && err = false then 1 else 0)
   do
-    blocks_when h s x fl fd nbk bp bo bj tp ts td to bi;
-    head_when h s x fl fd nbk bp bo bj tp ts td to bi;
+    blocks_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
+    head_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
     if 3 > nb - p then (err <- true; e' <- Ends p)
     else (
       let final = field s p 1 in
       let ty = field s (p + 1) 2 in
       let here = p in
       p <- p + 3;
-      let r = block s p ty dst o j lb db ltab dtab x fl fd nbk bp bo bj tp ts td to here bi h in
+      let r = block s p ty dst o j lb db ltab dtab x fl fd nbk bp bo bj tp ts td to bcl bll bdl here bi h in
       match r with
       | Ok a -> (p <- a.p; o <- a.o; j <- a.j; bi <- bi +| 1; if final = 1 then last <- true else ())
       | Err x' -> (err <- true; e' <- x'))
   done;
-  blocks_when h s x fl fd nbk bp bo bj tp ts td to bi;
+  blocks_when h s x fl fd nbk bp bo bj tp ts td to bcl bll bdl bi;
   if err then Err e' else Ok { written = o; pos = p }
 
 (** Decodes the deflate stream starting at bit pos of s into dst, and
@@ -566,4 +795,5 @@ let inflate_ref (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb
 let inflate (s : [u8]) (pos : usize) (dst : borrowed inout mutable [u8]) (lb : borrowed inout mutable [u8]) (ltab : borrowed inout mutable [u8]) (dtab : borrowed inout mutable [u8]) : result inflated inflate_error
 = let spec zu : [usize; 1] = zeros in
   let spec zs : [int{0..319}; 1] = zeros in
-  inflate_ref s pos dst lb ltab dtab s s s 0 zu zu zu zu zs zs zu false
+  let spec zb : [[u8]; 1] = zeros in
+  inflate_ref s pos dst lb ltab dtab s s s 0 zu zu zu zu zs zs zu zb zb zb false

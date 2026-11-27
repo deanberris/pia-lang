@@ -30,25 +30,25 @@
       "wall_ms_n": 5155.8
     },
     "lib/Pia/Compress/Huffman.pia": {
-      "cost": 687774327,
-      "goals": 825,
-      "solve_ms_n": 88175,
-      "solved": 741,
-      "wall_ms_n": 165893.9
+      "cost": 688020737,
+      "goals": 840,
+      "solve_ms_n": 89834,
+      "solved": 756,
+      "wall_ms_n": 163820.4
     },
     "lib/Pia/Compress/Inflate.pia": {
-      "cost": 685286029,
-      "goals": 474,
-      "solve_ms_n": 62961,
-      "solved": 436,
-      "wall_ms_n": 93471.7
+      "cost": 804931163,
+      "goals": 716,
+      "solve_ms_n": 59497,
+      "solved": 681,
+      "wall_ms_n": 116249.1
     },
     "lib/Pia/Compress/Inflate/Ref.pia": {
-      "cost": 219072854,
-      "goals": 411,
-      "solve_ms_n": 8911,
-      "solved": 403,
-      "wall_ms_n": 21037.1
+      "cost": 279274284,
+      "goals": 789,
+      "solve_ms_n": 12806,
+      "solved": 774,
+      "wall_ms_n": 43033.0
     },
     "lib/Pia/Compress/Inflate/Spec.pia": {
       "cost": 1124870,
@@ -60,9 +60,9 @@
     "lib/Pia/Compress/Zlib.pia": {
       "cost": 20198049,
       "goals": 96,
-      "solve_ms_n": 1327,
+      "solve_ms_n": 1101,
       "solved": 61,
-      "wall_ms_n": 2260.2
+      "wall_ms_n": 1998.1
     },
     "lib/Pia/Core/Algo/BinarySearch.pia": {
       "cost": 107665070,
@@ -1236,10 +1236,10 @@
   },
   "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 8048384589,
-    "goals": 14202,
-    "solved": 12735,
+    "cost": 8228477563,
+    "goals": 14837,
+    "solved": 13366,
     "wall_ms_1": 0,
-    "wall_ms_n": 1578055.3
+    "wall_ms_n": 1620493.0
   }
 }

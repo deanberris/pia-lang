@@ -35,7 +35,7 @@ let zero (a : out mutable [u8; 4]) (spec owner : u8) : unit
 
 let pixel = type { r : u8; g : u8 }
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, or a buffer of them, in this step
+(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$p', of type pixel; a splice is an integer, a bool, a buffer of them, or a value of a type with @lower
 *)
 let red (p : pixel) : u8 @lower("return $p : i8") = p.r
 

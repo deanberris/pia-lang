@@ -342,14 +342,17 @@ let only (s : [u8]) (items : [Pia.Text.Json.Dom.member]) (name : [u8]) (i : usiz
    A `[t; n]` field's member is an array of exactly n values of t.
    A field of another record type with @derive(json, json_dom) is a
    nested object, which that record's own conforms, check and from_dom
-   take; `json_is_<t> s v x` says x holds what each member says.
-   Not yet: variants, and an option or array of a record. *)
+   take; `json_is_<t> s v x` says x holds what each member says. An
+   option of such a record is that record, null, or missing.
+   Not yet: variants, and an array of records. *)
 (* How deep a document of the record named rn nests: the object, and
    inside it an array field's array or a nested record's own depth. *)
 let meta json_depth_of (rn : string) : int =
   let ints = [ "u8"; "u16"; "u32"; "u64"; "usize"; "i8"; "i16"; "i32"; "i64"; "isize" ] in
   let inner = fold (let (acc) (f) =>
       let ft = field_type rn f in
+      (* An option of a record nests as deep as the record. *)
+      let ft = if eq (kind ft) "TypeApp" then nth (children ft) 1 else ft in
       let d =
         if eq (kind ft) "ArrayType" then 1
         else if eq (kind ft) "TypeName" then
@@ -409,8 +412,8 @@ let meta derive_json_dom (t : type_decl) : list =
       let ft = base f in
       if bool_field f then [ 0; 0 ]
       else if is_rec f then
-        (if or (is_opt f) (is_arr f) then
-           fail (concat "@derive(json_dom): the field '" (concat f "' is an option or an array of a record, which @derive(json_dom) cannot read yet"))
+        (if is_arr f then
+           fail (concat "@derive(json_dom): the field '" (concat f "' is an array of records, which @derive(json_dom) cannot read yet"))
          else [ 0; 0 ])
       else if or (eq (kind ft) "RangeType")
                  (and (eq (kind ft) "TypeName") (fold (let (h) (n) => or h (eq n (name ft))) false ints)) then
@@ -446,7 +449,42 @@ let meta derive_json_dom (t : type_decl) : list =
     let f = nth fs i in
     let ft = field_type t f in
     let bt = base f in
-    if is_rec f then
+    if and (is_opt f) (is_rec f) then
+      (let inner = name bt in
+       let icn = concat "conforms_json_" inner in
+       let ich = concat "check_json_" inner in
+       let ifr = concat "from_dom_json_" inner in
+       let iis = concat "json_is_" inner in
+       let sn = concat (concat (concat "json_some_" tn) "_") f in
+       [ `( let spec $sn ($!s : [u8]) ($!v : Pia.Text.Json.Dom.json) ($!r : $ft) : bool @opaque =
+              match $!r with
+              | $!None -> $(shape "is_null") $!v
+              | Some $!y -> $(shape "is_null") $!v = false && $iis $!s $!v $!y );
+         `( let spec $okn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool =
+              forall (json_dom_j in 0 .. len $!items).
+                $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+                ==> (($(shape "is_null") $!items.[json_dom_j].value || $icn $!s $!items.[json_dom_j].value)
+                     && (forall (json_dom_q in 0 .. len $!items).
+                           $(shape "key_is") $!s $!items.[json_dom_q].key $kn ==> json_dom_q = json_dom_j)) );
+         `( let $chn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : bool
+              ensures $!result = $okn $!s $!items
+            = match $(shape "find") $!s $!items $kn with
+              | Err _ -> true
+              | Ok $!i ->
+                $(shape "only") $!s $!items $kn $!i
+                && ($(shape "check_null") $!items.[$!i].value || $ich $!s $!items.[$!i].value) );
+         `( let $vn ($!s : [u8]) ($!items : [Pia.Text.Json.Dom.member]) : $ft
+              requires $okn $!s $!items
+              ensures (forall (json_dom_j in 0 .. len $!items).
+                $(shape "key_is") $!s $!items.[json_dom_j].key $kn
+                ==> $sn $!s $!items.[json_dom_j].value $!result)
+              ensures (forall (json_dom_j in 0 .. len $!items). $(shape "key_is") $!s $!items.[json_dom_j].key $kn = false)
+                ==> (match $!result with | $!None -> true | Some _ -> false)
+              with $sn
+            = match $(shape "find") $!s $!items $kn with
+              | Err _ -> None
+              | Ok $!i -> if $(shape "check_null") $!items.[$!i].value then None else Some ($ifr $!s $!items.[$!i].value) ) ])
+    else if is_rec f then
       (let inner = name bt in
        let icn = concat "conforms_json_" inner in
        let ich = concat "check_json_" inner in
@@ -680,7 +718,14 @@ let meta derive_json_dom (t : type_decl) : list =
   let field_post = let (i) =>
     let kn = kname i in
     let f = nth fs i in
-    if is_rec f then
+    if and (is_opt f) (is_rec f) then
+      (let sn = concat (concat (concat "json_some_" tn) "_") f in
+       `( (forall (json_dom_j in 0 .. len $!o.items).
+             $(shape "key_is") $!s $!o.items.[json_dom_j].key $kn
+             ==> $sn $!s $!o.items.[json_dom_j].value $!x.$f)
+          && ((forall (json_dom_j in 0 .. len $!o.items). $(shape "key_is") $!s $!o.items.[json_dom_j].key $kn = false)
+              ==> (match $!x.$f with | $!None -> true | Some _ -> false)) ))
+    else if is_rec f then
       (let iis = concat "json_is_" (name (base f)) in
        `( (forall (json_dom_j in 0 .. len $!o.items).
              $(shape "key_is") $!s $!o.items.[json_dom_j].key $kn
