@@ -1,9 +1,11 @@
 load("@rules_cc//cc:defs.bzl", "cc_test")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 cc_test(
     name = "smt_to_z3_test",
     srcs = ["smt_to_z3_test.cpp"],
+    copts = PIA_MLIR_COPTS,
     deps = [
         "@googletest//:gtest_main",
         "@llvm-project//llvm:Support",

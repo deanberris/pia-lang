@@ -11,6 +11,7 @@ uint64_t gif_encode_rgb(uint16_t w, uint16_t h, const uint8_t *rgb, uint64_t nrg
                         uint64_t nhist, uint8_t *rect, uint64_t nrect, uint8_t *lz,
                         uint64_t nlz, uint8_t *hash, uint64_t nhash);
 int main(int argc, char **argv) {
+  (void)argc;
   int w = atoi(argv[1]), h = atoi(argv[2]), nf = atoi(argv[3]);
   int delay = atoi(argv[4]), loops = atoi(argv[5]);
   static uint8_t rgb[3 << 22], dst[1 << 24], idx[1 << 22], pal[768], bx[1536], hist[1024],

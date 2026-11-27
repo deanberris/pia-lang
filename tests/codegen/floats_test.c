@@ -4,7 +4,9 @@
 // strict too: BUILD.bazel compiles this file with -ffp-contract=off, so
 // `a * b + c` is two roundings on both sides.
 
+#if defined(__clang__)
 #pragma STDC FP_CONTRACT OFF
+#endif
 
 #include <float.h>
 #include <math.h>

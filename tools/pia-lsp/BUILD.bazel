@@ -1,12 +1,14 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools:copts.bzl", "PIA_COPTS")
 load("//tools:link.bzl", "TOOL_LINKOPTS")
 
 # The Pia language server (ADR 0021), with proofs from IRGen and the
 # verifier. Editors start it as a subprocess and talk LSP over stdio.
 cc_binary(
     name = "pia-lsp",
-    linkopts = TOOL_LINKOPTS,
     srcs = ["pia-lsp.cpp"],
+    copts = PIA_COPTS,
+    linkopts = TOOL_LINKOPTS,
     visibility = ["//visibility:public"],
     deps = [
         "//src/lsp",
@@ -17,8 +19,9 @@ cc_binary(
 # The front-end features only, without LLVM: quick to build and test.
 cc_binary(
     name = "pia-lsp-frontend",
-    linkopts = TOOL_LINKOPTS,
     srcs = ["pia-lsp.cpp"],
+    copts = PIA_COPTS,
+    linkopts = TOOL_LINKOPTS,
     local_defines = ["PIA_NO_MLIR"],
     visibility = ["//visibility:public"],
     deps = ["//src/lsp"],

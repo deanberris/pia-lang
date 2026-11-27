@@ -44,9 +44,11 @@ permissions:
 # A new push to a pull request makes its older run worthless, so that run is
 # cancelled. Runs on main are not: each one checks a commit that landed and
 # saves the cache that later runs start from. Queue groups each have their
-# own ref, so they never cancel one another.
+# own ref, so they never cancel one another. The event is in the group too:
+# GitHub keeps one waiting run per group, so a nightly or manual run on main
+# that shared a group with pushes was replaced by the next merge and never ran.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
