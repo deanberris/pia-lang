@@ -56,6 +56,6 @@ let matmul (r : region) (a : mat8) (b : mat8) (c : inout grid i32 [4; 4] r)
 // LLVM-NOT: linalg
 
 // PROOF: lower_type.pia:27:3: trusted: the lowering of 'matmul' to MLIR (arith.constant, linalg.fill, linalg.matmul, memref.cast, memref.expand_shape; sha256 {{[0-9a-f]+}})
-// PROOF: lower_type.pia:25:{{[0-9]+}}: proved: 'c.data' holds 16 elements, as the @lower of grid<i32, [4; 4], {{.*}}> views it
+// PROOF: lower_type.pia:25:48: proved: 'c.data' holds 16 elements, as the @lower of grid<i32, [4; 4]> views it
 // PROOF: 0 failed, 0 skipped
 *)
