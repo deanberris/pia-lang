@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Proof certificates in Pia objects: the format, reading them from object
 # files, and the link check (docs/abi.md, ADR 0039 step 6).
@@ -6,6 +7,7 @@ cc_library(
     name = "cert",
     srcs = ["Certificate.cpp"],
     hdrs = ["Certificate.h"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [

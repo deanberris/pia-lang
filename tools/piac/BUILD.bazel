@@ -1,16 +1,12 @@
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 load("//tools:link.bzl", "TOOL_LINKOPTS")
 
 cc_binary(
     name = "piac",
-    linkopts = TOOL_LINKOPTS,
     srcs = ["piac.cpp"],
-    # MLIR's generated headers trip -Wunused-parameter.
-    copts = [
-        "-Wall",
-        "-Wextra",
-        "-Wno-unused-parameter",
-    ],
+    copts = PIA_MLIR_COPTS,
+    linkopts = TOOL_LINKOPTS,
     visibility = ["//visibility:public"],
     deps = [
         "//src/cert",

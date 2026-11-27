@@ -11,7 +11,7 @@
 void matmul(const int8_t *a, const int8_t *b, int32_t *c);
 
 static int check(const int8_t *a, const int8_t *b) {
-  int32_t c[16], want[16];
+  int32_t c[16];
   for (int i = 0; i < 16; ++i)
     c[i] = 0x5a5a5a5a;
   matmul(a, b, c);
@@ -21,7 +21,6 @@ static int check(const int8_t *a, const int8_t *b) {
       int32_t sum = 0;
       for (int p = 0; p < 4; ++p)
         sum += (int32_t)a[i * 4 + p] * b[p * 4 + j];
-      want[i * 4 + j] = sum;
       if (c[i * 4 + j] != sum) {
         fprintf(stderr, "c[%d][%d] = %d, expected %d\n", i, j, c[i * 4 + j],
                 sum);

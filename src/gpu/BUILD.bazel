@@ -1,4 +1,5 @@
 load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS", "PIA_MLIR_COPTS")
 
 # The GPU path's lowering to SPIR-V (ADR 0068, step 1): upstream MLIR's gpu
 # and spirv dialects and conversions, linked into piac and pia-opt.
@@ -8,7 +9,7 @@ cc_library(
     name = "msl",
     srcs = ["Msl.cpp"],
     hdrs = ["Msl.h"],
-    copts = ["-fexceptions"],
+    copts = PIA_COPTS + ["-fexceptions"],
     strip_include_prefix = "/src",
     deps = ["@spirv_cross"],
 )
@@ -25,7 +26,7 @@ cc_library(
         "Place.h",
         "Spirv.h",
     ],
-    copts = ["-Wno-unused-parameter"],
+    copts = PIA_MLIR_COPTS,
     strip_include_prefix = "/src",
     visibility = ["//visibility:public"],
     deps = [
