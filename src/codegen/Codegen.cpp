@@ -587,6 +587,54 @@ struct ConvertLowering : mlir::OpConversionPattern<ConvertOp> {
   }
 };
 
+// Floats and integers (M11). A range integer is held in its repr, whose
+// signedness says which LLVM conversion reads it. Truncation toward zero is
+// what fptosi and fptoui do, and the verifier proved the result fits the
+// target's range, so neither can produce LLVM's poison.
+struct IntToFloatLowering : mlir::OpConversionPattern<IntToFloatOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(IntToFloatOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Type t = op.getResult().getType();
+    if (reprOf(mlir::cast<IntType>(op.getInput().getType())).isSigned)
+      rw.replaceOpWithNewOp<mlir::arith::SIToFPOp>(op, t, adaptor.getInput());
+    else
+      rw.replaceOpWithNewOp<mlir::arith::UIToFPOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+struct FloatToIntLowering : mlir::OpConversionPattern<FloatToIntOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(FloatToIntOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Repr r = reprOf(mlir::cast<IntType>(op.getResult().getType()));
+    Type t = rw.getIntegerType(r.width);
+    if (r.isSigned)
+      rw.replaceOpWithNewOp<mlir::arith::FPToSIOp>(op, t, adaptor.getInput());
+    else
+      rw.replaceOpWithNewOp<mlir::arith::FPToUIOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
+// IRGen gives `to_bits` and `from_bits` the unsigned type of the float's
+// width, whose repr is that width, so both are a bitcast.
+template <typename OpTy>
+struct BitcastLowering : mlir::OpConversionPattern<OpTy> {
+  using mlir::OpConversionPattern<OpTy>::OpConversionPattern;
+  using OpAdaptor = typename OpTy::Adaptor;
+  LogicalResult
+  matchAndRewrite(OpTy op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Type t = this->getTypeConverter()->convertType(op.getResult().getType());
+    rw.replaceOpWithNewOp<mlir::arith::BitcastOp>(op, t, adaptor.getInput());
+    return mlir::success();
+  }
+};
+
 struct CmpLowering : mlir::OpConversionPattern<CmpOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult matchAndRewrite(
@@ -2106,6 +2154,10 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
            AddressLowering, AbortLowering, ConstArrayLowering, ForeignLowering,
            RecMakeLowering, RecTagLowering, RecPayloadLowering>(
           types, ctx);
+  // Floats and integers (M11).
+  patterns.add<IntToFloatLowering, FloatToIntLowering,
+               BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,
+                                                                       ctx);
   // Atomics (ADR 0052).
   patterns.add<AtomicNewLowering, AtomicLoadLowering, AtomicStoreLowering,
                AtomicCasLowering, AtomicRmwLowering, FenceLowering>(types, ctx);

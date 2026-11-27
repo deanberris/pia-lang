@@ -23,7 +23,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | integers | `u8`…`u64`, `i8`…`i64`, `usize`, `isize`, all bounded | UB on signed overflow, unsigned wraps | panics in debug, wraps in release | 63-bit, wraps | illegal behaviour |
 | a bounded value | `int{0..99}`, `[int{0..15}]` | a comment | a newtype with a check | a private type | `u7`, a check |
 | type alias | `let byte = u8` | `using byte = uint8_t` | `type Byte = u8` | `type byte = int` | `const Byte = u8` |
-| distinct type (newtype) | `let length = type u32`; `length 5` wraps, `u32 l` unwraps, no implicit conversion; operators from `@derive(ord, add, scale)` | `enum class`, a one-field struct | `struct Length(u32)` | a private type | `enum(u32)` |
+| distinct type (newtype) | `let length = type u32`; `length 5` wraps, `u32 l` unwraps, no implicit conversion; operators from `@derive(ord, add, scale)`, `@derive(hash)` and `@derive(json)` from their modules | `enum class`, a one-field struct | `struct Length(u32)` | a private type | `enum(u32)` |
 | wraparound | `@overflow(wrap)` after the result type | unsigned arithmetic | `wrapping_add`, `Wrapping<T>` | the default | `+%` |
 | saturation | `+\|`, `-\|`, or `@overflow(saturate)` | by hand | `saturating_add` | by hand | `+\|` |
 | checked arithmetic | a `requires`, a guard, or a `result` | `__builtin_add_overflow` | `checked_add` | by hand | `@addWithOverflow` |
@@ -44,7 +44,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | closures | `let [x] (a : t) => e`, captures listed | `[x](T a) { }` | `move \|a\| e` | `fun a -> e` | none |
 | modules | one per file; `interface I = sig ... end`; `import M.I` | headers, C++20 modules | `mod`, `pub`, `use` | `.mli` | `@import`, `pub` |
 | memory | explicit allocators, every allocation fallible, `box t` | `malloc`, `new` | `Box`, infallible by default | GC | explicit allocators |
-| floats | `f32`, `f64`, strict IEEE 754; `0.5f32`, or `0.5` where a float is expected | `float`, `double`, with `-ffp-contract=off` | `f32`, `f64` | `float` (64-bit) | `f32`, `f64` |
+| floats | `f32`, `f64`, strict IEEE 754; `0.5f32`, or `0.5` where a float is expected; `f32 n`, `i32 x` (a goal: not NaN, in range), `to_bits x`, `from_bits u` | `float`, `double`, with `-ffp-contract=off` | `f32`, `f64` | `float` (64-bit) | `f32`, `f64` |
 | C calls | `let f (x : i32) : i32 ensures ... = extern "f"`; `unsafe f x` if uncontracted | native | `extern "C"`, `unsafe` | `external` | `extern` |
 | assertions | `assert p`, proved, never run | `assert` at run time | `assert!` | `assert` | `std.debug.assert` |
 | loops | `for i in 0 .. n` (half open) with `invariant`; `while` with `decreases` | `for` | `for i in 0..n` | `for i = 0 to n - 1` (inclusive) | `for (0..n) \|i\|` |
@@ -54,7 +54,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): conversions between floats and integers and the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds that count calls to a function such as `less` (ADR 0062 step 2), `@derive(hash, json)` on distinct types (ADR 0064 step 4).
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, compiling recursive types (the verifier proves them; codegen does not), cost bounds that count calls to a function such as `less` (ADR 0062 step 2).
 
 ## From C and C++
 
@@ -62,6 +62,7 @@ Port one function at a time, callee first, and read each failed goal as a questi
 - **`size_t` subtraction** (`n - k`) is a goal: it is the most common real bug a port finds. Compare against what is left (`k <= n`) before subtracting.
 - **Pointer and length become a slice**, and a write-only buffer an `out mutable` slice. `len` replaces the length parameter, so the port cannot pass the wrong one.
 - **Exceptions and `errno` become `result`** with a closed error variant. RAII and `goto cleanup` become `defer`.
+- **A float cast is a goal.** C's `(int)x` is undefined for a NaN or an out-of-range `x`; Pia's `i32 x` is the same truncation with a goal that neither happens, so state the range (`requires -1.0 < x && x < 256.0` before `u8 x`). `(float)n` is `f32 n`, and type punning through a union or `memcpy` is `to_bits`/`from_bits`.
 - **Templates become generics with concepts.** A concept's laws are proved for each type that meets it, so a `std::sort` comparator that is not a strict weak order is a compile error, not undefined behaviour.
 
 <!-- example: be32.pia -->

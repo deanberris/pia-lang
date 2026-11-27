@@ -8,7 +8,7 @@
 *)
 let twice (x : f32) : f32 = x * 2
 
-(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '+' needs operands of one type, found f32 and u8; a float literal has a decimal point, such as 2.0, and an integer is not converted to a float implicitly
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: '+' needs operands of one type, found f32 and u8; a float literal has a decimal point, such as 2.0, and an integer converts to a float only explicitly, as in 'f32 n'
 *)
 let mixed (x : f32) (n : u8) : f32 = x + n
 
@@ -37,3 +37,17 @@ let narrow (x : f32) : f64 = x
 // CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: this expression has the spec-only type real
 *)
 let unsuffixed (x : u8) : u8 = let y = 0.5 in x
+
+(* A type applied to a value converts it to or from a float, and an integer
+   type applied to an integer is not a conversion.
+// CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'u16 x' converts a float to an integer, but this is u8; an integer converts where a u16 is expected, as in 'let y : u16 = x'
+*)
+let widen_int (n : u8) : u16 = u16 n
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'f32' converts an integer or a float, not bool
+*)
+let of_bool (b : bool) : f32 = f32 b
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'to_bits' takes an f32 or f64, found u8
+*)
+let int_bits (n : u8) : u32 = to_bits n

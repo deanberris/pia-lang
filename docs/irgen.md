@@ -175,4 +175,4 @@ An atomic cell, `atomic t`, is a place, not a value ([ADR 0052](adr/0052-atomics
 
 ## Not yet
 
-Local functions, captures, untyped lambdas and other function values, recursive types, `dyn`, conversions between floats and integers, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where` on values), modules, `decreases` for metaprograms, generic adapters, entailment proved from laws and contracts, and precondition orders that need a proof rather than included clauses.
+Local functions, captures, untyped lambdas and other function values, recursive types, `dyn`, `spread` and tiles (M8), type-level lengths (`[T; n]`), refinements (`where` on values), modules, `decreases` for metaprograms, generic adapters, entailment proved from laws and contracts, and precondition orders that need a proof rather than included clauses.
