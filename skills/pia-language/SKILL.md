@@ -57,7 +57,7 @@ let count_bright (ys : [u16]) : usize
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
-| `let block = let (t : type) (n : usize) => type { cells : [t; n] }`, `block u8 4` | a value parameter on a type (ADR 0074): an integer that is part of the type, usable as an array length, another type's argument, or in a `where`. Arguments are integer literals; functions cannot be generic over one yet. See `tests/verify/value_params.pia` |
+| `let block = let (t : type) (n : usize) => type { cells : [t; n] }`, `block u8 4` | a value parameter on a type (ADR 0074): an integer that is part of the type, usable as an array length, another type's argument, or in a `where`. Arguments are integer literals. A function is generic over one by naming it in the type, `(b : block t n)`, with no parameter declaring `n`: it is deduced, and is the argument's value in the body and contracts. See `tests/verify/value_params.pia` |
 | `type { v : u8 where v <= 100 }`, `type { lo : u32; hi : u32 } where lo <= hi` | a field's refinement, and a record's invariant over all its fields (ADR 0074): assumed of every parameter, proved of every result and every handed-back `out`/`inout` parameter, so no function restates it. See `tests/verify/record_invariants.pia` |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |
@@ -117,6 +117,8 @@ handle
 
 Each value bound by a `?` keeps its callee's postcondition (`x < 10` above), which is what proves `x * 10 + y`. To see `defer` and error sets in use, read `tests/verify/defer.pia` and `tests/verify/error_sets.pia`.
 
+When one case must hold errors of types you don't know yet (a C++ exception, a plugin's error), give that constructor a box over a concept: `let io_error = type | Closed | Cxx of box Exception`. Build it with `Err (Cxx (widen b))` from a full `box t`, and in the handler call the concept's requirements through it, `| Cxx e -> code e`, proved from the concept's contracts alone. It works within one module for now; `tests/verify/box_error_payload.pia` is the full example.
+
 **Generics, concepts and lambdas.** A type parameter comes first, `(t : type where C t)`, and the type arguments are deduced from the arguments. A generic function must write its return type. A concept is a `let meta C (t : type) : concept = sig ... end` with requirements and laws. A lambda is a nameless `let`, and it lists its captures in brackets:
 
 <!-- example: lambda.pia -->
@@ -136,7 +138,7 @@ let first_between (xs : [u8]) (lo : u8) (hi : u8) : usize
 = find xs (let [lo, hi] (x : u8) => lo <= x && x <= hi)
 ```
 
-The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value.
+The verifier knows a lambda's body where the lambda is passed, so it needs no contract of its own. Captures are copied (`[x]`), borrowed (`[borrowed x]`) or written (`[inout x]`). A `let` of a function type holds a reference to a top-level function, `let h : (x : u8) -> u8 requires x < 100 ensures result > x = succ in h y` (ADR 0071): `succ` is proved against the arrow once, and a call through `h` sees only the arrow's contract, so write there what the caller needs. There is no address operator; the name is the value. `let h : mutable ((x : u8) -> u8) requires x < 100 = succ` can be rebound with `h <- twice` (each function is checked against the arrow there) and is called indirectly; the parentheses keep `mutable` off the parameter, and its types are scalars for now.
 
 **Modules.** One file is one module. Everything in it is private unless an interface the module claims lists it, and an import names an interface, never a wildcard:
 

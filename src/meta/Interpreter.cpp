@@ -1631,6 +1631,36 @@ class QuoteBuilder {
         }
         continue;
       }
+      // `type | $cs`: a variant's constructors, a list whose elements
+      // are names, for constructors with no payload, or [name; type]
+      // pairs, so a derive can make an error set with one constructor
+      // per field it found (ADR 0045). A `$c` bound to a string stays
+      // one constructor, which the binder splice above names.
+      if (n.kind == NodeKind::Variants && n.kids[i]->kind == NodeKind::Ctor &&
+          n.kids[i]->text.size() > 1 && n.kids[i]->text[0] == '$' &&
+          n.kids[i]->text[1] != '!' && n.kids[i]->kids.size() == 1 &&
+          n.kids[i]->kids[0]->kind == NodeKind::None &&
+          var(n.kids[i]->text)->kind == K::List) {
+        auto bad = [&] {
+          return MetaError{site, "'type | $constructors' needs a list of names "
+                                 "or [name; type] pairs"};
+        };
+        for (const ValuePtr &c : var(n.kids[i]->text)->list) {
+          if (c->kind == K::Str) {
+            auto ctor = makeNode(NodeKind::Ctor, site, c->s);
+            ctor->add(makeNode(NodeKind::None, site));
+            out->add(std::move(ctor));
+            continue;
+          }
+          if (c->kind != K::List || c->list.size() != 2 ||
+              c->list[0]->kind != K::Str)
+            throw bad();
+          auto ctor = makeNode(NodeKind::Ctor, site, c->list[0]->s);
+          ctor->add(fromValue(c->list[1], /*typePos=*/true));
+          out->add(std::move(ctor));
+        }
+        continue;
+      }
       // `type { $fs }`: a record type's fields, a list of [name; type]
       // pairs, the type as syntax or its name.
       if (n.kind == NodeKind::RecordType && n.kids[i]->kind == NodeKind::Splice &&

@@ -333,6 +333,11 @@ struct FuncSig {
   // instance has them, with `typeArgs` binding the type parameters.
   std::vector<std::string> typeParams;
   std::map<std::string, mlir::Type> typeArgs;
+  // The type parameters that are values (ADR 0074): a name in a value
+  // parameter's place, `n` in `(v : vec u8 n)`, which no parameter
+  // declares. Deduced like a type, its argument is int{v..v}, and in the
+  // body and contracts it is the constant v.
+  std::vector<std::string> valueParams;
   bool isGeneric() const { return !typeParams.empty() && typeArgs.empty(); }
   // A higher-order function, `let find (xs : [u8]) (p : u8 -> bool)`, has
   // parameters of function type (ADR 0044). It is not lowered itself:

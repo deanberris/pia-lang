@@ -5,7 +5,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
+    srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "box_error_payload.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
     tools = [
         "//tools/pia-cert",
         "//tools/piac",
@@ -290,6 +290,26 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# fn_refs.pia, mutable function references called through their
+# addresses (ADR 0071), run against the same steps in C.
+genrule(
+    name = "fn_refs_run_obj",
+    srcs = ["fn_refs.pia"],
+    outs = ["fn_refs_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fn_refs_run_test",
+    srcs = [
+        "fn_refs_test.c",
+        ":fn_refs_run_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # box_concept.pia, a box over a concept compiled to a tagged union and
 # called through by a switch on the tag (ADR 0046, step 5).
 genrule(
@@ -306,6 +326,26 @@ cc_test(
     srcs = [
         "box_concept_test.c",
         ":box_concept_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
+# box_error_payload.pia, an error set whose Cxx case carries a box over a
+# concept, handled by a call through the box (ADR 0046, 2026-11-27 note).
+genrule(
+    name = "box_error_payload_obj",
+    srcs = ["box_error_payload.pia"],
+    outs = ["box_error_payload.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "box_error_payload_test",
+    srcs = [
+        "box_error_payload_test.c",
+        ":box_error_payload_obj",
     ],
     target_compatible_with = PIA_TARGETS,
 )

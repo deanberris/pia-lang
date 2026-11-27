@@ -1,0 +1,232 @@
+(* Pia.Compress.Inflate.Ref: what a Huffman block of a deflate stream
+   says, as a trace of its symbols (RFC 1951, section 3.2.5; ADR 0054,
+   step 5), for a decoder to be proved against.
+
+   Symbol j of the trace is the literal/length code ts.[j] at bit tp.[j],
+   in the code whose lengths are ll (nl symbols). A literal is the byte
+   at to.[j] of the output x. A length code is followed by its extra
+   bits, the distance code td.[j] in the code whose lengths are dl (nd
+   symbols) and its extra bits, and writes the bytes from to.[j] to
+   to.[j + 1] as copies of the bytes dist before them, one at a time, so
+   that a copy may overlap what it writes. The last symbol is the end
+   code, 256. A code is read where the canonical code (Pia.Compress.
+   Huffman) has it, so a decoder that returns the symbol whose code it
+   read returns the trace's symbol, because the code is prefix-free.
+
+   The trace is a recursion over the symbols (blk_from), not a
+   quantified step, and it and copy_ok are opaque, so that a decoder's
+   loop takes its facts one symbol at a time (skills/pia-contracts,
+   "A whole-stream theorem"). *)
+module Pia.Compress.Inflate.Ref : Ref
+
+import Pia.Image.Bits.Bits as B
+import Pia.Compress.Huffman.Huffman as H
+import Pia.Compress.Inflate.Spec.Deflate as F
+
+interface Ref = sig
+  let spec code_at : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> bool
+  let spec copy_ok : (x : [u8]) -> (o : usize) -> (n : usize) -> (dist : usize) -> bool
+  let spec blk_step : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> bool
+  let spec blk_from : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> bool
+  let spec blk_ok : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> bool
+  let lemma at_same : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> (b : int{0..319}) -> unit
+    requires code_at s p l n a
+    requires b < n && n <= len l && 1 <= l.[b] && l.[b] <= 15 && p <= B.nbits s && l.[b] <= B.nbits s - p
+    requires H.code_of l n b = H.hbits s p l.[b]
+    ensures a = b
+  let lemma at_none : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> unit
+    requires code_at s p l n a && H.none_at s p l n
+    ensures false
+  let lemma copy_byte : (x : [u8]) -> (o : usize) -> (n : usize) -> (dist : usize) -> (d : usize) -> unit
+    requires copy_ok x o n dist && d < n
+    ensures 1 <= dist && dist <= o && o + n <= len x && x.[o + d] = x.[o - dist + d]
+  let lemma step_code : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> unit
+    requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+    requires blk_step s ll nl dl nd x tp ts td to j
+    ensures code_at s tp.[j] ll nl ts.[j] && ts.[j] <> 256 && ts.[j] <= 285
+    ensures to.[j] <= to.[j + 1] && to.[j + 1] <= len x
+  let lemma step_lit : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> (q : usize) -> unit
+    requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+    requires blk_step s ll nl dl nd x tp ts td to j && ts.[j] < 256
+    requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+    ensures tp.[j + 1] = q && to.[j + 1] - to.[j] = 1 && to.[j] < len x && x.[to.[j]] = ts.[j]
+  let lemma step_len : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> (q : usize) -> (c : int{0..28}) -> unit
+    requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+    requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+    requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+    ensures F.len_extra c <= B.nbits s - q && td.[j] <= 29 && code_at s (q + F.len_extra c) dl nd td.[j]
+  let lemma step_dist : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> (q : usize) -> (c : int{0..28}) -> (qx : usize) -> (dc : int{0..29}) -> unit
+    requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+    requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+    requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+    requires td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc]
+    ensures F.dist_extra dc <= B.nbits s - qx && tp.[j + 1] = qx + F.dist_extra dc
+  let lemma step_copy : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> (q : usize) -> (c : int{0..28}) -> (qx : usize) -> (dc : int{0..29}) -> (n : usize) -> (dist : usize) -> unit
+    requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+    requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+    requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+    requires td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc] && F.dist_extra dc <= B.nbits s - qx
+    requires n = F.len_base c + B.bits_at s q (F.len_extra c) && dist = F.dist_base dc + B.bits_at s qx (F.dist_extra dc)
+    ensures to.[j + 1] - to.[j] = n && copy_ok x to.[j] n dist
+  let lemma from_step : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> (j : usize) -> unit
+    requires k <= len tp && k <= len ts && k <= len td && k <= len to && j < k
+    requires blk_from s ll nl dl nd x k tp ts td to j
+    ensures j + 1 < k ==> blk_step s ll nl dl nd x tp ts td to j && blk_from s ll nl dl nd x k tp ts td to (j + 1)
+    ensures j + 1 = k ==> code_at s tp.[j] ll nl ts.[j] && ts.[j] = 256 && to.[j] <= len x
+  let lemma ok_start : (s : [u8]) -> (ll : [u8]) -> (nl : int{1..288}) -> (dl : [u8]) -> (nd : int{1..30}) -> (x : [u8]) -> (p0 : usize) -> (o0 : usize) -> (k : usize) -> (tp : [usize]) -> (ts : [int{0..319}]) -> (td : [int{0..319}]) -> (to : [usize]) -> unit
+    requires blk_ok s ll nl dl nd x p0 o0 k tp ts td to
+    ensures 1 <= k && k <= len tp && k <= len ts && k <= len td && k <= len to
+    ensures tp.[0] = p0 && to.[0] = o0
+    ensures blk_from s ll nl dl nd x k tp ts td to 0
+end
+
+(** sym's code, in the code whose lengths are l (n symbols), is the bits
+    at p of s. *)
+let spec code_at (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (sym : int{0..319}) : bool =
+  if sym >= n || n > len l || p > B.nbits s then false
+  else if l.[sym] < 1 || l.[sym] > 15 || l.[sym] > B.nbits s - p then false
+  else (let b : int{1..15} = l.[sym] in H.code_of l n sym = H.hbits s p b)
+
+(** The n bytes of x from o are each the byte dist before it, one at a
+    time, so a copy may read what it wrote. *)
+let spec copy_ok (x : [u8]) (o : usize) (n : usize) (dist : usize) : bool @opaque =
+  if dist < 1 || o > len x then false
+  else if dist > o || n > len x - o then false
+  else (forall (d in 0 .. n). x.[o + d] = x.[o - dist + d])
+
+(** Symbol j of the trace, which is not the last, read as RFC 1951 3.2.5
+    reads it: a literal writes itself, and a length code, with its extra
+    bits, a distance code and its extra bits, writes a copy. The next
+    symbol follows. *)
+let spec blk_step (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) : bool @opaque
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+= if code_at s tp.[j] ll nl ts.[j] = false then false
+  else if to.[j] > to.[j + 1] || to.[j + 1] > len x then false
+  else (
+    let q : usize = tp.[j] + ll.[ts.[j]] in
+    if ts.[j] < 256 then (if to.[j + 1] - to.[j] <> 1 then false else tp.[j + 1] = q && x.[to.[j]] = ts.[j])
+    else if ts.[j] = 256 || ts.[j] > 285 || td.[j] > 29 then false
+    else (
+      let c : int{0..28} = ts.[j] - 257 in
+      let e = F.len_extra c in
+      if e > B.nbits s - q then false
+      else (
+        let n : usize = F.len_base c + B.bits_at s q e in
+        let qd : usize = q + e in
+        if code_at s qd dl nd td.[j] = false then false
+        else (
+          let dc : int{0..29} = td.[j] in
+          let qx : usize = qd + dl.[td.[j]] in
+          let de = F.dist_extra dc in
+          if de > B.nbits s - qx then false
+          else (
+            let dist : usize = F.dist_base dc + B.bits_at s qx de in
+            tp.[j + 1] = qx + de && to.[j + 1] - to.[j] = n && copy_ok x to.[j] n dist)))))
+
+(** From symbol j on, the trace reads s as RFC 1951 does, up to its last
+    symbol k - 1, the end code. *)
+let spec blk_from (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) : bool @opaque
+  requires k <= len tp && k <= len ts && k <= len td && k <= len to && j < k
+  decreases k - j
+= if j + 1 = k then (if code_at s tp.[j] ll nl ts.[j] = false then false else ts.[j] = 256 && to.[j] <= len x)
+  else if blk_step s ll nl dl nd x tp ts td to j = false then false
+  else blk_from s ll nl dl nd x k tp ts td to (j + 1)
+
+(** x from o0 is what the Huffman block at bit p0 of s writes, with the
+    literal/length code ll and the distance code dl, by the trace of its
+    k symbols. *)
+let spec blk_ok (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : bool @opaque =
+  if k < 1 || k > len tp || k > len ts || k > len td || k > len to then false
+  else if tp.[0] <> p0 || to.[0] <> o0 then false
+  else blk_from s ll nl dl nd x k tp ts td to 0
+
+(** Two symbols whose codes are both at p are the same symbol. *)
+let lemma at_same (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (a : int{0..319}) (b : int{0..319}) : unit
+  requires code_at s p l n a
+  requires b < n && n <= len l && 1 <= l.[b] && l.[b] <= 15 && p <= B.nbits s && l.[b] <= B.nbits s - p
+  requires H.code_of l n b = H.hbits s p l.[b]
+  ensures a = b
+= H.prefix_free s p l n a b
+
+(** Where no code is, no symbol's code is. *)
+let lemma at_none (s : [u8]) (p : usize) (l : [u8]) (n : int{0..320}) (a : int{0..319}) : unit
+  requires code_at s p l n a && H.none_at s p l n
+  ensures false
+= H.no_code s p l n a
+
+(** copy_ok's fact for byte d of the copy. *)
+let lemma copy_byte (x : [u8]) (o : usize) (n : usize) (dist : usize) (d : usize) : unit
+  requires copy_ok x o n dist && d < n
+  ensures 1 <= dist && dist <= o && o + n <= len x && x.[o + d] = x.[o - dist + d]
+  with copy_ok
+= ()
+
+(** blk_step's facts for any symbol that is not the last. *)
+let lemma step_code (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) : unit
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+  requires blk_step s ll nl dl nd x tp ts td to j
+  ensures code_at s tp.[j] ll nl ts.[j] && ts.[j] <> 256 && ts.[j] <= 285
+  ensures to.[j] <= to.[j + 1] && to.[j + 1] <= len x
+  with blk_step
+= ()
+
+(** blk_step's facts for a literal, with the next code's position q
+    explicit. *)
+let lemma step_lit (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) : unit
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+  requires blk_step s ll nl dl nd x tp ts td to j && ts.[j] < 256
+  requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+  ensures tp.[j + 1] = q && to.[j + 1] - to.[j] = 1 && to.[j] < len x && x.[to.[j]] = ts.[j]
+  with blk_step
+= ()
+
+(** blk_step's facts for a length code 257 + c, up to its distance code,
+    with the extra bits' position q explicit. *)
+let lemma step_len (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) : unit
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+  requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]]
+  ensures F.len_extra c <= B.nbits s - q && td.[j] <= 29 && code_at s (q + F.len_extra c) dl nd td.[j]
+  with blk_step
+= ()
+
+(** blk_step's facts for a length code's distance, with the
+    distance's extra bits' position qx explicit. *)
+let lemma step_dist (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) (qx : usize) (dc : int{0..29}) : unit
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+  requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+  requires td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc]
+  ensures F.dist_extra dc <= B.nbits s - qx && tp.[j + 1] = qx + F.dist_extra dc
+  with blk_step
+= ()
+
+(** blk_step's facts for a length code's copy, its length n and distance
+    dist explicit. *)
+let lemma step_copy (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) (q : usize) (c : int{0..28}) (qx : usize) (dc : int{0..29}) (n : usize) (dist : usize) : unit
+  requires j + 1 < len tp && j + 1 < len ts && j + 1 < len td && j + 1 < len to
+  requires blk_step s ll nl dl nd x tp ts td to j && 256 < ts.[j] && c = ts.[j] - 257
+  requires ts.[j] < len ll && q = tp.[j] + ll.[ts.[j]] && F.len_extra c <= B.nbits s - q
+  requires td.[j] = dc && dc < len dl && qx = q + F.len_extra c + dl.[dc] && F.dist_extra dc <= B.nbits s - qx
+  requires n = F.len_base c + B.bits_at s q (F.len_extra c) && dist = F.dist_base dc + B.bits_at s qx (F.dist_extra dc)
+  ensures to.[j + 1] - to.[j] = n && copy_ok x to.[j] n dist
+  with blk_step
+= ()
+
+(** What blk_from says of symbol j, for a proof that keeps it opaque. *)
+let lemma from_step (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) (j : usize) : unit
+  requires k <= len tp && k <= len ts && k <= len td && k <= len to && j < k
+  requires blk_from s ll nl dl nd x k tp ts td to j
+  ensures j + 1 < k ==> blk_step s ll nl dl nd x tp ts td to j && blk_from s ll nl dl nd x k tp ts td to (j + 1)
+  ensures j + 1 = k ==> code_at s tp.[j] ll nl ts.[j] && ts.[j] = 256 && to.[j] <= len x
+  with blk_from
+= ()
+
+(** What blk_ok says, for a proof that keeps it opaque. *)
+let lemma ok_start (s : [u8]) (ll : [u8]) (nl : int{1..288}) (dl : [u8]) (nd : int{1..30}) (x : [u8]) (p0 : usize) (o0 : usize) (k : usize) (tp : [usize]) (ts : [int{0..319}]) (td : [int{0..319}]) (to : [usize]) : unit
+  requires blk_ok s ll nl dl nd x p0 o0 k tp ts td to
+  ensures 1 <= k && k <= len tp && k <= len ts && k <= len td && k <= len to
+  ensures tp.[0] = p0 && to.[0] = o0
+  ensures blk_from s ll nl dl nd x k tp ts td to 0
+  with blk_ok
+= ()

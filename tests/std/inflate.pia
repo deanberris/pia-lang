@@ -1,18 +1,21 @@
-(* Pia.Compress.Huffman, Pia.Compress.Inflate.Spec, Pia.Compress.Inflate
-   and Pia.Compress.Zlib (ADR 0054, step 5): every goal is proved, with
+(* Pia.Compress.Huffman, Pia.Compress.Inflate.Spec, Pia.Compress.Inflate.Ref,
+   Pia.Compress.Inflate and Pia.Compress.Zlib (ADR 0054, step 5): every goal is proved, with
    nothing accepted unproved. The canonical code is RFC 1951's (its
    example is proved) and prefix-free, the Kraft sum decides
    completeness, decoding stays inside the tables and the input and
    fails only where no code is, every distance is at most the
-   bytes written, and Adler-32 is RFC 1950's.
+   bytes written, a Huffman block decodes to what its trace (Inflate.Ref)
+   says, and Adler-32 is RFC 1950's.
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Huffman.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate/Spec.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate/Ref.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Inflate.pia
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Compress/Zlib.pia
 // RUN: FileCheck --check-prefix=HUFF %s < %S/../../lib/Pia/Compress/huffman.goals
 // RUN: FileCheck --check-prefix=SPEC %s < %S/../../lib/Pia/Compress/Inflate/spec.goals
+// RUN: FileCheck --check-prefix=REF %s < %S/../../lib/Pia/Compress/Inflate/ref.goals
 // RUN: FileCheck --check-prefix=INFL %s < %S/../../lib/Pia/Compress/inflate.goals
 // RUN: FileCheck --check-prefix=ZLIB %s < %S/../../lib/Pia/Compress/zlib.goals
 // RUN: FileCheck --check-prefix=HI %s < %t/Pia.Compress.Huffman.Huffman.piai
@@ -25,9 +28,11 @@
 // HUFF: 776 proved, 0 failed, 0 skipped
 // SPEC-NOT: failed
 // SPEC: 46 proved, 0 failed, 0 skipped
+// REF-NOT: failed
+// REF: 189 proved, 0 failed, 0 skipped
 // INFL-NOT: warning
 // INFL-NOT: failed
-// INFL: 179 proved, 0 failed, 0 skipped
+// INFL: 296 proved, 0 failed, 0 skipped
 // ZLIB-NOT: warning
 // ZLIB-NOT: failed
 // ZLIB: 96 proved, 0 failed, 0 skipped

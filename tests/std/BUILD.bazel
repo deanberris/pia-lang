@@ -11,6 +11,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 filegroup(
     name = "library_goals",
     srcs = [
+        "//lib/Pia/Compress/Inflate:ref",
         "//lib/Pia/Compress/Inflate:spec",
         "//lib/Pia/Compress:huffman",
         "//lib/Pia/Compress:inflate",
@@ -111,6 +112,7 @@ lit_tests(
         "//lib/Pia/Compress:Huffman.pia",
         "//lib/Pia/Compress:Inflate.pia",
         "//lib/Pia/Compress:Zlib.pia",
+        "//lib/Pia/Compress/Inflate:Ref.pia",
         "//lib/Pia/Compress/Inflate:Spec.pia",
         "//lib/Pia/Format:Safetensors.pia",
         "//lib/Pia/Image:Bits.pia",
@@ -956,6 +958,8 @@ pia_library(
     src = "Inputs/json_shape_run.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
         "//lib/Pia/Mem:alloc",
         "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:dom",

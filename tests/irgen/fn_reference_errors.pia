@@ -4,11 +4,32 @@
 
 let succ (x : u8) : u8 = x
 
-(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:11: error: a mutable function reference, which can be rebound, comes with ADR 0071's step 2
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+4]]:32: error: 'h' is a local; a mutable function reference is bound to a top-level function by its name (ADR 0071)
 *)
-let rebind (y : u8) : u8 =
+let copied (y : u8) : u8 =
   let h : mutable (u8 -> u8) = succ in
-  h y
+  let k : mutable (u8 -> u8) = h in
+  k y
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+5]]:3: error: 'z' is a copy of a mutable function reference; call the reference itself, as copies come later (ADR 0071)
+*)
+let as_value (y : u8) : u8 =
+  let h : mutable (u8 -> u8) = succ in
+  let z = h in
+  z y
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:20: error: a stored function reference takes integers, bools and floats for now (ADR 0071)
+*)
+let buffers (xs : [u8]) : u8 =
+  let h : mutable ([u8] -> u8) = succ in
+  0
+
+(* CHECK-DAG: fn_reference_errors.pia:[[@LINE+4]]:10: error: a call through a mutable function reference is code, not part of a contract
+*)
+let in_assert (y : u8) : u8 =
+  let h : mutable (u8 -> u8) = succ in
+  assert h y = y;
+  y
 
 (* CHECK-DAG: fn_reference_errors.pia:[[@LINE+3]]:22: error: 'y' is a local; a function reference names a top-level function (ADR 0071)
 *)
