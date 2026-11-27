@@ -1,0 +1,24 @@
+# kostya/benchmarks (https://github.com/kostya/benchmarks, MIT, see LICENSE)
+# at commit 83852b246c4f6342ba676d3f2eabc21c3089ef18: reference programs
+# bench/codegen runs against Pia (ADR 0075). Each file is upstream's
+# <problem>/<file>, renamed <problem>_<file> and otherwise unmodified; a
+# change lives in a .patch beside its file.
+
+package(default_visibility = ["//bench/codegen:__subpackages__"])
+
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+# test-nolib.c reports to kostya's harness over a socket (libnotify.h) and
+# prints its own timings. The patch drops both, so that it prints only its
+# answer, and reads the number of tries from the command line.
+genrule(
+    name = "base64_c",
+    srcs = [
+        "base64_test-nolib.c",
+        "base64_test-nolib.c.patch",
+    ],
+    outs = ["patched/base64_test-nolib.c"],
+    cmd = "cp $(location base64_test-nolib.c) $@ && patch --quiet $@ $(location base64_test-nolib.c.patch)",
+)
