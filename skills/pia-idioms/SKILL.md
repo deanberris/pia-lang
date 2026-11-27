@@ -37,6 +37,8 @@ let narrow (x : u32) : u8 @allow(range_requires)
 
 `piac --no-lint=name` turns one off for a run and `--no-lint` turns them all off, which is for tests that check output, not for silencing advice.
 
+A `warning: ... [deprecated]` is not a lint: it names a migration rule, and the old form it flags stops compiling in the next release. Apply its quick fix, or run `piac migrate` on the file ([docs/migrations.md](../../docs/migrations.md)); no flag turns it off.
+
 ## The lint in practice
 
 <!-- example: percent.pia -->

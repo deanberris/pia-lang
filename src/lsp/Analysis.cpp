@@ -5,6 +5,7 @@
 #include <functional>
 #include <map>
 
+#include "migrate/Migrate.h"
 #include "syntax/Comments.h"
 #include "syntax/Interfaces.h"
 #include "syntax/Lexer.h"
@@ -784,6 +785,14 @@ Analysis::Analysis(std::string text, bool literate)
     tree_ = parseItemByItem(literate ? syntax::literateCode(text_) : text_);
   else
     lints_ = syntax::lint(*tree_, text_);
+  // A deprecated form, with its migration rule's rewrite as a quick fix,
+  // as piac reports it (ADR 0073, section 5).
+  if (!diags_.hasErrors())
+    for (syntax::Lint l : migrate::find(*tree_, text_, "", /*builds=*/true)) {
+      l.message += " (deprecated by migration rule " + l.name + ")";
+      l.name = "deprecated";
+      lints_.push_back(std::move(l));
+    }
 }
 
 std::vector<Diag> Analysis::diagnostics() const {

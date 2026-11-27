@@ -119,6 +119,18 @@ pia-cert check --require-released a.o b.o                 # refuse objects from 
 
 `pia_library` runs `pia-cert check` as a validation action. Exit status: 0 when the objects link, 1 when they do not, 2 for bad usage or an unreadable object.
 
+## Migrating old source
+
+When piac changes in a way that breaks source, the change ships a migration rule ([docs/migrations.md](../../docs/migrations.md), ADR 0073). Run it before fixing errors by hand:
+
+```sh
+piac migrate f.pia g.pia                      # apply every safe rewrite in place, then prove each changed file
+piac migrate --from=0.0.0+600 f.pia           # only the rules after that piac version (piac --version, or a certificate's prover line)
+piac migrate --check lib/*.pia                # write nothing; fail if a rewrite would apply
+```
+
+A line `f.pia:3:11: [rule] ...` is a suggestion that needs a person: read it, and take its quick fix only if the old meaning was meant. Suggestions never fail `--check`.
+
 ## Other tools
 
 | Tool | Use |

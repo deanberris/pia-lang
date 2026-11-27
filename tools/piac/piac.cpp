@@ -72,6 +72,10 @@
 //   piac --target=<triple> --cpu=<name> -O<n>   code generation options
 //   piac --version                  print piac's version, the Pia ABI
 //                                   version and the solver's (ADR 0073)
+//   piac migrate [--from=V] [--check] file...
+//                                   rewrite old forms to new ones and list
+//                                   what needs a person, then prove each
+//                                   rewritten file (ADR 0073, section 5)
 //   piac --dump-ast file.pia        print the syntax tree
 //   piac --dump-expanded file.pia   print it after metaprograms run (M7)
 //   piac --meta-cycles=N ...        cap metaprogram expansion at N passes
@@ -104,6 +108,7 @@
 #include <vector>
 
 #include "meta/Expand.h"
+#include "migrate/Migrate.h"
 #include "syntax/Embeds.h"
 #include "syntax/Interfaces.h"
 #include "syntax/Lean.h"
@@ -132,6 +137,7 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/SourceMgr.h"
 #include "llvm/Support/raw_ostream.h"
@@ -158,6 +164,7 @@ int usage() {
          "[--lean-receipt=<file>]...\n"
          "             [--report=<file>] <file.pia>\n"
          "       piac --version [--advisories=<dir>]...\n"
+         "       piac migrate [--from=<version>] [--check] <file>...\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
          "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
@@ -1045,7 +1052,115 @@ int printVersion(int argc, char **argv) {
   return 0;
 }
 
+// `piac migrate [--from=<version>] [--check] <file>...` (ADR 0073, section
+// 5): applies the rewrites of every migration rule introduced after
+// `--from` (every rule without it), in place and until none applies, then
+// proves each file it changed. A rule's suggestion, which needs a person,
+// is listed as `file:line:col: [rule] message`. With --check nothing is
+// written, and a rewrite that would apply fails the run; suggestions do
+// not, since only a person can tell whether one applies. Other `--` flags,
+// such as --iface-path, are passed to the proof.
+int migrateMain(int argc, char **argv) {
+  std::string from;
+  bool check = false;
+  std::vector<std::string> files, passed;
+  for (int i = 2; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg.rfind("--from=", 0) == 0)
+      from = arg.substr(7);
+    else if (arg == "--check")
+      check = true;
+    else if (arg.rfind("--", 0) == 0)
+      passed.push_back(arg);
+    else
+      files.push_back(arg);
+  }
+  if (files.empty())
+    return usage();
+  bool pending = false, failed = false;
+  for (const std::string &file : files) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) {
+      std::cerr << "piac: cannot open " << file << "\n";
+      return 2;
+    }
+    std::stringstream buf;
+    buf << in.rdbuf();
+    const std::string original = buf.str();
+    bool literate = pia::syntax::isLiterateFileName(file);
+    std::string source = original;
+    size_t rewrites = 0;
+    std::vector<pia::syntax::Lint> found;
+    // Each pass parses again, so a rewrite that makes room for another, or
+    // overlaps one, is applied on the next. Rewrites are idempotent, so
+    // this ends; the cap only guards against a rule that is not.
+    for (int pass = 0; pass < 16; ++pass) {
+      pia::syntax::Diagnostics diags;
+      pia::syntax::NodePtr tree =
+          pia::syntax::parseProgram(source, diags, literate);
+      if (diags.hasErrors()) {
+        diags.print(std::cerr, file, source);
+        return 1;
+      }
+      found = pia::migrate::find(*tree, source, from, /*builds=*/false);
+      if (check)
+        break;
+      size_t applied = 0;
+      std::string next = pia::migrate::apply(source, found, applied);
+      if (applied == 0)
+        break;
+      rewrites += applied;
+      source = std::move(next);
+    }
+    for (const pia::syntax::Lint &l : found) {
+      bool rewrite = !l.edits.empty() && l.preferred;
+      pending |= rewrite;
+      std::cout << file << ":" << l.loc.line << ":" << l.loc.column << ": ["
+                << l.name << "] " << l.message;
+      if (rewrite)
+        std::cout << " (piac migrate rewrites it)";
+      else if (!l.fixTitle.empty())
+        std::cout << " (quick fix: " << l.fixTitle << ")";
+      std::cout << "\n";
+    }
+    if (check || source == original)
+      continue;
+    std::ofstream out(file, std::ios::binary);
+    out << source;
+    if (!out) {
+      std::cerr << "piac: cannot write " << file << "\n";
+      return 2;
+    }
+    std::cout << file << ": " << rewrites
+              << (rewrites == 1 ? " rewrite" : " rewrites") << "\n";
+#ifndef PIA_NO_MLIR
+    // A rewrite is checked by proof, not trusted (ADR 0073, section 5).
+    // The proof runs this same piac, found the way the driver finds
+    // itself, since argv[0] may be a bare name from PATH.
+    std::string self = llvm::sys::fs::getMainExecutable(
+        argv[0], reinterpret_cast<void *>(&migrateMain));
+    std::vector<llvm::StringRef> args = {self, "--verify"};
+    for (const std::string &p : passed)
+      args.push_back(p);
+    args.push_back(file);
+    std::string error;
+    int status =
+        llvm::sys::ExecuteAndWait(self, args, std::nullopt, {}, 0, 0, &error);
+    if (status != 0) {
+      std::cerr << "piac: " << file
+                << " does not prove after migrating it; see above\n";
+      failed = true;
+    }
+#endif
+  }
+  if (check && pending)
+    return 1;
+  return failed ? 1 : 0;
+}
+
 int main(int argc, char **argv) {
+  if (argc > 1 && std::string_view(argv[1]) == "migrate")
+    return migrateMain(argc, argv);
   // Anywhere on the line, since wrappers (tests/lit/run_lit.sh) add
   // --target and --cpu to every call.
   for (int i = 1; i < argc; ++i)
@@ -1372,6 +1487,17 @@ int main(int argc, char **argv) {
          mode == "--emit=asm" || mode == "--emit=obj"))
       for (const pia::syntax::Lint &l : pia::syntax::lint(*tree, source))
         if (lints.on(l.name)) pia::syntax::printLint(std::cerr, l, file, source);
+    // A deprecated form still compiles for one release, with a warning
+    // that names its migration rule (ADR 0073, section 5). No flag turns
+    // it off: old source is never accepted silently.
+    if (!diags.hasErrors() && !contracts)
+      for (pia::syntax::Lint l :
+           pia::migrate::find(*tree, source, "", /*builds=*/true)) {
+        l.message += " (deprecated by migration rule " + l.name +
+                     "; `piac migrate` rewrites it)";
+        l.name = "deprecated";
+        pia::syntax::printLint(std::cerr, l, file, source);
+      }
     // Everything past the syntax tree sees the program after its
     // metaprograms have run (docs/meta.md).
     // Imports bring in the functions of other modules' interfaces, as

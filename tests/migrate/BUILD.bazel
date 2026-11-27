@@ -1,0 +1,22 @@
+load("@rules_cc//cc:defs.bzl", "cc_test")
+load("//tests/lit:lit.bzl", "lit_tests")
+
+# Migration rules (src/migrate, ADR 0073, section 5): each rule's old form,
+# what `piac migrate` says or writes for it, and that the result proves.
+lit_tests(
+    name = "migrate_tests",
+    srcs = glob(["*.pia"]),
+    tools = ["//tools/piac"],
+)
+
+# The framework, with rules made in the test: version order, --from, the
+# rules a build runs, and applying rewrites without overlaps.
+cc_test(
+    name = "migrate_test",
+    srcs = ["migrate_test.cpp"],
+    deps = [
+        "//src/migrate",
+        "//src/syntax",
+        "@googletest//:gtest_main",
+    ],
+)

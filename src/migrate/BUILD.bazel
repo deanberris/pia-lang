@@ -1,0 +1,21 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+load("//tools:copts.bzl", "PIA_COPTS")
+
+# Migration rules (ADR 0073, section 5): each change that breaks source
+# finds the old form and rewrites it or says what to write. No LLVM, so
+# piac, pia-lsp and their tests share it.
+cc_library(
+    name = "migrate",
+    srcs = [
+        "Migrate.cpp",
+        "rules/TypeMakesDistinct.cpp",
+    ],
+    hdrs = [
+        "Migrate.h",
+        "rules/Rules.h",
+    ],
+    copts = PIA_COPTS,
+    strip_include_prefix = "/src",
+    visibility = ["//visibility:public"],
+    deps = ["//src/syntax"],
+)
