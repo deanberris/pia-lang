@@ -9,7 +9,11 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 lit_tests(
     name = "modules_tests",
     srcs = glob(["*.pia"]),
-    data = glob(["Inputs/*.pia", "Inputs/*.pia.md"]),
+    data = glob([
+        "Inputs/*.pia",
+        "Inputs/*.pia.md",
+        "Inputs/advisories/*.toml",
+    ]),
     tools = [
         "//tools/pia-cert",
         "//tools/piac",

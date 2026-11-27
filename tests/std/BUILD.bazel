@@ -15,6 +15,7 @@ lit_tests(
         "Inputs/ratio_errors.pia",
         "Inputs/time_errors.pia",
         "Inputs/time_overflow.pia",
+        "Inputs/test_gen_spec.pia",
         "//lib/Pia/Core:Ascii.pia",
         "//lib/Pia/Core:Bit.pia",
         "//lib/Pia/Core:Charconv.pia",
@@ -25,6 +26,7 @@ lit_tests(
         "//lib/Pia/Core:Order.pia",
         "//lib/Pia/Core:Ratio.pia",
         "//lib/Pia:Time.pia",
+        "//lib/Pia/Test:Gen.pia",
         "//lib/Pia/Core:Result.pia",
         "//lib/Pia/Core:Utf8.pia",
         "//lib/Pia/Core/Algo:BinarySearch.pia",
@@ -45,6 +47,7 @@ lit_tests(
         "//lib/Pia/Compress:Huffman.pia",
         "//lib/Pia/Compress:Inflate.pia",
         "//lib/Pia/Compress:Zlib.pia",
+        "//lib/Pia/Compress/Inflate:Ref.pia",
         "//lib/Pia/Compress/Inflate:Spec.pia",
         "//lib/Pia/Format:Safetensors.pia",
         "//lib/Pia/Image:Bits.pia",
@@ -75,7 +78,7 @@ lit_tests(
     # past the 300 s of a medium test. heap.pia and partial_sort.pia were
     # here too, until the verifier stopped rescanning the module for each
     # callee, which halved them (21 s and 17 s alone). inflate.pia proves
-    # Huffman's Kraft lemma and table build (671 goals), which took past
+    # Huffman's Kraft lemma, table build and prefix-freeness (776 goals), which took past
     # 300 s on the macOS runner. gif_lzw.pia proves decode_ref's
     # whole-stream theorem (about 3 min on 4 threads).
     sizes = {
@@ -896,6 +899,8 @@ pia_library(
     src = "Inputs/json_shape_run.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        "//lib/Pia/Core:option",
+        "//lib/Pia/Core:order",
         "//lib/Pia/Mem:alloc",
         "//lib/Pia/Text/Json:derive",
         "//lib/Pia/Text/Json:dom",

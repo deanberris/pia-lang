@@ -1,0 +1,20 @@
+(* No u8 is a + b when a + b > 255, so this contract is wrong whatever
+   plus_c does. Nothing proves an extern, so without the specification
+   check its oracle would follow from the contradiction and pass. The
+   six cases whose sum leaves u8 fail as specification failures. *)
+import Pia.Test.Gen.Gen as G
+
+let plus_c (a : u8) (b : u8) : u8
+  ensures result = a + b
+= extern "plus_c"
+
+G.cases plus_c
+
+(* SPEC: proved: case 7: some result can meet the ensures of 'plus_c'
+   SPEC: failed: case 8: some result can meet the ensures of 'plus_c'
+   SPEC-NEXT: counterexample: a = 1, b = 255
+   SPEC-NEXT: hint: specification failure: no value of 'plus_c''s result type satisfies its ensures at these inputs
+   SPEC: failed: case 16: some result can meet the ensures of 'plus_c'
+   SPEC-NEXT: counterexample: a = 255, b = 255
+   SPEC: 10 proved, 6 failed, 0 skipped
+*)

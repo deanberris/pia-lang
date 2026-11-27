@@ -413,6 +413,14 @@ class CoreTypes : public mlir::TypeConverter {
           t.getContext(), mlir::ShapedType::kDynamic, {1});
       return mlir::MemRefType::get({mlir::ShapedType::kDynamic}, elem, layout);
     });
+    // A function reference's type, in machine types (ADR 0071).
+    addConversion([this](mlir::FunctionType t) -> std::optional<Type> {
+      llvm::SmallVector<Type> inputs, results;
+      if (mlir::failed(convertTypes(t.getInputs(), inputs)) ||
+          mlir::failed(convertTypes(t.getResults(), results)))
+        return std::nullopt;
+      return mlir::FunctionType::get(t.getContext(), inputs, results);
+    });
     auto cast = [](OpBuilder &b, Type t, mlir::ValueRange in,
                    Location loc) -> Value {
       return make<mlir::UnrealizedConversionCastOp>(b, loc, t, in)
@@ -438,6 +446,34 @@ class CoreTypes : public mlir::TypeConverter {
 //===----------------------------------------------------------------------===//
 // Patterns
 //===----------------------------------------------------------------------===//
+
+// A function reference's address and a call through it (ADR 0071) keep
+// their ops; only the function type they carry changes to machine types.
+struct FunctionConstantLowering
+    : mlir::OpConversionPattern<mlir::func::ConstantOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(mlir::func::ConstantOp op, OpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Type t = getTypeConverter()->convertType(op.getType());
+    if (!t)
+      return mlir::failure();
+    rw.replaceOpWithNewOp<mlir::func::ConstantOp>(op, t, op.getValueAttr());
+    return mlir::success();
+  }
+};
+
+struct CallIndirectLowering
+    : mlir::OpConversionPattern<mlir::func::CallIndirectOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(mlir::func::CallIndirectOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    rw.replaceOpWithNewOp<mlir::func::CallIndirectOp>(
+        op, adaptor.getCallee(), adaptor.getCalleeOperands());
+    return mlir::success();
+  }
+};
 
 struct ConstantLowering : mlir::OpConversionPattern<ConstantOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -2186,7 +2222,9 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
     return types.isSignatureLegal(f.getFunctionType()) &&
            types.isLegal(&f.getBody());
   });
-  target.addDynamicallyLegalOp<mlir::func::CallOp, mlir::func::ReturnOp>(
+  target.addDynamicallyLegalOp<mlir::func::CallOp, mlir::func::ReturnOp,
+                               mlir::func::ConstantOp,
+                               mlir::func::CallIndirectOp>(
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
@@ -2203,7 +2241,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
       CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
       AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
-      RecMakeLowering, RecTagLowering, RecPayloadLowering>(types, ctx);
+      RecMakeLowering, RecTagLowering, RecPayloadLowering,
+      FunctionConstantLowering, CallIndirectLowering>(types, ctx);
   // Floats and integers (M11).
   patterns.add<IntToFloatLowering, FloatToIntLowering,
                BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,

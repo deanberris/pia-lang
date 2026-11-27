@@ -291,6 +291,15 @@ let spec valid (c : ymd) : bool
 let spec maps_to (c : ymd) (z : i64) : bool
 = if c.day <= last_day c.year c.month then civil_days c.year c.month c.day = z else false
 
+(** The day of its year of era that day doe of an era falls on. Its own
+    function, so that the subtraction is proved from doe_round_trip alone
+    and not inside civil_from_days's division by 146097. *)
+let doy_of_doe (doe : int{0..146096}) : int{0..365}
+  ensures result = doe - doe_of (yoe_of doe) 0
+  ensures result < 365 || leap_yoe (yoe_of doe)
+= doe_round_trip doe;
+  doe - doe_of (yoe_of doe) 0
+
 let civil_from_days (z : int{-365962028..364523337}) : ymd
   ensures valid result
   ensures maps_to result z
@@ -301,8 +310,7 @@ let civil_from_days (z : int{-365962028..364523337}) : ymd
   assert era >= -2502 && era <= 2500;
   let doe : int{0..146096} = s - era * 146097 in
   let yoe : int{0..399} = yoe_of doe in
-  doe_round_trip doe;
-  let doy : int{0..365} = doe - doe_of yoe 0 in
+  let doy : int{0..365} = doy_of_doe doe in
   let mp : int{0..11} = month_of doy in
   let d : int{1..31} = day_of doy in
   doy_round_trip doy;

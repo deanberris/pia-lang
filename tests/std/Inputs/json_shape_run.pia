@@ -1,7 +1,11 @@
 (* Runs @derive(json_dom) from C (json_shape_run_test.c): a point read
-   from a parsed document, and one written as a document and read back. *)
+   from a parsed document, and one written as a document and read back,
+   the same for a reading, whose option fields may be null or missing,
+   and for a sample, whose fields are fixed arrays. *)
 module JsonShapeRun : Run
 
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
 import Pia.Text.Json.Spec.Grammar
 import Pia.Text.Json.Lex.Lexer
 import Pia.Text.Json.Read.Reader
@@ -14,6 +18,10 @@ import Pia.Text.Json.Shape.Shapes
 interface Run @abi(c) = sig
   let read_point : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
   let round_trip : (x : i32) -> (y : u8) -> (ok : bool) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let read_reading : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_reading : (id : u16) -> (has_temp : bool) -> (temp : i8) -> (ok : int{0..2}) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let read_sample : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_sample : (id : u8) -> (x0 : i8) -> (x1 : i8) -> (x2 : i8) -> (f0 : bool) -> (f1 : bool) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
 end
 
 let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
@@ -38,3 +46,64 @@ let round_trip (x : i32) (y : u8) (ok : bool) (text : borrowed inout mutable [u8
   match to_dom_json_point { x = x; y = y; ok = ok } text vs ms with
   | Err _ -> -1
   | Ok v -> code (from_dom_json_point text v)
+
+let reading = type { id : u16; temp : O.option i8; ok : O.option bool } @derive(json, json_dom)
+
+(* id * 100000 + temp's code * 10 + ok's code, of a reading: temp's code
+   is 500 for None and temp + 128 for Some temp, and ok's is 0 for None,
+   1 for false and 2 for true. *)
+let reading_code (r : reading) : i64 =
+  let t : i64 = match r.temp with | None -> 500 | Some x -> (let w : i64 = x in w + 128) in
+  let k : i64 = match r.ok with | None -> 0 | Some b -> if b then 2 else 1 in
+  let i : i64 = r.id in
+  i * 100000 + t * 10 + k
+
+(* The reading s denotes, as its code, or -1 if s is no document and -2
+   if it is one that is not a reading. *)
+let read_reading (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_reading s v then reading_code (from_dom_json_reading s v) else -2
+
+(* A reading as a document over text, read back, as its code; -1 if
+   to_dom made none. ok is 0 for None, 1 for false and 2 for true. *)
+let round_trip_reading (id : u16) (has_temp : bool) (temp : i8) (ok : int{0..2}) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  let t : O.option i8 = if has_temp then Some temp else None in
+  let k : O.option bool = if ok = 0 then None else Some (ok = 2) in
+  match to_dom_json_reading { id = id; temp = t; ok = k } text vs ms with
+  | Err _ -> -1
+  | Ok v -> reading_code (from_dom_json_reading text v)
+
+let sample = type { id : u8; xs : [i8; 3]; flags : [bool; 2] } @derive(json, json_dom)
+
+(* A sample's code: id, then each x + 128, three decimal digits each,
+   then flags as two bits. *)
+let sample_code (p : sample) : i64 =
+  let i : i64 = p.id in
+  let a : i64 = p.xs.[0] in
+  let b : i64 = p.xs.[1] in
+  let c : i64 = p.xs.[2] in
+  let f : i64 = (if p.flags.[0] then 2 else 0) + (if p.flags.[1] then 1 else 0) in
+  (((i * 1000 + a + 128) * 1000 + b + 128) * 1000 + c + 128) * 10 + f
+
+(* The sample s denotes, as its code, or -1 if s is no document and -2
+   if it is one that is not a sample. *)
+let read_sample (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_sample s v then sample_code (from_dom_json_sample s v) else -2
+
+(* A sample as a document over text, read back, as its code; -1 if
+   to_dom made none. *)
+let round_trip_sample (id : u8) (x0 : i8) (x1 : i8) (x2 : i8) (f0 : bool) (f1 : bool) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match to_dom_json_sample { id = id; xs = [ x0; x1; x2 ]; flags = [ f0; f1 ] } text vs ms with
+  | Err _ -> -1
+  | Ok v -> sample_code (from_dom_json_sample text v)

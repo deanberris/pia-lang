@@ -37,11 +37,18 @@
       "wall_ms_n": 167457.0
     },
     "lib/Pia/Compress/Inflate.pia": {
-      "cost": 491743942,
-      "goals": 179,
-      "solve_ms_n": 29366,
-      "solved": 149,
-      "wall_ms_n": 34012.5
+      "cost": 619817920,
+      "goals": 296,
+      "solve_ms_n": 45153,
+      "solved": 266,
+      "wall_ms_n": 66223.9
+    },
+    "lib/Pia/Compress/Inflate/Ref.pia": {
+      "cost": 245352428,
+      "goals": 189,
+      "solve_ms_n": 8910,
+      "solved": 187,
+      "wall_ms_n": 15336.9
     },
     "lib/Pia/Compress/Inflate/Spec.pia": {
       "cost": 1124870,
@@ -53,9 +60,9 @@
     "lib/Pia/Compress/Zlib.pia": {
       "cost": 20198049,
       "goals": 96,
-      "solve_ms_n": 1187,
+      "solve_ms_n": 1276,
       "solved": 61,
-      "wall_ms_n": 2095.2
+      "wall_ms_n": 2210.5
     },
     "lib/Pia/Core/Algo/BinarySearch.pia": {
       "cost": 107665070,
@@ -380,11 +387,11 @@
       "wall_ms_n": 66240.0
     },
     "lib/Pia/Time.pia": {
-      "cost": 2432001563,
-      "goals": 230,
-      "solve_ms_n": 209122,
-      "solved": 176,
-      "wall_ms_n": 213578.3
+      "cost": 803930194,
+      "goals": 232,
+      "solve_ms_n": 46500,
+      "solved": 178,
+      "wall_ms_n": 52100.0
     },
     "tests/memory/coherence.pia": {
       "cost": 14995,
@@ -680,6 +687,13 @@
       "solved": 15,
       "wall_ms_n": 137.3
     },
+    "tests/verify/inherited_contracts.pia": {
+      "cost": 160319,
+      "goals": 17,
+      "solve_ms_n": 54,
+      "solved": 16,
+      "wall_ms_n": 109.3
+    },
     "tests/verify/inout_values.pia": {
       "cost": 5265,
       "goals": 12,
@@ -814,11 +828,11 @@
       "wall_ms_n": 97.2
     },
     "tests/verify/modules.pia": {
-      "cost": 19615,
-      "goals": 13,
-      "solve_ms_n": 29,
-      "solved": 9,
-      "wall_ms_n": 87.2
+      "cost": 22147,
+      "goals": 14,
+      "solve_ms_n": 39,
+      "solved": 10,
+      "wall_ms_n": 117.6
     },
     "tests/verify/old_calls.pia": {
       "cost": 1196,
@@ -1222,10 +1236,10 @@
   },
   "host": "github-ubuntu-24.04",
   "total": {
-    "cost": 9238233585,
-    "goals": 13431,
-    "solved": 11981,
+    "cost": 9611822842,
+    "goals": 13755,
+    "solved": 12302,
     "wall_ms_1": 0,
-    "wall_ms_n": 1660295.7
+    "wall_ms_n": 1708099.0
   }
 }

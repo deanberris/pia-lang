@@ -119,6 +119,7 @@ handle
 - `handle` attaches to a function body, a `let ... in` scope, or a loop body. It is one keyword, in Dean's style.
 - **An arm knows only what holds where its errors are raised** (Dean, 2026-11-22). Each arm is checked and proved once per `?` that can reach it, so the arm for `decode_png`'s errors may use `bytes`, while the arm for `open_read`'s errors may not. `| PngError p ->` binds the payload, and `| e ->` or `| NoEntry as e ->` binds the whole error.
 - Implemented (#84), with error sets: see [irgen.md](irgen.md#errors). Or-patterns in arms and a set converting to a larger set come next.
+- **An open case in a closed set.** A constructor may carry a box over a concept, `let io_error = type | Closed | Cxx of box Exception`, so the set's list of cases stays closed while that one case holds an error of any type that meets `Exception`. `Err (Cxx (widen b))` boxes it, `?` passes it on like any error, and a handler's `| Cxx e -> code e` calls `Exception`'s requirements through the box, proved from the concept's contracts, which `widen`'s use check proved for each type boxed ([ADR 0046](adr/0046-box-over-a-type-or-a-concept.md#note-2026-11-27-a-box-over-a-concept-as-an-error-payload); [tests/verify/box_error_payload.pia](../tests/verify/box_error_payload.pia)). This is how a C++ exception of any dynamic type will become one case of a Pia error set. Built within a module; a box made in one module and handled in another waits for boxes through tables ([ADR 0071](adr/0071-function-references.md), section 6).
 
 **Cleanup at scope end.** Two forms, both run in reverse order of registration on every exit from the scope: falling off the end, `?`, a handler's result, and a loop's next iteration.
 
@@ -556,7 +557,7 @@ The GIF and inflate codecs ([ADR 0054](adr/0054-proved-gif-and-inflate-codecs.md
 - **`Pia.Image.Gif.Decode`:** `info` accepts exactly the files that the block grammar accepts.
 - **`Pia.Image.Gif.Encode`:** the stream `encode_animation` writes parses with `info` and fits its proved size bound.
 - **`Pia.Compress.Huffman`:** `build` makes the canonical code's table, and on such a table `decode` returns the symbol whose canonical code is the bits it read, and fails only when no symbol's code is there. `prefix_free` proves that the canonical code is prefix-free, so the symbol `decode` returns is the only one it could be. `kraft_room` shows that an over-subscribed set of code lengths can't build.
-- **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written.
+- **`Pia.Compress.Inflate`:** every back-reference stays within the bytes already written. `codes_ref` proves a Huffman block's theorem. `Pia.Compress.Inflate.Ref` writes RFC 1951's reading of a block as a trace of its symbols: each literal, or each length and distance with its copy, one byte at a time. Whenever the tables are the canonical codes of the block's code lengths and x is what that trace writes, decoding the block returns `Ok` at its end code with x in the output. Because the code is prefix-free, the symbol decoded is the trace's. The theorem for a whole stream, through the fixed and dynamic tables, is next.
 
 These large specs are `@opaque` ([ADR 0063](adr/0063-opaque-spec-functions.md)), and only small step lemmas reveal them. That keeps the loops' goals small enough to prove.
 

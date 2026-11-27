@@ -47,6 +47,9 @@ A range type is stored in the smallest machine integer that holds its range: 8, 
 | `[T]` | `memref<? x T, strided<[1], offset: ?>>` |
 | `!pia.atomic<T>` | `memref<1 x T>`, with a `bool` held as `i8` |
 | `!pia.rec<"tree">` | `!llvm.struct<"pia.rec.tree", (tag, fields...)>` |
+| a mutable function reference, `(u8) -> u8` | `(i8) -> i8`, a pointer to the function |
+
+A mutable function reference ([ADR 0071](adr/0071-function-references.md)) is the address of the wrapper that checked its function against the arrow, `func.constant @"succ@f.pia:5:74"`, and rebinding it replaces the value, so in a loop or a branch it is a `phi` of addresses. A call through it goes to the reference's proxy, `h@f.pia:5:20`, whose body is the `func.call_indirect`; the verifier takes the proxy's contract, the arrow's, as given, and LLVM inlines the proxy, leaving one indirect call.
 
 A slice's offset is dynamic because `xs.[a .. b]` (`pia.slice`) is a view into the same storage: it lowers to `memref.extract_strided_metadata` and `memref.reinterpret_cast`, at the buffer's offset plus `a`, with `b - a` elements. At the C boundary a slice is still a pointer and a length, with offset 0. `abort ()` lowers to `llvm.intr.trap`. A constant array (`pia.const_array`) becomes a private constant `memref.global`, one per constant, which LLVM places in read-only data; each use is a `memref.get_global`. A `with_arena`'s region (`pia.region`) is a `memref.alloca` at the start of the function, zeroed by a loop where the `with_arena` is entered.
 

@@ -260,6 +260,49 @@ std::optional<llvm::APInt> TypeResolver::constantBound(const Node &n) {
   return std::nullopt;
 }
 
+std::optional<llvm::APInt> TypeResolver::valueArg(const Node &n,
+                                                  mlir::Type want) {
+  std::optional<llvm::APInt> v;
+  if (n.kind == NodeKind::Name || n.kind == NodeKind::TypeName) {
+    // Inside a generic's body, its own value parameter: `vec t n`.
+    if (auto it = values_.find(n.text); it != values_.end())
+      v = it->second.value;
+    // A generic function's value parameter, bound to int{v..v}.
+    for (auto it = typeScopes_.rbegin(); !v && it != typeScopes_.rend(); ++it)
+      if (auto p = it->find(n.text); p != it->end()) {
+        auto single = mlir::dyn_cast<IntType>(p->second);
+        if (single && single.getLo() == single.getHi())
+          v = single.getLo();
+        break;
+      }
+  } else if (n.kind == NodeKind::IntLit) {
+    auto lit = parseIntLiteral(n.text);
+    if (lit && lit->suffix.empty())
+      v = lit->value;
+  } else if (n.kind == NodeKind::Neg && n.kids.size() == 1 &&
+             n.kids[0]->kind == NodeKind::IntLit) {
+    auto lit = parseIntLiteral(n.kids[0]->text);
+    if (lit && lit->suffix.empty())
+      v = -lit->value;
+  }
+  if (!v) {
+    diags_.error(n.loc, "a value argument must be an integer literal, or a "
+                        "value parameter of the type being defined, for now");
+    return std::nullopt;
+  }
+  auto range = mlir::dyn_cast<IntType>(want);
+  if (!range) {
+    diags_.error(n.loc, "a value parameter must have an integer type for now");
+    return std::nullopt;
+  }
+  if (!range.contains(*v)) {
+    diags_.error(n.loc, llvm::toString(*v, 10, true) + " does not fit in " +
+                            typeName(want));
+    return std::nullopt;
+  }
+  return v->sextOrTrunc(kWidth);
+}
+
 bool TypeResolver::plainElement(mlir::Type elem, syntax::SourceLoc at) {
   // A buffer whose elements hold slices is a buffer of slices (ADR 0048),
   // one per slice field; a slice in a variant's payload is not yet.
@@ -276,6 +319,12 @@ mlir::Type TypeResolver::resolve(const Node &type) {
     case NodeKind::Annot:  // `(borrowed(m) [u8])` in a result type (#70)
       return resolveAnnot(type);
     case NodeKind::TypeName: {
+      if (values_.count(type.text)) {
+        diags_.error(type.loc, "'" + type.text +
+                                   "' is a value parameter, "
+                                   "not a type");
+        return {};
+      }
       for (auto it = typeScopes_.rbegin(); it != typeScopes_.rend(); ++it)
         if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
@@ -323,8 +372,24 @@ mlir::Type TypeResolver::resolve(const Node &type) {
         diags_.error(head.loc, "only a generic type can take type arguments");
         return {};
       }
+      // A value argument, `4` in `vec u8 4`, is carried as the type that
+      // holds only it, int{4..4}, so instances and deduction compare
+      // value arguments the way they compare types (ADR 0074).
+      const Generic *g = generic(head.text);
       llvm::SmallVector<mlir::Type> args;
       for (size_t i = 1; i < type.kids.size(); ++i) {
+        const Node *valueType =
+            i - 1 < g->valueTypes.size() ? g->valueTypes[i - 1] : nullptr;
+        if (valueType) {
+          mlir::Type want = resolve(*valueType);
+          if (!want)
+            return {};
+          auto v = valueArg(*type.kids[i], want);
+          if (!v)
+            return {};
+          args.push_back(IntType::get(&ctx_, *v, *v));
+          continue;
+        }
         mlir::Type a = resolve(*type.kids[i]);
         if (!a) return {};
         args.push_back(a);
@@ -365,6 +430,17 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       if (!elem) return {};
       if (!plainElement(elem, type.kids[0]->loc)) return {};
       const Node &len = *type.kids[1];
+      if (len.kind == NodeKind::Name || len.kind == NodeKind::TypeName)
+        if (auto v = values_.find(len.text); v != values_.end()) {
+          if (v->second.value.isNegative() ||
+              v->second.value.ugt(unsignedMax(64))) {
+            diags_.error(len.loc,
+                         "an array's length cannot be " +
+                             llvm::toString(v->second.value, 10, true));
+            return {};
+          }
+          return ArrayType::get(&ctx_, v->second.value.getZExtValue(), elem);
+        }
       auto lit = len.kind == NodeKind::IntLit ? parseIntLiteral(len.text)
                                               : std::nullopt;
       if (!lit || !lit->suffix.empty()) {
@@ -490,10 +566,12 @@ bool isGenericTypeItem(const Node &item) {
     return false;
   for (size_t i = 0; i + 1 < value.kids.size(); ++i) {
     const Node &p = *value.kids[i];
+    // `(t : type)`, or a value parameter `(n : usize)` (ADR 0074).
     if (p.kind != NodeKind::LParam || p.kids.size() < 2 ||
         p.kids[0]->kind != NodeKind::PVar ||
         p.kids[1]->kind != NodeKind::Annot ||
-        p.kids[1]->kids[1]->kind != NodeKind::TypeKind)
+        (p.kids[1]->kids[1]->kind != NodeKind::TypeKind &&
+         p.kids[1]->kids[1]->kind != NodeKind::TypeName))
       return false;
   }
   return true;
@@ -706,15 +784,40 @@ mlir::Type TypeResolver::instantiate(const std::string &name,
                                      syntax::SourceLoc at) {
   const Generic *g = generic(name);
   if (!g) return {};
+  bool hasValues = std::any_of(g->valueTypes.begin(), g->valueTypes.end(),
+                               [](const Node *v) { return v != nullptr; });
   if (args.size() != g->params.size()) {
-    diags_.error(at, "'" + name + "' takes " + std::to_string(g->params.size()) +
-                         " type argument" + (g->params.size() == 1 ? "" : "s") +
-                         ", given " + std::to_string(args.size()));
+    diags_.error(at, "'" + name + "' takes " +
+                         std::to_string(g->params.size()) +
+                         (hasValues ? " argument" : " type argument") +
+                         (g->params.size() == 1 ? "" : "s") + ", given " +
+                         std::to_string(args.size()));
     return {};
   }
+  // A value argument is int{v..v}, and is spelled v: `vec<u8, 4>`.
+  ValueArgs values;
   std::string key = name + "<";
-  for (size_t i = 0; i < args.size(); ++i)
-    key += (i ? ", " : "") + typeName(args[i]);
+  for (size_t i = 0; i < args.size(); ++i) {
+    const Node *valueType =
+        i < g->valueTypes.size() ? g->valueTypes[i] : nullptr;
+    if (!valueType) {
+      key += (i ? ", " : "") + typeName(args[i]);
+      continue;
+    }
+    auto single = mlir::dyn_cast<IntType>(args[i]);
+    if (!single || single.getLo() != single.getHi()) {
+      diags_.error(at, "'" + g->params[i] + "' of '" + name +
+                           "' is a value: give an integer, not " +
+                           typeName(args[i]));
+      return {};
+    }
+    mlir::Type want = resolve(*valueType);
+    if (!want)
+      return {};
+    llvm::APInt v = single.getLo().sextOrTrunc(kWidth);
+    key += (i ? ", " : "") + llvm::toString(v, 10, true);
+    values[g->params[i]] = ValueArg{want, v};
+  }
   key += ">";
   if (auto it = instances_.find(key); it != instances_.end()) return it->second;
   if (instantiating_.count(key)) {
@@ -733,13 +836,20 @@ mlir::Type TypeResolver::instantiate(const std::string &name,
         rec, Instance{name, std::vector<mlir::Type>(args.begin(), args.end())});
   }
   std::map<std::string, mlir::Type> scope;
-  for (size_t i = 0; i < args.size(); ++i) scope[g->params[i]] = args[i];
+  for (size_t i = 0; i < args.size(); ++i)
+    if (!values.count(g->params[i]))
+      scope[g->params[i]] = args[i];
   // The body sees only its parameters and top-level names.
   std::vector<std::map<std::string, mlir::Type>> saved;
   saved.swap(typeScopes_);
   pushTypeScope(std::move(scope));
+  if (!values.empty())
+    valueArgs_[key] = values;
+  ValueArgs savedValues = std::move(values_);
+  values_ = std::move(values);
   mlir::Type t =
       buildType(key, *g->value, *this, diags_, /*instance=*/true, rec);
+  values_ = std::move(savedValues);
   typeScopes_.swap(saved);
   instantiating_.erase(key);
   if (!t) {
@@ -791,6 +901,24 @@ void defineGenericType(const Node &item, TypeResolver &types,
   const Node &value = *item.kids[3]->kids.back();
   Generic g{item.text, genericParams(item), &value, item.loc};
   g.rec = item.flags.find("rec") != std::string::npos;
+  // `(n : usize)`: a value parameter (ADR 0074, section 2), of an integer
+  // type, so that its arguments are literals that instances compare.
+  const Node &lambda = *item.kids[3];
+  for (size_t i = 0; i + 1 < lambda.kids.size(); ++i) {
+    const Node &annot = *lambda.kids[i]->kids[1];
+    if (annot.kids[1]->kind == NodeKind::TypeKind) {
+      g.valueTypes.push_back(nullptr);
+      continue;
+    }
+    mlir::Type t = types.builtin(annot.kids[1]->text);
+    if (!t || !mlir::isa<IntType>(t)) {
+      diags.error(annot.loc, "the value parameter '" + g.params[i] +
+                                 "' must have an integer type, such as "
+                                 "usize, for now");
+      return;
+    }
+    g.valueTypes.push_back(annot.kids[1].get());
+  }
   std::set<std::string> seen;
   for (const std::string &p : g.params)
     if (!seen.insert(p).second) {
@@ -1106,6 +1234,43 @@ void defineTypeItems(const Node &program, TypeResolver &types,
   defineTypes(program, types, diags);
 }
 
+// The names in a value parameter's place in `t`, `n` in `vec u8 n`, that
+// are no parameter of `sig`'s function: its implicit value parameters
+// (ADR 0074), added to its type parameters.
+static void valueParamsIn(const Node &t, TypeResolver &types,
+                          const std::set<std::string> &declared, FuncSig &sig) {
+  if (t.kind == NodeKind::TypeApp && !t.kids.empty() &&
+      t.kids[0]->kind == NodeKind::TypeName)
+    if (const Generic *g = types.generic(t.kids[0]->text))
+      for (size_t i = 1; i < t.kids.size() && i - 1 < g->valueTypes.size();
+           ++i) {
+        const Node &a = *t.kids[i];
+        if (!g->valueTypes[i - 1] ||
+            (a.kind != NodeKind::TypeName && a.kind != NodeKind::Name) ||
+            declared.count(a.text) ||
+            // A type's name stays a type, and is an error here.
+            types.builtin(a.text) || types.named(a.text) ||
+            types.generic(a.text) ||
+            std::find(sig.typeParams.begin(), sig.typeParams.end(), a.text) !=
+                sig.typeParams.end())
+          continue;
+        sig.typeParams.push_back(a.text);
+        sig.valueParams.push_back(a.text);
+      }
+  for (const syntax::NodePtr &k : t.kids)
+    valueParamsIn(*k, types, declared, sig);
+}
+
+static void implicitValueParams(const Node &item, TypeResolver &types,
+                                FuncSig &sig) {
+  std::set<std::string> declared;
+  for (const syntax::NodePtr &p : item.kids[0]->kids)
+    declared.insert(p->text);
+  for (const syntax::NodePtr &p : item.kids[0]->kids)
+    valueParamsIn(*p, types, declared, sig);
+  valueParamsIn(*item.kids[1], types, declared, sig);
+}
+
 // "regions:r,s" (irgen/Regions.cpp) -> {r, s}.
 static std::vector<std::string> regionsOf(llvm::StringRef flags) {
   std::vector<std::string> out;
@@ -1360,6 +1525,7 @@ std::map<std::string, FuncSig> collectSignatures(const Node &program,
       }
     for (const syntax::NodePtr &p : item->kids[0]->kids)
       if (isFunctionParam(*p)) sig.fnParams.push_back(p->text);
+    implicitValueParams(*item, types, sig);
     // A generic function's types are resolved for each instance, and a
     // higher-order function's for each specialisation (ADR 0044).
     bool ok = sig.isGeneric() || sig.isHigherOrder() ||

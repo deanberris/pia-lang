@@ -31,6 +31,7 @@ pia_library(
     target_compatible_with = PIA_TARGETS,
     deps = [
         ":huffman",
+        "//lib/Pia/Compress/Inflate:ref",
         "//lib/Pia/Compress/Inflate:spec",
         "//lib/Pia/Image:bits",
     ],

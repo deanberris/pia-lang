@@ -59,14 +59,16 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
+| Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |
 | Type-level metaprograms, `match` on types, substitution failure | [meta](meta.md#type-level-metaprograms), [ADR 0035](adr/0035-substitution-failure-and-total-constraints.md) | [type_functions](../tests/verify/type_functions.pia), [type_match](../tests/verify/type_match.pia), [total_metaprograms](../tests/verify/total_metaprograms.pia), [soft_failure](../tests/verify/soft_failure.pia) |
+| Tests generated from contracts: `Pia.Test.Gen`'s `cases`, `@case`, and specification failures | [meta](meta.md#tests-from-contracts), [ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md) | [test_gen](../tests/std/test_gen.pia), [test_gen_spec](../tests/std/Inputs/test_gen_spec.pia) |
 | Lambdas and function values | [tour](tour.md#function-values), [ADR 0044](adr/0044-function-values-and-lambdas.md) | [lambda_find](../tests/verify/lambda_find.pia), [lambda_generic](../tests/verify/lambda_generic.pia), [lambda_generic_forms](../tests/verify/lambda_generic_forms.pia), [lambda_named](../tests/verify/lambda_named.pia), [lambda_overloads](../tests/verify/lambda_overloads.pia) |
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
-| Function references: `let h : (x : u8) -> u8 requires ... = succ` | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia) |
+| Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory
@@ -74,6 +76,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Error sets, `?` and `handle` | [stdlib](stdlib.md#errors-and-scope-cleanup), [ADR 0028](adr/0028-error-propagation-and-cleanup.md) | [error_sets](../tests/verify/error_sets.pia), [handlers](../tests/verify/handlers.pia) |
+| An open case in a closed error set: a constructor carrying `box c` | [stdlib](stdlib.md#errors-and-scope-cleanup), [ADR 0046](adr/0046-box-over-a-type-or-a-concept.md#note-2026-11-27-a-box-over-a-concept-as-an-error-payload) | [box_error_payload](../tests/verify/box_error_payload.pia) |
 | `defer` | [stdlib](stdlib.md#errors-and-scope-cleanup) | [defer](../tests/verify/defer.pia) |
 | Foreign functions, contracted or `unsafe`, and `unsafe view` | [codegen](codegen.md#foreign-functions) | [ffi](../tests/verify/ffi.pia), [views](../tests/verify/views.pia) |
 | Allocators: bump, arenas, pools and size classes | [stdlib](stdlib.md#7-linear-resources-and-memory), [theories](theories.md#allocators), [Pia.Mem](library.md#memory) | [bump](../tests/verify/bump.pia), [arena](../tests/verify/arena.pia), [pool](../tests/verify/pool.pia), [pool_alloc](../tests/verify/pool_alloc.pia), [pool_owner_errors](../tests/verify/pool_owner_errors.pia), [size_classes](../tests/verify/size_classes.pia) |
@@ -87,6 +90,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Modules and interfaces, met by proof | [getting started](getting-started.md), [ADR 0039](adr/0039-module-and-interface-syntax.md) | [modules](../tests/verify/modules.pia) |
+| A definition with no contract takes its interface's, so a contract is written once | [getting started](getting-started.md#contracts-written-once), [ADR 0077](adr/0077-definitions-inherit-interface-contracts.md) | [inherited_contracts](../tests/verify/inherited_contracts.pia) |
 | `spread`, a parallel loop whose iterations own their cells, and `@owns` | [tour](tour.md#parallel-loops), [verifier](verifier.md#spread), [ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md) | [spread](../tests/verify/spread.pia), [spread_ensures](../tests/verify/spread_ensures.pia), [spread_frame](../tests/verify/spread_frame.pia) |
 | `@place(gpu)` on a `spread`, a Metal kernel, and on a `for`, a sequence of kernels in one command buffer | [D8 on the GPU](placed.pia.md), [the pull step on the GPU](pull_gpu.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md) | [gpu_sequence](../tests/verify/gpu_sequence.pia) |
 
