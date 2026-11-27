@@ -4,8 +4,9 @@
 #ifndef PIA_VERIFY_VERIFIER_H
 #define PIA_VERIFY_VERIFIER_H
 
-#include <optional>
 #include <array>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -89,6 +90,15 @@ struct Options {
   // "file:line:col". Empty selects every goal. Unselected goals are left out
   // of the outcomes; earlier goals are still assumed, as in a full run.
   std::vector<std::string> only;
+  // The lemmas proved in Lean (ADR 0061), by the Pia lemma's name: whether
+  // a receipt proves the statement as it is now, and if not, why. A lemma
+  // with no entry has no receipt, so its goal fails.
+  struct LeanProof {
+    bool proved = false;
+    std::string why;  // "stale receipt", "no receipt" and so on
+    std::string hint; // what to do about it
+  };
+  std::map<std::string, LeanProof> leanProofs;
   // `--check-vacuity` (ADR 0036, step 7): solve each goal proved with a
   // trusted axiom or an `assume` again, without its negation, and fail it
   // if its hypotheses alone are unsatisfiable.

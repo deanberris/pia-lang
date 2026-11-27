@@ -1,0 +1,40 @@
+(* What the Lean translation does not support yet (ADR 0061, step 1): only
+   int, bool and records of them, no division, no quantifier in a spec
+   function's body, and a lemma proved in Lean states only `requires` and
+   `ensures`. A definition no `by lean` lemma uses is not translated, so
+   `unused` is no error.
+// RUN: not piac --emit=lean %s 2>&1 | FileCheck %s
+*)
+
+let spec unused (b : u8) : u8 = b / 2
+
+let spec half (n : int) : int = n / 2
+
+let lemma half_small (n : int) : unit
+  requires n >= 0
+  ensures half n <= n
+= by lean Proofs.half_small
+
+let lemma byte (b : u8) : unit
+  ensures b <= 255
+= by lean Proofs.byte
+
+let spec below (n : int) : bool = forall (k : int). k < n ==> k < n
+
+let lemma all_below (n : int) : unit
+  ensures below n
+= by lean Proofs.all_below
+
+let lemma counted (n : int) : unit
+  requires n >= 0
+  ensures n >= 0
+  decreases n
+= by lean Proofs.counted
+
+(* Expected errors.
+// CHECK: error: the operator 'div' has no Lean translation yet (ADR 0061, step 3)
+// CHECK: error: the Lean translation supports int, bool and records of them, not 'u8' yet (ADR 0061, step 3)
+// CHECK: error: a quantifier in a spec function's body has no Lean translation yet (ADR 0061, step 3)
+// CHECK: error: a lemma proved in Lean states only 'requires' and 'ensures'
+// CHECK-NOT: error
+*)

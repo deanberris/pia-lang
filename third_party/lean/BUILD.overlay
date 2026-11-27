@@ -1,0 +1,14 @@
+# A Lean 4 release (ADR 0061): the `lean` binary and the libraries and
+# compiled core modules it loads. The static libraries are only for
+# compiling Lean to native code, which pia_lean_proof never does.
+filegroup(
+    name = "files",
+    srcs = glob(
+        [
+            "bin/**",
+            "lib/**",
+        ],
+        exclude = ["**/*.a"],
+    ),
+    visibility = ["//visibility:public"],
+)

@@ -1,0 +1,30 @@
+(* @derive(hash) on a distinct type (ADR 0064, step 4): `same` and `hash`
+   on the value it wraps, so a length meets the concept Hash and
+   `hash_all<length>` works, its laws proved at the instance (ADR 0034).
+   A length hashes as the u32 it holds.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Order.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Core/Hash.pia
+// RUN: piac --verify --iface-path=%t %s | FileCheck %s
+// CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)
+import Pia.Core.Order.Ops
+import Pia.Core.Hash.Hash
+
+let length = type u32 @derive(eq, hash)
+let temp = type i16 @derive(hash)
+
+(* Lengths that hold the same number are `same`, and hash alike. *)
+let alike (a : length) (b : length) : unit
+  requires u32 a = u32 b
+  ensures same a b && hash a = hash b
+= ()
+
+(* A length hashes as its u32, and a temp as its i16. *)
+let as_number (a : length) (t : temp) : unit
+  ensures hash a = Pia.Core.Hash.hash (u32 a)
+  ensures hash t = Pia.Core.Hash.hash (i16 t)
+= ()
+
+(* Any slice of lengths, through the concept. *)
+let all (xs : [length]) : u64 = Pia.Core.Hash.hash_all<length> xs
