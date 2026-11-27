@@ -16,6 +16,7 @@ exports_files([
     "Dom.pia",
     "Lex.pia",
     "Read.pia",
+    "Shape.pia",
     "Spec.pia",
     "Write.pia",
 ])
@@ -76,6 +77,22 @@ pia_library(
     src = "Dom.pia",
     target_compatible_with = PIA_TARGETS,
     deps = [
+        ":lex",
+        ":spec",
+        "//lib/Pia/Mem:alloc",
+    ],
+)
+
+# What @derive(json_dom) builds a type's conformance on, and the derive
+# itself (ADR 0045, step 7): tests/std/json_shape.pia checks its goals,
+# tests/std/json_shape_derive.pia a derived record's, and
+# :json_shape_run_test runs one.
+pia_library(
+    name = "shape",
+    src = "Shape.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":dom",
         ":lex",
         ":spec",
         "//lib/Pia/Mem:alloc",
