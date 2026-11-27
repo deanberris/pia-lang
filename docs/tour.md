@@ -405,7 +405,7 @@ let reserve (n : usize) : result unit oom =
 
 The type arguments are deduced. A constructor takes its instance from the type it is expected to have, as `Err OutOfMemory` does from `reserve`'s result, or else from its payload, as `Some v` does. A call takes them from its arguments, then from the type it is expected to have. To force a choice, give them: `unwrap_or<u16> (Some v) 0`, or by name, `unwrap_or<t = u16>`. A generic function needs its return type written, and recursive generic types, such as a list, are not supported yet.
 
-A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. Functions that are generic over a value parameter, such as one `last` for every `n`, are not supported yet.
+A generic type can also take values, written `(n : usize)` beside its type parameters, so a length is part of the type. `block u8 4` and `block u8 5` are different types. Inside the type, the parameter can be an array's length, an argument to another type, or a name in an invariant, so `row 8 r` below promises a slice of exactly eight bytes to every function that takes one ([ADR 0074](adr/0074-library-types-tensors.md)). An argument is an integer literal for now. A function can be generic over one: a name in a value parameter's place that no parameter declares, `n` in `(b : block t n)`, is deduced from the argument like a type parameter, and in the body and contracts it is the argument's value. Each instance is proved on its own.
 
 ```ocaml
 let block = let (t : type) (n : usize) => type { cells : [t; n] }
@@ -417,6 +417,14 @@ let row = let (n : usize) (r : region) => type {
 } where len data = n
 
 let last (r : region) (v : row 8 r) : u8 = v.data.[7]
+
+let size (t : type) (b : block t n) : usize
+  ensures result = n
+= len b.cells
+
+let four (b : block u8 4) : usize
+  ensures result = 4
+= size b
 ```
 
 ### Concepts

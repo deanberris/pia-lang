@@ -31,6 +31,24 @@ let same (p : twin 2) : bool = p.a.cells.[1] = p.b.cells.[1]
 (* The same arguments make the same type. *)
 let keep (b : block u8 4) : block u8 4 = b
 
+(* A function generic over a value parameter: `n` is in a value
+   parameter's place and no parameter declares it, so it is deduced from
+   the argument, like a type parameter. Each instance, `size<u8, 4>`, is
+   proved on its own, and in its body and contracts `n` is the argument. *)
+let size (t : type) (b : block t n) : usize
+  ensures result = n
+= len b.cells
+
+let size_four (b : block u8 4) : usize
+  ensures result = 4
+= size b
+
+let head (r : region) (v : row n r) : u8
+  requires 0 < n
+= v.data.[0]
+
+let head_eight (r : region) (v : row 8 r) : u8 = head v
+
 (*
 // CHECK: value_params.pia:14:{{[0-9]+}}: failed: the index is within bounds
 // CHECK: value_params.pia:24:{{[0-9]+}}: failed: the index is within bounds
