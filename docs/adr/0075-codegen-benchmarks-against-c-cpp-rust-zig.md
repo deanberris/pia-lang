@@ -2,7 +2,7 @@
 
 Date: 2026-11-27
 
-Status: Proposed
+Status: Accepted (2026-11-27, with Dean's answers below)
 
 ## Context
 
@@ -150,6 +150,8 @@ Each run's report follows the project's report format: per problem, the input, P
 3. Should the best-known lane be built at all before `vec<T, k>`? Proposed: yes for the multithreaded programs with `spread`, no for the hand-vectorised ones until M10.
 
 ## Answers to the open questions
+
+Accepted by Dean on 2026-11-27 ("0075 LGTM").
 
 Dean, 2026-11-27:
 
