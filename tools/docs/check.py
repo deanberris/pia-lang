@@ -89,6 +89,8 @@ UNTESTED_PAGES = {
     # macOS CI job can run.
     "docs/placed.pia.md":
         "built by examples/streams/BUILD.bazel",
+    "docs/pull_gpu.pia.md":
+        "built by examples/streams/BUILD.bazel",
     # Design documents: their examples show syntax that is designed, much
     # of it not built yet. What is built is taught, and tested, on the tour.
     "docs/design.md": "design",

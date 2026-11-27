@@ -47,6 +47,8 @@ path: IDENT (DOT IDENT)*
 
 // ---------------------------------------------------------------- bindings
 
+// A lemma's body `by lean Proofs.l` (ADR 0061) parses here as an
+// application; the C++ parser reads it as the ByLean form.
 let_item: LET REC? (SPEC | LEMMA)? META? binder param* ret_annot? contract* reveal_clause? EQ handled
 
 binder: IDENT | SPLICE_IDENT

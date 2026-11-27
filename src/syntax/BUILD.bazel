@@ -7,6 +7,7 @@ cc_library(
     srcs = [
         "Comments.cpp",
         "Interfaces.cpp",
+        "Lean.cpp",
         "Lexer.cpp",
         "Lint.cpp",
         "Parser.cpp",
@@ -18,6 +19,7 @@ cc_library(
         "Comments.h",
         "Diagnostics.h",
         "Interfaces.h",
+        "Lean.h",
         "Lexer.h",
         "Lint.h",
         "Parser.h",
