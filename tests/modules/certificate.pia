@@ -11,6 +11,16 @@
 // RUN: not pia-cert check %t/blend.o 2>&1 | FileCheck --check-prefix=MISSING %s
 // RUN: piac --version | FileCheck --check-prefix=VERSION %s
 
+   Advisories (ADR 0073) revoke proofs from a faulty piac or solver. The
+   ones compiled in are listed; a newer set is added with --advisories. The
+   test advisory revokes these objects until Image.Pixels and Blend are
+   accepted by name, which makes each a trusted item. piac here is
+   unstamped, which --require-released refuses.
+// RUN: pia-cert advisories | FileCheck --check-prefix=LIST %s
+// RUN: not pia-cert check --advisories=%S/Inputs/advisories %t/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=REVOKED %s
+// RUN: pia-cert check --advisories=%S/Inputs/advisories --accept-advisory=PIA-2099-0001:Image.Pixels --accept-advisory=PIA-2099-0001:Blend %t/pixels.o %t/blend.o | FileCheck --check-prefix=ACCEPTED %s
+// RUN: not pia-cert check --require-released %t/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=RELEASED %s
+
    Image.Pixels again, with a stronger precondition on luma: Blend was
    proved against the old interface, so it must be proved again.
 // RUN: mkdir %t/v2
@@ -34,6 +44,19 @@
 // VERSION: piac dev
 // VERSION-NEXT: Pia ABI 1
 // VERSION-NEXT: z3 {{[0-9]+\.[0-9]+\.[0-9]+}}
+
+// LIST: PIA-2026-0001 unsound
+// LIST-NEXT: Termination was checked only for direct recursion
+// LIST-NEXT: piac 0.0.0+0 to 0.0.0+720
+
+// REVOKED: '{{.*}}pixels.o': Image.Pixels was proved with z3 {{[0-9.]+}}, and its certificate does not say which proof engines it used, which PIA-2099-0001 revokes (The fake engine proves anything): rebuild it with a piac that fixes it (https://example.invalid/fix), or accept it with --accept-advisory=PIA-2099-0001:Image.Pixels
+// REVOKED: '{{.*}}blend.o': Blend was proved with z3
+
+// ACCEPTED: pia-cert: trusted advisory PIA-2099-0001 Image.Pixels
+// ACCEPTED-NEXT: pia-cert: trusted advisory PIA-2099-0001 Blend
+// ACCEPTED-NEXT: pia-cert: 2 objects link
+
+// RELEASED: '{{.*}}pixels.o' was built by an unstamped piac (dev), and --require-released refuses those
 
 // MISSING: '{{.*}}blend.o' imports 'Image.Pixels.Ops', which no object provides
 

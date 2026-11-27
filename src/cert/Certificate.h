@@ -32,11 +32,15 @@
 //   abi 1 arm64-apple-macos
 //   prover piac 0.0.0+512.9f3c2e1a7b04
 //   solver z3 5.4.1
+//   engines intervals,z3
 //
 // `abi` is the Pia ABI version and the target triple, which the link check
 // requires to be the same in every object. `prover` is piac's version, or
 // `dev` in a build without stamping. `solver` names each SMT solver that
-// may have decided a goal, with its version. piac writes format 3; formats
+// may have decided a goal, with its version. `engines` is the set of proof
+// engines that discharged at least one goal; a certificate without the line
+// does not say, so an advisory naming engines matches it (ADR 0073). piac
+// writes format 3; formats
 // 1 and 2 are still read, as objects with no ABI version, which the link
 // check refuses.
 
@@ -86,6 +90,8 @@ struct Certificate {
   std::string target; // the target triple, with `abi`
   std::string prover; // piac's version, `dev` unstamped; empty before 3
   std::vector<Solver> solvers;
+  // The proof engines used, or nothing when the certificate does not say.
+  std::optional<std::vector<std::string>> engines;
   std::vector<Interface> provides, requires_;
   std::vector<Trusted> trusted;
 };

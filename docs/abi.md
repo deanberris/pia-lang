@@ -97,7 +97,7 @@ modules[]    one per Pia module linked into the image:
 strings      string table for the names above
 ```
 
-What is built so far is a text body (src/cert/Certificate.h): format 1 has the module and its provides and requires, format 2 its trusted lowerings, and format 3 ([ADR 0073](adr/0073-prover-identity-abi-version-and-advisories.md)) the Pia ABI version and target triple (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, `dev` in a build that is not stamped) and the solver's (`solver z3 5.4.1`). `piac --version` prints the same three. The link check refuses objects for different ABI versions or targets, and objects in formats 1 and 2, which record none.
+What is built so far is a text body (src/cert/Certificate.h): format 1 has the module and its provides and requires, format 2 its trusted lowerings, and format 3 ([ADR 0073](adr/0073-prover-identity-abi-version-and-advisories.md)) the Pia ABI version and target triple (`abi 1 arm64-apple-macos`), piac's version (`prover piac 0.0.0+512.9f3c2e1a7b04`, `dev` in a build that is not stamped) and the solver's (`solver z3 5.4.1`). `piac --version` prints the same three. The link check refuses objects for different ABI versions or targets, and objects in formats 1 and 2, which record none. It also refuses objects proved by a piac or solver version that an [advisory](advisories.md) says may prove false goals, unless they are accepted by name.
 
 Decisions behind the format:
 

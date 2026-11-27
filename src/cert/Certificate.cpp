@@ -88,6 +88,12 @@ std::string encode(const Certificate &c) {
     body += "prover piac " + c.prover + "\n";
   for (const Solver &s : c.solvers)
     body += "solver " + s.name + " " + s.version + "\n";
+  if (c.engines) {
+    std::string list;
+    for (const std::string &e : *c.engines)
+      list += (list.empty() ? "" : ",") + e;
+    body += "engines " + (list.empty() ? "-" : list) + "\n";
+  }
   for (const Interface &i : c.provides)
     body += "provides " + i.name + " " + i.hash + "\n";
   for (const Interface &i : c.requires_)
@@ -142,6 +148,12 @@ std::optional<Certificate> decode(std::string_view bytes, std::string &error) {
     } else if (kind == "solver" && format >= 3 && !name.empty() &&
                !hash.empty()) {
       c.solvers.push_back({name, hash});
+    } else if (kind == "engines" && format >= 3 && !name.empty() &&
+               hash.empty() && !c.engines) {
+      c.engines.emplace();
+      if (name != "-")
+        for (llvm::StringRef e : llvm::split(name, ','))
+          c.engines->push_back(e.str());
     } else if ((kind == "provides" || kind == "requires") &&
                hash.size() == 64) {
       (kind == "provides" ? c.provides : c.requires_).push_back({name, hash});
