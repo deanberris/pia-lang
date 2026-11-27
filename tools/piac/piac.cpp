@@ -814,6 +814,55 @@ void printTrustReport(
   }
 }
 
+// The proof engines that discharged at least one goal, for the
+// certificate's `engines` line (ADR 0073), in a fixed order: interval
+// analysis, Z3, int-blasting, the proof cache, a generic's proof over sorts
+// standing for its instances (ADR 0043), Lean, then each library theory
+// whose axioms a proof used.
+std::vector<std::string>
+proofEngines(const std::vector<pia::verify::Outcome> &outcomes,
+             const pia::verify::Stats &stats, bool lean) {
+  bool intervals = false, smt = false, generic = false;
+  std::set<std::string> theories;
+  for (const pia::verify::Outcome &o : outcomes) {
+    if (o.status != pia::verify::Status::Proved)
+      continue;
+    intervals |= o.method == "intervals";
+    smt |= o.method == "smt";
+    generic |= o.method == "generic";
+    lean |= o.method == "lean";
+    // A theory's axiom is named `Theory.axiom`, so its theory is what
+    // precedes the last dot. The list also holds other facts, such as an
+    // `assume` named by its location, which are not engines.
+    for (const std::string &axiom : o.axiomsUsed) {
+      bool name =
+          !axiom.empty() && std::all_of(axiom.begin(), axiom.end(), [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_' ||
+                   c == '.' || c == '\'';
+          });
+      size_t dot = axiom.rfind('.');
+      if (name && dot != std::string::npos && dot > 0)
+        theories.insert(axiom.substr(0, dot));
+    }
+  }
+  std::vector<std::string> engines;
+  if (intervals)
+    engines.push_back("intervals");
+  if (smt && stats.solved > 0)
+    engines.push_back("z3");
+  if (stats.intBlasted > 0)
+    engines.push_back("int-blast");
+  if (stats.cached > 0)
+    engines.push_back("proof-cache");
+  if (generic)
+    engines.push_back("generic");
+  if (lean)
+    engines.push_back("lean");
+  for (const std::string &t : theories)
+    engines.push_back("theory:" + t);
+  return engines;
+}
+
 int compile(mlir::ModuleOp module, const std::string &mode,
             const std::string &output, pia::codegen::Options options,
             const std::vector<std::string> &allowUnproved,
@@ -877,7 +926,10 @@ int compile(mlir::ModuleOp module, const std::string &mode,
   bool anyLean = false;
   for (const auto &[lemma, p] : verifyOptions.leanProofs)
     anyLean |= p.proved;
-  if ((!lowerings.empty() || anyLean) && !options.certificate.empty()) {
+  // The certificate also names the proof engines that discharged a goal,
+  // so an advisory against one engine revokes only what it proved (ADR
+  // 0073).
+  if (!options.certificate.empty()) {
     std::string error;
     std::optional<pia::cert::Certificate> cert =
         pia::cert::decode(options.certificate, error);
@@ -900,6 +952,7 @@ int compile(mlir::ModuleOp module, const std::string &mode,
           compiler.push_back(a);
       cert->trusted.push_back({"native_decide", lemma, p.statement, compiler});
     }
+    cert->engines = proofEngines(outcomes, stats, anyLean);
     options.certificate = pia::cert::encode(*cert);
   }
 

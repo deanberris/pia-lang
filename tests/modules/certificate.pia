@@ -13,8 +13,9 @@
 
    Advisories (ADR 0073) revoke proofs from a faulty piac or solver. The
    ones compiled in are listed; a newer set is added with --advisories. The
-   test advisory revokes these objects until Image.Pixels and Blend are
-   accepted by name, which makes each a trusted item. piac here is
+   first test advisory revokes these objects until Image.Pixels and Blend
+   are accepted by name, which makes each a trusted item; the second names
+   an engine their certificates do not, so it revokes neither. piac here is
    unstamped, which --require-released refuses.
 // RUN: pia-cert advisories | FileCheck --check-prefix=LIST %s
 // RUN: not pia-cert check --advisories=%S/Inputs/advisories %t/pixels.o %t/blend.o 2>&1 | FileCheck --check-prefix=REVOKED %s
@@ -32,6 +33,7 @@
 // DUMP-NEXT: abi 1 {{[a-z0-9_]+-[a-z0-9_.-]+}}
 // DUMP-NEXT: prover piac dev
 // DUMP-NEXT: solver z3 {{[0-9]+\.[0-9]+\.[0-9]+}}
+// DUMP-NEXT: engines {{[a-z0-9:,.-]+}}
 // DUMP-NEXT: provides Blend.C [[C:[0-9a-f]{64}]]
 // DUMP-NEXT: requires Image.Pixels.Ops [[OPS:[0-9a-f]{64}]]
 
@@ -49,8 +51,9 @@
 // LIST-NEXT: Termination was checked only for direct recursion
 // LIST-NEXT: piac 0.0.0+0 to 0.0.0+720
 
-// REVOKED: '{{.*}}pixels.o': Image.Pixels was proved with z3 {{[0-9.]+}}, and its certificate does not say which proof engines it used, which PIA-2099-0001 revokes (The fake engine proves anything): rebuild it with a piac that fixes it (https://example.invalid/fix), or accept it with --accept-advisory=PIA-2099-0001:Image.Pixels
+// REVOKED: '{{.*}}pixels.o': Image.Pixels was proved with z3 {{[0-9.]+}}, which PIA-2099-0001 revokes (Every z3 proves anything): rebuild it with a piac that fixes it (https://example.invalid/fix), or accept it with --accept-advisory=PIA-2099-0001:Image.Pixels
 // REVOKED: '{{.*}}blend.o': Blend was proved with z3
+// REVOKED-NOT: PIA-2099-0002
 
 // ACCEPTED: pia-cert: trusted advisory PIA-2099-0001 Image.Pixels
 // ACCEPTED-NEXT: pia-cert: trusted advisory PIA-2099-0001 Blend

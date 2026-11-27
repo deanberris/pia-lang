@@ -1,9 +1,6 @@
-# A test advisory (certificate.pia): it revokes every proof from any z3
-# that used a fake engine. Certificates do not list their engines yet, so
-# it matches every object piac writes today.
+# A test advisory (certificate.pia): it revokes every proof from any z3.
 id = "PIA-2099-0001"
-summary = "The fake engine proves anything"
+summary = "Every z3 proves anything"
 solver = { z3 = { introduced = "0" } }
-engines = ["fake"]
 severity = "unsound"
 fixed_by = "https://example.invalid/fix"

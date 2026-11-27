@@ -1,0 +1,8 @@
+# A test advisory (certificate.pia) against an engine no object names, so
+# the engines in a certificate narrow it to nothing.
+id = "PIA-2099-0002"
+summary = "The fake engine proves anything"
+solver = { z3 = { introduced = "0" } }
+engines = ["fake"]
+severity = "unsound"
+fixed_by = "https://example.invalid/fix"
