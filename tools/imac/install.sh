@@ -3,7 +3,7 @@
 #
 #   ~/.local/bin/bazelq   the FIFO build queue (a copy of tools/imac/bazelq)
 #   ~/.local/bin/bazel    a shim that sends bare `bazel` through bazelq
-#   ~/.bazelrc            --jobs=4 and matching resource limits, between
+#   ~/.bazelrc            --jobs=6 and matching resource limits, between
 #                         "pia-imac" markers (the rest of the file is kept)
 #   ~/.cache/bazelq/slots how many queued commands run at once
 #
@@ -35,17 +35,17 @@ tmp="$rc.new"
 sed '/^# >>> pia-imac/,/^# <<< pia-imac/d' "$rc" > "$tmp"
 cat >> "$tmp" <<'EOF'
 # >>> pia-imac (written by pia-lang tools/imac/install.sh; edits here are lost)
-# At most 4 actions at a time per build, on every worktree. bazelq decides
+# At most 6 actions at a time per build, on every worktree. bazelq decides
 # how many builds run at once. Memory, not CPU, is what runs out first on
 # this 16 GB machine: every worktree's Bazel server holds about 1 GB, so an
 # idle one exits after 15 minutes.
 startup --max_idle_secs=900
-build --jobs=4
-build --local_resources=cpu=4
+build --jobs=6
+build --local_resources=cpu=6
 build --local_resources=memory=HOST_RAM*.4
-test --local_test_jobs=4
-# piac solves on one thread per core by default; 4 tests at once on 2
-# threads each is the machine's 8 cores.
+test --local_test_jobs=6
+# piac solves on one thread per core by default; 2 threads each keeps 6
+# tests at once near the machine's 8 cores, since few saturate both.
 test --test_env=PIA_JOBS=2
 # <<< pia-imac
 EOF
