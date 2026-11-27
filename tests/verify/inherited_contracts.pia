@@ -1,0 +1,73 @@
+(* A definition that states no contract takes the contract of the
+   interface that lists it (ADR 0077), so a module writes each contract
+   once. The body is proved against it, and callers in the module use it,
+   as if it were written on the definition. Its goals point at the
+   interface, where the contract is.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+module Counting : Counter
+
+interface Counter = sig
+  let count_to : (n : u32) -> u32
+    requires n < 1000
+    ensures result = n
+  let clamp_to : (x : u8) -> (hi : u8) -> u8
+    ensures result <= hi
+  let next : (x : u8) -> u16
+    ensures result > x
+  let wrong : (x : u8) -> u8
+    ensures result > x
+end
+
+(* A loop: the body is proved against the interface's contract, with the
+   interface's `n` as the definition's `m`. *)
+let count_to (m : u32) : u32
+=
+  let i : mutable u32 = 0 in
+  while i < m
+    invariant i <= m
+    decreases m - i
+  do
+    i <- i + 1
+  done;
+  i
+
+let clamp_to (x : u8) (hi : u8) : u8 = if x > hi then hi else x
+
+(* A definition that states a contract keeps its own, which must meet the
+   interface's, as before. *)
+let next (x : u8) : u16
+  ensures result = x + 1
+= x + 1
+
+(* A caller in the module takes `count_to` on the contract it inherited:
+   its precondition is a goal here, and its postcondition a fact. *)
+let five (k : u32) : u32
+  ensures result = 5
+= count_to 5
+
+(* The inherited contract is a goal like any other: this body breaks it. *)
+let wrong (x : u8) : u8 = x
+
+(* Expected report, in order. The inherited clauses report at the
+   interface's lines.
+// CHECK: inherited_contracts.pia:28:5: proved: the loop invariant holds on entry [smt]
+// CHECK: inherited_contracts.pia:31:12: proved: '+' does not overflow u32 [smt]
+// CHECK: inherited_contracts.pia:28:5: proved: the loop invariant holds after each iteration [smt]
+// CHECK: inherited_contracts.pia:29:5: proved: the measure decreases [smt]
+// CHECK: inherited_contracts.pia:13:5: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:15:5: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:41:5: proved: '+' does not overflow u16 [intervals]
+// CHECK: inherited_contracts.pia:40:3: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:47:3: proved: the precondition of 'count_to' holds [smt]
+// CHECK: inherited_contracts.pia:46:3: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:19:5: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: inherited_contracts.pia:12:5: proved: the interface 'Counter' gives the precondition of 'count_to' [smt]
+// CHECK: inherited_contracts.pia:11:3: proved: the precondition of 'count_to' holds [smt]
+// CHECK: inherited_contracts.pia:13:5: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:15:5: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:17:5: proved: the postcondition holds [smt]
+// CHECK: inherited_contracts.pia:19:5: proved: the postcondition holds [smt]
+// CHECK: 16 proved, 1 failed, 0 skipped
+*)

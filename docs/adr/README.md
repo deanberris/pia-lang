@@ -80,3 +80,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0074](0074-library-types-tensors.md) | Library types: a type written in Pia gets an MLIR type, ops and proofs from its library, and `Pia.Tensor` over MLIR `tensor` is the proof point | Accepted |
 | [0075](0075-codegen-benchmarks-against-c-cpp-rust-zig.md) | Codegen is benchmarked against C, C++, Rust and Zig on public problems, same algorithm first, counted in instructions on Linux and timed on Apple Silicon | Proposed |
 | [0076](0076-transparent-exports.md) | Transparent exports: an exported function the verifier can unfold is exported with its body, so a module boundary never changes what proves; `@opaque` keeps one contract-only | Proposed |
+| [0077](0077-definitions-inherit-interface-contracts.md) | A definition that states no contract takes the contract of the interface that lists it, so a module writes each contract once | Proposed |

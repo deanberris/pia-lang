@@ -1147,6 +1147,12 @@ int main(int argc, char **argv) {
         mode != "--check" && !emitInterface) {
       meta.embeds = embedOptions;
       pia::meta::expand(*tree, diags, meta);
+      // A definition that states no contract takes its interface's (ADR
+      // 0077) before the Lean statements are made from it. IRGen does the
+      // same for the REPL and the language server; doing it twice changes
+      // nothing.
+      if (!diags.hasErrors())
+        pia::syntax::inheritInterfaceContracts(*tree, diags);
     }
     if (!diags.hasErrors() && mode == "--dump-expanded")
       pia::syntax::dump(std::cout, *tree, showComments);
