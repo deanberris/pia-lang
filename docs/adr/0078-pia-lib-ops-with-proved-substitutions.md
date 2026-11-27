@@ -101,6 +101,6 @@ ADR 0065's existing function lowerings (`linalg.matmul` in `tests/codegen/lower_
 
 ## Open questions
 
-1. Is one generic op naming the function right, or should libraries be able to declare named ops (`pia_lib.sqrt`)? Proposed: one generic op. Named ops would bring back ODS per library.
+1. ~~Is one generic op naming the function right, or should libraries be able to declare named ops (`pia_lib.sqrt`)?~~ Decided (Dean, 2026-11-27): one generic op. Named ops would bring back ODS per library.
 2. For `f32`, is running both forms on all 2³² inputs at build time an accepted proof of a rule? It is exhaustive, so it is a proof, and it is cheaper than bit-blasting. Proposed: yes, as a fourth state, `exhaustive`, listed separately in the trust report, for rules whose inputs total at most 32 bits.
 3. Should a rule that has not been proved be applied by default? Proposed: yes, as trusted lowerings are today, listed in the trust report.
