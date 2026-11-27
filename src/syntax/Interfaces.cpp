@@ -792,4 +792,189 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     }
 }
 
+namespace {
+
+// A clause that is part of what a function promises its callers. A
+// `decreases` measure is about the body, so a definition that states only
+// one still takes its interface's contract.
+bool callerClause(const Node &c) {
+  return c.kind == N::Requires || c.kind == N::Ensures || c.kind == N::Costs ||
+         c.kind == N::Reads;
+}
+
+bool statesContract(const Node &item) {
+  for (const NodePtr &c : item.kids[2]->kids)
+    if (callerClause(*c))
+      return true;
+  return false;
+}
+
+// The parameter domains of a sig entry's arrow type, outermost first.
+std::vector<const Node *> domainsOf(const Node &val) {
+  std::vector<const Node *> out;
+  for (const Node *cur = val.kids[0]->kids[1].get(); cur->kind == N::ArrowType;
+       cur = cur->kids[1].get())
+    out.push_back(cur->kids[0].get());
+  return out;
+}
+
+// Whether a definition's parameters have the types an entry's domains
+// name, as written. Only overloads need this: a name defined once is
+// matched by its arity, and `checkInterface` checks its types.
+bool sameParamTypes(const Node &item, const std::vector<const Node *> &doms) {
+  const Node &params = *item.kids[0];
+  for (size_t i = 0; i < doms.size(); ++i) {
+    const Node &p = *params.kids[i];
+    if (p.kind != N::Param || p.kids.empty() || p.kids[0]->kids.size() < 2 ||
+        doms[i]->kids.size() < 2 ||
+        !sameShape(*p.kids[0]->kids[1], *doms[i]->kids[1]))
+      return false;
+  }
+  return true;
+}
+
+// The names a contract binds itself: quantifier binders and patterns.
+void contractBinders(const Node &n, std::set<std::string> &out) {
+  if (n.kind == N::Binder || n.kind == N::RangeBinder || n.kind == N::PVar)
+    out.insert(n.text);
+  for (const NodePtr &k : n.kids)
+    contractBinders(*k, out);
+}
+
+void renameParams(Node &n, const std::map<std::string, std::string> &to) {
+  if (n.kind == N::Name && n.flags.empty())
+    if (auto it = to.find(n.text); it != to.end())
+      n.text = it->second;
+  for (NodePtr &k : n.kids)
+    renameParams(*k, to);
+}
+
+struct Entry {
+  const Node *iface;
+  const Node *val;
+};
+
+} // namespace
+
+void inheritInterfaceContracts(Node &program, Diagnostics &diags) {
+  const Node *header = nullptr;
+  std::map<std::string, const Node *> interfaces;
+  for (const NodePtr &item : program.kids) {
+    if (item->kind == N::ModuleHeader)
+      header = item.get();
+    if (item->kind == N::Interface)
+      interfaces.emplace(item->text, item.get());
+  }
+  if (!header || header->kids.size() < 2)
+    return;
+  // The ordinary functions and lemmas the claimed interfaces list with a
+  // contract. Spec functions and generics are exported with their
+  // definitions, whose contract is the real one, so they inherit nothing.
+  std::map<std::string, std::vector<Entry>> entries;
+  std::set<std::string> claimed;
+  for (const NodePtr &path : header->kids[1]->kids) {
+    auto it = interfaces.find(path->text);
+    if (it == interfaces.end() || !claimed.insert(path->text).second)
+      continue;
+    for (const NodePtr &k : it->second->kids) {
+      const Node &val = *k;
+      if (val.kind != N::SigVal || val.kids.size() < 3 || val.flags == "meta" ||
+          val.flags == "spec" || genericSig(val))
+        continue;
+      bool any = false;
+      for (const NodePtr &c : val.kids[2]->kids)
+        any = any || callerClause(*c);
+      if (any)
+        entries[val.text].push_back({it->second, &val});
+    }
+  }
+  if (entries.empty())
+    return;
+  std::map<std::string, unsigned> defined;
+  for (const NodePtr &item : program.kids)
+    if (item->kind == N::LetItem)
+      ++defined[item->text];
+  for (NodePtr &item : program.kids) {
+    if (item->kind != N::LetItem || item->kids.size() < 4 || specItem(*item) ||
+        metaprogramItem(*item) || genericItem(*item) || statesContract(*item))
+      continue;
+    auto e = entries.find(item->text);
+    if (e == entries.end())
+      continue;
+    // Each entry this definition meets: one per interface that lists it.
+    std::vector<Entry> mine;
+    for (const Entry &x : e->second) {
+      std::vector<const Node *> doms = domainsOf(*x.val);
+      if (doms.size() != item->kids[0]->kids.size())
+        continue;
+      if (defined[item->text] > 1 && !sameParamTypes(*item, doms))
+        continue;
+      mine.push_back(x);
+    }
+    if (mine.empty())
+      continue;
+    // Two interfaces that promise different things leave no one contract
+    // to take, so the definition states the one that meets both.
+    std::vector<const Node *> first = domainsOf(*mine[0].val);
+    for (size_t i = 1; i < mine.size(); ++i) {
+      std::vector<const Node *> doms = domainsOf(*mine[i].val);
+      bool same = mine[i].val->kids[2]->kids.size() ==
+                  mine[0].val->kids[2]->kids.size();
+      for (size_t j = 0; same && j < doms.size(); ++j)
+        same = doms[j]->text == first[j]->text;
+      same = same && sameShape(*mine[i].val->kids[2], *mine[0].val->kids[2]);
+      if (same)
+        continue;
+      diags.error(item->loc,
+                  "'" + item->text +
+                      "' states no contract, and the "
+                      "interfaces '" +
+                      mine[0].iface->text + "' and '" + mine[i].iface->text +
+                      "' give it different ones; state "
+                      "the contract that meets both on the definition");
+      mine.clear();
+      break;
+    }
+    if (mine.empty())
+      continue;
+    // The interface names the parameters its own way; the copy uses the
+    // definition's names.
+    std::map<std::string, std::string> rename;
+    std::set<std::string> targets;
+    const Node &params = *item->kids[0];
+    for (size_t i = 0; i < first.size(); ++i) {
+      if (params.kids[i]->kind != N::Param || first[i]->text.empty())
+        continue;
+      targets.insert(params.kids[i]->text);
+      if (first[i]->text != params.kids[i]->text)
+        rename[first[i]->text] = params.kids[i]->text;
+    }
+    std::set<std::string> bound;
+    contractBinders(*mine[0].val->kids[2], bound);
+    std::string clash;
+    if (!rename.empty())
+      for (const std::string &b : bound)
+        if (targets.count(b))
+          clash = b;
+    if (!clash.empty()) {
+      diags.error(item->loc,
+                  "'" + item->text +
+                      "' takes its contract from the "
+                      "interface '" +
+                      mine[0].iface->text + "', which binds '" + clash +
+                      "', the name of one of its parameters; rename the "
+                      "parameter or the binder");
+      continue;
+    }
+    Node &contracts = *item->kids[2];
+    for (const NodePtr &c : mine[0].val->kids[2]->kids) {
+      if (!callerClause(*c))
+        continue;
+      NodePtr copy = clone(*c);
+      renameParams(*copy, rename);
+      contracts.add(std::move(copy));
+    }
+  }
+}
+
 }  // namespace pia::syntax

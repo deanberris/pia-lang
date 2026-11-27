@@ -10,5 +10,6 @@ grep -q '^directions: .* 0 cells differ$' out.txt
 grep -q '^render: .* 0 cells differ$' out.txt
 grep -q '^pull: .* on both: yes; 0 cells differ$' out.txt
 # Every buffer the stages pass is page-aligned, so none is copied but the
-# scalars, eight bytes each: a few for each dispatch, one for each wave.
-grep -Eq '^buffers: [1-9][0-9]* wrapped in place, [0-9]+ copied \([0-9]+ bytes\)$' out.txt
+# scalars of the single runs, eight bytes each. The pull step's waves are
+# dispatches of one command buffer a step, whose scalars are set in it.
+grep -Eq '^buffers: [1-9][0-9]* wrapped in place, [0-9]+ copied \([0-9]+ bytes\); [1-9][0-9]* dispatches in sequences$' out.txt

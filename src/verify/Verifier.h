@@ -97,6 +97,12 @@ struct Options {
     bool proved = false;
     std::string why;  // "stale receipt", "no receipt" and so on
     std::string hint; // what to do about it
+    // From the receipt, for the certificate and --trust-report.
+    std::string theorem, statement, toolchain;
+    std::vector<std::string> axioms;
+    // Whether the proof trusts Lean's compiler, through `native_decide`,
+    // which only a `@trusted` file may do.
+    bool trustsCompiler = false;
   };
   std::map<std::string, LeanProof> leanProofs;
   // `--check-vacuity` (ADR 0036, step 7): solve each goal proved with a
