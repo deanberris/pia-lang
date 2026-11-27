@@ -145,4 +145,4 @@ A skipped goal is not proved either, so `piac` refuses it too, and `piac --verif
 ## Where it goes next
 
 - **Presburger arithmetic for affine goals.** Subscripts such as `xs.[2*i + 1]`, aliasing between buffers and loop-carried dependence are linear integer problems. MLIR's Presburger library will decide them between intervals and Z3 ([ADR 0020](adr/0020-presburger-for-affine-goals.md)).
-- **Modules and proof certificates.** Each compiled module will carry a certificate naming the hashes of the interfaces it was proved against, and the linker will refuse a stale one ([ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md)).
+- **Modules and proof certificates.** Each compiled module carries a certificate naming the hashes of the interfaces it was proved against, the Pia ABI version and the piac and Z3 versions that proved it, and `pia-cert check` refuses a stale or mismatched one ([ADR 0010](adr/0010-modules-interfaces-and-proof-certificates.md), [ADR 0073](adr/0073-prover-identity-abi-version-and-advisories.md)). Advisories that revoke proofs made by a faulty piac come next.
