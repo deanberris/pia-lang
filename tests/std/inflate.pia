@@ -1,8 +1,9 @@
 (* Pia.Compress.Huffman, Pia.Compress.Inflate.Spec, Pia.Compress.Inflate
    and Pia.Compress.Zlib (ADR 0054, step 5): every goal is proved, with
    nothing accepted unproved. The canonical code is RFC 1951's (its
-   example is proved), the Kraft sum decides completeness, decoding
-   stays inside the tables and the input, every distance is at most the
+   example is proved) and prefix-free, the Kraft sum decides
+   completeness, decoding stays inside the tables and the input and
+   fails only where no code is, every distance is at most the
    bytes written, and Adler-32 is RFC 1950's.
 // RUN: mkdir -p %t
 // RUN: piac --emit=interface -o %t %S/../../lib/Pia/Image/Bits.pia
@@ -21,7 +22,7 @@
 
 (*
 // HUFF-NOT: failed
-// HUFF: 671 proved, 0 failed, 0 skipped
+// HUFF: 776 proved, 0 failed, 0 skipped
 // SPEC-NOT: failed
 // SPEC: 46 proved, 0 failed, 0 skipped
 // INFL-NOT: warning
@@ -49,9 +50,13 @@
 // HI-NEXT: {{^}}  let spec u16at : (t : [u8]) -> (i : usize) -> u16{{$}}
 // HI-NEXT: {{^}}  let spec sym_ok : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..15}) -> (i : int{0..319}) -> (r : int{0..320}) -> bool{{$}}
 // HI-NEXT: {{^}}  let spec tab_from : (t : [u8]) -> (l : [u8]) -> (n : int{0..320}) -> (bits : int{1..16}) -> bool{{$}}
+// HI-NEXT: {{^}}  let spec miss : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> (b : int{1..15}) -> bool{{$}}
+// HI-NEXT: {{^}}  let spec none_at : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> bool{{$}}
 // HI-NEXT: {{^}}  let build : (l : [u8]) -> (n : int{0..320}) -> (t : borrowed inout mutable [u8]) -> fill requires len t = 704 && n <= len l ensures result = Complete <==> kraft l n = 32768 ensures result = Oversubscribed <==> kraft l n > 32768 ensures tab_from t l n 1{{$}}
-// HI-NEXT: {{^}}  let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> (spec l : [u8]) -> (spec h : bool) -> result decoded usize requires len t = 704 && pos <= B.nbits s requires h ==> n <= len l && room l n 1 && tab_from t l n 1 ensures (match result with | Ok d -> pos < d.pos && d.pos - pos <= 15 && d.pos <= B.nbits s && d.sym < n | Err p -> p <= B.nbits s) ensures h ==> (match result with | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false) | Err _ -> true){{$}}
+// HI-NEXT: {{^}}  let decode : (s : [u8]) -> (pos : usize) -> (t : [u8]) -> (n : int{0..320}) -> (spec l : [u8]) -> (spec h : bool) -> result decoded usize requires len t = 704 && pos <= B.nbits s requires h ==> n <= len l && room l n 1 && tab_from t l n 1 ensures (match result with | Ok d -> pos < d.pos && d.pos - pos <= 15 && d.pos <= B.nbits s && d.sym < n | Err p -> p <= B.nbits s) ensures h ==> (match result with | Ok d -> (if d.sym < len l && d.sym < n && n <= len l && pos < d.pos && d.pos - pos <= 15 then (if l.[d.sym] = d.pos - pos then code_of l n d.sym = hbits s pos (d.pos - pos) else false) else false) | Err _ -> none_at s pos l n){{$}}
 // HI-NEXT: {{^}}  let lemma kraft_room : (l : [u8]) -> (n : int{0..320}) -> (b : int{1..16}) -> unit requires n <= len l && kraft l n <= 32768 ensures room l n b{{$}}
+// HI-NEXT: {{^}}  let lemma prefix_free : (s : [u8]) -> (p : usize) -> (l : [u8]) -> (n : int{0..320}) -> (a : int{0..319}) -> (b : int{0..319}) -> unit requires a < n && b < n && n <= len l requires 1 <= l.[a] && l.[a] <= 15 && 1 <= l.[b] && l.[b] <= 15 requires p <= B.nbits s && l.[a] <= B.nbits s - p && l.[b] <= B.nbits s - p requires code_of l n a = hbits s p l.[a] && code_of l n b = hbits s p l.[b] ensures a = b{{$}}
+// HI-NEXT: {{^}}  let lemma no_code : (s : [u8]) -> (pos : usize) -> (l : [u8]) -> (n : int{0..320}) -> (sym : int{0..319}) -> unit requires pos <= B.nbits s && n <= len l && sym < n && 1 <= l.[sym] && l.[sym] <= 15 requires none_at s pos l n ensures l.[sym] > B.nbits s - pos || code_of l n sym <> hbits s pos l.[sym]{{$}}
 // HI-NEXT: {{^}}end{{$}}
 *)
 
