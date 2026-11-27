@@ -2081,6 +2081,18 @@ class Gen {
         binding->type = ft;
         scopes_.back()[name.str()] = std::move(binding);
       };
+      // An instance's value parameters are its constants: `n` in
+      // `vec<u8, 4>`'s invariant is 4 (ADR 0074).
+      if (const auto *values = types_.valueArgs(rec.getName().str()))
+        for (const auto &[name, arg] : *values) {
+          auto binding = std::make_shared<Binding>();
+          binding->name = name;
+          binding->value = create<ConstantOp>(
+              l, arg.type,
+              b_.getIntegerAttr(b_.getIntegerType(kWidth), arg.value));
+          binding->type = arg.type;
+          scopes_.back()[name] = std::move(binding);
+        }
       if (field.empty()) {
         for (auto [n, ft] : llvm::zip(rec.getFieldNames(), rec.getFieldTypes()))
           bindField(n.getValue(), ft);

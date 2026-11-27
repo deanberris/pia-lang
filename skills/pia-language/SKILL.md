@@ -57,6 +57,7 @@ let count_bright (ys : [u16]) : usize
 | `min u8`, `max u32`, `min i64`, `max usize` | an integer type's bounds, folded to literals: write these, never `4294967295`. Not yet for a generic's type parameter |
 | `[t; n]`, `[t]`, `xs.[i]`, `xs.[a .. b]`, `len xs` | arrays, slices, indexing (a goal) and sub-slices, which are views, not copies |
 | `type { a : t }`, `type \| A \| B of t` | records, and variants with at most one payload each |
+| `let block = let (t : type) (n : usize) => type { cells : [t; n] }`, `block u8 4` | a value parameter on a type (ADR 0074): an integer that is part of the type, usable as an array length, another type's argument, or in a `where`. Arguments are integer literals; functions cannot be generic over one yet. See `tests/verify/value_params.pia` |
 | `type { v : u8 where v <= 100 }`, `type { lo : u32; hi : u32 } where lo <= hi` | a field's refinement, and a record's invariant over all its fields (ADR 0074): assumed of every parameter, proved of every result and every handed-back `out`/`inout` parameter, so no function restates it. See `tests/verify/record_invariants.pia` |
 | `match e with \| C x -> … \| _ -> …` | must be exhaustive. An unreachable arm is an error |
 | `let spec ref : mutable [u8; 64] = zeros`, `(spec log : inout [u16; 64])` | spec state (ADR 0058): code writes it, only contracts, invariants, asserts and lemma calls read it, and codegen erases it. Fixed arrays for now. A record field can be one too: `type { n : u8; spec seen : [u8; 256] }` |

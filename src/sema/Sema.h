@@ -82,6 +82,9 @@ struct Generic {
   const syntax::Node *value = nullptr;  // the TypeValue body
   syntax::SourceLoc loc;
   bool rec = false;  // `let rec`: its variant instances are leaves (ADR 0047)
+  // Per parameter: null for a type, else the type of a value parameter,
+  // `(n : usize)` (ADR 0074, section 2).
+  std::vector<const syntax::Node *> valueTypes;
 };
 
 // What an instance was made from: `option<u8>` is `option` applied to u8.
@@ -145,6 +148,18 @@ class TypeResolver {
   const Refinements *refinements(const std::string &record) const {
     auto it = refinements_.find(record);
     return it == refinements_.end() ? nullptr : &it->second;
+  }
+  // An instance's value arguments (ADR 0074): `vec u8 4` has `n`, a
+  // usize, equal to 4. Its body's array lengths and refinements see them,
+  // and a refinement's predicate binds each name to its value.
+  struct ValueArg {
+    mlir::Type type;
+    llvm::APInt value;
+  };
+  using ValueArgs = std::map<std::string, ValueArg>;
+  const ValueArgs *valueArgs(const std::string &record) const {
+    auto it = valueArgs_.find(record);
+    return it == valueArgs_.end() ? nullptr : &it->second;
   }
   mlir::Type named(const std::string &name) const {
     auto it = named_.find(name);
@@ -256,6 +271,8 @@ class TypeResolver {
 
  private:
   std::optional<llvm::APInt> constantBound(const syntax::Node &n);
+  // The value of the argument `n` to a value parameter of type `want`.
+  std::optional<llvm::APInt> valueArg(const syntax::Node &n, mlir::Type want);
 
   mlir::MLIRContext &ctx_;
   syntax::Diagnostics &diags_;
@@ -263,6 +280,8 @@ class TypeResolver {
   std::set<std::string> recursive_;
   std::vector<mlir::Type> datatypes_;
   std::map<std::string, Refinements> refinements_;
+  std::map<std::string, ValueArgs> valueArgs_; // by instance, `vec<u8, 4>`
+  ValueArgs values_; // the value parameters of the body being built
   std::map<std::string, Ctor> ctors_;
   llvm::DenseMap<mlir::Type, std::vector<Ctor>> variants_;
   std::map<std::string, GenericCtor> genericCtors_;
