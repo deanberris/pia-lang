@@ -3070,7 +3070,11 @@ class Gen {
     if (isFloat(v->type)) {
       unsigned from = v->type.getIntOrFloatBitWidth();
       if (from < target.getIntOrFloatBitWidth())
-        return TV{create<mlir::arith::ExtFOp>(l, target, v->value), target};
+        // Without the flags, the only builder that takes (type, value) is
+        // the deprecated attribute-list one, which -Werror refuses.
+        return TV{create<mlir::arith::ExtFOp>(l, target, v->value,
+                                              mlir::arith::FastMathFlagsAttr()),
+                  target};
       return TV{create<mlir::arith::TruncFOp>(l, target, v->value), target};
     }
     return fail(arg, "'" + to + "' converts an integer or a float, not " +
