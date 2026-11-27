@@ -114,6 +114,7 @@
 #include "version/Version.h"
 
 #ifndef PIA_NO_MLIR
+#include "cert/Advisory.h"
 #include "cert/Certificate.h"
 #include "codegen/Codegen.h"
 #include "codegen/Lowerings.h"
@@ -156,7 +157,7 @@ int usage() {
          "             [--allow-unproved=<function>|<file:line[:col]>]... "
          "[--lean-receipt=<file>]...\n"
          "             [--report=<file>] <file.pia>\n"
-         "       piac --version\n"
+         "       piac --version [--advisories=<dir>]...\n"
          "       piac --emit=interface -o <dir> <file.pia>\n"
          "       piac --emit=lean [-o <Statements.lean>] <file.pia>\n"
          "       piac --emit=spirv -o <out.spv> <file.mlir>\n"
@@ -166,7 +167,7 @@ int usage() {
          "[--report=<file>] <file.pia>\n"
          "       Every mode but --emit=interface takes "
          "[--iface-path=<dir>]... [--embed-path=<dir>]... "
-         "[--embed=<logical>=<path>]...\n";
+         "[--embed=<logical>=<path>]... [--advisories=<dir>]...\n";
   return 2;
 }
 
@@ -995,12 +996,51 @@ int compile(mlir::ModuleOp module, const std::string &mode,
 
 }  // namespace
 
-// `piac --version`: what a certificate records about the compiler.
-int printVersion() {
+#ifndef PIA_NO_MLIR
+// The advisories piac checks itself against (ADR 0073): those compiled in,
+// and those in each `--advisories=<dir>`. False, with a message printed,
+// when a directory cannot be read.
+bool loadAdvisories(int argc, char **argv,
+                    std::vector<pia::cert::Advisory> &out) {
+  out = pia::cert::builtinAdvisories();
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg.rfind("--advisories=", 0) != 0)
+      continue;
+    std::string error;
+    if (!pia::cert::readAdvisories(std::string(arg.substr(13)), out, error)) {
+      std::cerr << "piac: " << error << "\n";
+      return false;
+    }
+  }
+  return true;
+}
+
+// What this piac writes into a certificate about itself, with its solver
+// alone when `solverOnly`: a solver advisory makes the proof cache's
+// answers untrustworthy, a piac one does not (ADR 0073, section 3).
+pia::cert::Certificate toolchain(bool solverOnly) {
+  pia::cert::Certificate self;
+  if (!solverOnly)
+    self.prover = std::string(pia::version::prover());
+  self.solvers.push_back({"z3", pia::verify::solverVersion()});
+  return self;
+}
+#endif
+
+// `piac --version`: what a certificate records about the compiler, and the
+// advisories that revoke this piac or its Z3.
+int printVersion(int argc, char **argv) {
   std::cout << "piac " << pia::version::prover() << "\n";
 #ifndef PIA_NO_MLIR
   std::cout << "Pia ABI " << pia::cert::kAbiVersion << "\n";
   std::cout << "z3 " << pia::verify::solverVersion() << "\n";
+  std::vector<pia::cert::Advisory> advisories;
+  if (!loadAdvisories(argc, argv, advisories))
+    return 2;
+  for (const pia::cert::Advisory *a :
+       pia::cert::revoking(toolchain(false), advisories))
+    std::cout << "revoked by " << a->id << ": " << a->summary << "\n";
 #endif
   return 0;
 }
@@ -1010,7 +1050,7 @@ int main(int argc, char **argv) {
   // --target and --cpu to every call.
   for (int i = 1; i < argc; ++i)
     if (std::string_view(argv[i]) == "--version")
-      return printVersion();
+      return printVersion(argc, argv);
   std::string mode, file, output;
   std::string reportPath; // --report: where to write the goal report too
   std::vector<std::string> allowUnproved;
@@ -1119,11 +1159,14 @@ int main(int argc, char **argv) {
       verifyOnly.push_back(arg.substr(14));
       verify = true;
     }
-    else if (arg.rfind("--proof-cache=", 0) == 0) {
+    // Read by loadAdvisories, which sees every argument.
+    else if (arg.rfind("--advisories=", 0) == 0) {
+      if (arg.size() == 13)
+        return usage();
+    } else if (arg.rfind("--proof-cache=", 0) == 0) {
       if (arg.size() == 14) return usage();
       proofCache = arg.substr(14);
-    }
-    else if (arg == "--slice")
+    } else if (arg == "--slice")
       slice = 1;
     else if (arg == "--no-slice")
       slice = -1;
@@ -1450,6 +1493,26 @@ int main(int argc, char **argv) {
                       : slice < 0 ? pia::verify::Options::Slice::Off
                                   : pia::verify::Options::Slice::Auto;
       options.cacheDir = proofCache;
+      // A proof by a revoked piac or solver is refused by pia-cert later,
+      // so say so now. A cache entry is keyed by the solver's version, so
+      // with a revoked solver every entry this run could read came from
+      // it, and none is read or written (ADR 0073, section 3).
+      std::vector<pia::cert::Advisory> advisories;
+      if (!loadAdvisories(argc, argv, advisories))
+        return 2;
+      for (const pia::cert::Advisory *a :
+           pia::cert::revoking(toolchain(false), advisories))
+        std::cerr << "piac: warning: " << a->id << " revokes this piac ("
+                  << pia::version::prover() << ") or its z3 ("
+                  << pia::verify::solverVersion() << "): " << a->summary
+                  << "; pia-cert will refuse what it proves\n";
+      if (!proofCache.empty() &&
+          !pia::cert::revoking(toolchain(true), advisories).empty()) {
+        std::cerr << "piac: warning: the proof cache is not used, since an "
+                     "advisory revokes z3 "
+                  << pia::verify::solverVersion() << "\n";
+        options.cacheDir.clear();
+      }
       options.intBlast = intBlast;
       options.only = verifyOnly;
       options.checkVacuity = checkVacuity;

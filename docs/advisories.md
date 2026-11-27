@@ -38,12 +38,15 @@ The advisories are compiled into `pia-cert`, so every `pia_library` build checks
 - `pia-cert check --require-released ...` also refuses objects from an unstamped (`dev`) piac, for a deployment that wants only published compilers.
 - `pia-cert advisories` lists the advisories the check applies, and `--advisories=<dir>` adds to the list.
 
+## piac checks itself
+
+piac knows the same advisories, and `--advisories=<dir>` adds a newer set to it too. `piac --version` ends with a `revoked by <id>: <summary>` line for each advisory that revokes this piac or its Z3, and every run that proves warns about them, since `pia-cert` will refuse what it proves. A proof cache entry is keyed by Z3's version, so if an advisory revokes Z3, every entry piac could read was made by that Z3: piac then warns, and neither reads nor writes the cache. An advisory against piac alone leaves the cache in use, because a piac bug makes a wrong query, and the cached fact that a query is unsatisfiable is still true.
+
 Proofs are deterministic, so the fix for a refused object is to rebuild it with a fixed piac. In Bazel that happens anyway when piac changes.
 
 ## Not built yet
 
 These parts of ADR 0073 come in later steps:
 
-- Solver advisories should also make piac refuse proof cache entries from a revoked solver (step 4).
 - `piac link --trust-report` should list accepted advisories (step 3 prints them from `pia-cert check` only).
 - The runtime check at launch and in `Pia.Dl.open` waits for the certificate check in abi.md, Layer 2.

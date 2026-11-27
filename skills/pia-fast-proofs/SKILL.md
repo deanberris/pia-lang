@@ -41,7 +41,7 @@ two.pia:7:3: proved: the postcondition holds [smt]
 
 ## 2. Cache proved goals
 
-`--proof-cache=<dir>` keeps one file per proved goal, keyed by the SHA-256 of the Z3 version, the rlimit and the query. An unchanged query is not solved again. Since calls are encoded from contracts, editing a callee's *body* leaves its callers' queries, and so their cache entries, unchanged; editing its *contract* invalidates them. Failures are never cached, so a cached run can never hide a failure.
+`--proof-cache=<dir>` keeps one file per proved goal, keyed by the SHA-256 of the Z3 version, the rlimit and the query. An unchanged query is not solved again. Since calls are encoded from contracts, editing a callee's *body* leaves its callers' queries, and so their cache entries, unchanged; editing its *contract* invalidates them. Failures are never cached, so a cached run can never hide a failure. If an advisory revokes your Z3 ([docs/advisories.md](../../docs/advisories.md)), piac warns and skips the cache: upgrade piac.
 
 A second run of an unchanged file answers from the cache (here on a two-function file):
 

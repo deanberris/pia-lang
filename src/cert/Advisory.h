@@ -79,6 +79,14 @@ bool inRange(std::string_view version, const Range &r);
 // `--require-released` refuses instead.
 std::optional<std::string> matches(const Certificate &c, const Advisory &a);
 
+// The advisories that revoke a toolchain: those `self`, a certificate
+// naming only that piac and its solvers, matches. It lists no engines,
+// since the toolchain may use any, so an advisory narrowed to engines
+// counts too. piac uses it to warn, and to leave the proof cache alone
+// when its own solver is revoked (ADR 0073, section 3).
+std::vector<const Advisory *> revoking(const Certificate &self,
+                                       const std::vector<Advisory> &all);
+
 } // namespace pia::cert
 
 #endif // PIA_CERT_ADVISORY_H

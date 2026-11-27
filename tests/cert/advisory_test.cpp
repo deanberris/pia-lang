@@ -120,6 +120,25 @@ TEST(Advisory, UnfixedRangeHasNoEnd) {
   EXPECT_TRUE(matches(proved("9.0.0+99999.9f3c"), a));
 }
 
+TEST(Advisory, RevokesAToolchain) {
+  std::vector<Advisory> all = {parse(kFake), parse(R"(id = "PIA-2099-0002"
+summary = "z3 bug"
+solver = { z3 = { introduced = "4.15.0", fixed = "4.15.2" } }
+severity = "unsound"
+)")};
+  // A toolchain lists no engines, so the engine-narrowed advisory counts.
+  std::vector<const Advisory *> r = revoking(proved("0.0.0+150.9f3c"), all);
+  ASSERT_EQ(r.size(), 2u);
+  EXPECT_EQ(r[0]->id, "PIA-2099-0001");
+  // With the solver alone, only the solver advisory is left.
+  Certificate solverOnly = proved("");
+  r = revoking(solverOnly, all);
+  ASSERT_EQ(r.size(), 1u);
+  EXPECT_EQ(r[0]->id, "PIA-2099-0002");
+  solverOnly.solvers[0].version = "4.15.2";
+  EXPECT_TRUE(revoking(solverOnly, all).empty());
+}
+
 TEST(Advisory, BuiltinsParse) {
   // builtinAdvisories() stops the program on a malformed file, so this
   // proves every file in security/advisories reads.
