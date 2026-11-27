@@ -24,7 +24,7 @@ severity = "unsound"             # "incomplete" is recorded but never revokes
 fixed_by = "https://github.com/deanberris/pia-lang/pull/496"
 ```
 
-A certificate **matches** when its `prover` falls in the piac range, from `introduced` up to but not including `fixed`, or one of its `solver` lines falls in that solver's range. An advisory that names `engines` matches only certificates whose `engines` line includes one of them. A certificate with no `engines` line could have used any engine, so it matches too. piac versions are compared by their commit count on `main` (`0.1.0+512.9f3c2e1a7b04` is commit 512), so every build on `main` has its place in a range. An unstamped piac records `dev`, which no range covers.
+A certificate **matches** when its `prover` falls in the piac range, from `introduced` up to but not including `fixed`, or one of its `solver` lines falls in that solver's range. An advisory that names `engines` matches only certificates whose `engines` line includes one of them. piac lists, in a fixed order, `intervals` (interval analysis), `z3`, `int-blast` ([ADR 0066](adr/0066-int-blasting-for-nonlinear-goals.md)), `proof-cache` (a goal answered by `--proof-cache`), `generic` (an instance proved by its generic's proof over sorts, [ADR 0043](adr/0043-generic-definitions-proved-once.md)), `lean`, and `theory:<name>` for each library theory whose axioms a proof used. A certificate with no `engines` line, from a piac before this list, could have used any engine, so it matches too. piac versions are compared by their commit count on `main` (`0.1.0+512.9f3c2e1a7b04` is commit 512), so every build on `main` has its place in a range. An unstamped piac records `dev`, which no range covers.
 
 Publishing an advisory goes with the fix and a regression test in `tests/verify/` that the faulty piac proved and the fixed one refuses.
 
@@ -44,7 +44,6 @@ Proofs are deterministic, so the fix for a refused object is to rebuild it with 
 
 These parts of ADR 0073 come in later steps:
 
-- piac does not yet write the `engines` line or Lean receipts (step 2), so today an advisory that names engines matches every object in its range.
 - Solver advisories should also make piac refuse proof cache entries from a revoked solver (step 4).
 - `piac link --trust-report` should list accepted advisories (step 3 prints them from `pia-cert check` only).
 - The runtime check at launch and in `Pia.Dl.open` waits for the certificate check in abi.md, Layer 2.

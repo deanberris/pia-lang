@@ -38,11 +38,10 @@
 // requires to be the same in every object. `prover` is piac's version, or
 // `dev` in a build without stamping. `solver` names each SMT solver that
 // may have decided a goal, with its version. `engines` is the set of proof
-// engines that discharged at least one goal; a certificate without the line
-// does not say, so an advisory naming engines matches it (ADR 0073). piac
-// writes format 3; formats
-// 1 and 2 are still read, as objects with no ABI version, which the link
-// check refuses.
+// engines that discharged at least one goal (piac's `proofEngines`); a
+// certificate without the line does not say, so an advisory naming engines
+// matches it (ADR 0073). piac writes format 3; formats 1 and 2 are still read,
+// as objects with no ABI version, which the link check refuses.
 //
 // A second kind, `native_decide`, is a lemma whose Lean proof trusts Lean's
 // compiler, with its statement hash and the compiler's axioms (ADR 0061):
