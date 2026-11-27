@@ -1064,9 +1064,14 @@ int migrateMain(int argc, char **argv) {
   std::string from;
   bool check = false;
   std::vector<std::string> files, passed;
-  for (int i = 2; i < argc; ++i) {
+  bool sawCommand = false;
+  for (int i = 1; i < argc; ++i) {
     std::string arg = argv[i];
-    if (arg.rfind("--from=", 0) == 0)
+    // Flags may come before the command, since wrappers such as
+    // tests/lit/run_lit.sh put --target and --cpu first.
+    if (!sawCommand && arg == "migrate")
+      sawCommand = true;
+    else if (arg.rfind("--from=", 0) == 0)
       from = arg.substr(7);
     else if (arg == "--check")
       check = true;
@@ -1159,8 +1164,15 @@ int migrateMain(int argc, char **argv) {
 }
 
 int main(int argc, char **argv) {
-  if (argc > 1 && std::string_view(argv[1]) == "migrate")
-    return migrateMain(argc, argv);
+  // The command is the first argument that is not a flag.
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg = argv[i];
+    if (arg.rfind("-", 0) == 0)
+      continue;
+    if (arg == "migrate")
+      return migrateMain(argc, argv);
+    break;
+  }
   // Anywhere on the line, since wrappers (tests/lit/run_lit.sh) add
   // --target and --cpu to every call.
   for (int i = 1; i < argc; ++i)
