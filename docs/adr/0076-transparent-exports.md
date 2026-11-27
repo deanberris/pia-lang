@@ -97,13 +97,20 @@ The interface hash is the SHA-256 of the `.piai` text (`interfaceHash` in `src/c
 
 An importer compiles each transparent function it calls as an LLVM `available_externally` definition. LLVM may inline it and fold the branches it decides, and the symbol still comes from the defining module's object, so no code is duplicated in the link. This is the optimisation half of the claim, and it is sound for the same reason the proof is: the hash ties the importer to the body it inlined.
 
-### 5. Steps
+### 5. An LTO mode links modules into one optimisation unit (Dean, 2026-11-27)
+
+Transparent bodies reach importers only for loop-free functions of scalars. A link-time mode covers everything else: `piac --lto` emits LLVM bitcode rather than machine code, and `pia_binary(lto = True)` links a program's Pia objects, and C objects compiled with `-flto`, through LLVM's LTO (ThinLTO by default, full LTO as an option). LLVM can then inline across modules, fold branches and run its peephole passes over the whole program, loops and buffers included. This is #490 in the codegen benchmark plan (#485), "LTO across Pia objects and their C callers", so the two land as one change.
+
+LTO changes no proof. Each module is still proved against its imports' contracts and its certificate still names the interface hashes it used, so `modular` covers whatever LLVM links. LLVM only uses what the IR says, and since contracts are erased first, it cannot assume anything a proof did not establish. What LTO gives up is the separate shipping of objects: a module whose code was inlined into another under LTO is part of that binary, so a shared library is never built this way, and the witness symbols are still emitted so the certificate check runs at link time as it does now.
+
+### 6. Steps
 
 1. Export transparent definitions in `.piai` and unfold them at importers. Prove `tests/modules/transparent.pia` (the `Clamp` example), and record the change in the Linux proof-cost shards.
 2. `@opaque` on ordinary functions, `with f` across them, and the docs (verifier.md "Calls", tour, features).
 3. `available_externally` bodies in codegen, with a test that `dead`'s branch is gone from the importer's assembly.
 4. A lint, `opaque_export`, for an exported function that is not transparent and whose `ensures` does not determine its result, pointing at the precision it gives up.
 5. The inline surface hash split from the interface hash (docs/abi.md), recorded per importer in its certificate.
+6. `piac --lto` (bitcode objects) and `pia_binary(lto = True)` through LLVM ThinLTO, with C objects built `-flto`, measured on the codegen benchmark (#485, #490).
 
 ## Consequences
 
