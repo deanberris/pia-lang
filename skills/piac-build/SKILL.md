@@ -131,6 +131,8 @@ piac migrate --check lib/*.pia                # write nothing; fail if a rewrite
 
 A line `f.pia:3:11: [rule] ...` is a suggestion that needs a person: read it, and take its quick fix only if the old meaning was meant. Suggestions never fail `--check`.
 
+When you change piac itself so that old source breaks, add the rule in the same PR (`src/migrate/rules/`, a test in `tests/migrate`). A PR that touches the grammar, keyword table or prelude and breaks nothing says `no-migration: <why>` on a line of its description, or `tools/migrate/check.py` fails it.
+
 ## Other tools
 
 | Tool | Use |
