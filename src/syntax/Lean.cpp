@@ -106,8 +106,9 @@ public:
     bool saved = ok_;
     std::map<std::string, std::string> savedLocals;
     std::swap(savedLocals, locals_);
-    std::vector<std::string> savedRanges;
+    std::vector<std::string> savedRanges, savedGuards;
     std::swap(savedRanges, ranges_);
+    std::swap(savedGuards, guards_);
     unsigned savedHyps = hyps_;
     ok_ = true;
     std::string text;
@@ -126,6 +127,7 @@ public:
     ok_ = saved && good;
     locals_ = std::move(savedLocals);
     ranges_ = std::move(savedRanges);
+    guards_ = std::move(savedGuards);
     hyps_ = savedHyps;
     visiting_.pop_back();
     if (!good) {
@@ -176,6 +178,21 @@ private:
       deps_[visiting_.back()].insert(name);
   }
 
+  // A slice or fixed array is a `Slice'`, its length and its elements by
+  // index, as the verifier encodes both. It is a definition like any other,
+  // emitted once, first, and part of the hash of every statement that uses it.
+  void useSlice() {
+    static const char *kSlice = "Slice'";
+    if (!text_.count(kSlice)) {
+      text_[kSlice] =
+          "/-- A Pia slice or fixed array: its length, and its "
+          "elements by index. -/\nstructure Slice' (α : Type) where\n"
+          "  len : Int\n  get : Int → α\n\n";
+      order_.insert(order_.begin(), kSlice);
+    }
+    use(kSlice);
+  }
+
   // --- types ---------------------------------------------------------
 
   // The range of a machine integer type. The verifier's integers are exact
@@ -207,10 +224,29 @@ private:
   }
 
   // The hypothesis that `x` has the type `t`, or "" when every value of
-  // its Lean type has it.
-  std::string range(const Node &t, const std::string &x) {
+  // its Lean type has it. With `decidable`, only the part an `if` can
+  // test: a slice's length, not the range of each element.
+  std::string range(const Node &t, const std::string &x,
+                    bool decidable = false) {
     if (t.kind == N::Annot)
-      return range(*t.kids[1], x);
+      return range(*t.kids[1], x, decidable);
+    if ((t.kind == N::SliceType && !t.kids.empty()) ||
+        (t.kind == N::ArrayType && t.kids.size() == 2)) {
+      // A fixed array's length is its type's.
+      std::string out =
+          t.kind == N::ArrayType
+              ? "(" + x + ".len = " + expr(*t.kids[1], Mode::Value) + ")"
+              : "(" + intLit("0") + " ≤ " + x + ".len ∧ " + x + ".len ≤ " +
+                    intLit("18446744073709551615") + ")";
+      if (decidable)
+        return out;
+      // `i'` is a name no program writes, so it captures none of `x`.
+      std::string elem = range(*t.kids[0], "(" + x + ".get i')");
+      if (!elem.empty())
+        out += " ∧ (∀ (i' : Int), " + intLit("0") + " ≤ i' ∧ i' < " + x +
+               ".len → " + elem + ")";
+      return out;
+    }
     if (t.kind == N::TypeName) {
       if (auto r = machineRange(t.text))
         return "(" + intLit(r->first) + " ≤ " + x + " ∧ " + x + " ≤ " +
@@ -247,9 +283,31 @@ private:
         return ident(t.text);
       }
     }
+    if (((t.kind == N::SliceType && !t.kids.empty()) ||
+         (t.kind == N::ArrayType && t.kids.size() == 2)) &&
+        !field) {
+      auto buffer = [](const Node &e) {
+        return e.kind == N::SliceType || e.kind == N::ArrayType;
+      };
+      if (buffer(*t.kids[0]) ||
+          (t.kids[0]->kind == N::Annot && t.kids[0]->kids.size() > 1 &&
+           buffer(*t.kids[0]->kids[1]))) {
+        fail(t.loc, "a slice or array of slices or arrays has no Lean "
+                    "translation yet (ADR 0061, step 3)");
+        return "Int";
+      }
+      std::string elem = type(*t.kids[0]);
+      useSlice();
+      return "(Slice' " + elem + ")";
+    }
     if (t.kind == N::RangeType && !field && t.kids.size() == 2 &&
         (t.text == "int" || machineRange(t.text)))
       return "Int";
+    if (field && (t.kind == N::SliceType || t.kind == N::ArrayType)) {
+      fail(t.loc, "a record field that is a slice or array has no Lean "
+                  "translation yet (ADR 0061, step 3)");
+      return "Int";
+    }
     if (field && (t.kind == N::RangeType ||
                   (t.kind == N::TypeName && machineRange(t.text)))) {
       fail(t.loc, "a record field of a machine integer or range type has no "
@@ -269,6 +327,7 @@ private:
   std::string params(const Node &ps, bool binders) {
     std::string out;
     ranges_.clear();
+    guards_.clear();
     for (const NodePtr &p : ps.kids) {
       if (p->kind != N::Param || p->kids.empty() ||
           p->kids[0]->kind == N::None) {
@@ -282,6 +341,8 @@ private:
         out += " ";
       if (std::string r = range(*p->kids[0], ident(p->text)); !r.empty())
         ranges_.push_back(r);
+      if (std::string r = range(*p->kids[0], ident(p->text), true); !r.empty())
+        guards_.push_back(r);
     }
     return out;
   }
@@ -314,8 +375,11 @@ private:
     }
     std::string result = type(*ret.kids[0]);
     // Outside its parameters' ranges, which no call reaches, the function
-    // is `f'outside` too.
-    std::vector<std::string> pre = ranges_;
+    // is `f'outside` too. The ranges of a slice's elements are left out,
+    // since an `if` cannot test a `∀`. A statement applies the function
+    // only to slices whose elements are in range, so its value elsewhere
+    // decides nothing.
+    std::vector<std::string> pre = guards_;
     const Node *measure = nullptr;
     for (const NodePtr &c : item.kids[2]->kids)
       if (c->kind == N::Requires)
@@ -467,6 +531,12 @@ private:
         locals_.erase(n.text);
       return body;
     }
+    case N::Index:
+      if (n.kids.size() != 2)
+        return unsupported(n, "this index");
+      return asProp("((" + expr(*n.kids[0], Mode::Value) + ").get " +
+                        expr(*n.kids[1], Mode::Value) + ")",
+                    m);
     case N::Field:
       if (!n.text.empty() && n.text[0] == '$')
         return unsupported(n, "a spliced field");
@@ -554,6 +624,8 @@ private:
     if (!items_.count(head.text) && n.kids.size() == 2) {
       if (head.text == "int")
         return expr(*n.kids[1], Mode::Value);
+      if (head.text == "len")
+        return "(" + expr(*n.kids[1], Mode::Value) + ").len";
       if (machineRange(head.text))
         return unsupported(n, "a conversion to '" + head.text + "'");
     }
@@ -607,7 +679,7 @@ private:
   // What each parameter, bound variable and local stands for.
   std::map<std::string, std::string> locals_;
   // The ranges of the parameters that params() last translated.
-  std::vector<std::string> ranges_;
+  std::vector<std::string> ranges_, guards_;
   unsigned hyps_ = 0;
   bool ok_ = true;
 };

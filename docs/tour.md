@@ -126,7 +126,37 @@ let to_byte (x : f64) : u8
 let abs32 (x : f32) : f32 = from_bits (to_bits x & 2147483647)
 ```
 
-The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`. What `+` and `*` compute is not modelled yet, so a goal that depends on a sum's value fails rather than being proved wrongly; proving float kernels against real-valued specifications, with their rounding error, is [ADR 0038](adr/0038-float-kernels-against-real-theories.md), still to come.
+The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`.
+
+A contract states what a float computes against real arithmetic ([ADR 0038](adr/0038-float-kernels-against-real-theories.md)). `to_real x` is the exact value of a float as a spec-only `real`, `finite x` says it is neither infinite nor NaN, and `eps f32` is the unit roundoff, 2⁻²⁴ (2⁻⁵³ for `f64`). The prover knows that each operation is rounded once: a finite result lies within `eps` of the exact one, relative to its size, plus `tiny f32` (2⁻¹⁵⁰) for results in the subnormal range, and a result is finite when the exact value is below the largest float. So rounding error and finiteness are proved like any other bound:
+
+```ocaml
+let spec mag (x : real) : real = if x >= 0.0 then x else 0.0 - x
+
+let fma_free (a : f32) (b : f32) (c : f32) : f32
+  requires finite a && finite b && finite c
+  requires mag (to_real a) <= 1000.0 && mag (to_real b) <= 1000.0 && mag (to_real c) <= 1000.0
+  ensures finite result
+  ensures mag (to_real result - (to_real a * to_real b + to_real c)) <= 3000000.0 * eps f32
+= a * b + c
+```
+
+A loop states its bound in its invariant. `finite` also compiles, to a test of the exponent bits. The lemmas for long sums and dot products, `@fp(reassoc)` and the `~= within` form come next.
+
+### Licensed reassociation and FMA
+
+Strict IEEE keeps a float reduction in order, one addition after another, so it cannot use SIMD lanes, and never fuses `a * b + c` into one instruction. A function that wants either says so with `@fp` ([ADR 0012](adr/0012-floating-point-reassociation.md)): `@fp(reassoc)` lets codegen reorder its sums and products, which lets LLVM vectorise a reduction into several partial sums, and `@fp(contract)` lets it fuse a multiply and an add into one FMA, which rounds once. `@fp(reassoc, contract)` gives both. Nothing else of C's `-ffast-math` comes with it: NaNs, infinities, signed zeros and subnormals keep their IEEE meaning.
+
+```ocaml
+let dot (xs : [f32]) (ys : [f32]) : f32 @fp(reassoc, contract)
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+```
+
+On an M1 this loop runs as four-lane `fmla` instructions, and on x86-64-v3 as eight-lane `vfmadd` ones; without the licence it is summed in order, one lane at a time. The licence covers the function's own code. Its contracts stay strict, since they are the specification, and a function it calls is strict unless it has a licence of its own. A licensed sum need not give the bits of the strict sum a contract names, so until ADR 0038's error bounds land the prover knows nothing about a licensed operation's result, and a goal about it fails. Index, length and integer goals in the function are proved as anywhere else.
 
 ## Arrays and slices
 
@@ -955,4 +985,4 @@ let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) :
   record_outflow grid (all_reduce add (map outflow_of grid))
 ```
 
-**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, three explicit ways to allow reassociation, and float kernels proved against real arithmetic ([ADR 0038](adr/0038-float-kernels-against-real-theories.md)). `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on values.
+**More floats and SIMD vectors.** `f16`, `@finite` to prove no NaN or infinity appears, the other two ways to allow reassociation (a `fast f32` type and a tolerance in `ensures`, ADR 0012), and float kernels proved against real arithmetic ([ADR 0038](adr/0038-float-kernels-against-real-theories.md)). `vec<T, k>` fixes a SIMD shape where auto-vectorisation is not enough. **Refinement types** such as `{ y : i32 | lo <= y && y <= hi }` and `where` invariants on values.

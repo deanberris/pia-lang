@@ -52,6 +52,13 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
                     Diagnostics &diags,
                     std::vector<InterfaceArtifact> *loaded = nullptr);
 
+// The text of a definition an import brought in with its body, a generic
+// function, spec function or concept, by its qualified name `M.f`, as its
+// interface artifact has it, or empty. Its nodes in the program are placed
+// at the import, so a pass that reads a definition's tokens, as boxes over
+// a concept do (ADR 0046), reads them from here. It outlives the program.
+std::string importedDefinitionText(const std::string &qualified);
+
 // A definition that takes its contract from an interface (ADR 0077):
 // `program.kids[item]`, which `entry`, an item of `iface`, lists. The
 // entry's clauses name the parameters as `rename` maps them, from the
