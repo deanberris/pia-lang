@@ -37,7 +37,8 @@ def Lib_CallOp : Op<Lib_Dialect, "call", [
                        UnitAttr:$pure);
   let results = (outs Variadic<AnyType>:$results);
   let assemblyFormat = [{
-    $callee `(` $args `)` attr-dict `:` functional-type($args, results)
+    $callee `(` $args `)` (`pure` $pure^)? attr-dict `:`
+    functional-type($args, results)
   }];
 }
 
