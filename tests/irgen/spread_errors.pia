@@ -44,7 +44,7 @@ let unowned_call (label : [usize]) (v : borrowed inout mutable [u32]) : unit
 
 (*
 // CHECK: spread_errors.pia:10:3: error: a spread body cannot assign 's', which is declared outside it: iterations run at the same time (ADR 0060)
-// CHECK: spread_errors.pia:15:51: error: 'v' is written in this spread, so it can only be indexed here: passing it on could reach a cell another iteration writes (ADR 0060)
+// CHECK: spread_errors.pia:15:53: error: 'w' is written in this spread, so it can only be indexed here: passing it on could reach a cell another iteration writes (ADR 0060)
 // CHECK: spread_errors.pia:22:26: error: @place takes one device, and only @place(gpu) is supported yet; a spread runs on the CPU without it
 // CHECK: spread_errors.pia:25:43: error: the owner array 'label' must not be written in the spread
 // CHECK: spread_errors.pia:28:25: error: a spread inside a spread is not supported yet
