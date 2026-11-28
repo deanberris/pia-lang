@@ -90,3 +90,4 @@ Each file records one decision: its context, the decision, and its consequences.
 | [0084](0084-release-0-5-0-gates.md) | Release 0.5.0: a SAT and SMT solver written in Pia, beside Z3 | Proposed |
 | [0085](0085-release-1-0-gates.md) | Release 1.0: a Pia front end in Pia over Pia IR | Proposed |
 | [0086](0086-spread-collectives.md) | Collectives in a `spread`: `all_reduce` and `halo_exchange`, proved to match by uniform control flow, run as phases on the async runtime | Proposed |
+| [0087](0087-simd-vectors-as-a-library-type.md) | SIMD vectors are a library type, `simd t k` in `Pia.Simd`, lowered to MLIR `vector` values | Proposed |
