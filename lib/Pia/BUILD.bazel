@@ -10,6 +10,7 @@ exports_files([
     "Fn.pia",
     "Gpu.pia",
     "Math.pia",
+    "Par.pia",
     "Time.pia",
 ])
 
@@ -25,6 +26,15 @@ pia_library(
 pia_library(
     name = "math",
     src = "Math.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Pia.Par (ADR 0086): the collectives of a spread, as @collective
+# functions over every iteration's argument; tests/std/par.pia proves them
+# and an importer's spreads.
+pia_library(
+    name = "par",
+    src = "Par.pia",
     target_compatible_with = PIA_TARGETS,
 )
 

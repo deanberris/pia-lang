@@ -1,0 +1,49 @@
+(* Function references in variant payloads (ADR 0071), compiled and run
+   from C by fn_variants_test.c: each constructor's record holds a
+   reference, and the other constructors' slots a placeholder that no code
+   calls. Here LLVM sees every function stored, so the calls are direct.
+// RUN: piac --emit=llvm -O2 %s | FileCheck %s
+*)
+
+(* CHECK-LABEL: define {{.*}}$act"(
+// CHECK-LABEL: define {{.*}}$maybe"(
+*)
+module FnVariants : Variants
+
+interface Variants @abi(c) = sig
+  let act : (op : u8) -> (y : u8) -> u8
+  let maybe : (op : u8) -> (y : u8) -> u8
+end
+
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+let twice (x : u8) : u8 requires x < 128 ensures result = x + x = (x + x)
+
+let step = type { f : (x : u8) -> u8 requires x < 100 ensures result >= x }
+
+let action = type
+  | Skip
+  | Run of step
+  | Twice of step
+
+let choose (op : u8) : action =
+  if op = 1 then Run { f = succ }
+  else if op = 2 then Twice { f = twice }
+  else Skip
+
+let act (op : u8) (y : u8) : u8 =
+  if y >= 100 then y else (
+    match choose op with
+    | Skip -> y
+    | Run s -> s.f y
+    | Twice s -> let z = s.f y in if z < 100 then s.f z else z)
+
+let found (op : u8) : option step =
+  if op % 2 = 1 then Some { f = succ } else None
+
+let maybe (op : u8) (y : u8) : u8 =
+  if y >= 100 then y else (
+    match found op with
+    | Some s -> s.f y
+    | None -> y)

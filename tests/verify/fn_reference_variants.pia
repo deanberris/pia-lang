@@ -1,0 +1,48 @@
+(* Function references in variants (ADR 0071): a constructor's payload
+   may be a record with a function reference field, checked where the
+   record is built, and a match binds it like any other payload. The other
+   constructors' payload slots hold a placeholder no code calls.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = x + 1
+let twice (x : u8) : u8 requires x < 128 ensures result = x * 2 = x * 2
+
+let step = type { f : (x : u8) -> u8 requires x < 50 ensures result > x }
+
+let action = type
+  | Skip
+  | Run of step
+
+let go (a : action) (y : u8) : u8 requires y < 50 ensures result >= y =
+  match a with
+  | Skip -> y
+  | Run s -> s.f y
+
+let make (b : bool) : action = if b then Run { f = succ } else Skip
+
+(* twice 0 is 0, not more than 0. *)
+let bad () : action = Run { f = twice }
+
+let pick (o : option step) (y : u8) : u8 requires y < 50 =
+  match o with
+  | Some s -> s.f y
+  | None -> y
+
+(* Expected report, in order.
+// CHECK: fn_reference_variants.pia:10:68: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_reference_variants.pia:10:41: proved: the postcondition holds [smt]
+// CHECK: fn_reference_variants.pia:11:69: proved: '*' does not overflow u8 [smt]
+// CHECK: fn_reference_variants.pia:11:42: proved: the postcondition holds [smt]
+// CHECK: fn_reference_variants.pia:22:14: proved: the precondition of 'step.f@fn_reference_variants.pia:13:23' holds [smt]
+// CHECK: fn_reference_variants.pia:19:51: proved: the postcondition holds [smt]
+// CHECK: fn_reference_variants.pia:31:15: proved: the precondition of 'step.f@fn_reference_variants.pia:13:23' holds [smt]
+// CHECK: fn_reference_variants.pia:24:52: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_reference_variants.pia:24:52: proved: the postcondition holds [smt]
+// CHECK: fn_reference_variants.pia:27:33: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_reference_variants.pia:27:33: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: 10 proved, 1 failed, 0 skipped
+*)

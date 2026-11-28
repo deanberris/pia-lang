@@ -1,0 +1,197 @@
+(* Pia.Par: the collectives of a spread (ADR 0086), in Pia. Each is a
+   function marked @collective, which every iteration of a spread calls
+   once, together: a gathered parameter `xs : [t; r]` holds every
+   iteration's argument at its position in the spread's range `r`, which
+   the call passes itself, and the body, an ordinary proved loop, is what
+   runs, once, between two phases of the spread. So nothing here is
+   trusted: the compiler knows only @collective, ranges and the arrays
+   over them.
+
+   - sum adds u32s into a u64, over a range short enough that the sum
+     fits.
+   - least and most are the least and greatest argument, which is one of
+     them, of u32, i32, u64 or i64.
+   - any and every combine bools.
+   - exchange gathers nothing: it is a barrier, and the buffer it takes
+     is published, readable by every iteration until the next
+     collective. One overload per element type, since a generic with an
+     attribute is not exported yet. *)
+module Pia.Par : Collectives
+
+interface Collectives = sig
+  (** The sum of every iteration's u32, as a u64: at least each one. The
+      range is shorter than 2^32, so the sum cannot overflow. *)
+  let sum : (r : range) -> (xs : [u32; r]) -> u64 @collective(xs)
+    requires len xs <= 4'294'967'295
+    ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+  (** The least of every iteration's u32: at most each, and one of them. *)
+  let least : (r : range) -> (xs : [u32; r]) -> u32 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result <= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The greatest of every iteration's u32: at least each, and one of them. *)
+  let most : (r : range) -> (xs : [u32; r]) -> u32 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The least of every iteration's i32: at most each, and one of them. *)
+  let least : (r : range) -> (xs : [i32; r]) -> i32 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result <= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The greatest of every iteration's i32: at least each, and one of them. *)
+  let most : (r : range) -> (xs : [i32; r]) -> i32 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The least of every iteration's u64: at most each, and one of them. *)
+  let least : (r : range) -> (xs : [u64; r]) -> u64 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result <= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The greatest of every iteration's u64: at least each, and one of them. *)
+  let most : (r : range) -> (xs : [u64; r]) -> u64 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The least of every iteration's i64: at most each, and one of them. *)
+  let least : (r : range) -> (xs : [i64; r]) -> i64 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result <= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** The greatest of every iteration's i64: at least each, and one of them. *)
+  let most : (r : range) -> (xs : [i64; r]) -> i64 @collective(xs)
+    requires len xs > 0
+    ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+    ensures exists (k in r.lo .. r.hi). result = xs.[k]
+  (** Whether some iteration's bool holds. *)
+  let any : (r : range) -> (xs : [bool; r]) -> bool @collective(xs)
+    ensures result <==> (exists (k in r.lo .. r.hi). xs.[k])
+  (** Whether every iteration's bool holds. *)
+  let every : (r : range) -> (xs : [bool; r]) -> bool @collective(xs)
+    ensures result <==> (forall (k in r.lo .. r.hi). xs.[k])
+  (** A barrier: every iteration has written its cells of b, which it
+      publishes, so until the next collective every iteration may read
+      any cell of b and none may write it. In shared memory there is
+      nothing to copy. *)
+  let exchange : (b : [u32]) -> unit @collective
+  let exchange : (b : [i32]) -> unit @collective
+  let exchange : (b : [u64]) -> unit @collective
+  let exchange : (b : [i64]) -> unit @collective
+  let exchange : (b : [u8]) -> unit @collective
+end
+
+let sum (r : range) (xs : [u32; r]) : u64
+  @collective(xs)
+= let s : mutable u64 = 0 in
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
+  do s <- s + xs.[j] done;
+  s
+
+let least (r : range) (xs : [u32; r]) : u32
+  @collective(xs)
+= let m : mutable u32 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m <= xs.[k]
+  do if xs.[j] < m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let most (r : range) (xs : [u32; r]) : u32
+  @collective(xs)
+= let m : mutable u32 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m >= xs.[k]
+  do if xs.[j] > m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let least (r : range) (xs : [i32; r]) : i32
+  @collective(xs)
+= let m : mutable i32 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m <= xs.[k]
+  do if xs.[j] < m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let most (r : range) (xs : [i32; r]) : i32
+  @collective(xs)
+= let m : mutable i32 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m >= xs.[k]
+  do if xs.[j] > m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let least (r : range) (xs : [u64; r]) : u64
+  @collective(xs)
+= let m : mutable u64 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m <= xs.[k]
+  do if xs.[j] < m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let most (r : range) (xs : [u64; r]) : u64
+  @collective(xs)
+= let m : mutable u64 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m >= xs.[k]
+  do if xs.[j] > m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let least (r : range) (xs : [i64; r]) : i64
+  @collective(xs)
+= let m : mutable i64 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m <= xs.[k]
+  do if xs.[j] < m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let most (r : range) (xs : [i64; r]) : i64
+  @collective(xs)
+= let m : mutable i64 = xs.[r.lo] in
+  let at : mutable usize = r.lo in
+  for j in r.lo .. r.hi
+    invariant r.lo <= at && at < r.hi && m = xs.[at]
+    invariant forall (k in r.lo .. j). m >= xs.[k]
+  do if xs.[j] > m then (m <- xs.[j]; at <- j) else () done;
+  m
+
+let any (r : range) (xs : [bool; r]) : bool
+  @collective(xs)
+= let found : mutable bool = false in
+  for j in r.lo .. r.hi
+    invariant found <==> (exists (k in r.lo .. j). xs.[k])
+  do found <- found || xs.[j] done;
+  found
+
+let every (r : range) (xs : [bool; r]) : bool
+  @collective(xs)
+= let all : mutable bool = true in
+  for j in r.lo .. r.hi
+    invariant all <==> (forall (k in r.lo .. j). xs.[k])
+  do all <- all && xs.[j] done;
+  all
+
+let exchange (b : [u32]) : unit @collective = ()
+
+let exchange (b : [i32]) : unit @collective = ()
+
+let exchange (b : [u64]) : unit @collective = ()
+
+let exchange (b : [i64]) : unit @collective = ()
+
+let exchange (b : [u8]) : unit @collective = ()
