@@ -2327,37 +2327,6 @@ class Encoder {
     return c && c.getValue().getValue().isZero();
   }
 
-  // Whether two terms are the same expression: the same value, or the
-  // same op with the same attributes over operands that are the same.
-  // Declarations are never the same, since each is a fresh constant.
-  static bool sameTerm(Value a, Value b, unsigned depth = 8) {
-    if (a == b)
-      return true;
-    if (!a || !b || depth == 0)
-      return false;
-    Operation *x = a.getDefiningOp(), *y = b.getDefiningOp();
-    if (!x || !y || x->getName() != y->getName() ||
-        x->getAttrDictionary() != y->getAttrDictionary() ||
-        x->getNumOperands() != y->getNumOperands() || x->getNumRegions() != 0 ||
-        y->getNumRegions() != 0 || mlir::isa<mlir::smt::DeclareFunOp>(x))
-      return false;
-    if (mlir::cast<mlir::OpResult>(a).getResultNumber() !=
-        mlir::cast<mlir::OpResult>(b).getResultNumber())
-      return false;
-    for (auto [p, q] : llvm::zip(x->getOperands(), y->getOperands()))
-      if (!sameTerm(p, q, depth - 1))
-        return false;
-    return true;
-  }
-
-  // A view array made in a block, for the slice of `root` at `off` of
-  // `len` elements.
-  struct View {
-    mlir::Block *block;
-    Value root, off, len, array;
-  };
-  std::vector<View> viewArrays_;
-
   Value viewArray(Value root, Value off, Value len) {
     using P = mlir::smt::BVCmpPredicate;
     // A view from 0 reads what its root does at each index below its
@@ -2367,16 +2336,6 @@ class Encoder {
     // quantifier could not hold.
     if (isZeroBV(off))
       return root;
-    // The same view in code and in a contract, `w.[k .. k + n]` passed to
-    // a kernel and to the spec function its result is stated in, must be
-    // the same array: two fresh arrays equal only element by element give
-    // a spec function two unrelated values, and the callee's ensures says
-    // nothing about the caller's.
-    mlir::Block *block = b_.getInsertionBlock();
-    for (const View &m : viewArrays_)
-      if (m.block == block && m.root == root && sameTerm(m.off, off) &&
-          sameTerm(m.len, len))
-        return m.array;
     Value v = declare(root.getType(), "", false);
     Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
     assertTerm(forallIndex([&](Value i) {
@@ -2386,7 +2345,6 @@ class Encoder {
                           elem, root, bvBin("add", off, i)));
       return implies(inside, same);
     }));
-    viewArrays_.push_back({block, root, off, len, v});
     return v;
   }
 
