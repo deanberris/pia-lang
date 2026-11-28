@@ -17,7 +17,7 @@ piac --verify-only=edges.pia:41 edges.pia         # the goals on one line
 piac --verify-only=streams.pia.md streams.pia.md  # one file (module)
 ```
 
-Earlier goals are still *assumed*, as in a full run, so a selected goal is proved exactly as it would be in the whole file. Unselected goals are left out of the report. A selective run never generates code: always finish with a full `--verify` (or a build) before you call the work done.
+A function's name selects all its overloads; `'sqrt(f64)'`, quoted for the shell, selects one. Earlier goals are still *assumed*, as in a full run, so a selected goal is proved exactly as it would be in the whole file. Unselected goals are left out of the report. A selective run never generates code: always finish with a full `--verify` (or a build) before you call the work done.
 
 <!-- example: two.pia -->
 ```ocaml

@@ -13,10 +13,12 @@
 
    The contract is over the bits: a NaN in, or a negative number, gives a
    NaN; zeros and infinity are their own roots; and for a positive finite
-   x the result is the float nearest its square root (`rounded32`). The
-   NaN's payload is not specified, since targets differ: arm64 gives
-   0x7fc00000 and x86-64 0xffc00000. f64 comes next, and needs arithmetic
-   wider than 64 bits for its significand's square. *)
+   x the result is the float nearest its square root (`rounded32`,
+   `rounded64`). The NaN's payload is not specified, since targets
+   differ: arm64 gives 0x7fc00000 and x86-64 0xffc00000. `sqrt` and
+   `sqrt_soft` are overloaded on f32 and f64, as C++'s std::sqrt is; the
+   f64 contract is over unbounded integers, since its significand squared
+   needs 106 bits. *)
 @trusted
 
 module Pia.Math : Sqrt
@@ -40,6 +42,25 @@ interface Sqrt = sig
     ensures nan32 (to_bits x) || to_bits x > 2147483648 ==> nan32 (to_bits result)
     ensures 0 < to_bits x && to_bits x < 2139095040
             ==> rounded32 (to_bits x) (to_bits result)
+  let spec mant64 : (b : u64) -> u64
+  let spec ex64 : (b : u64) -> u64
+  let spec sqi : (x : int) -> int
+  let spec shift64 : (b : u64) -> (r : u64) -> u64
+  let spec top64 : (b : u64) -> (r : u64) -> u64
+  let spec rounded64 : (b : u64) -> (r : u64) -> bool
+  let spec nan64 : (b : u64) -> bool
+  let sqrt_soft : (x : f64) -> f64
+    ensures to_bits x = 0 || to_bits x = 9223372036854775808 || to_bits x = 9218868437227405312
+            ==> to_bits result = to_bits x
+    ensures nan64 (to_bits x) || to_bits x > 9223372036854775808 ==> nan64 (to_bits result)
+    ensures 0 < to_bits x && to_bits x < 9218868437227405312
+            ==> rounded64 (to_bits x) (to_bits result)
+  let sqrt : (x : f64) -> f64
+    ensures to_bits x = 0 || to_bits x = 9223372036854775808 || to_bits x = 9218868437227405312
+            ==> to_bits result = to_bits x
+    ensures nan64 (to_bits x) || to_bits x > 9223372036854775808 ==> nan64 (to_bits result)
+    ensures 0 < to_bits x && to_bits x < 9218868437227405312
+            ==> rounded64 (to_bits x) (to_bits result)
 end
 
 (* The significand of a positive finite f32 with bits b, its implicit bit
@@ -88,6 +109,8 @@ let spec rounded32 (b : u32) (r : u32) : bool =
 
 (* A NaN: every exponent bit set and a nonzero fraction. *)
 let spec nan32 (b : u32) : bool = b & 2139095040 = 2139095040 && b & 8388607 <> 0
+let spec nan64 (b : u64) : bool =
+  b & 9218868437227405312 = 9218868437227405312 && b & 4503599627370495 <> 0
 
 (* The significand of the root, in half units: n is in [2^48, 2^50), and the
    result r has (2 r - 1)^2 <= n <= (2 r + 1)^2. The integer root lo, with
@@ -155,4 +178,244 @@ let sqrt_soft (x : f32) : f32
 (* The same function, compiled to the hardware instruction. *)
 let sqrt (x : f32) : f32
   @lower("$result = math.sqrt $x : f32")
+= sqrt_soft x
+
+let spec mant64 (b : u64) : u64 =
+  if b >> 52 = 0 then b & 4503599627370495 else (b & 4503599627370495) + 4503599627370496
+let spec ex64 (b : u64) : u64 = if b >> 52 = 0 then 1 else b >> 52
+
+(* x squared over unbounded integers, since an f64's significand squared
+   needs 106 bits. It is opaque, as `sq` is, and the lemmas below reveal
+   it. *)
+let spec sqi (x : int) : int @opaque = x * x
+
+let lemma sq_steps (x : int) : unit
+  ensures sqi (2 * x) = 4 * sqi x
+  ensures sqi (2 * x + 1) = 4 * sqi x + 4 * x + 1
+  ensures sqi (x + 1) = sqi x + 2 * x + 1
+  with sqi
+= ()
+
+let lemma sq_is (x : u64) : unit
+  requires x < 4294967296
+  ensures sqi (int x) = int (x * x)
+  with sqi
+= ()
+
+(* m * 4^i, opaque so that loop goals see it as one value. *)
+let spec scaled (m : int) (i : u64) : int @opaque
+  requires i <= 27
+= m * int (1 << (2 * i))
+
+let lemma scaled_step (m : int) (i : u64) : unit
+  requires i < 27
+  ensures scaled m (i + 1) = 4 * scaled m i
+  with scaled
+= ()
+
+let lemma scaled_ends (m : int) : unit
+  ensures scaled m 0 = m
+  ensures scaled m 27 = m * 18014398509481984
+  with scaled
+= ()
+
+let lemma scaled_le (m : int) (i : u64) : unit
+  requires 0 <= m && m < 18014398509481984 && i <= 27
+  ensures scaled m i < 324518553658426726783156020576256
+  with scaled
+= ()
+
+(* Bounds on a root, from bounds on its square. *)
+let lemma root_low (x : int) : unit
+  requires 0 <= x && 81129638414606681695789005144064 < sqi (x + 1)
+  ensures x >= 9007199254740992
+  with sqi
+= ()
+
+let lemma root_top (x : int) : unit
+  requires 0 <= x && sqi x <= 324518553658426690754359001612288
+  ensures x <= 18014398509481982
+  with sqi
+= ()
+
+let lemma root_bound (x : int) : unit
+  requires 0 <= x && sqi x < 324518553658426726783156020576256
+  ensures x < 18014398509481984
+  with sqi
+= ()
+
+(* The shift that scales b's significand to units of half r's last place,
+   squared. *)
+let spec shift64 (b : u64) (r : u64) : u64 =
+  if ex64 b + 1077 >= 2 * (r >> 52) then ex64 b + 1077 - 2 * (r >> 52) else 0
+
+(* b's significand in those units, over 2^54: it fits in 64 bits. *)
+let spec top64 (b : u64) (r : u64) : u64 =
+  if shift64 b r >= 54 && shift64 b r < 118 then
+    if mant64 b <= 18446744073709551615 >> (shift64 b r - 54) then
+      mant64 b << (shift64 b r - 54)
+    else 0
+  else 0
+
+(* rounded32 for f64: r is the f64 nearest the square root of the positive
+   finite f64 b. The quarter-ulp bound at a power of two is (4 m - 1)^2
+   with m = 2^52. *)
+let spec rounded64 (b : u64) (r : u64) : bool =
+  if r >> 52 >= 1 && r < 9218868437227405312 && shift64 b r >= 54 && shift64 b r < 118 then
+    if mant64 b <= 18446744073709551615 >> (shift64 b r - 54) then
+      (if mant64 r = 4503599627370496
+       then 324518553658426690754359001612289 <= 4 * (int (top64 b r) * 18014398509481984)
+       else sqi (2 * int (mant64 r) - 1) <= int (top64 b r) * 18014398509481984) &&
+      int (top64 b r) * 18014398509481984 <= sqi (2 * int (mant64 r) + 1)
+    else false
+  else false
+
+(* The integer root of m < 2^54, by bisection, with what is left over at
+   most twice the root. *)
+let root27 (m : u64) : u64
+  requires m >= 4503599627370496 && m < 18014398509481984
+  ensures result >= 67108864 && result < 134217728
+  ensures result * result <= m && m - result * result <= 2 * result
+= let lo : mutable u64 = 67108864 in
+  let hi : mutable u64 = 134217728 in
+  while hi - lo > 1
+    invariant 67108864 <= lo && lo < hi && hi <= 134217728
+    invariant lo * lo <= m && m < hi * hi
+    decreases hi - lo
+  do
+    let mid = lo + (hi - lo) / 2 in
+    let msq = mid * mid in
+    if msq <= m then lo <- mid else hi <- mid
+  done;
+  assert m < (lo + 1) * (lo + 1);
+  lo
+
+(* One step of the digit-by-digit root: with the digit 1 or the digit 0,
+   what is left plus the root squared is four times what it was. *)
+let lemma digit (left : int) (r : int) (total : int) (up : bool) (nl : int) (nr : int) : unit
+  requires left + sqi r = total
+  requires up ==> nl = 4 * left - 4 * r - 1 && nr = 2 * r + 1
+  requires up = false ==> nl = 4 * left && nr = 2 * r
+  ensures nl + sqi nr = 4 * total
+  with sqi
+= ()
+
+(* From the root of m, the root of m * 4^27, two bits at a time: the bits
+   below m's are zeros, and what is left over stays below 2^56. *)
+let extend (m : u64) (r0 : u64) : u64
+  requires m >= 4503599627370496 && m < 18014398509481984
+  requires r0 < 134217728 && r0 * r0 <= m && m - r0 * r0 <= 2 * r0
+  ensures 9007199254740992 <= result && result < 18014398509481984
+  ensures sqi (int result) <= int m * 18014398509481984
+  ensures int m * 18014398509481984 < sqi (int result + 1)
+= let r : mutable u64 = r0 in
+  let left : mutable u64 = m - r0 * r0 in
+  sq_is r0;
+  scaled_ends (int m);
+  for i in 0 .. 27
+    invariant left <= 2 * r
+    invariant int left + sqi (int r) = scaled (int m) i
+  do
+    sq_steps (int r);
+    scaled_step (int m) i;
+    scaled_le (int m) i;
+    root_bound (int r);
+    let t = 4 * r + 1 in
+    let w = 4 * left in
+    let up = w >= t in
+    let nl : u64 = if up then w - t else w in
+    let nr : u64 = if up then 2 * r + 1 else 2 * r in
+    assert int w = 4 * int left && int t = 4 * int r + 1;
+    assert int (2 * r + 1) = 2 * int r + 1 && int (2 * r) = 2 * int r;
+    assert up ==> nl = w - t && int (w - t) = int w - int t && nr = 2 * r + 1;
+    assert up = false ==> nl = w && nr = 2 * r;
+    assert up ==> int nl = 4 * int left - 4 * int r - 1 && int nr = 2 * int r + 1;
+    assert up = false ==> int nl = 4 * int left && int nr = 2 * int r;
+    digit (int left) (int r) (scaled (int m) i) up (int nl) (int nr);
+    left <- nl;
+    r <- nr
+  done;
+  sq_steps (int r);
+  root_bound (int r);
+  root_low (int r);
+  r
+
+(* s = (r + 1) / 2 as integers. *)
+let lemma halves (r : u64) (s : u64) : unit
+  requires r < 18014398509481984 && (2 * s = r || 2 * s = r + 1)
+  ensures 2 * int s = int r || 2 * int s = int r + 1
+= ()
+
+(* r rounded to the nearest unit of two. *)
+let lemma rounding (n : int) (r : int) (s : int) : unit
+  requires r >= 9007199254740992 && sqi r <= n && n < sqi (r + 1)
+  requires 2 * s = r || 2 * s = r + 1
+  ensures sqi (2 * s - 1) <= n
+  ensures n <= sqi (2 * s + 1)
+  ensures s = 4503599627370496 ==> 324518553658426690754359001612289 <= 4 * n
+  with sqi
+= ()
+
+(* The root of a positive finite f64's bits, as sqrt_pos32: m is shifted
+   left by d - 54, d of the other parity than the exponent field, since
+   the bias, 1075, is odd, until it is in [2^52, 2^54); its root to 27
+   bits is extended by 27 more, digit by digit, to the root of
+   m << d, and rounded. The asserts lead the solver through the bits of
+   the result; each is cheap where their conjunction is not. *)
+let sqrt_pos64 (b : u64) : u64
+  requires 0 < b && b < 9218868437227405312
+  ensures rounded64 b result
+= let m : u64 = if b >> 52 = 0 then b & 4503599627370495 else (b & 4503599627370495) + 4503599627370496 in
+  let e : u64 = if b >> 52 = 0 then 1 else b >> 52 in
+  let d : mutable u64 = if e % 2 = 0 then 55 else 54 in
+  let big : mutable u64 = m << (d - 54) in
+  while big < 4503599627370496
+    invariant 54 <= d && d < 108 && (d + e) % 2 = 1
+    invariant big = m << (d - 54) && big < 18014398509481984
+    invariant big % 2 = 0 || big < 9007199254740992
+    decreases 108 - d
+  do
+    big <- big * 4;
+    d <- d + 2
+  done;
+  let r = extend big (root27 big) in
+  let s = (r + 1) / 2 in
+  assert big <= 18014398509481982;
+  assert int big * 18014398509481984 <= 324518553658426690754359001612288;
+  root_top (int r);
+  assert r <= 18014398509481982;
+  assert 2 * s = r || 2 * s = r + 1;
+  assert int r >= 9007199254740992;
+  assert sqi (int r) <= int big * 18014398509481984;
+  assert int big * 18014398509481984 < sqi (int r + 1);
+  halves r s;
+  rounding (int big * 18014398509481984) (int r) (int s);
+  let ey : u64 = (e + 1077 - d) / 2 in
+  let w : u64 = ((ey << 52) | (s - 4503599627370496)) in
+  assert s >= 4503599627370496 && s < 9007199254740992;
+  assert ey >= 1 && ey < 2047;
+  assert w >> 52 = ey;
+  assert mant64 w = s;
+  assert shift64 b w = d;
+  assert top64 b w = big;
+  assert w >> 52 >= 1 && w < 9218868437227405312;
+  assert shift64 b w >= 54 && shift64 b w < 118;
+  assert mant64 b <= 18446744073709551615 >> (shift64 b w - 54);
+  assert int (top64 b w) = int big && int (mant64 w) = int s;
+  assert mant64 w = 4503599627370496 ==>
+         324518553658426690754359001612289 <= 4 * (int (top64 b w) * 18014398509481984);
+  assert mant64 w <> 4503599627370496 ==>
+         sqi (2 * int (mant64 w) - 1) <= int (top64 b w) * 18014398509481984;
+  assert int (top64 b w) * 18014398509481984 <= sqi (2 * int (mant64 w) + 1);
+  w
+
+(* IEEE 754 square root of an f64, rounded to nearest, in Pia. *)
+let sqrt_soft (x : f64) : f64
+= let b = to_bits x in
+  if b = 0 || b = 9223372036854775808 || b = 9218868437227405312 then x
+  else if b > 9218868437227405312 then from_bits 9221120237041090560
+  else from_bits (sqrt_pos64 b)
+
+let sqrt (x : f64) : f64
+  @lower("$result = math.sqrt $x : f64")
 = sqrt_soft x

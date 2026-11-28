@@ -626,7 +626,8 @@ sh_test(
     target_compatible_with = PIA_TARGETS,
 )
 
-# Pia.Math's sqrt, lowered and in software, against C's sqrtf bit for bit.
+# Pia.Math's sqrt, lowered and in software, against C's sqrtf and sqrt bit
+# for bit.
 cc_test(
     name = "math_sqrt_test",
     srcs = [

@@ -5909,8 +5909,16 @@ bool canIntBlast(const std::string &script) {
   // a sub-slice was passed to Pia.Float.Error.sum
   // (tests/std/float_error_use.pia, `row_total`). Other goals over reals,
   // such as Pia.Time's ratios, keep the solver they had.
-  if (script.find("(bv2int ") != std::string::npos &&
-      script.find(".to_real") != std::string::npos)
+  //
+  // A goal with no reals at all that converts to `int`, as a spec over
+  // unbounded integers does (Pia.Math's f64 root, whose square needs 106
+  // bits), has the same trouble: `int r = 4 * int s + 1` on a u64 did not
+  // finish in two minutes under bit-blasting and is immediate int-blasted.
+  // Quantified ones stay with the bit-blaster here too: int-blasting
+  // tests/verify/spec_locals.pia's made it 14 times slower.
+  bool converts = script.find("(bv2int ") != std::string::npos;
+  if (converts && (script.find(".to_real") != std::string::npos ||
+                   script.find("Real") == std::string::npos))
     return true;
   return multipliesVariables(script);
 }
@@ -6383,7 +6391,9 @@ bool selects(const std::string &spec, const std::string &where,
   }
   if (s.contains(':'))
     return where == spec || llvm::StringRef(where).starts_with(spec + ":");
-  return function == spec;
+  // An overload's symbol is its name and parameter types, as `sqrt(f32)`;
+  // its plain name selects every overload, and the symbol only that one.
+  return function == spec || llvm::StringRef(function).starts_with(spec + "(");
 }
 
 bool isContractGoal(contract::ObligationKind kind) {

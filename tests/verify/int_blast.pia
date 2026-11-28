@@ -6,7 +6,7 @@
    lib/Pia/Image/Raster.pia. Now a nonlinear goal is first given to Z3's
    int-blasting solver, which decides it as integer arithmetic.
 // RUN: not piac --verify --verify-stats %s 2>&1 | FileCheck %s
-// CHECK: verify-stats: {{.*}} intblast=6
+// CHECK: verify-stats: {{.*}} intblast=7
 *)
 
 (* Monotonicity of a product, with no induction.
@@ -51,6 +51,16 @@ let lemma digit_step (q : u64) (p : u64) (d : u64) (b : int{2..36}) : unit
   ensures (q % b) * p + d < p * b
 = ()
 
+(* A contract over unbounded integers, as a spec wider than 64 bits states
+   it: the conversion to int has no product, but bit-blasting it did not
+   finish in two minutes.
+// CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let step (r : u64) : u64
+  requires r < 18014398509481984
+  ensures int result = 4 * int r + 1
+= 4 * r + 1
+
 (* Without c >= 0 a product is not monotone, and the counterexample still
    comes from the bit-blaster.
 // CHECK: int_blast.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
@@ -61,5 +71,5 @@ let lemma signed_mono (a : i32) (b : i32) (c : i32) : unit
 = ()
 
 (*
-// CHECK: 6 proved, 1 failed, 0 skipped
+// CHECK: 9 proved, 1 failed, 0 skipped
 *)

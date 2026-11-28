@@ -71,6 +71,8 @@ No solver disagreed with another on any query: none proved a goal that another r
 - A nonlinear goal that int-blasting cannot prove pays for both attempts. The 5M budget bounds the extra cost, and the benchmark (`tools/bench/proof_bench.py`) shows whether it ever matters. The baseline is regenerated in the PR that turns the attempt on.
 - The measurements and the scripts that produced them are in the PR. The hard nonlinear goals are a lit test, `tests/verify/int_blast.pia`.
 
+- **Conversions to `int` (2026-11-28).** A quantifier-free goal with `bv2int` and no reals, as a contract over unbounded integers writes `int x`, is also tried with int-blasting, linear or not. Quantified ones are not: trying them made `tests/verify/spec_locals.pia` 14 times slower in the proof benchmark. Under bit-blasting, `int result = 4 * int r + 1` on a `u64` did not finish in two minutes, and int-blasted it proves at once. Goals over floats' real values already took this path (ADR 0038); goals over other reals, such as Pia.Time's ratios, keep the bit-blaster. Pia.Math's `f64` square root (#487) is the first user.
+
 ## Dean's answers (2026-11-25)
 
 1. **Int-blasting is on by default.** `--no-int-blast` stays, for comparison.

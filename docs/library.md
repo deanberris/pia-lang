@@ -24,7 +24,7 @@ The vocabulary types, concepts and algorithms that everything else is built from
 | [`Pia.Core.Charconv`](../lib/Pia/Core/Charconv.pia) | `from_chars` and `to_chars` for integers in bases 2 to 36, with the round trip proved |
 | [`Pia.Core.Digits`](../lib/Pia/Core/Digits.pia) | The facts about digit strings that formatting and parsing proofs need, as lemmas |
 | [`Pia.Fn`](../lib/Pia/Fn.pia) | Laws of function arguments, such as `strict_weak_order` and `sorted`, that a higher-order function states as preconditions ([ADR 0044](adr/0044-function-values-and-lambdas.md)) |
-| [`Pia.Math`](../lib/Pia/Math.pia) | `sqrt` on `f32`, proved correctly rounded over its bits and compiled to the hardware instruction by `@lower` ([ADR 0078](adr/0078-pia-lib-ops-with-proved-substitutions.md)) |
+| [`Pia.Math`](../lib/Pia/Math.pia) | `sqrt` on `f32` and `f64`, proved correctly rounded over its bits and compiled to the hardware instruction by `@lower` ([ADR 0078](adr/0078-pia-lib-ops-with-proved-substitutions.md)) |
 | [`Pia.Time`](../lib/Pia/Time.pia) | C++'s `<chrono>` durations, as types a metaprogram makes over a ratio |
 | [`Pia.Test.Gen`](../lib/Pia/Test/Gen.pia) | Tests generated from a function's contract: boundary values, pairwise rows, and a specification check and an oracle per case ([ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md), [meta](meta.md#tests-from-contracts)) |
 
