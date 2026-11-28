@@ -2787,7 +2787,7 @@ LogicalResult lowerToLLVM(mlir::ModuleOp module, bool exportsOnly) {
   // compiles every body (ADR 0065).
   if (mlir::failed(applyLowerings(module, /*enabled=*/false)))
     return mlir::failure();
-  expandLibCalls(module);
+  lowerLibCalls(module);
   bool lowered = takeLoweredMark(module);
 
   std::vector<Entry> entries;

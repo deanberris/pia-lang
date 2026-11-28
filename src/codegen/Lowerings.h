@@ -34,10 +34,10 @@ struct Lowering {
   std::vector<std::string> ops; // the ops `text` uses, sorted, no duplicates
 };
 
-// Turns each `pia_lib.call` back into a call of the function it names,
-// whose body is the lowering or the Pia body (ADR 0078, the expand path of
-// `pia-lib-lower`). Substitution at the call comes with step 2.
-void expandLibCalls(mlir::ModuleOp module);
+// `pia-lib-lower` (ADR 0078): replaces each `pia_lib.call` with its rule's
+// MLIR when the function it names was lowered, and with a call of the
+// function, whose body is the Pia body, otherwise.
+void lowerLibCalls(mlir::ModuleOp module);
 
 // Loads the dialects a lowering's MLIR may use: linalg, tensor,
 // bufferization, transform and affine, besides those lowerToCore produces.
