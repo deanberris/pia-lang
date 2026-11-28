@@ -158,8 +158,8 @@ std::vector<uint32_t> contractEnds(const std::vector<const Node *> &cs,
 std::string erasedSource(const std::string &cname, const Node &concept,
                          const std::string &box, Text &text,
                          std::map<std::string, std::string> &whyNot,
-                         const std::vector<std::string> *closed,
-                         int words, std::map<std::string, BoxOp> &ops,
+                         const std::vector<std::string> *closed, int words,
+                         std::map<std::string, BoxOp> &ops,
                          syntax::Diagnostics &diags) {
   const std::string m = mangle(cname);
   const std::string theory = "erased_" + m;
@@ -304,7 +304,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   // descriptor's entries.
   std::vector<const Requirement *> callable;
   for (const Requirement &q : reqs)
-    if (q.why.empty()) callable.push_back(&q);
+    if (q.why.empty())
+      callable.push_back(&q);
   for (const Requirement &q : reqs) {
     std::string recv;
     for (const Param &p : q.params)
@@ -338,8 +339,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
     // justifies it. Before the widened types are known, a stand-in.
     const std::string call = theory + "_call_" + q.name;
     src += "let " + call + params(q, boxType) + " : " + q.result +
-           requires(onSelf) + "\n  ensures result = " + theory + "." +
-           q.name + "_of" + args(q, self) + "\n= abort ()\n\n";
+           requires(onSelf) + "\n  ensures result = " + theory + "." + q.name +
+           "_of" + args(q, self) + "\n= abort ()\n\n";
     if (closed && !closed->empty()) {
       BoxOp op;
       op.kind = BoxOp::Call;
@@ -357,8 +358,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
           ps += " (" + (p.receiver ? self : p.name) + " : " +
                 (p.receiver ? t : p.type) + ")";
         src += "let " + theory + "_thunk_" + q.name + "_" + t + ps + " : " +
-               q.result + requires(onValue) + "\n= " + q.name +
-               args(q, self) + "\n\n";
+               q.result + requires(onValue) + "\n= " + q.name + args(q, self) +
+               "\n\n";
       }
     }
     std::map<std::string, std::string> onBox = outside;
@@ -387,8 +388,8 @@ std::string erasedSource(const std::string &cname, const Node &concept,
       for (const Requirement *q : callable)
         op.thunks.push_back(theory + "_thunk_" + q->name + "_" + t);
       ops[pack] = op;
-      src += "let " + pack + " (v : " + t + ") : " + boxType +
-             "\n= abort ()\n\n";
+      src +=
+          "let " + pack + " (v : " + t + ") : " + boxType + "\n= abort ()\n\n";
       src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
              "\n= " + theory + "_check b;\n  " + pack + " b.slot.[0]\n\n";
     }
@@ -449,15 +450,15 @@ std::string boxUncallable(const Node &item) {
 }
 
 BoxOp boxOp(const Node &item) {
-  if (item.flags.find("box_op") == std::string::npos) return {};
+  if (item.flags.find("box_op") == std::string::npos)
+    return {};
   auto it = boxOps().find(item.text);
   return it == boxOps().end() ? BoxOp{} : it->second;
 }
 
 void expandErasedBoxes(
     Node &program, std::string_view source, syntax::Diagnostics &diags,
-    const std::map<std::string, std::vector<std::string>> *widened,
-    int words) {
+    const std::map<std::string, std::vector<std::string>> *widened, int words) {
   std::set<std::string> unsized = unsizedTypes(program);
   std::map<std::string, const Node *> cs = concepts(program);
   std::set<std::string> used;

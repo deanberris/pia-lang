@@ -1019,7 +1019,8 @@ struct EmbedLowering : mlir::OpConversionPattern<EmbedOp> {
 // The bytes a field of machine type `t` takes in an object, which is also
 // its alignment; 0 for a type an object cannot hold inline.
 int64_t boxFieldBytes(Type t) {
-  if (!t.isIntOrFloat()) return 0;
+  if (!t.isIntOrFloat())
+    return 0;
   unsigned bits = t.getIntOrFloatBitWidth();
   int64_t bytes = llvm::PowerOf2Ceil(std::max(1u, (bits + 7) / 8));
   return bytes <= 8 ? bytes : 0;
@@ -1076,8 +1077,7 @@ struct BoxPackLowering : mlir::OpConversionPattern<BoxPackOp> {
     int64_t room = (words - 1) * 8;
     if (size > room)
       return op.emitError()
-             << "this object takes " << size << " bytes, more than the "
-             << room
+             << "this object takes " << size << " bytes, more than the " << room
              << " a box's cache line holds inline; a larger object needs "
                 "a block through the box's lease, which is not built yet "
                 "(ADR 0046)";
@@ -1108,12 +1108,11 @@ struct BoxPackLowering : mlir::OpConversionPattern<BoxPackOp> {
     Value desc = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
     make<mlir::LLVM::StoreOp>(rw, loc, desc, slot);
     for (auto [v, off] : llvm::zip_equal(adaptor.getObject(), offsets))
-      make<mlir::LLVM::StoreOp>(rw, loc, v,
-                                bytesAfter(rw, loc, slot, 8 + off));
+      make<mlir::LLVM::StoreOp>(rw, loc, v, bytesAfter(rw, loc, slot, 8 + off));
     llvm::SmallVector<Value> out;
     for (int64_t w = 0; w < words; ++w)
-      out.push_back(make<mlir::LLVM::LoadOp>(
-          rw, loc, i64, bytesAfter(rw, loc, slot, w * 8)));
+      out.push_back(make<mlir::LLVM::LoadOp>(rw, loc, i64,
+                                             bytesAfter(rw, loc, slot, w * 8)));
     rw.replaceOp(op, out);
     return mlir::success();
   }
@@ -1150,7 +1149,8 @@ struct BoxCallLowering : mlir::OpConversionPattern<BoxCallOp> {
     // The size, the alignment and the drop come first.
     Value fn = make<mlir::LLVM::LoadOp>(
         rw, loc, ptr,
-        bytesAfter(rw, loc, desc, 8 * (3 + static_cast<int64_t>(op.getEntry()))));
+        bytesAfter(rw, loc, desc,
+                   8 * (3 + static_cast<int64_t>(op.getEntry()))));
     llvm::SmallVector<Type> params{ptr};
     llvm::SmallVector<Value> operands{fn, bytesAfter(rw, loc, slot, 8)};
     for (Value a : args.drop_front(words)) {
@@ -2259,7 +2259,8 @@ static LogicalResult addBoxEntries(mlir::ModuleOp module) {
   auto ptr = mlir::LLVM::LLVMPointerType::get(module.getContext());
   llvm::SmallVector<mlir::LLVM::GlobalOp> descriptors;
   for (auto g : module.getOps<mlir::LLVM::GlobalOp>())
-    if (g->hasAttr("pia.box_thunks")) descriptors.push_back(g);
+    if (g->hasAttr("pia.box_thunks"))
+      descriptors.push_back(g);
   for (mlir::LLVM::GlobalOp g : descriptors) {
     auto thunks = g->getAttrOfType<mlir::ArrayAttr>("pia.box_thunks");
     auto leaves = g->getAttrOfType<mlir::ArrayAttr>("pia.box_leaves");
@@ -2274,13 +2275,14 @@ static LogicalResult addBoxEntries(mlir::ModuleOp module) {
       unsigned n = leaves.size();
       bool same = ft.getNumInputs() >= n;
       for (unsigned i = 0; same && i < n; ++i)
-        same = ft.getInput(i) ==
-               mlir::cast<mlir::TypeAttr>(leaves[i]).getValue();
+        same =
+            ft.getInput(i) == mlir::cast<mlir::TypeAttr>(leaves[i]).getValue();
       if (!same)
         return g.emitError() << "the box's thunk '" << name
                              << "' does not take the object's fields";
       llvm::SmallVector<Type> inputs{ptr};
-      for (Type a : ft.getInputs().drop_front(n)) inputs.push_back(a);
+      for (Type a : ft.getInputs().drop_front(n))
+        inputs.push_back(a);
       b.setInsertionPointToEnd(module.getBody());
       auto entry = make<mlir::func::FuncOp>(
           b, loc, (g.getSymName() + "$" + llvm::Twine(k)).str(),
@@ -2311,7 +2313,8 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
   auto i64 = b.getI64Type();
   for (auto g : module.getOps<mlir::LLVM::GlobalOp>()) {
     auto thunks = g->getAttrOfType<mlir::ArrayAttr>("pia.box_thunks");
-    if (!thunks) continue;
+    if (!thunks)
+      continue;
     Location loc = g.getLoc();
     Block *init = b.createBlock(&g.getInitializerRegion());
     b.setInsertionPointToStart(init);
@@ -2319,7 +2322,8 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
     auto word = [&](llvm::StringRef attr) -> Value {
       return make<mlir::LLVM::ConstantOp>(
           b, loc, i64,
-          b.getI64IntegerAttr(g->getAttrOfType<mlir::IntegerAttr>(attr).getInt()));
+          b.getI64IntegerAttr(
+              g->getAttrOfType<mlir::IntegerAttr>(attr).getInt()));
     };
     v = make<mlir::LLVM::InsertValueOp>(b, loc, v, word("pia.box_size"),
                                         llvm::ArrayRef<int64_t>{0});
@@ -2336,9 +2340,9 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
     }
     make<mlir::LLVM::ReturnOp>(b, loc, v);
     g.setLinkage(mlir::LLVM::Linkage::Internal);
-    for (llvm::StringRef a : {"pia.box_thunks", "pia.box_leaves",
-                              "pia.box_offsets", "pia.box_size",
-                              "pia.box_align"})
+    for (llvm::StringRef a :
+         {"pia.box_thunks", "pia.box_leaves", "pia.box_offsets", "pia.box_size",
+          "pia.box_align"})
       g->removeAttr(a);
   }
 }
@@ -2519,22 +2523,22 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<
-      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
-      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
-      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
-      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
-      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
-      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
-      AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
-      RecMakeLowering, RecTagLowering, RecPayloadLowering,
-      FunctionConstantLowering, CallIndirectLowering, BoxPackLowering,
-      BoxCallLowering>(types, ctx);
+  patterns
+      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
+           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
+           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
+           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
+           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering,
+           AtAddressLowering, AddressLowering, AbortLowering,
+           ConstArrayLowering, EmbedLowering, ForeignLowering, RecMakeLowering,
+           RecTagLowering, RecPayloadLowering, FunctionConstantLowering,
+           CallIndirectLowering, BoxPackLowering, BoxCallLowering>(types, ctx);
   // Floats and integers (M11).
   patterns.add<IntToFloatLowering, FloatToIntLowering,
                BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,

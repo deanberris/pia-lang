@@ -58,10 +58,10 @@ void expandErasedBoxes(
 // `pia.box_pack` (pack) or a `pia.box_call` (call), else neither.
 struct BoxOp {
   enum Kind { None, Pack, Call } kind = None;
-  std::string descriptor;           // Pack: the descriptor's symbol
-  std::vector<std::string> thunks;  // Pack: one per callable requirement
-  int entry = 0;                    // Call: which requirement
-  int words = 0;                    // Call: the box's words
+  std::string descriptor;          // Pack: the descriptor's symbol
+  std::vector<std::string> thunks; // Pack: one per callable requirement
+  int entry = 0;                   // Call: which requirement
+  int words = 0;                   // Call: the box's words
 };
 BoxOp boxOp(const syntax::Node &item);
 

@@ -1556,9 +1556,9 @@ class Gen {
       return;
     BoxOp box = boxOp(item);
     R body = box.kind != BoxOp::None ? genBoxOp(bodyNode, box, sig, entry)
-             : isExtern ? genForeign(bodyNode, foreign, sig, entry)
-             : isSpec   ? genContractExpr(bodyNode, sig.result)
-                        : genExpr(*bodyPtr, sig.result);
+             : isExtern              ? genForeign(bodyNode, foreign, sig, entry)
+             : isSpec                ? genContractExpr(bodyNode, sig.result)
+                                     : genExpr(*bodyPtr, sig.result);
     spread_.reset();
     if (!body) return;
     if (!isSpec && !ghost_) {
@@ -10637,7 +10637,8 @@ class Gen {
   R genBoxOp(const Node &body, const BoxOp &box, const sema::FuncSig &sig,
              Block *entry) {
     llvm::SmallVector<Type> results;
-    if (!isUnit(sig.result)) results.push_back(sig.result);
+    if (!isUnit(sig.result))
+      results.push_back(sig.result);
     llvm::SmallVector<Value> args(entry->getArguments().begin(),
                                   entry->getArguments().end());
     mlir::Operation *op;
@@ -10650,12 +10651,13 @@ class Gen {
                              b_.getArrayAttr(thunks), args)
                .getOperation();
     } else {
-      op = create<BoxCallOp>(loc(body), results,
-                             b_.getI64IntegerAttr(box.entry),
-                             b_.getI64IntegerAttr(box.words), args)
-               .getOperation();
+      op =
+          create<BoxCallOp>(loc(body), results, b_.getI64IntegerAttr(box.entry),
+                            b_.getI64IntegerAttr(box.words), args)
+              .getOperation();
     }
-    if (results.empty()) return unit();
+    if (results.empty())
+      return unit();
     return TV{op->getResult(0), sig.result};
   }
 
