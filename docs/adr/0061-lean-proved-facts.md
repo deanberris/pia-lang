@@ -198,6 +198,8 @@ Cost in contracts ([ADR 0062](0062-cost-bounds-in-contracts.md)) needs no Lean a
 
 **Step 3, fixed arrays and spec buffers, as built (2026-11-28).** A fixed array `[t; n]` is a `Slice' t` too, with `xs.len = n` as its length's hypothesis, which the guard tests as well. A spec buffer ([ADR 0058](0058-spec-buffers.md)) is a fixed array, and a spec function or lemma reads its parameters the same whether they are spec-only or not, so it needs nothing more.
 
+**Step 3, variant types, as built (2026-11-28).** A variant type is a Lean `inductive` deriving `DecidableEq`, a constructor is `t.C`, and `match` is Lean's `match`, which checks exhaustiveness again. A payload of a machine integer or range type is an `Int`, and its range is a hypothesis of each value of the type, of a lemma and of a bound variable, written as a `match` that is the range for the constructors with such a payload and `True` for the rest. It is not in a spec function's guard, for the reason a slice's elements are not. A recursive variant, a nested pattern and a match arm with a contract are still errors; `let rec` sums need the recursive case (tests/lean/variants.pia).
+
 ## Answers to the open questions
 
 Dean answered when he accepted it (2026-11-24):

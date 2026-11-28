@@ -9,12 +9,22 @@ package(default_visibility = ["//visibility:public"])
 exports_files([
     "Fn.pia",
     "Gpu.pia",
+    "Par.pia",
     "Time.pia",
 ])
 
 pia_library(
     name = "fn",
     src = "Fn.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# Pia.Par (ADR 0086): the collectives of a spread, as @collective
+# functions over every iteration's argument; tests/std/par.pia proves them
+# and an importer's spreads.
+pia_library(
+    name = "par",
+    src = "Par.pia",
     target_compatible_with = PIA_TARGETS,
 )
 

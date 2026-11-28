@@ -1,0 +1,73 @@
+(* What @collective and the protocol check of collectives (ADR 0086)
+   reject: a collective under a condition on the loop variable, outside a
+   spread, a value that crosses a collective, a write of a published
+   buffer, a for range that depends on the iteration, a while loop, an
+   argument a collective does not gather that depends on the iteration,
+   and collectives that gather a parameter that is not a slice or take
+   one they could write.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let exchange (b : [u32]) : unit @collective = ()
+
+let total (r : range) (xs : [u32; r]) (k : u32) : u32 @collective(xs) = k
+
+let first_only (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    if i = 0 then exchange a else ();
+    a.[i] <- 0
+  done
+
+let outside (a : [u32]) : unit = exchange a
+
+let crossing (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    let x = a.[i] in
+    exchange a;
+    a.[i] <- x
+  done
+
+let write_published (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    exchange a;
+    a.[i] <- 0
+  done
+
+let ragged (a : borrowed inout mutable [u32]) (k : [u32]) : unit
+  requires len k = len a
+= spread i in 0 .. len a do
+    for t in 0 .. k.[i] do
+      exchange a
+    done
+  done
+
+let looping (a : borrowed inout mutable [u32]) (go : bool) : unit
+= spread i in 0 .. len a do
+    while go do exchange a done
+  done
+
+let varying (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do ys.[i] <- total xs.[i] xs.[i] done
+
+let scalar (x : u32) : u32 @collective(x) = x
+
+let writer (r : range) (xs : [u32; r]) (ys : out mutable [u32]) : unit @collective(xs) = ()
+
+let plain (xs : [u32]) : u32 @collective(xs) = 0
+
+let loose (r : range) : unit = ()
+
+(*
+// CHECK: 17:19: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
+// CHECK: 21:34: error: 'exchange' is a collective (@collective), which every iteration of a spread joins: it can only be called in a 
+// CHECK: 27:14: error: 'x' is computed by each iteration on one side of a collective and used on the other: the code between collecti
+// CHECK: 33:5: error: 'a' was passed to a collective, which published it: every iteration may read any of its cells and none may wri
+// CHECK: 40:7: error: every iteration must reach this call of the collective 'exchange' in the same order, but it is reached only wh
+// CHECK: 46:5: error: a while loop cannot hold a collective yet: use a for loop over a uniform range (ADR 0086)
+// CHECK: 51:53: error: 'total' runs once for every iteration, so this argument must be the same in each, and it depends on the iterat
+// CHECK: 53:40: error: a gathered parameter is an array over a range parameter, '(r : range) (x : [t; r])', which holds every iterati
+// CHECK: 55:72: error: a collective takes no out, inout or mutable parameter: it runs once for every iteration, so what it writes wou
+// CHECK: 57:42: error: a gathered parameter is an array over a range parameter, '(r : range) (xs : [t; r])', which holds every iterat
+// CHECK: 59:1: error: a range parameter is for a collective, which gets the range of the spread that calls it (ADR 0086)
+*)

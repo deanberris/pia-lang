@@ -1,0 +1,81 @@
+(* Collectives in a spread (ADR 0086), compiled and run by
+   collectives_test.c: a stencil over time steps with an exchange between
+   them, which runs as a parallel loop per phase, and sums, minima, maxima
+   and an any over every iteration's argument, each a @collective function
+   that codegen calls once, on the gathered buffer. *)
+module Collectives : Phases
+
+interface Phases @abi(c) = sig
+  let relax : (a : borrowed inout mutable [u32]) -> (b : borrowed inout mutable [u32]) -> (steps : u32) -> unit
+    requires len b = len a && len a <= 1000000
+  let share : (xs : [u32]) -> (ys : out mutable [u64]) -> unit
+    requires len ys = len xs && len xs <= 4294967295
+  let spans : (xs : [i32]) -> (lo : out mutable [i32]) -> (hi : out mutable [i32]) -> unit
+    requires len lo = len xs && len hi = len xs
+  let any_zero : (xs : [u32]) -> (ys : out mutable [u8]) -> unit
+    requires len ys = len xs
+end
+
+let exchange (b : [u32]) : unit @collective = ()
+
+let sum (r : range) (xs : [u32; r]) : u64
+  @collective(xs)
+  requires len xs <= 4'294'967'295
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
+= let s : mutable u64 = 0 in
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). xs.[k] <= s
+    invariant s <= (j - r.lo) << 32
+  do s <- s + xs.[j] done;
+  s
+
+let least (r : range) (xs : [i32; r]) : i32
+  @collective(xs)
+= let m : mutable i32 = max i32 in
+  for j in r.lo .. r.hi do if xs.[j] < m then m <- xs.[j] else () done;
+  m
+
+let most (r : range) (xs : [i32; r]) : i32
+  @collective(xs)
+= let m : mutable i32 = min i32 in
+  for j in r.lo .. r.hi do if xs.[j] > m then m <- xs.[j] else () done;
+  m
+
+let any (r : range) (xs : [bool; r]) : bool
+  @collective(xs)
+= let found : mutable bool = false in
+  for j in r.lo .. r.hi do if xs.[j] then found <- true else () done;
+  found
+
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+= spread i in 0 .. len xs do
+    let total = sum xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+
+let spans (xs : [i32]) (lo : out mutable [i32]) (hi : out mutable [i32]) : unit
+= spread i in 0 .. len xs do
+    let small = least xs.[i] in
+    lo.[i] <- small;
+    let big = most xs.[i] in
+    hi.[i] <- big
+  done
+
+let any_zero (xs : [u32]) (ys : out mutable [u8]) : unit
+= spread i in 0 .. len xs do
+    let z = any (xs.[i] = 0) in
+    ys.[i] <- if z then 1 else 0
+  done

@@ -5,7 +5,7 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS", "PIAC_TARGET_FLAGS")
 # Codegen v0 (M6). The lit tests check the lowering and run on any host.
 lit_tests(
     name = "codegen_tests",
-    srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "box_error_payload.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia"]),
+    srcs = glob(["*.pia"], exclude = ["floats.pia", "saturate.pia", "bits.pia", "bit_counts.pia", "ffi_run.pia", "slices.pia", "consts.pia", "variants.pia", "record_buffers.pia", "arena.pia", "pages.pia", "spec_state.pia", "box_concept.pia", "box_error_payload.pia", "rec_run.pia", "slice_buffers_run.pia", "local_arrays.pia", "spread.pia", "collectives.pia"]),
     tools = [
         "//tools/pia-cert",
         "//tools/pia-opt",
@@ -354,6 +354,26 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# fn_variants.pia, function references in variant payloads (ADR 0071),
+# run against the same steps in C.
+genrule(
+    name = "fn_variants_run_obj",
+    srcs = ["fn_variants.pia"],
+    outs = ["fn_variants_run.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fn_variants_run_test",
+    srcs = [
+        "fn_variants_test.c",
+        ":fn_variants_run_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # box_concept.pia, a box over a concept compiled to a tagged union and
 # called through by a switch on the tag (ADR 0046, step 5).
 genrule(
@@ -448,6 +468,27 @@ cc_test(
     srcs = [
         "spread_test.c",
         ":spread_obj",
+    ],
+    target_compatible_with = PIA_TARGETS,
+    deps = ["@llvm-project//mlir:mlir_async_runtime"],
+)
+
+# collectives.pia (ADR 0086): a spread split into phases at its
+# collectives, each run on MLIR's async runtime.
+genrule(
+    name = "collectives_obj",
+    srcs = ["collectives.pia"],
+    outs = ["collectives.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "collectives_test",
+    srcs = [
+        "collectives_test.c",
+        ":collectives_obj",
     ],
     target_compatible_with = PIA_TARGETS,
     deps = ["@llvm-project//mlir:mlir_async_runtime"],
