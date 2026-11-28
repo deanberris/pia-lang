@@ -1,0 +1,156 @@
+(* Pia.Float.Error: rounding error bounds for f32 reductions (ADR 0038,
+   step 3).
+
+   Each correctly rounded operation is within `eps f32 * |e| + tiny f32`
+   of its exact result `e` (ADR 0038, step 2), so a straight line of them
+   is bounded by the prover alone. A reduction is a loop, and its bound
+   grows with its length: this module gives that bound once, as spec
+   functions for the exact sums and step lemmas that carry the bound
+   through one iteration, so a loop's goals stay the size of one step.
+
+   - rabs x, near x c b: |x| and |x - c| <= b, over reals.
+   - gamma n: the relative error of n roundings in a row, 1.01 (n + 1) eps,
+     which covers Higham's gamma for n + 1 when it is at most 0.01.
+   - sum_r, sum_abs, dot_r, dot_abs: the exact sum and dot product of a
+     prefix, and the same over absolute values.
+   - sum_step, dot_step: one iteration of a sum or a dot product.
+   - sum, dot: the kernels, proved finite and within
+     `gamma n * abs + k n tiny` of the exact result. *)
+module Pia.Float.Error : Error
+
+interface Error = sig
+  let spec rabs : (x : real) -> real
+  let spec near : (x : real) -> (c : real) -> (b : real) -> bool
+  let spec gamma : (n : real) -> real
+  let spec sum_r : (xs : [f32]) -> (n : usize) -> real
+  let spec sum_abs : (xs : [f32]) -> (n : usize) -> real
+  let spec dot_r : (xs : [f32]) -> (ys : [f32]) -> (n : usize) -> real
+  let spec dot_abs : (xs : [f32]) -> (ys : [f32]) -> (n : usize) -> real
+  let lemma mul_bound : (a : real) -> (b : real) -> (ba : real) -> (bb : real) -> unit
+    requires ba >= 0.0 && bb >= 0.0 && near a 0.0 ba && near b 0.0 bb
+    ensures near (a * b) 0.0 (ba * bb)
+  let lemma sum_step : (n : real) -> (i : real) -> (m : real) -> (S : real) -> (A : real) -> (s : real) -> (x : real) -> (r : real) -> (i1 : real) -> (S1 : real) -> (A1 : real) -> unit
+    requires 0.0 <= i && i1 = i + 1.0 && S1 = S + x && A1 = A + rabs x
+    requires m >= 0.0 && i1 <= n && n * m <= 1.0e30 && gamma n <= 0.01
+    requires near S 0.0 A && A <= i * m
+    requires near s S (gamma i * A + 2.0 * i * tiny f32)
+    requires near x 0.0 m
+    requires near r (s + x) (eps f32 * rabs (s + x) + tiny f32)
+    ensures near (s + x) 0.0 2.0e30
+    ensures near S1 0.0 A1 && A1 <= i1 * m
+    ensures near r S1 (gamma i1 * A1 + 2.0 * i1 * tiny f32)
+  let lemma dot_step : (n : real) -> (i : real) -> (m : real) -> (S : real) -> (A : real) -> (s : real) -> (p : real) -> (pa : real) -> (q : real) -> (r : real) -> (i1 : real) -> (S1 : real) -> (A1 : real) -> unit
+    requires 0.0 <= i && i1 = i + 1.0 && S1 = S + p && A1 = A + pa
+    requires m >= 0.0 && i1 <= n && n * m <= 1.0e30 && gamma n <= 0.01
+    requires near S 0.0 A && A <= i * m
+    requires near s S (gamma i * A + 3.0 * i * tiny f32)
+    requires pa >= 0.0 && near p 0.0 pa && pa <= m
+    requires near q p (eps f32 * pa + tiny f32)
+    requires near r (s + q) (eps f32 * rabs (s + q) + tiny f32)
+    ensures near S1 0.0 A1 && A1 <= i1 * m
+    ensures near r S1 (gamma i1 * A1 + 3.0 * i1 * tiny f32)
+  let lemma dot_mag : (n : real) -> (i : real) -> (m : real) -> (S : real) -> (A : real) -> (s : real) -> (p : real) -> (pa : real) -> (q : real) -> unit
+    requires 0.0 <= i && i + 1.0 <= n && m >= 0.0 && n * m <= 1.0e30 && gamma n <= 0.01
+    requires near S 0.0 A && A <= i * m
+    requires near s S (gamma i * A + 3.0 * i * tiny f32)
+    requires pa >= 0.0 && near p 0.0 pa && pa <= m
+    requires near q p (eps f32 * pa + tiny f32)
+    ensures near (s + q) 0.0 2.0e30
+  let sum : (xs : [f32]) -> (m : real) -> f32
+    requires m >= 0.0 && real (len xs) * m <= 1.0e30 && gamma (real (len xs)) <= 0.01
+    requires forall (i in 0..len xs). finite xs.[i] && near (to_real xs.[i]) 0.0 m
+    ensures finite result
+    ensures near (to_real result) (sum_r xs (len xs)) (gamma (real (len xs)) * sum_abs xs (len xs) + 2.0 * real (len xs) * tiny f32)
+    ensures near (sum_r xs (len xs)) 0.0 (sum_abs xs (len xs)) && sum_abs xs (len xs) <= real (len xs) * m
+  let dot : (xs : [f32]) -> (ys : [f32]) -> (bx : real) -> (by : real) -> (m : real) -> f32
+    requires len xs = len ys && bx >= 0.0 && by >= 0.0
+    requires bx * by <= m && real (len xs) * m <= 1.0e30 && gamma (real (len xs)) <= 0.01
+    requires forall (i in 0..len xs). finite xs.[i] && finite ys.[i] && near (to_real xs.[i]) 0.0 bx && near (to_real ys.[i]) 0.0 by
+    ensures finite result
+    ensures near (to_real result) (dot_r xs ys (len xs)) (gamma (real (len xs)) * dot_abs xs ys (len xs) + 3.0 * real (len xs) * tiny f32)
+    ensures near (dot_r xs ys (len xs)) 0.0 (dot_abs xs ys (len xs)) && dot_abs xs ys (len xs) <= real (len xs) * m
+end
+
+let spec rabs (x : real) : real = if x >= 0.0 then x else 0.0 - x
+
+let spec near (x : real) (c : real) (b : real) : bool = x - c <= b && c - x <= b
+
+let spec gamma (n : real) : real = 1.01 * (n + 1.0) * eps f32
+
+let spec sum_r (xs : [f32]) (n : usize) : real
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0.0 else sum_r xs (n - 1) + to_real xs.[n - 1]
+
+let spec sum_abs (xs : [f32]) (n : usize) : real
+  requires n <= len xs
+  decreases n
+= if n = 0 then 0.0 else sum_abs xs (n - 1) + rabs (to_real xs.[n - 1])
+
+let spec dot_r (xs : [f32]) (ys : [f32]) (n : usize) : real
+  requires n <= len xs && n <= len ys
+  decreases n
+= if n = 0 then 0.0 else dot_r xs ys (n - 1) + to_real xs.[n - 1] * to_real ys.[n - 1]
+
+let spec dot_abs (xs : [f32]) (ys : [f32]) (n : usize) : real
+  requires n <= len xs && n <= len ys
+  decreases n
+= if n = 0 then 0.0 else dot_abs xs ys (n - 1) + rabs (to_real xs.[n - 1] * to_real ys.[n - 1])
+
+let lemma mul_bound (a : real) (b : real) (ba : real) (bb : real) : unit
+= ()
+
+(* One step of a sum: s is within gamma i * A of the exact S, and
+   r = fl(s + x). The step's relative error eps (1 + gamma i) fits in
+   gamma's 1.01 eps per step because gamma i <= 0.01. *)
+let lemma sum_step (n : real) (i : real) (m : real) (S : real) (A : real) (s : real) (x : real) (r : real) (i1 : real) (S1 : real) (A1 : real) : unit
+= ()
+
+(* Before a dot product's sum is rounded, its exact value is far from
+   overflowing, so the rounding is finite. *)
+let lemma dot_mag (n : real) (i : real) (m : real) (S : real) (A : real) (s : real) (p : real) (pa : real) (q : real) : unit
+= ()
+
+(* One step of a dot product: q = fl(p) rounds the exact product p, and
+   r = fl(s + q) the sum, two roundings that gamma's step covers. *)
+let lemma dot_step (n : real) (i : real) (m : real) (S : real) (A : real) (s : real) (p : real) (pa : real) (q : real) (r : real) (i1 : real) (S1 : real) (A1 : real) : unit
+= ()
+
+(* The sum of xs, each within m of 0, rounded once per element in order. *)
+let sum (xs : [f32]) (m : real) : f32
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs
+    invariant finite s
+    invariant near (sum_r xs i) 0.0 (sum_abs xs i) && sum_abs xs i <= real i * m
+    invariant near (to_real s) (sum_r xs i) (gamma (real i) * sum_abs xs i + 2.0 * real i * tiny f32)
+  do
+    let x = xs.[i] in
+    let r = s + x in
+    assert real i + 1.0 <= real (len xs);
+    sum_step (real (len xs)) (real i) m (sum_r xs i) (sum_abs xs i) (to_real s) (to_real x) (to_real r) (real (i + 1)) (sum_r xs (i + 1)) (sum_abs xs (i + 1));
+    s <- r
+  done;
+  s
+
+(* The dot product of xs and ys, each product within m of 0: two
+   roundings per element, a product and a sum, in order. *)
+let dot (xs : [f32]) (ys : [f32]) (bx : real) (by : real) (m : real) : f32
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs
+    invariant finite s
+    invariant near (dot_r xs ys i) 0.0 (dot_abs xs ys i) && dot_abs xs ys i <= real i * m
+    invariant near (to_real s) (dot_r xs ys i) (gamma (real i) * dot_abs xs ys i + 3.0 * real i * tiny f32)
+  do
+    let x = xs.[i] in
+    let y = ys.[i] in
+    let q = x * y in
+    let r = s + q in
+    mul_bound (to_real x) (to_real y) bx by;
+    assert real i + 1.0 <= real (len xs);
+    dot_mag (real (len xs)) (real i) m (dot_r xs ys i) (dot_abs xs ys i) (to_real s) (to_real x * to_real y) (rabs (to_real x * to_real y)) (to_real q);
+    dot_step (real (len xs)) (real i) m (dot_r xs ys i) (dot_abs xs ys i) (to_real s) (to_real x * to_real y) (rabs (to_real x * to_real y)) (to_real q) (to_real r) (real (i + 1)) (dot_r xs ys (i + 1)) (dot_abs xs ys (i + 1));
+    s <- r
+  done;
+  s

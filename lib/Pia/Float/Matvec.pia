@@ -1,0 +1,63 @@
+(* Pia.Float.Matvec: a matrix-vector product with each output's rounding
+   error bounded (ADR 0067, K1).
+
+   `matvec y w x bw bx` writes into y[r] the dot product of x with row r
+   of the row-major matrix w, which has len y rows of len x columns, and
+   proves each output finite and within Pia.Float.Error.dot's bound of
+   the exact dot product of that row. bw and bx bound the magnitudes of
+   w's and x's elements.
+
+   - row_ok w x v r: v is finite and within gamma (len x) of the exact dot
+     product of x with row r of w. It is opaque, so a caller's goals see
+     it as one fact per row; `with Pia.Float.Matvec.row_ok` unfolds it. *)
+module Pia.Float.Matvec : Matvec
+
+import Pia.Float.Error.Error
+
+interface Matvec = sig
+  let spec row_ok : (w : [f32]) -> (x : [f32]) -> (v : f32) -> (r : usize) -> bool
+  let matvec : (y : borrowed inout mutable [f32]) -> (w : [f32]) -> (x : [f32]) -> (bw : real) -> (bx : real) -> unit
+    requires len x <= 65536 && bw >= 0.0 && bx >= 0.0
+    requires len y * len x = len w
+    requires real (len x) * (bw * bx) <= 1.0e30
+    requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 bw
+    requires forall (i in 0..len x). finite x.[i] && Pia.Float.Error.near (to_real x.[i]) 0.0 bx
+    ensures forall (r in 0..len y). row_ok w x y.[r] r
+end
+
+(* Row r of a rows-by-cols matrix of n elements fits in it, as machine
+   integers for the slice and as integers for row_ok's guard. *)
+let lemma row_fits (rows : usize) (cols : usize) (n : usize) (r : usize) : unit
+  requires rows * cols = n && r < rows
+  ensures r * cols <= n - cols && r * cols + cols <= n
+  ensures int r * int cols + int cols <= int n
+= ()
+
+(* Guarded by integers rather than requiring the row to fit, so it is
+   total, and keyed by the row index rather than its slice, so the loop's
+   invariant names no product. *)
+let spec row_ok (w : [f32]) (x : [f32]) (v : f32) (r : usize) : bool @opaque
+= if int r * int (len x) + int (len x) <= int (len w) then
+    finite v && Pia.Float.Error.near (to_real v) (Pia.Float.Error.dot_r (w.[r * len x .. r * len x + len x]) x (len x)) (Pia.Float.Error.gamma (real (len x)) * Pia.Float.Error.dot_abs (w.[r * len x .. r * len x + len x]) x (len x) + 3.0 * real (len x) * tiny f32)
+  else false
+
+(* One output: the dot product of x with row r. Its magnitude bound is
+   dot's own, a product of reals, which nlsat decides; the goals stay
+   small since the loop calls this once per row. *)
+let row_value (w : [f32]) (x : [f32]) (bw : real) (bx : real) (rows : usize) (r : usize) : f32 @allow(nonlinear_contract)
+  requires rows * len x = len w && r < rows && len x <= 65536 && bw >= 0.0 && bx >= 0.0
+  requires real (len x) * (bw * bx) <= 1.0e30
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 bw
+  requires forall (i in 0..len x). finite x.[i] && Pia.Float.Error.near (to_real x.[i]) 0.0 bx
+  ensures row_ok w x result r
+  with row_ok
+= row_fits rows (len x) (len w) r;
+  Pia.Float.Error.dot (w.[r * len x .. r * len x + len x]) x bw bx (bw * bx)
+
+let matvec (y : borrowed inout mutable [f32]) (w : [f32]) (x : [f32]) (bw : real) (bx : real) : unit
+=
+  for r in 0..len y
+    invariant forall (q in 0..r). row_ok w x y.[q] q
+  do
+    y.[r] <- row_value w x bw bx (len y) r
+  done

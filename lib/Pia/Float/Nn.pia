@@ -1,0 +1,228 @@
+(* Pia.Float.Nn: the activation and normalisation kernels of a small
+   transformer (ADR 0067, K2), proved against Pia.Float.Error's bounds.
+
+   - softmax y e x: y is x's softmax, every output finite and in [0, 1],
+     and the outputs sum to within 5 gamma n of 1. e is a scratch buffer
+     of x's length, which holds the exponentials. It subtracts the
+     maximum first, so exp is only taken of x <= 0 and the largest term
+     is at least 0.25, and the sum is Pia.Float.Error.sum.
+   - sigmoid x and silu x = x * sigmoid x: finite, sigmoid in [0, 1] and
+     silu no larger in magnitude than x. sigmoid takes exp of -|x|, so it
+     never overflows.
+   - rmsnorm y x w bx bw: y = w * x / sqrt (mean (x^2) + 1e-5), every
+     output finite and within 335 bx bw + 1 of 0, for |x| <= bx and
+     |w| <= bw. The normalisation itself is not proved: Pia.Math.sqrt's
+     contract is over bits, so the root is held to [0.003, 2e19], which a
+     correct root of a number at least 1e-5 always is. *)
+module Pia.Float.Nn : Nn
+
+import Pia.Float.Error.Error
+import Pia.Float.Exp.Exp
+import Pia.Math.Sqrt
+
+interface Nn = sig
+  let softmax : (y : borrowed inout mutable [f32]) -> (e : borrowed inout mutable [f32]) -> (x : [f32]) -> unit
+    requires len y = len x && len e = len x && 0 < len x && len x <= 65536
+    requires forall (i in 0..len x). finite x.[i] && Pia.Float.Error.near (to_real x.[i]) 0.0 1.0e30
+    ensures forall (i in 0..len y). finite y.[i] && 0.0 <= to_real y.[i] && to_real y.[i] <= 1.0
+    ensures Pia.Float.Error.near (Pia.Float.Error.sum_r y (len y)) 1.0 (5.0 * Pia.Float.Error.gamma (real (len y)))
+  let sigmoid : (x : f32) -> f32
+    requires finite x
+    ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
+  let silu : (x : f32) -> f32
+    requires finite x && Pia.Float.Error.near (to_real x) 0.0 1.0e30
+    ensures finite result
+    ensures Pia.Float.Error.near (to_real result) 0.0 (Pia.Float.Error.rabs (to_real x) * (1.0 + eps f32) + tiny f32)
+  let rmsnorm : (y : borrowed inout mutable [f32]) -> (x : [f32]) -> (w : [f32]) -> (bx : real) -> (bw : real) -> unit
+    requires len y = len x && len w = len x && 0 < len x && len x <= 65536
+    requires bx >= 0.0 && bw >= 0.0 && bx <= 1.0e12 && bw <= 1.0e12
+    requires forall (i in 0..len x). finite x.[i] && Pia.Float.Error.near (to_real x.[i]) 0.0 bx
+    requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 bw
+    ensures forall (i in 0..len y). finite y.[i] && Pia.Float.Error.near (to_real y.[i]) 0.0 (335.0 * bx * bw + 1.0)
+end
+
+(* Over nonnegative elements the sum is the sum of absolute values. *)
+let lemma abs_nonneg (xs : [f32]) (n : usize) : unit
+  requires n <= len xs
+  requires forall (i in 0..n). 0.0 <= to_real xs.[i]
+  ensures Pia.Float.Error.sum_abs xs n = Pia.Float.Error.sum_r xs n
+  decreases n
+= if n > 0 then abs_nonneg xs (n - 1) else ()
+
+(* A sum of nonnegative elements is nonnegative. *)
+let lemma sum_nonneg (xs : [f32]) (n : usize) : unit
+  requires n <= len xs
+  requires forall (i in 0..n). 0.0 <= to_real xs.[i]
+  ensures 0.0 <= Pia.Float.Error.sum_r xs n
+  decreases n
+= if n > 0 then sum_nonneg xs (n - 1) else ()
+
+(* A sum of nonnegative elements is at least each of them. *)
+let lemma sum_ge (xs : [f32]) (n : usize) (j : usize) : unit
+  requires n <= len xs && j < n && n <= 65536
+  requires forall (i in 0..n). 0.0 <= to_real xs.[i]
+  ensures to_real xs.[j] <= Pia.Float.Error.sum_r xs n
+  decreases n
+= if n > j + 1 then sum_ge xs (n - 1) j else sum_nonneg xs j
+
+
+(* y is e / c rounded with relative error k, and t of absolute error. *)
+let spec qnear (y : real) (e : real) (c : real) (k : real) (t : real) : bool @opaque
+= if c > 0.0 then Pia.Float.Error.near y (e / c) (k * (e / c) + t) else false
+
+(* One more term of a sum of quotients. *)
+let lemma qstep (s : real) (a : real) (y : real) (e : real) (c : real) (k : real) (t : real) (i : real) : unit
+  requires k >= 0.0 && t >= 0.0 && i >= 0.0 && e >= 0.0
+  requires qnear s a c k (i * t) && qnear y e c k t
+  ensures qnear (s + y) (a + e) c k ((i + 1.0) * t)
+  with qnear
+= ()
+
+(* real of a bounded usize steps by 1. *)
+let lemma real_pred (n : usize) : unit
+  requires n > 0 && n <= 65536
+  ensures real (n - 1) + 1.0 = real n
+= ()
+
+(* The empty sums. *)
+let lemma qzero (c : real) (k : real) : unit
+  requires c > 0.0 && k >= 0.0
+  ensures qnear 0.0 0.0 c k (0.0 * tiny f32)
+  with qnear
+= ()
+
+(* qstep's sums are the next prefix's. *)
+let lemma unfold_ok (ys : [f32]) (es : [f32]) (c : real) (k : real) (n : usize) : unit
+  requires n <= len ys && n <= len es && n <= 65536 && n > 0 && c > 0.0 && k >= 0.0
+  requires qnear (Pia.Float.Error.sum_r ys (n - 1) + to_real ys.[n - 1]) (Pia.Float.Error.sum_r es (n - 1) + to_real es.[n - 1]) c k ((real (n - 1) + 1.0) * tiny f32)
+  ensures qnear (Pia.Float.Error.sum_r ys n) (Pia.Float.Error.sum_r es n) c k (real n * tiny f32)
+= real_pred n
+
+(* Each y within k of e / c makes the sum of the y within k of the sum
+   of the e over c: the outputs sum to the exponentials' sum over s. *)
+let lemma quot_sum (ys : [f32]) (es : [f32]) (c : real) (k : real) (n : usize) : unit
+  requires n <= len ys && n <= len es && n <= 65536 && c > 0.0 && k >= 0.0
+  requires forall (i in 0..n). 0.0 <= to_real es.[i] && qnear (to_real ys.[i]) (to_real es.[i]) c k (tiny f32)
+  ensures qnear (Pia.Float.Error.sum_r ys n) (Pia.Float.Error.sum_r es n) c k (real n * tiny f32)
+  decreases n
+= if n > 0 then (
+    quot_sum ys es c k (n - 1);
+    qstep (Pia.Float.Error.sum_r ys (n - 1)) (Pia.Float.Error.sum_r es (n - 1)) (to_real ys.[n - 1]) (to_real es.[n - 1]) c k (tiny f32) (real (n - 1));
+    unfold_ok ys es c k n)
+  else qzero c k
+
+
+(* s within k of a / c, and c within g of a, puts s within 5 g of 1. *)
+let lemma total (s : real) (a : real) (c : real) (u : real) (g : real) (k : real) (t : real) : unit
+  requires a >= 0.25 && 0.0000001 <= g && g <= 0.01 && 0.0 <= t && t <= 1.0e-30
+  requires c > 0.0 && u * c = a
+  requires Pia.Float.Error.near c a (g * a + t)
+  requires k = 3.0 * g
+  requires Pia.Float.Error.near s u (k * u + t)
+  ensures Pia.Float.Error.near s 1.0 (5.0 * g)
+= ()
+
+(* One probability e / s, held to [0, 1]; the hold moves it by less than
+   2 g, since e is at most the sum s rounds. *)
+let prob (e : f32) (s : f32) (a : real) (g : real) : f32
+  requires finite e && finite s && 0.0 <= to_real e && to_real e <= a
+  requires a >= 0.25 && 0.0000001 <= g && g <= 0.01
+  requires Pia.Float.Error.near (to_real s) a (g * a + 1.0e-30)
+  ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
+  ensures qnear (to_real result) (to_real e) (to_real s) (3.0 * g) (tiny f32)
+  with qnear
+= let q = e / s in if q > 1.0 then 1.0 else if q < 0.0 then 0.0 else q
+
+(* a / c times c. *)
+let lemma div_mul (a : real) (c : real) : unit
+  requires c > 0.0
+  ensures (a / c) * c = a
+= ()
+
+(* x - m for x <= m, held at or below 0, and within -0.34 of 0 when x is m. *)
+let shift (x : f32) (m : f32) : f32
+  requires finite x && finite m && to_real x <= to_real m
+  requires Pia.Float.Error.near (to_real x) 0.0 1.0e30 && Pia.Float.Error.near (to_real m) 0.0 1.0e30
+  ensures finite result && result <= 0.0
+  ensures to_real x = to_real m ==> -0.34 <= to_real result
+= let d = x - m in if d > 0.0 then 0.0 else d
+
+(* Three passes: the maximum's index j, the exponentials of x - x.[j]
+   into e, whose j-th is at least 0.25, then each e over their sum. *)
+let softmax (y : borrowed inout mutable [f32]) (e : borrowed inout mutable [f32]) (x : [f32]) : unit
+  with qnear
+=
+  let n = len x in
+  let j : mutable usize = 0 in
+  for i in 1..n
+    invariant j < i && forall (q in 0..i). to_real x.[q] <= to_real x.[j]
+  do
+    if x.[i] > x.[j] then j <- i else ()
+  done;
+  let m = x.[j] in
+  for i in 0..n
+    invariant forall (q in 0..i). finite e.[q] && 0.0 <= to_real e.[q] && to_real e.[q] <= 1.0
+    invariant j < i ==> 0.25 <= to_real e.[j]
+  do
+    e.[i] <- Pia.Float.Exp.exp (shift x.[i] m)
+  done;
+  let s = Pia.Float.Error.sum e 1.0 in
+  abs_nonneg e n;
+  sum_ge e n j;
+  for i in 0..n
+    invariant forall (q in 0..i). finite y.[q] && 0.0 <= to_real y.[q] && to_real y.[q] <= 1.0 && qnear (to_real y.[q]) (to_real e.[q]) (to_real s) (3.0 * Pia.Float.Error.gamma (real n)) (tiny f32)
+  do
+    sum_ge e n i;
+    y.[i] <- prob e.[i] s (Pia.Float.Error.sum_r e n) (Pia.Float.Error.gamma (real n))
+  done;
+  quot_sum y e (to_real s) (3.0 * Pia.Float.Error.gamma (real n)) n;
+  div_mul (Pia.Float.Error.sum_r e n) (to_real s);
+  total (Pia.Float.Error.sum_r y n) (Pia.Float.Error.sum_r e n) (to_real s) (Pia.Float.Error.sum_r e n / to_real s) (Pia.Float.Error.gamma (real n)) (3.0 * Pia.Float.Error.gamma (real n)) 1.0e-30
+
+
+(* The logistic function, from exp of -|x| so it never overflows. *)
+let sigmoid (x : f32) : f32
+= if x >= 0.0 then (
+    let t = Pia.Float.Exp.exp (-x) in
+    let s = 1.0 / (1.0 + t) in
+    if s > 1.0 then 1.0 else if s < 0.0 then 0.0 else s)
+  else (
+    let t = Pia.Float.Exp.exp x in
+    let s = t / (1.0 + t) in
+    if s > 1.0 then 1.0 else if s < 0.0 then 0.0 else s)
+
+(* x * sigmoid x, no larger in magnitude than x. *)
+let silu (x : f32) : f32
+= x * sigmoid x
+
+
+(* 1 / sqrt (ss / n + 1e-5), held to [1/2e19, 1/0.003]: the root of a
+   number at least 1e-5 is at least 0.00316, so the hold changes nothing
+   when sqrt is correct, and it keeps the proof off sqrt's bits. *)
+let inv_rms (ss : f32) (n : int{1..65536}) : f32
+  requires finite ss
+  ensures finite result && 0.0 < to_real result && to_real result <= 334.0
+= let v0 = ss / f32 n in
+  let v = (if v0 > 0.0 then v0 else 0.0) + 0.00001 in
+  let s = Pia.Math.sqrt v in
+  let s1 = if s >= 0.003 && s <= 2.0e19 then s else 0.003 in
+  1.0 / s1
+
+(* One output, w * (x * inv). *)
+let scaled (w : f32) (x : f32) (inv : f32) (bx : real) (bw : real) : f32
+  requires bx >= 0.0 && bw >= 0.0 && bx <= 1.0e12 && bw <= 1.0e12
+  requires finite x && Pia.Float.Error.near (to_real x) 0.0 bx
+  requires finite w && Pia.Float.Error.near (to_real w) 0.0 bw
+  requires finite inv && 0.0 < to_real inv && to_real inv <= 334.0
+  ensures finite result && Pia.Float.Error.near (to_real result) 0.0 (335.0 * bx * bw + 1.0)
+= w * (x * inv)
+
+let rmsnorm (y : borrowed inout mutable [f32]) (x : [f32]) (w : [f32]) (bx : real) (bw : real) : unit
+=
+  let ss = Pia.Float.Error.dot x x bx bx (bx * bx) in
+  let inv = inv_rms ss (len x) in
+  for i in 0..len y
+    invariant forall (q in 0..i). finite y.[q] && Pia.Float.Error.near (to_real y.[q]) 0.0 (335.0 * bx * bw + 1.0)
+  do
+    y.[i] <- scaled w.[i] x.[i] inv bx bw
+  done

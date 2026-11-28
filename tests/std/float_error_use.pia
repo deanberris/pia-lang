@@ -1,0 +1,83 @@
+(* Pia.Float.Error's kernels through its interface (ADR 0038, step 3): a
+   caller states its inputs' bounds, and gets the kernel's result finite
+   and within a relative error it can weaken to its own. A neuron of a
+   small model, 4096 weights within 1 and activations within 10, is
+   within 0.001 of its exact dot product, but not within 1e-6.
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Error.pia
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Matvec.pia
+// RUN: not piac --verify --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+import Pia.Float.Error.Error
+import Pia.Float.Matvec.Matvec
+
+(* The dot product of the weights and the activations.
+// CHECK: float_error_use.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_error_use.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let neuron (w : [f32]) (x : [f32]) : f32
+  requires len w = len x && len w <= 4096
+  requires forall (i in 0..len w). finite w.[i] && finite x.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0 && Pia.Float.Error.near (to_real x.[i]) 0.0 10.0
+  ensures finite result
+  ensures Pia.Float.Error.near (to_real result) (Pia.Float.Error.dot_r w x (len w)) (0.001 * Pia.Float.Error.dot_abs w x (len w) + 1.0e-40)
+= Pia.Float.Error.dot w x 1.0 10.0 10.0
+
+(* gamma 4096 is about 2.5e-4, so a tighter bound fails.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let tight (w : [f32]) (x : [f32]) : f32
+  requires len w = len x && len w <= 4096
+  requires forall (i in 0..len w). finite w.[i] && finite x.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0 && Pia.Float.Error.near (to_real x.[i]) 0.0 10.0
+  ensures Pia.Float.Error.near (to_real result) (Pia.Float.Error.dot_r w x (len w)) (0.000001 * Pia.Float.Error.dot_abs w x (len w) + 1.0e-40)
+= Pia.Float.Error.dot w x 1.0 10.0 10.0
+
+(* The mean of n values within 1, finite and within 0.001 of the exact sum
+   before it is divided.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let total (xs : [f32]) : f32
+  requires len xs <= 4096
+  requires forall (i in 0..len xs). finite xs.[i] && Pia.Float.Error.near (to_real xs.[i]) 0.0 1.0
+  ensures finite result && Pia.Float.Error.near (to_real result) (Pia.Float.Error.sum_r xs (len xs)) (0.001 * Pia.Float.Error.sum_abs xs (len xs) + 1.0e-40)
+= Pia.Float.Error.sum xs 1.0
+
+(* A row of a matrix is a sub-slice, and its elements' bounds follow from
+   the whole buffer's.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the precondition of 'Pia.Float.Error.sum' holds [smt]
+*)
+let row_total (w : [f32]) (k : usize) (c : int{0..4096}) : f32
+  requires k + c <= len w
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
+= let row = w.[k .. k + c] in Pia.Float.Error.sum row 1.0
+
+(* The kernel's bound, stated for the same row in the caller's contract:
+   the view at k is one array in code and in contracts.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let row_bound (w : [f32]) (k : usize) (c : int{0..4096}) : f32
+  requires k + c <= len w
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
+  ensures Pia.Float.Error.near (to_real result) (Pia.Float.Error.sum_r (w.[k .. k + c]) c) (Pia.Float.Error.gamma (real c) * Pia.Float.Error.sum_abs (w.[k .. k + c]) c + 2.0 * real c * tiny f32)
+= Pia.Float.Error.sum (w.[k .. k + c]) 1.0
+
+(* A layer of a small model: 288 outputs of 288 inputs, each output row
+   finite and within dot's bound of its exact value.
+// CHECK: float_error_use.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let layer (y : borrowed inout mutable [f32]) (w : [f32]) (x : [f32]) : unit
+  requires len y = 288 && len x = 288 && len w = 82944
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
+  requires forall (i in 0..len x). finite x.[i] && Pia.Float.Error.near (to_real x.[i]) 0.0 10.0
+  ensures forall (r in 0..len y). Pia.Float.Matvec.row_ok w x y.[r] r
+= Pia.Float.Matvec.matvec y w x 1.0 10.0
+
+(* Too long for its bound: 2^24 roundings of f32 may lose every digit,
+   so the kernel's precondition fails.
+// CHECK: float_error_use.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the precondition of 'Pia.Float.Error.sum' holds
+*)
+let huge (xs : [f32]) : f32
+  requires forall (i in 0..len xs). finite xs.[i] && Pia.Float.Error.near (to_real xs.[i]) 0.0 1.0
+= Pia.Float.Error.sum xs 1.0
+
+(*
+// CHECK: {{[0-9]+}} proved, 2 failed, 0 skipped
+*)

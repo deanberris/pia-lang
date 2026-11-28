@@ -204,3 +204,5 @@ nav:
       - adr/0084-release-0-5-0-gates.md
       - adr/0085-release-1-0-gates.md
       - adr/0086-spread-collectives.md
+      - adr/0087-simd-vectors-as-a-library-type.md
+      - adr/0088-theories-cross-module-boundaries.md

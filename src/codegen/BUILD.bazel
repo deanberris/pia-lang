@@ -3,7 +3,8 @@ load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
 # Codegen v0 (milestone M6): erase contracts, lower pia to core MLIR and
 # LLVM, and emit an object file (docs/codegen.md). Linalg, Tensor,
-# Bufferization and Transform are for lowerings written in Pia (ADR 0065).
+# Bufferization and Transform are for lowerings written in Pia (ADR 0065),
+# and Vector for library types that lower to vector values (ADR 0087).
 cc_library(
     name = "codegen",
     srcs = [
@@ -77,5 +78,7 @@ cc_library(
         "@llvm-project//mlir:TransformDialect",
         "@llvm-project//mlir:TransformUtils",
         "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:VectorDialect",
+        "@llvm-project//mlir:VectorToLLVM",
     ],
 )

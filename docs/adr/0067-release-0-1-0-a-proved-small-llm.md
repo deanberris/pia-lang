@@ -86,9 +86,9 @@ Sizes: **S** is about a day of work and one PR, **M** two to three days, **L** a
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
 | F1 | `f32` and `f64` types: suffixed literals, arithmetic, comparisons, conversions to and from integers, `to_bits`/`from_bits`, strict IEEE codegen (no flush-to-zero) | L | done (#440, #452) |
-| F2 | The verifier's float encoding, step 1 of ADR 0038: `to_real`, `finite`, `eps`, `tiny`, the `Float` concept with builtin adapters, float intervals in the interval stage; bit-precise FP behind `@solver(fp_exact)` | L | not started |
-| F3 | Step 2: the `round` encoding with per-operation δ, nlsat for straight-line error goals | M | not started |
-| F4 | Step 3: `Pia.Float.Error` with γₙ, and the summation, dot product and matrix-vector lemmas | M | not started |
+| F2 | The verifier's float encoding, step 1 of ADR 0038: `to_real`, `finite`, `eps`, `tiny`, the `Float` concept with builtin adapters, float intervals in the interval stage; bit-precise FP behind `@solver(fp_exact)` | L | done (#565): `to_real`, `finite`, `eps`, `tiny`; the `Float` concept, float intervals and `fp_exact` remain |
+| F3 | Step 2: the `round` encoding with per-operation δ, nlsat for straight-line error goals | M | done (#565), as an absolute error bound per operation rather than a fresh δ, which Z3 decides far faster |
+| F4 | Step 3: `Pia.Float.Error` with γₙ, and the summation, dot product and matrix-vector lemmas | M | sum and dot done (`lib/Pia/Float/Error.pia`); matvec is K1 |
 | F5 | Step 4 plus ADR 0012's licence: `@fp(reassoc)` and `contract` in codegen, order-free bounds | M | not started |
 | F6 | Step 6: `a ~= e within b`, derived bounds published in interfaces | M | not started |
 | F7 | Step 5: device float models in placement, with the Apple GPU's model | S | not started; needed only for stage 3 |
@@ -98,15 +98,15 @@ Sizes: **S** is about a day of work and one PR, **M** two to three days, **L** a
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
 | X1 | `sqrt` as a builtin IEEE operation, and `rsqrt` as `1 / sqrt` with its error | S | needs F1, F3 |
-| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | needs F1-F4 and ADR 0061's runner |
+| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | done for `x <= 0` (`Pia.Float.Exp.exp`, what softmax and a stable SiLU need): proved finite and in [0, 1]; its error is measured (2.5e-7 relative), and the Lean-proved bound waits on Mathlib |
 | X3 | `sin` and `cos` for f32 on the range RoPE uses (`|x| <= seq_len`), the same way | M | needs X2's machinery |
 
 **Kernels (`Pia.Nn`) and the model (`Pia.Llm`)**
 
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
-| K1 | `matvec` with its γₙ tolerance and bounds lemmas | S | needs F4 |
-| K2 | `rmsnorm`, `softmax` (max-subtracted, probabilities in `[0, 1]`, sum within tolerance of 1), `silu`/SwiGLU, residual add | M | needs X1, X2 |
+| K1 | `matvec` with its γₙ tolerance and bounds lemmas | S | done: `Pia.Float.Matvec.matvec` |
+| K2 | `rmsnorm`, `softmax` (max-subtracted, probabilities in `[0, 1]`, sum within tolerance of 1), `silu`/SwiGLU, residual add | M | done (`Pia.Float.Nn`): softmax in [0, 1] summing to within 5γₙ of 1, sigmoid, SiLU, rmsnorm finite and bounded; rmsnorm's normalisation waits on a real contract for `sqrt` |
 | K3 | `rope` and grouped-query attention over a KV cache | M | needs X3, K1, K2 |
 | M1 | `Pia.Format.Safetensors`, proved total, and `tools/llm/export.py` | M | integer-only, can start now |
 | M2 | Tokenizer: `tok512` vocabulary loader, BPE encode, decode, the round trip | M | integer-only, can start now |

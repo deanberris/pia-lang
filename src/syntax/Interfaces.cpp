@@ -525,6 +525,69 @@ interfaceArtifacts(const Node &program, std::string_view source, bool literate,
       rep += ")";
       embedReplacements[sigAttr->loc.offset] = std::move(rep);
     }
+    // An exported theory goes into the artifact with its declaration, and
+    // its entry gets the status importers trust it by (ADR 0088).
+    std::vector<size_t> theoryStarts;
+    for (const NodePtr &k : item->kids) {
+      if (k->kind != N::SigTheory)
+        continue;
+      if (!k->kids.empty() && !k->kids[0]->kids.empty()) {
+        diags.error(k->kids[0]->kids[0]->loc,
+                    "in an interface, write 'let theory " + k->text +
+                        "' without a status; piac --emit=interface records "
+                        "whether it is modelled or trusted");
+        continue;
+      }
+      const Node *decl = nullptr;
+      bool modelled = false, axioms = false;
+      for (const NodePtr &other : program.kids) {
+        if (other->kind == N::Theory && other->text == k->text)
+          decl = other.get();
+        if (other->kind == N::Model && !other->kids.empty() &&
+            other->kids[0]->text == k->text)
+          modelled = true;
+      }
+      if (!decl) {
+        diags.error(k->loc, "the interface '" + item->text +
+                                "' lists the "
+                                "theory '" +
+                                k->text +
+                                "', which this module "
+                                "does not declare");
+        continue;
+      }
+      if (decl->flags == "call" || decl->flags == "alias") {
+        diags.error(k->loc, "the theory '" + k->text +
+                                "' is built by a "
+                                "metaprogram, so it has no declaration to "
+                                "export yet: export the metaprogram, which "
+                                "importers apply (ADR 0088, section 3)");
+        continue;
+      }
+      for (const NodePtr &m : decl->kids)
+        if (m->kind == N::LetItem && hasWord(m->flags, "axiom"))
+          axioms = true;
+      size_t at = 0;
+      while (at < tokens.size() &&
+             !(tokens[at].kind == K::Ident && tokens[at].text == k->text &&
+               tokens[at].loc.offset > k->loc.offset))
+        ++at;
+      if (at < tokens.size())
+        embedReplacements[tokens[at].loc.offset] =
+            k->text + (modelled || !axioms ? " @modelled" : " @trusted");
+      size_t start = 0;
+      while (start < tokens.size() &&
+             !(tokens[start].kind == K::Let &&
+               tokens[start].loc.offset == decl->loc.offset))
+        ++start;
+      if (start == tokens.size()) {
+        diags.error(k->loc, "the theory '" + k->text +
+                                "' was made by a "
+                                "metaprogram, so it has no source to publish");
+        continue;
+      }
+      theoryStarts.push_back(start);
+    }
     InterfaceArtifact a;
     a.module = header->text;
     a.name = item->text;
@@ -541,6 +604,27 @@ interfaceArtifacts(const Node &program, std::string_view source, bool literate,
     std::set<std::string> topLevel;
     for (const NodePtr &other : program.kids)
       if (other->kind == N::LetItem) topLevel.insert(other->text);
+    // A theory may name only what the interface lists, as an inlined
+    // definition may: its importers form its types.
+    for (size_t start : theoryStarts) {
+      const Node *decl = nullptr;
+      for (const NodePtr &other : program.kids)
+        if (other->kind == N::Theory &&
+            other->loc.offset == tokens[start].loc.offset)
+          decl = other.get();
+      std::set<std::string> uses;
+      namesIn(*decl, uses);
+      for (const std::string &u : uses)
+        if (topLevel.count(u) && !listed.count(u))
+          diags.error(decl->loc,
+                      "the theory '" + decl->text +
+                          "' is "
+                          "exported with its declaration, which uses "
+                          "'" +
+                          u + "', which the interface '" + item->text +
+                          "' does not list");
+      a.text += canonical(tokens, start);
+    }
     std::vector<const Node *> exported;
     for (size_t i = 0; i < program.kids.size(); ++i) {
       const Node &def = *program.kids[i];
@@ -696,9 +780,30 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
         typesAndConcepts.insert(k->text);
       if (inlinedSig(*k)) inlined.insert(k->text);
     }
+    // Exported theories, by name, and whether a model proved them.
+    std::map<std::string, bool> theoriesListed;
+    for (const NodePtr &k : iface->kids) {
+      if (k->kind != N::SigTheory)
+        continue;
+      std::string status;
+      if (!k->kids.empty() && !k->kids[0]->kids.empty())
+        status = k->kids[0]->kids[0]->text;
+      if (status != "modelled" && status != "trusted") {
+        diags.error(at, "'" + found +
+                            "' is not an interface artifact: its "
+                            "theory '" +
+                            k->text +
+                            "' has no status, @modelled "
+                            "or @trusted");
+        continue;
+      }
+      theoriesListed[k->text] = status == "modelled";
+    }
     std::set<std::string> listed;
     for (const NodePtr &k : iface->kids) {
-      if (k->kind == N::Attrs || k->kind == N::Comment) continue;
+      if (k->kind == N::Attrs || k->kind == N::Comment ||
+          k->kind == N::SigTheory)
+        continue;
       // A generic function or a concept comes in with its definition,
       // below. Each entry by its own shape: a plain overload of the same
       // name, such as iota at u8 beside a generic iota, still comes in as
@@ -746,6 +851,59 @@ void resolveImports(Node &program, const std::vector<std::string> &paths,
     for (size_t i = 2; i < artifact->kids.size(); ++i) {
       const Node &def = *artifact->kids[i];
       if (def.kind == N::Comment) continue;
+      if (def.kind == N::Theory && theoriesListed.count(def.text)) {
+        std::string qualified = module + "." + def.text;
+        if (!imported.insert(qualified + " = theory").second)
+          continue;
+        bool modelled = theoriesListed.at(def.text);
+        std::vector<std::string> axioms;
+        for (const NodePtr &m : def.kids) {
+          if (m->kind == N::SortItem) {
+            imp.types.insert(qualified + "." + m->text);
+            continue;
+          }
+          if (m->kind != N::LetItem)
+            continue;
+          imp.items.insert(qualified + "." + m->text);
+          if (hasWord(m->flags, "axiom"))
+            axioms.push_back(m->text);
+        }
+        // A trusted theory's axioms are facts no model proved, so the
+        // importer says it trusts them (ADR 0088, section 2).
+        bool trusting = item->flags == "trusting";
+        if (!modelled && !trusting) {
+          std::string list;
+          for (const std::string &x : axioms)
+            list += (list.empty() ? "'" : ", '") + qualified + "." + x + "'";
+          diags.error(
+              at, where + " exports the theory '" + qualified + "', whose " +
+                      (axioms.size() == 1 ? "axiom " : "axioms ") + list +
+                      " no model proved; "
+                      "write 'import " +
+                      path +
+                      " trusting' to trust "
+                      "them (ADR 0088)");
+          continue;
+        }
+        NodePtr copy = clone(def);
+        copy->text = qualified;
+        copy->flags = std::string("imported ") +
+                      (modelled ? "proved" : "trusted") +
+                      (trusting ? " trusting" : "");
+        // Its own members are qualified by the theory itself, when it is
+        // flattened; the module's types and spec functions, here.
+        std::set<std::string> own;
+        for (const NodePtr &m : def.kids)
+          own.insert(m->text);
+        std::set<std::string> outer;
+        for (const std::string &x : typesAndConcepts)
+          if (!own.count(x))
+            outer.insert(x);
+        qualify(*copy, module, outer, {}, {});
+        relocate(*copy, at);
+        out.push_back(std::move(copy));
+        continue;
+      }
       if (def.kind != N::LetItem || !inlined.count(def.text) ||
           !inlinedItem(def)) {
         diags.error(at, "'" + found + "' is not an interface artifact: it "

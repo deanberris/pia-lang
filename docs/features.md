@@ -21,6 +21,10 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Recursive types, `let rec` variants | [verifier](verifier.md#recursive-types) | [rec_types](../tests/verify/rec_types.pia), [rec_aliasing](../tests/verify/rec_aliasing.pia), [rec_fill](../tests/verify/rec_fill.pia) |
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 | Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
+| Error bounds of long sums and dot products (`Pia.Float.Error`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_error_use](../tests/std/float_error_use.pia) |
+| `exp` on `f32` for `x <= 0`, proved finite and in `[0, 1]` (`Pia.Float.Exp`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_exp](../tests/std/float_exp.pia) |
+| softmax summing to within 5γₙ of 1, SiLU and rmsnorm, proved finite and bounded (`Pia.Float.Nn`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_nn](../tests/std/float_nn.pia) |
+| Error bounds of matrix-vector products, one opaque fact per row (`Pia.Float.Matvec`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_matvec](../tests/std/float_matvec.pia) |
 | Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
@@ -36,6 +40,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
+| Frames across calls, kept by the callee's ensures | [verifier](verifier.md#spread) | [frames_calls](../tests/verify/frames_calls.pia) |
 | Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia), [bytes](../tests/lean/bytes.pia), [slices](../tests/lean/slices.pia), [variants](../tests/lean/variants.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
@@ -52,6 +57,8 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | --- | --- | --- |
 | Theories: sorts, abstract functions, axioms and triggers | [theories](theories.md), [verifier](verifier.md#theories) | [theory_lip](../tests/verify/theory_lip.pia), [theory_closure](../tests/verify/theory_closure.pia) |
 | Models, which prove a theory's axioms | [theories](theories.md#writing-a-theory) | [models](../tests/verify/models.pia), [model_check](../tests/verify/model_check.pia) |
+| Type-level metaprograms over `usize` and the target: `target_value`, value arguments computed by a metaprogram, and constraints on a generic type's arguments | [meta](meta.md#type-level-metaprograms), [ADR 0087](adr/0087-simd-vectors-as-a-library-type.md) | [target_queries](../tests/verify/target_queries.pia), [target_query_errors](../tests/irgen/target_query_errors.pia) |
+| Theories across modules: `let theory T` in an interface, `@modelled` and `@trusted` artifacts, `import ... trusting` | [theories](theories.md#theories-across-modules), [ADR 0088](adr/0088-theories-cross-module-boundaries.md) | [theories](../tests/modules/theories.pia), [theory_trust_errors](../tests/modules/theory_trust_errors.pia), [theory_export_errors](../tests/modules/theory_export_errors.pia) |
 | Consistency of trusted theories | [verifier](verifier.md#theories) | [trust_checks](../tests/verify/trust_checks.pia) |
 | Theories built by metaprograms, such as `machine` | [theories](theories.md#state-machines), [meta](meta.md#theory-building-metaprograms) | [machine](../tests/verify/machine.pia) |
 | The target as a theory, and `@target(m)` items | [theories](theories.md#the-target), [ADR 0049](adr/0049-targets-are-theories.md) | [target](../tests/verify/target.pia), [target_items](../tests/verify/target_items.pia), [target_theory](../tests/verify/target_theory.pia) |
@@ -63,6 +70,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
 | Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia), [shapes](../tests/verify/shapes.pia) |
 | `@lower` on a type: a record's MLIR type, a memref view of its buffer | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0074](adr/0074-library-types-tensors.md) | [lower_type](../tests/codegen/lower_type.pia) |
+| `@lower` on a type to an MLIR `vector`, a value of its lanes | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0087](adr/0087-simd-vectors-as-a-library-type.md) | [lower_vector](../tests/codegen/lower_vector.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |

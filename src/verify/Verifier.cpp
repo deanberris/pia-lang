@@ -2327,7 +2327,56 @@ class Encoder {
     return c && c.getValue().getValue().isZero();
   }
 
-  Value viewArray(Value root, Value off, Value len) {
+  // Whether two terms are the same expression: the same value, or the
+  // same op with the same attributes over operands that are the same.
+  // Declarations are never the same, since each is a fresh constant.
+  static bool sameTerm(Value a, Value b, unsigned depth = 8) {
+    if (a == b)
+      return true;
+    if (!a || !b || depth == 0)
+      return false;
+    Operation *x = a.getDefiningOp(), *y = b.getDefiningOp();
+    if (!x || !y || x->getName() != y->getName() ||
+        x->getAttrDictionary() != y->getAttrDictionary() ||
+        x->getNumOperands() != y->getNumOperands() || x->getNumRegions() != 0 ||
+        y->getNumRegions() != 0 || mlir::isa<mlir::smt::DeclareFunOp>(x))
+      return false;
+    if (mlir::cast<mlir::OpResult>(a).getResultNumber() !=
+        mlir::cast<mlir::OpResult>(b).getResultNumber())
+      return false;
+    for (auto [p, q] : llvm::zip(x->getOperands(), y->getOperands()))
+      if (!sameTerm(p, q, depth - 1))
+        return false;
+    return true;
+  }
+
+  // Whether `inner` is `outer` or nested in it, so a value `outer` defined
+  // earlier may be used at the end of `inner`.
+  static bool encloses(mlir::Block *outer, mlir::Block *inner) {
+    for (mlir::Block *b = inner; b;) {
+      if (b == outer)
+        return true;
+      Operation *parent = b->getParentOp();
+      b = parent ? parent->getBlock() : nullptr;
+    }
+    return false;
+  }
+
+  // A view array made in a block, for the slice of `root` at `off` of
+  // `len` elements.
+  struct View {
+    mlir::Block *block;
+    Value root, off, len, array;
+    Operation *call; // the call it was made for, if any
+    bool spec;       // made for a contract or a spec function
+  };
+  std::vector<View> viewArrays_;
+  // The call whose arguments are being made, and whether it is in a
+  // contract or calls a spec function.
+  Operation *viewCall_ = nullptr;
+  bool viewSpec_ = false;
+
+  Value viewArray(Value root, Value off, Value len, bool reuse = false) {
     using P = mlir::smt::BVCmpPredicate;
     // A view from 0 reads what its root does at each index below its
     // length, and nothing else is read through it: it is the root. So
@@ -2336,6 +2385,20 @@ class Encoder {
     // quantifier could not hold.
     if (isZeroBV(off))
       return root;
+    // A spec function applied to a view, `sum_r (w.[k .. k + n]) n` in a
+    // contract, and a call passed the same view share one array, as do a
+    // call's own precondition and postcondition, so a kernel's ensures
+    // about the slice it was passed is about the caller's slice too: two
+    // fresh arrays equal only element by element give a spec function two
+    // unrelated values. Two calls in code never share one: that made some
+    // code goals far costlier (Pia.Image.Gif.Encode's frame loop, +45%).
+    mlir::Block *block = b_.getInsertionBlock();
+    bool spec = reuse || viewSpec_;
+    for (const View &m : viewArrays_)
+      if ((spec || m.spec || (viewCall_ && m.call == viewCall_)) &&
+          encloses(m.block, block) && m.root == root && sameTerm(m.off, off) &&
+          sameTerm(m.len, len))
+        return m.array;
     Value v = declare(root.getType(), "", false);
     Type elem = mlir::cast<mlir::smt::ArrayType>(root.getType()).getRangeType();
     assertTerm(forallIndex([&](Value i) {
@@ -2345,6 +2408,7 @@ class Encoder {
                           elem, root, bvBin("add", off, i)));
       return implies(inside, same);
     }));
+    viewArrays_.push_back({block, root, off, len, v, viewCall_, spec});
     return v;
   }
 
@@ -2519,7 +2583,6 @@ class Encoder {
   Value floatFits(Value x, Type ft, IntType rt) {
     const llvm::fltSemantics &sem =
         mlir::cast<mlir::FloatType>(ft).getFloatSemantics();
-    unsigned w = ft.getIntOrFloatBitWidth();
     APInt lo = bound(rt.getLo(), 192) - 1;
     APInt hi = bound(rt.getHi(), 192) + 1;
     llvm::APFloat flo(sem), fhi(sem);
@@ -2530,14 +2593,13 @@ class Encoder {
                                         llvm::APFloat::rmTowardNegative) ==
                    llvm::APFloat::opOK;
     using B = mlir::smt::BVCmpPredicate;
-    Value kx = floatKey(x, w);
-    Value kl =
-        floatKey(create<mlir::smt::BVConstantOp>(flo.bitcastToAPInt()), w);
-    Value kh =
-        floatKey(create<mlir::smt::BVConstantOp>(fhi.bitcastToAPInt()), w);
-    Value above = loExact ? cmp(B::sgt, kx, kl) : cmp(B::sge, kx, kl);
-    Value below = hiExact ? cmp(B::slt, kx, kh) : cmp(B::sle, kx, kh);
-    return andOf(notOf(floatNaN(x, w)), andOf(above, below));
+    // IEEE order, which with floats as reals is also real order, so a
+    // bound on `to_real x` proves the goal.
+    Value kl = create<mlir::smt::BVConstantOp>(flo.bitcastToAPInt());
+    Value kh = create<mlir::smt::BVConstantOp>(fhi.bitcastToAPInt());
+    Value above = floatOrder(loExact ? B::slt : B::sle, kl, x);
+    Value below = floatOrder(hiExact ? B::slt : B::sle, x, kh);
+    return andOf(above, below);
   }
 
   // --- floats as reals (ADR 0038, steps 1 and 2) ------------------------
@@ -2652,6 +2714,11 @@ class Encoder {
     if (auto c = x.getDefiningOp<mlir::smt::BVConstantOp>()) {
       if (std::optional<std::string> q = floatRational(c.getValue().getValue()))
         r = realConst(*q);
+    } else if (auto i = x.getDefiningOp<mlir::smt::IteOp>()) {
+      // A float chosen by a branch, `if v > 1.0 then 1.0 else v`, has the
+      // value of the float chosen, so a constant arm keeps its value.
+      r = ite(i.getCond(), floatToReal(i.getThenValue(), w),
+              floatToReal(i.getElseValue(), w));
     } else if (auto n = x.getDefiningOp<mlir::smt::BVXOrOp>()) {
       // Negation flips the sign bit (floatSemantics), and is exact.
       auto k = n->getOperand(1).getDefiningOp<mlir::smt::BVConstantOp>();
@@ -2747,6 +2814,24 @@ class Encoder {
     if (mlir::isa<mlir::arith::TruncFOp>(op)) {
       Value x = in[0];
       roundingFacts(floatFinite(x, 64), floatToReal(x, 64), r, 32);
+      return;
+    }
+    // Truncation toward zero: the integer is within 1 of the float, on
+    // the same side of 0, and no further from 0. Its goal kept it in the
+    // target's range, where `r` is the truncation itself (floatBits);
+    // outside it the fact says nothing, so it stays sound after a failed
+    // goal.
+    if (auto c = mlir::dyn_cast<FloatToIntOp>(op)) {
+      unsigned w = c.getInput().getType().getIntOrFloatBitWidth();
+      Value t = r;
+      if (auto i = r.getDefiningOp<mlir::smt::IteOp>())
+        t = i.getThenValue();
+      Value x = floatToReal(in[0], w), n = toReal(bvToInt(t));
+      Value zero = realConst("0"), one = realConst("1");
+      Value up = andOf(realLe(n, x), realLt(x, realAdd(n, one)));
+      Value down = andOf(realLe(x, n), realLt(n, realAdd(x, one)));
+      define(implies(andOf(floatFinite(in[0], w), inRange(t, c.getType())),
+                     ite(realLe(zero, x), up, down)));
       return;
     }
   }
@@ -3683,6 +3768,21 @@ class Encoder {
       return true;
     }
     bool hasBody = callee && !callee.isExternal();
+    // The views this call's arguments make are shared by its own
+    // precondition and postcondition, and with contracts and spec
+    // functions over the same slice (viewArray).
+    struct ViewScope {
+      Encoder &e;
+      Operation *call;
+      bool spec;
+      ~ViewScope() {
+        e.viewCall_ = call;
+        e.viewSpec_ = spec;
+      }
+    } viewScope{*this, viewCall_, viewSpec_};
+    viewCall_ = call.getOperation();
+    viewSpec_ = spec_.contains(call.getOperation()) ||
+                (callee && callee->hasAttr(PiaDialect::getSpecAttrName()));
     // A call in a contract is needed only under its guard, so its
     // precondition is a goal, and its postconditions facts, only there.
     Value guard = spec_.contains(call.getOperation())
@@ -3832,6 +3932,7 @@ class Encoder {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
+      Value before = arrays_[root];
       Value off = views_.lookup(actual), len = lengths_.lookup(actual);
       if (actual != root && off && len) {
         setArray(root, writtenThrough(arrays_[root], off, len));
@@ -3840,6 +3941,12 @@ class Encoder {
       } else {
         havocArray(root);
       }
+      // A spec function with a footprint keeps its value across the call
+      // where the callee's ensures keep the footprint's cells.
+      Derived d;
+      d.old = before;
+      d.byCall = true;
+      derived_[arrays_[root]] = d;
     }
     if (!hasBody) return true;
     Demand post = pre;
@@ -4381,6 +4488,9 @@ class Encoder {
   // iteration; no owner for the identity).
   struct Derived {
     Value old, at, owner, iv;
+    // Written by a call, which says in its ensures which cells it kept:
+    // the frame holds where the two contents agree on the footprint.
+    bool byCall = false;
   };
   llvm::DenseMap<Value, Derived> derived_;
   // The buffers' contents before the spread being walked.
@@ -4429,7 +4539,16 @@ class Encoder {
                                lo));
       };
       Value outside;
-      if (from.at) {
+      if (from.byCall) {
+        auto at = mlir::cast<mlir::smt::ArrayType>(arr.getType());
+        outside = forallIndex([&](Value c) {
+          return implies(
+              inFoot(c),
+              eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), arr, c),
+                 create<mlir::smt::ArraySelectOp>(at.getRangeType(), from.old,
+                                                  c)));
+        });
+      } else if (from.at) {
         outside = notOf(inFoot(from.at));
       } else {
         outside = forallIndex([&](Value c) {
@@ -4626,7 +4745,7 @@ class Encoder {
           // cannot hold, unless it starts at 0 and is its root.
           if (!off || (quantifierDepth_ > 0 && !isZeroBV(off)))
             return Value();
-          arr = viewArray(arr, off, len);
+          arr = viewArray(arr, off, len, /*reuse=*/true);
         }
         args.arrays[formal] = arr;
         args.lengths[formal] = len;
@@ -5776,23 +5895,23 @@ bool multipliesVariables(const std::string &script) {
 // Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
 // Quantified queries leave int-blasting incomplete and stall on quantified
 // definitions, so only quantifier-free nonlinear queries take this path,
-// except goals over floats' real values that convert integers, below.
+// and quantifier-free goals over floats' real values that convert integers.
 bool canIntBlast(const std::string &script) {
-  // A goal that compares the real value of an integer with reals, as a
-  // float error bound does with `real i` for a loop's index (ADR 0038),
-  // goes through bv2int, which bit-blasting decides only by blasting the
-  // integer: `a <= b ==> real a <= real b` on two usizes alone did not
-  // finish in minutes, and takes milliseconds int-blasted, quantified
-  // hypotheses and all. Only goals over the real values of floats take
-  // this path: other goals over reals, such as Pia.Time's ratios, keep
-  // the solver they had, which is cheaper for them.
-  if (script.find("(bv2int ") != std::string::npos &&
-      script.find(".to_real") != std::string::npos)
-    return true;
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
       script.find("(lambda") != std::string::npos)
     return false;
+  // A goal that compares the real value of an integer with reals, as a
+  // float error bound does with `real i` for a loop's index (ADR 0038),
+  // goes through bv2int, which bit-blasting decides only by blasting the
+  // integer, and int-blasting in milliseconds. Quantified goals of this
+  // kind are left to the bit-blaster: int-blasting them crashed piac when
+  // a sub-slice was passed to Pia.Float.Error.sum
+  // (tests/std/float_error_use.pia, `row_total`). Other goals over reals,
+  // such as Pia.Time's ratios, keep the solver they had.
+  if (script.find("(bv2int ") != std::string::npos &&
+      script.find(".to_real") != std::string::npos)
+    return true;
   return multipliesVariables(script);
 }
 

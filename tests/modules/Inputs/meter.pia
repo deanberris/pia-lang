@@ -1,0 +1,13 @@
+(* A library theory with no model: its axioms are trusted, so the file is
+   @trusted, and an importer must say it trusts them (ADR 0088). *)
+module Lib.Meter @trusted : Meters
+
+interface Meters = sig
+  let theory Meter
+end
+
+let theory Meter = sig
+  let sort tick
+  let spec count : (t : tick) -> u32
+  let axiom count_small (t : tick) ensures count t <= 1000
+end

@@ -67,7 +67,7 @@ Each expansion has a fuel budget of a million steps. Running out is an error.
 
 ## Type-level metaprograms
 
-A `let meta` whose parameters are all types and that returns a `type` or a `bool` is type-level ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)). It stays in the program after expansion, because types and `where` predicates call it while the compiler checks types ([irgen.md](irgen.md#functions)):
+A `let meta` whose parameters are types, or types and `usize` values, and that returns a `type`, a `bool` or a `usize` is type-level ([ADR 0035](adr/0035-substitution-failure-and-total-constraints.md)). It stays in the program after expansion, because types and `where` predicates call it while the compiler checks types ([irgen.md](irgen.md#functions)):
 
 ```ocaml
 let meta widen (t : type) : type =
@@ -83,13 +83,14 @@ There, types are values. A type's name, such as `u8` or `pixel`, denotes the typ
 
 | Builtin | Meaning |
 | --- | --- |
-| `size_of t` | the bytes a value of `t` takes: an integer the smallest of 1, 2, 4 or 8 that holds its range, a bool 1, an array its elements', a record the sum of its fields'; a slice has no fixed size, which is an error |
-| `type_kind t` | `"int"`, `"bool"`, `"unit"`, `"array"`, `"slice"`, `"record"` or `"variant"` |
+| `size_of t` | the bytes a value of `t` takes: an integer the smallest of 1, 2, 4 or 8 that holds its range, a float its width (4 or 8), a bool 1, an array its elements', a record the sum of its fields'; a slice has no fixed size, which is an error |
+| `type_kind t` | `"int"`, `"float"`, `"bool"`, `"unit"`, `"array"`, `"slice"`, `"record"` or `"variant"` |
 | `element t` | an array's or a slice's element type |
 | `field_types t` | a record's field types, or a variant's payload types, as a list |
 | `type_args t` | a generic instance's type arguments, as a list (empty for any other type) |
 | `type_named s` | the type named `s`, as `Pia.Text.Json.Derive`'s `json_errors` names the error type a derive defined |
 | `eq ne lt gt le ge add sub mul div rem and or implies iff` | the core builtins that a `where` predicate's operators expand to |
+| `target_value s` | what the model of the target being compiled for gives the `Target` spec named `s`, such as `target_value "vector_bits"`: 128 on arm64, 256 on x86-64-v3 ([ADR 0087](adr/0087-simd-vectors-as-a-library-type.md), [ADR 0049](adr/0049-targets-are-theories.md)); only in types and constraints |
 
 `match` takes a type too, which reads better than a cascade of `if`s:
 
@@ -113,6 +114,21 @@ let meta small (t : type) : bool =
 - Types are an open set, so a match on a type must end with a catch-all.
 - An arm's `requires` is not a guard: if a type reaches the arm and it does not hold, that is an error (or, during overload resolution, the candidate's reason). An arm's `ensures` is checked of the arm's value, `result`, when the arm is taken.
 - The same arm contracts work on a value `match` in ordinary code, where they are proof goals ([irgen.md](irgen.md#variants)).
+
+A type-level metaprogram that returns a `usize` gives a type its value argument, and one that returns a `bool` may constrain a generic type's arguments in its `where`. That constraint is checked where an instance of the type is formed, for the target being compiled for, and the prover never sees it. So the width of a block of native vector lanes depends on the target, and a block wider than the target's vectors is a type error where it is used:
+
+<!-- untested: its result depends on the target; tests/verify/target_queries.pia proves it on arm64 and x86, and tests/irgen/target_query_errors.pia has the errors -->
+```ocaml
+let meta bits (t : type) : usize = 8 * size_of t
+let meta lanes (t : type) : usize = target_value "vector_bits" / bits t
+let meta fits (t : type) (k : usize) : bool =
+  k > 0 && k * bits t <= target_value "vector_bits"
+
+let block = let (t : type) (k : usize) => type { cells : [t; k] } where fits t k
+
+(* 4 cells on arm64, 8 on x86. *)
+let last (b : block f32 (lanes f32)) : f32 = b.cells.[len b.cells - 1]
+```
 
 A metaprogram that runs during expansion has no type values: a type's name there is an unknown name, as before.
 

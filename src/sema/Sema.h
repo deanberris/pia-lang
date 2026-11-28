@@ -198,6 +198,9 @@ class TypeResolver {
     unsigned fieldIndex = 0;
     std::string text; // as written, for messages
     syntax::SourceLoc at;
+    // `vector<...>` (ADR 0087): a value, loaded whole where a lowering
+    // splices it, rather than a view of its buffer.
+    bool vector = false;
   };
   void lowerType(const std::string &record, TypeLowering l) {
     lowerings_[record] = std::move(l);
@@ -307,6 +310,28 @@ class TypeResolver {
   bool isTypeFunction(const std::string &name) const {
     return isTypeFunction_ && isTypeFunction_(name);
   }
+  // A type-level predicate in a generic type's invariant, `where supports
+  // t k` (ADR 0087), is a constraint on the type's arguments: it is
+  // checked where an instance is formed, with each type parameter bound
+  // to its argument and each value parameter to int{v..v}, and is not
+  // part of the invariant the prover sees. `check` says why it fails, or
+  // nothing when it holds.
+  using TypePredicateCheck = std::function<std::optional<std::string>(
+      const syntax::Node &, const std::map<std::string, mlir::Type> &,
+      const std::set<std::string> &)>;
+  void setTypePredicates(std::function<bool(const std::string &)> is,
+                         TypePredicateCheck check) {
+    isTypePredicate_ = std::move(is);
+    checkTypePredicate_ = std::move(check);
+  }
+  bool isTypePredicate(const std::string &name) const {
+    return isTypePredicate_ && isTypePredicate_(name);
+  }
+  // Splits the constraints out of an instance's invariant `p` and checks
+  // them; returns what is left for the prover (null when nothing is), and
+  // false in `ok` after an error.
+  const syntax::Node *checkTypeConstraints(const std::string &instance,
+                                           const syntax::Node &p, bool &ok);
 
   mlir::Type usize() { return builtin("usize"); }
   mlir::Type i32() { return builtin("i32"); }
@@ -353,6 +378,12 @@ class TypeResolver {
   std::set<std::string> instantiating_;
   std::vector<std::map<std::string, mlir::Type>> typeScopes_;
   std::function<bool(const std::string &)> isTypeFunction_;
+  std::function<bool(const std::string &)> isTypePredicate_;
+  TypePredicateCheck checkTypePredicate_;
+  // The invariants left once constraints are split out of them.
+  std::vector<syntax::NodePtr> residues_;
+  // Where the instance being formed is used.
+  syntax::SourceLoc formedAt_;
   TypeFunctionCall callTypeFunction_;
 };
 

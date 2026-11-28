@@ -1,0 +1,37 @@
+(* Type-level metaprograms that answer for the target (ADR 0087, section
+   1). `target_value "vector_bits"` is what the model of the target being
+   compiled for gives `Target.vector_bits`: 128 on arm64, 256 on
+   x86-64-v3. A type-level metaprogram may take a `usize` beside its types
+   and return one, so `lanes f32` is a type's value argument, as in
+   `block f32 (lanes f32)`. A type-level predicate in a generic type's
+   `where`, `fits t k`, is a constraint on its arguments: it is checked
+   where the instance is formed, for the target, and the prover never sees
+   it. So the same file proves on both targets, with four lanes of f32 on
+   arm64 and eight on x86; tests/irgen/target_query_errors.pia has a
+   block wider than the target, a type error at its use.
+// RUN: piac --verify --no-lint --target=arm64-apple-macosx14.0.0 %s | FileCheck %s --check-prefix=ARM
+// RUN: piac --verify --no-lint --target=x86_64-unknown-linux-gnu %s | FileCheck %s --check-prefix=X86
+// RUN: piac --emit=mlir --no-lint --target=arm64-apple-macosx14.0.0 %s | FileCheck %s --check-prefix=ARM-IR
+// RUN: piac --emit=mlir --no-lint --target=x86_64-unknown-linux-gnu %s | FileCheck %s --check-prefix=X86-IR
+*)
+
+let meta bits (t : type) : usize = 8 * size_of t
+let meta lanes (t : type) : usize = target_value "vector_bits" / bits t
+let meta fits (t : type) (k : usize) : bool =
+  k > 0 && k * bits t <= target_value "vector_bits"
+
+let block = let (t : type) (k : usize) => type {
+  cells : [t; k]
+} where fits t k
+
+(* A block of one native vector of f32: 4 cells on arm64, 8 on x86. *)
+let last (b : block f32 (lanes f32)) : f32 = b.cells.[len b.cells - 1]
+
+(*
+// ARM: target_queries.pia:[[@LINE-3]]:46: proved: the index is within bounds
+// ARM: 0 failed, 0 skipped
+// X86: target_queries.pia:[[@LINE-5]]:46: proved: the index is within bounds
+// X86: 0 failed, 0 skipped
+// ARM-IR: func.func @last(%{{.*}}: !block3Cf322C_43E
+// X86-IR: func.func @last(%{{.*}}: !block3Cf322C_83E
+*)

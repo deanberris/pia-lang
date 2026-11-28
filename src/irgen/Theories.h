@@ -52,6 +52,9 @@ struct TheoryInfo {
   // time and never of its words. The shape's is checked instead, since the
   // check grows with every word of the box (#563).
   std::set<std::string> boxModelled;
+  // Imported theories whose exporter proved a model (ADR 0088): their
+  // axioms are not trusted here either.
+  std::set<std::string> importModelled;
 };
 void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,
                      TheoryInfo *info = nullptr);

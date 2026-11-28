@@ -1,0 +1,30 @@
+(* A library theory with a model (ADR 0088): its interface exports the
+   theory's declaration, and the model stays here, sealed. A reading is a
+   level, which its refinement keeps at most 100. *)
+module Lib.Gauge : Gauges
+
+interface Gauges = sig
+  let theory Gauge
+  let level = type { v : u8 where v <= 100 }
+  let read : (l : level) -> u8 ensures result <= 100
+end
+
+let theory Gauge = sig
+  let sort reading
+  let spec value : (r : reading) -> u8
+  let spec bump : (r : reading) -> reading
+  let axiom value_small (r : reading) ensures value r <= 100
+  let axiom bump_grows (r : reading)
+    requires value r < 100
+    ensures value (bump r) = value r + 1
+end
+
+let level = type { v : u8 where v <= 100 }
+
+let model levels : Gauge = struct
+  let sort reading = level
+  let spec value (r : level) : u8 = r.v
+  let spec bump (r : level) : level = { v = if r.v < 100 then r.v + 1 else 100 }
+end
+
+let read (l : level) : u8 = l.v
