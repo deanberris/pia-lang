@@ -1,0 +1,83 @@
+(* ADR 0012's licence in codegen. `@fp(reassoc)` lets LLVM reorder a
+   float reduction, so the loop vectoriser keeps several partial sums in
+   one vector register, and `@fp(contract)` lets it fuse a multiply and an
+   add into one FMA. The strict dot product below is the same loop without
+   the licence: it is summed in order, one lane at a time, with no FMA.
+   fp_licence_test.c runs every function here against a scalar reference.
+// RUN: piac --emit=mlir %s | FileCheck %s --check-prefix=MLIR
+// RUN: piac --emit=llvm --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 %s | FileCheck %s --check-prefix=LL
+// RUN: piac --emit=asm --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 %s | FileCheck %s --check-prefix=NEON
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=AVX
+*)
+
+(* The licence is on the function's code, never on its contracts.
+   MLIR-LABEL: func.func @dot(
+   MLIR: arith.mulf %{{.*}}, %{{.*}} fastmath<reassoc,contract> : f32
+   MLIR: arith.addf %{{.*}}, %{{.*}} fastmath<reassoc,contract> : f32
+   MLIR-LABEL: func.func @strict_dot(
+   MLIR-NOT: fastmath
+   MLIR-LABEL: func.func @axpy_rows(
+   MLIR: arith.mulf %{{.*}}, %{{.*}} fastmath<contract> : f64
+
+   LL-LABEL: define float @dot(
+   LL: fmul reassoc contract <4 x float>
+   LL: fadd reassoc contract <4 x float>
+   LL-LABEL: define float @strict_dot(
+   LL-NOT: fadd {{.*}}<4 x float>
+   LL-LABEL: define void @axpy_rows(
+   LL: fmul contract <{{[0-9]+}} x double>
+
+   NEON-LABEL: {{^}}_dot:
+   NEON: fmla.4s
+   NEON-LABEL: {{^}}_strict_dot:
+   NEON-NOT: fmla
+   NEON-LABEL: {{^}}_axpy_rows:
+   NEON: fmla.2d
+
+   AVX-LABEL: {{^}}dot:
+   AVX: vfmadd{{[0-9]+}}ps {{.*}}%ymm
+   AVX-LABEL: {{^}}strict_dot:
+   AVX-NOT: vfmadd
+   AVX-LABEL: {{^}}axpy_rows:
+   AVX: vfmadd{{[0-9]+}}pd {{.*}}%ymm
+*)
+module FpLicence : Kernels
+
+(* What fp_licence_test.c calls, by its C names (ADR 0039). *)
+interface Kernels @abi(c) = sig
+  let dot : (xs : [f32]) -> (ys : [f32]) -> f32
+    requires len xs = len ys
+  let strict_dot : (xs : [f32]) -> (ys : [f32]) -> f32
+    requires len xs = len ys
+  let axpy_rows : (n : usize) -> (a : [f64]) -> (b : [f64]) -> (c : borrowed inout mutable [f64]) -> unit
+    requires n <= 46'340
+    requires len a = n * n && len b = n * n && len c = n * n
+end
+
+(* A reduction: reordering the sum is what lets it vectorise. *)
+let dot (xs : [f32]) (ys : [f32]) : f32 @fp(reassoc, contract)
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+
+let strict_dot (xs : [f32]) (ys : [f32]) : f32
+  requires len xs = len ys
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs do s <- s + xs.[i] * ys.[i] done;
+  s
+
+(* Matmul's inner loop in the i, k, j order (bench/codegen/matmul): each
+   c.[i * n + j] is its own sum, so the loop vectorises without
+   reassociation, and the licence to contract makes each step one FMA. *)
+let axpy_rows (n : usize) (a : [f64]) (b : [f64]) (c : borrowed inout mutable [f64]) : unit @fp(contract) @allow(range_requires)
+= for i in 0 .. n do
+    for k in 0 .. n do
+      let aik : f64 = a.[i * n + k] in
+      for j in 0 .. n do
+        c.[i * n + j] <- c.[i * n + j] + aik * b.[k * n + j]
+      done
+    done
+  done

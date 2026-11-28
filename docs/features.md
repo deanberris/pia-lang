@@ -20,6 +20,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Parameter modifiers, `inout` and `old` | [tour](tour.md#parameter-modifiers) | [inout_values](../tests/verify/inout_values.pia), [old_calls](../tests/verify/old_calls.pia) |
 | Recursive types, `let rec` variants | [verifier](verifier.md#recursive-types) | [rec_types](../tests/verify/rec_types.pia), [rec_aliasing](../tests/verify/rec_aliasing.pia), [rec_fill](../tests/verify/rec_fill.pia) |
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
+| Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
 

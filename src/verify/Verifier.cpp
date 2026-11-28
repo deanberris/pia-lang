@@ -2374,6 +2374,14 @@ class Encoder {
                              : mlir::isa<mlir::arith::SubFOp>(op) ? "sub"
                              : mlir::isa<mlir::arith::MulFOp>(op) ? "mul"
                                                                   : "div";
+      // Under `@fp(reassoc)` or `@fp(contract)` (ADR 0012) codegen may
+      // reorder this operation with its neighbours or fuse it into an FMA,
+      // so the same operands need not give the same bits as the strict
+      // operation a contract names: the result is any value of its type
+      // until ADR 0038's error encoding bounds it.
+      auto fm = op->getAttrOfType<mlir::arith::FastMathFlagsAttr>("fastmath");
+      if (fm && fm.getValue() != mlir::arith::FastMathFlags::none)
+        return declare(sortOf(t), "", false);
       return apply(name(t, what), {in[0], in[1]}, sortOf(t));
     }
     if (auto c = mlir::dyn_cast<mlir::arith::CmpFOp>(op)) {

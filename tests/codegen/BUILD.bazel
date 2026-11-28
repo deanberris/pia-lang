@@ -57,6 +57,29 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# fp_licence.pia, ADR 0012's licence: the licensed kernels against scalar
+# references within the order-free rounding bound, and the strict one
+# against C bit for bit. Its lit checks (codegen_tests) see the vector code.
+genrule(
+    name = "fp_licence_obj",
+    srcs = ["fp_licence.pia"],
+    outs = ["fp_licence.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "fp_licence_test",
+    srcs = [
+        "fp_licence_test.c",
+        ":fp_licence_obj",
+    ],
+    copts = ["-ffp-contract=off"],
+    linkopts = ["-lm"],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # bits.pia, the bit operators (#48), against C over every u8 input.
 genrule(
     name = "bits_obj",

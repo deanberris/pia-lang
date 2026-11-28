@@ -51,3 +51,13 @@ let of_bool (b : bool) : f32 = f32 b
 (* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'to_bits' takes an f32 or f64, found u8
 *)
 let int_bits (n : u8) : u32 = to_bits n
+
+(* `@fp` licenses reassociation, contraction or both (ADR 0012), and
+   nothing else: there is no blanket fast-math.
+// CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @fp takes reassoc, contract or both, as in @fp(reassoc, contract)
+*)
+let fast_sum (x : f32) (y : f32) : f32 @fp(fast) = x + y
+
+(* CHECK-DAG: float_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: @fp takes reassoc, contract or both, as in @fp(reassoc, contract)
+*)
+let bare_licence (x : f32) (y : f32) : f32 @fp = x + y

@@ -294,6 +294,8 @@ So nothing the program computes depends on a spec-only value. The verifier sees 
 
 So a goal that follows from those facts is proved, such as `(x < y) = (-y < -x)`, and a goal that needs what a float operation computes, even one IEEE 754 guarantees such as `x + y = y + x`, fails rather than being proved wrongly. A float in a counterexample is shown as a float, read from its bits, such as `x = nan`. Indices, lengths and integer goals in float code are proved as anywhere else. `tests/verify/floats.pia` has examples of both.
 
+In a function licensed with `@fp(reassoc)` or `@fp(contract)` ([ADR 0012](adr/0012-floating-point-reassociation.md)), codegen may reorder a `+ - * /` with its neighbours or fuse it into an FMA, so the same operands need not give the same bits as the strict operation a contract names. Each licensed operation's result is therefore a fresh unknown of its type, and only the contracts' own arithmetic, which is always strict, is uninterpreted as above. `tests/verify/fp_licence.pia` shows both.
+
 ## Spec state
 
 `spec` marks a local or a parameter as spec-only whatever its type ([ADR 0058](adr/0058-spec-buffers.md)). It is how a proof keeps state that evolves with the code, such as a reference implementation run beside a fast one, or the trace of what a loop has written. For now a spec local is a fixed array `[t; n]`, whose length is a constant, and its elements may be machine integers, `bool`, `int` or `real`. `zeros` makes an array of zero elements of the type it is bound at, in code too.
