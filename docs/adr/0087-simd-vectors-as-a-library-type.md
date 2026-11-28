@@ -38,14 +38,24 @@ None of these is about SIMD in particular. Each is a gap in the library-type mec
 ```
 let simd = let (t : type where Lane t) (k : usize) => type {
   lanes : [t; k]
-} where Target.is_pow2 k && k * bits t <= Target.vector_bits
+} where supports t k
   @lower("vector<$k x $t>", lanes)
 ```
 
 - **The meaning is the array.** A `simd f32 4` is four `f32`s, and every contract about it is about `v.lanes.[i]`. The verifier needs nothing new: a record of a fixed array is already `k` values to it, as stdlib.md planned.
 - **The name is `simd`**, as in Rust's `Simd` and Mojo's `SIMD`, so that it does not collide with `Pia.Mem`'s growable `vec` (open question 1). design.md's `vec<T, k>` becomes `simd<T, k>`: the angle brackets are the same sugar for applying a generic type (grammar.md), and `simd f32 4` is the other spelling.
 - **`Lane t`** is a concept that every integer type, `bool`, `f32` and `f64` meet. `bool` lanes are what comparisons give and what `select` takes, and lower to `i1`.
-- **Widths depend on the target** (Dean, 2026-11-28). `k` is a power of two, and `k * bits t` is at most `Target.vector_bits`, the widest vector the CPU runs natively ([ADR 0049](0049-targets-are-theories.md)): 128 bits on arm64 (NEON) and 256 on x86-64-v3 (AVX2). The width is a proof obligation where the type is used, not a fixed table, so a new target or CPU level with wider vectors (AVX-512, SVE at a known length) allows wider `simd` types by changing its model alone. Target-generic code sees only the axiom `vector_bits >= 128`, so it may use up to 128 bits, which every target runs; a 256-bit `simd f32 8` is legal only under `@target(x86_64_linux)` or in the `then` of an `if Target.is x86_64_linux`, which `piac` folds. `Pia.Simd.natural t` is `Target.vector_bits / bits t`, the lane count of one register on the target being compiled for: 4 for `f32` on arm64 and 8 on x86-64-v3. A kernel written with `natural f32` lanes gets each target's register width with no `@target` branch, and its width obligation holds on every model by the definition.
+- **Widths depend on the target** (Dean, 2026-11-28). `k` is a power of two, and `k * bits t` is at most the widest vector the CPU runs natively, `Target.vector_bits` in the model of the target being compiled for ([ADR 0049](0049-targets-are-theories.md)): 128 bits on arm64 (NEON) and 256 on x86-64-v3 (AVX2). There is no fixed table, so a new target or CPU level with wider vectors (AVX-512, SVE at a known length) allows wider `simd` types by changing its model alone.
+- **Target-generic code asks the library, with metaprograms** (Dean, 2026-11-28). `Pia.Simd` exports type-level metaprograms ([ADR 0035](0035-substitution-failure-and-total-constraints.md)) that answer for the target being compiled for, so code that names no target can still use each target's width:
+
+  | Metaprogram | Meaning | arm64 | x86-64-v3 |
+  | --- | --- | --- | --- |
+  | `vector_bits t` | the widest native vector, in bits (`t` is only there because a type-level metaprogram takes types) | 128 | 256 |
+  | `bits t` | the bits of one lane of `t` | 32 for `f32` | 32 for `f32` |
+  | `natural t` | the lanes of one native vector, `vector_bits t / bits t` | 4 for `f32` | 8 for `f32` |
+  | `supports t k` | `k` is a power of two and `k * bits t <= vector_bits t` | `supports f32 8` is false | true |
+
+  They read the target through one new metaprogram builtin, `target_value "vector_bits"`, the value the target's model gives a `Target` spec. The width check is `simd`'s `where supports t k`, a constraint that piac evaluates where the type is formed, as it does a generic's `where` over a type-level metaprogram, so it costs no solver query and a use outside the target's widths is a type error naming the target, not a failed goal. A type argument may be a type-level metaprogram's integer, `simd f32 (natural f32)`, and overloads may be chosen by `where supports t 8` (substitution failure, ADR 0035), so one kernel takes the wide path where the target has it. The proofs of a target-generic function are then the proofs of its instance for the target it is compiled for, the instance's width being a constant, as with any value parameter. A function that must hold on every target still says so with the axiom `vector_bits >= 128`, which lets it use `simd f32 4`, `simd u8 16` and other 128-bit types without a query.
 
 ### 2. A type lowered to `vector` is a value: `$a` is the vector, and `$result` may be one
 
@@ -103,11 +113,11 @@ The meaning of a `vector` op for ADR 0065's refinement goal is the meaning of th
 Each step is one PR with its tests, docs and skill changes.
 
 1. **Value lowerings to `vector`** (section 2) and **float elements** in lowered types, with the `vector` dialect and its LLVM conversion (section 4). Tested by a lowered type in `tests/codegen`, by checking the vector instructions on both targets, and by refusing `out` vector operands.
-2. **`Pia.Simd`**: the type, `natural`, and the ops of section 3, with trusted lowerings. `tests/std/simd.pia` proves the bodies, `tests/codegen/simd.pia` checks NEON and AVX2 output, and a C harness checks every op against the scalar loop bit for bit, under `--lower=off` too.
+2. **`Pia.Simd`**: the type, the target queries of section 1 (`target_value`, type-level metaprograms that return an integer, and their use as a value argument), and the ops of section 3, with trusted lowerings. `tests/std/simd.pia` proves the bodies, `tests/codegen/simd.pia` checks NEON and AVX2 output, and a C harness checks every op against the scalar loop bit for bit, under `--lower=off` too.
 3. **Kernels**: a dot product and clamp-and-scale written with `simd`, against the auto-vectorised loops of PRs #564 and #579, which closes #11.
 4. **Proved lowerings** (section 5), after 0.1.0.
 
 ## Open questions
 
 1. **The name.** `simd t k` in `Pia.Simd` is proposed above, because `vec` is `Pia.Mem`'s growable vector. The alternatives are to keep `vec<T, k>` and rename `Pia.Mem`'s type (a breaking change with a migration rule), or to keep both and write the SIMD one `Simd.vec` wherever both are in scope.
-2. **Widths.** Resolved (Dean, 2026-11-28): what is supported depends on the target, not a fixed limit. `k * bits t <= Target.vector_bits`, so 128 bits everywhere and 256 bits on x86-64-v3 (section 1). design.md's fixed 64 or 128 bits and the earlier proposal of a fixed 512 bits are both dropped.
+2. **Widths.** Resolved (Dean, 2026-11-28): what is supported depends on the target, not a fixed limit, and target-generic code asks the library's metaprograms (`natural`, `supports`) rather than naming a target (section 1). design.md's fixed 64 or 128 bits and the earlier proposal of a fixed 512 bits are both dropped.
