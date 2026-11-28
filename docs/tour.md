@@ -648,6 +648,22 @@ let has (xs : [u32]) (v : u32) : bool
 
 `has` proves its bounds from `find`'s, without looking at its loop. A function that calls one with a loop and no bound cannot bound its own cost, and that is an error that names the callee.
 
+A counter can also be a function of the module: `costs less <= e` counts the calls of `less`, the way C++ states its complexity in comparisons. A callee that cannot call `less` at all adds nothing, whatever loops it has, so only the code on the way to `less` needs a bound:
+
+```ocaml
+let less (a : u32) (b : u32) : bool = a < b
+
+let count_below (xs : [u32]) (v : u32) : usize
+  ensures result <= len xs
+  costs less <= len xs
+=
+  let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent less <= i do
+    if less xs.[i] v then n <- n + 1
+  done;
+  n
+```
+
 ## Function values
 
 A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
@@ -848,7 +864,24 @@ let install (t : inout [handler; 4]) : unit =
   t.[2].f <- t.[1].f
 ```
 
-A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record, and `option step` is a reference that may be missing. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` as one nullable address, and references passed to C come later.
+A variant carries a reference the same way, as a constructor's record payload, `| Run of step` with `step` such a record. To give an arrow and its contract a name of their own, make it a type: `type` over an arrow is a new type ([ADR 0064](adr/0064-distinct-types.md)) whose contract is part of it, so `option op` is a reference with a contract that may be missing, and two arrows with different contracts are never one type. `op succ` makes an `op`, checking `succ` against the arrow there, and an `op` is called like a function:
+
+```ocaml
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let start () : option op = Some (op succ)
+```
+
+A function's name is never an `op` by itself: `let h : op = succ` is an error that suggests `op succ`. A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, `option (u8 -> u8)` of a bare arrow, `option` laid out as one nullable address, and references passed to C come later.
 
 ## Parallel loops
 

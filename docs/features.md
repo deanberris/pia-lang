@@ -21,6 +21,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Recursive types, `let rec` variants | [verifier](verifier.md#recursive-types) | [rec_types](../tests/verify/rec_types.pia), [rec_aliasing](../tests/verify/rec_aliasing.pia), [rec_fill](../tests/verify/rec_fill.pia) |
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 | Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
+| Error bounds of long sums and dot products (`Pia.Float.Error`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_error_use](../tests/std/float_error_use.pia) |
 | Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
@@ -36,10 +37,11 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
+| Frames across calls, kept by the callee's ensures | [verifier](verifier.md#spread) | [frames_calls](../tests/verify/frames_calls.pia) |
 | Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia), [bytes](../tests/lean/bytes.pia), [slices](../tests/lean/slices.pia), [variants](../tests/lean/variants.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
-| Cost bounds, `costs iterations` and `costs calls` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |
+| Cost bounds, `costs iterations`, `costs calls` and `costs f` for a function `f` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia), [cost_functions](../tests/verify/cost_functions.pia) |
 | `assume`, `@trusted` and `--trust-report --why` | [how verification works](verification.md), [ADR 0023](adr/0023-minimal-core-self-hosted-stdlib.md) | [assumes](../tests/verify/assumes.pia) |
 | `--check-vacuity` | [verifier](verifier.md#theories) | [vacuity](../tests/verify/vacuity.pia) |
 | Parallel, sliced and cached proving | [verifier](verifier.md#parallel-sliced-and-cached-proving) | [parallel](../tests/verify/parallel.pia) |
@@ -63,6 +65,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
 | Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia), [shapes](../tests/verify/shapes.pia) |
 | `@lower` on a type: a record's MLIR type, a memref view of its buffer | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0074](adr/0074-library-types-tensors.md) | [lower_type](../tests/codegen/lower_type.pia) |
+| `@lower` on a type to an MLIR `vector`, a value of its lanes | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0087](adr/0087-simd-vectors-as-a-library-type.md) | [lower_vector](../tests/codegen/lower_vector.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |
@@ -73,6 +76,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
 | Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
 | Function reference fields: `type { f : (x : u8) -> u8 requires ...; ... }`, stored and rebound with `<-`, buffers of them as tables called indirectly, and variant payloads holding them | [tour](tour.md#function-values), [codegen](codegen.md), [ADR 0071](adr/0071-function-references.md) | [fn_reference_fields](../tests/verify/fn_reference_fields.pia), [fn_reference_variants](../tests/verify/fn_reference_variants.pia) |
+| Distinct arrow types: `let op = type (x : u8) -> u8 requires ...`, made by `op f`, called as `f y`, and nullable as `option op` | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md#amendment-2026-11-28-a-nullable-reference-with-a-contract-is-option-of-a-distinct-arrow-type) | [fn_arrow_types](../tests/verify/fn_arrow_types.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory

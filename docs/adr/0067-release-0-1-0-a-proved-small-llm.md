@@ -86,9 +86,9 @@ Sizes: **S** is about a day of work and one PR, **M** two to three days, **L** a
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
 | F1 | `f32` and `f64` types: suffixed literals, arithmetic, comparisons, conversions to and from integers, `to_bits`/`from_bits`, strict IEEE codegen (no flush-to-zero) | L | done (#440, #452) |
-| F2 | The verifier's float encoding, step 1 of ADR 0038: `to_real`, `finite`, `eps`, `tiny`, the `Float` concept with builtin adapters, float intervals in the interval stage; bit-precise FP behind `@solver(fp_exact)` | L | not started |
-| F3 | Step 2: the `round` encoding with per-operation δ, nlsat for straight-line error goals | M | not started |
-| F4 | Step 3: `Pia.Float.Error` with γₙ, and the summation, dot product and matrix-vector lemmas | M | not started |
+| F2 | The verifier's float encoding, step 1 of ADR 0038: `to_real`, `finite`, `eps`, `tiny`, the `Float` concept with builtin adapters, float intervals in the interval stage; bit-precise FP behind `@solver(fp_exact)` | L | done (#565): `to_real`, `finite`, `eps`, `tiny`; the `Float` concept, float intervals and `fp_exact` remain |
+| F3 | Step 2: the `round` encoding with per-operation δ, nlsat for straight-line error goals | M | done (#565), as an absolute error bound per operation rather than a fresh δ, which Z3 decides far faster |
+| F4 | Step 3: `Pia.Float.Error` with γₙ, and the summation, dot product and matrix-vector lemmas | M | sum and dot done (`lib/Pia/Float/Error.pia`); matvec is K1 |
 | F5 | Step 4 plus ADR 0012's licence: `@fp(reassoc)` and `contract` in codegen, order-free bounds | M | not started |
 | F6 | Step 6: `a ~= e within b`, derived bounds published in interfaces | M | not started |
 | F7 | Step 5: device float models in placement, with the Apple GPU's model | S | not started; needed only for stage 3 |

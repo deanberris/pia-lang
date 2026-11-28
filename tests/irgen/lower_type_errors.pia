@@ -15,7 +15,7 @@ let a1 = type { data : [u8; 4] } @lower("memref<4xi8>")
 *)
 let a2 = type { data : [u8; 4] } @lower("memref<2x2xi8>", bytes)
 
-(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:49: error: the field 'n' of 'a3' is u8; a lowered type's elements are an array or a slice of integers or bools
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:49: error: the field 'n' of 'a3' is u8; a lowered type's elements are an array or a slice of integers, bools or floats
 *)
 let a3 = type { n : u8 } @lower("memref<1xi8>", n)
 
@@ -31,9 +31,19 @@ let a5 = type { data : [u8; 4] } @lower("memref<?x2xi8>", data)
 *)
 let a6 = type { data : [u8; 4] } @lower("memref<3x2xi8>", data)
 
-(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a7' names 'vector<4xi8>'; a type lowers to a ranked memref, as in 'memref<4x4xi8>'
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a7' names 'llvm.ptr'; a type lowers to a ranked memref, as in 'memref<4x4xi8>', or to a vector, as in 'vector<4xf32>'
 *)
-let a7 = type { data : [u8; 4] } @lower("vector<4xi8>", data)
+let a7 = type { data : [u8; 4] } @lower("llvm.ptr", data)
+
+(* A vector is a value (ADR 0087): its lanes are an array of one
+   dimension.
+// CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:54: error: 'v1' lowers to 'vector<4xi8>', a value, so its lanes 'data' are an array, not [u8]
+*)
+let v1 = type { data : [u8] } @lower("vector<4xi8>", data)
+
+(* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'v2' names 'vector<2x2xi8>'; a type lowers to a vector of one dimension, as in 'vector<4xf32>'
+*)
+let v2 = type { data : [u8; 4] } @lower("vector<2x2xi8>", data)
 
 (* CHECK-DAG: lower_type_errors.pia:[[@LINE+2]]:34: error: @lower on 'a8' names 'memref<4xi8,strided<[1]>>'; a type lowers to a ranked memref of static extents with the identity layout, as in 'memref<4x4xi8>'
 *)

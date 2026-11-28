@@ -30,3 +30,13 @@ let clear (m : inout mat) : unit
 let first (r : region) (g : inout grid r) : u8
   @lower("%z = arith.constant 0 : index\n%v = memref.load $g[%z, %z] : $g.type\nreturn %v : i8")
 = g.data.[0]
+
+(* A vector is a value (ADR 0087), so a lowering returns a new one.
+*)
+let f4 = type { lanes : [f32; 4] } @lower("vector<4xf32>", lanes)
+
+(* CHECK-DAG: lower_type_inout_errors.pia:[[@LINE+3]]:3: error: 'v' is 'out', but f4 lowers to a vector, which is a value: return it, as in '$result = ...' (ADR 0087)
+*)
+let fill (v : out f4) : unit
+  @lower("")
+= for i in 0 .. 4 do v.lanes.[i] <- 0.0 done

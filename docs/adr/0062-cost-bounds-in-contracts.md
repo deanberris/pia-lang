@@ -134,6 +134,8 @@ Each step is a PR with tests in `tests/verify/costs.pia`.
 5. **Reporting**: `--verify-stats` and the REPL report cost goals separately, so their proof cost is visible.
 6. **The lint** `unbounded_cost` ([ADR 0037](0037-idiomatic-pia-and-lints.md)): an exported function of a `Pia.Core` module with a loop or recursion and no cost clause is a warning. It is on for `lib/Pia/Core` from the start, and the warnings it finds there are fixed module by module.
 
+**Step 2a as built (2026-11-28).** A counter may name a function of the module, `costs less <= e`. Each call of it counts one, and a call of anything else adds the callee's bound on it. Section 2 decides reachability from the callee's signature, which is right for a function parameter or a concept requirement but not for a function of the module, which any body may call by name. So a callee without a clause adds 0 when no path through its body, its callees' bodies or a call through a function reference reaches the counted function, whatever loops or recursion it has, and otherwise is inferred as for `calls`. Function parameters and concept requirements as counters, and `Pia.Math.Log`, are step 2b (tests/verify/cost_functions.pia).
+
 ## Answers to the open questions
 
 Dean answered when he accepted it (2026-11-24):

@@ -1886,11 +1886,12 @@ class Gen {
                  "cost; a cost clause belongs on code");
         return false;
       }
-      if (c->text != "iterations" && c->text != "calls") {
+      if (!isEventCounter(c->text) && !isCountedFunction(c->text)) {
         fail(*c, "'" + c->text +
-                     "' is not a counter yet: a cost clause "
-                     "counts 'iterations' or 'calls', and the calls of a "
-                     "function come later (ADR 0062)");
+                     "' is not a counter: a cost clause counts "
+                     "'iterations', 'calls' or the calls of a function of "
+                     "this module, and function parameters and concept "
+                     "requirements come later (ADR 0062)");
         return false;
       }
       for (const Counter &k : costs_)
@@ -1917,6 +1918,68 @@ class Gen {
       b_.getBlock()->getParentOp()->setAttr("pia.costs", b_.getUnitAttr());
     }
     return true;
+  }
+
+  static bool isEventCounter(llvm::StringRef counter) {
+    return counter == "iterations" || counter == "calls";
+  }
+
+  // Whether `name` is a function of this module that code calls, whose
+  // calls a cost clause can count (ADR 0062, section 2).
+  bool isCountedFunction(const std::string &name) {
+    for (const auto &[symbol, sig] : sigs_)
+      if (sig.item && sig.item->text == name && !hasFlag(*sig.item, "spec") &&
+          !hasFlag(*sig.item, "lemma"))
+        return true;
+    return false;
+  }
+
+  // Whether a call of `sig` is itself an event on `counter`: every call of
+  // code is one on `calls`, and a call of `f` one on `f`.
+  static bool isEvent(const sema::FuncSig &sig, const std::string &counter) {
+    if (counter == "calls")
+      return true;
+    return !isEventCounter(counter) && sig.item && sig.item->text == counter;
+  }
+
+  // Whether running `r` may call the function `counter`: a call of it, a
+  // call of a function that may, or a call through a reference, which may
+  // be to anything. A callee that cannot spends nothing on it, loops and
+  // recursion included.
+  bool mayReach(mlir::Region &r, const std::string &counter,
+                std::set<std::string> &seen) {
+    bool found = false;
+    r.walk([&](mlir::Operation *op) {
+      if (found)
+        return mlir::WalkResult::interrupt();
+      if (mlir::isa<mlir::func::CallIndirectOp>(op)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      auto call = mlir::dyn_cast<mlir::func::CallOp>(op);
+      if (!call)
+        return mlir::WalkResult::advance();
+      std::string g = call.getCallee().str();
+      if (sourceName(g) == counter || mayReach(g, counter, seen)) {
+        found = true;
+        return mlir::WalkResult::interrupt();
+      }
+      return mlir::WalkResult::advance();
+    });
+    return found;
+  }
+
+  bool mayReach(const std::string &symbol, const std::string &counter,
+                std::set<std::string> &seen) {
+    if (!seen.insert(symbol).second)
+      return false;
+    auto f = module_.lookupSymbol<mlir::func::FuncOp>(symbol);
+    // A function of another module or of C cannot call one of this
+    // module's by name; one it was given is a reference, called here.
+    if (!f || f.isExternal() || f->hasAttr("pia.extern") ||
+        f->hasAttr(PiaDialect::getImportAttrName()))
+      return false;
+    return mayReach(f.getBody(), counter, seen);
   }
 
   // At the return: what the body spent is within the bound, a contract
@@ -1979,7 +2042,7 @@ class Gen {
         c->setAttr("pia.cost_caller", b_.getStringAttr(costSymbol_));
         costSites_[c] = n.loc;
       }
-      if (k.name == "calls")
+      if (isEvent(sig, k.name))
         part = addCost(l, part, counterConst(l, 1));
       k.spent->value = addCost(l, k.spent->value, part);
     }
@@ -2033,6 +2096,13 @@ class Gen {
     // A C function has no loop of Pia's: its call is the event.
     if (f->hasAttr("pia.extern"))
       return 0;
+    // A callee that cannot call the counted function spends nothing on it,
+    // whatever loops or recursion it has.
+    if (!isEventCounter(counter)) {
+      std::set<std::string> seen;
+      if (!mayReach(symbol, counter, seen))
+        return 0;
+    }
     if (f->hasAttr(PiaDialect::getImportAttrName()) || f.isExternal()) {
       why = "is defined in another module";
       return std::nullopt;
@@ -2060,6 +2130,12 @@ class Gen {
         if (op.getName().getDialectNamespace() == "pia_contract")
           continue;
         if (mlir::isa<mlir::scf::ForOp, mlir::scf::WhileOp>(op)) {
+          std::set<std::string> seen;
+          bool reaches = isEventCounter(counter);
+          for (mlir::Region &inner : op.getRegions())
+            reaches = reaches || mayReach(inner, counter, seen);
+          if (!reaches)
+            continue;
           why = "has a loop";
           return std::nullopt;
         }
@@ -2100,7 +2176,7 @@ class Gen {
             }
             part = *c;
           }
-          if (counter == "calls")
+          if (counter == "calls" || sourceName(g) == counter)
             part = satAdd(part, 1);
           total = satAdd(total, part);
           continue;
@@ -3051,6 +3127,12 @@ class Gen {
       sema::FuncSig &sig = *set[0];
       if (sig.isGeneric())
         return genGenericCall(n, sig, nullptr, {}, expected);
+      // A distinct arrow type is made only by applying it (ADR 0064).
+      if (!sig.params.empty() && arrowField(expected)) {
+        std::string t = typeName(expected);
+        return fail(n, "'" + n.text + "' is a function, not a value of " + t +
+                           "; write '" + t + " " + n.text + "' (ADR 0071)");
+      }
       if (!sig.params.empty())
         return fail(n, "functions as values are not supported yet; apply '" +
                            n.text + "' to all its arguments");
@@ -4900,6 +4982,18 @@ class Gen {
       if (BindingPtr h = lookup(fn.text);
           mlir::isa<mlir::FunctionType>(h->type))
         return genReferenceCall(n, h, expected);
+    // `f x` for `f` of a distinct arrow type calls through its one field.
+    if (local && !targs)
+      if (BindingPtr f = lookup(fn.text); arrowField(f->type)) {
+        auto field =
+            syntax::makeNode(NodeKind::Field, fn.loc, *arrowField(f->type));
+        field->add(syntax::clone(fn));
+        auto call = syntax::makeNode(NodeKind::Apply, n.loc);
+        call->add(std::move(field));
+        for (size_t i = 1; i < n.kids.size(); ++i)
+          call->add(syntax::clone(*n.kids[i]));
+        return genFieldReferenceCall(*keep(std::move(call)));
+      }
     // `g x` for a function object `g` is `apply g x` (ADR 0044, section 4).
     if (local && !targs)
       if (BindingPtr g = lookup(fn.text);
@@ -5095,7 +5189,8 @@ class Gen {
       // counter its cost clause bounds (ADR 0062).
       if (fn.text == "spent" && argc == 1 &&
           n.kids[1]->kind == NodeKind::Name &&
-          (n.kids[1]->text == "iterations" || n.kids[1]->text == "calls")) {
+          (isEventCounter(n.kids[1]->text) ||
+           isCountedFunction(n.kids[1]->text))) {
         const std::string &c = n.kids[1]->text;
         if (!spentOk_)
           return fail(n, "'spent " + c +
@@ -9206,7 +9301,17 @@ class Gen {
   // Stand-in types for the type parameters of `sig`.
   std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
     std::map<std::string, Type> bound;
+    unsigned values = 0;
     for (const std::string &t : sig.typeParams) {
+      // A value parameter, `k` in `simd f32 k`, stands for a value, one
+      // per parameter, so `simd f32 k` is not an instance of `simd u8 k`.
+      // 2^32 and up: no program spells such an extent, and a type that
+      // lowers to it is still within MLIR's limits.
+      if (llvm::is_contained(sig.valueParams, t)) {
+        llvm::APInt v(kWidth, (uint64_t(1) << 32) + values++);
+        bound[t] = IntType::get(&ctx_, v, v);
+        continue;
+      }
       bound[t] = RecordType::get(&ctx_, t, {}, {});
       standIns_.insert(bound[t]);
     }
@@ -10744,10 +10849,15 @@ class Gen {
                  "step 1)");
       return false;
     }
+    const sema::TypeResolver::TypeLowering *resultLowering =
+        sig.result ? typeLowering(sig.result) : nullptr;
+    if (resultLowering && !resultLowering->vector)
+      resultLowering = nullptr;
     if (sig.result && !isUnit(sig.result) && !mlir::isa<IntType>(sig.result) &&
-        !isBool(sig.result) && !mlir::isa<mlir::FloatType>(sig.result)) {
-      fail(attr, "a lowered function returns unit, an integer, a float or a "
-                 "bool; '" +
+        !isBool(sig.result) && !mlir::isa<mlir::FloatType>(sig.result) &&
+        !resultLowering) {
+      fail(attr, "a lowered function returns unit, an integer, a float, a "
+                 "bool or a value of a type that lowers to a vector; '" +
                      name + "' returns " + typeName(sig.result));
       return false;
     }
@@ -10828,6 +10938,15 @@ class Gen {
         return false;
       }
       auto rt = mlir::cast<RecordType>(p.type);
+      if (tl->vector) {
+        fail(attr,
+             "'" + p.name + "' is '" +
+                 (sema::hasModifier(p.modifiers, "out") ? "out" : "inout") +
+                 "', but " + typeName(p.type) +
+                 " lowers to a vector, which is a value: return it, "
+                 "as in '$result = ...' (ADR 0087)");
+        return false;
+      }
       if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl->fieldIndex])) {
         fail(attr,
              "'" + p.name + "' is '" +
@@ -10862,17 +10981,19 @@ class Gen {
         if (!markTypeLowering(sig.params[i], *tl, fn, i))
           return false;
     }
+    // A vector result (ADR 0087) is stored into the buffer codegen gives
+    // a record result.
+    if (resultLowering)
+      fn->setAttr("pia.lower_result_view",
+                  loweringView(sig.result, *resultLowering));
     return true;
   }
 
-  // Marks argument `i`, a value of a lowered type, with the view codegen
-  // makes of its buffer, `pia.lower_view`, which ScalarizeRecords moves to
-  // the buffer's own argument. A slice's length is not in its type, so
-  // the body proves it matches the view, from the type's invariant.
-  bool markTypeLowering(const sema::Param &p,
-                        const sema::TypeResolver::TypeLowering &tl,
-                        mlir::func::FuncOp fn, unsigned i) {
-    auto rt = mlir::cast<RecordType>(p.type);
+  // What codegen needs to make a value of a lowered type from its buffer:
+  // the field, its shape, whether it is a vector, and how to name it.
+  mlir::DictionaryAttr
+  loweringView(Type t, const sema::TypeResolver::TypeLowering &tl) {
+    auto rt = mlir::cast<RecordType>(t);
     llvm::SmallVector<mlir::NamedAttribute> view{
         b_.getNamedAttr("field", b_.getI64IntegerAttr(tl.fieldIndex)),
         b_.getNamedAttr("shape", b_.getDenseI64ArrayAttr(tl.extents)),
@@ -10884,7 +11005,20 @@ class Gen {
                                          std::to_string(tl.at.column)))};
     if (!tl.element.empty())
       view.push_back(b_.getNamedAttr("element", b_.getStringAttr(tl.element)));
-    fn.setArgAttr(i, "pia.lower_view", b_.getDictionaryAttr(view));
+    if (tl.vector)
+      view.push_back(b_.getNamedAttr("vector", b_.getUnitAttr()));
+    return b_.getDictionaryAttr(view);
+  }
+
+  // Marks argument `i`, a value of a lowered type, with the view codegen
+  // makes of its buffer, `pia.lower_view`, which ScalarizeRecords moves to
+  // the buffer's own argument. A slice's length is not in its type, so
+  // the body proves it matches the view, from the type's invariant.
+  bool markTypeLowering(const sema::Param &p,
+                        const sema::TypeResolver::TypeLowering &tl,
+                        mlir::func::FuncOp fn, unsigned i) {
+    auto rt = mlir::cast<RecordType>(p.type);
+    fn.setArgAttr(i, "pia.lower_view", loweringView(p.type, tl));
     if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl.fieldIndex]))
       return true;
     BindingPtr b = lookup(p.name);
@@ -13969,13 +14103,38 @@ class Gen {
                 : RecordType();
   }
 
+  // The field of a distinct arrow type (ADR 0071, amendment of
+  // 2026-11-28), a record whose one field holds a function reference, or
+  // none for any other type.
+  std::optional<std::string> arrowField(Type t) {
+    auto rt = mlir::dyn_cast_or_null<RecordType>(t);
+    if (!rt || types_.isVariant(rt) || rt.getFieldNames().size() != 1 ||
+        !mlir::isa<mlir::FunctionType>(rt.getFieldTypes()[0]))
+      return std::nullopt;
+    std::string field = rt.getFieldNames()[0].str();
+    if (!llvm::StringRef(field).starts_with("raw#") ||
+        !types_.fieldArrow(rt.getName().str(), field))
+      return std::nullopt;
+    return field;
+  }
+
   // `r.op x` through a function reference field: a call of the field's
-  // proxy, which every record with this field shares.
+  // proxy, which every record with this field shares. A field of a
+  // distinct arrow type is called through that type's own field.
   R genFieldReferenceCall(const Node &n) {
-    const Node &fn = *n.kids[0];
-    R f = genField(fn);
+    const Node *fnp = n.kids[0].get();
+    R f = genField(*fnp);
     if (!f)
       return f;
+    if (std::optional<std::string> inner = arrowField(f->type)) {
+      auto field = syntax::makeNode(NodeKind::Field, fnp->loc, *inner);
+      field->add(syntax::clone(*fnp));
+      fnp = keep(std::move(field));
+      f = genField(*fnp);
+      if (!f)
+        return f;
+    }
+    const Node &fn = *fnp;
     auto ft = mlir::dyn_cast<mlir::FunctionType>(f->type);
     if (!ft)
       return fail(fn, "'." + fn.text + "' is " + typeName(f->type) +

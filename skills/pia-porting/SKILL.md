@@ -43,14 +43,14 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | interfaces | concepts with laws, proved per type | C++20 concepts (no laws) | traits | module signatures | duck-typed `comptime` |
 | metaprograms | `let meta`, quotes and splices, `@derive(eq)` | macros, templates, `constexpr` | `macro_rules!`, proc macros | ppx | `comptime` |
 | closures | `let [x] (a : t) => e`, captures listed | `[x](T a) { }` | `move \|a\| e` | `fun a -> e` | none |
-| function pointers | `let h : u8 -> u8 = succ`, a reference with the arrow's contract (no `&`); `let h : mutable (u8 -> u8) = succ` and `h <- twice` to rebind; a table is a buffer of records with an arrow field, `t.[i].f y` | `T (*h)(U) = succ` | `let h: fn(u8) -> u8 = succ` | `let h = succ` | `const h: *const fn (u8) u8 = succ` |
+| function pointers | `let h : u8 -> u8 = succ`, a reference with the arrow's contract (no `&`); `let h : mutable (u8 -> u8) = succ` and `h <- twice` to rebind; a table is a buffer of records with an arrow field, `t.[i].f y`; a nullable pointer is `option op` with `let op = type (x : u8) -> u8 requires ...` | `T (*h)(U) = succ` | `let h: fn(u8) -> u8 = succ` | `let h = succ` | `const h: *const fn (u8) u8 = succ` |
 | modules | one per file; `interface I = sig ... end`; `import M.I` | headers, C++20 modules | `mod`, `pub`, `use` | `.mli` | `@import`, `pub` |
 | memory | explicit allocators, every allocation fallible, `box t` | `malloc`, `new` | `Box`, infallible by default | GC | explicit allocators |
 | floats | `f32`, `f64`, strict IEEE 754; `0.5f32`, or `0.5` where a float is expected; `f32 n`, `i32 x` (a goal: not NaN, in range), `to_bits x`, `from_bits u`; `sqrtf` is `Pia.Math.sqrt` (`f32` so far) | `float`, `double`, with `-ffp-contract=off`; a loop built with `-ffast-math` or `#pragma clang fp reassociate(on) contract(fast)` is `@fp(reassoc, contract)` on the function | `f32`, `f64` | `float` (64-bit) | `f32`, `f64` |
 | C calls | `let f (x : i32) : i32 ensures ... = extern "f"`; `unsafe f x` if uncontracted | native | `extern "C"`, `unsafe` | `external` | `extern` |
 | assertions | `assert p`, proved, never run | `assert` at run time | `assert!` | `assert` | `std.debug.assert` |
 | loops | `for i in 0 .. n` (half open) with `invariant`; `while` with `decreases` | `for` | `for i in 0..n` | `for i = 0 to n - 1` (inclusive) | `for (0..n) \|i\|` |
-| complexity | `costs iterations <= len xs`, proved (ADR 0062) | a comment | a comment | a comment | a comment |
+| complexity | `costs iterations <= len xs`, `costs less <= len xs` for a comparison function, proved (ADR 0062) | a comment | a comment | a comment | a comment |
 | theorems Z3 cannot prove | `let lemma l ... = by lean T`, proved in Lean 4 (ADR 0061, `pia-lean`) | none | none (Verus, Kani outside the language) | none (Coq outside the language) | none |
 | parallel loops | `spread i in 0 .. n do ... done`, proved race-free; `@place(gpu)` on a Mac's GPU | OpenMP | rayon | domains | threads |
 | reductions and barriers inside a parallel loop | `sum x` and `exchange buf` (`Pia.Par`, or your own `@collective` function over `xs : [t; r]`) in a `spread` body, under conditions every iteration shares | `MPI_Allreduce`, `#pragma omp barrier`, CUDA `__syncthreads` | rayon `reduce` (outside the loop) | — | `sync.WaitGroup` per step |

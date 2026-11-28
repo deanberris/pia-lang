@@ -1,0 +1,11 @@
+(* A distinct arrow type is made by applying it (ADR 0071, amendment of
+   2026-11-28).
+// RUN: not piac --emit=mlir %s 2>&1 | FileCheck %s
+*)
+
+let succ (x : u8) : u8 = x
+let op = type (x : u8) -> u8
+
+(* CHECK: fn_arrow_type_errors.pia:[[@LINE+2]]:24: error: 'succ' is a function, not a value of op; write 'op succ' (ADR 0071)
+*)
+let implicit () : op = succ
