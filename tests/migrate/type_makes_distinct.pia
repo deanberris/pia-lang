@@ -1,0 +1,26 @@
+(* Migration rule type-makes-distinct (ADR 0064, piac 0.0.0+634): before
+   it, `let blk = type int{0..63}` was another name for int{0..63}; since,
+   it is a new type. Only a person knows which was meant, so `piac migrate`
+   suggests dropping `type` and writes nothing, and --check passes. From a
+   version after the change, the rule does not run. A build never reports
+   it, since that would flag every distinct type.
+// RUN: cp %s %t/old.pia
+// RUN: piac migrate --check %t/old.pia | FileCheck %s
+// RUN: piac migrate %t/old.pia | FileCheck %s
+// RUN: cmp %s %t/old.pia
+// RUN: piac migrate --from=0.0.0+634 --check %t/old.pia | FileCheck %s --allow-empty --check-prefix=NONE
+// RUN: piac --check %s 2>&1 | FileCheck %s --allow-empty --check-prefix=NONE
+// RUN: piac --verify %s | FileCheck %s --check-prefix=PROVED
+*)
+
+let blk = type int{0..63}
+let point = type { x : int; y : int }
+let byte = u8
+
+(* Expected suggestions: one, for blk; a record was always a new type, and
+   byte is already an alias.
+// CHECK: old.pia:16:11: [type-makes-distinct] 'blk' is a new type, distinct from what follows 'type', since ADR 0064; before, it was another name for it. If you meant another name, drop 'type' (quick fix: Keep 'blk' another name: drop 'type')
+// CHECK-NOT: type-makes-distinct
+// NONE-NOT: {{.}}
+// PROVED: 0 failed
+*)

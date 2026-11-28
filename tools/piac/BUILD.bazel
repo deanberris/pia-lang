@@ -15,6 +15,7 @@ cc_binary(
         "//src/gpu",
         "//src/irgen",
         "//src/meta",
+        "//src/migrate",
         "//src/syntax",
         "//src/verify",
         "//src/version",

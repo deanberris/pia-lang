@@ -106,6 +106,7 @@ nav:
       - "The C++23 standard library in Pia": cpp-std.md
       - Shared libraries and certificates: abi.md
       - Advisories: advisories.md
+      - Migrations: migrations.md
       - Module initialisation: init.md
       - Coroutines, races and deadlocks: concurrency.md
   - Compiler internals:
