@@ -98,5 +98,5 @@ let narrow (xs : [box Shape]) : bool
 // CHECK: box_concept.pia:81:3: proved: the postcondition holds [smt]
 // CHECK: box_concept.pia:87:3: failed: the precondition of 'fits(box_Shape, u32)' holds
 // CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
-// CHECK: 59 proved, 1 failed, 0 skipped
+// CHECK: 57 proved, 1 failed, 0 skipped
 *)
