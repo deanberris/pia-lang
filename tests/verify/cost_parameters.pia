@@ -1,0 +1,96 @@
+(* Counting the calls of a function parameter or a concept's requirement
+   (ADR 0062, step 2). `costs p <= e` on a higher-order function bounds how
+   many times a run applies `p`. It is proved once, over any function
+   argument, and at a call it counts the calls of what `p` is given: a
+   named function by its name, an object or a closure by `apply`.
+   `costs less <= e` on a generic counts the calls of its concept's
+   requirement `less`, which each instance makes at its own `less`.
+// RUN: piac --verify %s | FileCheck %s
+*)
+
+(* One application of `p` per element tested. *)
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  costs p <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs && spent p <= i
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+(* Given a named function, `find` counts its calls by its name. *)
+let big (x : u8) : bool = x > 3
+
+let first_big (xs : [u8]) : usize
+  costs big <= len xs
+= find xs big
+
+(* Given a closure or an object, the calls of `apply`. *)
+let first_above (xs : [u8]) (lo : u8) : usize
+  costs apply <= len xs
+= find xs (let [lo] (x : u8) => x > lo)
+
+let below = type { lim : u8 }
+let apply (g : below) (x : u8) : bool = (x < g.lim)
+
+let first_below (xs : [u8]) (lim : u8) : usize
+  costs apply <= len xs
+= let b : below = { lim = lim } in
+  find xs b
+
+(* A parameter passed on is applied as often as the callee's bound on
+   its own parameter says. *)
+let find_twice (xs : [u8]) (p : u8 -> bool) : usize
+  costs p <= 2 * len xs
+= let a = find xs p in
+  let b = find xs p in
+  if a < b then a else b
+
+let twice_big (xs : [u8]) : usize
+  costs big <= 2 * len xs
+= find_twice xs big
+
+(* A function object of a generic type: its applications count. *)
+let count (t : type) (f : type where Function f t bool) (xs : [t]) (p : f) : usize
+  ensures result <= len xs
+  costs p <= len xs
+= let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent p <= i do
+    if p xs.[i] then n <- n + 1
+  done;
+  n
+
+(* A concept's requirement, proved over any `Ord t`. *)
+let meta Ord (t : type) : concept = sig
+  let less : (a : t) -> (b : t) -> bool
+end
+
+let count_below (t : type where Ord t) (xs : [t]) (v : t) : usize
+  ensures result <= len xs
+  costs less <= len xs
+= let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i && spent less <= i do
+    if less xs.[i] v then n <- n + 1
+  done;
+  n
+
+let less (a : u32) (b : u32) : bool = a < b
+
+let small (xs : [u32]) : usize
+  costs less <= len xs
+= count_below xs 10
+
+(* Expected report.
+// CHECK-DAG: cost_parameters.pia:14:3: proved: the cost on p is within its bound [generic]
+// CHECK-DAG: cost_parameters.pia:26:3: proved: the cost on big is within its bound [smt]
+// CHECK-DAG: cost_parameters.pia:31:3: proved: the cost on apply is within its bound [smt]
+// CHECK-DAG: cost_parameters.pia:38:3: proved: the cost on apply is within its bound [smt]
+// CHECK-DAG: cost_parameters.pia:45:3: proved: the cost on p is within its bound [generic]
+// CHECK-DAG: cost_parameters.pia:51:3: proved: the cost on big is within its bound [smt]
+// CHECK-DAG: cost_parameters.pia:57:3: proved: the cost on p is within its bound [generic]
+// CHECK-DAG: cost_parameters.pia:71:3: proved: the cost on less is within its bound [generic]
+// CHECK-DAG: cost_parameters.pia:81:3: proved: the cost on less is within its bound [smt]
+// CHECK-DAG: cost_parameters.pia:14:3: proved: the cost on big is within its bound [smt]
+// CHECK: 0 failed
+*)

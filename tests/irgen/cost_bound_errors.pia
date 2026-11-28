@@ -30,8 +30,51 @@ let ranked (xs : [u32]) : usize
   costs less <= len xs
 = below xs 7
 
+(* A function given for a counted parameter is counted by its name, so
+   one that calls itself needs its own bound: the proof over any function
+   argument counts only its applications.
+*)
+let find (xs : [u8]) (p : u8 -> bool) : usize
+  costs p <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs && spent p <= i
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let down (x : u8) : bool
+  decreases x
+= if x = 0 then false else down (x - 1)
+
+let first_down (xs : [u8]) : usize
+  costs down <= len xs
+= find xs down
+
+(* A parameter passed to a function with no bound on its own parameter.
+*)
+let scan (xs : [u8]) (p : u8 -> bool) : usize =
+  let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let scan_on (xs : [u8]) (p : u8 -> bool) : usize
+  costs p <= len xs
+= scan xs p
+
+let big (x : u8) : bool = x > 3
+
+let scan_big (xs : [u8]) : usize
+  costs big <= len xs
+= scan_on xs big
+
 (* Expected errors, in order.
 // CHECK: cost_bound_errors.pia:15:3: error: 'wrapped' has no bound on iterations, so the cost of 'report' on iterations cannot be proved; add 'costs iterations <= ...' to 'wrapped', which calls 'total', which has a loop
 // CHECK: cost_bound_errors.pia:19:3: error: 'total' has no bound on calls, so the cost of 'counted' on calls cannot be proved; add 'costs calls <= ...' to 'total', which has a loop
 // CHECK: cost_bound_errors.pia:31:3: error: 'below' has no bound on less, so the cost of 'ranked' on less cannot be proved; add 'costs less <= ...' to 'below', which has a loop
+// CHECK: cost_bound_errors.pia:40:23: error: 'down' has no bound on down, so the cost of 'find[down]' on down cannot be proved; add 'costs down <= ...' to 'down', which calls 'down', which is recursive
+// CHECK: cost_bound_errors.pia:66:3: error: 'scan[big]' has no bound on big, so the cost of 'scan_on[big]' on big cannot be proved; add 'costs big <= ...' to 'scan[big]', which has a loop
 *)
