@@ -46,3 +46,7 @@ let cost (x : u8) : u8 @lower("$ 1") = x
 (* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer or a bool; 'pair' returns pixel
 *)
 let pair (r : u8) (g : u8) : pixel @lower("") = { r = r; g = g }
+
+(* CHECK: lower_errors.pia:[[@LINE+2]]:26: error: @lower splices '$result', the value of a function that returns one; 'tick' returns unit
+*)
+let tick (x : u8) : unit @lower("$result = arith.constant 0 : i8") = ()

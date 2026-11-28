@@ -970,12 +970,14 @@ def Pia_ExactCmpOp : Pia_Op<"exact.cmp", [Pure, SameTypeOperands]> {
 }
 
 def Pia_ExactConvertOp : Pia_Op<"exact.convert", [Pure]> {
-  let summary = "an integer as an int or a real, exactly";
+  let summary = "an integer as an int or a real, or a float as a real, exactly";
   let description = [{
-    A range-typed integer to `int` or `real`, or an `int` to `real`. Every
-    such conversion is exact, so it raises no goal.
+    A range-typed integer to `int` or `real`, an `int` to `real`, or an
+    `f32` or `f64` to `real` (`to_real`, ADR 0038), which is the float's
+    value when it is finite and an unknown real otherwise. Every such
+    conversion is exact, so it raises no goal.
   }];
-  let arguments = (ins Pia_IntOrExact:$input);
+  let arguments = (ins AnyTypeOf<[Pia_IntOrExact, AnyFloat]>:$input);
   let results = (outs Pia_Exact:$result);
   let assemblyFormat = "$input attr-dict `:` type($input) `->` type($result)";
   let hasVerifier = 1;

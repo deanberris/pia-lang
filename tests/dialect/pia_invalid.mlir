@@ -77,7 +77,7 @@ func.func @int_division(%a: !pia.integer) {
 // -----
 
 func.func @real_to_int(%a: !pia.real) {
-  // expected-error @+1 {{converts an integer to int or real, or an int to real}}
+  // expected-error @+1 {{converts an integer to int or real, or an int or a float to real}}
   %n = pia.exact.convert %a : !pia.real -> !pia.integer
   return
 }

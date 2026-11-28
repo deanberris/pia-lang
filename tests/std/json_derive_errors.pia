@@ -48,3 +48,11 @@ let tagged = type
 *)
 let vertex = type { x : u8 } @derive(json)
 let polyline = type { pts : [vertex; 2] } @derive(json)
+
+(* A tag that is also a payload's member name.
+// CHECK: json_derive_errors.pia:[[@LINE+5]]:3: error: @derive(json) on 'clash' failed: @derive(json): the tag 'x' is also a member of the payload of 'Dot'
+*)
+let spot = type { x : u8 } @derive(json)
+let clash = type
+  | Dot of spot
+  @derive(json) @json(tag = "x")
