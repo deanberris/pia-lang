@@ -231,6 +231,13 @@ Dean (2026-11-28): a box needs a theory that checks an instance keeps its invari
 
 **Every contract states the state** (Dean, 2026-11-28, on a card, over a default of `full`). There is no default invariant. A function that takes a box states its state in a `requires` (`requires full b`), and one that hands a box out, as a result, an `inout` or `out` parameter, or a store into a buffer the caller sees, states the state it leaves in an `ensures` (`ensures full result`, `ensures not full b`, `ensures holds_square result`). A box in a signature with no such clause is an error that names the clause to add. So the state of every box is explicit at every boundary, and the caller learns it from the contract alone.
 
+**An indeterminate state** (Dean, 2026-11-28). A function may leave a box in a state its caller cannot know, but it must say so: `ensures unknown b`, where `unknown` is a spec function of the theory that is always true and only marks the clause as stating a state. The caller then knows nothing of `b` and must ask before using it. Two queries read the box at run time and tell the verifier what they read:
+
+- `is_full b : bool`, which ensures `result = full b`: word 0 is not the concept's static control block.
+- `is<t> b : bool`, which ensures `result = holds_t b`: word 0 is `t`'s descriptor.
+
+So `if is_full b then area b else ...` proves the call in its first branch, and a `match` on `take` or `consume` is itself such a query. A use of a box whose state is unknown is a failed goal that names the queries.
+
 **The invariant in a scope.** Inside a body the verifier tracks a box's state through the theory as it does any spec function, starting from the `requires`. A box may be emptied and refilled within a scope, and each use is checked against the state at that point. The move checker keeps its error for a local used after `take` (clearer than a failed goal), and the theory covers everything else: parameters, results, fields and slice elements.
 
 **Where it escapes, the postcondition is deterministic.** Where a box leaves a function, the verifier proves the state its `ensures` names on every path, so the state the caller receives is the one the contract names and never a "maybe". A state that differs between paths is stated as a condition, as `take` does (`match result with | Ok -> not full b | Err _ -> ...`). An empty box in a slice element is described by a quantified clause over the slice.
@@ -241,6 +248,6 @@ Dean (2026-11-28): a box needs a theory that checks an instance keeps its invari
 
 Implementation:
 
-1. `full` and `holds_t` in `erased_C`, with the axioms; `widen`, `take`, `consume` and the empty box state them; calls through a box require `full`.
+1. `full`, `holds_t` and `unknown` in `erased_C`, with the axioms; `widen`, `take`, `consume` and the empty box state them; the queries `is_full` and `is<t>`; calls through a box require `full`.
 2. The state clause required on every box in a signature, with the migration rule that adds `full`.
 3. Quantified states over buffers of boxes, with `vec (box c)` (the amendment's step 3).
