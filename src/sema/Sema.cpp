@@ -846,12 +846,13 @@ bool lowerRecord(const std::string &name, const Node &attr,
   else if (auto sl = mlir::dyn_cast<SliceType>(buffer))
     element = sl.getElementType();
   if (!element ||
-      !(mlir::isa<IntType>(element) || element == types.boolType())) {
+      !(mlir::isa<IntType>(element) || element == types.boolType() ||
+        mlir::isa<mlir::FloatType>(element))) {
     diags.error(attr.kids[1]->loc,
                 "the field '" + field + "' of '" + name + "' is " +
                     typeName(buffer) +
                     "; a lowered type's elements are an array or a slice "
-                    "of integers or bools");
+                    "of integers, bools or floats");
     return false;
   }
 
@@ -914,13 +915,26 @@ bool lowerRecord(const std::string &name, const Node &attr,
                 "step 3b)");
     return false;
   }
-  if (!rest.consume_front("memref<") || !rest.consume_back(">")) {
+  // A `vector` is a value (ADR 0087): its lanes are part of it, so they
+  // are an array, never a loan.
+  bool vector = rest.consume_front("vector<");
+  if (vector && !mlir::isa<ArrayType>(buffer)) {
+    diags.error(attr.kids[1]->loc, "'" + name + "' lowers to '" + shown +
+                                       "', a value, so its "
+                                       "lanes '" +
+                                       field + "' are an array, not " +
+                                       typeName(buffer));
+    return false;
+  }
+  if ((!vector && !rest.consume_front("memref<")) || !rest.consume_back(">")) {
     diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
                               "'; a type lowers to a ranked memref, as "
-                              "in 'memref<4x4xi8>'");
+                              "in 'memref<4x4xi8>', or to a vector, as in "
+                              "'vector<4xf32>'");
     return false;
   }
   TypeResolver::TypeLowering l;
+  l.vector = vector;
   l.field = field;
   l.fieldIndex = index;
   l.text = shown;
@@ -956,6 +970,12 @@ bool lowerRecord(const std::string &name, const Node &attr,
                 "@lower on '" + name + "' names '" + shown +
                     "'; a type lowers to a ranked memref of static extents "
                     "with the identity layout, as in 'memref<4x4xi8>'");
+    return false;
+  }
+  if (vector && l.extents.size() != 1) {
+    diags.error(attr.loc, "@lower on '" + name + "' names '" + shown +
+                              "'; a type lowers to a vector of one "
+                              "dimension, as in 'vector<4xf32>'");
     return false;
   }
   if (rest != kElement)

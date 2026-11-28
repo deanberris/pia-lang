@@ -12,6 +12,7 @@
 
 #include "mlir/AsmParser/AsmParser.h"
 #include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
+#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVMPass.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
@@ -25,6 +26,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
@@ -45,6 +47,9 @@ constexpr llvm::StringLiteral kAt = "pia.lower_at";
 constexpr llvm::StringLiteral kName = "pia.lower_name";
 constexpr llvm::StringLiteral kView = "pia.lower_view";
 constexpr llvm::StringLiteral kThreaded = "pia.lower_threaded";
+// A function whose result lowers to a vector (ADR 0087): the view of the
+// buffer its result is stored into.
+constexpr llvm::StringLiteral kResultView = "pia.lower_result_view";
 constexpr llvm::StringLiteral kLowered = "pia.lowered";
 // A function whose body is now its lowering, which a `pia_lib.call` of it
 // may substitute (ADR 0078).
@@ -133,6 +138,21 @@ mlir::FailureOr<View> viewOf(mlir::func::FuncOp f, unsigned i,
   std::string arg = "%pia_arg" + std::to_string(i);
   std::string name = std::to_string(i);
   View v;
+  // A vector is a value (ADR 0087): loaded whole from its lanes, which
+  // are an array, so the buffer holds exactly them.
+  if (d.get("vector")) {
+    if (!src.hasStaticShape() || src.getNumElements() != count)
+      return mlir::emitError(at)
+             << "the @lower of '" << type << "' names '" << text << "', of "
+             << count << " lanes, but its buffer is " << printed(src);
+    v.type = mlir::VectorType::get(shape, elem);
+    std::string zero = "%pia_zero" + name;
+    v.value = "%pia_vector" + name;
+    v.ops = zero + " = arith.constant 0 : index " + v.value +
+            " = vector.load " + arg + "[" + zero + "] : " + printed(src) +
+            ", " + printed(v.type) + " ";
+    return v;
+  }
   mlir::MemRefType from = src;
   if (src.hasStaticShape() && src.getLayout().isIdentity()) {
     if (src.getNumElements() != count)
@@ -183,7 +203,43 @@ struct Spliced {
   std::string text;
   // Whether the text defines `$result`, the value codegen returns.
   bool result = false;
+  // For a vector result (ADR 0087): the buffer argument it is stored
+  // into, and the store, which follows the text.
+  std::optional<unsigned> resultBuffer;
+  std::string store;
 };
+
+// A vector result (ADR 0087): ArrayResults gave the record result a
+// buffer, the last argument, and the lowering's value is stored into it.
+// Returns the buffer's argument and the vector's type.
+mlir::FailureOr<std::pair<unsigned, std::string>>
+vectorResult(mlir::func::FuncOp f, mlir::Location at, Spliced &out) {
+  auto d = f->getAttrOfType<mlir::DictionaryAttr>(kResultView);
+  unsigned n = f.getNumArguments();
+  auto buf =
+      n ? mlir::dyn_cast<mlir::MemRefType>(f.getArgument(n - 1).getType())
+        : mlir::MemRefType();
+  llvm::ArrayRef<int64_t> shape =
+      d.getAs<mlir::DenseI64ArrayAttr>("shape").asArrayRef();
+  if (f.getNumResults() != 0 || !buf || f.getArgAttr(n - 1, kName) ||
+      !buf.hasStaticShape() || buf.getShape() != shape)
+    return mlir::emitError(at)
+           << "@lower splices '$result', a value of '"
+           << d.getAs<mlir::StringAttr>("type").getValue() << "', but '"
+           << f.getSymName()
+           << "' has no buffer of its lanes for it in the compiled function";
+  std::string vector =
+      printed(mlir::VectorType::get(shape, buf.getElementType()));
+  if (!out.resultBuffer) {
+    out.resultBuffer = n - 1;
+    std::string arg = "%pia_arg" + std::to_string(n - 1);
+    out.store = "%pia_result_zero = arith.constant 0 : index\nvector.store "
+                "%pia_result, " +
+                arg + "[%pia_result_zero] : " + printed(buf) + ", " + vector +
+                "\n";
+  }
+  return std::make_pair(n - 1, vector);
+}
 
 // The text with each `$name` replaced by the argument's SSA name in the
 // wrapper and each `$name.type` by its core type, or by a view of its
@@ -209,6 +265,16 @@ mlir::FailureOr<Spliced> splice(mlir::func::FuncOp f, llvm::StringRef text,
     std::string name = text.substr(i + 1, end - i - 1).str();
     bool type = text.substr(end).starts_with(".type") &&
                 (end + 5 == text.size() || !isNameChar(text[end + 5]));
+    if (name == "result" && f->hasAttr(kResultView)) {
+      mlir::FailureOr<std::pair<unsigned, std::string>> r =
+          vectorResult(f, at, out);
+      if (mlir::failed(r))
+        return mlir::failure();
+      i = (type ? end + 5 : end) - 1;
+      out.result = true;
+      out.text += type ? r->second : "%pia_result";
+      continue;
+    }
     if (name == "result") {
       if (f.getNumResults() != 1)
         return mlir::emitError(at)
@@ -284,6 +350,9 @@ mlir::FailureOr<std::string> wrap(mlir::func::FuncOp f, const Spliced &s,
       types += (k ? ", " : "") + printed(ft.getResult(k));
     }
     out += "return " + values + " : " + types + "\n";
+  } else if (s.resultBuffer) {
+    // A vector result goes into its buffer (ADR 0087).
+    out += s.store + "return\n";
   } else if (s.result) {
     // `$result` is the value (ADR 0078, section 2).
     out += "return %pia_result : " + printed(ft.getResult(0)) + "\n";
@@ -381,7 +450,9 @@ mlir::LogicalResult checkEffects(mlir::func::FuncOp f, mlir::func::FuncOp tmp,
     if (!mlir::isa<mlir::BaseMemRefType>(v.getType()))
       return std::nullopt;
     std::optional<unsigned> i = argumentOf(tmp, v);
-    if (i && (resultOnly || !writable(f, *i)))
+    // A vector result's buffer is codegen's, and only the store after the
+    // text writes it.
+    if (i && ((resultOnly && f.getArgAttr(*i, kName)) || !writable(f, *i)))
       return i;
     return std::nullopt;
   };
@@ -517,6 +588,7 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
 
 void unmark(mlir::func::FuncOp f) {
   f->removeAttr(kText);
+  f->removeAttr(kResultView);
   f->removeAttr(kAt);
   for (unsigned i = 0; i < f.getNumArguments(); ++i) {
     f.removeArgAttr(i, kName);
@@ -560,7 +632,8 @@ void loadLoweringDialects(mlir::MLIRContext &ctx) {
                   mlir::linalg::LinalgDialect, mlir::math::MathDialect,
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::tensor::TensorDialect,
-                  mlir::transform::TransformDialect, lib::LibDialect>();
+                  mlir::transform::TransformDialect,
+                  mlir::vector::VectorDialect, lib::LibDialect>();
 }
 
 mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
@@ -686,6 +759,9 @@ void addLoweringPasses(mlir::OpPassManager &pm) {
   pm.addPass(mlir::createConvertLinalgToLoopsPass());
   pm.addPass(mlir::memref::createExpandStridedMetadataPass());
   pm.addPass(mlir::createLowerAffinePass());
+  // `vector` values of library types (ADR 0087) become LLVM's fixed
+  // vectors, which instruction selection maps to NEON and AVX2.
+  pm.addPass(mlir::createConvertVectorToLLVMPass());
 }
 
 } // namespace pia::codegen
