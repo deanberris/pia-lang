@@ -117,7 +117,7 @@ handle
 
 Each value bound by a `?` keeps its callee's postcondition (`x < 10` above), which is what proves `x * 10 + y`. To see `defer` and error sets in use, read `tests/verify/defer.pia` and `tests/verify/error_sets.pia`.
 
-When one case must hold errors of types you don't know yet (a C++ exception, a plugin's error), give that constructor a box over a concept: `let io_error = type | Closed | Cxx of box Exception`. Build it with `Err (Cxx (widen b))` from a full `box t`, and in the handler call the concept's requirements through it, `| Cxx e -> code e`, proved from the concept's contracts alone. It works within one module for now; `tests/verify/box_error_payload.pia` is the full example.
+When one case must hold errors of types you don't know yet (a C++ exception, a plugin's error), give that constructor a box over a concept: `let io_error = type | Closed | Cxx of box Exception`. Build it with `Err (Cxx (widen b))` from a full `box t`, and in the handler call the concept's requirements through it, `| Cxx e -> code e`, proved from the concept's contracts alone. An importer of the error set may box its own types in that case and handle errors boxed by either module; `tests/verify/box_error_payload.pia` is the full example, and `tests/modules/box_across.pia` the one across modules.
 
 **Generics, concepts and lambdas.** A type parameter comes first, `(t : type where C t)`, and the type arguments are deduced from the arguments. A generic function must write its return type. A concept is a `let meta C (t : type) : concept = sig ... end` with requirements and laws. A lambda is a nameless `let`, and it lists its captures in brackets:
 
