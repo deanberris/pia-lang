@@ -12266,14 +12266,6 @@ class Gen {
     return true;
   }
 
-  static void collectAssigned(const Node &n, std::set<std::string> &out) {
-    if (n.kind == NodeKind::Assign && n.kids[0]->kind == NodeKind::Name)
-      out.insert(n.kids[0]->text);
-    for (const syntax::NodePtr &k : n.kids)
-      if (k)
-        collectAssigned(*k, out);
-  }
-
   bool checkProtocol(const Node &body, SpreadScope &sc) {
     Protocol p;
     if (!holdsCollective(body, p))
