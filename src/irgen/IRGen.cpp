@@ -4663,6 +4663,9 @@ class Gen {
       callee = callee->kids[0].get();
     }
     const Node &fn = *callee;
+    // `r.op x` through a function reference field (ADR 0071).
+    if (fn.kind == NodeKind::Field && !targs)
+      return genFieldReferenceCall(n);
     if (fn.kind != NodeKind::Name)
       return fail(fn, "only named functions can be called for now");
     size_t argc = n.kids.size() - 1;
@@ -9911,6 +9914,14 @@ class Gen {
         fields.push_back(sv->value);
         continue;
       }
+      if (mlir::isa<mlir::FunctionType>(ft)) {
+        R r = referenceFieldValue(rt, *rt.fieldIndex(name.getValue()),
+                                  *init->kids[0]);
+        if (!r)
+          return r;
+        fields.push_back(r->value);
+        continue;
+      }
       R v = genExpr(*init->kids[0], ft);
       if (!v) return v;
       R c = coerce(*v, ft, *init->kids[0]);
@@ -10002,8 +10013,11 @@ class Gen {
     bool specValue = rt.isSpecField(*i) && !contract_ && !ghost_;
     if (specValue)
       contract_ = true;
-    R v = genExpr(*n.kids[1], ft);
-    R c = v ? coerce(*v, ft, *n.kids[1]) : std::nullopt;
+    R c = mlir::isa<mlir::FunctionType>(ft)
+              ? referenceFieldValue(rt, *i, *n.kids[1])
+              : genExpr(*n.kids[1], ft);
+    if (c && !mlir::isa<mlir::FunctionType>(ft))
+      c = coerce(*c, ft, *n.kids[1]);
     if (specValue)
       contract_ = false;
     if (!c)
@@ -10058,8 +10072,11 @@ class Gen {
                            "yet; write its elements");
       if (specValue)
         contract_ = true;
-      R v = genExpr(valueNode, ft);
-      R c = v ? coerce(*v, ft, valueNode) : std::nullopt;
+      R c = mlir::isa<mlir::FunctionType>(ft)
+                ? referenceFieldValue(rt, *i, valueNode)
+                : genExpr(valueNode, ft);
+      if (c && !mlir::isa<mlir::FunctionType>(ft))
+        c = coerce(*c, ft, valueNode);
       if (specValue)
         contract_ = false;
       if (!c)
@@ -12793,6 +12810,79 @@ class Gen {
     R body = genExpr(*n.kids[4], expected);
     popScope();
     return body;
+  }
+
+  // The value stored in the function reference field `i` of `rt` (ADR
+  // 0071): a top-level function, checked against the field's arrow, or
+  // the same field of another record, which holds one already checked.
+  R referenceFieldValue(RecordType rt, unsigned i, const Node &value) {
+    auto ft = mlir::cast<mlir::FunctionType>(rt.getFieldTypes()[i]);
+    std::string field = rt.getFieldNames()[i].str();
+    const Node *arrow = types_.fieldArrow(rt.getName().str(), field);
+    if (!arrow)
+      return fail(value, "the field '" + field + "' of " + typeName(rt) +
+                             " holds a function reference of no known arrow");
+    std::string takes = "the field '" + field + "' of " + typeName(rt) +
+                        " takes a top-level function by its name, or the "
+                        "same field of another " +
+                        typeName(rt) + " (ADR 0071)";
+    if (value.kind == NodeKind::Field) {
+      R v = genField(value);
+      if (!v)
+        return v;
+      if (auto from = fieldRecord(*v);
+          from && types_.fieldArrow(from.getName().str(), value.text) == arrow)
+        return v;
+      return fail(value, takes);
+    }
+    if (value.kind != NodeKind::Name || !value.flags.empty() ||
+        lookup(value.text) || overloadSet(value.text).empty())
+      return fail(value, (value.kind == NodeKind::Name && lookup(value.text)
+                              ? "'" + value.text + "' is a local; "
+                              : std::string()) +
+                             takes);
+    return referenceValue(value, arrowOf(*arrow), ft,
+                          "the field '" + field + "' of " + typeName(rt));
+  }
+
+  // The record a field read `v` came from.
+  static RecordType fieldRecord(const TV &v) {
+    auto read = v.value.getDefiningOp<FieldOp>();
+    return read ? mlir::dyn_cast<RecordType>(read->getOperand(0).getType())
+                : RecordType();
+  }
+
+  // `r.op x` through a function reference field: a call of the field's
+  // proxy, which every record with this field shares.
+  R genFieldReferenceCall(const Node &n) {
+    const Node &fn = *n.kids[0];
+    R f = genField(fn);
+    if (!f)
+      return f;
+    auto ft = mlir::dyn_cast<mlir::FunctionType>(f->type);
+    if (!ft)
+      return fail(fn, "'." + fn.text + "' is " + typeName(f->type) +
+                          ", not a function reference, so it cannot be "
+                          "called");
+    RecordType rt = fieldRecord(*f);
+    const Node *arrowNode = types_.fieldArrow(rt.getName().str(), fn.text);
+    if (!arrowNode)
+      return fail(fn, "the field '" + fn.text + "' of " + typeName(rt) +
+                          " holds a function reference of no known arrow");
+    if (contract_ || ghost_)
+      return fail(n, "a call through a function reference field is code, "
+                     "not part of a contract");
+    std::optional<std::string> proxy =
+        referenceProxy(rt.getName().str() + "." + fn.text, arrowOf(*arrowNode),
+                       ft, *arrowNode);
+    if (!proxy)
+      return std::nullopt;
+    std::vector<const Node *> all{&fn};
+    for (size_t i = 1; i < n.kids.size(); ++i)
+      all.push_back(n.kids[i].get());
+    std::vector<std::optional<TV>> early(all.size());
+    early[0] = *f;
+    return genCall(n, sigs_.at(*proxy), all, &early);
   }
 
   // `h x` through a mutable function reference: a call of its proxy, or,

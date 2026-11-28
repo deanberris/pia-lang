@@ -70,6 +70,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Contracts on function types | [verifier](verifier.md#higher-order-functions-proved-once) | [lambda_arrow_contract](../tests/verify/lambda_arrow_contract.pia), [lambda_requires](../tests/verify/lambda_requires.pia) |
 | Captures, partial application and closures as results | [tour](tour.md#function-values) | [lambda_captures](../tests/verify/lambda_captures.pia), [lambda_results](../tests/verify/lambda_results.pia) |
 | Function references: `let h : (x : u8) -> u8 requires ... = succ`, and `mutable` ones rebound with `<-` and called indirectly | [tour](tour.md#function-values), [ADR 0071](adr/0071-function-references.md) | [fn_references](../tests/verify/fn_references.pia), [fn_references_mutable](../tests/verify/fn_references_mutable.pia) |
+| Function reference fields: `type { f : (x : u8) -> u8 requires ...; ... }`, stored and rebound with `<-`, and buffers of them as tables called indirectly | [tour](tour.md#function-values), [codegen](codegen.md), [ADR 0071](adr/0071-function-references.md) | [fn_reference_fields](../tests/verify/fn_reference_fields.pia) |
 | Function objects, any type with an `apply` | [tour](tour.md#function-values) | [function_object](../tests/verify/function_object.pia) |
 
 ## Errors, resources and memory

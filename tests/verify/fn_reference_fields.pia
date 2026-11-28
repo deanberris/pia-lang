@@ -1,0 +1,67 @@
+(* Function references stored in records and buffers (ADR 0071): a field
+   of an arrow type holds a top-level function checked against the arrow
+   where it is stored, and a call through the field sees only the arrow's
+   contract. Copying the field of another record of the same type needs
+   no check.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = x + 1
+let twice (x : u8) : u8 requires x < 100 ensures result = x * 2 = x * 2
+let add3 (x : u8) : u8 requires x < 200 ensures result = x + 3 = x + 3
+
+let op = type {
+  f : (x : u8) -> u8 requires x < 50 ensures result > x;
+  bias : u8
+}
+
+let make (b : u8) : op = { f = succ; bias = b }
+
+(* The call's precondition is the field's, and so is all it knows. *)
+let run (o : op) (y : u8) : u8 requires y < 50 ensures result > y = o.f y
+
+let swap (o : op) : op = let p : mutable op = o in p.f <- add3; p
+
+(* twice 0 is 0, not more than 0. *)
+let bad (o : op) : op = let p : mutable op = o in p.f <- twice; p
+
+let copy (o : op) (b : u8) : op = { f = o.f; bias = b }
+
+(* A buffer of records is a buffer per field, the functions among them. *)
+let sum (ops : [op; 4]) (y : u8) : u16 requires y < 50 =
+  let t : mutable u16 = 0 in
+  for i in 0..4 invariant t <= i * 255 do
+    t <- t + ops.[i].f y
+  done;
+  t
+
+let fill (ops : inout [op; 4]) : unit = ops.[2].f <- add3
+
+
+(* Expected report, in order.
+// CHECK: fn_reference_fields.pia:9:68: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_reference_fields.pia:9:41: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:10:69: proved: '*' does not overflow u8 [smt]
+// CHECK: fn_reference_fields.pia:10:42: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:11:68: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_reference_fields.pia:11:41: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:21:69: proved: the precondition of 'op.f@fn_reference_fields.pia:14:7' holds [smt]
+// CHECK: fn_reference_fields.pia:21:48: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:33:17: proved: the loop invariant holds on entry [smt]
+// CHECK: fn_reference_fields.pia:34:14: proved: the index is within bounds [smt]
+// CHECK: fn_reference_fields.pia:34:14: proved: the precondition of 'op.f@fn_reference_fields.pia:14:7' holds [smt]
+// CHECK: fn_reference_fields.pia:34:12: proved: '+' does not overflow u16 [smt]
+// CHECK: fn_reference_fields.pia:33:17: proved: the loop invariant holds after each iteration [smt]
+// CHECK: fn_reference_fields.pia:38:41: proved: the index is within bounds [intervals]
+// CHECK: fn_reference_fields.pia:38:41: proved: the index is within bounds [intervals]
+// CHECK: fn_reference_fields.pia:18:32: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_reference_fields.pia:18:32: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:23:59: proved: the precondition of 'add3' holds [smt]
+// CHECK: fn_reference_fields.pia:23:59: proved: the postcondition holds [smt]
+// CHECK: fn_reference_fields.pia:26:58: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_reference_fields.pia:26:58: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: fn_reference_fields.pia:38:54: proved: the precondition of 'add3' holds [smt]
+// CHECK: fn_reference_fields.pia:38:54: proved: the postcondition holds [smt]
+// CHECK: 22 proved, 1 failed, 0 skipped
+*)
