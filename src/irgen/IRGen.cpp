@@ -117,6 +117,9 @@ struct Binding {
   // A `let spec` local or a spec parameter (ADR 0058): code may write it,
   // and only contracts, invariants, asserts and lemma calls may read it.
   bool spec = false;
+  // `(xs : [t; r])`: the range parameter whose positions index it, so
+  // `xs.[k]` is its cell `k - r.lo` (ADR 0086).
+  std::shared_ptr<Binding> over;
 };
 using BindingPtr = std::shared_ptr<Binding>;
 
@@ -1223,6 +1226,46 @@ class Gen {
       if (p.regions.empty() && holdsRegionField(p.type))
         b->lenders.push_back(regionBinding("'" + p.name + "'", p.name));
     }
+    // Index types (ADR 0086): a range's bounds are in order, and an array
+    // over a range has as many elements as it has positions. A range comes
+    // only from a spread, at a collective's call, which is where these
+    // hold.
+    bool hasRange = false;
+    for (const syntax::NodePtr &pn : item.kids[0]->kids) {
+      BindingPtr b = pn->kind == NodeKind::Param ? lookup(pn->text) : nullptr;
+      if (!b || !b->isParam)
+        continue;
+      if (b->type == types_.rangeType()) {
+        hasRange = true;
+        Value lo = create<FieldOp>(l, types_.usize(), b->value, "lo");
+        Value hi = create<FieldOp>(l, types_.usize(), b->value, "hi");
+        create<contract::AssumeOp>(l, cmp(l, CmpPredicate::le, lo, hi));
+        continue;
+      }
+      const Node *annot = pn->kids.empty() ? nullptr : pn->kids[0].get();
+      if (!annot || annot->kind != NodeKind::Annot ||
+          annot->kids[1]->kind != NodeKind::ArrayType)
+        continue;
+      const Node &len = *annot->kids[1]->kids[1];
+      BindingPtr r = len.kind == NodeKind::Name || len.kind == NodeKind::TypeName
+                         ? lookup(len.text)
+                         : nullptr;
+      if (!r || !r->isParam || r->type != types_.rangeType())
+        continue;
+      b->over = r;
+      Type intT = UnboundedIntType::get(&ctx_);
+      Value lo = create<FieldOp>(l, types_.usize(), r->value, "lo");
+      Value hi = create<FieldOp>(l, types_.usize(), r->value, "hi");
+      Value n = create<FromIndexOp>(
+          l, types_.usize(), create<LenOp>(l, b_.getIndexType(), b->value));
+      Value count = create<ExactSubOp>(l, intT,
+                                       create<ExactConvertOp>(l, intT, hi),
+                                       create<ExactConvertOp>(l, intT, lo));
+      create<contract::AssumeOp>(
+          l, create<ExactCmpOp>(l, b_.getI1Type(),
+                                CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
+                                create<ExactConvertOp>(l, intT, n), count));
+    }
     // An instance's value parameters are constants: `n` is 8 in the
     // instance of `last` for a `row 8 r` (ADR 0074).
     for (const std::string &name : sig.valueParams) {
@@ -1594,6 +1637,11 @@ class Gen {
       return;
     if (collective_ && !markCollective(*collective_, sig, fn, isExtern))
       return;
+    if (hasRange && !collective_) {
+      fail(item, "a range parameter is for a collective, which gets the "
+                 "range of the spread that calls it (ADR 0086)");
+      return;
+    }
     if (deref_ && !isExtern) {
       fail(*deref_, "@deref is only for a foreign declaration, "
                     "'= extern \"symbol\"'");
@@ -9799,7 +9847,31 @@ class Gen {
       Value v = create<SliceOp>(loc(n), t, buf->value, *lo, *hi);
       return TV{v, t};
     }
-    auto idx = genIndexValue(*n.kids[1]);
+    std::optional<Value> idx;
+    // `xs.[k]` of an array over a range reads its cell `k - r.lo`, which
+    // the bounds goal keeps within it (ADR 0086).
+    BindingPtr ranged = n.kids[0]->kind == NodeKind::Name
+                            ? lookup(n.kids[0]->text)
+                            : nullptr;
+    if (ranged && ranged->over) {
+      R k = genExpr(*n.kids[1], types_.usize());
+      if (!k) return std::nullopt;
+      R ku = coerce(*k, types_.usize(), *n.kids[1]);
+      if (!ku) return std::nullopt;
+      Location il = loc(*n.kids[1]);
+      Value lo =
+          create<FieldOp>(il, types_.usize(), ranged->over->value, "lo");
+      if (!contract_ && !ghost_) {
+        auto inRange = create<contract::AssertOp>(
+            il, cmp(il, CmpPredicate::ge, ku->value, lo));
+        inRange->setAttr("pia.claim",
+                         b_.getStringAttr("the position is in '" +
+                                          ranged->over->name + "'"));
+      }
+      idx = toIndex(il, create<SubOp>(il, types_.usize(), ku->value, lo));
+    } else {
+      idx = genIndexValue(*n.kids[1]);
+    }
     if (!idx) return std::nullopt;
     if (spread_ && n.kids[0]->kind == NodeKind::Name)
       if (BindingPtr b = lookup(n.kids[0]->text))
@@ -12159,6 +12231,39 @@ class Gen {
     return out;
   }
 
+  // Which of a collective's value parameters are ranges, which its call
+  // does not pass: the call gets the spread's range there (ADR 0086).
+  std::vector<bool> rangeParamsOf(const sema::FuncSig &sig) {
+    std::vector<bool> out;
+    if (sig.isGeneric()) {
+      for (const Node *p : valueParamsOf(sig))
+        out.push_back(!p->kids.empty() &&
+                      p->kids[0]->kind == NodeKind::Annot &&
+                      p->kids[0]->kids[1]->kind == NodeKind::TypeName &&
+                      p->kids[0]->kids[1]->text == "range");
+      return out;
+    }
+    for (const sema::Param &p : sig.params)
+      out.push_back(p.type == types_.rangeType());
+    return out;
+  }
+
+  // The positions, among a call's written arguments, of those a
+  // collective gathers.
+  std::vector<size_t> gatheredArgsOf(const sema::FuncSig &sig) {
+    std::vector<bool> range = rangeParamsOf(sig);
+    std::vector<size_t> gathered = gatheredOf(sig), out;
+    size_t arg = 0;
+    for (size_t i = 0; i < range.size(); ++i) {
+      if (range[i])
+        continue;
+      if (llvm::is_contained(gathered, i))
+        out.push_back(arg);
+      ++arg;
+    }
+    return out;
+  }
+
   // A function that `name` may call and that is a collective, or null.
   const sema::FuncSig *collectiveSig(const std::string &name) {
     if (lookup(name))
@@ -12208,10 +12313,13 @@ class Gen {
         return fail(*k, "@collective names the parameters it gathers, as "
                         "in @collective(xs)"),
                false;
-      if (!mlir::isa<SliceType>(p->type))
-        return fail(*k, "a gathered parameter is a slice, '" + p->name +
-                            " : [t]', which holds every iteration's argument "
-                            "(ADR 0086)"),
+      BindingPtr pb = lookup(p->name);
+      if (!mlir::isa<SliceType>(p->type) || !pb || !pb->over)
+        return fail(*k, "a gathered parameter is an array over a range "
+                        "parameter, '(r : range) (" +
+                            p->name +
+                            " : [t; r])', which holds every iteration's "
+                            "argument at its position (ADR 0086)"),
                false;
       if (!seen.insert(p->name).second)
         return fail(*k, "'" + p->name + "' is gathered twice"), false;
@@ -12262,11 +12370,19 @@ class Gen {
                          "called in a spread's body (ADR 0086)");
     const sema::FuncSig *first = collectiveSig(name);
     std::vector<size_t> gathered = gatheredOf(*first);
+    std::vector<bool> ranges = rangeParamsOf(*first);
     for (const sema::FuncSig *s : overloadSet(name))
-      if (!collectiveAttrOf(s->item) || gatheredOf(*s) != gathered)
+      if (!collectiveAttrOf(s->item) || gatheredOf(*s) != gathered ||
+          rangeParamsOf(*s) != ranges)
         return fail(n, "every overload of the collective '" + name +
-                           "' must be a collective that gathers the same "
-                           "parameters (ADR 0086)");
+                           "' must be a collective with the same range and "
+                           "gathered parameters (ADR 0086)");
+    size_t written = llvm::count(ranges, false);
+    if (n.kids.size() - 1 != written)
+      return fail(n, "'" + name + "' takes " + plural(written, "argument") +
+                         ", given " + std::to_string(n.kids.size() - 1) +
+                         "; its range is the spread's, which the call "
+                         "passes itself (ADR 0086)");
     auto call = syntax::makeNode(NodeKind::Apply, n.loc);
     call->flags = n.flags;
     call->add(syntax::clone(*n.kids[0]));
@@ -12274,9 +12390,32 @@ class Gen {
     std::vector<std::string> published;
     Type usize = types_.usize();
     Type intT = UnboundedIntType::get(&ctx_);
-    for (size_t k = 1; k < n.kids.size(); ++k) {
-      const Node &arg = *n.kids[k];
-      if (!llvm::is_contained(gathered, k - 1)) {
+    auto set = overloadSet(name);
+    const sema::FuncSig *lone =
+        set.size() == 1 && !set[0]->isGeneric() ? set[0] : nullptr;
+    size_t k = 1;
+    for (size_t p = 0; p < ranges.size(); ++p) {
+      // The spread's range, `lo .. hi`, where the collective takes one.
+      if (ranges[p]) {
+        Type bt = spread_->lo.getType();
+        R lo = coerce(TV{spread_->lo, bt}, usize, n);
+        R hi = lo ? coerce(TV{spread_->hi, bt}, usize, n) : R();
+        if (!hi) {
+          popScope();
+          return fail(n, "a collective with a range runs in a spread over "
+                         "usize positions, as in 'spread i in 0 .. len xs' "
+                         "(ADR 0086)");
+        }
+        Type rt = types_.rangeType();
+        Value rv = create<RecordOp>(l, rt,
+                                    mlir::ValueRange{lo->value, hi->value});
+        std::string tmp = "$range" + std::to_string(p);
+        bind(tmp, rv, rt, false);
+        call->add(syntax::makeNode(NodeKind::Name, n.loc, tmp));
+        continue;
+      }
+      const Node &arg = *n.kids[k++];
+      if (!llvm::is_contained(gathered, p)) {
         if (arg.kind == NodeKind::Name && spread_->written.count(arg.text))
           if (BindingPtr b = lookup(arg.text);
               b && spread_->outside.count(b.get()))
@@ -12285,12 +12424,10 @@ class Gen {
         continue;
       }
       // A lone non-generic collective gives the element type, so that a
-      // u8 is gathered into its [u32].
+      // u8 is gathered into its [u32; r].
       Type elem;
-      if (auto set = overloadSet(name); set.size() == 1 &&
-                                        !set[0]->isGeneric() &&
-                                        k - 1 < set[0]->params.size())
-        if (auto sl = mlir::dyn_cast<SliceType>(set[0]->params[k - 1].type))
+      if (lone && p < lone->params.size())
+        if (auto sl = mlir::dyn_cast<SliceType>(lone->params[p].type))
           elem = sl.getElementType();
       R x = genExpr(arg, elem);
       if (x && elem)
@@ -12311,8 +12448,9 @@ class Gen {
                                  mlir::ValueRange{x->value});
       g->setAttr("pia.gather", b_.getUnitAttr());
       Value xs = g.getResult(0);
-      // How the argument binds: `len xs = hi - lo`, and the iteration's
-      // own argument at `xs.[i - lo]`.
+      // How the argument binds: the array holds a cell per position of
+      // the spread's range, and the iteration's own argument is at its
+      // position, cell `i - lo`.
       Value len = create<FromIndexOp>(
           l, usize, create<LenOp>(l, b_.getIndexType(), xs));
       Value count = create<ExactSubOp>(
@@ -12333,7 +12471,7 @@ class Gen {
                     .getResult()
               : cmp(l, CmpPredicate::eq, own, x->value);
       create<contract::AssumeOp>(l, same);
-      std::string tmp = "$gathered" + std::to_string(k);
+      std::string tmp = "$gathered" + std::to_string(p);
       bind(tmp, xs, st, false);
       call->add(syntax::makeNode(NodeKind::Name, arg.loc, tmp));
     }
@@ -12435,7 +12573,7 @@ class Gen {
       // The call runs once for every iteration, so what it does not
       // gather must be the same in each. A buffer outside the spread is
       // the same buffer, whatever its cells hold.
-      std::vector<size_t> gathered = gatheredOf(*collectiveSig(name));
+      std::vector<size_t> gathered = gatheredArgsOf(*collectiveSig(name));
       for (size_t k = 1; k < n.kids.size(); ++k) {
         const Node &arg = *n.kids[k];
         if (llvm::is_contained(gathered, k - 1))

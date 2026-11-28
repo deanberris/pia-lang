@@ -10,23 +10,23 @@
 // RUN: not piac --verify %s | FileCheck %s
 *)
 
-let sum (xs : [u32]) : u64
+let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
   requires len xs <= 4'294'967'297
-  ensures forall (k in 0 .. len xs). result >= xs.[k]
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let s : mutable u64 = 0 in
-  for j in 0 .. len xs
-    invariant s <= j * 4'294'967'295
-    invariant forall (k in 0 .. j). s >= xs.[k]
+  for j in r.lo .. r.hi
+    invariant s <= (j - r.lo) * 4'294'967'295
+    invariant forall (k in r.lo .. j). s >= xs.[k]
   do s <- s + xs.[j] done;
   s
 
-let most (xs : [u32]) : u32
+let most (r : range) (xs : [u32; r]) : u32
   @collective(xs)
-  ensures forall (k in 0 .. len xs). result >= xs.[k]
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let m : mutable u32 = 0 in
-  for j in 0 .. len xs
-    invariant forall (k in 0 .. j). m >= xs.[k]
+  for j in r.lo .. r.hi
+    invariant forall (k in r.lo .. j). m >= xs.[k]
   do if xs.[j] > m then m <- xs.[j] else () done;
   m
 

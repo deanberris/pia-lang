@@ -18,33 +18,33 @@ end
 
 let exchange (b : [u32]) : unit @collective = ()
 
-let sum (xs : [u32]) : u64
+let sum (r : range) (xs : [u32; r]) : u64
   @collective(xs)
   requires len xs <= 4'294'967'297
-  ensures forall (k in 0 .. len xs). result >= xs.[k]
+  ensures forall (k in r.lo .. r.hi). result >= xs.[k]
 = let s : mutable u64 = 0 in
-  for j in 0 .. len xs
-    invariant s <= j * 4'294'967'295
-    invariant forall (k in 0 .. j). s >= xs.[k]
+  for j in r.lo .. r.hi
+    invariant s <= (j - r.lo) * 4'294'967'295
+    invariant forall (k in r.lo .. j). s >= xs.[k]
   do s <- s + xs.[j] done;
   s
 
-let least (xs : [i32]) : i32
+let least (r : range) (xs : [i32; r]) : i32
   @collective(xs)
 = let m : mutable i32 = max i32 in
-  for j in 0 .. len xs do if xs.[j] < m then m <- xs.[j] else () done;
+  for j in r.lo .. r.hi do if xs.[j] < m then m <- xs.[j] else () done;
   m
 
-let most (xs : [i32]) : i32
+let most (r : range) (xs : [i32; r]) : i32
   @collective(xs)
 = let m : mutable i32 = min i32 in
-  for j in 0 .. len xs do if xs.[j] > m then m <- xs.[j] else () done;
+  for j in r.lo .. r.hi do if xs.[j] > m then m <- xs.[j] else () done;
   m
 
-let any (xs : [bool]) : bool
+let any (r : range) (xs : [bool; r]) : bool
   @collective(xs)
 = let found : mutable bool = false in
-  for j in 0 .. len xs do if xs.[j] then found <- true else () done;
+  for j in r.lo .. r.hi do if xs.[j] then found <- true else () done;
   found
 
 let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit

@@ -404,6 +404,7 @@ mlir::Type TypeResolver::resolve(const Node &type) {
         if (auto p = it->find(type.text); p != it->end()) return p->second;
       if (mlir::Type t = builtin(type.text)) return t;
       if (mlir::Type t = named(type.text)) return t;
+      if (type.text == "range") return rangeType();
       if (isTypeFunction(type.text)) {
         diags_.error(type.loc, "'" + type.text + "' is a type-level "
                                "metaprogram: apply it to types, as in '" +
@@ -512,6 +513,10 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       if (!elem) return {};
       if (!plainElement(elem, type.kids[0]->loc)) return {};
       const Node &len = *type.kids[1];
+      // `[t; r]` over a range parameter: its length is the range's.
+      if ((len.kind == NodeKind::Name || len.kind == NodeKind::TypeName) &&
+          rangeParams_.count(len.text))
+        return SliceType::get(&ctx_, elem);
       if (len.kind == NodeKind::Name || len.kind == NodeKind::TypeName)
         if (auto v = values_.find(len.text);
             v != values_.end() && !v->second.isShape) {
@@ -1652,10 +1657,31 @@ bool isFunctionParam(const Node &p) {
          p.kids[0]->kids[1]->kind == NodeKind::ArrowType;
 }
 
+mlir::Type TypeResolver::rangeType() {
+  mlir::MLIRContext *ctx = &ctx_;
+  llvm::SmallVector<mlir::StringAttr> names{mlir::StringAttr::get(ctx, "lo"),
+                                            mlir::StringAttr::get(ctx, "hi")};
+  llvm::SmallVector<mlir::Type> fieldTypes{usize(), usize()};
+  return RecordType::get(ctx, "range", names, fieldTypes);
+}
+
 bool resolveSignature(FuncSig &sig, TypeResolver &types,
                       syntax::Diagnostics &diags) {
   const Node &item = *sig.item;
   sig.params.clear();
+  // `(r : range)`, which `[t; r]` may name (ADR 0086).
+  std::set<std::string> ranges;
+  for (const syntax::NodePtr &p : item.kids[0]->kids)
+    if (p->kind == NodeKind::Param && !p->kids.empty() &&
+        p->kids[0]->kind == NodeKind::Annot &&
+        p->kids[0]->kids[1]->kind == NodeKind::TypeName &&
+        p->kids[0]->kids[1]->text == "range")
+      ranges.insert(p->text);
+  types.setRangeParams(ranges);
+  struct ClearRanges {
+    TypeResolver &types;
+    ~ClearRanges() { types.setRangeParams({}); }
+  } clearRanges{types};
   std::vector<std::map<std::string, mlir::Type>> saved;
   if (!sig.typeArgs.empty()) saved = types.replaceTypeScopes({sig.typeArgs});
   bool ok = true;

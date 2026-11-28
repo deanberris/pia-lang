@@ -10,7 +10,7 @@
 
 let exchange (b : [u32]) : unit @collective = ()
 
-let total (xs : [u32]) (k : u32) : u32 @collective(xs) = k
+let total (r : range) (xs : [u32; r]) (k : u32) : u32 @collective(xs) = k
 
 let first_only (a : borrowed inout mutable [u32]) : unit
 = spread i in 0 .. len a do
@@ -52,7 +52,11 @@ let varying (xs : [u32]) (ys : out mutable [u32]) : unit
 
 let scalar (x : u32) : u32 @collective(x) = x
 
-let writer (xs : [u32]) (ys : out mutable [u32]) : unit @collective(xs) = ()
+let writer (r : range) (xs : [u32; r]) (ys : out mutable [u32]) : unit @collective(xs) = ()
+
+let plain (xs : [u32]) : u32 @collective(xs) = 0
+
+let loose (r : range) : unit = ()
 
 (*
 // CHECK: error
