@@ -1254,18 +1254,17 @@ class Gen {
       if (!r || !r->isParam || r->type != types_.rangeType())
         continue;
       b->over = r;
-      Type intT = UnboundedIntType::get(&ctx_);
       Value lo = create<FieldOp>(l, types_.usize(), r->value, "lo");
       Value hi = create<FieldOp>(l, types_.usize(), r->value, "hi");
       Value n = create<FromIndexOp>(
           l, types_.usize(), create<LenOp>(l, b_.getIndexType(), b->value));
+      // In usize, not as exact integers: the bounds goals compare
+      // bit-vectors, and a fact that converts them to integers is one Z3
+      // gives up on. `lo <= hi` makes the wrapping subtraction exact.
       Value count =
-          create<ExactSubOp>(l, intT, create<ExactConvertOp>(l, intT, hi),
-                             create<ExactConvertOp>(l, intT, lo));
-      create<contract::AssumeOp>(
-          l, create<ExactCmpOp>(l, b_.getI1Type(),
-                                CmpPredicateAttr::get(&ctx_, CmpPredicate::eq),
-                                create<ExactConvertOp>(l, intT, n), count));
+          create<SubOp>(l, types_.usize(), hi, lo,
+                        OverflowModeAttr::get(&ctx_, OverflowMode::wrap));
+      create<contract::AssumeOp>(l, cmp(l, CmpPredicate::eq, n, count));
     }
     // An instance's value parameters are constants: `n` is 8 in the
     // instance of `last` for a `row 8 r` (ADR 0074).
@@ -9870,7 +9869,10 @@ class Gen {
                          b_.getStringAttr("the position is in '" +
                                           ranged->over->name + "'"));
       }
-      idx = toIndex(il, create<SubOp>(il, types_.usize(), ku->value, lo));
+      // The position goal above keeps the subtraction exact.
+      idx = toIndex(
+          il, create<SubOp>(il, types_.usize(), ku->value, lo,
+                            OverflowModeAttr::get(&ctx_, OverflowMode::wrap)));
     } else {
       idx = genIndexValue(*n.kids[1]);
     }
