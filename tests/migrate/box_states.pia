@@ -1,5 +1,5 @@
 (* Migration rule box-states (ADR 0046, a theory of a box's state, piac
-   0.0.0+790): before it, a `box C` was full by its type, so a signature
+   0.0.0+798): before it, a `box C` was full by its type, so a signature
    said nothing of its state; since, every contract states it, and piac
    rejects one that does not. `piac migrate` adds what the old program
    assumed, `requires full b` for a box taken and `ensures full b` or
@@ -10,7 +10,7 @@
 // RUN: piac migrate %t/old.pia
 // RUN: piac migrate --check %t/old.pia | FileCheck %s --allow-empty --check-prefix=NONE
 // RUN: piac --verify --no-lint %t/old.pia | FileCheck %s --check-prefix=PROVED
-// RUN: piac migrate --from=0.0.0+790 --check %s | FileCheck %s --allow-empty --check-prefix=NONE
+// RUN: piac migrate --from=0.0.0+798 --check %s | FileCheck %s --allow-empty --check-prefix=NONE
 *)
 
 let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }

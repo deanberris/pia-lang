@@ -273,7 +273,7 @@ void find(const Rule &rule, const syntax::Node &program,
 
 Rule boxStates() {
   return {"box-states",
-          "0.0.0+790",
+          "0.0.0+798",
           "every contract states the state of each box over a concept in its "
           "signature, and a call through a box requires it full",
           "ADR 0046",
