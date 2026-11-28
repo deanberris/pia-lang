@@ -18,6 +18,8 @@ interface Run @abi(c) = sig
     requires len sq = 1 && len rc = 1 && len xs = 2
   let peek : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> (s : borrowed mutable [square]) -> u8
     requires len xs = 2 && i < 2 && len s = 1
+  let side_of : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> u8
+    requires len xs = 2 && i < 2
 end
 
 let oom = type | OutOfMemory
@@ -99,10 +101,19 @@ let run (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : bo
 
 (* What box_concept_test.c checks of take: the side of the square box i
    holds, copied into an empty `box square`, or 0 when box i holds a
-   rectangle and gives itself back. *)
+   rectangle. *)
 let peek (xs : borrowed inout mutable [box Shape]) (i : usize) (s : borrowed mutable [square]) : u8
   requires len xs = 2 && i < 2 && len s = 1
-= let d : mutable box square = { slot = s; state = 0 } in
-  match take xs.[i] d with
+= let b : mutable box Shape = xs.[i] in
+  let d : mutable box square = { slot = s; state = 0 } in
+  match take b d with
   | Ok -> d.slot.[0].side
+  | Err _ -> 0
+
+(* The same through `consume`, which copies the square to the stack. *)
+let side_of (xs : borrowed inout mutable [box Shape]) (i : usize) : u8
+  requires len xs = 2 && i < 2
+= let b : mutable box Shape = xs.[i] in
+  match consume<square> b with
+  | Ok v -> v.side
   | Err _ -> 0

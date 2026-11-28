@@ -1275,6 +1275,53 @@ struct BoxUnpackLowering : mlir::OpConversionPattern<BoxUnpackOp> {
   }
 };
 
+// `pia.box_empty`: a box whose first word is the address of the
+// concept's static control block, defined here once per module and
+// link-once across a program: size 0, alignment 1, no drop and null
+// entries, since nothing calls through an empty box.
+struct BoxEmptyLowering : mlir::OpConversionPattern<BoxEmptyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  LogicalResult
+  matchAndRewrite(BoxEmptyOp op, OpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    Location loc = op.getLoc();
+    mlir::MLIRContext *ctx = rw.getContext();
+    auto ptr = mlir::LLVM::LLVMPointerType::get(ctx);
+    auto i64 = rw.getI64Type();
+    int64_t words = op.getNumResults();
+    auto module = op->getParentOfType<mlir::ModuleOp>();
+    llvm::StringRef sym = op.getDescriptor();
+    if (!module.lookupSymbol<mlir::LLVM::GlobalOp>(sym)) {
+      llvm::SmallVector<Type> entries{i64, i64, ptr};
+      for (int64_t i = 0; i < op.getEntries(); ++i)
+        entries.push_back(ptr);
+      auto type = mlir::LLVM::LLVMStructType::getLiteral(ctx, entries);
+      mlir::OpBuilder::InsertionGuard guard(rw);
+      rw.setInsertionPointToStart(module.getBody());
+      auto g = make<mlir::LLVM::GlobalOp>(rw, loc, type, /*isConstant=*/true,
+                                          mlir::LLVM::Linkage::LinkonceODR, sym,
+                                          mlir::Attribute());
+      mlir::Block *init = rw.createBlock(&g.getInitializerRegion());
+      rw.setInsertionPointToStart(init);
+      Value v = make<mlir::LLVM::ZeroOp>(rw, loc, type);
+      Value one =
+          make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(1));
+      v = make<mlir::LLVM::InsertValueOp>(rw, loc, v, one,
+                                          llvm::ArrayRef<int64_t>{1});
+      make<mlir::LLVM::ReturnOp>(rw, loc, v);
+    }
+    llvm::SmallVector<Value> out;
+    Value desc = make<mlir::LLVM::AddressOfOp>(rw, loc, ptr, sym);
+    out.push_back(make<mlir::LLVM::PtrToIntOp>(rw, loc, i64, desc));
+    Value zero =
+        make<mlir::LLVM::ConstantOp>(rw, loc, i64, rw.getI64IntegerAttr(0));
+    for (int64_t w = 1; w < words; ++w)
+      out.push_back(zero);
+    rw.replaceOp(op, out);
+    return mlir::success();
+  }
+};
+
 struct ViewLowering : mlir::OpConversionPattern<ViewOp> {
   using OpConversionPattern::OpConversionPattern;
   LogicalResult
@@ -2633,22 +2680,23 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
       [&](mlir::Operation *op) { return types.isLegal(op); });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<
-      ConstantLowering, ArithLowering<AddOp, Arith::Add>,
-      ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
-      ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
-      ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
-      ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
-      ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>, BitLowering<CtzOp>,
-      BitLowering<PopcountOp>, BitLowering<BSwapOp>, RotateLowering<RotlOp>,
-      RotateLowering<RotrOp>, ConvertLowering, CmpLowering, ToIndexLowering,
-      FromIndexLowering, LenLowering, LoadLowering, StoreLowering,
-      SliceLowering, EmptyLowering, ErasedLowering, RegionLowering,
-      CopyLowering, ViewLowering, AtAddressLowering, AddressLowering,
-      AbortLowering, ConstArrayLowering, EmbedLowering, ForeignLowering,
-      RecMakeLowering, RecTagLowering, RecPayloadLowering,
-      FunctionConstantLowering, CallIndirectLowering, BoxPackLowering,
-      BoxCallLowering, BoxHoldsLowering, BoxUnpackLowering>(types, ctx);
+  patterns
+      .add<ConstantLowering, ArithLowering<AddOp, Arith::Add>,
+           ArithLowering<SubOp, Arith::Sub>, ArithLowering<MulOp, Arith::Mul>,
+           ArithLowering<DivOp, Arith::Div>, ArithLowering<RemOp, Arith::Rem>,
+           ArithLowering<BAndOp, Arith::BAnd>, ArithLowering<BOrOp, Arith::BOr>,
+           ArithLowering<BXorOp, Arith::BXor>, ArithLowering<ShlOp, Arith::Shl>,
+           ArithLowering<ShrOp, Arith::Shr>, BitLowering<ClzOp>,
+           BitLowering<CtzOp>, BitLowering<PopcountOp>, BitLowering<BSwapOp>,
+           RotateLowering<RotlOp>, RotateLowering<RotrOp>, ConvertLowering,
+           CmpLowering, ToIndexLowering, FromIndexLowering, LenLowering,
+           LoadLowering, StoreLowering, SliceLowering, EmptyLowering,
+           ErasedLowering, RegionLowering, CopyLowering, ViewLowering,
+           AtAddressLowering, AddressLowering, AbortLowering,
+           ConstArrayLowering, EmbedLowering, ForeignLowering, RecMakeLowering,
+           RecTagLowering, RecPayloadLowering, FunctionConstantLowering,
+           CallIndirectLowering, BoxPackLowering, BoxCallLowering,
+           BoxHoldsLowering, BoxUnpackLowering, BoxEmptyLowering>(types, ctx);
   // Floats and integers (M11).
   patterns.add<IntToFloatLowering, FloatToIntLowering,
                BitcastLowering<ToBitsOp>, BitcastLowering<FromBitsOp>>(types,

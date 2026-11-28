@@ -5,8 +5,8 @@
 // cache-line amendment): 8 words on x86_64, 16 on Apple silicon. Word 0 is
 // the boxed type's descriptor, and the object starts at word 1 in its C
 // layout: square's side is its low byte, and rect's w and h its two low
-// bytes. `peek` takes a square out of a box, or gets a rectangle's box
-// back.
+// bytes. `peek` and `side_of` take a square out of a box, and find that a
+// rectangle's box holds no square.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +31,7 @@ uint32_t run(uint8_t *sq_side, uint64_t sq_len, uint8_t *rc_w, uint64_t rc_len,
              uint8_t *rc_h, uint64_t *xs_w0, uint64_t xs_len, REST);
 uint8_t peek(uint64_t *xs_w0, uint64_t xs_len, REST, uint64_t i,
              uint8_t *s_side, uint64_t s_len);
+uint8_t side_of(uint64_t *xs_w0, uint64_t xs_len, REST, uint64_t i);
 
 int main(void) {
   uint8_t sq_side[1] = {0};
@@ -53,8 +54,8 @@ int main(void) {
             (unsigned long long)w[1][1]);
     ++failures;
   }
-  // take copies the square out of box 0, and box 1, a rectangle, is not
-  // one.
+  // take and consume copy the square out of box 0, and box 1, a
+  // rectangle, is not one.
   uint8_t out[1] = {0};
   uint8_t got = peek(w[0], 2, REST_ARGS(w), 0, out, 1);
   if (got != 3 || out[0] != 3) {
@@ -65,6 +66,11 @@ int main(void) {
   got = peek(w[0], 2, REST_ARGS(w), 1, out, 1);
   if (got != 0 || out[0] != 0) {
     fprintf(stderr, "peek 1: expected 0, got %u (slot %u)\n", got, out[0]);
+    ++failures;
+  }
+  if (side_of(w[0], 2, REST_ARGS(w), 0) != 3 ||
+      side_of(w[0], 2, REST_ARGS(w), 1) != 0) {
+    fprintf(stderr, "side_of: expected 3 and 0\n");
     ++failures;
   }
   return failures ? 1 : 0;

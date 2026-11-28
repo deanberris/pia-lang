@@ -758,6 +758,24 @@ def Pia_BoxUnpackOp : Pia_Op<"box_unpack", [Pure]> {
   }];
 }
 
+def Pia_BoxEmptyOp : Pia_Op<"box_empty", [Pure]> {
+  let summary = "the empty box over a concept";
+  let description = [{
+    The box `take` and `consume` leave behind (ADR 0046, the cache-line
+    amendment): its first word is the address of `descriptor`, the
+    concept's one static control block, whose size is 0 and whose entries
+    are null, and its other words are 0. The operands, the box it
+    replaces, are not read. The compiler treats the box as moved from, so
+    nothing calls through it until it is refilled.
+  }];
+  let arguments = (ins StrAttr:$descriptor, I64Attr:$entries,
+                       Variadic<AnyType>:$box);
+  let results = (outs Variadic<AnyType>:$empty);
+  let assemblyFormat = [{
+    $descriptor $entries `(` $box `)` attr-dict `:` functional-type($box, $empty)
+  }];
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{
