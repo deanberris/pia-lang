@@ -1,5 +1,6 @@
 (* What a cost clause refuses (ADR 0062): a counter that is not
-   `iterations`, `calls` or a function of this module, two bounds on one counter, `old` in a bound,
+   `iterations`, `calls`, a function of this module, a function parameter
+   or a concept's requirement, two bounds on one counter, `old` in a bound,
    a bound on a spec function, `spent` outside an invariant, an assert or
    a lemma call, `spent` without a clause, recursion without a measure,
    and a spread.
@@ -40,12 +41,12 @@ let par (xs : borrowed inout mutable [u32]) : unit
 = spread i in 0 .. len xs do xs.[i] <- 0 done
 
 (* Expected errors, in order.
-// CHECK: cost_errors.pia:10:3: error: 'less' is not a counter: a cost clause counts 'iterations', 'calls' or the calls of a function of this module, and function parameters and concept requirements come later (ADR 0062)
-// CHECK: cost_errors.pia:15:3: error: a second cost clause on iterations; a function has one bound per counter
-// CHECK: cost_errors.pia:19:23: error: a cost bound is read at the parameters' entry values, so it needs no 'old'
-// CHECK: cost_errors.pia:23:3: error: a spec function or a lemma never runs, so it has no cost; a cost clause belongs on code
-// CHECK: cost_errors.pia:27:11: error: 'spent iterations' can be used only in loop invariants, 'assert's and lemma calls
-// CHECK: cost_errors.pia:32:27: error: 'spent iterations' needs a cost clause on iterations, as in 'costs iterations <= ...'
-// CHECK: cost_errors.pia:36:24: error: 'down' calls itself and has a cost clause, so it needs a 'decreases' measure (ADR 0062)
-// CHECK: cost_errors.pia:40:3: error: a spread in a function with a cost clause is not supported yet (ADR 0062)
+// CHECK: cost_errors.pia:11:3: error: 'less' is not a counter: a cost clause counts 'iterations', 'calls', or the calls of a function of this module, a function parameter or a concept's requirement (ADR 0062)
+// CHECK: cost_errors.pia:16:3: error: a second cost clause on iterations; a function has one bound per counter
+// CHECK: cost_errors.pia:20:23: error: a cost bound is read at the parameters' entry values, so it needs no 'old'
+// CHECK: cost_errors.pia:24:3: error: a spec function or a lemma never runs, so it has no cost; a cost clause belongs on code
+// CHECK: cost_errors.pia:28:11: error: 'spent iterations' can be used only in loop invariants, 'assert's and lemma calls
+// CHECK: cost_errors.pia:33:27: error: 'spent iterations' needs a cost clause on iterations, as in 'costs iterations <= ...'
+// CHECK: cost_errors.pia:37:24: error: 'down' calls itself and has a cost clause, so it needs a 'decreases' measure (ADR 0062)
+// CHECK: cost_errors.pia:41:3: error: a spread in a function with a cost clause is not supported yet (ADR 0062)
 *)

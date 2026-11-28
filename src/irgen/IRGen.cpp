@@ -674,6 +674,9 @@ class Gen {
     const Node *clause;
     Value bound;
     BindingPtr spent;
+    // A function parameter that stays a value, an object or the stand-in
+    // of a generic proof: its events are its applications.
+    bool param = false;
   };
   std::vector<Counter> costs_;
   std::string costSymbol_; // the function they belong to
@@ -1890,12 +1893,12 @@ class Gen {
                  "cost; a cost clause belongs on code");
         return false;
       }
-      if (!isEventCounter(c->text) && !isCountedFunction(c->text)) {
+      if (!isCounter(c->text)) {
         fail(*c, "'" + c->text +
                      "' is not a counter: a cost clause counts "
-                     "'iterations', 'calls' or the calls of a function of "
-                     "this module, and function parameters and concept "
-                     "requirements come later (ADR 0062)");
+                     "'iterations', 'calls', or the calls of a function of "
+                     "this module, a function parameter or a concept's "
+                     "requirement (ADR 0062)");
         return false;
       }
       for (const Counter &k : costs_)
@@ -1918,7 +1921,8 @@ class Gen {
       spent->value = counterConst(l, 0);
       spent->type = counterType();
       spent->isMutable = true;
-      costs_.push_back({c->text, c.get(), e->value, spent});
+      costs_.push_back(
+          {c->text, c.get(), e->value, spent, isParamCounter(c->text)});
       b_.getBlock()->getParentOp()->setAttr("pia.costs", b_.getUnitAttr());
     }
     return true;
@@ -1928,12 +1932,87 @@ class Gen {
     return counter == "iterations" || counter == "calls";
   }
 
-  // Whether `name` is a function of this module that code calls, whose
-  // calls a cost clause can count (ADR 0062, section 2).
+  bool isCounter(const std::string &name) {
+    return isEventCounter(name) || isCountedFunction(name) ||
+           isParamCounter(name);
+  }
+
+  // Whether `name` is a function of this module that code calls, or a
+  // requirement of a concept the function being made constrains its types
+  // by, whose calls a cost clause can count (ADR 0062, section 2).
   bool isCountedFunction(const std::string &name) {
+    auto code = [&](const Node *item) {
+      return item && item->text == name && !hasFlag(*item, "spec") &&
+             !hasFlag(*item, "lemma");
+    };
     for (const auto &[symbol, sig] : sigs_)
-      if (sig.item && sig.item->text == name && !hasFlag(*sig.item, "spec") &&
-          !hasFlag(*sig.item, "lemma"))
+      if (code(sig.item))
+        return true;
+    for (const sema::FuncSig &r : promisedSigs_)
+      if (code(r.item))
+        return true;
+    return false;
+  }
+
+  // Whether `name` is a parameter of the function being made that is a
+  // function and stays a value in its body: a function object, applied
+  // through its `apply`, or the stand-in `p#type` of a higher-order
+  // function's proof (ADR 0062, section 2). A parameter given a lambda or a
+  // named function is renamed to it, and counts as that function.
+  bool isParamCounter(const std::string &name) {
+    BindingPtr b = lookup(name);
+    if (!b || !b->isParam)
+      return false;
+    auto it = sigs_.find(costSymbol_);
+    if (it == sigs_.end() || !it->second.item)
+      return false;
+    for (const NodePtr &q : it->second.item->kids[0]->kids) {
+      if (q->kind != NodeKind::Param || q->text != name)
+        continue;
+      if (sema::isFunctionParam(*q))
+        return true;
+      const Node *annot = q->kids.empty() ? nullptr : q->kids[0].get();
+      if (annot && annot->kind == NodeKind::Annot && annot->kids.size() > 1 &&
+          annot->kids[1]->kind == NodeKind::TypeName &&
+          (llvm::StringRef(annot->kids[1]->text).ends_with("#type") ||
+           llvm::is_contained(it->second.typeParams, annot->kids[1]->text)))
+        return true;
+    }
+    for (const sema::FuncSig *s : overloadSet("apply"))
+      if (!s->params.empty() && s->params[0].type == b->type)
+        return true;
+    return false;
+  }
+
+  // Whether a call applies a function value: `apply`, the wrapper with an
+  // arrow's contract, or a closure's `apply`.
+  static bool isApplication(const sema::FuncSig &sig) {
+    llvm::StringRef n(sig.name);
+    return (sig.item && sig.item->text == "apply") || n.starts_with("apply@") ||
+           n.starts_with("apply[");
+  }
+
+  // Whether `v` may hold the parameter `p`: `p` itself, or a value made
+  // from it, such as a closure that captured it. A value carried around a
+  // loop may hold it when it could, by its type.
+  static bool mayHold(Value v, Value p, unsigned depth = 0) {
+    if (v == p)
+      return true;
+    if (depth > 16)
+      return true;
+    if (auto arg = mlir::dyn_cast<mlir::BlockArgument>(v)) {
+      if (arg.getOwner()->isEntryBlock() &&
+          mlir::isa<mlir::func::FuncOp>(arg.getOwner()->getParentOp()))
+        return false;
+      return v.getType() == p.getType() || mlir::isa<RecordType>(v.getType());
+    }
+    mlir::Operation *op = v.getDefiningOp();
+    if (!op)
+      return false;
+    if (op->getNumRegions() > 0)
+      return v.getType() == p.getType() || mlir::isa<RecordType>(v.getType());
+    for (Value o : op->getOperands())
+      if (mayHold(o, p, depth + 1))
         return true;
     return false;
   }
@@ -1964,7 +2043,8 @@ class Gen {
       if (!call)
         return mlir::WalkResult::advance();
       std::string g = call.getCallee().str();
-      if (sourceName(g) == counter || mayReach(g, counter, seen)) {
+      if (g == counter || sourceName(g) == counter ||
+          mayReach(g, counter, seen)) {
         found = true;
         return mlir::WalkResult::interrupt();
       }
@@ -2023,6 +2103,38 @@ class Gen {
     Location l = loc(n);
     for (Counter &k : costs_) {
       Value part;
+      if (k.param) {
+        // An application of the parameter is one event. A call it is
+        // passed to applies it at most as often as the callee calls
+        // `apply` at all, which a higher-order callee's clause on its own
+        // parameter bounds once it is given an object.
+        BindingPtr b = lookup(k.name);
+        if (!b)
+          continue;
+        if (isApplication(sig) && !operands.empty() &&
+            operands[0] == b->value) {
+          k.spent->value = addCost(l, k.spent->value, counterConst(l, 1));
+          continue;
+        }
+        if (llvm::none_of(operands,
+                          [&](Value o) { return mayHold(o, b->value); }))
+          continue;
+        const Node *clause = costClause(sig, "apply");
+        if (!clause) {
+          std::string callee =
+              llvm::StringRef(sig.source()).split('[').first.str();
+          fail(n, "'" + k.name + "' is passed to '" + callee +
+                      "', which may call it, so '" + callee +
+                      "' needs a bound on the calls of its function "
+                      "parameter, as in 'costs p <= ...' (ADR 0062)");
+          return false;
+        }
+        std::optional<Value> v = boundAt(n, *clause, sig, operands);
+        if (!v)
+          return false;
+        k.spent->value = addCost(l, k.spent->value, *v);
+        continue;
+      }
       if (const Node *clause = costClause(sig, k.name)) {
         // A recursive call is bounded by the function's own clause, which
         // holds by induction on its measure (ADR 0062, section 4).
@@ -5192,9 +5304,7 @@ class Gen {
       // `spent iterations`: what the function has spent so far on a
       // counter its cost clause bounds (ADR 0062).
       if (fn.text == "spent" && argc == 1 &&
-          n.kids[1]->kind == NodeKind::Name &&
-          (isEventCounter(n.kids[1]->text) ||
-           isCountedFunction(n.kids[1]->text))) {
+          n.kids[1]->kind == NodeKind::Name && isCounter(n.kids[1]->text)) {
         const std::string &c = n.kids[1]->text;
         if (!spentOk_)
           return fail(n, "'spent " + c +
@@ -6276,6 +6386,18 @@ class Gen {
   }
 
   // Makes each application `p x` in `n` call `via p x`.
+  // `spent p` in a specialisation reads the counter of what `p` is given.
+  static void renameSpent(Node &n,
+                          const std::map<std::string, std::string> &to) {
+    for (NodePtr &k : n.kids)
+      renameSpent(*k, to);
+    if (n.kind == NodeKind::Apply && n.kids.size() == 2 &&
+        n.kids[0]->kind == NodeKind::Name && n.kids[0]->text == "spent" &&
+        n.kids[1]->kind == NodeKind::Name)
+      if (auto it = to.find(n.kids[1]->text); it != to.end())
+        n.kids[1]->text = it->second;
+  }
+
   static void applyThrough(Node &n, const std::string &p, const std::string &via) {
     for (NodePtr &k : n.kids) applyThrough(*k, p, via);
     if (n.kind == NodeKind::Apply && !n.kids.empty() &&
@@ -6723,6 +6845,15 @@ class Gen {
     std::map<std::string, Type> bound = deduceFromArguments(hof, valueParams, args);
     std::vector<std::string> symbols;
     std::map<std::string, std::string> rename;
+    // A cost clause on a function parameter counts the calls of what it
+    // is given: the lambda, or the named function, through the wrapper
+    // with the arrow's contract too, and for an object or a closure its
+    // `apply`, which counts every `apply` and so never undercounts (ADR
+    // 0062, section 2).
+    std::map<std::string, std::string> counted;
+    // The parameters given a lambda without captures, which nothing else
+    // can call: the proof over any function argument counts its calls.
+    std::set<std::string> lambdaGiven;
     // Function objects: each parameter's type, and what its applications
     // call, `apply` or a wrapper with the arrow's contract.
     std::map<std::string, std::pair<Type, std::string>> objects;
@@ -6779,6 +6910,7 @@ class Gen {
         std::optional<std::string> via = objectApply(a, *ap, arrow);
         if (!via) return std::nullopt;
         objects[p.text] = {g->type, *via};
+        counted[p.text] = "apply";
         symbols.push_back(tname);
         rest.push_back(args[i]);
         continue;
@@ -6796,6 +6928,7 @@ class Gen {
               objectApply(a, sigs_.at(c->apply), arrow);
           if (!via) return std::nullopt;
           objects[p.text] = {c->type, *via};
+          counted[p.text] = "apply";
           symbols.push_back("lambda@" + placeOf(a));
           if (effectful(*caps)) {
             if (!effectfulArrow(arrow))
@@ -6823,6 +6956,7 @@ class Gen {
           continue;
         }
         symbol = liftLambda(a, &arrow, hof.typeParams, what, nullptr, &bound);
+        lambdaGiven.insert(p.text);
       } else if (a.kind == NodeKind::Name && a.flags.empty() &&
                  !overloadSet(a.text).empty()) {
         symbol = functionArgument(a, arrow, what);
@@ -6839,6 +6973,11 @@ class Gen {
       if (!symbol) return std::nullopt;
       symbols.push_back(*symbol);
       rename[p.text] = *symbol;
+      counted[p.text] = *symbol;
+      if (a.kind == NodeKind::Name)
+        if (std::vector<sema::FuncSig *> set = overloadSet(a.text);
+            set.size() == 1)
+          counted[p.text] = set[0]->source();
     }
     std::string key = hof.name + "[" + llvm::join(symbols, ", ") + "]";
     auto it = sigs_.find(key);
@@ -6863,7 +7002,13 @@ class Gen {
                                 return sema::isFunctionParam(*q);
                               }),
                ps.end());
+      renameSpent(*item, counted);
       renameNames(*item, rename, nullptr);
+      if (item->kids.size() > 2 && item->kids[2]->kind == NodeKind::Contracts)
+        for (NodePtr &c : item->kids[2]->kids)
+          if (auto to = counted.find(c->text);
+              c->kind == NodeKind::Costs && to != counted.end())
+            c->text = to->second;
       sema::FuncSig sig;
       sig.name = key;
       sig.item = item.get();
@@ -6876,8 +7021,17 @@ class Gen {
       it = sigs_.emplace(key, std::move(sig)).first;
       overloads_[key].push_back(key);
       // Discharged by the higher-order function's proof, unless a closure
-      // writes through it, which the proof does not cover.
-      if (auto p = hofProof_.find(hof.name); p != hofProof_.end() && writing.empty())
+      // writes through it, which the proof does not cover, or a cost
+      // clause counts a function the body may call besides through the
+      // parameter, or that calls itself: the proof counts applications.
+      bool countsMore = false;
+      if (hof.item->kids.size() > 2 &&
+          hof.item->kids[2]->kind == NodeKind::Contracts)
+        for (const NodePtr &c : hof.item->kids[2]->kids)
+          countsMore |= c->kind == NodeKind::Costs && counted.count(c->text) &&
+                        !lambdaGiven.count(c->text);
+      if (auto p = hofProof_.find(hof.name);
+          p != hofProof_.end() && writing.empty() && !countsMore)
         provedBy_[key] = p->second;
     }
     sema::FuncSig &spec = it->second;

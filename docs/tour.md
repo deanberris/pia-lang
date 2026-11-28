@@ -664,6 +664,26 @@ let count_below (xs : [u32]) (v : u32) : usize
   n
 ```
 
+The counter can be a function parameter too, `costs p <= e`, which bounds how many times the function applies `p`, or a requirement of a concept, as in `costs less <= len xs` on a generic over `Ord t`. The bound is proved once, for any function or type, and a caller counts what it passed by its name, or `apply` for a closure or a function object:
+
+```ocaml
+let find_first (xs : [u8]) (p : u8 -> bool) : usize
+  ensures result <= len xs
+  costs p <= len xs
+= let i : mutable usize = 0 in
+  while i < len xs && p xs.[i] = false
+    invariant i <= len xs && spent p <= i
+    decreases len xs - i
+  do i <- i + 1 done;
+  i
+
+let big (x : u8) : bool = x > 3
+
+let first_big (xs : [u8]) : usize
+  costs big <= len xs
+= find_first xs big
+```
+
 ## Function values
 
 A nameless `let` is a function literal, a lambda: there is no `fun` keyword. A parameter with a function type, `(p : u8 -> bool)`, takes a lambda or the name of a top-level function. Each call compiles to its own copy of the function with the argument called directly, so a lambda costs what writing its body in the loop would ([ADR 0044](adr/0044-function-values-and-lambdas.md)).
