@@ -10426,14 +10426,19 @@ class Gen {
   // tracks nothing else.
   bool emptyBox(const Node &arg, Type t, const sema::FuncSig &sig,
                 const sema::Param &p) {
-    if (contract_ || ghost_ || (sig.name != "take" && sig.name != "consume"))
+    if (contract_ || ghost_ || !sig.item)
+      return true;
+    // The overloads and instances have names of their own; the source
+    // name is the one written.
+    const std::string &name = sig.source();
+    if (name != "take" && name != "consume")
       return true;
     auto rt = mlir::dyn_cast<RecordType>(t);
     if (!rt || !rt.getName().starts_with("box_") ||
         !sema::hasModifier(p.modifiers, "inout"))
       return true;
     if (arg.kind != NodeKind::Name || !arg.flags.empty()) {
-      fail(arg, "'" + sig.name +
+      fail(arg, "'" + name +
                     "' leaves the box it takes from empty, so "
                     "pass a local box by name");
       return false;
@@ -10442,7 +10447,7 @@ class Gen {
     if (!b)
       return true;
     if (b->isParam && !sema::hasModifier(b->modifiers, "moved")) {
-      fail(arg, "'" + sig.name + "' leaves '" + arg.text +
+      fail(arg, "'" + name + "' leaves '" + arg.text +
                     "' empty, and this "
                     "function's caller would still see it full; take it as "
                     "'moved', or copy it into a local first");
@@ -10450,13 +10455,13 @@ class Gen {
     }
     if (b->loopDepth < loopDepth_) {
       fail(arg,
-           "'" + sig.name + "' empties '" + arg.text +
+           "'" + name + "' empties '" + arg.text +
                "' inside a loop, "
                "so the next iteration would use it empty; refill it in the "
                "loop, or bind it inside the loop");
       return false;
     }
-    moved_[b] = Move{arg.loc, "emptied by '" + sig.name + "'", false, &arg};
+    moved_[b] = Move{arg.loc, "emptied by '" + name + "'", false, &arg};
     lastEmptied_ = {b, &arg};
     return true;
   }
