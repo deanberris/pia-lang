@@ -70,7 +70,7 @@ genrule(
 )
 
 cc_test(
-    name = "fp_licence_test",
+    name = "fp_licence_run_test",
     srcs = [
         "fp_licence_test.c",
         ":fp_licence_obj",
