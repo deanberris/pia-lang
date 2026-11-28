@@ -1,0 +1,62 @@
+(* Theories cross module boundaries (ADR 0088, step 1). Lib.Gauge exports
+   its theory Gauge, whose model stays sealed in Lib.Gauge, and Lib.Meter
+   exports Meter, which has no model, so its axiom is trusted. This module
+   proves against both, naming their items through the module,
+   `Lib.Gauge.Gauge.value`. A modelled theory needs nothing more; a
+   trusted one needs `import ... trusting`, and its axiom is then a
+   trusted item here. An axiom changed in Lib.Gauge changes its artifact,
+   so importers prove again.
+// RUN: piac --emit=interface -o %t %S/Inputs/gauge.pia
+// RUN: piac --emit=interface -o %t %S/Inputs/meter.pia
+// RUN: FileCheck --check-prefix=ART %s < %t/Lib.Gauge.Gauges.piai
+// RUN: FileCheck --check-prefix=TRUSTED %s < %t/Lib.Meter.Meters.piai
+// RUN: piac --verify --no-lint %S/Inputs/gauge.pia | FileCheck --check-prefix=LIB %s
+// RUN: not piac --verify --no-lint --trust-report --iface-path=%t %s | FileCheck %s
+// RUN: mkdir %t/changed
+// RUN: sed 's/value r <= 100/value r <= 99/' %S/Inputs/gauge.pia > %t/changed/gauge.pia
+// RUN: piac --emit=interface -o %t/changed %t/changed/gauge.pia
+// RUN: not cmp -s %t/Lib.Gauge.Gauges.piai %t/changed/Lib.Gauge.Gauges.piai
+*)
+import Lib.Gauge.Gauges as G
+import Lib.Meter.Meters trusting
+
+(* Proved from the axioms, as in the module that declares them. *)
+let lemma twice (r : Lib.Gauge.Gauge.reading) : unit
+  requires G.Gauge.value r < 99
+  ensures Lib.Gauge.Gauge.value (G.Gauge.bump (G.Gauge.bump r)) =
+          Lib.Gauge.Gauge.value r + 2
+= ()
+
+(* The axioms allow a reading of 100, so this fails, with a counterexample
+   from the axioms: the importer has no model to look in. *)
+let lemma below (r : G.Gauge.reading) : unit
+  ensures G.Gauge.value r < 100
+= ()
+
+
+let lemma room (t : Lib.Meter.Meter.tick) : unit
+  ensures Lib.Meter.Meter.count t + 1 <= 1001
+= ()
+
+(*
+// ART:      {{^}}interface Gauges = sig{{$}}
+// ART-NEXT: {{^}}  let theory Gauge @modelled{{$}}
+// ART:      {{^}}let theory Gauge = sig{{$}}
+// ART-NEXT: {{^}}  let sort reading{{$}}
+// ART:      {{^}}  let axiom value_small (r : reading) ensures value r <= 100{{$}}
+// ART-NOT:  model
+// ART-NOT:  level =
+
+// TRUSTED: {{^}}  let theory Meter @trusted{{$}}
+
+// LIB: proved: the model 'levels' meets the axiom 'Gauge.value_small'
+// LIB: 0 failed, 0 skipped
+
+// CHECK: trusted: the axiom 'Lib.Meter.Meter.count_small', since the theory 'Lib.Meter.Meter' has no model
+// CHECK-NEXT: 1 trusted item
+// CHECK: theories.pia:[[@LINE-31]]:3: proved: the postcondition holds
+// CHECK: theories.pia:[[@LINE-25]]:3: failed: the postcondition holds
+// CHECK-NEXT: counterexample: r = Lib.Gauge.Gauge.reading!val!{{[0-9]+}}
+// CHECK: theories.pia:[[@LINE-22]]:3: proved: the postcondition holds
+// CHECK: 2 proved, 1 failed, 0 skipped
+*)

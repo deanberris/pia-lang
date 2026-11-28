@@ -38,6 +38,7 @@ namespace pia::syntax {
   X(Sig)           /* a signature value: sig items */                        \
   X(SigInclude)    /* text=concept; type arguments */                        \
   X(SigLemma)      /* text=name; Params, Contracts */                        \
+  X(SigTheory)     /* text=name; Attrs: `let theory T` (ADR 0088) */         \
   X(Adapter)       /* text=name; concept type, item* */                      \
   X(Theory)        /* text=name; SortItem|LetItem* (ADR 0036) */            \
   X(SortItem)      /* text=name; abbreviated type? */                        \

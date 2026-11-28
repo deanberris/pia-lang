@@ -127,7 +127,7 @@ const std::map<std::string, size_t> &metaBuiltins() {
       {"redefine", 1},
       // Types, in type-level metaprograms (ADR 0035).
       {"size_of", 1}, {"type_kind", 1}, {"element", 1}, {"type_named", 1},
-      {"field_types", 1}, {"type_args", 1},
+      {"field_types", 1}, {"type_args", 1}, {"target_value", 1},
       // The core builtins that operators expand to, so a `where`
       // predicate, which is expanded code, can run (ADR 0035).
       {"eq", 2}, {"ne", 2}, {"lt", 2}, {"gt", 2}, {"le", 2}, {"ge", 2},
@@ -1164,6 +1164,25 @@ ValuePtr Interpreter::callBuiltin(const std::string &name,
     if (std::optional<std::string> t = host_.named(args[0]->s))
       return typeValue(*t);
     throw MetaError{site_, "there is no type named '" + args[0]->s + "'"};
+  }
+  // A fact of the target being compiled for, as `Pia.Simd`'s `natural`
+  // reads its vector width (ADR 0087): what the target's model gives a
+  // `Target` spec, so a type-level metaprogram answers for that target.
+  if (name == "target_value") {
+    if (args[0]->kind != K::Str)
+      throw MetaError{site_, std::string("'target_value' needs the name of a "
+                                         "'Target' spec as a string, as in "
+                                         "'target_value \"vector_bits\"', "
+                                         "found ") +
+                                 kindName(args[0]->kind)};
+    if (!host_.target)
+      throw MetaError{site_, "'target_value' is only available in types and "
+                             "constraints"};
+    if (std::optional<int64_t> v = host_.target(args[0]->s))
+      return intValue(*v);
+    throw MetaError{site_, "the target's model gives no integer for "
+                           "'Target." +
+                               args[0]->s + "'"};
   }
   if (name == "size_of" || name == "type_kind" || name == "element" ||
       name == "field_types" || name == "type_args") {

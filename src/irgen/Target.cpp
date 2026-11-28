@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "meta/Expand.h"
+#include "sema/Sema.h"
 #include "syntax/Parser.h"
 
 namespace pia::irgen {
@@ -134,6 +135,36 @@ void foldTargetIs(NodePtr &n, const std::string &model,
 }
 
 } // namespace
+
+std::optional<int64_t> targetModelValue(std::string_view triple,
+                                        const std::string &name) {
+  std::string model = targetModelFor(triple);
+  if (model.empty())
+    return std::nullopt;
+  // The models' values are literals, read once from the theory's source.
+  static const std::map<std::string, std::map<std::string, int64_t>> values =
+      [] {
+        std::map<std::string, std::map<std::string, int64_t>> out;
+        syntax::Diagnostics own;
+        NodePtr theory = syntax::parseProgram(targetTheorySource(), own);
+        if (own.hasErrors())
+          return out;
+        for (const NodePtr &item : theory->kids)
+          if (item->kind == NodeKind::Model)
+            for (const NodePtr &m : item->kids)
+              if (m->kids.size() > 3 && m->kids[3]->kind == NodeKind::IntLit)
+                if (auto lit = sema::parseIntLiteral(m->kids[3]->text))
+                  out[item->text][m->text] = lit->value.getSExtValue();
+        return out;
+      }();
+  auto m = values.find(model);
+  if (m == values.end())
+    return std::nullopt;
+  auto v = m->second.find(name);
+  if (v == m->second.end())
+    return std::nullopt;
+  return v->second;
+}
 
 bool usesTargetTheory(const Node &program) {
   for (const NodePtr &item : program.kids)
