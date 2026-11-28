@@ -522,6 +522,16 @@ class Encoder {
     if (fn->hasAttr(PiaDialect::getLemmaAttrName()))
       if (auto a = fn->getAttrOfType<mlir::IntegerAttr>(PiaDialect::getFuelAttrName()))
         minFuel_ = static_cast<unsigned>(a.getInt());
+    // A float's real value (ADR 0038) costs real arithmetic in every query
+    // that sees a float operation, so the facts that give floats their real
+    // meaning are added only where some contract in the module asks for
+    // one with `to_real`. Other float code keeps the bit encoding alone.
+    module_.walk([&](ExactConvertOp c) {
+      if (!mlir::isa<mlir::FloatType>(c.getInput().getType()))
+        return mlir::WalkResult::advance();
+      floatReals_ = true;
+      return mlir::WalkResult::interrupt();
+    });
   }
 
   // The sort of a declared constant, so its model value can be read.
@@ -2352,6 +2362,13 @@ class Encoder {
   // values fails rather than being proved wrongly. `to_bits` and
   // `from_bits` are the bits themselves.
   Value floatSemantics(Operation *op, llvm::ArrayRef<Value> in) {
+    Value r = floatBits(op, in);
+    if (r && mlir::isa<mlir::smt::BitVectorType>(r.getType()))
+      floatFacts(op, in, r);
+    return r;
+  }
+
+  Value floatBits(Operation *op, llvm::ArrayRef<Value> in) {
     auto name = [](Type t, llvm::StringRef what) {
       return ((t.isF32() ? "f32." : "f64.") + what).str();
     };
@@ -2439,7 +2456,18 @@ class Encoder {
     unsigned w = mlir::cast<mlir::smt::BitVectorType>(a.getType()).getWidth();
     Value ordered = andOf(notOf(floatNaN(a, w)), notOf(floatNaN(c, w)));
     Value ka = floatKey(a, w), kc = floatKey(c, w);
-    return andOf(ordered, p ? cmp(*p, ka, kc) : eq(ka, kc));
+    Value keys = p ? cmp(*p, ka, kc) : eq(ka, kc);
+    // On finite floats, IEEE order is the order of their real values.
+    if (floatReals_) {
+      using B = mlir::smt::BVCmpPredicate;
+      Value ra = floatToReal(a, w), rc = floatToReal(c, w);
+      Value reals = !p             ? eq(ra, rc)
+                    : *p == B::slt ? realLt(ra, rc)
+                                   : realLe(ra, rc);
+      define(implies(andOf(floatFinite(a, w), floatFinite(c, w)),
+                     eq(keys, reals)));
+    }
+    return andOf(ordered, keys);
   }
 
   Value floatMagnitude(Value x, unsigned w) {
@@ -2490,6 +2518,198 @@ class Encoder {
     Value above = loExact ? cmp(B::sgt, kx, kl) : cmp(B::sge, kx, kl);
     Value below = hiExact ? cmp(B::slt, kx, kh) : cmp(B::sle, kx, kh);
     return andOf(notOf(floatNaN(x, w)), andOf(above, below));
+  }
+
+  // --- floats as reals (ADR 0038, steps 1 and 2) ------------------------
+  //
+  // A float is still its bits. Where a contract uses `to_real`, each float
+  // term also has a real value, an uninterpreted function of its bits,
+  // with facts that IEEE 754 guarantees: a finite float lies within the
+  // largest finite magnitude and has the sign of its key, IEEE order on
+  // finite floats is real order, and each correctly rounded operation
+  // lands within a relative error `eps t` of the exact result, plus the
+  // absolute error `tiny t` of the subnormal range. The error is written
+  // as `|r - e| <= eps * |e| + tiny`, not with a fresh δ per operation:
+  // the two say the same, and without products of δs a chain of
+  // operations stays a query Z3 decides in milliseconds. Z3's own FP
+  // theory would give to_real exactly, but a single order goal through it
+  // did not finish in minutes.
+
+  static unsigned floatPrecision(unsigned w) { return w == 32 ? 24 : 53; }
+  static unsigned floatBias(unsigned w) { return w == 32 ? 127 : 1023; }
+
+  // The rational a finite float's bits stand for, as `n` or `n/d`, or
+  // nothing for an infinity or NaN.
+  static std::optional<std::string> floatRational(const APInt &bits) {
+    unsigned w = bits.getBitWidth();
+    unsigned p = floatPrecision(w);
+    unsigned expBits = w - p;
+    APInt frac = bits.extractBits(p - 1, 0).zext(w + 1100);
+    uint64_t e = bits.extractBits(expBits, p - 1).getZExtValue();
+    bool negative = bits.isSignBitSet();
+    if (e == (1u << expBits) - 1)
+      return std::nullopt;
+    // value = m * 2^k
+    APInt m = frac;
+    int64_t k = 1 - int64_t(floatBias(w)) - int64_t(p - 1);
+    if (e != 0) {
+      m.setBit(p - 1);
+      k = int64_t(e) - int64_t(floatBias(w)) - int64_t(p - 1);
+    }
+    std::string sign = negative && !m.isZero() ? "-" : "";
+    if (m.isZero())
+      return std::string("0");
+    if (k >= 0)
+      return sign + llvm::toString(m.shl(unsigned(k)), 10, false);
+    unsigned z = std::min<unsigned>(m.countr_zero(), unsigned(-k));
+    m.lshrInPlace(z);
+    k += z;
+    if (k == 0)
+      return sign + llvm::toString(m, 10, false);
+    APInt d = APInt::getOneBitSet(m.getBitWidth(), unsigned(-k));
+    return sign + llvm::toString(m, 10, false) + "/" +
+           llvm::toString(d, 10, false);
+  }
+
+  Value realConst(llvm::StringRef text) {
+    if (text.consume_front("-"))
+      return realSub(realConst("0"), realConst(text));
+    return exactConst(text, /*real=*/true);
+  }
+  Value realAdd(Value a, Value c) { return apply("+", {a, c}, realType()); }
+  Value realSub(Value a, Value c) { return apply("-", {a, c}, realType()); }
+  Value realMul(Value a, Value c) { return apply("*", {a, c}, realType()); }
+  Value realDiv(Value a, Value c) { return apply("/", {a, c}, realType()); }
+  Value realLe(Value a, Value c) { return apply("<=", {a, c}, boolType()); }
+  Value realLt(Value a, Value c) { return apply("<", {a, c}, boolType()); }
+  Value realAbs(Value x) {
+    Value zero = realConst("0");
+    return ite(realLe(zero, x), x, realSub(zero, x));
+  }
+
+  // The unit roundoff 2^-p, half the smallest subnormal 2^-(bias + p - 1),
+  // and the largest finite magnitude, of a float width (`eps`, `tiny`).
+  Value floatEps(unsigned w) {
+    return realConst(
+        ("1/" + llvm::toString(APInt::getOneBitSet(64, floatPrecision(w)), 10,
+                               false)));
+  }
+  Value floatTiny(unsigned w) {
+    unsigned k = floatBias(w) + floatPrecision(w) - 1;
+    return realConst("1/" +
+                     llvm::toString(APInt::getOneBitSet(k + 1, k), 10, false));
+  }
+  Value floatMax(unsigned w) {
+    APInt bits =
+        w == 32 ? APInt(32, 0x7f7fffffu) : APInt(64, 0x7fefffffffffffffull);
+    return realConst(*floatRational(bits));
+  }
+
+  Value floatFinite(Value x, unsigned w) {
+    Type t = mlir::smt::BitVectorType::get(ctx_, w);
+    Value mask = create<mlir::smt::BVConstantOp>(
+        w == 32 ? APInt(32, 0x7f800000u) : APInt(64, 0x7ff0000000000000ull));
+    return notOf(eq(create<mlir::smt::BVAndOp>(t, x, mask), mask));
+  }
+
+  // `to_real x` of float bits `x` of width `w`.
+  Value floatToReal(Value x, unsigned w) {
+    if (quantifierDepth_ == 0)
+      if (Value r = floatReal_.lookup(x))
+        return r;
+    Value r;
+    if (auto c = x.getDefiningOp<mlir::smt::BVConstantOp>()) {
+      if (std::optional<std::string> q = floatRational(c.getValue().getValue()))
+        r = realConst(*q);
+    } else if (auto n = x.getDefiningOp<mlir::smt::BVXOrOp>()) {
+      // Negation flips the sign bit (floatSemantics), and is exact.
+      auto k = n->getOperand(1).getDefiningOp<mlir::smt::BVConstantOp>();
+      if (k && k.getValue().getValue().isSignMask())
+        r = realSub(realConst("0"), floatToReal(n->getOperand(0), w));
+    }
+    if (!r) {
+      r = apply(w == 32 ? "f32.to_real" : "f64.to_real", {x}, realType());
+      using B = mlir::smt::BVCmpPredicate;
+      Value zero = realConst("0");
+      Value key = floatKey(x, w);
+      Value kzero = create<mlir::smt::BVConstantOp>(APInt(w, 0));
+      Value max = floatMax(w);
+      Value facts = andOf(realLe(realSub(zero, max), r), realLe(r, max));
+      facts = andOf(facts, eq(cmp(B::slt, key, kzero), realLt(r, zero)));
+      facts = andOf(facts, eq(eq(key, kzero), eq(r, zero)));
+      define(implies(floatFinite(x, w), facts));
+    }
+    if (quantifierDepth_ == 0)
+      floatReal_[x] = r;
+    return r;
+  }
+
+  // A correctly rounded result `r` of the exact real `e`, given `pre`,
+  // which says the operands are finite: within the error bound when `r`
+  // is finite, and finite when `e` is below the largest finite magnitude.
+  void roundingFacts(Value pre, Value e, Value r, unsigned w,
+                     bool subnormal = true) {
+    Value err = realMul(floatEps(w), realAbs(e));
+    if (subnormal)
+      err = realAdd(err, floatTiny(w));
+    Value rr = floatToReal(r, w);
+    define(implies(andOf(pre, floatFinite(r, w)),
+                   realLe(realAbs(realSub(rr, e)), err)));
+    define(implies(andOf(pre, realLt(realAbs(e), floatMax(w))),
+                   floatFinite(r, w)));
+  }
+
+  // The facts of a float operation `op` with operands `in` and result
+  // `r`, when floats have real values.
+  void floatFacts(Operation *op, llvm::ArrayRef<Value> in, Value r) {
+    if (!floatReals_)
+      return;
+    if (mlir::isa<mlir::arith::AddFOp, mlir::arith::SubFOp, mlir::arith::MulFOp,
+                  mlir::arith::DivFOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      Value a = floatToReal(in[0], w), c = floatToReal(in[1], w);
+      Value pre = andOf(floatFinite(in[0], w), floatFinite(in[1], w));
+      Value e;
+      if (mlir::isa<mlir::arith::AddFOp>(op)) {
+        e = realAdd(a, c);
+      } else if (mlir::isa<mlir::arith::SubFOp>(op)) {
+        e = realSub(a, c);
+      } else if (mlir::isa<mlir::arith::MulFOp>(op)) {
+        e = realMul(a, c);
+      } else {
+        pre = andOf(pre, notOf(eq(c, realConst("0"))));
+        e = realDiv(a, c);
+      }
+      roundingFacts(pre, e, r, w);
+      return;
+    }
+    // An integer is always finite as a float (2^127 is below f32's
+    // largest), exact up to 2^p, and otherwise rounded like any result,
+    // with no subnormal term since it is 0 or at least 1.
+    if (mlir::isa<IntToFloatOp>(op)) {
+      unsigned w = op->getResult(0).getType().getIntOrFloatBitWidth();
+      Value e = toReal(bvToInt(in[0]));
+      Value rr = floatToReal(r, w);
+      define(floatFinite(r, w));
+      roundingFacts(boolConst(true), e, r, w, /*subnormal=*/false);
+      APInt exact = APInt::getOneBitSet(64, floatPrecision(w));
+      define(implies(
+          realLe(realAbs(e), realConst(llvm::toString(exact, 10, false))),
+          eq(rr, e)));
+      return;
+    }
+    if (mlir::isa<mlir::arith::ExtFOp>(op)) {
+      Value x = in[0];
+      define(implies(floatFinite(x, 32),
+                     andOf(floatFinite(r, 64),
+                           eq(floatToReal(r, 64), floatToReal(x, 32)))));
+      return;
+    }
+    if (mlir::isa<mlir::arith::TruncFOp>(op)) {
+      Value x = in[0];
+      roundingFacts(floatFinite(x, 64), floatToReal(x, 64), r, 32);
+      return;
+    }
   }
 
   bool semantics(Operation *op, llvm::ArrayRef<Value> in,
@@ -2636,6 +2856,10 @@ class Encoder {
       return true;
     }
     if (auto c = mlir::dyn_cast<ExactConvertOp>(op)) {
+      if (auto ft = mlir::dyn_cast<mlir::FloatType>(c.getInput().getType())) {
+        out.push_back(floatToReal(in[0], ft.getWidth()));
+        return true;
+      }
       Value x = in[0];
       // In code, a load assumes its element's range (verifyOp). In a spec
       // function's body, an element made exact is read through its range:
@@ -4748,6 +4972,10 @@ class Encoder {
   int counter_ = 0;
   int nextName_ = 0;
   int quantifierDepth_ = 0;
+  // Floats as reals (ADR 0038): on when a contract uses `to_real`, and the
+  // real value of each float term made outside a quantifier.
+  bool floatReals_ = false;
+  llvm::DenseMap<Value, Value> floatReal_;
   // Spec functions (ADR 0023, group 5): one uninterpreted function per
   // result, the definitions being unfolded, and definitions made inside a
   // quantifier, which it takes as hypotheses.
