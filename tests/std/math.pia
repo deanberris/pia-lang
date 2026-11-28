@@ -1,7 +1,8 @@
-(* Pia.Math (#487): `sqrt` on f32 is proved correctly rounded by an integer
-   algorithm over its bits, and compiled to `math.sqrt` by its @lower
-   (ADR 0078), which LLVM makes one instruction; with --lower=off it is the
-   algorithm. tests/std/math_test.c runs both against C's sqrtf.
+(* Pia.Math (#487): `sqrt` on f32 and f64 is proved correctly rounded by an
+   integer algorithm over its bits, and compiled to `math.sqrt` by its
+   @lower (ADR 0078), which LLVM makes one instruction; with --lower=off it
+   is the algorithm. tests/std/math_test.c runs both against C's sqrtf and
+   sqrt.
 // RUN: FileCheck %s < %S/../../lib/Pia/math.goals
 // RUN: piac --emit=core %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=CORE %s
 // RUN: piac --emit=llvm -O2 %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=LLVM %s
@@ -9,20 +10,27 @@
 // RUN: piac --verify --trust-report --verify-only=sqrt %S/../../lib/Pia/Math.pia | FileCheck --check-prefix=TRUST %s
 *)
 
-(* The rounding theorem, the root's bounds, and each of the interface's
-   contracts, for sqrt_soft and for sqrt.
+(* The rounding theorems, the roots' bounds, the f64 root's loop invariant,
+   and the interface's rounding contracts, for sqrt_soft and for sqrt.
 // CHECK-NOT: failed
-// CHECK-DAG: Math.pia:129:3: proved: the postcondition holds
-// CHECK-DAG: Math.pia:102:3: proved: the postcondition holds
-// CHECK-DAG: Math.pia:104:3: proved: the postcondition holds
-// CHECK-DAG: Math.pia:41:5: proved: the postcondition holds
+// CHECK-DAG: Math.pia:152:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:125:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:127:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:43:5: proved: the postcondition holds
+// CHECK-DAG: Math.pia:367:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:310:3: proved: the postcondition holds
+// CHECK-DAG: Math.pia:317:5: proved: the loop invariant holds after each iteration
+// CHECK-DAG: Math.pia:62:5: proved: the postcondition holds
 // CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
 
 // CORE: math.sqrt %{{.*}} : f32
+// CORE: math.sqrt %{{.*}} : f64
 
 // LLVM: call float @llvm.sqrt.f32(
+// LLVM: call double @llvm.sqrt.f64(
 
 // OFF-NOT: llvm.sqrt
 
-// TRUST: Math.pia:157:3: trusted: the lowering of 'sqrt' to MLIR (math.sqrt; sha256 {{[0-9a-f]+}})
+// TRUST: Math.pia:180:3: trusted: the lowering of 'sqrt(f32)' to MLIR (math.sqrt; sha256 {{[0-9a-f]+}})
+// TRUST: Math.pia:420:3: trusted: the lowering of 'sqrt(f64)' to MLIR (math.sqrt; sha256 {{[0-9a-f]+}})
 *)

@@ -5785,9 +5785,14 @@ bool canIntBlast(const std::string &script) {
   // finish in minutes, and takes milliseconds int-blasted, quantified
   // hypotheses and all. Only goals over the real values of floats take
   // this path: other goals over reals, such as Pia.Time's ratios, keep
-  // the solver they had, which is cheaper for them.
+  // the solver they had, which is cheaper for them. A goal with no reals
+  // at all that converts to `int`, as a spec over unbounded integers does
+  // (Pia.Math's f64 root, whose square needs 106 bits), has the same
+  // trouble: `int a + int b = int c` on two u32s did not finish under
+  // bit-blasting and is immediate int-blasted.
   if (script.find("(bv2int ") != std::string::npos &&
-      script.find(".to_real") != std::string::npos)
+      (script.find(".to_real") != std::string::npos ||
+       script.find("Real") == std::string::npos))
     return true;
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
@@ -6264,7 +6269,9 @@ bool selects(const std::string &spec, const std::string &where,
   }
   if (s.contains(':'))
     return where == spec || llvm::StringRef(where).starts_with(spec + ":");
-  return function == spec;
+  // An overload's symbol is its name and parameter types, as `sqrt(f32)`;
+  // its plain name selects every overload, and the symbol only that one.
+  return function == spec || llvm::StringRef(function).starts_with(spec + "(");
 }
 
 bool isContractGoal(contract::ObligationKind kind) {
