@@ -39,7 +39,7 @@ What the language has today:
 - **Emptying and refilling** (Dean). A box has a spec-only state `box.full b` ([ADR 0041](0041-allocator-semantics-as-a-theory.md)'s spec-only fields, erased by codegen), so there is no run-time flag:
     - `box.release b : t` (for `box t`) moves the value out and leaves `b` empty. `box.remove b` (for any box, including `box c`, whose value is unsized and cannot be returned) drops the value in place and leaves `b` empty.
     - An empty box keeps its allocation. `box.fill b v` requires `not (box.full b)` and a compatible value, and makes `b` full again: for `box t`, any `t`; for `box c`, a value of any type that meets `c` and whose size and alignment fit the allocation, which the box records from `make` (as a real field when its allocator's `give` needs the size, spec-only otherwise).
-    - `get`, `get_mut` and every call through a box require `box.full b`, proved where they are used. An empty box is invalid until it is filled, and using it is a failed goal, not a run-time check.
+    - `get`, `get_mut` and every call through a box require `box.full b`, proved where they are used. An empty box is invalid until it is filled, and using it is a failed goal, not a run-time check. (For `box c`, the cache-line amendment replaces this: an empty box is moved from, so the compiler rejects using it, and a call through a box needs no proof.)
     - `box.free b` requires `not (box.full b)` and returns the memory without dropping anything.
 - A box is `Drop`, and dropping requires it to be full: it drops the contents and then returns the memory to its allocator. A box that may be empty at scope end must be filled or freed first. A box of a `@linear` type is itself `@linear`.
 - There is no deleter. A different way to free is a different allocator.
@@ -213,6 +213,41 @@ This replaces step 5's tagged union, and ADR 0048 section 5's inline slots sized
 
 Implementation:
 
-1. **The layout within a module**: `box c` as a cache line with the descriptor reference, the lease and the inline storage; `make` and `widen` storing inline or out of line; calls and drops through the descriptor; direct calls where it is known. tests/codegen/box_concept.pia and box_error_payload.pia move to it, with C harnesses that treat the box as an opaque block. (Done for objects that fit inline, PR #540: the descriptor, the inline object, calls through it and direct where known. The lease, objects out of line and drops through the descriptor are still to come.)
+1. **The layout within a module**: `box c` as a cache line with the descriptor reference, the lease and the inline storage; `make` and `widen` storing inline or out of line; calls and drops through the descriptor; direct calls where it is known. tests/codegen/box_concept.pia and box_error_payload.pia move to it, with C harnesses that treat the box as an opaque block. (Done for objects that fit inline, PR #540: the descriptor, the inline object, calls through it and direct where known. Taking out is done for objects inline, in tests/verify/box_concept.pia and tests/codegen/box_concept.pia, with the empty box (Dean, 2026-11-28): for each type the module widens, `take b d` moves the object into the caller's empty `box t`, and `consume<t> b` copies it to the stack, when the box's descriptor is that type's. Both leave `b` empty, its descriptor the concept's static control block, and IRGen treats `b` as moved from in their `Ok` arms, so it cannot be used until it is assigned again; a mismatch is `Err Mismatch` and leaves `b` full. So a `box c` is full wherever it can be used, and a call through one needs no proof that it is (Dean's choice, which replaces section 1's `box.full` requirement for `box c`). Only a local or a `moved` parameter can be left empty. Descriptors are link-once, so the address comparison holds across modules. The lease (Dean: the allocator's address and a table for its type, as `std::pmr`), objects out of line and drops through the descriptor are still to come.)
 2. **Across modules**: an interface shows a `box c`, and a test boxes an error payload in one module and handles it in another. (Done, in tests/modules/box_across.pia: each module makes the box from the concept, so a module that imports a concept boxes values of its own types in it. The box's theory over the box is taken as consistent when the same axioms over a one-byte shape are, which the verifier checks, since they speak of one box at a time and never of its words (#563). Requirement types that name the concept's module's own types are not read through an import yet.)
 3. **Buffers of boxes**: `vec (box c)` over cache-line elements.
+
+## Amendment, 2026-11-28: a theory of a box's state
+
+Dean (2026-11-28): a box needs a theory that checks an instance keeps its invariants within a scope, and makes its postcondition deterministic where it escapes. The move checker alone tracks only locals, so an empty box could not be handed through an `inout` parameter, a result or a slice element, and nothing in a proof said what state a box leaves a function in.
+
+**The theory.** Each concept's generated theory, `erased_C`, gains a box's state as spec-only functions of the box, with no run-time cost:
+
+- `full b`, the box holds an object, and `holds_t b` for each type `t` the module boxes: it holds a `t`.
+- Axioms: `holds_t b ==> full b`, and `holds_t b ==> not holds_u b` for two types `t` and `u`, so a box holds at most one type.
+- `widen` and `box.make` ensure `holds_t result`. The empty box ensures `not full result`.
+- `take b d` and `consume<t> b` ensure, on `Ok`, `not full b` (and `d` full), and on `Err`, `full b = old (full b)` with every `holds` unchanged: a mismatch leaves the state as it was.
+- A call through a box requires `full b`, a goal discharged from the box's stated or tracked state.
+
+**Every contract states the state** (Dean, 2026-11-28, on a card, over a default of `full`). There is no default invariant. A function that takes a box states its state in a `requires` (`requires full b`), and one that hands a box out, as a result, an `inout` or `out` parameter, or a store into a buffer the caller sees, states the state it leaves in an `ensures` (`ensures full result`, `ensures not full b`, `ensures holds_square result`). A box in a signature with no such clause is an error that names the clause to add. So the state of every box is explicit at every boundary, and the caller learns it from the contract alone.
+
+**An indeterminate state** (Dean, 2026-11-28). A function may leave a box in a state its caller cannot know, but it must say so: `ensures unknown b`, where `unknown` is a spec function of the theory that is always true and only marks the clause as stating a state. The caller then knows nothing of `b` and must ask before using it. Two queries read the box at run time and tell the verifier what they read:
+
+- `is_full b : bool`, which ensures `result = full b`: word 0 is not the concept's static control block.
+- `is<t> b : bool`, which ensures `result = holds_t b`: word 0 is `t`'s descriptor.
+
+So `if is_full b then area b else ...` proves the call in its first branch, and a `match` on `take` or `consume` is itself such a query. A use of a box whose state is unknown is a failed goal that names the queries.
+
+**The invariant in a scope.** Inside a body the verifier tracks a box's state through the theory as it does any spec function, starting from the `requires`. A box may be emptied and refilled within a scope, and each use is checked against the state at that point. The move checker keeps its error for a local used after `take` (clearer than a failed goal), and the theory covers everything else: parameters, results, fields and slice elements.
+
+**Where it escapes, the postcondition is deterministic.** Where a box leaves a function, the verifier proves the state its `ensures` names on every path, so the state the caller receives is the one the contract names and never a "maybe". A state that differs between paths is stated as a condition, as `take` does (`match result with | Ok -> not full b | Err _ -> ...`). An empty box in a slice element is described by a quantified clause over the slice.
+
+**Soundness.** The empty box is made only inside `take` and `consume`, whose contracts state that the box is empty, and every other function states the states it relies on and leaves, so no proof assumes a state the contracts do not give it.
+
+**Migration.** Box signatures without a state clause were accepted before, so this is a breaking change: a migration rule (ADR 0073) adds `requires full b` for each box parameter and `ensures full result` for a box result, which is what every such program assumed.
+
+Implementation:
+
+1. `full`, `holds_t` and `unknown` in `erased_C`, with the axioms; `widen`, `take`, `consume` and the empty box state them; the queries `is_full` and `is<t>`; calls through a box require `full`.
+2. The state clause required on every box in a signature, with the migration rule that adds `full`.
+3. Quantified states over buffers of boxes, with `vec (box c)` (the amendment's step 3).

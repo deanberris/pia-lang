@@ -290,6 +290,11 @@ std::string erasedSource(const std::string &cname, const Node &concept,
                (p.receiver ? recvType : p.type) + ") -> ";
       out += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
     }
+    // Which of this module's widened types a box holds, which `take` asks.
+    if (closed)
+      for (const std::string &t : *closed)
+        out += "  let spec holds_" + t + " : (" + self + " : " + recvType +
+               ") -> bool\n";
     for (const Requirement &q : reqs) {
       bool ensures = false;
       for (const Node *c : q.contracts)
@@ -408,9 +413,32 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   if (!closed) {
     src += "let widen (t : type where " + conceptRef(cname) +
            " t) (b : " + box + " t) : " + boxType + full + "\n= { tag = 0 }\n";
+    src += "let take (t : type where " + conceptRef(cname) +
+           " t) (b : inout "
+           "mutable " +
+           boxType + ") (d : inout mutable " + box +
+           " t) : "
+           "result unit box_mismatch\n  requires len d.slot = 1 && d.state = "
+           "0\n= Err Mismatch\n";
+    src += "let consume (t : type where " + conceptRef(cname) +
+           " t) (b : "
+           "inout mutable " +
+           boxType +
+           ") : result t box_mismatch\n= Err "
+           "Mismatch\n";
   } else {
     src += "let " + theory + "_check (t : type where " + conceptRef(cname) +
            " t) (b : " + box + " t) : unit = ()\n\n";
+    // The empty box `take` and `consume` leave: the concept's one static
+    // control block.
+    const std::string empty = theory + "_empty";
+    BoxOp e;
+    e.kind = BoxOp::Empty;
+    e.descriptor = "pia$e$" + m;
+    e.entry = static_cast<int>(callable.size());
+    ops[empty] = e;
+    src += "let " + empty + " (b : " + boxType + ") : " + boxType +
+           "\n= abort ()\n\n";
     for (const std::string &t : *closed) {
       // The object, packed into the box with its descriptor.
       const std::string pack = theory + "_pack_" + t;
@@ -424,6 +452,43 @@ std::string erasedSource(const std::string &cname, const Node &concept,
           "let " + pack + " (v : " + t + ") : " + boxType + "\n= abort ()\n\n";
       src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
              "\n= " + theory + "_check b;\n  " + pack + " b.slot.[0]\n\n";
+      // Taking it out (Dean, 2026-11-28): when the box's descriptor is
+      // `t`'s, `take b d` copies its object into the caller's empty box
+      // `d`, and `consume<t> b` returns it, and both leave `b` empty. IRGen
+      // treats `b` as moved from then, and only then: a mismatch is an
+      // `Err` that leaves it as it was.
+      const std::string holds = theory + "_holds_" + t;
+      const std::string unpack = theory + "_unpack_" + t;
+      BoxOp h;
+      h.kind = BoxOp::Holds;
+      h.descriptor = op.descriptor;
+      ops[holds] = h;
+      BoxOp u;
+      u.kind = BoxOp::Unpack;
+      ops[unpack] = u;
+      src += "let " + holds + " (b : " + boxType +
+             ") : bool\n  ensures result "
+             "= " +
+             theory + ".holds_" + t + " b\n= abort ()\n\n";
+      src += "let " + unpack + " (b : " + boxType + ") : " + t +
+             "\n  requires " + theory + ".holds_" + t + " b\n= abort ()\n\n";
+      src += "let take (b : inout mutable " + boxType +
+             ") (d : inout mutable " + box + " " + t +
+             ") : result unit box_mismatch"
+             "\n  requires len d.slot = 1 && d.state = 0"
+             "\n  ensures len d.slot = 1"
+             "\n  ensures (match result with | Ok -> d.state = 1 | Err _ -> "
+             "d.state = 0)\n= if " +
+             holds + " b then\n    (d.slot.[0] <- " + unpack +
+             " b;\n     b <- " + empty +
+             " b;\n     d.state <- 1;"
+             "\n     Ok ())\n  else Err Mismatch\n\n";
+      // The where is written as the operator expands, since this source
+      // is parsed after expansion.
+      src += "let consume (t : type where eq t " + t + ") (b : inout mutable " +
+             boxType + ") : result " + t + " box_mismatch\n= if " + holds +
+             " b then\n    (let v = " + unpack + " b in\n     b <- " + empty +
+             " b;\n     Ok v)\n  else Err Mismatch\n\n";
     }
   }
   return src;
@@ -534,6 +599,20 @@ void expandErasedBoxes(
   syntax::LexOptions lex;
   text.tokens = syntax::tokenize(source, diags, lex);
   std::string box = *unsized.begin();
+  // What `take` and `consume` return when the box holds another type:
+  // one error for every concept.
+  bool defined = false;
+  for (const NodePtr &item : program.kids)
+    defined |= item->text == "box_mismatch";
+  if (!defined) {
+    syntax::Diagnostics local;
+    NodePtr mismatch =
+        syntax::parseProgram("let box_mismatch = type | Mismatch\n", local);
+    if (mismatch)
+      for (NodePtr &k : mismatch->kids)
+        if (k->kind != NodeKind::FileAttr)
+          program.kids.push_back(std::move(k));
+  }
   for (const std::string &c : used) {
     std::map<std::string, std::string> whyNot;
     std::map<std::string, BoxOp> ops;

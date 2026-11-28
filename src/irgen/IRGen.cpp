@@ -2777,6 +2777,10 @@ class Gen {
   R genExpr(const Node &n, Type expected) {
     lent_.erase(&n);
     writable_.erase(&n);
+    // The `Err` arm of a match on `take` or `consume`: the box was not
+    // emptied, so it is usable here.
+    if (auto u = unmoveAt_.find(&n); u != unmoveAt_.end())
+      moved_.erase(u->second);
     // A spec-only place in code, such as `p.heap <- Alloc.take p.heap s`
     // or a spec-only argument: its value is specification, as in a
     // contract, and codegen erases it (ADR 0041).
@@ -3774,8 +3778,17 @@ class Gen {
   // mutable locals and result types work as they do for `if`. The arms must
   // cover every constructor, and none may be redundant.
   R genMatch(const Node &n, Type expected) {
+    lastEmptied_ = {};
     R s = genExpr(*n.kids[0], Type());
     if (!s) return s;
+    // A match on `take b d` or `consume b`: `b` is emptied in the `Ok`
+    // arms only.
+    BindingPtr emptied;
+    if (lastEmptied_.first)
+      for (const syntax::NodePtr &k : n.kids[0]->kids)
+        if (k.get() == lastEmptied_.second)
+          emptied = lastEmptied_.first;
+    lastEmptied_ = {};
     if (auto rt = mlir::dyn_cast<RecordType>(s->type);
         rt && !types_.isVariant(rt))
       return genRecordMatch(n, *s, rt, expected);
@@ -3924,6 +3937,8 @@ class Gen {
       }
       if (!a.as.empty())
         body = letIn(a.as, a.asAt, hiddenName(), std::move(body));
+      if (emptied && a.ctor && a.ctor->name == "Err")
+        unmoveAt_[body.get()] = emptied;
       return body;
     };
     syntax::NodePtr chain = armBody(arms.back());
@@ -5188,6 +5203,8 @@ class Gen {
       if (!sema::hasModifier(sig.params[i].modifiers, "moved"))
         unconsume(*args[i]);
       else if (!moveArgument(*args[i], c->type, sig, sig.params[i]))
+        return std::nullopt;
+      if (!emptyBox(*args[i], c->type, sig, sig.params[i]))
         return std::nullopt;
       // `inout` may update a lender, as `alloc` updates its allocator:
       // what the callee's contract promises keeps the loans valid. `out`
@@ -10578,6 +10595,53 @@ class Gen {
     return true;
   }
 
+  // The box `b` passed to `take` or `consume` over a concept (ADR 0046,
+  // the cache-line amendment): emptied when they return `Ok`, so moved
+  // from after the call, except in a match's `Err` arms (genMatch). Only
+  // a local or a `moved` parameter can be left empty, since the checker
+  // tracks nothing else.
+  bool emptyBox(const Node &arg, Type t, const sema::FuncSig &sig,
+                const sema::Param &p) {
+    if (contract_ || ghost_ || !sig.item)
+      return true;
+    // The overloads and instances have names of their own; the source
+    // name is the one written.
+    const std::string &name = sig.source();
+    if (name != "take" && name != "consume")
+      return true;
+    auto rt = mlir::dyn_cast<RecordType>(t);
+    if (!rt || !rt.getName().starts_with("box_") ||
+        !sema::hasModifier(p.modifiers, "inout"))
+      return true;
+    if (arg.kind != NodeKind::Name || !arg.flags.empty()) {
+      fail(arg, "'" + name +
+                    "' leaves the box it takes from empty, so "
+                    "pass a local box by name");
+      return false;
+    }
+    BindingPtr b = lookup(arg.text);
+    if (!b)
+      return true;
+    if (b->isParam && !sema::hasModifier(b->modifiers, "moved")) {
+      fail(arg, "'" + name + "' leaves '" + arg.text +
+                    "' empty, and this "
+                    "function's caller would still see it full; take it as "
+                    "'moved', or copy it into a local first");
+      return false;
+    }
+    if (b->loopDepth < loopDepth_) {
+      fail(arg,
+           "'" + name + "' empties '" + arg.text +
+               "' inside a loop, "
+               "so the next iteration would use it empty; refill it in the "
+               "loop, or bind it inside the loop");
+      return false;
+    }
+    moved_[b] = Move{arg.loc, "emptied by '" + name + "'", false, &arg};
+    lastEmptied_ = {b, &arg};
+    return true;
+  }
+
   // --- `@linear` (#56) --------------------------------------------------
 
   // The types marked `@linear`: a value of one must be consumed, passed as
@@ -10957,9 +11021,10 @@ class Gen {
     return TV{op.getResult(0), sig.result};
   }
 
-  // The body of a box's pack or of a call through it (ADR 0046): one
-  // `pia.box_pack` or `pia.box_call` of the parameters, which codegen
-  // lowers through the boxed type's descriptor.
+  // The body of a box's own op (ADR 0046): one `pia.box_pack`,
+  // `pia.box_call`, `pia.box_holds`, `pia.box_unpack` or `pia.box_empty` of
+  // the parameters,
+  // which codegen lowers through the boxed type's descriptor.
   R genBoxOp(const Node &body, const BoxOp &box, const sema::FuncSig &sig,
              Block *entry) {
     llvm::SmallVector<Type> results;
@@ -10975,6 +11040,16 @@ class Gen {
       op = create<BoxPackOp>(loc(body), results,
                              b_.getStringAttr(box.descriptor),
                              b_.getArrayAttr(thunks), args)
+               .getOperation();
+    } else if (box.kind == BoxOp::Holds) {
+      op = create<BoxHoldsOp>(loc(body), b_.getStringAttr(box.descriptor), args)
+               .getOperation();
+    } else if (box.kind == BoxOp::Unpack) {
+      op = create<BoxUnpackOp>(loc(body), results, args).getOperation();
+    } else if (box.kind == BoxOp::Empty) {
+      op = create<BoxEmptyOp>(loc(body), results,
+                              b_.getStringAttr(box.descriptor),
+                              b_.getI64IntegerAttr(box.entry), args)
                .getOperation();
     } else {
       op =
@@ -14082,6 +14157,10 @@ class Gen {
   // The locals moved so far on the path being generated (`moved`), and the
   // loops open there.
   std::map<BindingPtr, Move> moved_;
+  // The box the last `take` or `consume` emptied, and its argument.
+  std::pair<BindingPtr, const Node *> lastEmptied_;
+  // The bodies of `Err` arms where that box is still full.
+  std::map<const Node *, BindingPtr> unmoveAt_;
   // Elements of buffers that own their slices read as values: moved out
   // of a writable buffer, with the store that empties the one left behind,
   // or copied out of one that cannot be written (ADR 0048, section 6).

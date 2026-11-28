@@ -86,17 +86,38 @@ let narrow (xs : [box Shape]) : bool
   requires len xs = 2
 = fits xs.[0] 0
 
+(* Taking the object out names the type expected. `take b d` moves the
+   square into the empty `box square` d, and `consume<square> b` copies it
+   to the stack; both leave b empty, moved from, in the `Ok` arm only. A
+   rectangle is an `Err`, and b is still full there. *)
+let side (x : box Shape) (s : borrowed mutable [square]) : u32
+  requires len s = 1
+= let b : mutable box Shape = x in
+  let d : mutable box square = { slot = s; state = 0 } in
+  match take b d with
+  | Ok -> d.slot.[0].side
+  | Err _ -> area b
+
+let copied (x : box Shape) : u32
+= let b : mutable box Shape = x in
+  match consume<square> b with
+  | Ok v -> v.side
+  | Err _ -> area b
+
 (* The sum is bounded through the boxes, from Shape's contract alone; the
    boxes are made from a square and a rectangle, each of which the use
    check at widen proved to meet Shape; twice, proved once over Shape, is
    instantiated at box Shape and discharged by that proof; and fits
-   through a box with a width of 0 fails its precondition.
+   through a box with a width of 0 fails its precondition. `take` is
+   proved for each type widened, and its caller's goals as for any call.
 // CHECK: box_concept.pia:60:3: proved: the postcondition holds [smt]
 // CHECK: box_concept.pia:69:13: proved: the precondition of 'widen(box<square>)' holds [smt]
 // CHECK: box_concept.pia:70:13: proved: the precondition of 'widen(box<rect>)' holds [smt]
 // CHECK: box_concept.pia:71:7: proved: the precondition of 'total' holds [smt]
 // CHECK: box_concept.pia:81:3: proved: the postcondition holds [smt]
 // CHECK: box_concept.pia:87:3: failed: the precondition of 'fits(box_Shape, u32)' holds
+// CHECK: box_concept.pia:97:9: proved: the precondition of 'take(box_Shape, box<square>)' holds [smt]
+// CHECK: box_concept.pia:98:11: proved: the index is within bounds [smt]
 // CHECK: 'twice<box_Shape>' is an instance of the generic proof of 'twice' [generic]
-// CHECK: 57 proved, 1 failed, 0 skipped
+// CHECK: 68 proved, 1 failed, 0 skipped
 *)

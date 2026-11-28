@@ -3,7 +3,7 @@
    of a requirement with two values of the concept's type, which two boxes
    may hold of different types. widen refuses a value that borrows too,
    but no `box t` of such a type can be made yet: a buffer cannot hold a
-   slice.
+   slice. A box `take` emptied cannot be used where it is empty.
 // RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
 *)
 let box = let (@unsized t : type) (r : region) => type { slot : borrowed(r) mutable [t]; state : int }
@@ -40,3 +40,14 @@ let compare (x : box Shape) (y : box Shape) : bool =
 (* CHECK: box_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'same' cannot be called through a box over 'Shape': it takes 2 values of the concept's type, and two boxes may hold values of different types (ADR 0046, section 4)
 *)
   same x y
+
+(* take empties the box in its Ok arm, so the box is moved from there. *)
+let reuse (x : box Shape) (s : borrowed mutable [square]) : u32
+  requires len s = 1
+= let b : mutable box Shape = x in
+  let d : mutable box square = { slot = s; state = 0 } in
+  match take b d with
+(* CHECK: box_concept_errors.pia:[[@LINE+2]]:{{[0-9]+}}: error: 'b' was emptied by 'take' at {{[0-9]+}}:{{[0-9]+}}, so it can no longer be used here
+*)
+  | Ok -> area b
+  | Err _ -> 0

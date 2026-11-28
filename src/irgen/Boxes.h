@@ -55,12 +55,14 @@ void expandErasedBoxes(
     int words = 8);
 
 // What a generated function's body is, when it is a box's own op: a
-// `pia.box_pack` (pack) or a `pia.box_call` (call), else neither.
+// `pia.box_pack` (pack), a `pia.box_call` (call), a `pia.box_holds`
+// (holds), a `pia.box_unpack` (unpack) or a `pia.box_empty` (empty),
+// else none.
 struct BoxOp {
-  enum Kind { None, Pack, Call } kind = None;
-  std::string descriptor;          // Pack: the descriptor's symbol
+  enum Kind { None, Pack, Call, Holds, Unpack, Empty } kind = None;
+  std::string descriptor; // Pack, Holds, Empty: the descriptor's symbol
   std::vector<std::string> thunks; // Pack: one per callable requirement
-  int entry = 0;                   // Call: which requirement
+  int entry = 0;                   // Call: which requirement; Empty: how many
   int words = 0;                   // Call: the box's words
 };
 BoxOp boxOp(const syntax::Node &item);
