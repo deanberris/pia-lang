@@ -2709,6 +2709,9 @@ class Gen {
   }
 
   R genExprOf(const Node &n, Type expected) {
+    if (spread_ && !spread_->footprint && spread_->compounds.count(&n) &&
+        inCompound_ != &n)
+      return genCollectiveCompound(n, expected);
     if (!frames_.empty() && frames_.back().tails.count(&n))
       if (const Node *t = hoistable(n)) return genTry(n, *t, expected);
     switch (n.kind) {
@@ -4655,6 +4658,8 @@ class Gen {
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
       if (f.text == "unsafe") return genUnsafe(n, expected);
+      if (isCollectiveName(f.text))
+        return genCollective(n, f.text);
       if (f.text == "with_arena")
         return fail(n, "'with_arena' takes the arena's size in bytes, an "
                        "integer literal, and a function of the arena, as "
@@ -11594,6 +11599,13 @@ class Gen {
     std::set<std::string> written;     // the buffers the body writes
     std::map<std::string, BindingPtr> owners;
     bool footprint = false; // a function's @owns, not a spread
+    // Collectives (ADR 0086): the range, the buffers a halo_exchange made
+    // readable everywhere until the next collective, and the if, for and
+    // while statements that hold a collective, which are barriers.
+    Value lo, hi;
+    std::set<std::string> halo;
+    std::set<const Node *> compounds;
+    bool collectives = false;
   };
   std::optional<SpreadScope> spread_;
 
@@ -11673,6 +11685,17 @@ class Gen {
     if (!spread_->outside.count(buf.get()) ||
         !spread_->written.count(buf->name))
       return true;
+    // After `halo_exchange buf`, every cell is readable and none writable
+    // until the next collective (ADR 0086, section 3).
+    if (spread_->halo.count(buf->name)) {
+      if (!write)
+        return true;
+      fail(at, "'" + buf->name +
+                   "' was exchanged by halo_exchange, so every iteration "
+                   "may read any of its cells and none may write it until "
+                   "the next collective (ADR 0086)");
+      return false;
+    }
     Location l = loc(at);
     Value cell;
     std::string by;
@@ -11789,6 +11812,12 @@ class Gen {
       BindingPtr buf = lookup(arg.text);
       if (!buf || !spread_->outside.count(buf.get()))
         continue;
+      if (spread_->halo.count(arg.text))
+        return fail(arg, "'" + arg.text +
+                             "' was exchanged by halo_exchange, so no "
+                             "iteration may write it until the next "
+                             "collective (ADR 0086)"),
+               false;
       auto fp =
           llvm::find_if(fps, [&](const Footprint &f) { return f.buf == i; });
       auto owner = spread_->owners.find(arg.text);
@@ -11871,6 +11900,10 @@ class Gen {
                       "' is written in this spread, so it "
                       "can only be indexed here: passing it on could reach "
                       "a cell another iteration writes (ADR 0060)");
+    // Every iteration must reach the same collectives in the same order
+    // (ADR 0086, section 2).
+    if (!checkProtocol(body, sc))
+      return std::nullopt;
     bool onGpu = false;
     for (const syntax::NodePtr &a : attrs.kids) {
       if (a->text == "place") {
@@ -11899,15 +11932,24 @@ class Gen {
     }
     // On the GPU an owner array is only a proof fact: the kernel writes
     // where the body says (ADR 0068, section 9).
+    if (onGpu && sc.collectives)
+      return fail(n, "a spread with collectives runs on the CPU only for "
+                     "now (ADR 0086)");
     auto bounds = genRange(iterable);
     if (!bounds)
       return std::nullopt;
     Type t = bounds->first.type;
+    sc.lo = bounds->first.value;
+    sc.hi = bounds->second.value;
     Value lb = toIndex(l, bounds->first.value);
     Value ub = toIndex(l, bounds->second.value);
     Value step = create<mlir::arith::ConstantIndexOp>(l, 1);
     auto forOp = create<mlir::scf::ForOp>(l, lb, ub, step, mlir::ValueRange{});
     forOp->setAttr("pia.spread", b_.getUnitAttr());
+    // Codegen splits the body into phases at its collectives (ADR 0086,
+    // section 4).
+    if (sc.collectives)
+      forOp->setAttr("pia.collectives", b_.getUnitAttr());
     if (onGpu)
       forOp->setAttr("pia.place", b_.getStringAttr("gpu"));
     Block *block = forOp.getBody();
@@ -12019,6 +12061,364 @@ class Gen {
       return r;
     }
     return unit();
+  }
+
+  // --- collectives (ADR 0086) ---------------------------------------------
+
+  // The if, for or while being generated as a barrier, so that the hook in
+  // genExprOf lets it through the second time.
+  const Node *inCompound_ = nullptr;
+
+  bool isCollectiveName(const std::string &name) {
+    return (name == "all_reduce" || name == "halo_exchange") && !lookup(name) &&
+           overloadSet(name).empty();
+  }
+
+  bool isCollective(const Node &n) {
+    return n.kind == NodeKind::Apply && !n.kids.empty() &&
+           n.kids[0]->kind == NodeKind::Name && n.kids[0]->flags.empty() &&
+           isCollectiveName(n.kids[0]->text);
+  }
+
+  // At a collective, and around an if, for or while that holds one, the
+  // other iterations may have written their cells: forget them, and close
+  // the halo window (ADR 0086, section 3).
+  void spreadBarrier(Location l) {
+    spread_->halo.clear();
+    for (const std::string &name : spread_->written) {
+      BindingPtr wb = lookup(name);
+      if (!wb || !spread_->outside.count(wb.get()))
+        continue;
+      auto owner = spread_->owners.find(name);
+      Value ov =
+          owner != spread_->owners.end() ? owner->second->value : Value();
+      create<contract::HavocOthersOp>(l, wb->value, spread_->iv, ov);
+    }
+  }
+
+  R genCollectiveCompound(const Node &n, Type expected) {
+    Location l = loc(n);
+    spreadBarrier(l);
+    const Node *saved = inCompound_;
+    inCompound_ = &n;
+    R r = genExprOf(n, expected);
+    inCompound_ = saved;
+    if (r && spread_)
+      spreadBarrier(l);
+    return r;
+  }
+
+  // `all_reduce op e` and `halo_exchange b1 ... bk` in a spread body.
+  R genCollective(const Node &n, const std::string &name) {
+    Location l = loc(n);
+    if (!spread_ || spread_->footprint || contract_ || ghost_)
+      return fail(n, "'" + name +
+                         "' is a collective, which every iteration of a "
+                         "spread joins: it can only be called in a spread's "
+                         "body (ADR 0086)");
+    if (name == "halo_exchange") {
+      if (n.kids.size() < 2)
+        return fail(n, "halo_exchange names the buffers to exchange, as in "
+                       "'halo_exchange bed'");
+      std::vector<std::string> bufs;
+      for (size_t k = 1; k < n.kids.size(); ++k) {
+        const Node &a = *n.kids[k];
+        BindingPtr b = a.kind == NodeKind::Name ? lookup(a.text) : nullptr;
+        if (!b || !elementType(b->type) || !spread_->outside.count(b.get()) ||
+            !spread_->written.count(a.text))
+          return fail(a, "halo_exchange names a buffer the spread writes; "
+                         "one that no iteration writes can be read anywhere "
+                         "already (ADR 0086)");
+        bufs.push_back(a.text);
+      }
+      spreadBarrier(l);
+      auto x = create<ForeignOp>(l, mlir::TypeRange{},
+                                 b_.getStringAttr("pia$par$halo_exchange"),
+                                 mlir::ValueRange{});
+      x->setAttr("pia.collective", b_.getUnitAttr());
+      spread_->halo.insert(bufs.begin(), bufs.end());
+      return unit();
+    }
+    static const std::set<std::string> ops = {"add", "min", "max", "or", "and"};
+    if (n.kids.size() != 3 || n.kids[1]->kind != NodeKind::Name ||
+        !ops.count(n.kids[1]->text))
+      return fail(n, "all_reduce takes an operator and a value, as in "
+                     "'all_reduce add x': add, min or max over integers, or "
+                     "or and and over bools");
+    const std::string op = n.kids[1]->text;
+    const Node &arg = *n.kids[2];
+    bool boolean = op == "or" || op == "and";
+    R v = genExpr(arg, boolean ? boolType() : Type());
+    if (!v)
+      return v;
+    if (boolean && v->type != boolType())
+      return fail(arg, "all_reduce " + op + " combines bools, found " +
+                           typeName(v->type));
+    auto it = mlir::dyn_cast<IntType>(v->type);
+    if (!boolean && !it)
+      return fail(arg, "all_reduce " + op +
+                           " combines integers for now, found " +
+                           typeName(v->type) + " (floats come with M11)");
+    std::string sym = "pia$par$all_reduce$" + op;
+    Type rt = v->type;
+    bool sgn = it && it.isSigned();
+    if (!boolean) {
+      sym += sgn ? "_s" : "_u";
+      if (op == "add")
+        rt = types_.builtin(sgn ? "i64" : "u64");
+    }
+    // The sum of every iteration's contribution fits the result when the
+    // range has at most max / m iterations, for m the largest magnitude
+    // of the contribution's type.
+    if (op == "add") {
+      constexpr unsigned w = 192;
+      llvm::APInt lo = it.getLo().sextOrTrunc(w),
+                  hi = it.getHi().sextOrTrunc(w);
+      llvm::APInt m = lo.abs().ugt(hi.abs()) ? lo.abs() : hi.abs();
+      if (!m.isZero()) {
+        llvm::APInt top = sgn ? llvm::APInt::getSignedMaxValue(64).zext(w)
+                              : llvm::APInt::getMaxValue(64).zext(w);
+        llvm::APInt most = top.udiv(m);
+        Type intT = UnboundedIntType::get(&ctx_);
+        Value hiI = create<ExactConvertOp>(l, intT, spread_->hi);
+        Value loI = create<ExactConvertOp>(l, intT, spread_->lo);
+        Value count = create<ExactSubOp>(l, intT, hiI, loI);
+        TV k = exactConst(l, intT, llvm::toString(most, 10, false));
+        Value ok = create<ExactCmpOp>(
+            l, b_.getI1Type(), CmpPredicateAttr::get(&ctx_, CmpPredicate::le),
+            count, k.value);
+        auto as = create<contract::AssertOp>(l, ok);
+        as->setAttr("pia.claim",
+                    b_.getStringAttr(
+                        "the sum of every iteration's " + typeName(v->type) +
+                        " fits in " + typeName(rt) + ": at most " +
+                        llvm::toString(most, 10, false) + " iterations"));
+      }
+    }
+    spreadBarrier(l);
+    auto call = create<ForeignOp>(l, mlir::TypeRange{rt}, b_.getStringAttr(sym),
+                                  mlir::ValueRange{v->value});
+    call->setAttr("pia.collective", b_.getUnitAttr());
+    Value r = call.getResult(0);
+    // What one contribution says about the result.
+    Value fact;
+    if (op == "add" && !sgn) {
+      R wide = coerce(*v, rt, arg);
+      if (!wide)
+        return wide;
+      fact = cmp(l, CmpPredicate::ge, r, wide->value);
+    } else if (op == "min") {
+      fact = cmp(l, CmpPredicate::le, r, v->value);
+    } else if (op == "max") {
+      fact = cmp(l, CmpPredicate::ge, r, v->value);
+    } else if (op == "or") {
+      fact = implies(l, v->value, r);
+    } else if (op == "and") {
+      fact = implies(l, r, v->value);
+    }
+    if (fact)
+      create<contract::AssumeOp>(l, fact);
+    return TV{r, rt};
+  }
+
+  // The protocol check (ADR 0086, section 2): every collective is reached
+  // under uniform control flow, so every iteration issues the same
+  // sequence, and no per-iteration value crosses a collective, so codegen
+  // can run the code between collectives as separate parallel loops.
+  struct Protocol {
+    struct Local {
+      bool uniform;
+      int phase;
+    };
+    std::map<std::string, Local> locals;
+    std::map<const Node *, bool> holds;
+    std::set<std::string> assigned;
+    int phase = 0;
+  };
+
+  bool holdsCollective(const Node &n, Protocol &p) {
+    if (auto it = p.holds.find(&n); it != p.holds.end())
+      return it->second;
+    bool h = isCollective(n);
+    for (const syntax::NodePtr &k : n.kids)
+      if (k && holdsCollective(*k, p))
+        h = true;
+    p.holds[&n] = h;
+    return h;
+  }
+
+  // Whether `n` is the same in every iteration: it reads only names bound
+  // before the spread, uniform locals and all_reduce results, and no
+  // buffer the spread writes.
+  bool uniformExpr(const Node &n, const SpreadScope &sc, const Protocol &p) {
+    if (isCollective(n))
+      return true;
+    if (n.kind == NodeKind::Name) {
+      if (n.text == sc.var)
+        return false;
+      if (auto it = p.locals.find(n.text); it != p.locals.end())
+        return it->second.uniform;
+      return !sc.written.count(n.text);
+    }
+    for (const syntax::NodePtr &k : n.kids)
+      if (k && !uniformExpr(*k, sc, p))
+        return false;
+    return true;
+  }
+
+  static void collectAssigned(const Node &n, std::set<std::string> &out) {
+    if (n.kind == NodeKind::Assign && n.kids[0]->kind == NodeKind::Name)
+      out.insert(n.kids[0]->text);
+    for (const syntax::NodePtr &k : n.kids)
+      if (k)
+        collectAssigned(*k, out);
+  }
+
+  bool checkProtocol(const Node &body, SpreadScope &sc) {
+    Protocol p;
+    if (!holdsCollective(body, p))
+      return true;
+    sc.collectives = true;
+    if (const Node *t = findKind(body, NodeKind::Try))
+      return fail(*t, "'?' could leave the spread in one iteration while "
+                      "the others wait at a collective: handle the error "
+                      "inside the iteration (ADR 0086)"),
+             false;
+    collectAssigned(body, p.assigned);
+    return walkProtocol(body, sc, p, "");
+  }
+
+  // `why` is empty under uniform control flow, and otherwise names the
+  // condition that is not.
+  bool walkProtocol(const Node &n, SpreadScope &sc, Protocol &p,
+                    const std::string &why) {
+    auto all = [&](size_t from, const std::string &w) {
+      for (size_t k = from; k < n.kids.size(); ++k)
+        if (n.kids[k] && !walkProtocol(*n.kids[k], sc, p, w))
+          return false;
+      return true;
+    };
+    if (isCollective(n)) {
+      const std::string &name = n.kids[0]->text;
+      if (!why.empty())
+        return fail(n, "every iteration must reach this " + name +
+                           " in the same order, but it is reached only "
+                           "when " +
+                           why +
+                           " holds, and that depends on the iteration "
+                           "(ADR 0086)"),
+               false;
+      if (!all(1, why))
+        return false;
+      ++p.phase;
+      return true;
+    }
+    switch (n.kind) {
+    case NodeKind::Name: {
+      auto it = p.locals.find(n.text);
+      if (it != p.locals.end() && !it->second.uniform &&
+          it->second.phase != p.phase)
+        return fail(n, "'" + n.text +
+                           "' is computed by each iteration on one side of "
+                           "a collective and used on the other: the code "
+                           "between collectives runs as its own parallel "
+                           "loop, so keep the value in a cell the iteration "
+                           "owns, or compute it again (ADR 0086)"),
+               false;
+      return true;
+    }
+    case NodeKind::Assert:
+    case NodeKind::Assume:
+    case NodeKind::Quantifier:
+      return true; // spec only: erased before the body is split
+    case NodeKind::Lambda:
+    case NodeKind::Match:
+    case NodeKind::Handle:
+      if (holdsCollective(n, p))
+        return fail(n,
+                    "a collective inside a " +
+                        std::string(n.kind == NodeKind::Lambda  ? "lambda"
+                                    : n.kind == NodeKind::Match ? "match"
+                                                                : "handler") +
+                        " is not supported yet: put it in the spread "
+                        "body under if, for or while (ADR 0086)"),
+               false;
+      return all(0, why);
+    case NodeKind::If: {
+      const Node &c = *n.kids[0];
+      if (!walkProtocol(c, sc, p, why))
+        return false;
+      bool has = holdsCollective(n, p);
+      if (has && holdsCollective(c, p))
+        return fail(c, "an if condition cannot hold a collective yet: bind "
+                       "its result first (ADR 0086)"),
+               false;
+      std::string inner = why;
+      if (has && inner.empty() && !uniformExpr(c, sc, p))
+        inner = "the condition at " + where(c);
+      if (has) {
+        sc.compounds.insert(&n);
+        ++p.phase;
+      }
+      if (!all(1, inner))
+        return false;
+      if (has)
+        ++p.phase;
+      return true;
+    }
+    case NodeKind::For: {
+      const Node &pattern = *n.kids[0];
+      const Node &range = *n.kids[1];
+      const Node &stepNode = *n.kids[2];
+      const Node &body = *n.kids[4];
+      if (!walkProtocol(range, sc, p, why) ||
+          !walkProtocol(stepNode, sc, p, why))
+        return false;
+      bool has = holdsCollective(body, p);
+      if (has && (holdsCollective(range, p) || holdsCollective(stepNode, p)))
+        return fail(range, "a for range cannot hold a collective yet: bind "
+                           "its result first (ADR 0086)"),
+               false;
+      bool uni = uniformExpr(range, sc, p) && uniformExpr(stepNode, sc, p);
+      std::string inner = why;
+      if (has && inner.empty() && !uni)
+        inner = "the range at " + where(range);
+      if (has) {
+        sc.compounds.insert(&n);
+        ++p.phase;
+      }
+      if (pattern.kind == NodeKind::PVar)
+        p.locals[pattern.text] = {uni, p.phase};
+      if (!walkProtocol(body, sc, p, inner))
+        return false;
+      if (has)
+        ++p.phase;
+      return true;
+    }
+    case NodeKind::While:
+      // Its condition would have to be uniform and change, and in v0 only
+      // an all_reduce result is uniform and nothing can assign one.
+      if (holdsCollective(n, p))
+        return fail(n, "a while loop cannot hold a collective yet: use a "
+                       "for loop over a uniform range (ADR 0086)"),
+               false;
+      return all(0, why);
+    case NodeKind::LetIn: {
+      const Node &value = *n.kids[3];
+      if (holdsCollective(value, p) && !isCollective(value))
+        return fail(value, "only an all_reduce itself can be bound here: "
+                           "code that holds a collective cannot compute a "
+                           "value yet (ADR 0086)"),
+               false;
+      if (!walkProtocol(value, sc, p, why))
+        return false;
+      bool uni = uniformExpr(value, sc, p) && !p.assigned.count(n.text);
+      p.locals[n.text] = {uni, p.phase};
+      return walkProtocol(*n.kids[4], sc, p, why);
+    }
+    default:
+      return all(0, why);
+    }
   }
 
   // The function `name` of gpuPrelude_: its LetItem.

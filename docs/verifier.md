@@ -497,6 +497,12 @@ After a `spread` over `lo .. hi`, the cells that no iteration of the range owns 
 
 A spec function over a buffer may say which cells it reads, `reads xs.[lo .. hi]` ([ADR 0060](adr/0060-spread-v0-ownership-and-runtime.md), section 3). piac then writes its frame lemma `f'frame`, for two buffers that agree on the footprint `f` gives the same result, and proves it by induction on `f`'s own `decreases`, asserting that every element `f` reads is in the footprint. Where a buffer changes outside a framed call's footprint, by a store or by a `spread`'s forgetting of the cells other iterations own, the verifier states that the call on the new contents equals the call on the old, so a sum over a range survives writes elsewhere with no lemma by hand (tests/verify/frames.pia).
 
+### Collectives
+
+`all_reduce op e` and `halo_exchange b` are collectives: every iteration of the spread joins them ([ADR 0086](adr/0086-spread-collectives.md)). Before any goal, piac checks that every iteration reaches them in the same order: every `if` condition and `for` range around a collective must be uniform, the same in every iteration, so the walk of one iteration covers the walk of all. A `while` around a collective, `?` in such a body, and a per-iteration value that crosses a collective are rejected (tests/irgen/collective_errors.pia).
+
+In the one iteration the verifier walks, each collective is a barrier: every cell another iteration owns, of every buffer the spread writes, is forgotten there, and on entering and leaving an `if` or `for` that holds one. `all_reduce`'s result is an unknown value with what this iteration's contribution says about it (an unsigned sum is at least `e`, a `min` at most `e`, a `max` at least `e`, an `or` holds if `e` does, `e` holds if an `and` does), and `add`'s goal is that the range has few enough iterations for the sum to fit its 64-bit result. After `halo_exchange b`, a read of `b` needs no ownership goal, and a write of `b` is an error, until the next collective (tests/verify/collectives.pia).
+
 ## Solver strategies and tactics
 
 Two ways to help a proof the solver cannot find, or finds slowly ([ADR 0036](adr/0036-library-theories.md), step 6). Neither can make a wrong proof.

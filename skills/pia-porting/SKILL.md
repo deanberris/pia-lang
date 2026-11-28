@@ -53,11 +53,12 @@ Port one function at a time, callee first, and read each failed goal as a questi
 | complexity | `costs iterations <= len xs`, proved (ADR 0062) | a comment | a comment | a comment | a comment |
 | theorems Z3 cannot prove | `let lemma l ... = by lean T`, proved in Lean 4 (ADR 0061, `pia-lean`) | none | none (Verus, Kani outside the language) | none (Coq outside the language) | none |
 | parallel loops | `spread i in 0 .. n do ... done`, proved race-free; `@place(gpu)` on a Mac's GPU | OpenMP | rayon | domains | threads |
+| reductions and barriers inside a parallel loop | `all_reduce add x` and `halo_exchange buf` in a `spread` body, under conditions every iteration shares | `MPI_Allreduce`, `#pragma omp barrier`, CUDA `__syncthreads` | rayon `reduce` (outside the loop) | — | `sync.WaitGroup` per step |
 | a sequence of GPU kernels | `for k in 0 .. n @place(gpu) do ... done`, its spreads one command buffer | CUDA streams, Metal command buffers | wgpu command encoders | — | — |
 | recursive data | `let rec tree = type \| Leaf \| Node of { l : box tree; ... }` | pointers | `Box<Tree>` | `type tree = ...` | pointers |
 | comments | `(* *)` nests, `\` to end of line, `(** *)` doc; `//` is **not** a comment | `//`, `/* */` | `//` | `(* *)` | `//` |
 
-**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, cost bounds that count calls to a function such as `less` (ADR 0062 step 2), functions stored in data and generic lambdas that capture, collectives, and `@place(auto)`. Recursive types now compile, and a `spread` runs on the GPU under `@place(gpu)`; [docs/features.md](../../docs/features.md) lists everything built.
+**Designed, not built yet** (piac says "not supported yet"; check [docs/status.md](../../docs/status.md) before relying on one): the real-valued proofs of float kernels (ADR 0038), `dyn`, `vec<T, k>`, refinement types, cost bounds that count calls to a function such as `less` (ADR 0062 step 2), functions stored in data and generic lambdas that capture, tiled grids, and `@place(auto)`. Recursive types now compile, and a `spread` runs on the GPU under `@place(gpu)`; [docs/features.md](../../docs/features.md) lists everything built.
 
 ## From C and C++
 

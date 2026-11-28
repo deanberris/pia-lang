@@ -3017,6 +3017,11 @@ class Encoder {
       if (auto call = mlir::dyn_cast<mlir::func::CallOp>(op))
         for (unsigned i = 0; i < call.getNumOperands(); ++i)
           if (callWrites(call, i)) out.insert(rootBuffer(call.getOperand(i)));
+      // A collective in a loop of a spread's body lets the other
+      // iterations' writes in (ADR 0086), so the loop changes the buffer.
+      if (auto h = mlir::dyn_cast<contract::HavocOthersOp>(op);
+          h && !h->hasAttr("pia.from_start"))
+        out.insert(rootBuffer(h.getBuffer()));
     });
     llvm::SmallVector<Value> tracked;
     for (Value b : out)

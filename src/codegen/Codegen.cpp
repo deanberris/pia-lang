@@ -3,6 +3,7 @@
 #include "codegen/Codegen.h"
 #include "codegen/ArrayResults.h"
 #include "codegen/Lowerings.h"
+#include "codegen/Phases.h"
 #include "codegen/SliceBuffers.h"
 #include "gpu/Place.h"
 
@@ -2351,13 +2352,20 @@ static void defineBoxDescriptors(mlir::ModuleOp module) {
 // `pia.spread`, so that the verifier sees an ordinary loop. Its iterations
 // own disjoint cells, which the verifier proved, so here it becomes an
 // `scf.parallel`, which MLIR's async lowering runs on all cores.
-static void lowerSpreads(mlir::ModuleOp module) {
+// A spread with collectives (ADR 0086) is split into phases first, each
+// an `scf.parallel` of its own.
+static LogicalResult lowerSpreads(mlir::ModuleOp module) {
   llvm::SmallVector<mlir::scf::ForOp> spreads;
   module.walk([&](mlir::scf::ForOp f) {
     if (f->hasAttr("pia.spread"))
       spreads.push_back(f);
   });
   for (mlir::scf::ForOp f : spreads) {
+    if (f->hasAttr("pia.collectives")) {
+      if (mlir::failed(splitIntoPhases(f)))
+        return mlir::failure();
+      continue;
+    }
     mlir::OpBuilder b(f);
     auto par = make<mlir::scf::ParallelOp>(
         b, f.getLoc(), mlir::ValueRange{f.getLowerBound()},
@@ -2370,6 +2378,8 @@ static void lowerSpreads(mlir::ModuleOp module) {
                                 std::prev(src->end()));
     f.erase();
   }
+  eraseCollectiveDeclarations(module);
+  return mlir::success();
 }
 
 LogicalResult lowerToCore(mlir::ModuleOp module) {
@@ -2561,7 +2571,8 @@ LogicalResult lowerToCore(mlir::ModuleOp module) {
   // rest run on all cores (ADR 0068, step 3).
   if (mlir::failed(pia::gpu::lowerPlacedSpreads(module)))
     return mlir::failure();
-  lowerSpreads(module);
+  if (mlir::failed(lowerSpreads(module)))
+    return mlir::failure();
   // Tidy the casts and constants the conversion leaves behind.
   mlir::PassManager pm(ctx);
   pm.addPass(mlir::createCanonicalizerPass());

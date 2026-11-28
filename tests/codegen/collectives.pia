@@ -1,0 +1,49 @@
+(* Collectives in a spread (ADR 0086), compiled and run by
+   collectives_test.c: a stencil over time steps with a halo_exchange
+   between them, which runs as a parallel loop per phase, and all_reduce
+   sums, minima and maxima that every iteration sees. *)
+module Collectives : Phases
+
+interface Phases @abi(c) = sig
+  let relax : (a : borrowed inout mutable [u32]) -> (b : borrowed inout mutable [u32]) -> (steps : u32) -> unit
+    requires len b = len a && len a <= 1000000
+  let share : (xs : [u32]) -> (ys : out mutable [u64]) -> unit
+    requires len ys = len xs && len xs <= 4294967296
+  let spans : (xs : [i32]) -> (lo : out mutable [i32]) -> (hi : out mutable [i32]) -> unit
+    requires len lo = len xs && len hi = len xs
+  let any_zero : (xs : [u32]) -> (ys : out mutable [u8]) -> unit
+    requires len ys = len xs
+end
+
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      halo_exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      halo_exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+= spread i in 0 .. len xs do
+    let total = all_reduce add xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+
+let spans (xs : [i32]) (lo : out mutable [i32]) (hi : out mutable [i32]) : unit
+= spread i in 0 .. len xs do
+    let small = all_reduce min xs.[i] in
+    lo.[i] <- small;
+    let big = all_reduce max xs.[i] in
+    hi.[i] <- big
+  done
+
+let any_zero (xs : [u32]) (ys : out mutable [u8]) : unit
+= spread i in 0 .. len xs do
+    let z = all_reduce or (xs.[i] = 0) in
+    ys.[i] <- if z then 1 else 0
+  done

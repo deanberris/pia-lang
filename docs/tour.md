@@ -836,6 +836,38 @@ blur.pia:3:38: failed: the iteration owns the cell it reads in 'v' (c = i)
 
 A spread whose iteration `i` writes only cell `i` can run on the GPU instead: `@place(gpu)` after its range moves the body into a GPU kernel, and the proof stays the same. A placed spread can fail at run time, if there is no GPU or it runs out of memory, so it is a `result` the caller handles ([D8 directions and the picture on the GPU](placed.pia.md), [ADR 0068](adr/0068-gpu-compute-through-spirv-and-metal.md)).
 
+### Collectives
+
+A collective is a call in a spread body that every iteration joins ([ADR 0086](adr/0086-spread-collectives.md)). `all_reduce op e` combines `e` from every iteration, with `add`, `min` or `max` over integers or `or` and `and` over bools, and every iteration gets the result; `add` sums into a 64-bit result, and its goal is that the sum fits. `halo_exchange b` lets every iteration read any cell of `b`, which the spread writes, until the next collective, and no iteration may write `b` until then. So a stencil can run many time steps in one spread, reading its neighbours' cells after each exchange:
+
+<!-- example: collectives.pia -->
+```ocaml
+let relax (a : borrowed inout mutable [u32]) (b : borrowed inout mutable [u32]) (steps : u32) : unit
+  requires len b = len a && len a <= 1000000
+= let n = len a in
+  spread i in 0 .. n do
+    for t in 0 .. steps do
+      halo_exchange a;
+      let l = if i > 0 then a.[i - 1] else a.[i] in
+      let r = if i + 1 < n then a.[i + 1] else a.[i] in
+      b.[i] <- l / 2 + r / 2;
+      halo_exchange b;
+      a.[i] <- b.[i]
+    done
+  done
+
+let share (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs && len xs <= 4294967296
+= spread i in 0 .. len xs do
+    let total = all_reduce add xs.[i] in
+    ys.[i] <- total - xs.[i]
+  done
+```
+
+Each iteration knows only what its own contribution says about the result: `total` is at least `xs.[i]`, which is what proves the subtraction.
+
+Every iteration must reach the same collectives in the same order, or the others would wait forever, and piac checks this as it reads the body: an `if` or `for` around a collective must have a condition or range that is the same in every iteration, computed from names bound before the spread, `all_reduce` results and buffers no iteration writes. `if i = 0 then halo_exchange a else ()` is a compile error at the collective, naming the condition. A value an iteration computes before a collective and uses after it is an error too, with a hint to keep it in a cell the iteration owns: codegen runs the code between collectives as its own parallel loop, so the join at its end is the barrier, and no new runtime is needed.
+
 ## Metaprograms
 
 A metaprogram is a function marked `let meta` that runs at compile time. It takes and returns values, and code is one kind of value: `` `( ... ) `` quotes code, and `$x` splices a value into it. Whatever a metaprogram produces is type checked and proved like code you wrote.
@@ -916,9 +948,9 @@ let describe (v : dyn) : str =
   | _         -> "other"
 ```
 
-**Collectives and tiles.** `spread` and `@place(gpu)` are built; collectives such as `halo_exchange` and `all_reduce`, which the compiler will prove every worker reaches in the same order, tiled grids, and `@place(auto)`, which lets the compiler choose the device, are not:
+**Tiles.** `spread`, `@place(gpu)` and the collectives `halo_exchange` and `all_reduce` are built ([Collectives](#collectives)); tiled grids with halo rows, and `@place(auto)`, which lets the compiler choose the device, are not:
 
-<!-- untested: collectives, tiled grids and @place(auto) are not implemented yet -->
+<!-- untested: tiled grids and @place(auto) are not implemented yet -->
 ```ocaml
 let sediment_step (grid : borrowed in mutable tiled<cell, 256, 256, halo = 1>) : unit
   ensures total_mass grid = old (total_mass grid) - outflow grid

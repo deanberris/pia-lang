@@ -1,0 +1,60 @@
+(* What the protocol check of collectives (ADR 0086) rejects: a collective
+   under a condition on the loop variable, outside a spread, a value that
+   crosses a collective, a write of an exchanged buffer, a for range that
+   depends on the iteration, a while loop, an operator all_reduce does
+   not know, and an exchange of a buffer no iteration writes.
+// RUN: not piac --emit=mlir --no-lint %s 2>&1 | FileCheck %s
+*)
+
+let first_only (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    if i = 0 then halo_exchange a else ();
+    a.[i] <- 0
+  done
+
+let outside (x : u32) : u64 = all_reduce add x
+
+let crossing (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    let x = a.[i] in
+    halo_exchange a;
+    a.[i] <- x
+  done
+
+let write_exchanged (a : borrowed inout mutable [u32]) : unit
+= spread i in 0 .. len a do
+    halo_exchange a;
+    a.[i] <- 0
+  done
+
+let ragged (a : borrowed inout mutable [u32]) (k : [u32]) : unit
+  requires len k = len a
+= spread i in 0 .. len a do
+    for t in 0 .. k.[i] do
+      halo_exchange a
+    done
+  done
+
+let looping (a : borrowed inout mutable [u32]) (go : bool) : unit
+= spread i in 0 .. len a do
+    while go do halo_exchange a done
+  done
+
+let product (xs : [u32]) (ys : out mutable [u64]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do ys.[i] <- all_reduce mul xs.[i] done
+
+let unread (xs : [u32]) (ys : out mutable [u32]) : unit
+  requires len ys = len xs
+= spread i in 0 .. len xs do halo_exchange xs; ys.[i] <- 0 done
+
+(*
+// CHECK: collective_errors.pia:11:19: error: every iteration must reach this halo_exchange in the same order, but it is reached only when the condition at 11:8 holds, and that depends on the iteration (ADR 0086)
+// CHECK: collective_errors.pia:15:31: error: 'all_reduce' is a collective, which every iteration of a spread joins: it can only be called in a spread's body (ADR 0086)
+// CHECK: collective_errors.pia:21:14: error: 'x' is computed by each iteration on one side of a collective and used on the other: the code between collectives runs as its own parallel loop, so keep the value in a cell the iteration owns, or compute it again (ADR 0086)
+// CHECK: collective_errors.pia:27:5: error: 'a' was exchanged by halo_exchange, so every iteration may read any of its cells and none may write it until the next collective (ADR 0086)
+// CHECK: collective_errors.pia:34:7: error: every iteration must reach this halo_exchange in the same order, but it is reached only when the range at 33:14 holds, and that depends on the iteration (ADR 0086)
+// CHECK: collective_errors.pia:40:5: error: a while loop cannot hold a collective yet: use a for loop over a uniform range (ADR 0086)
+// CHECK: collective_errors.pia:45:40: error: all_reduce takes an operator and a value, as in 'all_reduce add x': add, min or max over integers, or or and and over bools
+// CHECK: collective_errors.pia:49:44: error: halo_exchange names a buffer the spread writes; one that no iteration writes can be read anywhere already (ADR 0086)
+*)
