@@ -14,7 +14,7 @@ Every theory has the same four parts.
 3. **A proof that uses it.** A lemma or a function contract that the axioms prove.
 4. **A mistake it catches.** A version that is wrong and fails with a counterexample.
 
-A module cannot import another's theory yet, since interfaces do not carry theories, so each entry is one program, with the theory, its model and its clients together. A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
+Each entry is one program, with the theory, its model and its clients together, so that the documentation test can prove it on its own. A library exports its theory through an interface instead ([Theories across modules](#theories-across-modules)). A client still sees only the theory's axioms, because the model is sealed. The report under each program shows the lines that matter: the client's goals, and the model meeting each axiom. When a theory has a model, a counterexample is found in the model, where everything is concrete, and the report says so: a goal that is false in a model that meets the axioms is not a consequence of them.
 
 An entry also says whether anything in it is **trusted**. A trusted theory has no model that the program can find, so it is declared in a `@trusted` module and imported with `trusting`. Trust covers the whole theory, and the compiler lists every axiom it brings in `piac --trust-report`.
 
@@ -221,7 +221,7 @@ A request fails if any of three stages fails. Each stage's failure rate is at mo
 
 **Independence is a trusted axiom.** A tighter bound, such as "two replicas both lose a write with probability at most p²", needs independence, and no deterministic random number generator is truly independent. That is the idealisation every analysis of a randomised algorithm makes, so Pia makes it visible: the axiom lives in a theory with no model, which only a `@trusted` module may declare, and its users import it with `trusting`. Trust covers the whole theory, so `Ideal` holds only the axiom that needs it.
 
-A module cannot import another's theory yet, so this program repeats `Prob` and its model, and declares `Ideal` in the same `@trusted` file. In a library, `Ideal` would be its own module, `Pia.Rand.Ideal`, and the client would write `import Pia.Rand.Ideal trusting`.
+To be proved on its own, this program repeats `Prob` and its model, and declares `Ideal` in the same `@trusted` file. In a library, `Ideal` would be its own module, `Pia.Rand.Ideal`, exported by an interface, and the client would write `import Pia.Rand.Ideal.Ideals trusting` ([Theories across modules](#theories-across-modules)).
 
 <!-- example: ideal.pia -->
 ```ocaml
@@ -793,6 +793,45 @@ let vector_width (x : u8) : usize
 ```
 
 [tests/codegen/target_values.pia](https://github.com/deanberris/pia-lang/blob/main/tests/codegen/target_values.pia) checks the values each target compiles to.
+
+## Theories across modules
+
+A library exports a theory by listing it in an interface, `let theory T` ([ADR 0088](adr/0088-theories-cross-module-boundaries.md)). The interface artifact carries the theory's declaration, its sorts, abstract functions and axioms, but not its model, which stays sealed in the library. The declaration is part of the interface's hash, so a changed axiom makes importers prove again. `piac --emit=interface` records the theory's status beside it: `@modelled` when the module has a model that proves every axiom, or `@trusted` when it has none.
+
+<!-- untested: needs the interface artifact of Lib.Gauge, built with --emit=interface; tests/modules/theories.pia proves it -->
+```ocaml
+module Lib.Gauge : Gauges
+
+interface Gauges = sig
+  let theory Gauge
+end
+
+let theory Gauge = sig
+  let sort reading
+  let spec value : (r : reading) -> u8
+  let axiom value_small (r : reading) ensures value r <= 100
+end
+
+let level = type { v : u8 where v <= 100 }
+
+let model levels : Gauge = struct
+  let sort reading = level
+  let spec value (r : level) : u8 = r.v
+end
+```
+
+An importer names the theory's items through the module, `Lib.Gauge.Gauge.value`, or through an alias, `G.Gauge.value` after `import Lib.Gauge.Gauges as G`, and proves against its axioms as the library does:
+
+<!-- untested: needs the interface artifact of Lib.Gauge -->
+```ocaml
+import Lib.Gauge.Gauges as G
+
+let lemma small (r : G.Gauge.reading) : unit
+  ensures G.Gauge.value r <= 100
+= ()
+```
+
+A modelled theory needs nothing more: its axioms are facts a model proved, and the importer's `--trust-report` lists none of them. A trusted theory needs `import M.I trusting`. Without it the import is an error that names the axioms, and with it they are trusted items in the importer's report. A theory that names a type of its module must have that type listed by the interface too, as an exported generic must. [tests/modules/theories.pia](../tests/modules/theories.pia) has both kinds, and [theory_trust_errors.pia](../tests/modules/theory_trust_errors.pia) and [theory_export_errors.pia](../tests/modules/theory_export_errors.pia) the mistakes. A theory that a metaprogram builds, such as `machine`'s, crosses modules as the exported metaprogram, which the importer applies (ADR 0088, step 2, not built yet).
 
 ## Writing a theory
 

@@ -2,6 +2,7 @@
 #define PIA_IRGEN_TARGET_H
 
 #include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -18,6 +19,13 @@ std::string_view targetTheorySource();
 // x86_64-unknown-linux-gnu, or "" if Pia has no model for it. An empty
 // triple means the host's.
 std::string targetModelFor(std::string_view triple);
+
+// The integer the model of `Target` for `triple` gives the spec `name`,
+// as 128 for `vector_bits` on arm64-apple-macosx, or nothing when Pia has
+// no model for `triple` or the model gives `name` no integer literal. This
+// is what the metaprogram builtin `target_value` reads (ADR 0087).
+std::optional<int64_t> targetModelValue(std::string_view triple,
+                                        const std::string &name);
 
 // Whether `program` names `Target`, as `Target.x` or a type `Target.t`, or
 // marks an item `@target(m)`, and does not define an item `Target` itself.

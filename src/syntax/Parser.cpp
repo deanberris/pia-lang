@@ -804,6 +804,17 @@ class Parser {
         n.add(std::move(law));
         continue;
       }
+      // `let theory T` lists a theory, which an interface exports with its
+      // declaration but not its model (ADR 0088). In an artifact it carries
+      // its status, `@modelled` or `@trusted`.
+      if (!isConcept && at(K::Ident) && text() == "theory" &&
+          kind(1) == K::Ident) {
+        take();
+        auto th = makeNode(N::SigTheory, start, std::string(take().text));
+        th->add(attrs());
+        n.add(std::move(th));
+        continue;
+      }
       // `let meta C : concept` lists a concept, which an interface exports
       // with its definition (ADR 0039).
       bool meta = !isConcept && accept(K::Meta);

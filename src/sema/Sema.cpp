@@ -284,6 +284,17 @@ std::optional<llvm::APInt> TypeResolver::valueArg(const Node &n,
           v = single.getLo();
         break;
       }
+  } else if (n.kind == NodeKind::TypeApp && !n.kids.empty() &&
+             n.kids[0]->kind == NodeKind::TypeName &&
+             isTypeFunction(n.kids[0]->text)) {
+    // A type-level metaprogram's value, `simd f32 (natural f32)`
+    // (ADR 0087).
+    mlir::Type t = resolve(n);
+    if (!t)
+      return std::nullopt;
+    auto single = mlir::dyn_cast<IntType>(t);
+    if (single && single.getLo() == single.getHi())
+      v = single.getLo();
   } else if (n.kind == NodeKind::IntLit) {
     auto lit = parseIntLiteral(n.text);
     if (lit && lit->suffix.empty())
@@ -435,7 +446,22 @@ mlir::Type TypeResolver::resolve(const Node &type) {
       if (head.kind == NodeKind::TypeName && isTypeFunction(head.text)) {
         llvm::SmallVector<mlir::Type> args;
         for (size_t i = 1; i < type.kids.size(); ++i) {
-          mlir::Type a = resolve(*type.kids[i]);
+          const Node &arg = *type.kids[i];
+          // A value, `8` or the type's own `k`, for a `usize` parameter
+          // (ADR 0087), as int{v..v}.
+          bool value =
+              arg.kind == NodeKind::IntLit ||
+              ((arg.kind == NodeKind::Name || arg.kind == NodeKind::TypeName) &&
+               values_.count(arg.text));
+          mlir::Type a;
+          if (value) {
+            std::optional<llvm::APInt> v = valueArg(arg, usize());
+            if (!v)
+              return {};
+            a = IntType::get(&ctx_, *v, *v);
+          } else {
+            a = resolve(arg);
+          }
           if (!a) return {};
           args.push_back(a);
         }
@@ -1134,12 +1160,80 @@ static mlir::Type buildType(const std::string &name, const Node &value,
   // The invariant goes last, after the fields' own refinements, so a field
   // bound it relies on, such as `rows : usize where rows <= 65536`, is
   // assumed first. Its empty name means every field is in scope.
+  // Constraints on the arguments, `where supports t k`, are checked here,
+  // once per instance, and leave the invariant (ADR 0087).
+  if (invariant && instance) {
+    bool ok = true;
+    invariant = types.checkTypeConstraints(name, *invariant, ok);
+    if (!ok)
+      return {};
+  }
   if (invariant)
     refined.emplace_back("", invariant);
   if (!refined.empty()) types.refine(name, std::move(refined));
   if (lower && !lowerRecord(name, *lower, names, fieldTypes, types, diags))
     return {};
   return RecordType::get(ctx, name, names, fieldTypes, spec);
+}
+
+const Node *TypeResolver::checkTypeConstraints(const std::string &instance,
+                                               const Node &p, bool &ok) {
+  auto isAnd = [](const Node &n) {
+    return n.kind == NodeKind::Apply && n.kids.size() == 3 &&
+           n.kids[0]->kind == NodeKind::Name && n.kids[0]->text == "and";
+  };
+  std::vector<const Node *> conjuncts, kept;
+  std::function<void(const Node &)> split = [&](const Node &n) {
+    if (isAnd(n)) {
+      split(*n.kids[1]);
+      split(*n.kids[2]);
+      return;
+    }
+    conjuncts.push_back(&n);
+  };
+  split(p);
+  // The arguments: type parameters as types, value parameters as
+  // int{v..v}.
+  std::map<std::string, mlir::Type> bound;
+  std::set<std::string> valueNames;
+  if (!typeScopes_.empty())
+    bound = typeScopes_.back();
+  for (const auto &[name, arg] : values_) {
+    if (arg.isShape)
+      continue;
+    bound[name] = IntType::get(&ctx_, arg.value, arg.value);
+    valueNames.insert(name);
+  }
+  for (const Node *c : conjuncts) {
+    bool constraint = c->kind == NodeKind::Apply && !c->kids.empty() &&
+                      c->kids[0]->kind == NodeKind::Name &&
+                      isTypePredicate(c->kids[0]->text);
+    if (!constraint) {
+      kept.push_back(c);
+      continue;
+    }
+    if (std::optional<std::string> why =
+            checkTypePredicate_(*c, bound, valueNames)) {
+      // At the use that forms the instance, which is what is wrong.
+      diags_.error(formedAt_.line ? formedAt_ : c->loc,
+                   "'" + instance + "' cannot be formed: " + *why);
+      ok = false;
+    }
+  }
+  if (kept.size() == conjuncts.size())
+    return &p;
+  if (kept.empty())
+    return nullptr;
+  syntax::NodePtr rest = syntax::clone(*kept[0]);
+  for (size_t i = 1; i < kept.size(); ++i) {
+    syntax::NodePtr both = syntax::makeNode(NodeKind::Apply, kept[i]->loc);
+    both->add(syntax::makeNode(NodeKind::Name, kept[i]->loc, "and"));
+    both->add(std::move(rest));
+    both->add(syntax::clone(*kept[i]));
+    rest = std::move(both);
+  }
+  residues_.push_back(std::move(rest));
+  return residues_.back().get();
 }
 
 mlir::Type TypeResolver::instantiate(const std::string &name,
@@ -1226,8 +1320,11 @@ mlir::Type TypeResolver::instantiate(const std::string &name,
     valueArgs_[key] = values;
   ValueArgs savedValues = std::move(values_);
   values_ = std::move(values);
+  syntax::SourceLoc savedAt = formedAt_;
+  formedAt_ = at;
   mlir::Type t =
       buildType(key, *g->value, *this, diags_, /*instance=*/true, rec);
+  formedAt_ = savedAt;
   values_ = std::move(savedValues);
   typeScopes_.swap(saved);
   instantiating_.erase(key);

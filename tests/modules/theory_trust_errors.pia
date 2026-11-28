@@ -1,0 +1,13 @@
+(* A theory with no model is trusted, so importing it needs `trusting`
+   (ADR 0088, section 2): the error names the axioms that would be
+   trusted.
+// RUN: piac --emit=interface -o %t %S/Inputs/meter.pia
+// RUN: not piac --verify --no-lint --iface-path=%t %s 2>&1 | FileCheck %s
+*)
+(* CHECK: theory_trust_errors.pia:[[@LINE+2]]:1: error: 'Lib.Meter.Meters' exports the theory 'Lib.Meter.Meter', whose axiom 'Lib.Meter.Meter.count_small' no model proved; write 'import Lib.Meter.Meters trusting' to trust them (ADR 0088)
+*)
+import Lib.Meter.Meters
+
+let lemma room (t : Lib.Meter.Meter.tick) : unit
+  ensures Lib.Meter.Meter.count t <= 1000
+= ()

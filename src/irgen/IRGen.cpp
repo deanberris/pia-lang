@@ -1316,7 +1316,9 @@ class Gen {
     ghost_ = isSpec || isLemma || isAxiom;
     // A theory's members are named `T.x` (ADR 0036).
     if (hasFlag(item, "theory")) {
-      std::string theory = llvm::StringRef(sig.name).split('.').first.str();
+      // An imported theory's are `M.T.x` (ADR 0088), so the theory is
+      // everything before the member's name.
+      std::string theory = llvm::StringRef(sig.name).rsplit('.').first.str();
       fn->setAttr("pia.theory", b_.getStringAttr(theory));
       if (auto m = theoryInfo_.modelled.find(theory);
           m != theoryInfo_.modelled.end())
@@ -1326,6 +1328,8 @@ class Gen {
         fn->setAttr("pia.modelled", b_.getStringAttr(l->second));
       else if (theoryInfo_.boxModelled.count(theory))
         fn->setAttr("pia.modelled", b_.getStringAttr("widen"));
+      else if (theoryInfo_.importModelled.count(theory))
+        fn->setAttr("pia.modelled", b_.getStringAttr("imported"));
     }
     // A model's items, and the lemmas that check it, see its definitions;
     // nothing else does (sealing).
@@ -7296,7 +7300,11 @@ class Gen {
     for (const syntax::NodePtr &item : program.kids) {
       if (!syntax::isTypeLevelMetaItem(*item)) continue;
       const Node &ret = *item->kids[1]->kids[0]->kids[1];
-      auto &table = ret.kind == NodeKind::TypeKind ? typeFns_ : typePredicates_;
+      // One that makes a type or a type's value argument is called from
+      // types; one that decides is called from constraints.
+      bool value = ret.kind == NodeKind::TypeName && ret.text == "usize";
+      auto &table =
+          ret.kind == NodeKind::TypeKind || value ? typeFns_ : typePredicates_;
       if (typeFns_.count(item->text) || typePredicates_.count(item->text)) {
         diags_.error(item->loc, "'" + item->text + "' is already defined");
         continue;
@@ -7315,12 +7323,31 @@ class Gen {
     host.info = [this](const std::string &spelling) {
       return typeInfo(typeValues_.at(spelling));
     };
+    // `target_value "vector_bits"`, for the target being compiled for
+    // (ADR 0087).
+    host.target = [this](const std::string &name) {
+      return targetModelValue(options_.triple, name);
+    };
     interp_.setTypeHost(std::move(host));
     types_.setTypeFunctions(
         [this](const std::string &name) { return typeFns_.count(name) != 0; },
         [this](const std::string &name, llvm::ArrayRef<Type> args,
                syntax::SourceLoc at) {
           return callTypeFunction(name, args, at);
+        });
+    types_.setTypePredicates(
+        [this](const std::string &name) {
+          return typePredicates_.count(name) != 0;
+        },
+        [this](const Node &q, const std::map<std::string, Type> &bound,
+               const std::set<std::string> &valueNames)
+            -> std::optional<std::string> {
+          // A stand-in stands for every argument, so an instance formed to
+          // rank overloads meets every constraint.
+          for (auto &[name, t] : bound)
+            if (standIns_.contains(t) || valueStandIns_.contains(t))
+              return std::nullopt;
+          return predicateUnmet(q, bound, valueNames);
         });
   }
 
@@ -7417,6 +7444,8 @@ class Gen {
     info.size = byteSize(t);
     if (mlir::isa<IntType>(t)) {
       info.kind = "int";
+    } else if (mlir::isa<mlir::FloatType>(t)) {
+      info.kind = "float";
     } else if (t == types_.boolType()) {
       info.kind = "bool";
     } else if (types_.isUnit(t)) {
@@ -7471,6 +7500,8 @@ class Gen {
     }
     if (t == types_.boolType()) return 1;
     if (types_.isUnit(t)) return 0;
+    if (auto f = mlir::dyn_cast<mlir::FloatType>(t))
+      return f.getWidth() / 8;
     if (auto a = mlir::dyn_cast<ArrayType>(t)) {
       std::optional<int64_t> e = byteSize(a.getElementType());
       if (!e) return std::nullopt;
@@ -7515,11 +7546,48 @@ class Gen {
         if (checking_) opaqueStandIn_ = true;
         return r;
       }
+    // A `usize` parameter takes a value argument, int{4..4}, as the
+    // integer 4 (ADR 0087).
+    const Node *item =
+        typeFns_.count(name) ? typeFns_.at(name) : typePredicates_.at(name);
     std::vector<meta::ValuePtr> values;
-    for (Type a : args) values.push_back(typeValue(a));
+    for (size_t i = 0; i < args.size(); ++i) {
+      const Node &pt = *item->kids[0]->kids[i]->kids[0]->kids[1];
+      if (pt.kind == NodeKind::TypeKind) {
+        values.push_back(typeValue(args[i]));
+        continue;
+      }
+      auto single = mlir::dyn_cast<IntType>(args[i]);
+      if (!single || single.getLo() != single.getHi()) {
+        diags_.error(at, "'" + name + "' takes a value for '" +
+                             item->kids[0]->kids[i]->text + "', not " +
+                             sema::typeName(args[i]));
+        return {};
+      }
+      meta::Value n;
+      n.kind = meta::Value::Kind::Int;
+      n.i = single.getLo().getSExtValue();
+      values.push_back(std::make_shared<const meta::Value>(std::move(n)));
+    }
     interp_.setSite(at);
     try {
       meta::ValuePtr v = interp_.call(name, std::move(values));
+      const Node &ret = *item->kids[1]->kids[0]->kids[1];
+      // A value argument comes back as the type int{v..v}, which is how
+      // a type's value arguments are spelled.
+      if (ret.kind == NodeKind::TypeName && ret.text == "usize") {
+        if (v->kind != meta::Value::Kind::Int || v->i < 0) {
+          diags_.error(at, "'" + name +
+                               "' must return a usize, but "
+                               "returned " +
+                               (v->kind == meta::Value::Kind::Int
+                                    ? std::string("a negative integer")
+                                    : meta::Interpreter::kindName(v->kind)));
+          return {};
+        }
+        llvm::APInt n(kWidth, static_cast<uint64_t>(v->i));
+        return IntType::get(&ctx_, n, n);
+      }
       if (v->kind != meta::Value::Kind::Type) {
         diags_.error(at, "'" + name + "' must return a type, but returned " +
                              meta::Interpreter::kindName(v->kind));
@@ -7579,8 +7647,9 @@ class Gen {
   // Why the predicate `q` of a `where` is false for the type arguments
   // `bound`, or nothing when it holds. With a stand-in among them, it holds
   // only when the generic being defined promises the same predicate.
-  std::optional<std::string> predicateUnmet(
-      const Node &q, const std::map<std::string, Type> &bound) {
+  std::optional<std::string>
+  predicateUnmet(const Node &q, const std::map<std::string, Type> &bound,
+                 const std::set<std::string> &valueNames = {}) {
     std::string text = predicateText(q);
     std::vector<const Node *> metas;
     metaNamesIn(q, metas);
@@ -7612,6 +7681,18 @@ class Gen {
     std::vector<std::pair<std::string, meta::ValuePtr>> env;
     std::string forTypes;
     for (auto &[name, t] : bound) {
+      // A type's value parameter, `k`, is its integer (ADR 0087).
+      auto single = mlir::dyn_cast<IntType>(t);
+      if (valueNames.count(name) && single) {
+        meta::Value n;
+        n.kind = meta::Value::Kind::Int;
+        n.i = single.getLo().getSExtValue();
+        env.emplace_back(name,
+                         std::make_shared<const meta::Value>(std::move(n)));
+        forTypes += (forTypes.empty() ? "" : ", ") + name + " = " +
+                    llvm::toString(single.getLo(), 10, true);
+        continue;
+      }
       env.emplace_back(name, typeValue(t));
       forTypes += (forTypes.empty() ? "" : ", ") + name + " = " +
                   sema::typeName(t);
@@ -8543,6 +8624,17 @@ class Gen {
                                 "' is unfinished ('...')");
         continue;
       }
+      // `let theory T` (ADR 0088): the module declares T, whose members
+      // are its items `T.x` once flattened.
+      if (r.kind == NodeKind::SigTheory) {
+        std::string prefix = r.text + ".";
+        auto member = sigs_.lower_bound(prefix);
+        if ((member == sigs_.end() ||
+             !llvm::StringRef(member->first).starts_with(prefix)) &&
+            !typeItemWithPrefix(prefix))
+          diags_.error(r.loc, unmet + "no theory '" + r.text + "'");
+        continue;
+      }
       if (r.kind == NodeKind::SigType) {
         if (std::optional<std::string> name = privateType(*r.kids[0], shown))
           diags_.error(r.loc, "the type '" + r.text + "' is shown, but its "
@@ -8793,6 +8885,15 @@ class Gen {
     for (const auto &[n, item] : typeItems_)
       if (n == name) return item;
     return nullptr;
+  }
+
+  // Whether a type item's name starts with `prefix`, as a theory's sorts
+  // start with `T.`.
+  bool typeItemWithPrefix(const std::string &prefix) const {
+    for (const auto &[n, item] : typeItems_)
+      if (llvm::StringRef(n).starts_with(prefix))
+        return true;
+    return false;
   }
 
   // Whether two trees are the same apart from locations and comments.
@@ -9313,6 +9414,7 @@ class Gen {
       if (llvm::is_contained(sig.valueParams, t)) {
         llvm::APInt v(kWidth, (uint64_t(1) << 32) + values++);
         bound[t] = IntType::get(&ctx_, v, v);
+        valueStandIns_.insert(bound[t]);
         continue;
       }
       bound[t] = RecordType::get(&ctx_, t, {}, {});
@@ -14497,6 +14599,9 @@ class Gen {
   // each type a metaprogram has seen, by its spelling.
   std::map<std::string, const Node *> typeFns_;
   std::map<std::string, const Node *> typePredicates_;
+  // The values that stand for a generic's value parameters while
+  // overloads are ranked, int{2^32..2^32} and up.
+  llvm::DenseSet<Type> valueStandIns_;
   meta::Interpreter interp_;
   std::map<std::string, Type> typeValues_;
   // Stand-in types, which stand for every type: a generic's type

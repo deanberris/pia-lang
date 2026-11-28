@@ -1,0 +1,35 @@
+(* A generic type's constraint on its arguments, checked for the target
+   (ADR 0087): eight lanes of f32 are 256 bits, which x86-64-v3 runs and
+   arm64 does not.
+// RUN: not piac --emit=mlir --no-lint --target=arm64-apple-macosx14.0.0 %s 2>&1 | FileCheck %s
+// RUN: not piac --emit=mlir --no-lint --target=x86_64-unknown-linux-gnu %s 2>&1 | FileCheck %s --check-prefix=X86
+*)
+
+let meta bits (t : type) : usize = 8 * size_of t
+let meta fits (t : type) (k : usize) : bool =
+  k * bits t <= target_value "vector_bits"
+
+let block = let (t : type) (k : usize) => type {
+  cells : [t; k]
+} where fits t k
+
+(* CHECK: target_query_errors.pia:[[@LINE+2]]:15: error: 'block<f32, 8>' cannot be formed: the constraint 'fits t k' is false for k = 8, t = f32
+*)
+let wide (b : block f32 8) : f32 = b.cells.[7]
+
+(* A metaprogram's integer must be a usize.
+// CHECK: target_query_errors.pia:[[@LINE+3]]:24: error: 'minus' must return a usize, but returned a negative integer
+*)
+let meta minus (t : type) : usize = 0 - 1
+let bad (b : block u8 (minus u8)) : u8 = 0
+
+(* `target_value` names a Target spec with an integer.
+// CHECK: target_query_errors.pia:[[@LINE+3]]:26: error: the type 'odd u8' cannot be formed: the target's model gives no integer for 'Target.little_endian'
+*)
+let meta odd (t : type) : usize = target_value "little_endian"
+let worse (b : block u8 (odd u8)) : u8 = 0
+
+(* On x86 the wide block is formed, and only the other two fail.
+// X86-NOT: block<f32, 8>
+// X86: 'minus' must return a usize
+*)

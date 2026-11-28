@@ -245,8 +245,15 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
     // only ever names its members qualified, so a program's own
     // `page_size` does not clash with it.
     bool builtin = item->flags == "builtin";
+    // An imported theory (ADR 0088) is named only qualified, as `M.T.x`,
+    // and its exporter proved its model or trusted it.
+    bool imported = hasFlag(*item, "imported");
+    if (imported && info && hasFlag(*item, "proved"))
+      info->importModelled.insert(t.name);
+    if (imported && info && hasFlag(*item, "trusting"))
+      info->trusting.emplace_back(t.name, item->loc);
     for (const NodePtr &m : item->kids) {
-      if (builtin)
+      if (builtin || imported)
         break;
       std::string what;
       if (topLevel.count(m->text) || theories.count(m->text))
@@ -264,7 +271,7 @@ void flattenTheories(Node &program, syntax::Diagnostics &diags,
     bool box = hasFlag(*item, "box");
     if (box && hasFlag(*item, "modelled") && info)
       info->boxModelled.insert(t.name);
-    if (axioms && !trusted && !modelled.count(t.name) && !box)
+    if (axioms && !trusted && !modelled.count(t.name) && !box && !imported)
       diags.error(item->loc,
                   "the theory '" + t.name + "' has axioms and no model, so its "
                   "axioms are trusted: give it a model, 'let model m : " +
