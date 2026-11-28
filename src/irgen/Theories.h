@@ -2,6 +2,7 @@
 #define PIA_IRGEN_THEORIES_H
 
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -46,6 +47,11 @@ struct TheoryInfo {
   // `@target(m)` functions -> m (ADR 0049): their proofs see the model's
   // values of `Target`'s functions, not only its axioms.
   std::map<std::string, std::string> targetOf;
+  // A box's theory (ADR 0046) once `widen` boxes at least one type: each
+  // boxed type is a model of it, since the use check at `widen` proves the
+  // concept's contracts for that type, so its consistency is not checked
+  // again (a check that grows with every word of the box).
+  std::set<std::string> boxModelled;
 };
 void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,
                      TheoryInfo *info = nullptr);

@@ -538,7 +538,9 @@ void expandErasedBoxes(
     for (NodePtr &k : extra->kids) {
       if (k->kind == NodeKind::FileAttr) continue;
       // Its axioms hold of every type `widen` boxes, by the use check.
-      if (k->kind == NodeKind::Theory) k->flags = "box";
+      // Once it boxes a type, that type is a model of them.
+      if (k->kind == NodeKind::Theory)
+        k->flags = closed && !closed->empty() ? "box modelled" : "box";
       // A function whose body is a box's own op: a proxy to the verifier.
       if (k->kind == NodeKind::LetItem)
         if (auto o = ops.find(k->text); o != ops.end()) {

@@ -1232,6 +1232,8 @@ class Gen {
       if (auto m = theoryInfo_.modelled.find(theory);
           m != theoryInfo_.modelled.end())
         fn->setAttr("pia.modelled", b_.getStringAttr(m->second));
+      else if (theoryInfo_.boxModelled.count(theory))
+        fn->setAttr("pia.modelled", b_.getStringAttr("widen"));
     }
     // A model's items, and the lemmas that check it, see its definitions;
     // nothing else does (sealing).
