@@ -1,0 +1,108 @@
+(* Floats against reals (ADR 0038, steps 1 and 2). `to_real x` is the real
+   value of a finite float, `finite x` says it is neither infinite nor NaN,
+   and `eps t` and `tiny t` are the unit roundoff of a float type and the
+   absolute error of its subnormal range. Each correctly rounded operation
+   is within `eps t * |e| + tiny t` of its exact result `e`, and is finite
+   when `|e|` is below the largest float, so straight-line error bounds
+   and finiteness are proved, and a loop keeps them in its invariant.
+// RUN: not piac --verify %s 2>&1 | FileCheck %s
+*)
+
+let spec rabs (x : real) : real = if x >= 0.0 then x else 0.0 - x
+
+(* A literal's real value is exact, and so is negation.
+// CHECK: float_reals.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma literals (x : f32) : unit
+  ensures to_real 0.5f32 = 0.5 && to_real 3.0f64 = 3.0
+  ensures finite x ==> to_real (-x) = 0.0 - to_real x
+  ensures finite 1.0e38f32 && (finite x ==> finite (0.0f32 - x))
+= ()
+
+(* The unit roundoff and the subnormal error of each width.
+// CHECK: float_reals.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma units : unit
+  ensures eps f32 * 16777216.0 = 1.0 && eps f64 < eps f32 && tiny f32 < eps f32
+= ()
+
+(* IEEE order on finite floats is the order of their values.
+// CHECK: float_reals.pia:[[@LINE+4]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let lemma bounded (x : f32) : unit
+  requires finite x && x <= 1000.0f32 && -1000.0f32 <= x
+  ensures rabs (to_real x) <= 1000.0
+= ()
+
+(* One rounding: finite, and within eps of the exact sum.
+// CHECK: float_reals.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let add1 (a : f32) (b : f32) : f32
+  requires finite a && finite b
+  requires rabs (to_real a) <= 1000.0 && rabs (to_real b) <= 1000.0
+  ensures finite result
+  ensures rabs (to_real result - (to_real a + to_real b)) <= eps f32 * 2000.0 + tiny f32
+= a + b
+
+(* The sum is not exact, so claiming it is fails.
+// CHECK: float_reals.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let exact (a : f32) (b : f32) : f32
+  requires finite a && finite b
+  ensures to_real result = to_real a + to_real b
+= a + b
+
+(* A two-term dot product: three roundings, bounded by their sum.
+// CHECK: float_reals.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+// CHECK: float_reals.pia:[[@LINE+6]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let dot2 (a : f32) (b : f32) (c : f32) (d : f32) : f32
+  requires finite a && finite b && finite c && finite d
+  requires rabs (to_real a) <= 1000.0 && rabs (to_real b) <= 1000.0 && rabs (to_real c) <= 1000.0 && rabs (to_real d) <= 1000.0
+  ensures finite result
+  ensures rabs (to_real result - (to_real a * to_real b + to_real c * to_real d)) <= 6000000.0 * eps f32
+= a * b + c * d
+
+(* Too large to stay finite: 1e30 squared overflows f32.
+// CHECK: float_reals.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the postcondition holds
+*)
+let square (x : f32) : f32
+  requires finite x && x <= 1.0e30f32
+  ensures finite result
+= x * x
+
+(* An integer up to 2^24 is exact as an f32.
+// CHECK: float_reals.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let of_count (n : int{0..16777216}) : f32
+  ensures finite result && to_real result = real n
+= f32 n
+
+(* `finite` compiles too: it tests the exponent bits.
+// CHECK: float_reals.pia:[[@LINE+3]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let usable (x : f64) : bool
+  ensures result = finite x
+= finite x
+
+(* A loop keeps finiteness and a bound in its invariant: each step adds at
+   most 1 and rounds once, and 2 per step covers both.
+// CHECK: float_reals.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let sum (xs : [f32]) : f32
+  requires len xs <= 1000
+  requires forall (i in 0..len xs). finite xs.[i] && rabs (to_real xs.[i]) <= 1.0
+  ensures finite result && rabs (to_real result) <= 2000.0
+=
+  let s : mutable f32 = 0.0 in
+  for i in 0..len xs
+    invariant finite s && rabs (to_real s) <= 2.0 * real i
+  do s <- s + xs.[i] done;
+  s
+
+(*
+// CHECK: {{[0-9]+}} proved, 2 failed, 0 skipped
+*)

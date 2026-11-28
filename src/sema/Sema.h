@@ -149,6 +149,19 @@ class TypeResolver {
     auto it = refinements_.find(record);
     return it == refinements_.end() ? nullptr : &it->second;
   }
+  // The arrow a record's function reference field was declared with, `{ op
+  // : (x : u8) -> u8 requires x < 50 }` (ADR 0071): its contract is what a
+  // call through the field may assume, and what a function stored in it
+  // is checked against.
+  void setFieldArrow(const std::string &record, const std::string &field,
+                     const syntax::Node *arrow) {
+    fieldArrows_[{record, field}] = arrow;
+  }
+  const syntax::Node *fieldArrow(const std::string &record,
+                                 const std::string &field) const {
+    auto it = fieldArrows_.find({record, field});
+    return it == fieldArrows_.end() ? nullptr : it->second;
+  }
   // An instance's value arguments (ADR 0074): `vec u8 4` has `n`, a
   // usize, equal to 4. Its body's array lengths and refinements see them,
   // and a refinement's predicate binds each name to its value.
@@ -315,6 +328,8 @@ class TypeResolver {
   std::set<std::string> recursive_;
   std::vector<mlir::Type> datatypes_;
   std::map<std::string, Refinements> refinements_;
+  std::map<std::pair<std::string, std::string>, const syntax::Node *>
+      fieldArrows_;
   std::map<std::string, ValueArgs> valueArgs_; // by instance, `vec<u8, 4>`
   std::map<std::string, TypeLowering> lowerings_; // by record name
   ValueArgs values_; // the value parameters of the body being built

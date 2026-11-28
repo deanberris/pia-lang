@@ -106,6 +106,9 @@ public:
     bool saved = ok_;
     std::map<std::string, std::string> savedLocals;
     std::swap(savedLocals, locals_);
+    std::vector<std::string> savedRanges, savedGuards;
+    std::swap(savedRanges, ranges_);
+    std::swap(savedGuards, guards_);
     unsigned savedHyps = hyps_;
     ok_ = true;
     std::string text;
@@ -123,6 +126,8 @@ public:
     bool good = ok_;
     ok_ = saved && good;
     locals_ = std::move(savedLocals);
+    ranges_ = std::move(savedRanges);
+    guards_ = std::move(savedGuards);
     hyps_ = savedHyps;
     visiting_.pop_back();
     if (!good) {
@@ -173,20 +178,97 @@ private:
       deps_[visiting_.back()].insert(name);
   }
 
+  // A slice is a `Slice'`, its length and its elements by index, as the
+  // verifier encodes it. It is a definition like any other, emitted once,
+  // first, and part of the hash of every statement that uses it.
+  void useSlice() {
+    static const char *kSlice = "Slice'";
+    if (!text_.count(kSlice)) {
+      text_[kSlice] = "/-- A Pia slice: its length, and its elements by "
+                      "index. -/\nstructure Slice' (α : Type) where\n"
+                      "  len : Int\n  get : Int → α\n\n";
+      order_.insert(order_.begin(), kSlice);
+    }
+    use(kSlice);
+  }
+
   // --- types ---------------------------------------------------------
 
-  std::string type(const Node &t) {
+  // The range of a machine integer type. The verifier's integers are exact
+  // and never wrap (docs/verifier.md), so in Lean each is an `Int` of
+  // which its range is a hypothesis.
+  static std::optional<std::pair<std::string, std::string>>
+  machineRange(const std::string &name) {
+    static const std::map<std::string, std::pair<std::string, std::string>>
+        ranges = {
+            {"u8", {"0", "255"}},
+            {"u16", {"0", "65535"}},
+            {"u32", {"0", "4294967295"}},
+            {"u64", {"0", "18446744073709551615"}},
+            {"usize", {"0", "18446744073709551615"}},
+            {"i8", {"-128", "127"}},
+            {"i16", {"-32768", "32767"}},
+            {"i32", {"-2147483648", "2147483647"}},
+            {"i64", {"-9223372036854775808", "9223372036854775807"}},
+            {"isize", {"-9223372036854775808", "9223372036854775807"}},
+        };
+    auto it = ranges.find(name);
+    if (it == ranges.end())
+      return std::nullopt;
+    return it->second;
+  }
+
+  static std::string intLit(const std::string &digits) {
+    return "(" + digits + " : Int)";
+  }
+
+  // The hypothesis that `x` has the type `t`, or "" when every value of
+  // its Lean type has it. With `decidable`, only the part an `if` can
+  // test: a slice's length, not the range of each element.
+  std::string range(const Node &t, const std::string &x,
+                    bool decidable = false) {
+    if (t.kind == N::Annot)
+      return range(*t.kids[1], x, decidable);
+    if (t.kind == N::SliceType && !t.kids.empty()) {
+      std::string out = "(" + intLit("0") + " ≤ " + x + ".len ∧ " + x +
+                        ".len ≤ " + intLit("18446744073709551615") + ")";
+      if (decidable)
+        return out;
+      // `i'` is a name no program writes, so it captures none of `x`.
+      std::string elem = range(*t.kids[0], "(" + x + ".get i')");
+      if (!elem.empty())
+        out += " ∧ (∀ (i' : Int), " + intLit("0") + " ≤ i' ∧ i' < " + x +
+               ".len → " + elem + ")";
+      return out;
+    }
+    if (t.kind == N::TypeName) {
+      if (auto r = machineRange(t.text))
+        return "(" + intLit(r->first) + " ≤ " + x + " ∧ " + x + " ≤ " +
+               intLit(r->second) + ")";
+      return "";
+    }
+    if (t.kind == N::RangeType && t.kids.size() == 2)
+      return "(" + expr(*t.kids[0], Mode::Value) + " ≤ " + x + " ∧ " + x +
+             " ≤ " + expr(*t.kids[1], Mode::Value) + ")";
+    return "";
+  }
+
+  // `field` is set for a record's field, which has no hypothesis to carry
+  // its range, so only a type all of whose Lean values it has may be one.
+  std::string type(const Node &t, bool field = false) {
     if (t.kind == N::Annot) {
       if (t.kids.size() > 2 && t.kids[2]->kind != N::None)
         fail(t.kids[2]->loc, "a 'where' type has no Lean translation yet "
                              "(ADR 0061, step 3)");
-      return type(*t.kids[1]);
+      return type(*t.kids[1], field);
     }
     if (t.kind == N::TypeName) {
       if (t.text == "int")
         return "Int";
       if (t.text == "bool")
         return "Bool";
+      if (machineRange(t.text) && !field)
+        return "Int";
       auto it = items_.find(t.text);
       if (it != items_.end() && isRecordType(*it->second)) {
         if (!need(t.text, t.loc))
@@ -195,16 +277,46 @@ private:
         return ident(t.text);
       }
     }
+    if (t.kind == N::SliceType && !field && !t.kids.empty()) {
+      if (t.kids[0]->kind == N::SliceType ||
+          (t.kids[0]->kind == N::Annot && t.kids[0]->kids.size() > 1 &&
+           t.kids[0]->kids[1]->kind == N::SliceType)) {
+        fail(t.loc, "a slice of slices has no Lean translation yet (ADR "
+                    "0061, step 3)");
+        return "Int";
+      }
+      std::string elem = type(*t.kids[0]);
+      useSlice();
+      return "(Slice' " + elem + ")";
+    }
+    if (t.kind == N::RangeType && !field && t.kids.size() == 2 &&
+        (t.text == "int" || machineRange(t.text)))
+      return "Int";
+    if (field && t.kind == N::SliceType) {
+      fail(t.loc, "a record field that is a slice has no Lean translation "
+                  "yet (ADR 0061, step 3)");
+      return "Int";
+    }
+    if (field && (t.kind == N::RangeType ||
+                  (t.kind == N::TypeName && machineRange(t.text)))) {
+      fail(t.loc, "a record field of a machine integer or range type has no "
+                  "Lean translation yet (ADR 0061, step 3)");
+      return "Int";
+    }
     std::string what =
         t.kind == N::TypeName ? "'" + t.text + "'" : std::string("this type");
-    fail(t.loc, "the Lean translation supports int, bool and records of "
-                "them, not " +
+    fail(t.loc, "the Lean translation supports int, bool, machine integers "
+                "and records of int and bool, not " +
                     what + " yet (ADR 0061, step 3)");
     return "Int";
   }
 
+  // The parameters as binders, with the hypotheses of their ranges in
+  // `ranges_`.
   std::string params(const Node &ps, bool binders) {
     std::string out;
+    ranges_.clear();
+    guards_.clear();
     for (const NodePtr &p : ps.kids) {
       if (p->kind != N::Param || p->kids.empty() ||
           p->kids[0]->kind == N::None) {
@@ -216,6 +328,10 @@ private:
              type(*p->kids[0]) + ")";
       if (binders)
         out += " ";
+      if (std::string r = range(*p->kids[0], ident(p->text)); !r.empty())
+        ranges_.push_back(r);
+      if (std::string r = range(*p->kids[0], ident(p->text), true); !r.empty())
+        guards_.push_back(r);
     }
     return out;
   }
@@ -225,7 +341,7 @@ private:
   std::string structure(const Node &item) {
     std::string out = "structure " + ident(item.text) + " where\n";
     for (const NodePtr &f : item.kids[3]->kids[0]->kids)
-      out += "  " + ident(f->text) + " : " + type(*f->kids[0]) + "\n";
+      out += "  " + ident(f->text) + " : " + type(*f->kids[0], true) + "\n";
     return out + "  deriving DecidableEq, Inhabited\n\n";
   }
 
@@ -247,7 +363,12 @@ private:
       return "";
     }
     std::string result = type(*ret.kids[0]);
-    std::vector<std::string> pre;
+    // Outside its parameters' ranges, which no call reaches, the function
+    // is `f'outside` too. The ranges of a slice's elements are left out,
+    // since an `if` cannot test a `∀`. A statement applies the function
+    // only to slices whose elements are in range, so its value elsewhere
+    // decides nothing.
+    std::vector<std::string> pre = guards_;
     const Node *measure = nullptr;
     for (const NodePtr &c : item.kids[2]->kids)
       if (c->kind == N::Requires)
@@ -291,7 +412,7 @@ private:
     locals_.clear();
     hyps_ = 0;
     std::string binders = params(*item.kids[0], true);
-    std::vector<std::string> pre, ensures;
+    std::vector<std::string> pre = ranges_, ensures;
     for (const NodePtr &c : item.kids[2]->kids)
       if (c->kind == N::Requires)
         pre.push_back(expr(*c->kids[0], Mode::Prop));
@@ -342,13 +463,19 @@ private:
           digits += c;
       bool hex = digits.size() > 2 && digits[0] == '0' &&
                  (digits[1] == 'x' || digits[1] == 'X');
-      for (size_t i = hex ? 2 : 0; i < digits.size(); ++i)
-        if (!(hex ? std::isxdigit(static_cast<unsigned char>(digits[i]))
-                  : std::isdigit(static_cast<unsigned char>(digits[i]))))
-          return unsupported(n, "a literal with a type suffix");
+      size_t end = hex ? 2 : 0;
+      while (end < digits.size() &&
+             (hex ? std::isxdigit(static_cast<unsigned char>(digits[end]))
+                  : std::isdigit(static_cast<unsigned char>(digits[end]))))
+        ++end;
+      // A suffix such as `u8` names the literal's type, and the checker
+      // has made sure the value fits it, so the value is the same `Int`.
+      if (end < digits.size() && !machineRange(digits.substr(end)))
+        return unsupported(n, "a literal with the suffix '" +
+                                  digits.substr(end) + "'");
       // Typed, since a term of literals alone would otherwise be a `Nat`,
       // where `0 - 1 = 0` holds and Pia's `int` says it does not.
-      return "(" + digits + " : Int)";
+      return intLit(digits.substr(0, end));
     }
     case N::BoolLit:
       if (m == Mode::Prop)
@@ -393,6 +520,12 @@ private:
         locals_.erase(n.text);
       return body;
     }
+    case N::Index:
+      if (n.kids.size() != 2)
+        return unsupported(n, "this index");
+      return asProp("((" + expr(*n.kids[0], Mode::Value) + ").get " +
+                        expr(*n.kids[1], Mode::Value) + ")",
+                    m);
     case N::Field:
       if (!n.text.empty() && n.text[0] == '$')
         return unsupported(n, "a spliced field");
@@ -473,6 +606,18 @@ private:
     }
     if (locals_.count(head.text))
       return unsupported(n, "a call of a parameter");
+    // A conversion to `int` is exact (docs/verifier.md), so it is its
+    // operand. An integer meets a machine type without one, where the
+    // verifier proves it fits; `u8 x` converts a float, which has no
+    // translation yet.
+    if (!items_.count(head.text) && n.kids.size() == 2) {
+      if (head.text == "int")
+        return expr(*n.kids[1], Mode::Value);
+      if (head.text == "len")
+        return "(" + expr(*n.kids[1], Mode::Value) + ").len";
+      if (machineRange(head.text))
+        return unsupported(n, "a conversion to '" + head.text + "'");
+    }
     std::string call = "(" + name(head);
     for (size_t i = 1; i < n.kids.size(); ++i)
       call += " " + expr(*n.kids[i], Mode::Value);
@@ -494,6 +639,8 @@ private:
           continue;
         }
         out += (all ? "∀ (" : "∃ (") + x + " : " + type(*b.kids[0]) + "), ";
+        if (std::string r = range(*b.kids[0], x); !r.empty())
+          out += r + (all ? " → " : " ∧ ");
       } else if (b.kind == N::RangeBinder && b.kids[0]->kind == N::Range) {
         std::string lo = expr(*b.kids[0]->kids[0], Mode::Value);
         std::string hi = expr(*b.kids[0]->kids[1], Mode::Value);
@@ -520,6 +667,8 @@ private:
   std::vector<std::string> order_, visiting_;
   // What each parameter, bound variable and local stands for.
   std::map<std::string, std::string> locals_;
+  // The ranges of the parameters that params() last translated.
+  std::vector<std::string> ranges_, guards_;
   unsigned hyps_ = 0;
   bool ok_ = true;
 };

@@ -1,0 +1,67 @@
+(* Runs @derive(json_dom) on a variant from C
+   (json_shape_variant_run_test.c): a signal, one constructor of each
+   kind, read from a parsed document and written as one with to_dom. It
+   is a module of its own, apart from json_shape_run.pia, so that neither
+   proof grows past a build executor's memory. *)
+module JsonShapeVariantRun : Run
+
+import Pia.Core.Order.Ops
+import Pia.Core.Option.Optional as O
+import Pia.Text.Json.Spec.Grammar
+import Pia.Text.Json.Lex.Lexer
+import Pia.Text.Json.Read.Reader
+import Pia.Text.Json.Write.Writer
+import Pia.Text.Json.Derive.Derive as Json
+import Pia.Mem.Alloc.Allocators
+import Pia.Text.Json.Dom.Document
+import Pia.Text.Json.Shape.Shapes
+
+interface Run @abi(c) = sig
+  let read_signal_dom : (s : [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+  let round_trip_signal_dom : (k : int{0..4}) -> (text : borrowed inout mutable [u8]) -> (cells : borrowed mutable [Pia.Text.Json.Dom.json]) -> (mems : borrowed mutable [Pia.Text.Json.Dom.member]) -> i64
+end
+
+let point = type { x : i32 @json(name = "xx"); y : u8; ok : bool } @derive(json, json_dom)
+
+(* x * 1000 + y * 10 + ok, of a point. *)
+let code (p : point) : i64 = p.x * 1000 + p.y * 10 + (if p.ok then 1 else 0)
+
+let signal = type
+  | Off
+  | On of bool
+  | Level of int{0..9}
+  | Peak of int{100..999}
+  | Spot of point
+  @derive(json, json_dom)
+
+(* A signal's code: 0 when off, 1 or 2 when on, 10 + its level, its
+   peak, or 2000 + its spot's code. *)
+let signal_code (g : signal) : i64 =
+  match g with
+  | Off -> 0
+  | On b -> if b then 2 else 1
+  | Level n -> (let m : i64 = n in 10 + m)
+  | Peak n -> n
+  | Spot p -> 2000 + code p
+
+(* The signal s denotes as a document, as its code; -1 if s is no
+   document and -2 if it is one that is not a signal. *)
+let read_signal_dom (s : [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  match Pia.Text.Json.Dom.parse s 4 vs ms with
+  | Err _ -> -1
+  | Ok v -> if check_json_signal s v then signal_code (from_dom_json_signal s v) else -2
+
+(* The k-th constructor, Off, On true, Level 7, Peak 512 or a spot at
+   (-5, 6, true), as a document over text, read back, as its code; -1
+   if to_dom made none. *)
+let round_trip_signal_dom (k : int{0..4}) (text : borrowed inout mutable [u8]) (cells : borrowed mutable [Pia.Text.Json.Dom.json]) (mems : borrowed mutable [Pia.Text.Json.Dom.member]) : i64 =
+  let vs : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.json = { mem = cells; used = 0 } in
+  let ms : mutable Pia.Mem.Alloc.bump Pia.Text.Json.Dom.member = { mem = mems; used = 0 } in
+  let g : signal =
+    if k = 0 then Off else if k = 1 then On true else if k = 2 then Level 7
+    else if k = 3 then Peak 512 else Spot { x = -5; y = 6; ok = true } in
+  match to_dom_json_signal g text vs ms with
+  | Err _ -> -1
+  | Ok v -> signal_code (from_dom_json_signal text v)

@@ -339,6 +339,46 @@ struct StoreLowering : mlir::OpConversionPattern<StoreOp> {
   }
 };
 
+// A local array of records, `let t : [handler; 4] = [...]`, is a region
+// per field, as a parameter's buffer of records is a buffer per field.
+struct RegionLowering : mlir::OpConversionPattern<RegionOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(RegionOp op, OneToNOpAdaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getType()))
+      return mlir::failure();
+    llvm::SmallVector<Type> types;
+    leaves(op.getType(), types);
+    llvm::SmallVector<Value> fields;
+    for (Type t : types) {
+      auto region = make<RegionOp>(rw, op.getLoc(), t);
+      region->setAttrs(op->getAttrDictionary());
+      fields.push_back(region);
+    }
+    llvm::SmallVector<llvm::SmallVector<Value>> results;
+    results.push_back(std::move(fields));
+    rw.replaceOpWithMultiple(op, std::move(results));
+    return mlir::success();
+  }
+};
+
+// Copying an array of records copies each field's buffer.
+struct CopyLowering : mlir::OpConversionPattern<CopyOp> {
+  using OpConversionPattern::OpConversionPattern;
+  mlir::LogicalResult
+  matchAndRewrite(CopyOp op, OneToNOpAdaptor adaptor,
+                  mlir::ConversionPatternRewriter &rw) const override {
+    if (!elementRecord(op.getSrc().getType()))
+      return mlir::failure();
+    for (auto [src, dst] : llvm::zip_equal(adaptor.getSrc(), adaptor.getDst()))
+      make<CopyOp>(rw, op.getLoc(), src, dst)
+          ->setAttrs(op->getAttrDictionary());
+    rw.eraseOp(op);
+    return mlir::success();
+  }
+};
+
 // A view of a buffer of records is the same view of each field's buffer.
 struct SliceLowering : mlir::OpConversionPattern<SliceOp> {
   using OpConversionPattern::OpConversionPattern;
@@ -608,11 +648,11 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
-               OldLowering, LoadLowering, StoreLowering, SliceLowering,
-               LenLowering, RecMakeLowering, RecPayloadLowering,
-               FlattenLowering<BoxPackOp>, FlattenLowering<BoxCallOp>>(types,
-                                                                       ctx);
+  patterns
+      .add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
+           OldLowering, LoadLowering, StoreLowering, SliceLowering, LenLowering,
+           RecMakeLowering, RecPayloadLowering, RegionLowering, CopyLowering,
+           FlattenLowering<BoxPackOp>, FlattenLowering<BoxCallOp>>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);

@@ -126,7 +126,22 @@ let to_byte (x : f64) : u8
 let abs32 (x : f32) : f32 = from_bits (to_bits x & 2147483647)
 ```
 
-The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`. What `+` and `*` compute is not modelled yet, so a goal that depends on a sum's value fails rather than being proved wrongly; proving float kernels against real-valued specifications, with their rounding error, is [ADR 0038](adr/0038-float-kernels-against-real-theories.md), still to come.
+The prover sees a float as its bits. Comparisons are exactly IEEE's, so it knows a NaN is unordered and `-0.0 = 0.0`, which is what proves `u8 x` fits in `to_byte`.
+
+A contract states what a float computes against real arithmetic ([ADR 0038](adr/0038-float-kernels-against-real-theories.md)). `to_real x` is the exact value of a float as a spec-only `real`, `finite x` says it is neither infinite nor NaN, and `eps f32` is the unit roundoff, 2⁻²⁴ (2⁻⁵³ for `f64`). The prover knows that each operation is rounded once: a finite result lies within `eps` of the exact one, relative to its size, plus `tiny f32` (2⁻¹⁵⁰) for results in the subnormal range, and a result is finite when the exact value is below the largest float. So rounding error and finiteness are proved like any other bound:
+
+```ocaml
+let spec mag (x : real) : real = if x >= 0.0 then x else 0.0 - x
+
+let fma_free (a : f32) (b : f32) (c : f32) : f32
+  requires finite a && finite b && finite c
+  requires mag (to_real a) <= 1000.0 && mag (to_real b) <= 1000.0 && mag (to_real c) <= 1000.0
+  ensures finite result
+  ensures mag (to_real result - (to_real a * to_real b + to_real c)) <= 3000000.0 * eps f32
+= a * b + c
+```
+
+A loop states its bound in its invariant. `finite` also compiles, to a test of the exponent bits. The lemmas for long sums and dot products, `@fp(reassoc)` and the `~= within` form come next.
 
 ### Licensed reassociation and FMA
 
@@ -808,7 +823,32 @@ let pick (op : u8) (y : u8) : u8 requires y < 100 ensures result >= y =
   h y
 ```
 
-The parentheses make `mutable` the reference's, not its parameter's. A stored reference takes and returns integers, bools and floats for now; copies of a mutable reference, references in records and buffers, and references passed to C come later.
+The parentheses make `mutable` the reference's, not its parameter's.
+
+A record field of an arrow type holds a reference too, so a buffer of such records is a table of functions. The field's contracts follow its arrow, and a function stored in the field, in a record literal or with `<-`, is proved against them there. A call through the field, `t.[op].f y`, is an indirect call that sees only the arrow's contract. A field can also take the same field of another record of its type, which was proved when it was stored:
+
+```ocaml
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = (x + 1)
+
+let add3 (x : u8) : u8 requires x < 200 ensures result = x + 3 = (x + 3)
+
+let handler = type {
+  f : (x : u8) -> u8 requires x < 100 ensures result > x;
+  tag : u8
+}
+
+let run (t : [handler; 4]) (op : usize) (y : u8) : u8
+  requires op < 4 && y < 100
+  ensures result > y
+= t.[op].f y
+
+let install (t : inout [handler; 4]) : unit =
+  t.[0] <- { f = succ; tag = 0 };
+  t.[1].f <- add3;
+  t.[2].f <- t.[1].f
+```
+
+A stored reference takes and returns integers, bools and floats for now. Copies of a mutable reference into a local, references in variants and `option`, and references passed to C come later.
 
 ## Parallel loops
 

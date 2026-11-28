@@ -4623,6 +4623,72 @@ class Gen {
     return genExpr(*keep(std::move(neg)), expected);
   }
 
+  // `eps t` and `tiny t` of a float type (ADR 0038): the unit roundoff,
+  // 2^-24 for f32 and 2^-53 for f64, and the absolute error of rounding in
+  // the subnormal range, half the smallest subnormal, 2^-150 and 2^-1075.
+  // Like `min t` they name a fact about the type, so they are folded to
+  // exact `real` constants here. A program's own `eps` or `tiny` wins.
+  std::optional<R> genFloatBound(const Node &n) {
+    if (n.kids.size() != 2)
+      return std::nullopt;
+    const Node &f = *n.kids[0];
+    if (!boundName(f) || (f.text != "eps" && f.text != "tiny") ||
+        !overloadSet(f.text).empty())
+      return std::nullopt;
+    Type t = boundOperandType(*n.kids[1]);
+    if (!t)
+      return std::nullopt;
+    if (!isFloat(t))
+      return fail(*n.kids[1], "'" + f.text + " " + n.kids[1]->text +
+                                  "' needs a float type, f32 or f64");
+    bool f32 = t.isF32();
+    unsigned shift = f.text == "eps" ? (f32 ? 24 : 53) : (f32 ? 150 : 1075);
+    llvm::APInt den = llvm::APInt::getOneBitSet(shift + 1, shift);
+    std::string text = "1/" + llvm::toString(den, 10, false);
+    Type real = RealType::get(&ctx_);
+    return TV{create<ExactConstantOp>(loc(n), real, b_.getStringAttr(text)),
+              real};
+  }
+
+  // `finite x`: x is neither infinite nor NaN, so its exponent bits are
+  // not all ones. Written over `to_bits`, so it is exact in proofs and
+  // compiles to two instructions in code.
+  R genFinite(const Node &n, const Node &arg) {
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (!isFloat(v->type))
+      return fail(arg,
+                  "'finite' takes an f32 or f64, found " + typeName(v->type));
+    Location l = loc(n);
+    Type t = bitsOf(v->type);
+    llvm::APInt mask = v->type.isF32()
+                           ? llvm::APInt(kWidth, 0x7f800000u)
+                           : llvm::APInt(kWidth, 0x7ff0000000000000ull);
+    Value exp = create<ConstantOp>(
+        l, t, b_.getIntegerAttr(b_.getIntegerType(kWidth), mask));
+    Value bits = create<ToBitsOp>(l, t, v->value);
+    // The mask keeps bits in range, so nothing can overflow.
+    auto wrap = OverflowModeAttr::get(&ctx_, OverflowMode::wrap);
+    Value masked = create<BAndOp>(l, t, bits, exp, wrap);
+    return TV{cmp(l, CmpPredicate::ne, masked, exp), boolType()};
+  }
+
+  // `to_real x`: the real value of a float (ADR 0038). Spec-only, like
+  // every `real`; for an infinity or NaN it is some real, unknown, so a
+  // contract says `finite x` first.
+  R genToReal(const Node &n, const Node &arg) {
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (!isFloat(v->type))
+      return fail(arg, "'to_real' takes an f32 or f64, found " +
+                           typeName(v->type) +
+                           "; an integer converts with 'real x'");
+    Type real = RealType::get(&ctx_);
+    return TV{create<ExactConvertOp>(loc(n), real, v->value), real};
+  }
+
   // The spec functions a `with f, g` names (ADR 0063), as symbols, or
   // nothing after an error.
   std::optional<std::vector<std::string>> revealed(const Node &n) {
@@ -4682,6 +4748,8 @@ class Gen {
     if (n.flags == "region") return genRegion(n, expected);
     if (std::optional<R> b = genTypeBound(n, expected))
       return *b;
+    if (std::optional<R> b = genFloatBound(n))
+      return *b;
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
                                      overloadSet(f.text).empty()) {
@@ -4703,6 +4771,9 @@ class Gen {
       callee = callee->kids[0].get();
     }
     const Node &fn = *callee;
+    // `r.op x` through a function reference field (ADR 0071).
+    if (fn.kind == NodeKind::Field && !targs)
+      return genFieldReferenceCall(n);
     if (fn.kind != NodeKind::Name)
       return fail(fn, "only named functions can be called for now");
     size_t argc = n.kids.size() - 1;
@@ -4833,6 +4904,13 @@ class Gen {
         if (argc != 1)
           return fail(n, "'" + fn.text + "' takes one argument");
         return genFromFloat(n, fn.text, *n.kids[1]);
+      }
+      if ((fn.text == "finite" || fn.text == "to_real") &&
+          overloadSet(fn.text).empty()) {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        return fn.text == "finite" ? genFinite(n, *n.kids[1])
+                                   : genToReal(n, *n.kids[1]);
       }
       if (fn.text == "to_bits" || fn.text == "from_bits") {
         if (argc != 1)
@@ -9951,6 +10029,14 @@ class Gen {
         fields.push_back(sv->value);
         continue;
       }
+      if (mlir::isa<mlir::FunctionType>(ft)) {
+        R r = referenceFieldValue(rt, *rt.fieldIndex(name.getValue()),
+                                  *init->kids[0]);
+        if (!r)
+          return r;
+        fields.push_back(r->value);
+        continue;
+      }
       R v = genExpr(*init->kids[0], ft);
       if (!v) return v;
       R c = coerce(*v, ft, *init->kids[0]);
@@ -10042,8 +10128,11 @@ class Gen {
     bool specValue = rt.isSpecField(*i) && !contract_ && !ghost_;
     if (specValue)
       contract_ = true;
-    R v = genExpr(*n.kids[1], ft);
-    R c = v ? coerce(*v, ft, *n.kids[1]) : std::nullopt;
+    R c = mlir::isa<mlir::FunctionType>(ft)
+              ? referenceFieldValue(rt, *i, *n.kids[1])
+              : genExpr(*n.kids[1], ft);
+    if (c && !mlir::isa<mlir::FunctionType>(ft))
+      c = coerce(*c, ft, *n.kids[1]);
     if (specValue)
       contract_ = false;
     if (!c)
@@ -10098,8 +10187,11 @@ class Gen {
                            "yet; write its elements");
       if (specValue)
         contract_ = true;
-      R v = genExpr(valueNode, ft);
-      R c = v ? coerce(*v, ft, valueNode) : std::nullopt;
+      R c = mlir::isa<mlir::FunctionType>(ft)
+                ? referenceFieldValue(rt, *i, valueNode)
+                : genExpr(valueNode, ft);
+      if (c && !mlir::isa<mlir::FunctionType>(ft))
+        c = coerce(*c, ft, valueNode);
       if (specValue)
         contract_ = false;
       if (!c)
@@ -10461,6 +10553,18 @@ class Gen {
         fail(attr, "a '$' in @lower starts a splice: '$name' is the value of "
                    "the parameter 'name', and '$name.type' its MLIR type");
         return false;
+      }
+      // `$result` is the lowering's value (ADR 0078, section 2), which
+      // codegen returns.
+      if (splice == "result") {
+        if (!sig.result || isUnit(sig.result)) {
+          fail(attr, "@lower splices '$result', the value of a function "
+                     "that returns one; '" +
+                         name + "' returns unit");
+          return false;
+        }
+        i = end - 1;
+        continue;
       }
       auto p = llvm::find_if(
           sig.params, [&](const sema::Param &q) { return q.name == splice; });
@@ -12863,6 +12967,79 @@ class Gen {
     R body = genExpr(*n.kids[4], expected);
     popScope();
     return body;
+  }
+
+  // The value stored in the function reference field `i` of `rt` (ADR
+  // 0071): a top-level function, checked against the field's arrow, or
+  // the same field of another record, which holds one already checked.
+  R referenceFieldValue(RecordType rt, unsigned i, const Node &value) {
+    auto ft = mlir::cast<mlir::FunctionType>(rt.getFieldTypes()[i]);
+    std::string field = rt.getFieldNames()[i].str();
+    const Node *arrow = types_.fieldArrow(rt.getName().str(), field);
+    if (!arrow)
+      return fail(value, "the field '" + field + "' of " + typeName(rt) +
+                             " holds a function reference of no known arrow");
+    std::string takes = "the field '" + field + "' of " + typeName(rt) +
+                        " takes a top-level function by its name, or the "
+                        "same field of another " +
+                        typeName(rt) + " (ADR 0071)";
+    if (value.kind == NodeKind::Field) {
+      R v = genField(value);
+      if (!v)
+        return v;
+      if (auto from = fieldRecord(*v);
+          from && types_.fieldArrow(from.getName().str(), value.text) == arrow)
+        return v;
+      return fail(value, takes);
+    }
+    if (value.kind != NodeKind::Name || !value.flags.empty() ||
+        lookup(value.text) || overloadSet(value.text).empty())
+      return fail(value, (value.kind == NodeKind::Name && lookup(value.text)
+                              ? "'" + value.text + "' is a local; "
+                              : std::string()) +
+                             takes);
+    return referenceValue(value, arrowOf(*arrow), ft,
+                          "the field '" + field + "' of " + typeName(rt));
+  }
+
+  // The record a field read `v` came from.
+  static RecordType fieldRecord(const TV &v) {
+    auto read = v.value.getDefiningOp<FieldOp>();
+    return read ? mlir::dyn_cast<RecordType>(read->getOperand(0).getType())
+                : RecordType();
+  }
+
+  // `r.op x` through a function reference field: a call of the field's
+  // proxy, which every record with this field shares.
+  R genFieldReferenceCall(const Node &n) {
+    const Node &fn = *n.kids[0];
+    R f = genField(fn);
+    if (!f)
+      return f;
+    auto ft = mlir::dyn_cast<mlir::FunctionType>(f->type);
+    if (!ft)
+      return fail(fn, "'." + fn.text + "' is " + typeName(f->type) +
+                          ", not a function reference, so it cannot be "
+                          "called");
+    RecordType rt = fieldRecord(*f);
+    const Node *arrowNode = types_.fieldArrow(rt.getName().str(), fn.text);
+    if (!arrowNode)
+      return fail(fn, "the field '" + fn.text + "' of " + typeName(rt) +
+                          " holds a function reference of no known arrow");
+    if (contract_ || ghost_)
+      return fail(n, "a call through a function reference field is code, "
+                     "not part of a contract");
+    std::optional<std::string> proxy =
+        referenceProxy(rt.getName().str() + "." + fn.text, arrowOf(*arrowNode),
+                       ft, *arrowNode);
+    if (!proxy)
+      return std::nullopt;
+    std::vector<const Node *> all{&fn};
+    for (size_t i = 1; i < n.kids.size(); ++i)
+      all.push_back(n.kids[i].get());
+    std::vector<std::optional<TV>> early(all.size());
+    early[0] = *f;
+    return genCall(n, sigs_.at(*proxy), all, &early);
   }
 
   // `h x` through a mutable function reference: a call of its proxy, or,

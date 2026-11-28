@@ -162,6 +162,13 @@ class Interpreter {
   // An item made during the pass, such as a lifted payload record, that
   // the pass's later metaprograms can see.
   void addToListing(const syntax::Node *item) { listing_.push_back(item); }
+  // An attribute a derive has read, taken off the member of the type
+  // `owner` (Expand's settleAttrs): field_attrs and ctor_attrs still
+  // return it, for another type's derive that reads this one's members.
+  void settleAttr(const std::string &owner, const std::string &member,
+                  syntax::NodePtr attr) {
+    settled_[owner + "." + member].push_back(std::move(attr));
+  }
 
   // Makes the REPL-only builtins of Pia.Live available (ADR 0031).
   void setLive(bool live) { live_ = live; }
@@ -208,6 +215,7 @@ class Interpreter {
   std::map<std::string, const syntax::Node *> globals_;
   syntax::SourceLoc site_;
   std::vector<const syntax::Node *> listing_;
+  std::map<std::string, std::vector<syntax::NodePtr>> settled_;
   const syntax::Node *program_ = nullptr;
   bool live_ = false;
   const syntax::EmbedOptions *embedOptions_ = nullptr;

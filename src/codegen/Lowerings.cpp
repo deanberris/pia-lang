@@ -1,5 +1,6 @@
 #include "codegen/Lowerings.h"
 #include "codegen/Codegen.h"
+#include "dialect/LibDialect.h"
 #include "dialect/PiaDialect.h"
 
 #include <array>
@@ -24,10 +25,12 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/Dialect/Transform/IR/TransformDialect.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Interfaces/ViewLikeInterface.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
@@ -42,6 +45,9 @@ constexpr llvm::StringLiteral kName = "pia.lower_name";
 constexpr llvm::StringLiteral kView = "pia.lower_view";
 constexpr llvm::StringLiteral kThreaded = "pia.lower_threaded";
 constexpr llvm::StringLiteral kLowered = "pia.lowered";
+// A function whose body is now its lowering, which a `pia_lib.call` of it
+// may substitute (ADR 0078).
+constexpr llvm::StringLiteral kRule = "pia.lib_rule";
 constexpr llvm::StringLiteral kTmp = "pia_lowering";
 
 std::string where(mlir::Location loc) {
@@ -174,6 +180,8 @@ mlir::FailureOr<View> viewOf(mlir::func::FuncOp f, unsigned i,
 struct Spliced {
   std::string views;
   std::string text;
+  // Whether the text defines `$result`, the value codegen returns.
+  bool result = false;
 };
 
 // The text with each `$name` replaced by the argument's SSA name in the
@@ -200,6 +208,17 @@ mlir::FailureOr<Spliced> splice(mlir::func::FuncOp f, llvm::StringRef text,
     std::string name = text.substr(i + 1, end - i - 1).str();
     bool type = text.substr(end).starts_with(".type") &&
                 (end + 5 == text.size() || !isNameChar(text[end + 5]));
+    if (name == "result") {
+      if (f.getNumResults() != 1)
+        return mlir::emitError(at)
+               << "@lower splices '$result', but '" << f.getSymName()
+               << "' has " << f.getNumResults()
+               << " results in the compiled function";
+      i = (type ? end + 5 : end) - 1;
+      out.result = true;
+      out.text += type ? printed(f.getResultTypes()[0]) : "%pia_result";
+      continue;
+    }
     auto arg = argOf.find(name);
     if (arg == argOf.end())
       return mlir::emitError(at)
@@ -264,8 +283,12 @@ mlir::FailureOr<std::string> wrap(mlir::func::FuncOp f, const Spliced &s,
       types += (k ? ", " : "") + printed(ft.getResult(k));
     }
     out += "return " + values + " : " + types + "\n";
+  } else if (s.result) {
+    // `$result` is the value (ADR 0078, section 2).
+    out += "return %pia_result : " + printed(ft.getResult(0)) + "\n";
   } else if (!ft.getNumResults()) {
-    // A function that returns a value says what with its own `return`.
+    // A function that returns a value says what with its own `return`, or
+    // defines `$result`.
     out += "return\n";
   }
   return out + "}\n";
@@ -345,8 +368,10 @@ bool writable(mlir::func::FuncOp f, unsigned i) {
 // whose effects MLIR does not know, only buffers the Pia signature lets it
 // write. `linalg` ops write their `outs`, so a read-only buffer among them
 // is an error, as is a `memref.store` into one.
+// A lowering with `$result` gives only its result, so it may write no
+// buffer at all (ADR 0078, section 2).
 mlir::LogicalResult checkEffects(mlir::func::FuncOp f, mlir::func::FuncOp tmp,
-                                 mlir::Location at) {
+                                 mlir::Location at, bool resultOnly) {
   auto param = [&](unsigned i) {
     auto n = f.getArgAttrOfType<mlir::StringAttr>(i, kName);
     return n ? n.getValue().str() : "#" + std::to_string(i);
@@ -355,11 +380,17 @@ mlir::LogicalResult checkEffects(mlir::func::FuncOp f, mlir::func::FuncOp tmp,
     if (!mlir::isa<mlir::BaseMemRefType>(v.getType()))
       return std::nullopt;
     std::optional<unsigned> i = argumentOf(tmp, v);
-    if (i && !writable(f, *i))
+    if (i && (resultOnly || !writable(f, *i)))
       return i;
     return std::nullopt;
   };
   auto refuse = [&](mlir::Operation *op, unsigned i, llvm::StringRef how) {
+    if (resultOnly)
+      return mlir::emitError(at)
+             << "the @lower of '" << f.getSymName() << "' " << how << " '$"
+             << param(i) << "' in '" << op->getName()
+             << "', but a lowering that defines '$result' gives only its "
+                "result and may not write any buffer (ADR 0078)";
     return mlir::emitError(at)
            << "the @lower of '" << f.getSymName() << "' " << how << " '$"
            << param(i) << "' in '" << op->getName() << "', but '" << param(i)
@@ -467,7 +498,7 @@ mlir::FailureOr<Lowering> lowerOne(mlir::func::FuncOp f) {
     return mlir::failure();
   }
 
-  if (mlir::failed(checkEffects(f, tmp, at)))
+  if (mlir::failed(checkEffects(f, tmp, at, s->result)))
     return mlir::failure();
 
   // The views are part of the code, so the hash covers them.
@@ -493,6 +524,32 @@ void unmark(mlir::func::FuncOp f) {
   }
 }
 
+// Each call of a function with a lowering becomes `pia_lib.call` (ADR
+// 0078, step 1), which names the function whose body is its meaning, until
+// `lowerLibCalls` substitutes or expands it. Calls from C reach the function
+// itself, whose body the lowering replaces.
+void markLibCalls(mlir::ModuleOp module,
+                  llvm::ArrayRef<mlir::func::FuncOp> marked) {
+  llvm::DenseSet<mlir::StringAttr> lowered;
+  for (mlir::func::FuncOp f : marked)
+    lowered.insert(f.getSymNameAttr());
+  llvm::SmallVector<mlir::func::CallOp> calls;
+  module.walk([&](mlir::func::CallOp call) {
+    if (lowered.contains(call.getCalleeAttr().getAttr()))
+      calls.push_back(call);
+  });
+  for (mlir::func::CallOp call : calls) {
+    mlir::OpBuilder b(call);
+    auto op = lib::CallOp::create(b, call.getLoc(), call.getResultTypes(),
+                                  call.getCalleeAttr(), call.getOperands(),
+                                  mlir::UnitAttr());
+    for (mlir::NamedAttribute a : call->getDiscardableAttrs())
+      op->setAttr(a.getName(), a.getValue());
+    call.replaceAllUsesWith(op.getResults());
+    call.erase();
+  }
+}
+
 } // namespace
 
 void loadLoweringDialects(mlir::MLIRContext &ctx) {
@@ -501,7 +558,7 @@ void loadLoweringDialects(mlir::MLIRContext &ctx) {
                   mlir::func::FuncDialect, mlir::index::IndexDialect,
                   mlir::linalg::LinalgDialect, mlir::memref::MemRefDialect,
                   mlir::scf::SCFDialect, mlir::tensor::TensorDialect,
-                  mlir::transform::TransformDialect>();
+                  mlir::transform::TransformDialect, lib::LibDialect>();
 }
 
 mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
@@ -514,6 +571,9 @@ mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
     return mlir::success();
   if (enabled)
     loadLoweringDialects(*module.getContext());
+  else
+    module.getContext()->loadDialect<lib::LibDialect>();
+  markLibCalls(module, marked);
   bool ok = true, lowered = false;
   for (mlir::func::FuncOp f : marked) {
     if (enabled && !f.isExternal()) {
@@ -522,6 +582,7 @@ mlir::LogicalResult applyLowerings(mlir::ModuleOp module, bool enabled,
         ok = false;
       } else {
         lowered = true;
+        f->setAttr(kRule, mlir::UnitAttr::get(module.getContext()));
         if (applied)
           applied->push_back(std::move(*l));
       }
@@ -563,6 +624,56 @@ mlir::LogicalResult checkLowerings(mlir::ModuleOp module) {
       return mlir::success();
   }
   return applyLowerings(*copy, /*enabled=*/true);
+}
+
+// Whether a call of `f` may be replaced by `f`'s body: one block, ending in
+// `return`, that allocates nothing, since a copy inside a loop would
+// allocate on every iteration.
+static bool substitutable(mlir::func::FuncOp f) {
+  if (!f->hasAttr(kRule) || !f.getBody().hasOneBlock() ||
+      !mlir::isa<mlir::func::ReturnOp>(f.getBody().front().getTerminator()))
+    return false;
+  mlir::WalkResult r = f.walk([](mlir::Operation *op) {
+    auto effects = mlir::dyn_cast<mlir::MemoryEffectOpInterface>(op);
+    if (effects && effects.hasEffect<mlir::MemoryEffects::Allocate>())
+      return mlir::WalkResult::interrupt();
+    return mlir::WalkResult::advance();
+  });
+  return !r.wasInterrupted();
+}
+
+void lowerLibCalls(mlir::ModuleOp module) {
+  llvm::SmallVector<lib::CallOp> calls;
+  module.walk([&](lib::CallOp call) { calls.push_back(call); });
+  for (lib::CallOp call : calls) {
+    mlir::OpBuilder b(call);
+    auto callee = module.lookupSymbol<mlir::func::FuncOp>(call.getCalleeAttr());
+    // Substitute: the rule's MLIR, which is the callee's body, in place of
+    // the call.
+    if (callee && substitutable(callee)) {
+      mlir::Block &body = callee.getBody().front();
+      mlir::IRMapping map;
+      map.map(body.getArguments(), call.getArgs());
+      for (mlir::Operation &op : body.without_terminator())
+        b.clone(op, map);
+      llvm::SmallVector<mlir::Value> results;
+      for (mlir::Value v : body.getTerminator()->getOperands())
+        results.push_back(map.lookupOrDefault(v));
+      call.replaceAllUsesWith(results);
+      call.erase();
+      continue;
+    }
+    // Expand: a call of the function, whose body is the Pia body.
+    auto expanded =
+        mlir::func::CallOp::create(b, call.getLoc(), call.getCalleeAttr(),
+                                   call.getResultTypes(), call.getArgs());
+    for (mlir::NamedAttribute a : call->getDiscardableAttrs())
+      expanded->setAttr(a.getName(), a.getValue());
+    call.replaceAllUsesWith(expanded.getResults());
+    call.erase();
+  }
+  for (auto f : module.getOps<mlir::func::FuncOp>())
+    f->removeAttr(kRule);
 }
 
 bool takeLoweredMark(mlir::ModuleOp module) {

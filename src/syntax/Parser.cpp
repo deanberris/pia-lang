@@ -588,7 +588,8 @@ class Parser {
   }
 
   // `(f : (x : u8) -> u8 requires x < 255 ensures result > x)`: a
-  // function type's contracts (ADR 0044), on its innermost arrow.
+  // function type's contracts (ADR 0044), on its innermost arrow. A record
+  // field's annotation is its first child too.
   void paramContracts(Node &p) {
     if (p.kids[0]->kids[1]->kind != N::ArrowType || !atContract())
       return;
@@ -1197,6 +1198,9 @@ class Parser {
         f->flags = "spec";
       expect(K::Colon, "':' after the field name");
       f->add(annot());
+      // `op : (x : u8) -> u8 requires x < 50; ...`: a function reference
+      // field's contracts are its arrow's (ADR 0071).
+      paramContracts(*f);
       // `x : i32 @json(name = "x")`: attributes a derive reads (ADR 0045).
       if (at(K::Attr) || at(K::AttrOpen)) f->add(attrs());
       rec->add(std::move(f));

@@ -190,7 +190,10 @@ let meta json_variant (t : type_decl) : list =
     else false in
   let checked_pairs =
     if tagged then
-      map (let (i) => if or (eq (shape i) "object") (eq (shape i) "null") then true
+      map (let (i) => if or (eq (shape i) "object") (eq (shape i) "null") then
+                        (if has (rkeys i) tag then
+                           fail (concat "@derive(json): the tag '" (concat tag (concat "' is also a member of the payload of '" (concat (cname i) "'"))))
+                         else true)
                       else fail (concat "@derive(json): with a tag, each payload must be a record, but '" (concat (cname i) "' has another type"))) cidx
     else
       map (let (i) => map (let (j) =>
@@ -558,8 +561,10 @@ let meta json_variant (t : type_decl) : list =
            | Ok $!r -> $!pos < $!r.stop && $!r.stop <= len $!s
            | Err _ -> true)
        = $body ) in
+  (* The room the writer needs, for @derive(json_dom)'s to_dom. *)
+  let room_name = concat "json_room_" tn in
   concat (if tagged then map tagged_writer cidx else [])
-  (concat [ writer_fn; error_type; read_type; members_type; scan_fn ]
+  (concat [ writer_fn; `( let $room_name : usize = $wroom ); error_type; read_type; members_type; scan_fn ]
     (concat (map err_mapper recs)
       (concat (if gt ns 0 then [ key_fn ] else []) (concat (if tagged then [ ctor_fn ] else []) [ reader_fn ]))))
 

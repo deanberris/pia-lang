@@ -1,6 +1,7 @@
 // pia-opt: the MLIR optimiser driver for Pia's dialects.
 
 #include "dialect/ContractDialect.h"
+#include "dialect/LibDialect.h"
 #include "dialect/ParDialect.h"
 #include "dialect/PiaDialect.h"
 #include "gpu/Spirv.h"
@@ -24,7 +25,7 @@ int main(int argc, char **argv) {
                   mlir::memref::MemRefDialect, mlir::scf::SCFDialect,
                   mlir::smt::SMTDialect, mlir::vector::VectorDialect,
                   pia::PiaDialect, pia::contract::ContractDialect,
-                  pia::par::ParDialect>();
+                  pia::lib::LibDialect, pia::par::ParDialect>();
   pia::gpu::registerDialects(registry);
   pia::gpu::registerPasses();
   mlir::registerTransformsPasses();

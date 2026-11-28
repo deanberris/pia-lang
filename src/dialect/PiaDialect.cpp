@@ -616,9 +616,10 @@ LogicalResult ExactDivOp::verify() {
 LogicalResult ExactConvertOp::verify() {
   Type in = getInput().getType(), out = getType();
   if (isa<IntType>(in)) return success();
-  if (isa<UnboundedIntType>(in) && isa<RealType>(out)) return success();
-  return emitOpError("converts an integer to int or real, or an int to "
-                     "real, not ")
+  if (isa<UnboundedIntType, FloatType>(in) && isa<RealType>(out))
+    return success();
+  return emitOpError("converts an integer to int or real, or an int or a "
+                     "float to real, not ")
          << in << " to " << out;
 }
 

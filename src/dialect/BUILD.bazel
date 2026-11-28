@@ -2,12 +2,14 @@ load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("//tools:copts.bzl", "PIA_MLIR_COPTS")
 
-# Pia's MLIR dialects (milestone M3, ADR 0018): pia, pia_contract, pia_par.
+# Pia's MLIR dialects (milestone M3, ADR 0018): pia, pia_contract, pia_par,
+# and pia_lib (ADR 0078).
 
 td_library(
     name = "TdFiles",
     srcs = [
         "Contract.td",
+        "Lib.td",
         "Par.td",
         "Pia.td",
     ],
@@ -53,6 +55,20 @@ gentbl_cc_library(
 )
 
 gentbl_cc_library(
+    name = "LibIncGen",
+    strip_include_prefix = "/src",
+    tbl_outs = {
+        "Lib.h.inc": ["-gen-op-decls"],
+        "Lib.cpp.inc": ["-gen-op-defs"],
+        "LibDialect.h.inc": ["-gen-dialect-decls", "-dialect=pia_lib"],
+        "LibDialect.cpp.inc": ["-gen-dialect-defs", "-dialect=pia_lib"],
+    },
+    tblgen = "@llvm-project//mlir:mlir-tblgen",
+    td_file = "Lib.td",
+    deps = [":TdFiles"],
+)
+
+gentbl_cc_library(
     name = "ParIncGen",
     strip_include_prefix = "/src",
     tbl_outs = {
@@ -74,11 +90,13 @@ cc_library(
     name = "dialect",
     srcs = [
         "ContractDialect.cpp",
+        "LibDialect.cpp",
         "ParDialect.cpp",
         "PiaDialect.cpp",
     ],
     hdrs = [
         "ContractDialect.h",
+        "LibDialect.h",
         "ParDialect.h",
         "PiaDialect.h",
     ],
@@ -87,11 +105,13 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":ContractIncGen",
+        ":LibIncGen",
         ":ParIncGen",
         ":PiaIncGen",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:BytecodeOpInterface",
+        "@llvm-project//mlir:FuncDialect",
         "@llvm-project//mlir:IR",
         "@llvm-project//mlir:InferTypeOpInterface",
         "@llvm-project//mlir:SideEffectInterfaces",
