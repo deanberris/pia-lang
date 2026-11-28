@@ -12213,8 +12213,9 @@ class Gen {
         as->setAttr("pia.claim",
                     b_.getStringAttr(
                         "the sum of every iteration's " + typeName(v->type) +
-                        " fits in " + typeName(rt) + ": at most " +
-                        llvm::toString(most, 10, false) + " iterations"));
+                        " fits in " + (sgn ? "i64" : "u64") + ": at most " +
+                        llvm::toString(most, 10, false) +
+                        (most.isOne() ? " iteration" : " iterations")));
       }
     }
     spreadBarrier(l);

@@ -48,5 +48,48 @@ let wide (xs : [u64]) (ys : out mutable [u64]) : unit
 = spread i in 0 .. len xs do ys.[i] <- all_reduce add xs.[i] done
 
 (*
-// CHECK: 0 skipped
+// CHECK: collectives.pia:13:9: proved: the index fits in u32 [smt]
+// CHECK: collectives.pia:15:34: proved: '-' does not overflow usize [smt]
+// CHECK: collectives.pia:15:29: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:15:44: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:16:20: proved: '+' does not overflow usize [smt]
+// CHECK: collectives.pia:16:38: proved: '+' does not overflow usize [smt]
+// CHECK: collectives.pia:16:33: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:16:48: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:17:7: proved: the iteration owns the cell it writes in 'b' (c = i) [smt]
+// CHECK: collectives.pia:17:18: proved: the divisor is not zero [intervals]
+// CHECK: collectives.pia:17:18: proved: '/' does not overflow u32 [intervals]
+// CHECK: collectives.pia:17:26: proved: the divisor is not zero [intervals]
+// CHECK: collectives.pia:17:26: proved: '/' does not overflow u32 [intervals]
+// CHECK: collectives.pia:17:22: proved: '+' does not overflow u32 [smt]
+// CHECK: collectives.pia:17:7: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:19:7: proved: the iteration owns the cell it writes in 'a' (c = i) [smt]
+// CHECK: collectives.pia:19:16: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:19:7: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:26:32: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:26:17: proved: the sum of every iteration's u32 fits in u64: at most 4294967297 iterations [smt]
+// CHECK: collectives.pia:27:5: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
+// CHECK: collectives.pia:27:23: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:27:21: proved: '-' does not overflow usize [smt]
+// CHECK: collectives.pia:27:5: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:33:28: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:34:5: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
+// CHECK: collectives.pia:34:19: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:34:17: proved: '-' does not overflow u32 [smt]
+// CHECK: collectives.pia:34:5: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:41:28: proved: the iteration owns the cell it reads in 'a' (c = i) [smt]
+// CHECK: collectives.pia:41:28: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:42:5: proved: the iteration owns the cell it writes in 'a' (c = i) [smt]
+// CHECK: collectives.pia:42:19: proved: '-' does not overflow usize [smt]
+// CHECK: collectives.pia:42:14: failed: the iteration owns the cell it reads in 'a' (c = i)
+// CHECK-NEXT: counterexample: len a = {{-?[0-9]+}}
+// CHECK: collectives.pia:42:14: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:42:24: proved: '-' does not overflow u32 [smt]
+// CHECK: collectives.pia:42:5: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:48:30: proved: the iteration owns the cell it writes in 'ys' (c = i) [smt]
+// CHECK: collectives.pia:48:55: proved: the index is within bounds [smt]
+// CHECK: collectives.pia:48:40: failed: the sum of every iteration's usize fits in u64: at most 1 iteration
+// CHECK-NEXT: counterexample: len xs = {{-?[0-9]+}}, len ys = {{-?[0-9]+}}
+// CHECK: collectives.pia:48:30: proved: the index is within bounds [smt]
+// CHECK: 39 proved, 2 failed, 0 skipped
 *)
