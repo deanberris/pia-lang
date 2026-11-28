@@ -5975,9 +5975,18 @@ void solve(const Job &job, const Options &options, Outcome &out,
       // functions (ADR 0063), stall int-blasting, so Ackermann's reduction
       // first replaces them with constants and the facts that equal
       // arguments give equal results.
+      // Ackermann's reduction is for ground formulas. A quantified goal,
+      // which only a float error bound brings here (canIntBlast), crashed
+      // piac on this path when a sub-slice was passed to a kernel
+      // (tests/std/float_error_use.pia, `row_total`), so it goes to the
+      // `smt` tactic alone.
+      bool quantified = job.script.find("(forall") != std::string::npos ||
+                        job.script.find("(exists") != std::string::npos;
       z3::solver blast =
-          (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
-              .mk_solver();
+          quantified
+              ? z3::tactic(ictx, "smt").mk_solver()
+              : (z3::tactic(ictx, "ackermannize_bv") & z3::tactic(ictx, "smt"))
+                    .mk_solver();
       z3::params ip(ictx);
       ip.set("timeout", options.timeoutMs);
       ip.set("rlimit", static_cast<unsigned>(

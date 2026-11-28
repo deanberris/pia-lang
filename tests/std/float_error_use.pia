@@ -38,6 +38,15 @@ let total (xs : [f32]) : f32
   ensures finite result && Pia.Float.Error.near (to_real result) (Pia.Float.Error.sum_r xs (len xs)) (0.001 * Pia.Float.Error.sum_abs xs (len xs) + 1.0e-40)
 = Pia.Float.Error.sum xs 1.0
 
+(* A row of a matrix is a sub-slice, and its elements' bounds follow from
+   the whole buffer's.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the precondition of 'Pia.Float.Error.sum' holds [smt]
+*)
+let row_total (w : [f32]) (k : usize) (c : int{0..4096}) : f32
+  requires k + c <= len w
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
+= let row = w.[k .. k + c] in Pia.Float.Error.sum row 1.0
+
 (* Too long for its bound: 2^24 roundings of f32 may lose every digit,
    so the kernel's precondition fails.
 // CHECK: float_error_use.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the precondition of 'Pia.Float.Error.sum' holds
