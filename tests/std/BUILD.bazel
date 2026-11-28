@@ -616,7 +616,7 @@ sh_test(
 
 # Pia.Math's sqrt, lowered and in software, against C's sqrtf bit for bit.
 cc_test(
-    name = "math_test",
+    name = "math_sqrt_test",
     srcs = [
         "math_test.c",
         "//lib/Pia:math",

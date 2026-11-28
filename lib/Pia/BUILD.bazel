@@ -21,7 +21,7 @@ pia_library(
 
 # Pia.Math (#487): sqrt, proved correctly rounded over the bits and
 # lowered to math.sqrt (ADR 0078). tests/std/math.pia checks its goals and
-# lowering; tests/std:math_test runs it against C's sqrtf.
+# lowering; tests/std:math_sqrt_test runs it against C's sqrtf.
 pia_library(
     name = "math",
     src = "Math.pia",
