@@ -18,7 +18,20 @@ let counted (xs : [u32]) : u64
   costs calls <= 2
 = total xs
 
+(* Counting a function: a callee whose loop calls it has no bound. *)
+let less (a : u32) (b : u32) : bool = a < b
+
+let below (xs : [u32]) (v : u32) : usize =
+  let n : mutable usize = 0 in
+  for i in 0..len xs invariant n <= i do if less xs.[i] v then n <- n + 1 done;
+  n
+
+let ranked (xs : [u32]) : usize
+  costs less <= len xs
+= below xs 7
+
 (* Expected errors, in order.
 // CHECK: cost_bound_errors.pia:15:3: error: 'wrapped' has no bound on iterations, so the cost of 'report' on iterations cannot be proved; add 'costs iterations <= ...' to 'wrapped', which calls 'total', which has a loop
 // CHECK: cost_bound_errors.pia:19:3: error: 'total' has no bound on calls, so the cost of 'counted' on calls cannot be proved; add 'costs calls <= ...' to 'total', which has a loop
+// CHECK: cost_bound_errors.pia:31:3: error: 'below' has no bound on less, so the cost of 'ranked' on less cannot be proved; add 'costs less <= ...' to 'below', which has a loop
 *)
