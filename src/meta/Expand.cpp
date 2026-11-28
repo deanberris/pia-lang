@@ -335,6 +335,15 @@ class Expander {
        value.kids[0] = std::move(record);
        item->flags += item->flags.empty() ? "distinct" : " distinct";
        distinct_[n] = clone(*under);
+       // A distinct arrow type (ADR 0071, amendment of 2026-11-28) holds a
+       // function reference: `op succ` stores `succ` in the field, where it
+       // is checked against the arrow, and nothing converts an `op` back,
+       // since an `op` is called as it is.
+       if (under->kind == NodeKind::ArrowType) {
+         arrowTypes_.insert(n);
+         out.push_back(std::move(item));
+         continue;
+       }
 
        auto fn = [&](const std::string &name, NodePtr param, NodePtr result,
                      NodePtr ensures, NodePtr body) {
@@ -421,6 +430,16 @@ class Expander {
            e.kids[0]->kind != NodeKind::Name || !e.kids[0]->flags.empty())
          return;
        std::string &head = e.kids[0]->text;
+       if (arrowTypes_.count(head)) {
+         // `op succ` is the record `{ raw#op = succ }`.
+         auto init = makeNode(NodeKind::FieldInit, e.loc, "raw#" + head);
+         init->add(std::move(e.kids[1]));
+         e.kind = NodeKind::RecordLit;
+         e.text.clear();
+         e.kids.clear();
+         e.add(std::move(init));
+         return;
+       }
        if (distinct_.count(head) || unwrapHeads_.count(head))
          head += "#of";
      };
@@ -1136,6 +1155,7 @@ class Expander {
   // the names that unwrap one (makeDistinct).
   std::map<std::string, NodePtr> distinct_;
   std::set<std::string> unwrapHeads_;
+  std::set<std::string> arrowTypes_; // distinct arrow types
   std::set<std::string> producers_;
   SourceLoc producerLoc_;  // where the first of them ran in the last pass
   std::vector<Waiting> waiting_;

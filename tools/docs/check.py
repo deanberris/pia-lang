@@ -91,6 +91,9 @@ UNTESTED_PAGES = {
         "built by examples/streams/BUILD.bazel",
     "docs/pull_gpu.pia.md":
         "built by examples/streams/BUILD.bazel",
+    # Built by //examples/streams:pull_spread and run by :streams_test.
+    "docs/pull_spread.pia.md":
+        "built by examples/streams/BUILD.bazel",
     # Design documents: their examples show syntax that is designed, much
     # of it not built yet. What is built is taught, and tested, on the tour.
     "docs/design.md": "design",

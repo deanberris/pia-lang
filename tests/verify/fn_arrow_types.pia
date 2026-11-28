@@ -1,0 +1,52 @@
+(* Distinct arrow types (ADR 0071, amendment of 2026-11-28): `type` over an
+   arrow makes a new type whose contract is its arrow's, so `option op` is
+   a nullable reference with a contract. `op f` checks f against the arrow
+   and stores it; an `op` is called like a function, through the arrow's
+   contract alone.
+// RUN: not piac --verify %s | FileCheck %s
+*)
+
+let option = let (t : type) => type | None | Some of t
+
+let succ (x : u8) : u8 requires x < 255 ensures result = x + 1 = x + 1
+let twice (x : u8) : u8 requires x < 128 ensures result = x * 2 = x * 2
+
+let op = type (x : u8) -> u8 requires x < 100 ensures result > x
+
+let handlers = type { on_key : op; on_tick : option op }
+
+let run (h : option op) (y : u8) : u8 requires y < 100 ensures result >= y =
+  match h with
+  | Some f -> f y
+  | None -> y
+
+let key (h : handlers) (y : u8) : u8 requires y < 100 ensures result > y = h.on_key y
+
+let make () : handlers = { on_key = op succ; on_tick = Some (op succ) }
+
+(* twice 0 is 0, not more than 0. *)
+let bad () : op = op twice
+
+let mixed (f : op) (g : op) (y : u8) : u8 requires y < 50 =
+  let a = f y in if a < 100 then g a else a
+
+(* Expected report, in order.
+// CHECK: fn_arrow_types.pia:11:68: proved: '+' does not overflow u8 [smt]
+// CHECK: fn_arrow_types.pia:11:41: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:12:69: proved: '*' does not overflow u8 [smt]
+// CHECK: fn_arrow_types.pia:12:42: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:20:15: proved: the precondition of 'op.raw#op@fn_arrow_types.pia:14:15' holds [smt]
+// CHECK: fn_arrow_types.pia:18:56: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:23:76: proved: the precondition of 'op.raw#op@fn_arrow_types.pia:14:15' holds [smt]
+// CHECK: fn_arrow_types.pia:23:55: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:31:11: proved: the precondition of 'op.raw#op@fn_arrow_types.pia:14:15' holds [smt]
+// CHECK: fn_arrow_types.pia:31:34: proved: the precondition of 'op.raw#op@fn_arrow_types.pia:14:15' holds [smt]
+// CHECK: fn_arrow_types.pia:25:40: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_arrow_types.pia:25:40: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:25:65: proved: the precondition of 'succ' holds [smt]
+// CHECK: fn_arrow_types.pia:25:65: proved: the postcondition holds [smt]
+// CHECK: fn_arrow_types.pia:28:22: proved: the precondition of 'twice' holds [smt]
+// CHECK: fn_arrow_types.pia:28:22: failed: the postcondition holds
+// CHECK-NEXT: counterexample: x = {{-?[0-9]+}}
+// CHECK: 15 proved, 1 failed, 0 skipped
+*)

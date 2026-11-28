@@ -28,6 +28,12 @@ The vocabulary types, concepts and algorithms that everything else is built from
 | [`Pia.Time`](../lib/Pia/Time.pia) | C++'s `<chrono>` durations, as types a metaprogram makes over a ratio |
 | [`Pia.Test.Gen`](../lib/Pia/Test/Gen.pia) | Tests generated from a function's contract: boundary values, pairwise rows, and a specification check and an oracle per case ([ADR 0056](adr/0056-tests-generated-from-contracts-and-theories.md), [meta](meta.md#tests-from-contracts)) |
 
+### Numerics
+
+| Module | What it gives |
+|---|---|
+| [`Pia.Float.Error`](../lib/Pia/Float/Error.pia) | Rounding error bounds for `f32` sums and dot products: exact sums as spec functions, γₙ, step lemmas for loops, and the kernels `sum` and `dot` proved finite and within their bound ([ADR 0038](adr/0038-float-kernels-against-real-theories.md), [verifier](verifier.md#floats-as-reals)) |
+
 ### Algorithms
 
 C++'s `<algorithm>` and `<numeric>` on slices. Each takes its comparison or operation as a function value and is proved once, for every element type and every such function ([ADR 0043](adr/0043-generic-definitions-proved-once.md)).

@@ -3832,6 +3832,7 @@ class Encoder {
       Value actual = call.getOperand(i), root = rootBuffer(actual);
       if (callWrites(call, i) && chosen_.contains(root)) refuseChosenWrite(call);
       if (!callWrites(call, i) || !arrays_.count(root)) continue;
+      Value before = arrays_[root];
       Value off = views_.lookup(actual), len = lengths_.lookup(actual);
       if (actual != root && off && len) {
         setArray(root, writtenThrough(arrays_[root], off, len));
@@ -3840,6 +3841,12 @@ class Encoder {
       } else {
         havocArray(root);
       }
+      // A spec function with a footprint keeps its value across the call
+      // where the callee's ensures keep the footprint's cells.
+      Derived d;
+      d.old = before;
+      d.byCall = true;
+      derived_[arrays_[root]] = d;
     }
     if (!hasBody) return true;
     Demand post = pre;
@@ -4381,6 +4388,9 @@ class Encoder {
   // iteration; no owner for the identity).
   struct Derived {
     Value old, at, owner, iv;
+    // Written by a call, which says in its ensures which cells it kept:
+    // the frame holds where the two contents agree on the footprint.
+    bool byCall = false;
   };
   llvm::DenseMap<Value, Derived> derived_;
   // The buffers' contents before the spread being walked.
@@ -4429,7 +4439,16 @@ class Encoder {
                                lo));
       };
       Value outside;
-      if (from.at) {
+      if (from.byCall) {
+        auto at = mlir::cast<mlir::smt::ArrayType>(arr.getType());
+        outside = forallIndex([&](Value c) {
+          return implies(
+              inFoot(c),
+              eq(create<mlir::smt::ArraySelectOp>(at.getRangeType(), arr, c),
+                 create<mlir::smt::ArraySelectOp>(at.getRangeType(), from.old,
+                                                  c)));
+        });
+      } else if (from.at) {
         outside = notOf(inFoot(from.at));
       } else {
         outside = forallIndex([&](Value c) {
@@ -5776,30 +5795,30 @@ bool multipliesVariables(const std::string &script) {
 // Whether `script` is eligible for Z3's int-blasting solver (ADR 0066).
 // Quantified queries leave int-blasting incomplete and stall on quantified
 // definitions, so only quantifier-free nonlinear queries take this path,
-// except goals over floats' real values that convert integers, below.
+// and quantifier-free goals over floats' real values that convert integers.
 bool canIntBlast(const std::string &script) {
-  // A goal that compares the real value of an integer with reals, as a
-  // float error bound does with `real i` for a loop's index (ADR 0038),
-  // goes through bv2int, which bit-blasting decides only by blasting the
-  // integer: `a <= b ==> real a <= real b` on two usizes alone did not
-  // finish in minutes, and takes milliseconds int-blasted, quantified
-  // hypotheses and all. Only goals over the real values of floats take
-  // this path: other goals over reals, such as Pia.Time's ratios, keep
-  // the solver they had, which is cheaper for them.
-  bool converts = script.find("(bv2int ") != std::string::npos;
-  if (converts && script.find(".to_real") != std::string::npos)
-    return true;
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
       script.find("(lambda") != std::string::npos)
     return false;
-  // A quantifier-free goal with no reals at all that converts to `int`, as
-  // a spec over unbounded integers does (Pia.Math's f64 root, whose square
-  // needs 106 bits), has the same trouble: `int r = 4 * int s + 1` on a
-  // u64 did not finish in two minutes under bit-blasting and is immediate
-  // int-blasted. Quantified ones stay with the bit-blaster, as above:
-  // int-blasting tests/verify/spec_locals.pia's made it 14 times slower.
-  if (converts && script.find("Real") == std::string::npos)
+  // A goal that compares the real value of an integer with reals, as a
+  // float error bound does with `real i` for a loop's index (ADR 0038),
+  // goes through bv2int, which bit-blasting decides only by blasting the
+  // integer, and int-blasting in milliseconds. Quantified goals of this
+  // kind are left to the bit-blaster: int-blasting them crashed piac when
+  // a sub-slice was passed to Pia.Float.Error.sum
+  // (tests/std/float_error_use.pia, `row_total`). Other goals over reals,
+  // such as Pia.Time's ratios, keep the solver they had.
+  //
+  // A goal with no reals at all that converts to `int`, as a spec over
+  // unbounded integers does (Pia.Math's f64 root, whose square needs 106
+  // bits), has the same trouble: `int r = 4 * int s + 1` on a u64 did not
+  // finish in two minutes under bit-blasting and is immediate int-blasted.
+  // Quantified ones stay with the bit-blaster here too: int-blasting
+  // tests/verify/spec_locals.pia's made it 14 times slower.
+  bool converts = script.find("(bv2int ") != std::string::npos;
+  if (converts && (script.find(".to_real") != std::string::npos ||
+                   script.find("Real") == std::string::npos))
     return true;
   return multipliesVariables(script);
 }

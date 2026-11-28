@@ -75,6 +75,7 @@ nav:
   - "Demo: sediment in pull form": pull.pia.md
   - "Demo: D8 directions and the picture on the GPU": placed.pia.md
   - "Demo: the sediment pull step on the GPU": pull_gpu.pia.md
+  - "Demo: the sediment step in one spread, with collectives": pull_spread.pia.md
   - "Demo: CPU and GPU, side by side": gpu-demo.md
   - A tour of Pia: tour.md
   - Feature index: features.md
