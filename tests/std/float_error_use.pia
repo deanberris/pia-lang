@@ -47,6 +47,16 @@ let row_total (w : [f32]) (k : usize) (c : int{0..4096}) : f32
   requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
 = let row = w.[k .. k + c] in Pia.Float.Error.sum row 1.0
 
+(* The kernel's bound, stated for the same row in the caller's contract:
+   the view at k is one array in code and in contracts.
+// CHECK: float_error_use.pia:[[@LINE+5]]:{{[0-9]+}}: proved: the postcondition holds [smt]
+*)
+let row_bound (w : [f32]) (k : usize) (c : int{0..4096}) : f32
+  requires k + c <= len w
+  requires forall (i in 0..len w). finite w.[i] && Pia.Float.Error.near (to_real w.[i]) 0.0 1.0
+  ensures Pia.Float.Error.near (to_real result) (Pia.Float.Error.sum_r (w.[k .. k + c]) c) (Pia.Float.Error.gamma (real c) * Pia.Float.Error.sum_abs (w.[k .. k + c]) c + 2.0 * real c * tiny f32)
+= Pia.Float.Error.sum (w.[k .. k + c]) 1.0
+
 (* Too long for its bound: 2^24 roundings of f32 may lose every digit,
    so the kernel's precondition fails.
 // CHECK: float_error_use.pia:[[@LINE+4]]:{{[0-9]+}}: failed: the precondition of 'Pia.Float.Error.sum' holds
