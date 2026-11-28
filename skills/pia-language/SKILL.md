@@ -71,7 +71,7 @@ let count_bright (ys : [u16]) : usize
 | `@overflow(proof\|wrap\|saturate\|trap)`, `+\|`, `-\|` | after the return type. `proof` is the default. The `+\|` operators always saturate |
 | `for i in 0 .. n step 2 do ... done` | a half-open range with a stride |
 | `let r = for k in 0 .. n @place(gpu) invariant ... do ... done` | a placed sequence (ADR 0068, section 9): every spread its body reaches, through calls too, becomes a GPU dispatch of one command buffer. It is proved as a plain `for` and evaluates to `result unit gpu_error`; its invariants hold after it only on `Ok`. The rest of the body runs on the host as it encodes, so it may only compute scalars from buffers no spread in it writes, and it carries no variables. See `tests/verify/gpu_sequence.pia`, `docs/pull_gpu.pia.md` |
-| `let spec rsum (xs : [u32]) (lo : usize) (hi : usize) : u64 ... reads xs.[lo .. hi]` | a spec function's frame (ADR 0060): which cells it reads, so a write elsewhere keeps its value. See `tests/verify/frames.pia` |
+| `let spec rsum (xs : [u32]) (lo : usize) (hi : usize) : u64 ... reads xs.[lo .. hi]` | a spec function's frame (ADR 0060): which cells it reads, so a write elsewhere keeps its value, by a store or by a call whose ensures keep those cells. See `tests/verify/frames.pia` and `frames_calls.pia` |
 | `let meta operator ( ==> ) : prec 1 right = ...` | operators are metaprograms with a precedence; the prelude defines `==>`, `<==>`, `\|\|` and the rest this way |
 | `(* *)` (nests), `\` to the end of the line, `(** *)` doc | comments are syntax. `//` is **not** a comment |
 | `abort ()` | proved unreachable |
