@@ -5785,19 +5785,22 @@ bool canIntBlast(const std::string &script) {
   // finish in minutes, and takes milliseconds int-blasted, quantified
   // hypotheses and all. Only goals over the real values of floats take
   // this path: other goals over reals, such as Pia.Time's ratios, keep
-  // the solver they had, which is cheaper for them. A goal with no reals
-  // at all that converts to `int`, as a spec over unbounded integers does
-  // (Pia.Math's f64 root, whose square needs 106 bits), has the same
-  // trouble: `int a + int b = int c` on two u32s did not finish under
-  // bit-blasting and is immediate int-blasted.
-  if (script.find("(bv2int ") != std::string::npos &&
-      (script.find(".to_real") != std::string::npos ||
-       script.find("Real") == std::string::npos))
+  // the solver they had, which is cheaper for them.
+  bool converts = script.find("(bv2int ") != std::string::npos;
+  if (converts && script.find(".to_real") != std::string::npos)
     return true;
   if (script.find("(forall") != std::string::npos ||
       script.find("(exists") != std::string::npos ||
       script.find("(lambda") != std::string::npos)
     return false;
+  // A quantifier-free goal with no reals at all that converts to `int`, as
+  // a spec over unbounded integers does (Pia.Math's f64 root, whose square
+  // needs 106 bits), has the same trouble: `int r = 4 * int s + 1` on a
+  // u64 did not finish in two minutes under bit-blasting and is immediate
+  // int-blasted. Quantified ones stay with the bit-blaster, as above:
+  // int-blasting tests/verify/spec_locals.pia's made it 14 times slower.
+  if (converts && script.find("Real") == std::string::npos)
+    return true;
   return multipliesVariables(script);
 }
 
