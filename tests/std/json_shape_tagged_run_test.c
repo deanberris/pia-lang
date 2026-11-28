@@ -40,22 +40,26 @@ int main(void) {
   // The tag may come anywhere among the members.
   bad |= check_event("{\"y\": 4, \"x\": 3, \"kind\": \"click\"}", 100304);
   bad |= check_event("{\"kind\": \"Key\", \"code\": 9}", 1090);
-  bad |= check_event("{\"code\": 9, \"repeat\": true, \"kind\": \"Key\"}", 1091);
-  bad |= check_event("{\"kind\": \"Key\", \"code\": 9, \"repeat\": false}", 1092);
-  bad |= check_event("{\"kind\": \"Key\", \"code\": 9, \"repeat\": null}", 1090);
-  bad |= check_event("{\"kind\": \"Click\", \"x\": 3, \"y\": 4}", -2); // renamed
-  bad |= check_event("{\"x\": 3, \"y\": 4}", -2);                 // no tag
-  bad |= check_event("{\"kind\": 1, \"code\": 9}", -2);           // not a string
+  bad |=
+      check_event("{\"code\": 9, \"repeat\": true, \"kind\": \"Key\"}", 1091);
+  bad |=
+      check_event("{\"kind\": \"Key\", \"code\": 9, \"repeat\": false}", 1092);
+  bad |=
+      check_event("{\"kind\": \"Key\", \"code\": 9, \"repeat\": null}", 1090);
+  bad |=
+      check_event("{\"kind\": \"Click\", \"x\": 3, \"y\": 4}", -2); // renamed
+  bad |= check_event("{\"x\": 3, \"y\": 4}", -2);                   // no tag
+  bad |= check_event("{\"kind\": 1, \"code\": 9}", -2); // not a string
   bad |= check_event("{\"kind\": \"Key\", \"kind\": \"Key\", \"code\": 9}",
-                     -2);                                         // two tags
-  bad |= check_event("{\"kind\": \"Quit\", \"code\": 9}", -2);    // not Quit's
+                     -2);                                      // two tags
+  bad |= check_event("{\"kind\": \"Quit\", \"code\": 9}", -2); // not Quit's
   bad |= check_event("{\"kind\": \"Key\", \"code\": 9, \"x\": 3}", -2);
-  bad |= check_event("{\"kind\": \"click\", \"x\": 3}", -2);      // y missing
+  bad |= check_event("{\"kind\": \"click\", \"x\": 3}", -2); // y missing
   bad |= check_event("{", -1);
   const int64_t want[4] = {0, 100304, 1090, 1091};
   for (int64_t k = 0; k < 4; ++k) {
-    int64_t g = round_trip_event_dom(k, text, sizeof text, cells, 16,
-                                     key_start, 16, key_stop, member_values);
+    int64_t g = round_trip_event_dom(k, text, sizeof text, cells, 16, key_start,
+                                     16, key_stop, member_values);
     if (g != want[k]) {
       printf("round_trip_event_dom(%lld): %lld, want %lld\n", (long long)k,
              (long long)g, (long long)want[k]);
