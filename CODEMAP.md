@@ -24,7 +24,7 @@ Design: [docs/design.md](docs/design.md) covers the language and [docs/architect
 
 | What | Command | Where |
 | --- | --- | --- |
-| everything | `bazel build //... && bazel test //...` | CI (`.github/workflows/ci.yml`, macOS arm64 and Linux x86_64): push the branch and read its checks, which are the merge gate. Cloud sessions cannot fetch Bazel's dependencies; the iMac runs only the GPU demos. |
+| everything | `bazel build //... && bazel test //...` | CI (`.github/workflows/ci.yml`, macOS arm64 and Linux x86_64): push the branch and read its checks, which are the merge gate. Claude Code cloud sessions build with `--config=cloud` (BuildBuddy remote execution, set up by `tools/cloud/setup.sh`); the iMac runs only the GPU demos. |
 | prebuilt `pia` and `piac` | `gh release download latest -R deanberris/pia-lang --pattern 'pia-linux-x86_64.tar.gz'` (or `pia-macos-arm64.tar.gz`) | moving `latest` prerelease on [GitHub Releases](https://github.com/deanberris/pia-lang/releases/tag/latest) (plus `SHA256SUMS.txt`), updated on green `main` runs (`.github/workflows/ci.yml`) |
 | one test file | `bazel test //tests/verify:loops_test` (the target is `<stem>_test`) | |
 | a suite | `bazel test //tests/verify:verify_tests` (also `irgen_tests`, `std_tests`, …) | |
@@ -164,6 +164,7 @@ Line counts are as of 2026-11-23. For a file over 1,500 lines, run `outline.py` 
 - `tools/docs/hooks.py` and `tools/docs/requirements.txt` are the MkDocs hook (source links to GitHub, OCaml highlighting) and its pinned version.
 - `tools/docs/check.py` checks the public docs keep up: every lexer keyword, piac and pia flag, attribute in use and lint on some page, every `tests/verify` feature test named (`docs/features.md`), every `lib/Pia` module in `docs/library.md`, pages with examples tested, links out of `docs/` live. `.github/workflows/docs-check.yml` runs it.
 - `tools/imac/bazelq` is the machine-wide FIFO build queue for the shared iMac, and `tools/imac/install.sh` installs it with a `bazel` shim and the 4-job limits in `~/.bazelrc`.
+- `tools/cloud/setup.sh` sets up a Claude Code cloud session to build with Bazel (Bazelisk, `--config=cloud` in `user.bazelrc`), and `tools/cloud/buildbuddy-credential-helper` hands Bazel the `BUILDBUDDY_API_KEY` variable as BuildBuddy's API key header (`docs/getting-started.md`).
 - `tools/codemap/outline.py` outlines a file. `tools/codemap/check.py` checks this map.
 - `tools/llm/export.py` converts a llama2.c checkpoint (karpathy/tinyllamas) to safetensors with the config in `__metadata__` (ADR 0067). It is not run by the build.
 - `tools/bindings/gen.py` writes `lib/Pia/Sys/Gen/<target>.pia` from the host's C headers, for the names in `tools/bindings/posix.toml` and the rows of `lib/Pia/Sys/Posix.pia`, which it checks against the headers (ADRs 0051 and 0057). `--check` is the drift check that `.github/workflows/bindings.yml` runs on both targets.
