@@ -290,6 +290,11 @@ std::string erasedSource(const std::string &cname, const Node &concept,
                (p.receiver ? recvType : p.type) + ") -> ";
       out += "  let spec " + q.name + "_of : " + sig + q.result + "\n";
     }
+    // Which of this module's widened types a box holds, which `take` asks.
+    if (closed)
+      for (const std::string &t : *closed)
+        out += "  let spec holds_" + t + " : (" + self + " : " + recvType +
+               ") -> bool\n";
     for (const Requirement &q : reqs) {
       bool ensures = false;
       for (const Node *c : q.contracts)
@@ -408,6 +413,9 @@ std::string erasedSource(const std::string &cname, const Node &concept,
   if (!closed) {
     src += "let widen (t : type where " + conceptRef(cname) +
            " t) (b : " + box + " t) : " + boxType + full + "\n= { tag = 0 }\n";
+    src += "let take (t : type where " + conceptRef(cname) + " t) (b : moved " +
+           boxType + ") (d : inout mutable " + box + " t) : result unit " +
+           boxType + "\n  requires len d.slot = 1 && d.state = 0\n= Err b\n";
   } else {
     src += "let " + theory + "_check (t : type where " + conceptRef(cname) +
            " t) (b : " + box + " t) : unit = ()\n\n";
@@ -424,6 +432,33 @@ std::string erasedSource(const std::string &cname, const Node &concept,
           "let " + pack + " (v : " + t + ") : " + boxType + "\n= abort ()\n\n";
       src += "let widen (b : " + box + " " + t + ") : " + boxType + full +
              "\n= " + theory + "_check b;\n  " + pack + " b.slot.[0]\n\n";
+      // Taking it out (Dean, 2026-11-28): `take b d` moves the box in and
+      // copies its object into the caller's empty box `d` when the box
+      // holds a `t`, which its descriptor's address says; otherwise it
+      // gives the box back.
+      const std::string holds = theory + "_holds_" + t;
+      const std::string unpack = theory + "_unpack_" + t;
+      BoxOp h;
+      h.kind = BoxOp::Holds;
+      h.descriptor = op.descriptor;
+      ops[holds] = h;
+      BoxOp u;
+      u.kind = BoxOp::Unpack;
+      ops[unpack] = u;
+      src += "let " + holds + " (b : " + boxType +
+             ") : bool\n  ensures "
+             "result = " +
+             theory + ".holds_" + t + " b\n= abort ()\n\n";
+      src += "let " + unpack + " (b : " + boxType + ") : " + t +
+             "\n  requires " + theory + ".holds_" + t + " b\n= abort ()\n\n";
+      src += "let take (b : moved " + boxType + ") (d : inout mutable " + box +
+             " " + t + ") : result unit " + boxType +
+             "\n  requires len d.slot = 1 && d.state = 0"
+             "\n  ensures len d.slot = 1"
+             "\n  ensures (match result with | Ok -> d.state = 1 | Err _ -> "
+             "d.state = 0)\n= if " +
+             holds + " b then\n    (d.slot.[0] <- " + unpack +
+             " b;\n     d.state <- 1;\n     Ok ())\n  else Err b\n\n";
     }
   }
   return src;

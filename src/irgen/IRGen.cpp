@@ -10781,9 +10781,9 @@ class Gen {
     return TV{op.getResult(0), sig.result};
   }
 
-  // The body of a box's pack or of a call through it (ADR 0046): one
-  // `pia.box_pack` or `pia.box_call` of the parameters, which codegen
-  // lowers through the boxed type's descriptor.
+  // The body of a box's own op (ADR 0046): one `pia.box_pack`,
+  // `pia.box_call`, `pia.box_holds` or `pia.box_unpack` of the parameters,
+  // which codegen lowers through the boxed type's descriptor.
   R genBoxOp(const Node &body, const BoxOp &box, const sema::FuncSig &sig,
              Block *entry) {
     llvm::SmallVector<Type> results;
@@ -10800,6 +10800,11 @@ class Gen {
                              b_.getStringAttr(box.descriptor),
                              b_.getArrayAttr(thunks), args)
                .getOperation();
+    } else if (box.kind == BoxOp::Holds) {
+      op = create<BoxHoldsOp>(loc(body), b_.getStringAttr(box.descriptor), args)
+               .getOperation();
+    } else if (box.kind == BoxOp::Unpack) {
+      op = create<BoxUnpackOp>(loc(body), results, args).getOperation();
     } else {
       op =
           create<BoxCallOp>(loc(body), results, b_.getI64IntegerAttr(box.entry),

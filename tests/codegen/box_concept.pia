@@ -5,7 +5,8 @@
    words: the first is the address of the boxed type's descriptor, the
    rest hold the object in its C layout, so square's side, or rect's w and
    h, are the low bytes of the second word. A call through a box loads the
-   requirement's entry from the descriptor. Every goal is proved.
+   requirement's entry from the descriptor, and `take` compares the
+   box's descriptor with its type's. Every goal is proved.
 *)
 module BoxConcept : Run
 
@@ -15,6 +16,8 @@ interface Run @abi(c) = sig
   let rect = type { w : u8; h : u8 }
   let run : (sq : borrowed mutable [square]) -> (rc : borrowed mutable [rect]) -> (xs : borrowed inout mutable [box Shape]) -> u32
     requires len sq = 1 && len rc = 1 && len xs = 2
+  let peek : (xs : borrowed inout mutable [box Shape]) -> (i : usize) -> (s : borrowed mutable [square]) -> u8
+    requires len xs = 2 && i < 2 && len s = 1
 end
 
 let oom = type | OutOfMemory
@@ -92,4 +95,14 @@ let doubled (xs : [box Shape]) : u32
 let run (sq : borrowed mutable [square]) (rc : borrowed mutable [rect]) (xs : borrowed inout mutable [box Shape]) : u32
 = match two sq rc xs with
   | Ok v -> v
+  | Err _ -> 0
+
+(* What box_concept_test.c checks of take: the side of the square box i
+   holds, copied into an empty `box square`, or 0 when box i holds a
+   rectangle and gives itself back. *)
+let peek (xs : borrowed inout mutable [box Shape]) (i : usize) (s : borrowed mutable [square]) : u8
+  requires len xs = 2 && i < 2 && len s = 1
+= let d : mutable box square = { slot = s; state = 0 } in
+  match take xs.[i] d with
+  | Ok -> d.slot.[0].side
   | Err _ -> 0

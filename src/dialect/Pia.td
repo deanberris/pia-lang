@@ -725,6 +725,39 @@ def Pia_BoxCallOp : Pia_Op<"box_call"> {
   }];
 }
 
+def Pia_BoxHoldsOp : Pia_Op<"box_holds", [Pure]> {
+  let summary = "whether a box over a concept holds a given type";
+  let description = [{
+    The body of the function `take` asks before it unpacks (ADR 0046, the
+    cache-line amendment): true when the box's first word is the address
+    of `descriptor`, the constant describing one type under the concept.
+    Descriptors are link-once, so every module that boxes the type agrees
+    on the address. The verifier never looks inside: the function is a
+    proxy, and its result is an uninterpreted function of the box.
+  }];
+  let arguments = (ins StrAttr:$descriptor, Variadic<AnyType>:$box);
+  let results = (outs I1:$result);
+  let assemblyFormat = [{
+    $descriptor `(` $box `)` attr-dict `:` functional-type($box, $result)
+  }];
+}
+
+def Pia_BoxUnpackOp : Pia_Op<"box_unpack", [Pure]> {
+  let summary = "copy the object out of a box over a concept";
+  let description = [{
+    The body of the function `take` calls once it knows the type the box
+    holds (ADR 0046): the operands are the box's words, the results the
+    object's fields, loaded from their offsets in its C layout after the
+    descriptor's word, as `box_pack` stored them. Its precondition, that
+    the box holds that type, is the verifier's to prove.
+  }];
+  let arguments = (ins Variadic<AnyType>:$box);
+  let results = (outs Variadic<AnyType>:$object);
+  let assemblyFormat = [{
+    `(` $box `)` attr-dict `:` functional-type($box, $object)
+  }];
+}
+
 def Pia_AbortOp : Pia_Op<"abort"> {
   let summary = "stop the program; proved unreachable in proof mode";
   let description = [{
