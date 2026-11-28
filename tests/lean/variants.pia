@@ -1,0 +1,55 @@
+(* Variant types in lemmas proved in Lean (ADR 0061, step 3). A variant
+   is an `inductive`, a constructor is its Lean constructor, and `match`
+   is Lean's `match`. A payload of a machine integer is an `Int`, and its
+   range is a hypothesis of each value of the type: a `match` that is
+   `True` for the constructors with no such payload. Variants.lean proves
+   the lemmas, and the variants_proof target writes their receipts.
+// RUN: piac --emit=lean %s | FileCheck %s --check-prefix=LEAN
+// RUN: piac --verify --lean-receipt=%S/variants_proof.receipt %s | FileCheck %s
+*)
+
+let shape = type | Circle of int | Square of int | Empty
+
+let spec area (s : shape) : int =
+  match s with
+  | Circle r -> 3 * r * r
+  | Square w -> w * w
+  | Empty -> 0
+
+let lemma area_nonneg (s : shape) : unit
+  ensures area s >= 0
+= by lean Variants.area_nonneg
+
+let reading = type | Missing | Level of u8
+
+let spec level (r : reading) : int =
+  match r with
+  | Level v -> int v
+  | _ -> 0
+
+let lemma level_fits (r : reading) : unit
+  ensures level r <= 255 && level (Level 7u8) = 7
+= by lean Variants.level_fits
+
+(* Proved by Z3, from the Lean lemma. *)
+let lemma doubled (r : reading) : unit
+  ensures 2 * level r <= 510
+= level_fits r
+
+(* The payload's range is a `match` over the constructors.
+// LEAN: inductive shape where
+// LEAN-NEXT:   | Circle : Int → shape
+// LEAN-NEXT:   | Square : Int → shape
+// LEAN-NEXT:   | Empty : shape
+// LEAN-NEXT:   deriving DecidableEq, Inhabited
+// LEAN: def area (s : shape) : Int :=
+// LEAN-NEXT:   (match s with | shape.Circle r => (((3 : Int) * r) * r) | shape.Square w => (w * w) | shape.Empty => (0 : Int))
+// LEAN: def level_fits : Prop :=
+// LEAN-NEXT:   ∀ (r : reading),
+// LEAN-NEXT:     (match r with | reading.Level p' => ((0 : Int) ≤ p' ∧ p' ≤ (255 : Int)) | _ => True) → (((level r) ≤ (255 : Int)) ∧ ((level (reading.Level (7 : Int))) = (7 : Int)))
+
+// CHECK-DAG: proved: the Lean theorem 'Variants.area_nonneg' proves 'area_nonneg' [lean]
+// CHECK-DAG: proved: the Lean theorem 'Variants.level_fits' proves 'level_fits' [lean]
+// CHECK-DAG: variants.pia:{{[0-9]+}}:3: proved: the postcondition holds [{{smt|intervals}}]
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+*)

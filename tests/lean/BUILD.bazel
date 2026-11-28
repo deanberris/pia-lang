@@ -36,6 +36,14 @@ pia_lean_proof(
     proofs = "Slices.lean",
 )
 
+# variants_proof proves variants.pia's lemmas over variant types, by
+# cases on the constructor.
+pia_lean_proof(
+    name = "variants_proof",
+    src = "variants.pia",
+    proofs = "Variants.lean",
+)
+
 lit_tests(
     name = "lean_tests",
     srcs = glob(["*.pia"]),
@@ -43,6 +51,7 @@ lit_tests(
         ":bytes_proof",
         ":native_proof",
         ":slices_proof",
+        ":variants_proof",
         ":sums_proof",
     ],
     tools = [

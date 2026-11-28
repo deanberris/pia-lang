@@ -1,7 +1,7 @@
 (* What the Lean translation does not support yet (ADR 0061, step 3): no
-   slice of slices, no record field of a machine type, no division, no
-   quantifier in a spec function's body, and a lemma proved in Lean states
-   only `requires` and `ensures`. A definition no `by lean` lemma uses is
+   slice of slices, no record field of a machine type, no recursive
+   variant, no division, no quantifier in a spec function's body, and a
+   lemma proved in Lean states only `requires` and `ensures`. A definition no `by lean` lemma uses is
    not translated, so `unused` is no error.
 // RUN: not piac --emit=lean %s 2>&1 | FileCheck %s
 *)
@@ -25,6 +25,14 @@ let lemma red (p : pixel) : unit
   ensures p.r <= 255
 = by lean Proofs.red
 
+let chain = type | End | Link of chain
+
+let spec depth (c : chain) : int = match c with | End -> 0 | Link _ -> 1
+
+let lemma shallow (c : chain) : unit
+  ensures depth c <= 1
+= by lean Proofs.shallow
+
 let spec below (n : int) : bool = forall (k : int). k < n ==> k < n
 
 let lemma all_below (n : int) : unit
@@ -41,6 +49,7 @@ let lemma counted (n : int) : unit
 // CHECK: error: the operator 'div' has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a slice or array of slices or arrays has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a record field of a machine integer or range type has no Lean translation yet (ADR 0061, step 3)
+// CHECK: error: a recursive variant has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a quantifier in a spec function's body has no Lean translation yet (ADR 0061, step 3)
 // CHECK: error: a lemma proved in Lean states only 'requires' and 'ensures'
 // CHECK-NOT: error
