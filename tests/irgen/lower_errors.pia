@@ -43,7 +43,7 @@ let red (p : pixel) : u8 @lower("return $p : i8") = p.r
 *)
 let cost (x : u8) : u8 @lower("$ 1") = x
 
-(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer, a float or a bool; 'pair' returns pixel
+(* CHECK: lower_errors.pia:[[@LINE+2]]:36: error: a lowered function returns unit, an integer, a float, a bool or a value of a type that lowers to a vector; 'pair' returns pixel
 *)
 let pair (r : u8) (g : u8) : pixel @lower("") = { r = r; g = g }
 
