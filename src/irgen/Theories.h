@@ -47,10 +47,10 @@ struct TheoryInfo {
   // `@target(m)` functions -> m (ADR 0049): their proofs see the model's
   // values of `Target`'s functions, not only its axioms.
   std::map<std::string, std::string> targetOf;
-  // A box's theory (ADR 0046) once `widen` boxes at least one type: each
-  // boxed type is a model of it, since the use check at `widen` proves the
-  // concept's contracts for that type, so its consistency is not checked
-  // again (a check that grows with every word of the box).
+  // A box's theory over the box itself (ADR 0046), whose consistency
+  // follows from its one-byte shape's: its axioms speak of one box at a
+  // time and never of its words. The shape's is checked instead, since the
+  // check grows with every word of the box (#563).
   std::set<std::string> boxModelled;
 };
 void flattenTheories(syntax::Node &program, syntax::Diagnostics &diags,

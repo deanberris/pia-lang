@@ -22,6 +22,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 | Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
 | Error bounds of long sums and dot products (`Pia.Float.Error`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_error_use](../tests/std/float_error_use.pia) |
+| Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
 
@@ -80,7 +81,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Feature | Explained in | Examples |
 | --- | --- | --- |
 | Error sets, `?` and `handle` | [stdlib](stdlib.md#errors-and-scope-cleanup), [ADR 0028](adr/0028-error-propagation-and-cleanup.md) | [error_sets](../tests/verify/error_sets.pia), [error_set_unions](../tests/verify/error_set_unions.pia), [handlers](../tests/verify/handlers.pia) |
-| An open case in a closed error set: a constructor carrying `box c` | [stdlib](stdlib.md#errors-and-scope-cleanup), [ADR 0046](adr/0046-box-over-a-type-or-a-concept.md#note-2026-11-27-a-box-over-a-concept-as-an-error-payload) | [box_error_payload](../tests/verify/box_error_payload.pia) |
+| An open case in a closed error set: a constructor carrying `box c` | [stdlib](stdlib.md#errors-and-scope-cleanup), [ADR 0046](adr/0046-box-over-a-type-or-a-concept.md#note-2026-11-27-a-box-over-a-concept-as-an-error-payload) | [box_error_payload](../tests/verify/box_error_payload.pia), [box_across](../tests/modules/box_across.pia) |
 | `defer` | [stdlib](stdlib.md#errors-and-scope-cleanup) | [defer](../tests/verify/defer.pia) |
 | Foreign functions, contracted or `unsafe`, and `unsafe view` | [codegen](codegen.md#foreign-functions) | [ffi](../tests/verify/ffi.pia), [views](../tests/verify/views.pia) |
 | Allocators: bump, arenas, pools and size classes | [stdlib](stdlib.md#7-linear-resources-and-memory), [theories](theories.md#allocators), [Pia.Mem](library.md#memory) | [bump](../tests/verify/bump.pia), [arena](../tests/verify/arena.pia), [pool](../tests/verify/pool.pia), [pool_alloc](../tests/verify/pool_alloc.pia), [pool_owner_errors](../tests/verify/pool_owner_errors.pia), [size_classes](../tests/verify/size_classes.pia) |
