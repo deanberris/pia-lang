@@ -648,11 +648,11 @@ mlir::LogicalResult scalarizeRecordsIn(mlir::ModuleOp module) {
   });
 
   mlir::RewritePatternSet patterns(ctx);
-  patterns.add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
-               OldLowering, LoadLowering, StoreLowering, SliceLowering,
-               LenLowering, RecMakeLowering, RecPayloadLowering,
-               RegionLowering, CopyLowering, FlattenLowering<BoxPackOp>,
-               FlattenLowering<BoxCallOp>>(types, ctx);
+  patterns
+      .add<RecordLowering, FieldLowering, ArbitraryLowering, EmptyLowering,
+           OldLowering, LoadLowering, StoreLowering, SliceLowering, LenLowering,
+           RecMakeLowering, RecPayloadLowering, RegionLowering, CopyLowering,
+           FlattenLowering<BoxPackOp>, FlattenLowering<BoxCallOp>>(types, ctx);
   mlir::populateFunctionOpInterfaceTypeConversionPattern<mlir::func::FuncOp>(
       patterns, types);
   mlir::populateCallOpTypeConversionPattern(patterns, types);
