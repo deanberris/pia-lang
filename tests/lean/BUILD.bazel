@@ -28,12 +28,21 @@ pia_lean_proof(
     proofs = "Bytes.lean",
 )
 
+# slices_proof proves slices.pia's lemma, by induction over a slice's
+# prefix, which Z3 cannot do.
+pia_lean_proof(
+    name = "slices_proof",
+    src = "slices.pia",
+    proofs = "Slices.lean",
+)
+
 lit_tests(
     name = "lean_tests",
     srcs = glob(["*.pia"]),
     data = [
         ":bytes_proof",
         ":native_proof",
+        ":slices_proof",
         ":sums_proof",
     ],
     tools = [

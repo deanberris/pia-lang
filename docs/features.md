@@ -20,6 +20,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Parameter modifiers, `inout` and `old` | [tour](tour.md#parameter-modifiers) | [inout_values](../tests/verify/inout_values.pia), [old_calls](../tests/verify/old_calls.pia) |
 | Recursive types, `let rec` variants | [verifier](verifier.md#recursive-types) | [rec_types](../tests/verify/rec_types.pia), [rec_aliasing](../tests/verify/rec_aliasing.pia), [rec_fill](../tests/verify/rec_fill.pia) |
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
+| Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
 
 ## Contracts and proofs
 
@@ -34,7 +35,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Spec functions and lemmas | [verifier](verifier.md#spec-functions-and-lemmas) | [specs](../tests/verify/specs.pia), [pure_calls](../tests/verify/pure_calls.pia), [fuel_counterexamples](../tests/verify/fuel_counterexamples.pia) |
 | Opaque spec functions, `@opaque` and `with f` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0063](adr/0063-opaque-spec-functions.md) | [opaque](../tests/verify/opaque.pia) |
 | Frames, `reads xs.[lo .. hi]` | [verifier](verifier.md#spread) | [frames](../tests/verify/frames.pia) |
-| Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia), [bytes](../tests/lean/bytes.pia) |
+| Lemmas proved in Lean, `by lean`, `--emit=lean`, receipts in certificates and `--trust-report` | [verifier](verifier.md#spec-functions-and-lemmas), [ADR 0061](adr/0061-lean-proved-facts.md) | [by_lean](../tests/verify/by_lean.pia), [sums](../tests/lean/sums.pia), [native_trusted](../tests/lean/native_trusted.pia), [bytes](../tests/lean/bytes.pia), [slices](../tests/lean/slices.pia) |
 | Spec-only `int` and `real` | [verifier](verifier.md#spec-only-int-and-real) | [reals](../tests/verify/reals.pia) |
 | Spec state: `let spec` locals and `spec` fields | [verifier](verifier.md#spec-state), [ADR 0058](adr/0058-spec-buffers.md) | [spec_locals](../tests/verify/spec_locals.pia), [spec_fields](../tests/verify/spec_fields.pia), [spec_buffers](../tests/verify/spec_buffers.pia) |
 | Cost bounds, `costs iterations` and `costs calls` | [tour](tour.md#cost-bounds), [verifier](verifier.md#cost-bounds), [ADR 0062](adr/0062-cost-bounds-in-contracts.md) | [costs](../tests/verify/costs.pia) |

@@ -4656,6 +4656,72 @@ class Gen {
     return genExpr(*keep(std::move(neg)), expected);
   }
 
+  // `eps t` and `tiny t` of a float type (ADR 0038): the unit roundoff,
+  // 2^-24 for f32 and 2^-53 for f64, and the absolute error of rounding in
+  // the subnormal range, half the smallest subnormal, 2^-150 and 2^-1075.
+  // Like `min t` they name a fact about the type, so they are folded to
+  // exact `real` constants here. A program's own `eps` or `tiny` wins.
+  std::optional<R> genFloatBound(const Node &n) {
+    if (n.kids.size() != 2)
+      return std::nullopt;
+    const Node &f = *n.kids[0];
+    if (!boundName(f) || (f.text != "eps" && f.text != "tiny") ||
+        !overloadSet(f.text).empty())
+      return std::nullopt;
+    Type t = boundOperandType(*n.kids[1]);
+    if (!t)
+      return std::nullopt;
+    if (!isFloat(t))
+      return fail(*n.kids[1], "'" + f.text + " " + n.kids[1]->text +
+                                  "' needs a float type, f32 or f64");
+    bool f32 = t.isF32();
+    unsigned shift = f.text == "eps" ? (f32 ? 24 : 53) : (f32 ? 150 : 1075);
+    llvm::APInt den = llvm::APInt::getOneBitSet(shift + 1, shift);
+    std::string text = "1/" + llvm::toString(den, 10, false);
+    Type real = RealType::get(&ctx_);
+    return TV{create<ExactConstantOp>(loc(n), real, b_.getStringAttr(text)),
+              real};
+  }
+
+  // `finite x`: x is neither infinite nor NaN, so its exponent bits are
+  // not all ones. Written over `to_bits`, so it is exact in proofs and
+  // compiles to two instructions in code.
+  R genFinite(const Node &n, const Node &arg) {
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (!isFloat(v->type))
+      return fail(arg,
+                  "'finite' takes an f32 or f64, found " + typeName(v->type));
+    Location l = loc(n);
+    Type t = bitsOf(v->type);
+    llvm::APInt mask = v->type.isF32()
+                           ? llvm::APInt(kWidth, 0x7f800000u)
+                           : llvm::APInt(kWidth, 0x7ff0000000000000ull);
+    Value exp = create<ConstantOp>(
+        l, t, b_.getIntegerAttr(b_.getIntegerType(kWidth), mask));
+    Value bits = create<ToBitsOp>(l, t, v->value);
+    // The mask keeps bits in range, so nothing can overflow.
+    auto wrap = OverflowModeAttr::get(&ctx_, OverflowMode::wrap);
+    Value masked = create<BAndOp>(l, t, bits, exp, wrap);
+    return TV{cmp(l, CmpPredicate::ne, masked, exp), boolType()};
+  }
+
+  // `to_real x`: the real value of a float (ADR 0038). Spec-only, like
+  // every `real`; for an infinity or NaN it is some real, unknown, so a
+  // contract says `finite x` first.
+  R genToReal(const Node &n, const Node &arg) {
+    R v = genExpr(arg, Type());
+    if (!v)
+      return v;
+    if (!isFloat(v->type))
+      return fail(arg, "'to_real' takes an f32 or f64, found " +
+                           typeName(v->type) +
+                           "; an integer converts with 'real x'");
+    Type real = RealType::get(&ctx_);
+    return TV{create<ExactConvertOp>(loc(n), real, v->value), real};
+  }
+
   // The spec functions a `with f, g` names (ADR 0063), as symbols, or
   // nothing after an error.
   std::optional<std::vector<std::string>> revealed(const Node &n) {
@@ -4714,6 +4780,8 @@ class Gen {
     if (n.flags == "drop") return genDrop(n);
     if (n.flags == "region") return genRegion(n, expected);
     if (std::optional<R> b = genTypeBound(n, expected))
+      return *b;
+    if (std::optional<R> b = genFloatBound(n))
       return *b;
     if (const Node &f = *n.kids[0]; f.kind == NodeKind::Name &&
                                      f.flags.empty() && !lookup(f.text) &&
@@ -4874,6 +4942,13 @@ class Gen {
         if (argc != 1)
           return fail(n, "'" + fn.text + "' takes one argument");
         return genFromFloat(n, fn.text, *n.kids[1]);
+      }
+      if ((fn.text == "finite" || fn.text == "to_real") &&
+          overloadSet(fn.text).empty()) {
+        if (argc != 1)
+          return fail(n, "'" + fn.text + "' takes one argument");
+        return fn.text == "finite" ? genFinite(n, *n.kids[1])
+                                   : genToReal(n, *n.kids[1]);
       }
       if (fn.text == "to_bits" || fn.text == "from_bits") {
         if (argc != 1)
