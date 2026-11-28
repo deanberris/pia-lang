@@ -1,0 +1,91 @@
+(* A type that lowers to an MLIR `vector` (ADR 0087, step 1). `f4` keeps
+   four f32 lanes in an array, and `@lower("vector<4xf32>", lanes)` makes
+   its values vectors where a lowering splices them: `$a` is a
+   `vector.load` of its lanes, and `$result` is stored into the buffer
+   codegen gives a record result. `plus` and `mul_add` are proved on
+   their lanes and compiled from their vector ops, which
+   convert-vector-to-llvm makes LLVM's `<4 x float>`, a NEON `.4s` or an
+   SSE/AVX xmm register. lower_vector_test.c runs `add4` and `mul_add4`, and
+   the same harness their bodies with --lower=off, against C bit for bit:
+   a lane of `arith.addf` on a vector rounds as `arith.addf` on its f32,
+   and with no licence (ADR 0012) the multiply and the add stay apart.
+// RUN: piac --emit=core %s | FileCheck %s
+// RUN: piac --emit=core --lower=off %s | FileCheck %s --check-prefix=BODY
+// RUN: piac --emit=llvm --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 %s | FileCheck %s --check-prefix=LL
+// RUN: piac --emit=asm --target=arm64-apple-macosx14.0.0 --cpu=apple-m1 %s | FileCheck %s --check-prefix=NEON
+// RUN: piac --emit=asm --target=x86_64-unknown-linux-gnu --cpu=x86-64-v3 %s | FileCheck %s --check-prefix=AVX
+// RUN: piac --verify --trust-report %s | FileCheck %s --check-prefix=PROOF
+*)
+module LowerVector @trusted : Exported
+
+(* What lower_vector_test.c calls, by its C name. *)
+interface Exported @abi(c) = sig
+  let add4 : (a : [f32; 4]) -> (b : [f32; 4]) -> (c : out mutable [f32; 4]) -> unit
+  let mul_add4 : (a : [f32; 4]) -> (b : [f32; 4]) -> (c : [f32; 4]) -> (d : out mutable [f32; 4]) -> unit
+end
+
+let f4 = type { lanes : [f32; 4] } @lower("vector<4xf32>", lanes)
+
+let plus (a : f4) (b : f4) : f4
+  @lower("$result = arith.addf $a, $b : $result.type")
+= let l : mutable [f32; 4] = a.lanes in
+  for i in 0 .. 4 do l.[i] <- a.lanes.[i] + b.lanes.[i] done;
+  { lanes = l }
+
+let mul_add (a : f4) (b : f4) (c : f4) : f4
+  @lower("%p = arith.mulf $a, $b : $a.type\n$result = arith.addf %p, $c : $result.type")
+= let l : mutable [f32; 4] = c.lanes in
+  for i in 0 .. 4 do l.[i] <- a.lanes.[i] * b.lanes.[i] + c.lanes.[i] done;
+  { lanes = l }
+
+let add4 (a : [f32; 4]) (b : [f32; 4]) (c : out mutable [f32; 4]) : unit
+= let r = plus { lanes = a } { lanes = b } in
+  for i in 0 .. 4 do c.[i] <- r.lanes.[i] done
+
+let mul_add4 (a : [f32; 4]) (b : [f32; 4]) (c : [f32; 4]) (d : out mutable [f32; 4]) : unit
+= let r = mul_add { lanes = a } { lanes = b } { lanes = c } in
+  for i in 0 .. 4 do d.[i] <- r.lanes.[i] done
+
+(*
+// CHECK-LABEL: func.func {{.*}}@{{.*}}plus(
+// CHECK-SAME: memref<4xf32>
+// CHECK-NOT: pia.lower
+// CHECK: vector.load %{{.*}}[%{{.*}}] : memref<4xf32>, vector<4xf32>
+// CHECK: vector.load %{{.*}}[%{{.*}}] : memref<4xf32>, vector<4xf32>
+// CHECK: arith.addf %{{.*}}, %{{.*}} : vector<4xf32>
+// CHECK: vector.store %{{.*}}, %{{.*}}[%{{.*}}] : memref<4xf32>, vector<4xf32>
+// CHECK-NOT: scf.for
+// CHECK: return
+// CHECK-LABEL: func.func {{.*}}@{{.*}}mul_add(
+// CHECK: arith.mulf %{{.*}}, %{{.*}} : vector<4xf32>
+// CHECK: arith.addf %{{.*}}, %{{.*}} : vector<4xf32>
+// CHECK: vector.store
+
+// BODY-LABEL: func.func {{.*}}@{{.*}}plus(
+// BODY-NOT: vector.
+// BODY: scf.for
+
+   The lowered functions inline into their callers.
+// LL-LABEL: define void @add4(
+// LL: fadd <4 x float>
+// LL-LABEL: define void @mul_add4(
+// LL: fmul <4 x float>
+// LL: fadd <4 x float>
+
+// NEON-LABEL: {{^}}_add4:
+// NEON: fadd.4s
+// NEON-LABEL: {{^}}_mul_add4:
+// NEON: fmul.4s
+// NEON-NEXT: fadd.4s
+
+// AVX-LABEL: {{^}}add4:
+// AVX: vaddps
+// AVX-LABEL: {{^}}mul_add4:
+// AVX-NOT: vfmadd
+// AVX: vmulps
+// AVX: vaddps
+
+// PROOF: trusted: the lowering of 'plus' to MLIR (arith.addf, arith.constant, vector.load, vector.store; sha256 {{[0-9a-f]+}})
+// PROOF: trusted: the lowering of 'mul_add' to MLIR (arith.addf, arith.constant, arith.mulf, vector.load, vector.store; sha256 {{[0-9a-f]+}})
+// PROOF: 0 failed, 0 skipped
+*)

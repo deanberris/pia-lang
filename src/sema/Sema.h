@@ -204,6 +204,9 @@ class TypeResolver {
     unsigned fieldIndex = 0;
     std::string text; // as written, for messages
     syntax::SourceLoc at;
+    // `vector<...>` (ADR 0087): a value, loaded whole where a lowering
+    // splices it, rather than a view of its buffer.
+    bool vector = false;
   };
   void lowerType(const std::string &record, TypeLowering l) {
     lowerings_[record] = std::move(l);

@@ -98,15 +98,15 @@ Sizes: **S** is about a day of work and one PR, **M** two to three days, **L** a
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
 | X1 | `sqrt` as a builtin IEEE operation, and `rsqrt` as `1 / sqrt` with its error | S | needs F1, F3 |
-| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | needs F1-F4 and ADR 0061's runner |
+| X2 | `exp` for f32: reduction by `ln 2`, a degree-6 polynomial, scaling through the exponent bits; finite on `x <= 88.7`, error bound against a real `exp` theory whose model and polynomial lemma are proved in Lean | M | done for `x <= 0` (`Pia.Float.Exp.exp`, what softmax and a stable SiLU need): proved finite and in [0, 1]; its error is measured (2.5e-7 relative), and the Lean-proved bound waits on Mathlib |
 | X3 | `sin` and `cos` for f32 on the range RoPE uses (`|x| <= seq_len`), the same way | M | needs X2's machinery |
 
 **Kernels (`Pia.Nn`) and the model (`Pia.Llm`)**
 
 | # | PR | Size | Status |
 | --- | --- | --- | --- |
-| K1 | `matvec` with its γₙ tolerance and bounds lemmas | S | needs F4 |
-| K2 | `rmsnorm`, `softmax` (max-subtracted, probabilities in `[0, 1]`, sum within tolerance of 1), `silu`/SwiGLU, residual add | M | needs X1, X2 |
+| K1 | `matvec` with its γₙ tolerance and bounds lemmas | S | done: `Pia.Float.Matvec.matvec` |
+| K2 | `rmsnorm`, `softmax` (max-subtracted, probabilities in `[0, 1]`, sum within tolerance of 1), `silu`/SwiGLU, residual add | M | done (`Pia.Float.Nn`): softmax in [0, 1] summing to within 5γₙ of 1, sigmoid, SiLU, rmsnorm finite and bounded; rmsnorm's normalisation waits on a real contract for `sqrt` |
 | K3 | `rope` and grouped-query attention over a KV cache | M | needs X3, K1, K2 |
 | M1 | `Pia.Format.Safetensors`, proved total, and `tools/llm/export.py` | M | integer-only, can start now |
 | M2 | Tokenizer: `tok512` vocabulary loader, BPE encode, decode, the round trip | M | integer-only, can start now |

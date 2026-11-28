@@ -22,6 +22,9 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Floats, `f32` and `f64` | [tour](tour.md#floats), [verifier](verifier.md#floats) | [floats](../tests/verify/floats.pia) |
 | Floats as reals: `to_real`, `finite`, `eps`, `tiny` and rounding error | [tour](tour.md#floats), [verifier](verifier.md#floats-as-reals) | [float_reals](../tests/verify/float_reals.pia) |
 | Error bounds of long sums and dot products (`Pia.Float.Error`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_error_use](../tests/std/float_error_use.pia) |
+| `exp` on `f32` for `x <= 0`, proved finite and in `[0, 1]` (`Pia.Float.Exp`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_exp](../tests/std/float_exp.pia) |
+| softmax summing to within 5γₙ of 1, SiLU and rmsnorm, proved finite and bounded (`Pia.Float.Nn`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_nn](../tests/std/float_nn.pia) |
+| Error bounds of matrix-vector products, one opaque fact per row (`Pia.Float.Matvec`) | [verifier](verifier.md#floats-as-reals), [library](library.md#numerics) | [float_matvec](../tests/std/float_matvec.pia) |
 | Licensed reassociation and FMA, `@fp(reassoc, contract)` | [tour](tour.md#licensed-reassociation-and-fma), [codegen](codegen.md) | [fp_licence](../tests/verify/fp_licence.pia) |
 
 ## Contracts and proofs
@@ -65,6 +68,7 @@ Every feature `piac` builds today, with the page that explains it and a working 
 | Generic functions and types | [tour](tour.md#generics) | [generic_functions](../tests/verify/generic_functions.pia), [generic_types](../tests/verify/generic_types.pia) |
 | Value parameters on types, `block u8 4` | [tour](tour.md#generics), [ADR 0074](adr/0074-library-types-tensors.md) | [value_params](../tests/verify/value_params.pia), [shapes](../tests/verify/shapes.pia) |
 | `@lower` on a type: a record's MLIR type, a memref view of its buffer | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0074](adr/0074-library-types-tensors.md) | [lower_type](../tests/codegen/lower_type.pia) |
+| `@lower` on a type to an MLIR `vector`, a value of its lanes | [codegen](codegen.md#lowerings-written-in-pia), [ADR 0087](adr/0087-simd-vectors-as-a-library-type.md) | [lower_vector](../tests/codegen/lower_vector.pia) |
 | Generic bodies proved once | [verifier](verifier.md#generic-functions), [ADR 0043](adr/0043-generic-definitions-proved-once.md) | [generic_proofs](../tests/verify/generic_proofs.pia) |
 | Concepts with laws, and adapters | [tour](tour.md#concepts), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [concepts](../tests/verify/concepts.pia), [adapters](../tests/verify/adapters.pia), [generic_meets_concept](../tests/verify/generic_meets_concept.pia) |
 | Overloading, ranked by constraints and chosen by precondition | [verifier](verifier.md#choosing-overloads-by-precondition), [ADR 0034](adr/0034-concepts-and-overload-resolution.md) | [overloads](../tests/verify/overloads.pia), [concept_ranking](../tests/verify/concept_ranking.pia), [precondition_overloads](../tests/verify/precondition_overloads.pia) |

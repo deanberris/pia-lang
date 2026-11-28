@@ -7,7 +7,12 @@ load("//tools/piac:targets.bzl", "PIA_TARGETS")
 package(default_visibility = ["//visibility:public"])
 
 # Its tests read the source, to write its interfaces.
-exports_files(["Error.pia"])
+exports_files([
+    "Error.pia",
+    "Exp.pia",
+    "Matvec.pia",
+    "Nn.pia",
+])
 
 # Rounding error bounds for f32 sums and dot products (ADR 0038, step 3):
 # tests/std/float_error.pia checks its goals and interface, and
@@ -16,4 +21,35 @@ pia_library(
     name = "error",
     src = "Error.pia",
     target_compatible_with = PIA_TARGETS,
+)
+
+# A matrix-vector product with each output's error bounded (ADR 0067, K1):
+# tests/std/float_matvec.pia checks its goals, and
+# tests/std/float_error_use.pia calls it through its interface.
+pia_library(
+    name = "matvec",
+    src = "Matvec.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [":error"],
+)
+
+# exp for f32 on x <= 0 (ADR 0067, X2): tests/std/float_exp.pia checks
+# its goals, and tests/std/float_exp_run_test.c runs it against libm.
+pia_library(
+    name = "exp",
+    src = "Exp.pia",
+    target_compatible_with = PIA_TARGETS,
+)
+
+# softmax, sigmoid, SiLU and rmsnorm (ADR 0067, K2): tests/std/float_nn.pia
+# checks their goals and interface.
+pia_library(
+    name = "nn",
+    src = "Nn.pia",
+    target_compatible_with = PIA_TARGETS,
+    deps = [
+        ":error",
+        ":exp",
+        "//lib/Pia:math",
+    ],
 )

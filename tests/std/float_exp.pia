@@ -1,0 +1,13 @@
+(* Pia.Float.Exp (ADR 0067, X2): every goal of the module is proved, the
+   polynomial one Horner step at a time and the scaling one bit of n at a
+   time, and its interface gives exp's range.
+// RUN: FileCheck %s < %S/../../lib/Pia/Float/exp.goals
+// RUN: piac --emit=interface -o %t %S/../../lib/Pia/Float/Exp.pia
+// RUN: FileCheck --check-prefix=IFACE %s < %t/Pia.Float.Exp.Exp.piai
+*)
+
+(* CHECK-NOT: failed
+// CHECK: {{[0-9]+}} proved, 0 failed, 0 skipped
+// IFACE: module Pia.Float.Exp
+// IFACE: let exp : (x : f32) -> f32
+*)

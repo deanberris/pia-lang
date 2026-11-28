@@ -9316,7 +9316,17 @@ class Gen {
   // Stand-in types for the type parameters of `sig`.
   std::map<std::string, Type> standIns(const sema::FuncSig &sig) {
     std::map<std::string, Type> bound;
+    unsigned values = 0;
     for (const std::string &t : sig.typeParams) {
+      // A value parameter, `k` in `simd f32 k`, stands for a value, one
+      // per parameter, so `simd f32 k` is not an instance of `simd u8 k`.
+      // 2^32 and up: no program spells such an extent, and a type that
+      // lowers to it is still within MLIR's limits.
+      if (llvm::is_contained(sig.valueParams, t)) {
+        llvm::APInt v(kWidth, (uint64_t(1) << 32) + values++);
+        bound[t] = IntType::get(&ctx_, v, v);
+        continue;
+      }
       bound[t] = RecordType::get(&ctx_, t, {}, {});
       standIns_.insert(bound[t]);
     }
@@ -10854,10 +10864,15 @@ class Gen {
                  "step 1)");
       return false;
     }
+    const sema::TypeResolver::TypeLowering *resultLowering =
+        sig.result ? typeLowering(sig.result) : nullptr;
+    if (resultLowering && !resultLowering->vector)
+      resultLowering = nullptr;
     if (sig.result && !isUnit(sig.result) && !mlir::isa<IntType>(sig.result) &&
-        !isBool(sig.result) && !mlir::isa<mlir::FloatType>(sig.result)) {
-      fail(attr, "a lowered function returns unit, an integer, a float or a "
-                 "bool; '" +
+        !isBool(sig.result) && !mlir::isa<mlir::FloatType>(sig.result) &&
+        !resultLowering) {
+      fail(attr, "a lowered function returns unit, an integer, a float, a "
+                 "bool or a value of a type that lowers to a vector; '" +
                      name + "' returns " + typeName(sig.result));
       return false;
     }
@@ -10938,6 +10953,15 @@ class Gen {
         return false;
       }
       auto rt = mlir::cast<RecordType>(p.type);
+      if (tl->vector) {
+        fail(attr,
+             "'" + p.name + "' is '" +
+                 (sema::hasModifier(p.modifiers, "out") ? "out" : "inout") +
+                 "', but " + typeName(p.type) +
+                 " lowers to a vector, which is a value: return it, "
+                 "as in '$result = ...' (ADR 0087)");
+        return false;
+      }
       if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl->fieldIndex])) {
         fail(attr,
              "'" + p.name + "' is '" +
@@ -10972,17 +10996,19 @@ class Gen {
         if (!markTypeLowering(sig.params[i], *tl, fn, i))
           return false;
     }
+    // A vector result (ADR 0087) is stored into the buffer codegen gives
+    // a record result.
+    if (resultLowering)
+      fn->setAttr("pia.lower_result_view",
+                  loweringView(sig.result, *resultLowering));
     return true;
   }
 
-  // Marks argument `i`, a value of a lowered type, with the view codegen
-  // makes of its buffer, `pia.lower_view`, which ScalarizeRecords moves to
-  // the buffer's own argument. A slice's length is not in its type, so
-  // the body proves it matches the view, from the type's invariant.
-  bool markTypeLowering(const sema::Param &p,
-                        const sema::TypeResolver::TypeLowering &tl,
-                        mlir::func::FuncOp fn, unsigned i) {
-    auto rt = mlir::cast<RecordType>(p.type);
+  // What codegen needs to make a value of a lowered type from its buffer:
+  // the field, its shape, whether it is a vector, and how to name it.
+  mlir::DictionaryAttr
+  loweringView(Type t, const sema::TypeResolver::TypeLowering &tl) {
+    auto rt = mlir::cast<RecordType>(t);
     llvm::SmallVector<mlir::NamedAttribute> view{
         b_.getNamedAttr("field", b_.getI64IntegerAttr(tl.fieldIndex)),
         b_.getNamedAttr("shape", b_.getDenseI64ArrayAttr(tl.extents)),
@@ -10994,7 +11020,20 @@ class Gen {
                                          std::to_string(tl.at.column)))};
     if (!tl.element.empty())
       view.push_back(b_.getNamedAttr("element", b_.getStringAttr(tl.element)));
-    fn.setArgAttr(i, "pia.lower_view", b_.getDictionaryAttr(view));
+    if (tl.vector)
+      view.push_back(b_.getNamedAttr("vector", b_.getUnitAttr()));
+    return b_.getDictionaryAttr(view);
+  }
+
+  // Marks argument `i`, a value of a lowered type, with the view codegen
+  // makes of its buffer, `pia.lower_view`, which ScalarizeRecords moves to
+  // the buffer's own argument. A slice's length is not in its type, so
+  // the body proves it matches the view, from the type's invariant.
+  bool markTypeLowering(const sema::Param &p,
+                        const sema::TypeResolver::TypeLowering &tl,
+                        mlir::func::FuncOp fn, unsigned i) {
+    auto rt = mlir::cast<RecordType>(p.type);
+    fn.setArgAttr(i, "pia.lower_view", loweringView(p.type, tl));
     if (!mlir::isa<SliceType>(rt.getFieldTypes()[tl.fieldIndex]))
       return true;
     BindingPtr b = lookup(p.name);

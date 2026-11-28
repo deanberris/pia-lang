@@ -594,6 +594,49 @@ cc_test(
     target_compatible_with = PIA_TARGETS,
 )
 
+# lower_vector.pia, a type that lowers to an MLIR vector (ADR 0087, step 1),
+# run from C bit for bit: once from its vector lowerings, and once from its
+# Pia bodies (--lower=off).
+genrule(
+    name = "lower_vector_obj",
+    srcs = ["lower_vector.pia"],
+    outs = ["lower_vector.o"],
+    cmd = "$(location //tools/piac) --emit=obj " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lower_vector_run_test",
+    srcs = [
+        "lower_vector_test.c",
+        ":lower_vector_obj",
+    ],
+    copts = ["-ffp-contract=off"],
+    linkopts = ["-lm"],
+    target_compatible_with = PIA_TARGETS,
+)
+
+genrule(
+    name = "lower_vector_body_obj",
+    srcs = ["lower_vector.pia"],
+    outs = ["lower_vector_body.o"],
+    cmd = "$(location //tools/piac) --emit=obj --lower=off " + PIAC_TARGET_FLAGS + " -o $@ $<",
+    target_compatible_with = PIA_TARGETS,
+    tools = ["//tools/piac"],
+)
+
+cc_test(
+    name = "lower_vector_body_run_test",
+    srcs = [
+        "lower_vector_test.c",
+        ":lower_vector_body_obj",
+    ],
+    copts = ["-ffp-contract=off"],
+    linkopts = ["-lm"],
+    target_compatible_with = PIA_TARGETS,
+)
+
 # lower_meta.pia, the same matmul with its MLIR computed by a metaprogram
 # (ADR 0065, step 2), run from the same C harness.
 genrule(

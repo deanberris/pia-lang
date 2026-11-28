@@ -1,0 +1,81 @@
+(* Pia.Float.Exp: exp for f32 on x <= 0 (ADR 0067, X2), the range softmax
+   and SiLU need: softmax subtracts the maximum first, and a stable
+   sigmoid takes exp of -|x|.
+
+   exp reduces x by n ln 2, n = round(-x / ln 2), with ln 2 split in two
+   so n ln2_hi is exact (Cody and Waite), evaluates a degree-6
+   polynomial on the remainder r, |r| <= ln 2 / 2, and scales it by 2^-n
+   with one multiplication per bit of n. It is proved finite and in
+   [0, 1], and at least 0.25 for x >= -0.34, so a max-subtracted softmax
+   never divides by less than that; its error against a real exp is not
+   proved yet (a real exp theory waits on Mathlib in Lean). Measured
+   against libm's double exp, it is within 2.5e-7 relative for x in
+   [-87.33, 0] (tests/std/float_exp_run_test.c), and below that it is 0. *)
+module Pia.Float.Exp : Exp
+
+interface Exp = sig
+  let exp : (x : f32) -> f32
+    requires finite x && x <= 0.0
+    ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
+    ensures -0.34 <= to_real x ==> 0.25 <= to_real result
+end
+
+(* One Horner step a + r * q, for |r| <= 0.5 and q in [lo, hi]. *)
+let step (a : f32) (r : f32) (q : f32) (alo : real) (ahi : real) (lo : real) (hi : real) : f32
+  requires finite a && finite r && finite q
+  requires -0.5 <= to_real r && to_real r <= 0.5
+  requires alo <= to_real a && to_real a <= ahi && -2.0 <= alo && ahi <= 2.0
+  requires lo <= to_real q && to_real q <= hi && 0.0 <= lo && hi <= 4.0
+  ensures finite result
+  ensures alo - 0.5 * hi - 0.000001 <= to_real result && to_real result <= ahi + 0.5 * hi + 0.000001
+= a + r * q
+
+(* 1 + r + r^2/2 + ... + r^6/720 by Horner, as steps whose bounds are
+   intervals: each goal is one rounding of one step, where the whole
+   polynomial as one goal took Z3 minutes. *)
+let poly (r : f32) : f32
+  requires finite r && -0.5 <= to_real r && to_real r <= 0.5
+  ensures finite result && 0.25 <= to_real result && to_real result <= 2.0
+= let q5 = step 0.008333334 r 0.0013888889 0.0083333 0.0083334 0.0013 0.0014 in
+  let q4 = step 0.041666668 r q5 0.0416666 0.0416667 0.0076 0.0091 in
+  let q3 = step 0.16666667 r q4 0.1666665 0.1666668 0.037 0.047 in
+  let q2 = step 0.5 r q3 0.4999995 0.5000005 0.143 0.191 in
+  let q1 = step 1.0 r q2 0.999999 1.000001 0.404 0.596 in
+  step 1.0 r q1 0.999999 1.000001 0.70 1.30
+
+(* The result held to [0, 1], which exp of x <= 0 is in. *)
+let clamp01 (v : f32) : f32
+  requires finite v
+  ensures finite result && 0.0 <= to_real result && to_real result <= 1.0
+  ensures 0.25 <= to_real v ==> 0.25 <= to_real result
+= if v > 1.0 then 1.0 else if v < 0.0 then 0.0 else v
+
+(* s * 2^-bit if bit is set in n: each factor is a power of two at most
+   1/2, so s stays finite and within [0, 2]. *)
+let halve (s : f32) (n : u8) (bit : int{1..128}) (c : f32) : f32
+  requires finite s && 0.0 <= to_real s && to_real s <= 2.0
+  requires finite c && 0.0 < to_real c && to_real c <= 0.5
+  ensures finite result && 0.0 <= to_real result && to_real result <= 2.0
+= if (n / bit) % 2 = 1 then (let v = s * c in if v < 0.0 then 0.0 else v) else s
+
+(* Near 0 the polynomial alone; below -87.33 the result is under f32's
+   smallest normal, 0; else n = round(-x / ln 2) as the truncation of a
+   positive float, and the remainder held to |r| <= 1/2 for the proof
+   (it is within ln 2 / 2 already). *)
+let exp (x : f32) : f32
+= if x >= -0.34 then clamp01 (poly x)
+  else if x < -87.33 then 0.0
+  else (
+    let n = u8 (0.5 - x * 1.442695) in
+    let m = f32 n in
+    let r = (x + m * 0.693145752) + m * 1.42860677e-6 in
+    let r1 : f32 = if r > 0.5 then 0.5 else if r < -0.5 then -0.5 else r in
+    let s0 = poly r1 in
+    let s1 = halve s0 n 128 2.938736e-39 in
+    let s2 = halve s1 n 64 5.421011e-20 in
+    let s3 = halve s2 n 32 2.3283064e-10 in
+    let s4 = halve s3 n 16 1.5258789e-05 in
+    let s5 = halve s4 n 8 0.00390625 in
+    let s6 = halve s5 n 4 0.0625 in
+    let s7 = halve s6 n 2 0.25 in
+    clamp01 (halve s7 n 1 0.5))
